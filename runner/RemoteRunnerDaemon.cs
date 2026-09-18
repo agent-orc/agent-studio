@@ -684,7 +684,9 @@ public sealed class RemoteRunnerDaemon
                                     permitClaim.RunId,
                                     permitClaim.LeaseInstanceId,
                                     permitClaim.RunSpec,
-                                    shutdown))));
+                                    shutdown,
+                                    permitClaim.ContinuationBaseRef,
+                                    permitClaim.ContinuationBaseSha))));
                         idleWatchdog.RecordActiveSlots(active.Count);
                         continue;
                     }
@@ -764,7 +766,9 @@ public sealed class RemoteRunnerDaemon
                             // that predates it - the runner then falls back to
                             // its RUNNER_CLI_* configuration as before.
                             claim.RunSpec,
-                            shutdown)));
+                            shutdown,
+                            claim.ContinuationBaseRef,
+                            claim.ContinuationBaseSha)));
                     idleWatchdog.RecordActiveSlots(active.Count);
                 }
 

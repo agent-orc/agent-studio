@@ -1118,14 +1118,16 @@ public sealed class TaskServerClient : IDisposable
                 "Renewed",
                 true,
                 updated,
-                ReconciliationActions: FromContract(response.ReconciliationActions));
+                ReconciliationActions: FromContract(response.ReconciliationActions),
+                StopRequest: FromContract(response.StopRequest));
         }
         return new RunLeaseResponse(
             response?.Status ?? "Invalid",
             false,
             authority.Lease,
             response?.Message,
-            FromContract(response?.ReconciliationActions));
+            FromContract(response?.ReconciliationActions),
+            FromContract(response?.StopRequest));
     }
 
     public async Task<Contract.LeaseDto> ReconcileOutboxAuthorityAsync(
@@ -1184,6 +1186,16 @@ public sealed class TaskServerClient : IDisposable
                     report.Pid)).ToArray(),
                 inventory.AcknowledgedActionIds);
 
+    private static RunStopDirectiveDto? FromContract(Contract.RunStopDirective? directive)
+        => directive is null
+            ? null
+            : new RunStopDirectiveDto(
+                directive.TaskKey,
+                directive.Reason,
+                directive.RequestedAtUtc,
+                directive.AttemptId,
+                directive.RequestedBy);
+
     private static IReadOnlyList<RunnerReconciliationAction>? FromContract(
         IReadOnlyList<Contract.RunnerReconciliationAction>? actions)
         => actions?.Select(action => new RunnerReconciliationAction(
@@ -1214,7 +1226,14 @@ public sealed class TaskServerClient : IDisposable
                 authority.InstanceId,
                 req.LeaseId,
                 req.FencingToken,
-                req.Outcome ?? "runner-process-missing"),
+                req.Outcome ?? "runner-process-missing",
+                string.IsNullOrWhiteSpace(req.SalvageBranch)
+                || string.IsNullOrWhiteSpace(req.SalvageCommitSha)
+                    ? null
+                    : new Contract.LeaseReleaseSalvage(
+                        req.SalvageBranch,
+                        req.SalvageCommitSha,
+                        req.Detail)),
             ct);
         _v1Leases.TryRemove(req.TaskKey, out _);
         _v1TaskBodies.TryRemove(req.TaskKey, out _);

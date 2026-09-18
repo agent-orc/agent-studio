@@ -39,7 +39,24 @@ public static class TaskRunnerEndpoints
             }
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
-        group.MapPost("/{jobId}/stop", (string jobId, string? project, string? watchPath, string? reason, TaskRunnerService runner, AgentStudio.Registry.ProjectRegistry projects) =>
+        // Stop works for both execution locations. A local run is signalled
+        // directly; a run owned by a remote host cannot be signalled from here,
+        // so the request is recorded for its attempt and the owning runner picks
+        // it up on its next lease renewal, terminates the worker's process tree,
+        // salvages, and hands back with outcome 'Stopped' (AGT-2870). Before
+        // this, a remote run answered 404 and the only way to stop it was to
+        // kill the process on the host by hand.
+        group.MapPost("/{jobId}/stop", (
+            string jobId,
+            string? project,
+            string? watchPath,
+            string? reason,
+            TaskRunnerService runner,
+            TaskScannerService scanner,
+            RunLeaseService leases,
+            RemoteRunStopRequestStore stops,
+            TimelineLog timeline,
+            AgentStudio.Registry.ProjectRegistry projects) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             // 'reason' is a hint that travels into RunStatusClassifier so the
@@ -54,8 +71,41 @@ public static class TaskRunnerEndpoints
                 "watchdog" => RunStopReason.Watchdog,
                 _ => RunStopReason.UserStop
             };
-            var success = runner.StopJob(jobId, watchPath, parsed);
-            return success ? Results.Ok() : Results.NotFound();
+            var info = scanner.FindJob(jobId, watchPath);
+            if (info is null) return Results.NotFound();
+
+            var dispatch = RemoteRunStopPolicy.Decide(new RunStopFacts(
+                runner.StopJob(jobId, watchPath, parsed),
+                string.Equals(leases.Peek(info.TaskKey).Outcome, "Held", StringComparison.OrdinalIgnoreCase)));
+            if (dispatch != RunStopDispatch.RemoteStopRequested)
+                return dispatch == RunStopDispatch.StoppedLocally ? Results.Ok() : Results.NotFound();
+
+            var lease = leases.Peek(info.TaskKey).Lease;
+            var request = stops.Record(
+                info.TaskKey,
+                RemoteRunStopReasons.From(parsed),
+                lease?.AttemptId,
+                lease?.RunnerName ?? lease?.RunnerId);
+            timeline.Append(
+                info.FolderPath,
+                TimelineEventKinds.RemoteStopRequested,
+                TimelineActors.Human(string.Empty),
+                $"Stop requested for the remote run on {lease?.RunnerName ?? lease?.RunnerId ?? "the assigned host"}.",
+                runId: lease?.AttemptId,
+                details: new Dictionary<string, string>
+                {
+                    ["reason"] = request.Reason,
+                    ["runnerId"] = lease?.RunnerId ?? string.Empty,
+                });
+            return Results.Accepted(value: new
+            {
+                status = "stop-requested",
+                taskKey = info.TaskKey,
+                reason = request.Reason,
+                runnerId = lease?.RunnerId,
+                attemptId = lease?.AttemptId,
+                message = "The owning runner stops the attempt on its next lease renewal.",
+            });
         });
 
         group.MapPost("/{jobId}/continue", async (string jobId, string? project, string? watchPath, ContinueJobRequest req, TaskRunnerService runner, AgentStudio.Registry.ProjectRegistry projects, CancellationToken ct) =>
