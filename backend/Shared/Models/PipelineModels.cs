@@ -275,6 +275,12 @@ public sealed record PipelineStepExecution
     /// </summary>
     public string? FailureCode { get; init; }
     /// <summary>
+    /// Full structured evidence when all three delivery-integration stages
+    /// fail. The card uses the concise reason; audit and recovery consumers use
+    /// this record without parsing Git stderr.
+    /// </summary>
+    public AgentStudio.Git.IntegrationConflictReport? IntegrationConflictReport { get; init; }
+    /// <summary>
     /// Optional verdict token from the step (e.g. <c>pass</c>,
     /// <c>concerns</c>, <c>block</c> for aspect steps). Lets the UI
     /// render the right pill without re-reading the aspect MD.

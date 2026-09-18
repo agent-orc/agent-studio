@@ -267,6 +267,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             queued.PendingIntent?.SavedReason);
         Assert.Contains("direct merge", queued.PendingIntent?.Prompt, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("one-to-one", queued.PendingIntent?.Prompt, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("shared.txt", queued.PendingIntent?.Prompt, StringComparison.Ordinal);
+        Assert.Contains("Prefer merging 'develop' into the card branch", queued.PendingIntent?.Prompt, StringComparison.Ordinal);
         Assert.Contains(
             deps.Timeline.ReadAll(queued.FolderPath),
             entry => entry.Kind == TimelineEventKinds.IntegrationRecoveryQueued
@@ -297,6 +299,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var started = await AgentRounds(deps).TryStartAsync(request, result);
 
         Assert.True(started.Started, started.Reason);
+        Assert.Equal(1, started.AutomaticRoundsUsed);
+        Assert.Equal(2, started.AutomaticRoundsLimit);
         var queued = deps.Scanner.FindJob(Slug, _watchPath)!;
         Assert.Equal(TaskStates.Ready, queued.State);
         Assert.Equal(ContinueModes.Steer, queued.PendingIntent?.Mode);
@@ -317,6 +321,49 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Equal(
             MergeIntoIntegrationOutcome.AgentRoundRequired.ToString(),
             laneChange.Details![LaneChangeCauses.DetailQualifierKey]);
+    }
+
+    [Fact]
+    public async Task AttributionAmbiguity_WithSpentAutomaticBudgetReturnsExactParkReason()
+    {
+        var deliverySha = PublishDelivery("budget.txt", "delivery version\n");
+        var deps = Build(deliverySha, initialState: TaskStates.AutoReview);
+        var job = deps.Scanner.FindJob(Slug, _watchPath)!;
+        var epoch = OperatorReviewRequeueService.ReadEpoch(job.FolderPath).ToString(
+            System.Globalization.CultureInfo.InvariantCulture);
+        for (var round = 1; round <= 2; round++)
+        {
+            deps.Timeline.Append(
+                job.FolderPath,
+                TimelineEventKinds.IntegrationRecoveryQueued,
+                TimelineActors.System,
+                $"Automatic integration recovery round {round}.",
+                details: new Dictionary<string, string>
+                {
+                    ["automatic"] = "true",
+                    ["attemptEpoch"] = epoch,
+                });
+        }
+        var request = new RemoteDeliveryIntegrationRequest(
+            Project,
+            job.Id,
+            job.FolderPath,
+            job.WatchPath,
+            "develop",
+            IntegrationStrategies.DirectMerge,
+            PipelineTypes.Task,
+            DateTimeOffset.UtcNow);
+        var result = MergeIntoIntegrationResult.RequiresAgentRound(
+            ["budget.txt"],
+            "three-stage conflict");
+
+        var admission = await AgentRounds(deps).TryStartAsync(request, result);
+
+        Assert.False(admission.Started);
+        Assert.True(admission.BudgetExhausted);
+        Assert.Equal(2, admission.AutomaticRoundsUsed);
+        Assert.Equal("automatic recovery budget used: 2/2", admission.Reason);
+        Assert.Equal(TaskStates.AutoReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
     }
 
     [Fact]
@@ -818,11 +865,15 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Equal(
             AcceptedIntegrationFailureCodes.DeliveryAttributionAmbiguous,
             mergeStep.FailureCode);
-        Assert.Contains("shared.txt", mergeStep.VerdictSummary);
+        Assert.Equal(["shared.txt"], mergeStep.IntegrationConflictReport?.ConflictedFiles);
 
         var integration = deps.Integration.BuildLookup([reviewed])[reviewed.TaskKey];
         Assert.Equal(IntegrationStatuses.ConflictSkipped, integration.Status);
-        Assert.Contains("Mechanical rebase conflicted", integration.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.StartsWith(
+            "Merge into develop conflicted (direct merge, mechanical merge and rebase fallback all failed).",
+            integration.Detail,
+            StringComparison.Ordinal);
+        Assert.Equal(["shared.txt"], integration.ConflictReport?.ConflictedFiles);
         Assert.Contains(
             deps.Timeline.ReadAll(reviewed.FolderPath),
             entry => entry.Kind == TimelineEventKinds.IntegrationFailed);

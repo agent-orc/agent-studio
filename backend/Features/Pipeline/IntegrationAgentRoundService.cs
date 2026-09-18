@@ -9,13 +9,13 @@ public enum RemoteIntegrationContinuationAction
 
 /// <summary>
 /// Pure continuation policy for an integration result. A result that cannot
-/// retain unambiguous delivery SHA attribution receives one automatic steer
-/// round per operator-owned review epoch. Repeated ambiguity reaches Human
-/// Review instead of opening an unbounded coding loop.
+/// retain unambiguous delivery SHA attribution receives a bounded automatic
+/// recovery budget for the current delivery chain. Repeated ambiguity reaches
+/// Human Review instead of opening an unbounded coding loop.
 /// </summary>
 public static class RemoteIntegrationContinuationPolicy
 {
-    public const int MaxAutomaticAgentRounds = 1;
+    public const int MaxAutomaticAgentRounds = 2;
 
     public static RemoteIntegrationContinuationAction Decide(
         MergeIntoIntegrationOutcome outcome,
@@ -32,7 +32,10 @@ public static class RemoteIntegrationContinuationPolicy
 
 public sealed record IntegrationAgentRoundStartResult(
     bool Started,
-    string Reason);
+    string Reason,
+    bool BudgetExhausted = false,
+    int AutomaticRoundsUsed = 0,
+    int AutomaticRoundsLimit = RemoteIntegrationContinuationPolicy.MaxAutomaticAgentRounds);
 
 /// <summary>
 /// Applies the bounded side effects for an automatic integration-recovery
@@ -84,9 +87,19 @@ public sealed class IntegrationAgentRoundService
             return Task.FromResult(Failed("The integration result does not require an agent continuation."));
         if (action == RemoteIntegrationContinuationAction.LeaveForHumanReview)
         {
-            var reason = $"Automatic integration recovery already used its {RemoteIntegrationContinuationPolicy.MaxAutomaticAgentRounds} agent round for review epoch {epoch}; leaving the repeated attribution ambiguity for Human Review.";
-            RecordFailure(job.FolderPath, request, result, reason, epoch);
-            return Task.FromResult(Failed(reason));
+            var reason = $"automatic recovery budget used: {automaticRoundsUsed}/{RemoteIntegrationContinuationPolicy.MaxAutomaticAgentRounds}";
+            RecordFailure(
+                job.FolderPath,
+                request,
+                result,
+                reason,
+                epoch,
+                automaticRoundsUsed);
+            return Task.FromResult(new IntegrationAgentRoundStartResult(
+                false,
+                reason,
+                BudgetExhausted: true,
+                AutomaticRoundsUsed: automaticRoundsUsed));
         }
 
         if (!string.Equals(job.State, TaskStates.AutoReview, StringComparison.Ordinal))
@@ -166,7 +179,10 @@ public sealed class IntegrationAgentRoundService
             epoch,
             position,
             supersession.MarkedCommits);
-        return Task.FromResult(new IntegrationAgentRoundStartResult(true, prompt));
+        return Task.FromResult(new IntegrationAgentRoundStartResult(
+            true,
+            prompt,
+            AutomaticRoundsUsed: automaticRoundsUsed + 1));
     }
 
     private void RecordFailure(
@@ -174,21 +190,29 @@ public sealed class IntegrationAgentRoundService
         RemoteDeliveryIntegrationRequest request,
         MergeIntoIntegrationResult result,
         string reason,
-        int epoch)
+        int epoch,
+        int? automaticRoundsUsed = null)
     {
+        var details = new Dictionary<string, string>
+        {
+            ["outcome"] = result.Outcome.ToString(),
+            ["integrationBranch"] = request.IntegrationBranch,
+            ["detail"] = result.Error ?? string.Empty,
+            ["attemptEpoch"] = Invariant(epoch),
+            ["stage"] = "pre-human-review",
+        };
+        if (automaticRoundsUsed.HasValue)
+        {
+            details["automaticRecoveryRoundsUsed"] = Invariant(automaticRoundsUsed.Value);
+            details["automaticRecoveryRoundsLimit"] = Invariant(
+                RemoteIntegrationContinuationPolicy.MaxAutomaticAgentRounds);
+        }
         _timeline.Append(
             folderPath,
             TimelineEventKinds.IntegrationFailed,
             TimelineActors.System,
             reason,
-            details: new Dictionary<string, string>
-            {
-                ["outcome"] = result.Outcome.ToString(),
-                ["integrationBranch"] = request.IntegrationBranch,
-                ["detail"] = result.Error ?? string.Empty,
-                ["attemptEpoch"] = Invariant(epoch),
-                ["stage"] = "pre-human-review",
-            });
+            details: details);
     }
 
     private static string BuildPrompt(
@@ -196,12 +220,25 @@ public sealed class IntegrationAgentRoundService
         ReviewSubjectRecord subject,
         RemoteDeliveryIntegrationRequest request,
         MergeIntoIntegrationResult result)
-        =>
-            $"Automatic integration recovery for {job.Key ?? job.Id}. "
-            + $"The platform first tried a direct merge of delivery '{subject.ResultRef}' at {subject.ResultSha} into '{request.IntegrationBranch}', then a mechanical three-way/rerere merge, and only then a mechanical rebase. "
-            + $"Those paths could not preserve unambiguous commit attribution: {result.Error ?? "the delivery commit mapping changed"}. "
-            + "Continue from the existing delivery, resolve the integration conflict, and preserve a one-to-one delivery commit history: do not squash, split, drop, or combine delivery commits. "
-            + "Run the relevant tests and finish with the normal task terminal sentinel. Do not merge or push the integration branch yourself; publish only the updated delivery branch for a new delivery gate and review round.";
+    {
+        var report = result.ConflictReport;
+        var conflicts = report?.ConflictedFiles.Count > 0
+            ? string.Join(", ", report.ConflictedFiles)
+            : result.ConflictedFiles.Count > 0
+                ? string.Join(", ", result.ConflictedFiles.Take(IntegrationConflictReport.MaxConflictedFiles))
+                : "none recorded";
+        var count = report?.ConflictedFileCount ?? result.ConflictedFiles.Count;
+        var fallbackOutcome = report is null
+            ? "Rebase fallback outcome: delivery commit cardinality was not preserved. "
+            : string.Empty;
+        return $"Automatic integration recovery for {job.Key ?? job.Id}. "
+               + $"The platform first tried a direct merge of delivery '{subject.ResultRef}' at {subject.ResultSha} into '{request.IntegrationBranch}', then a mechanical three-way/rerere merge, and only then a mechanical rebase fallback. "
+               + $"All three stages failed. Conflicted files ({count}): {conflicts}. "
+               + fallbackOutcome
+               + $"Produce an updated delivery that integrates cleanly. Prefer merging '{request.IntegrationBranch}' into the card branch and resolving the conflicts over rebasing or otherwise rewriting history. "
+               + "Preserve a one-to-one delivery commit history: do not squash, split, drop, or combine existing delivery commits. "
+               + "Run the relevant tests and finish with the normal task terminal sentinel. Do not merge or push the integration branch itself; publish only the updated delivery branch for a new delivery gate and review round.";
+    }
 
     private static IntegrationAgentRoundStartResult Failed(string reason)
         => new(false, reason);

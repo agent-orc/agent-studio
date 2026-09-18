@@ -277,6 +277,12 @@ public record TaskIntegrationStatus
     public TaskIntegrationFailure? Failure { get; init; }
 
     /// <summary>
+    /// Full structured report for the current three-stage integration
+    /// conflict. Null for other states and legacy failure records.
+    /// </summary>
+    public AgentStudio.Git.IntegrationConflictReport? ConflictReport { get; init; }
+
+    /// <summary>
     /// Repository-scoped membership evidence. Every attributed repository has
     /// one entry, evaluated against its own registered checkout and branches.
     /// </summary>

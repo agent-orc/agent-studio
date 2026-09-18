@@ -235,12 +235,16 @@ cases in `backend.Tests/RemoteDeliveryIntegrationTests.cs`):
 | `Merged` | any | `None` |
 | `Conflict` | any | `None` |
 | `AgentRoundRequired` | 0 | `StartAgentRound` |
-| `AgentRoundRequired` | 1 or more | `LeaveForHumanReview` |
+| `AgentRoundRequired` | 1 | `StartAgentRound` |
+| `AgentRoundRequired` | 2 or more | `LeaveForHumanReview` |
 
-`MaxAutomaticAgentRounds` is 1 and is counted per operator review epoch. The
+`MaxAutomaticAgentRounds` is 2 and is counted per delivery chain. The
 epoch is read from `OperatorReviewRequeueService.ReadEpoch` and incremented
 whenever a human deliberately moves a reviewed card back for another attempt,
-so an operator requeue re-opens the budget while a machine loop cannot.
+so an operator requeue re-opens the budget while an automatic recovery remains
+inside the current chain. Budget exhaustion is carried through the integration
+coordinator as `automatic recovery budget used: 2/2`, which becomes the Human
+Review park reason instead of the internal `AgentRoundRequired` outcome.
 
 ## Conflict handling and recovery
 

@@ -453,6 +453,34 @@ public sealed class GitWorktreePrimitivesTests : IDisposable
         Assert.Equal(MergeIntoIntegrationOutcome.AgentRoundRequired, result.Outcome);
         // The conflict is made visible, not silent.
         Assert.Contains("shared.txt", result.ConflictedFiles);
+        var report = Assert.IsType<IntegrationConflictReport>(result.ConflictReport);
+        Assert.Equal("develop", report.IntegrationBranch);
+        Assert.Equal(developTipBefore, report.IntegrationTipSha);
+        Assert.Equal(taskTipBefore, report.DeliverySha);
+        Assert.Equal(3, report.Stages.Count);
+        Assert.Collection(
+            report.Stages,
+            direct =>
+            {
+                Assert.Equal("direct-merge", direct.Stage);
+                Assert.Equal(1, direct.ConflictedFileCount);
+            },
+            mechanical =>
+            {
+                Assert.Equal("mechanical-merge", mechanical.Stage);
+                Assert.Equal(1, mechanical.ConflictedFileCount);
+            },
+            rebase =>
+            {
+                Assert.Equal("rebase-fallback", rebase.Stage);
+                Assert.Equal(taskTipBefore, rebase.StoppedCommitSha);
+                Assert.Equal(1, rebase.StoppedCommitNumber);
+                Assert.Equal(1, rebase.TotalCommitCount);
+            });
+        Assert.Equal(1, report.ConflictedFileCount);
+        Assert.Equal(["shared.txt"], report.ConflictedFiles);
+        Assert.DoesNotContain("hint:", result.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(3, result.Error!.Split('\n').Length);
         // The merge was aborted: develop is unchanged, the tree is clean, and no
         // merge is in progress (MERGE_HEAD gone).
         Assert.Equal(developTipBefore, RunGit(repo, "rev-parse develop").Out.Trim());
@@ -460,6 +488,31 @@ public sealed class GitWorktreePrimitivesTests : IDisposable
         Assert.False(git.RepoHasUncommittedChanges(repo));
         Assert.NotEqual(0, RunGit(repo, "rev-parse --verify MERGE_HEAD").Code);
         Assert.Equal(worktreesBefore, git.ListWorktrees(repo).Select(item => item.Path));
+    }
+
+    [Fact]
+    public void MergeBranchIntoIntegration_ConflictReportCapsFileSampleAndKeepsTotal()
+    {
+        var repo = SeedRepo("merge-conflict-cap");
+        var git = BuildGitService(("Fixture", repo));
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "checkout -q -b task/capped");
+        for (var index = 1; index <= 14; index++)
+            File.WriteAllText(Path.Combine(repo, $"shared-{index:D2}.txt"), "delivery version");
+        RunGit(repo, "add .");
+        Commit(repo, "feat: delivery edits shared files");
+        RunGit(repo, "checkout -q develop");
+        for (var index = 1; index <= 14; index++)
+            File.WriteAllText(Path.Combine(repo, $"shared-{index:D2}.txt"), "develop version");
+        RunGit(repo, "add .");
+        Commit(repo, "chore: develop edits shared files");
+
+        var result = git.MergeBranchIntoIntegration(repo, "task/capped", "develop");
+
+        var report = Assert.IsType<IntegrationConflictReport>(result.ConflictReport);
+        Assert.Equal(14, report.ConflictedFileCount);
+        Assert.Equal(IntegrationConflictReport.MaxConflictedFiles, report.ConflictedFiles.Count);
+        Assert.Contains("(+2 more)", result.Error, StringComparison.Ordinal);
     }
 
     [Fact]

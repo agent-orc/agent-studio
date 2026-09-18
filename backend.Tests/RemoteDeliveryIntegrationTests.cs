@@ -149,7 +149,8 @@ public sealed class RemoteDeliveryIntegrationCoordinatorTests
     [InlineData(MergeIntoIntegrationOutcome.Merged, 0, RemoteIntegrationContinuationAction.None)]
     [InlineData(MergeIntoIntegrationOutcome.Conflict, 0, RemoteIntegrationContinuationAction.None)]
     [InlineData(MergeIntoIntegrationOutcome.AgentRoundRequired, 0, RemoteIntegrationContinuationAction.StartAgentRound)]
-    [InlineData(MergeIntoIntegrationOutcome.AgentRoundRequired, 1, RemoteIntegrationContinuationAction.LeaveForHumanReview)]
+    [InlineData(MergeIntoIntegrationOutcome.AgentRoundRequired, 1, RemoteIntegrationContinuationAction.StartAgentRound)]
+    [InlineData(MergeIntoIntegrationOutcome.AgentRoundRequired, 2, RemoteIntegrationContinuationAction.LeaveForHumanReview)]
     public void ContinuationPolicy_BoundsAutomaticAgentRound(
         MergeIntoIntegrationOutcome outcome,
         int roundsUsed,
@@ -179,6 +180,26 @@ public sealed class RemoteDeliveryIntegrationCoordinatorTests
 
         Assert.Equal(MergeIntoIntegrationOutcome.AgentRoundRequired, result.Outcome);
         Assert.Equal("cardinality", startedFor?.JobId);
+    }
+
+    [Fact]
+    public async Task EnqueueAsync_SpentRecoveryBudgetCarriesExactParkReason()
+    {
+        const string reason = "automatic recovery budget used: 2/2";
+        var coordinator = new RemoteDeliveryIntegrationCoordinator(
+            _ => Task.FromResult(MergeIntoIntegrationResult.RequiresAgentRound(
+                ["shared.txt"],
+                "three-stage conflict")),
+            NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance,
+            startAgentRound: (_, _) => Task.FromResult(new IntegrationAgentRoundStartResult(
+                false,
+                reason,
+                BudgetExhausted: true,
+                AutomaticRoundsUsed: 2)));
+
+        var result = await coordinator.EnqueueAsync(Request("budget-spent", 1));
+
+        Assert.Equal(reason, result.AutomaticRecoveryParkReason);
     }
 
     [Fact]

@@ -88,6 +88,21 @@ public sealed class RemoteDeliverySettlementStoreTests : IDisposable
     }
 
     [Fact]
+    public void Advancing_preserves_the_exact_automatic_recovery_budget_park_reason()
+    {
+        RemoteDeliverySettlementStore.Write(_folder, Record());
+
+        RemoteDeliverySettlementStore.Advance(
+            _folder,
+            RemoteDeliverySettlementStage.IntegrationSettled,
+            nameof(MergeIntoIntegrationOutcome.AgentRoundRequired),
+            "automatic recovery budget used: 2/2");
+
+        var read = RemoteDeliverySettlementStore.Read(_folder)!;
+        Assert.Equal("automatic recovery budget used: 2/2", read.AutomaticRecoveryParkReason);
+    }
+
+    [Fact]
     public void The_stage_never_rewinds_when_a_resumed_pass_races_the_original_request()
     {
         RemoteDeliverySettlementStore.Write(

@@ -942,8 +942,13 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         Assert.NotNull(step);
         Assert.Equal(PipelineStepStatus.Failed, step!.Status);
         Assert.Equal("agent-round-required", step.Verdict);
-        // The conflicted file is surfaced in the verdict summary tooltip.
-        Assert.Contains("shared.txt", step.VerdictSummary);
+        Assert.StartsWith(
+            "Merge into develop conflicted (direct merge, mechanical merge and rebase fallback all failed).",
+            step.Reason,
+            StringComparison.Ordinal);
+        Assert.Equal(3, step.Reason!.Split('\n').Length);
+        Assert.DoesNotContain("hint:", step.Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(["shared.txt"], step.IntegrationConflictReport?.ConflictedFiles);
     }
 
     // ---- AGT-1999: integration-branch push to origin -----------------------

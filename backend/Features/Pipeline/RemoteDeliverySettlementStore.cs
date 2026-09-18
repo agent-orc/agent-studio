@@ -75,6 +75,12 @@ public sealed record RemoteDeliverySettlementRecord
     /// <summary>Outcome string of the integration run, once one returned.</summary>
     public string? IntegrationOutcome { get; init; }
 
+    /// <summary>
+    /// Exact Human Review park reason when the automatic integration-recovery
+    /// budget was exhausted before the lane transition completed.
+    /// </summary>
+    public string? AutomaticRecoveryParkReason { get; init; }
+
     public DateTimeOffset RecordedAtUtc { get; init; }
 }
 
@@ -151,7 +157,8 @@ public static class RemoteDeliverySettlementStore
     public static bool Advance(
         string taskFolder,
         RemoteDeliverySettlementStage stage,
-        string? integrationOutcome = null)
+        string? integrationOutcome = null,
+        string? automaticRecoveryParkReason = null)
     {
         var current = Read(taskFolder);
         if (current is null) return false;
@@ -161,6 +168,8 @@ public static class RemoteDeliverySettlementStore
         {
             Stage = current.Stage >= stage ? current.Stage : stage,
             IntegrationOutcome = integrationOutcome ?? current.IntegrationOutcome,
+            AutomaticRecoveryParkReason = automaticRecoveryParkReason
+                ?? current.AutomaticRecoveryParkReason,
             RecordedAtUtc = DateTimeOffset.UtcNow,
         });
         return true;

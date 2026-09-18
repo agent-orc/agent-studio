@@ -1730,6 +1730,7 @@ public sealed class MergeIntoDevelopRunner
             VerdictSummary = summary,
             Reason = reason,
             FailureCode = failure?.Code,
+            IntegrationConflictReport = result.ConflictReport,
         });
     }
 
@@ -1815,14 +1816,15 @@ public sealed class MergeIntoDevelopRunner
                     $"Merge conflict in {result.ConflictedFiles?.Count ?? 0} file(s); merge aborted, working tree left clean. Start a steer round to rebase the delivery onto the current integration branch.",
                     $"Conflicted: {files}. Recovery: rebase the delivery onto the current integration branch, resolve the conflicts, and accept again.");
             case MergeIntoIntegrationOutcome.AgentRoundRequired:
-                var ambiguousFiles = result.ConflictedFiles is { Count: > 0 }
-                    ? string.Join(", ", result.ConflictedFiles)
-                    : "none recorded";
                 return (
                     PipelineStepStatus.Failed,
                     "agent-round-required",
-                    result.Error ?? "Automatic merge and cardinality-preserving rebase paths could not retain unambiguous delivery SHA attribution.",
-                    $"A bounded automatic steer round is required. Conflicted files: {ambiguousFiles}.");
+                    result.ConflictReport is not null
+                        ? IntegrationConflictReportFormatter.Detail(result.ConflictReport)
+                        : result.Error ?? "Automatic merge and cardinality-preserving rebase paths could not retain unambiguous delivery SHA attribution.",
+                    result.ConflictReport is not null
+                        ? $"Three-stage integration conflict in {result.ConflictReport.ConflictedFileCount} file(s)."
+                        : "A bounded automatic steer round is required.");
             default:
                 return (PipelineStepStatus.Failed, "error", result.Error ?? "Merge failed.", null);
         }

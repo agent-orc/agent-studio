@@ -657,6 +657,8 @@ export interface TaskIntegrationStatus {
   detail: string | null;
   /** Typed current failure from the durable accepted-integration pipeline step. */
   failure?: TaskIntegrationFailure | null;
+  /** Full structured evidence for a three-stage integration conflict. */
+  conflictReport?: IntegrationConflictReport | null;
   /** Repository-scoped commit membership, including multi-repository deliveries. */
   repositories?: TaskRepositoryIntegrationStatus[];
   /**
@@ -667,6 +669,24 @@ export interface TaskIntegrationStatus {
   released?: boolean | null;
   /** Release branch `released` was computed against (usually "main"). */
   releaseBranch?: string;
+}
+
+export interface IntegrationConflictReport {
+  integrationBranch: string;
+  integrationTipSha: string;
+  deliverySha: string;
+  stages: IntegrationConflictStageReport[];
+  conflictedFileCount: number;
+  conflictedFiles: string[];
+}
+
+export interface IntegrationConflictStageReport {
+  stage: string;
+  outcome: string;
+  conflictedFileCount: number;
+  stoppedCommitSha?: string | null;
+  stoppedCommitNumber?: number | null;
+  totalCommitCount?: number | null;
 }
 
 export interface TaskRepositoryIntegrationStatus {

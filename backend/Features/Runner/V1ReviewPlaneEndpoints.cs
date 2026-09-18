@@ -880,6 +880,7 @@ public static class V1ReviewPlaneEndpoints
                 // Carried onto the Human Review lane row as the verdict's
                 // qualifier: the integration outcome behind the park.
                 string? integrationOutcome = null;
+                string? integrationParkReason = null;
                 // AGT-2839: record what this review actually verified - the
                 // integration ref, the merge base on it, and the immutable
                 // result SHA - beside the task, synchronously, before any
@@ -926,6 +927,7 @@ public static class V1ReviewPlaneEndpoints
                     {
                         var integrated = await remoteIntegration.EnqueueAsync(integrationRequest).ConfigureAwait(false);
                         integrationOutcome = integrated.Outcome.ToString();
+                        integrationParkReason = integrated.AutomaticRecoveryParkReason;
                     }
                     else
                     {
@@ -938,7 +940,8 @@ public static class V1ReviewPlaneEndpoints
                         task.FolderPath,
                         RemoteDeliverySettlementStage.IntegrationSettled,
                         integrationOutcome,
-                        logger);
+                        logger,
+                        integrationParkReason);
                 }
 
                 if (string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
@@ -949,6 +952,7 @@ public static class V1ReviewPlaneEndpoints
                         task.WatchPath,
                         ct,
                         cause: $"remote-review:{attemptId}",
+                        reason: integrationParkReason,
                         authorityWrite: new AttemptWriteReference(
                             attemptId,
                             request.Fence,
@@ -1180,11 +1184,16 @@ public static class V1ReviewPlaneEndpoints
         string jobFolderPath,
         RemoteDeliverySettlementStage stage,
         string? integrationOutcome,
-        ILogger logger)
+        ILogger logger,
+        string? automaticRecoveryParkReason = null)
     {
         try
         {
-            RemoteDeliverySettlementStore.Advance(jobFolderPath, stage, integrationOutcome);
+            RemoteDeliverySettlementStore.Advance(
+                jobFolderPath,
+                stage,
+                integrationOutcome,
+                automaticRecoveryParkReason);
         }
         catch (Exception ex)
         {

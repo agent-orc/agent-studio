@@ -772,6 +772,7 @@ public sealed class TaskIntegrationStatusService
                     FailureClass = failure.FailureClass,
                     FailureSignature = failure.FailureSignature,
                 },
+                ConflictReport = ReadLatestMergeStep(job)?.IntegrationConflictReport,
             };
         }
 
