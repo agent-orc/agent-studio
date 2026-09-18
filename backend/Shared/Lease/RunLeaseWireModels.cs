@@ -47,7 +47,18 @@ public sealed record RunLeaseHeartbeatRequest(
     long? AuthorityEpoch = null,
     string? IdempotencyKey = null);
 
-/// <summary>Release: drops the lease only for the matching current holder; the fencing token keeps climbing for the next acquire.</summary>
+/// <summary>
+/// Release: drops the lease only for the matching current holder; the fencing
+/// token keeps climbing for the next acquire.
+///
+/// <para>
+/// AGT-2870: a release whose <see cref="Outcome"/> reports a lost detached
+/// worker also names the salvage the runner published for that exact attempt
+/// and the worker's last diagnostic line. That pair is what lets the server open
+/// the automatic continuation round instead of returning the card to Ready with
+/// no context.
+/// </para>
+/// </summary>
 public sealed record RunLeaseReleaseRequest(
     string TaskKey,
     string LeaseId,
@@ -55,7 +66,22 @@ public sealed record RunLeaseReleaseRequest(
     string RunnerId,
     string? AttemptId = null,
     long? AuthorityEpoch = null,
-    string? IdempotencyKey = null);
+    string? IdempotencyKey = null,
+    string? Outcome = null,
+    string? SalvageBranch = null,
+    string? SalvageCommitSha = null,
+    string? Detail = null);
+
+/// <summary>
+/// Server -> Runner: an operator asked this attempt to stop. It travels on the
+/// lease renewal, because the server never reaches into a remote host.
+/// </summary>
+public sealed record RunStopDirectiveDto(
+    string TaskKey,
+    string Reason,
+    DateTime RequestedAtUtc,
+    string? AttemptId = null,
+    string? RequestedBy = null);
 
 /// <summary>Wire projection of the server-held run-lease record.</summary>
 public sealed record RunLeaseInfoDto(
@@ -89,7 +115,10 @@ public sealed record RunLeaseResponse(
     string Outcome,
     bool Granted,
     RunLeaseInfoDto? Lease,
-    string? Message = null);
+    string? Message = null,
+    // AGT-2870: a granted renewal that also carries an operator stop for this
+    // card. The runner still owns the attempt and ends it itself.
+    RunStopDirectiveDto? StopRequest = null);
 
 /// <summary>
 /// Remote daemon request for the next server-assigned, pickup-eligible card.
@@ -192,7 +221,12 @@ public sealed record RunnerClaimResponse(
     // T0b: additive execution spec. An older runner ignores the whole object;
     // prompt enrichment travels inside its existing ModeFraming component.
     RunSpecDto? RunSpec = null,
-    string? LeaseInstanceId = null);
+    string? LeaseInstanceId = null,
+    // AGT-2870: the salvage a previous round of this card left behind, so a
+    // continuation round prepares its worktree on the rescued commit instead of
+    // on the integration branch.
+    string? ContinuationBaseRef = null,
+    string? ContinuationBaseSha = null);
 
 /// <summary>Fenced request for the server-rendered Epic decomposition prompt.</summary>
 public sealed record RemoteEpicPlanningPromptRequest(

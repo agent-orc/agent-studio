@@ -79,25 +79,71 @@ public static class LeaseEndpoints
             }
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
 
-        group.MapPost("/renew", (RunLeaseHeartbeatRequest req, HttpContext context, RunLeaseService leases) =>
-            !RunnerMatches(context, req.RunnerId)
-                ? Results.Unauthorized()
-                : CanonicalLeaseWritePresent(req.AttemptId, req.AuthorityEpoch, req.IdempotencyKey)
-                    ? Results.Ok(leases.Renew(req))
-                    : Results.Conflict(new RunLeaseResponse(
-                        "Invalid", false, null,
-                        "AttemptId, AuthorityEpoch, and IdempotencyKey are required for lease renewal.")))
-            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
+        // The renewal is also the only channel that reaches a remote worker, so
+        // an operator stop recorded for this card rides back on it (AGT-2870).
+        // The lease itself is still granted: the runner ends its own attempt and
+        // hands the outcome back rather than being fenced out mid-run.
+        group.MapPost("/renew", (
+            RunLeaseHeartbeatRequest req,
+            HttpContext context,
+            RunLeaseService leases,
+            RemoteRunStopRequestStore stops) =>
+        {
+            if (!RunnerMatches(context, req.RunnerId)) return Results.Unauthorized();
+            if (!CanonicalLeaseWritePresent(req.AttemptId, req.AuthorityEpoch, req.IdempotencyKey))
+                return Results.Conflict(new RunLeaseResponse(
+                    "Invalid", false, null,
+                    "AttemptId, AuthorityEpoch, and IdempotencyKey are required for lease renewal."));
+            var renewed = leases.Renew(req);
+            if (!renewed.Granted) return Results.Ok(renewed);
+            var stop = stops.Peek(req.TaskKey);
+            return Results.Ok(stop is null
+                ? renewed
+                : renewed with
+                {
+                    StopRequest = new RunStopDirectiveDto(
+                        stop.TaskKey,
+                        stop.Reason,
+                        stop.RequestedAtUtc,
+                        stop.AttemptId ?? req.AttemptId,
+                        stop.RequestedBy),
+                });
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
-        group.MapPost("/release", (RunLeaseReleaseRequest req, HttpContext context, RunLeaseService leases) =>
-            !RunnerMatches(context, req.RunnerId)
-                ? Results.Unauthorized()
-                : CanonicalLeaseWritePresent(req.AttemptId, req.AuthorityEpoch, req.IdempotencyKey)
-                    ? Results.Ok(leases.Release(req))
-                    : Results.Conflict(new RunLeaseResponse(
-                        "Invalid", false, null,
-                        "AttemptId, AuthorityEpoch, and IdempotencyKey are required for lease release.")))
-            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
+        group.MapPost("/release", async (
+            RunLeaseReleaseRequest req,
+            HttpContext context,
+            RunLeaseService leases,
+            RemoteRunStopRequestStore stops,
+            TaskScannerService scanner,
+            RunTimeoutContinuationService continuations,
+            HumanReviewEscalation humanReviewEscalation,
+            OrchestratorLog orchestratorLog,
+            ILoggerFactory loggerFactory,
+            CancellationToken ct) =>
+        {
+            if (!RunnerMatches(context, req.RunnerId)) return Results.Unauthorized();
+            if (!CanonicalLeaseWritePresent(req.AttemptId, req.AuthorityEpoch, req.IdempotencyKey))
+                return Results.Conflict(new RunLeaseResponse(
+                    "Invalid", false, null,
+                    "AttemptId, AuthorityEpoch, and IdempotencyKey are required for lease release."));
+
+            // The claim gate is held across the whole release so a lost worker's
+            // continuation is prepared before any runner can claim the card it
+            // returns to Ready.
+            await ClaimGate.WaitAsync(ct);
+            try
+            {
+                await ApplyLostWorkerContinuationAsync(
+                    req, scanner, continuations, humanReviewEscalation, orchestratorLog, loggerFactory, ct);
+                stops.Clear(req.TaskKey);
+                return Results.Ok(leases.Release(req));
+            }
+            finally
+            {
+                ClaimGate.Release();
+            }
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         group.MapGet("/{taskKey}", (string taskKey, RunLeaseService leases) =>
             Results.Ok(leases.Peek(taskKey)));
@@ -1047,6 +1093,21 @@ public static class LeaseEndpoints
                     runSpec.ThinkingLevel ?? "<cli-default>",
                     runSpec.PermissionMode,
                     runSpec.ContextMode);
+                // AGT-2870: a continuation round opened for a lost worker starts
+                // its worktree on the salvage that round was opened for. The
+                // record is consumed here so a later, unrelated claim of the
+                // same card can never be prepared on a stale generation.
+                var continuationBase = ContinuationBaseStore.Consume(claimedFolderPath);
+                if (continuationBase is not null)
+                {
+                    logger.LogInformation(
+                        "remote-claim-continuation-base task={TaskKey} ref={Ref} sha={Sha} reason={Reason} priorAttempt={PriorAttempt}",
+                        taskKey,
+                        continuationBase.Ref,
+                        continuationBase.CommitSha,
+                        continuationBase.Reason,
+                        continuationBase.AttemptId);
+                }
                 return Results.Ok(WithCapacity(new RunnerClaimResponse(
                     RunnerClaimStatus.Claimed,
                     taskKey,
@@ -1058,7 +1119,9 @@ public static class LeaseEndpoints
                     DefaultBranch: repository.DefaultBranch,
                     TaskKind: candidate.Kind,
                     LeaseInstanceId: req.CapabilityInstanceId,
-                    RunSpec: runSpec), admission.ReasonCode));
+                    RunSpec: runSpec,
+                    ContinuationBaseRef: continuationBase?.Ref,
+                    ContinuationBaseSha: continuationBase?.CommitSha), admission.ReasonCode));
             }
             finally
             {
@@ -1127,6 +1190,7 @@ public static class LeaseEndpoints
             OrchestratorLog orchestratorLog,
             HumanReviewEscalation humanReviewEscalation,
             RunTimeoutContinuationService timeoutContinuations,
+            RemoteRunStopRequestStore stops,
             ILoggerFactory loggerFactory,
             CancellationToken ct) =>
         {
@@ -1153,13 +1217,17 @@ public static class LeaseEndpoints
             {
                 "done" or "noop" => TaskStates.AutoReview,
                 "blocked" or "needsinput" or "unknown" => TaskStates.Escalated,
-                "environmentfailure" => TaskStates.Ready,
+                // AGT-2870: an operator stop is not a verdict on the work. The
+                // card returns to Ready, where a queued follow-up or the next
+                // pickup continues from the salvage this attempt left behind.
+                "environmentfailure" or "stopped" => TaskStates.Ready,
                 _ => string.Empty,
             };
+            var operatorStopped = string.Equals(outcome, "stopped", StringComparison.Ordinal);
             if (targetState.Length == 0)
                 return Results.BadRequest(new RemoteRunCompletionResponse(
                     req.TaskKey, reportedOutcome, TaskStates.Progress,
-                    "Outcome must be Done, NoOp, Blocked, NeedsInput, Unknown, or EnvironmentFailure."));
+                    "Outcome must be Done, NoOp, Blocked, NeedsInput, Unknown, EnvironmentFailure, or Stopped."));
 
             // AGT-2178: Epic planning is source-read-only - it produces no commit
             // and therefore no fenced ResultSha. The 2177 ResultSha gate only
@@ -1996,25 +2064,54 @@ public static class LeaseEndpoints
             {
                 var move = await transitions.MoveAsync(
                     task.Id, targetState, task.WatchPath, ct,
-                    cause: deliveryFailure is null
-                        ? $"remote-runner-completion:{source}"
-                        : $"remote-delivery-envelope-retry:{deliveryFailure.Attempt}/{deliveryFailure.MaximumAttempts}",
+                    cause: operatorStopped
+                        ? $"remote-operator-stop:{source}"
+                        : deliveryFailure is null
+                            ? $"remote-runner-completion:{source}"
+                            : $"remote-delivery-envelope-retry:{deliveryFailure.Attempt}/{deliveryFailure.MaximumAttempts}",
                     authorityWrite: laneWrite,
                     suppressProductExecution: true,
                     // A verified completion is the delivery hand-off; an unverified
-                    // one is requeued for another delivery round by the runner.
-                    transitionCause: deliveryFailure is null
+                    // one is requeued for another delivery round by the runner, and
+                    // an operator stop returns the card without claiming either.
+                    transitionCause: deliveryFailure is null && !operatorStopped
                         ? LaneChangeCauses.Delivered
                         : LaneChangeCauses.RunnerRequeue,
-                    transitionDetail: deliveryFailure is null
-                        ? outcome
-                        : $"delivery-envelope-retry {deliveryFailure.Attempt}/{deliveryFailure.MaximumAttempts}");
+                    transitionDetail: operatorStopped
+                        ? "operator-stop"
+                        : deliveryFailure is null
+                            ? outcome
+                            : $"delivery-envelope-retry {deliveryFailure.Attempt}/{deliveryFailure.MaximumAttempts}");
                 if (move.Status != MoveJobStatus.Success)
                     return Results.Conflict(new RemoteRunCompletionResponse(
                         req.TaskKey, reportedOutcome, task.State, $"Lane move refused: {move.Status} {move.Message}",
                         RunAttemptId: attemptId,
                         ReviewAttemptId: reviewAttempt?.AttemptId,
                         ReviewSubjectId: reviewAttempt?.Subject.SubjectId));
+            }
+
+            // AGT-2870: the stop request this attempt answered is spent. A
+            // Pause-and-Send stop queued its follow-up as a pending intent, so
+            // the stopped card goes to the front of Ready and the next claim
+            // consumes that follow-up as the next round.
+            if (operatorStopped)
+            {
+                var stopRequest = stops.Clear(req.TaskKey);
+                task = scanner.FindJob(task.Id, task.WatchPath) ?? task;
+                if (RemoteRunStopReasons.IsFollowup(stopRequest?.Reason) && task.PendingIntent is not null)
+                {
+                    var position = states.PromoteToReadyTop(
+                        task.Id,
+                        task.WatchPath,
+                        transitionCause: LaneChangeCauses.RunnerRequeue,
+                        transitionDetail: "operator-stop-followup");
+                    loggerFactory.CreateLogger("AgentStudio.Tasks.RemoteRunnerCompletion").LogInformation(
+                        "remote-operator-stop-followup-released task={TaskKey} attempt={AttemptId} mode={Mode} position={Position}",
+                        req.TaskKey,
+                        attemptId,
+                        task.PendingIntent.Mode,
+                        position);
+                }
             }
 
             // The claim guard and this mint share ReviewAttemptTaskLifecycleService's
@@ -2356,6 +2453,119 @@ public static class LeaseEndpoints
             Reason: marker.Reason ?? "replayed quota fallback",
             NextResetAt: null,
             Projection: null);
+    }
+
+    /// <summary>
+    /// AGT-2870: a release that reports a lost detached worker and names the
+    /// salvage the runner published for that attempt is the same situation as an
+    /// AGT-2861 timeout - the work exists and only lacks its finishing round. It
+    /// therefore gets the same bounded automatic continuation, built by the same
+    /// service, and escalates with the ref once the budget for this delivery
+    /// generation is spent.
+    /// </summary>
+    private static async Task ApplyLostWorkerContinuationAsync(
+        RunLeaseReleaseRequest req,
+        TaskScannerService scanner,
+        RunTimeoutContinuationService continuations,
+        HumanReviewEscalation humanReviewEscalation,
+        OrchestratorLog orchestratorLog,
+        ILoggerFactory loggerFactory,
+        CancellationToken ct)
+    {
+        if (!LostWorkerContinuationPolicy.IsLostWorkerRelease(req.Outcome)) return;
+
+        var logger = loggerFactory.CreateLogger("AgentStudio.Tasks.RemoteWorkerLost");
+        var task = FindTask(scanner, req.TaskKey);
+        if (task is null)
+        {
+            logger.LogWarning(
+                "worker-lost-release-unknown-task task={TaskKey} attempt={AttemptId}",
+                req.TaskKey,
+                req.AttemptId);
+            return;
+        }
+
+        var salvage = RunSalvageReference.From(req.SalvageBranch, req.SalvageCommitSha, null, null);
+        var roundsUsed = salvage is null ? 0 : continuations.CountAutomaticRounds(task);
+        var action = LostWorkerContinuationPolicy.Decide(req.Outcome, salvage is not null, roundsUsed);
+        logger.LogInformation(
+            "worker-lost-release task={TaskKey} attempt={AttemptId} salvage={Salvage} rounds={Rounds} action={Action}",
+            req.TaskKey,
+            req.AttemptId,
+            salvage?.Describe() ?? "none",
+            roundsUsed,
+            action);
+        if (action == RunTimeoutSalvageAction.None) return;
+
+        var attemptId = (req.AttemptId ?? req.LeaseId).Trim();
+        var laneWrite = new AttemptWriteReference(
+            attemptId,
+            req.FencingToken,
+            req.AuthorityEpoch ?? 0,
+            $"lane-worker-lost:{attemptId}");
+        if (action == RunTimeoutSalvageAction.StartContinuation)
+        {
+            var continuation = await continuations.StartAsync(
+                task,
+                salvage!,
+                LostWorkerContinuationPolicy.ReleaseOutcome,
+                attemptId,
+                laneWrite,
+                ct,
+                RunContinuationCause.WorkerLost(
+                    LostWorkerContinuationPolicy.ReleaseOutcome,
+                    req.Detail));
+            if (continuation.Started)
+            {
+                orchestratorLog.Append(task.WatchPath, new OrchestratorLogEntry
+                {
+                    Kind = OrchestratorLogKinds.Decision,
+                    Topic = LostWorkerContinuationPolicy.ContinuationReason,
+                    JobId = task.Id,
+                    Summary =
+                        $"Started continuation round {continuation.Round} for \"{task.Title}\": "
+                        + $"the detached worker was lost, salvaged as {salvage!.Describe()}.",
+                    Reasoning = continuation.Reason,
+                });
+                return;
+            }
+
+            logger.LogWarning(
+                "worker-lost-continuation-not-started task={TaskKey} attempt={AttemptId} salvage={Salvage} reason={Reason}",
+                req.TaskKey,
+                attemptId,
+                salvage!.Describe(),
+                continuation.Reason);
+        }
+
+        var escalationReason = LostWorkerContinuationPolicy.ComposeEscalationReason(
+            req.Detail, salvage, roundsUsed);
+        var escalated = await humanReviewEscalation.EscalateAsync(
+            task.Id,
+            task.WatchPath,
+            task.ProjectName,
+            HumanReviewEscalationCategories.InfraCrash,
+            escalationReason,
+            ct,
+            laneWrite);
+        if (escalated.Status != MoveJobStatus.Success)
+        {
+            logger.LogWarning(
+                "worker-lost-escalation-refused task={TaskKey} attempt={AttemptId} status={Status} message={Message}",
+                req.TaskKey,
+                attemptId,
+                escalated.Status,
+                escalated.Message);
+            return;
+        }
+        orchestratorLog.Append(task.WatchPath, new OrchestratorLogEntry
+        {
+            Kind = OrchestratorLogKinds.Intervention,
+            Topic = HumanReviewEscalationCategories.InfraCrash,
+            JobId = task.Id,
+            Summary = $"Parked \"{task.Title}\": {escalationReason}",
+            Reasoning = escalationReason,
+        });
     }
 
     private static TaskInfo? FindTask(ITaskScanner scanner, string taskKey)

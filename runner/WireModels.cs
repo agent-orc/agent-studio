@@ -77,7 +77,16 @@ public sealed record RunLeaseHeartbeatRequest(
     string? IdempotencyKey = null,
     RunnerProcessInventory? Inventory = null);
 
-/// <summary>Runner -> Server: drop the lease when the run ends (/api/runner/lease/release).</summary>
+/// <summary>
+/// Runner -> Server: drop the lease when the run ends (/api/runner/lease/release).
+///
+/// <para>
+/// A release that follows a lost detached worker (AGT-2870) carries the salvage
+/// the daemon published for that exact attempt plus the worker's crash line. The
+/// server needs both to open the automatic continuation round instead of
+/// returning the card to Ready with no context.
+/// </para>
+/// </summary>
 public sealed record RunLeaseReleaseRequest(
     string TaskKey,
     string LeaseId,
@@ -86,7 +95,22 @@ public sealed record RunLeaseReleaseRequest(
     string? AttemptId = null,
     long? AuthorityEpoch = null,
     string? IdempotencyKey = null,
-    string? Outcome = null);
+    string? Outcome = null,
+    string? SalvageBranch = null,
+    string? SalvageCommitSha = null,
+    string? Detail = null);
+
+/// <summary>
+/// Server -> Runner: an operator asked for this attempt to stop. Delivered on
+/// the next heartbeat or lease renewal, because the Task Server never reaches
+/// into a remote host (AGT-2870).
+/// </summary>
+public sealed record RunStopDirectiveDto(
+    string TaskKey,
+    string Reason,
+    DateTime RequestedAtUtc,
+    string? AttemptId = null,
+    string? RequestedBy = null);
 
 /// <summary>Server projection of the current lease holder + fencing token.</summary>
 public sealed record RunLeaseInfoDto(
@@ -117,7 +141,11 @@ public sealed record RunLeaseResponse(
     bool Granted,
     RunLeaseInfoDto? Lease,
     string? Message = null,
-    IReadOnlyList<RunnerReconciliationAction>? ReconciliationActions = null);
+    IReadOnlyList<RunnerReconciliationAction>? ReconciliationActions = null,
+    // Operator stop for a remote run: present on a renewal whose task carries an
+    // unconsumed stop request. A granted lease with a stop request means "you
+    // still own this attempt, end it now and hand back".
+    RunStopDirectiveDto? StopRequest = null);
 
 public sealed record RunnerClaimRequest(
     string RunnerId,
@@ -257,7 +285,13 @@ public sealed record RunnerClaimResponse(
     string? RampStrategy = null,
     string? AdmissionReason = null,
     // T0b: additive execution spec; an older server simply omits it.
-    RunSpecDto? RunSpec = null);
+    RunSpecDto? RunSpec = null,
+    // AGT-2870: the salvage a previous round of this card left behind. A
+    // continuation round starts its worktree from this exact commit instead of
+    // from the integration branch, so the rescued work is present before the
+    // agent reads its finishing instruction.
+    string? ContinuationBaseRef = null,
+    string? ContinuationBaseSha = null);
 
 public static class RemoteChatWorkKinds
 {

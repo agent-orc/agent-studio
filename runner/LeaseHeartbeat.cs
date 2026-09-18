@@ -43,6 +43,15 @@ public sealed class LeaseHeartbeat
     public bool LeaseLost { get; private set; }
 
     /// <summary>
+    /// Set when the server answered a renewal with an operator stop request for
+    /// this attempt (AGT-2870). Unlike <see cref="LeaseLost"/> this runner still
+    /// owns the lease: it ends the worker, salvages, and hands the outcome back
+    /// itself, which is what makes Pause and Pause-and-Send work for a run the
+    /// backend cannot reach with a signal.
+    /// </summary>
+    public RunStopDirectiveDto? StopRequest { get; private set; }
+
+    /// <summary>
     /// Renew on a cadence below the TTL until <paramref name="stopRun"/> fires.
     /// Cancels <paramref name="stopRun"/> itself when the lease is lost so the
     /// caller's run tears down promptly.
@@ -138,6 +147,11 @@ public sealed class LeaseHeartbeat
                     authorityExpiresAt,
                     "fenced lease renewal reconciled before report replay");
                 _inventory?.Apply(resp.ReconciliationActions);
+                if (resp.StopRequest is not null)
+                {
+                    MarkStopRequested(stopRun, resp.StopRequest);
+                    return;
+                }
                 await _delay(interval, stopRun.Token);
             }
         }
@@ -147,6 +161,16 @@ public sealed class LeaseHeartbeat
     internal static bool IsDefinitiveLeaseRejection(TaskServerException ex)
         => ex.StatusCode is >= 400 and < 500
            && ex.StatusCode is not 408 and not 429;
+
+    private void MarkStopRequested(CancellationTokenSource stopRun, RunStopDirectiveDto directive)
+    {
+        StopRequest = directive;
+        _log(
+            $"operator stop requested task={directive.TaskKey} reason={directive.Reason} " +
+            $"requestedAt={directive.RequestedAtUtc:o} by={directive.RequestedBy ?? "unknown"}; " +
+            "terminating the worker process tree and handing back");
+        stopRun.Cancel();
+    }
 
     private void MarkLeaseLost(CancellationTokenSource stopRun, string reason)
     {

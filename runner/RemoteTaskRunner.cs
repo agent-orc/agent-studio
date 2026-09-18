@@ -94,7 +94,12 @@ public sealed class RemoteTaskRunner
         string? runId = null,
         string? leaseInstanceId = null,
         RunSpecDto? runSpec = null,
-        CancellationToken daemonShutdown = default)
+        CancellationToken daemonShutdown = default,
+        // AGT-2870: the salvage a previous round of this card left behind. The
+        // server sends it with the claim, so the worktree below starts on the
+        // rescued work instead of on the integration branch.
+        string? continuationBaseRef = null,
+        string? continuationBaseSha = null)
     {
         var isProjectClone = !string.IsNullOrWhiteSpace(projectId);
         if (isProjectClone && string.IsNullOrWhiteSpace(repositoryUrl))
@@ -117,7 +122,9 @@ public sealed class RemoteTaskRunner
             defaultBranch,
             isProjectClone,
             sourceRunAttemptId: runId ?? lease.AttemptId ?? lease.LeaseId,
-            fencingToken: lease.FencingToken);
+            fencingToken: lease.FencingToken,
+            continuationBaseRef: continuationBaseRef,
+            continuationBaseSha: continuationBaseSha);
         var slot = _state.Create(
             taskKey, lease, workspace.RepoPath, runId, leaseInstanceId,
             projectId, repositoryUrl, defaultBranch, taskKind, runSpec);
@@ -139,11 +146,7 @@ public sealed class RemoteTaskRunner
         // Restore the recorded base SHA: this process never prepared the worktree,
         // and without it the completion would be assembled with no envelope trio
         // after every daemon restart.
-        var workspace = new GitWorkspace(
-            _options, slot.TaskKey, _log, slot.ProjectId, slot.RepositoryUrl, slot.DefaultBranch,
-            restoredBaseSha: slot.BaseSha,
-            sourceRunAttemptId: slot.RunId ?? slot.Lease.AttemptId ?? slot.AttemptId,
-            fencingToken: slot.Lease.FencingToken);
+        var workspace = WorkspaceFor(slot);
         return await RunPersistedAsync(
             slot,
             workspace,
@@ -155,13 +158,20 @@ public sealed class RemoteTaskRunner
     public async Task<bool> ReleaseDeadAsync(PersistedRunnerSlot slot, string reason)
     {
         _log($"releasing dead persisted attempt task={slot.TaskKey} attempt={slot.AttemptId}: {reason}");
-        var outcome = string.Equals(
+        var authorityExhausted = string.Equals(
             slot.Phase,
             "authority-deadline-exhausted",
-            StringComparison.Ordinal)
+            StringComparison.Ordinal);
+        // A slot whose worker died still owns the only copy of that attempt's
+        // work. Salvage it under the attempt's own generation ref before the
+        // lease goes: after the release the next claim can only quarantine it.
+        var handoff = authorityExhausted
+            ? LostWorkerHandoff.None
+            : await SalvageLostWorkerAsync(slot, WorkspaceFor(slot), reason, shipper: null);
+        var outcome = authorityExhausted
             ? "authority-deadline-exhausted"
-            : "runner-process-missing";
-        if (await ReleaseWithRetryAsync(slot.Lease, outcome))
+            : LostWorkerRecoveryPolicy.ReleaseOutcome;
+        if (await ReleaseWithRetryAsync(slot.Lease, outcome, handoff))
         {
             _state.Delete(slot);
             return true;
@@ -169,6 +179,165 @@ public sealed class RemoteTaskRunner
 
         _log($"dead attempt state retained for release retry: {slot.TaskKey}");
         return false;
+    }
+
+    /// <summary>
+    /// End the worker of an attempt an operator stopped, and compose the outcome
+    /// the card will carry. The worker's process tree is its cgroup, so the
+    /// cgroup kill is what a forking agent cannot escape; the reaper covers a
+    /// host without a delegated subtree.
+    /// </summary>
+    private async Task<RunOutcome> StopRequestedAsync(
+        PersistedRunnerSlot slot,
+        GitWorkspace workspace,
+        LogShipper shipper,
+        RunStopDirectiveDto directive,
+        Task heartbeatTask,
+        bool epicPlanning)
+    {
+        await SafeAwait(heartbeatTask);
+        DurableAgentProcess.Attach(slot).Kill();
+        var killed = WorkerCgroup.ReleaseFor(slot.WorkerDirectory);
+        if (!epicPlanning && Directory.Exists(workspace.RepoPath))
+            await WorktreeProcessReaper.ReapAsync(workspace.RepoPath, _log, CancellationToken.None);
+        var line =
+            $"[runner] operator-stop attempt={slot.AttemptId} reason={directive.Reason} " +
+            $"requestedBy={directive.RequestedBy ?? "unknown"} terminatedProcesses={killed}";
+        _log(line);
+        shipper.Add("system", line);
+        try { await shipper.FlushAsync(CancellationToken.None); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log($"operator-stop evidence could not be shipped: {ex.Message}");
+        }
+        return new RunOutcome(
+            RunOutcomeKind.Stopped,
+            $"The run was stopped by an operator ({directive.Reason}).");
+    }
+
+    /// <summary>
+    /// Preserve the stopped attempt's work on its generation-scoped salvage ref.
+    /// A salvage failure must not swallow the stop itself: the card is handed
+    /// back either way, with the retained worktree named in the journal.
+    /// </summary>
+    private async Task<WorktreeTeardownResult> SecureStoppedWorktreeAsync(
+        PersistedRunnerSlot slot,
+        GitWorkspace workspace)
+    {
+        if (!Directory.Exists(workspace.RepoPath)) return WorktreeTeardownResult.NoWork;
+        try
+        {
+            return await workspace.TeardownAsync(
+                RunOutcomeKind.Stopped.ToString(),
+                slot.RunId ?? slot.Lease.AttemptId ?? slot.AttemptId,
+                CancellationToken.None);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log(
+                $"operator-stop-salvage-failed task={slot.TaskKey} attempt={slot.AttemptId} " +
+                $"path={workspace.RepoPath} error={ex.Message}; worktree retained");
+            return WorktreeTeardownResult.NoWork;
+        }
+    }
+
+    /// <summary>
+    /// Ship whatever evidence the stopped run already wrote. The stop path has
+    /// no retry budget to spend on an upload, so a failure is logged and the
+    /// completion proceeds without an artifact manifest.
+    /// </summary>
+    private async Task<DurableArtifactManifest?> UploadResultsSafeAsync(
+        string taskKey,
+        RunLeaseInfoDto lease,
+        DurableRunOutbox? outbox)
+    {
+        try
+        {
+            return await UploadResultsAsync(taskKey, lease, outbox, CancellationToken.None);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log($"operator-stop results upload failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The workspace of a persisted slot, restored with the same generation
+    /// identity the slot was claimed under. Both reattachment and lost-worker
+    /// salvage need it, and both must keep publishing under the attempt's own
+    /// fenced refs rather than an anonymous one.
+    /// </summary>
+    private GitWorkspace WorkspaceFor(PersistedRunnerSlot slot)
+        => new(
+            _options, slot.TaskKey, _log, slot.ProjectId, slot.RepositoryUrl, slot.DefaultBranch,
+            restoredBaseSha: slot.BaseSha,
+            sourceRunAttemptId: slot.RunId ?? slot.Lease.AttemptId ?? slot.AttemptId,
+            fencingToken: slot.Lease.FencingToken);
+
+    /// <summary>
+    /// Preserve and describe what a lost detached worker left behind: the crash
+    /// evidence it wrote, the counters of the cgroup it died in, and the salvage
+    /// ref its work is published under. Never throws - a failed salvage retains
+    /// the worktree for the next pickup's quarantine path, which is still better
+    /// than blocking the release the card is waiting for.
+    /// </summary>
+    private async Task<LostWorkerHandoff> SalvageLostWorkerAsync(
+        PersistedRunnerSlot slot,
+        GitWorkspace workspace,
+        string detail,
+        LogShipper? shipper)
+    {
+        var attemptId = slot.RunId ?? slot.Lease.AttemptId ?? slot.AttemptId;
+        var evidence = WorkerCrashEvidenceReader.Read(slot.WorkerDirectory);
+        foreach (var line in evidence.Describe(attemptId, detail))
+        {
+            _log(line);
+            shipper?.Add("system", line);
+        }
+        if (shipper is not null)
+        {
+            try { await shipper.FlushAsync(CancellationToken.None); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log($"worker-lost evidence could not be shipped: {ex.Message}");
+            }
+        }
+
+        var action = LostWorkerRecoveryPolicy.Decide(
+            Directory.Exists(workspace.RepoPath),
+            readOnlyCheckout: string.Equals(slot.TaskKind, "epic", StringComparison.OrdinalIgnoreCase),
+            hasFencedGeneration: true);
+        if (action == LostWorkerRecoveryAction.None)
+            return new LostWorkerHandoff(null, null, evidence.CrashLine);
+
+        try
+        {
+            var teardown = await workspace.TeardownAsync(
+                LostWorkerRecoveryPolicy.Outcome,
+                attemptId,
+                CancellationToken.None);
+            var branch = teardown.Reconciliation?.RecoveryBranch ?? teardown.Branch;
+            var sha = teardown.Reconciliation?.RecoveryCommitSha ?? teardown.ResultSha;
+            if (string.IsNullOrWhiteSpace(branch) || string.IsNullOrWhiteSpace(sha))
+            {
+                _log(
+                    $"worker-lost-salvage-empty task={slot.TaskKey} attempt={attemptId}; " +
+                    "the worktree held no work to continue from");
+                return new LostWorkerHandoff(null, null, evidence.CrashLine);
+            }
+            _log(
+                $"worker-lost-salvaged task={slot.TaskKey} attempt={attemptId} " +
+                $"fence={slot.Lease.FencingToken} ref=refs/heads/{branch} sha={sha}");
+            return new LostWorkerHandoff(branch, sha, evidence.CrashLine);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log(
+                $"worker-lost-salvage-failed task={slot.TaskKey} attempt={attemptId} " +
+                $"path={workspace.RepoPath} error={ex.Message}; worktree retained");
+            return new LostWorkerHandoff(null, null, evidence.CrashLine);
+        }
     }
 
     private async Task<int> RunPersistedAsync(
@@ -239,6 +408,7 @@ public sealed class RemoteTaskRunner
         var resultTransferAcknowledged = false;
         var releaseOnly = false;
         var daemonHandedOff = false;
+        var lostWorker = LostWorkerHandoff.None;
         DurableArtifactManifest? artifactManifest = null;
         try
         {
@@ -438,6 +608,13 @@ public sealed class RemoteTaskRunner
         {
             releaseOnly = true;
             _log($"detached worker lost; attempt will be released to Ready: {ex.Message}");
+            // This process still holds the attempt identity and the fence, so
+            // the work is published under the attempt's own salvage ref and
+            // named on the release. Ordering is load-bearing: after the release
+            // the card can be claimed again, and the next claim would only be
+            // able to quarantine whatever is still on disk.
+            lostWorker = await SalvageLostWorkerAsync(slot, workspace, ex.Message, shipper);
+            teardownAttempted = true;
             return 3;
         }
         catch (RemoteClaimPreparationException ex)
@@ -493,6 +670,44 @@ public sealed class RemoteTaskRunner
             await ReportUnsecuredWorktreeAsync(taskKey, lease, ex);
             handedBack = true;
             return 1;
+        }
+        catch (OperationCanceledException) when (
+            heartbeat.StopRequest is not null && !heartbeat.LeaseLost)
+        {
+            // An operator stop is the one cancellation this runner still owns
+            // the lease for, so it ends the attempt itself: kill the worker's
+            // process tree, salvage what the agent already wrote, and hand back
+            // 'Stopped' with the salvage named. A queued follow-up then starts
+            // the next round on that work instead of on the integration branch.
+            outcome = await StopRequestedAsync(
+                slot,
+                workspace,
+                shipper,
+                heartbeat.StopRequest!,
+                heartbeatTask,
+                epicPlanning);
+            teardownAttempted = true;
+            var stopTeardown = epicPlanning
+                ? WorktreeTeardownResult.NoWork
+                : await SecureStoppedWorktreeAsync(slot, workspace);
+            outcomeDecision = WithDurableOutput(outcomeDecision, stopTeardown);
+            artifactManifest = await UploadResultsSafeAsync(taskKey, lease, outbox);
+            await CompleteAsync(
+                taskKey,
+                lease,
+                outcome,
+                outcomeDecision,
+                stopTeardown,
+                workspace.RepositoryUrl,
+                workspace.BaseSha,
+                workspace.IntegrationBranchRef,
+                artifactManifest?.Digest,
+                outputLines,
+                sourceMutated,
+                CancellationToken.None);
+            handedBack = true;
+            _log($"task '{taskKey}' handed back after an operator stop: {outcome.Kind}");
+            return 0;
         }
         catch (OperationCanceledException) when (
             daemonShutdown.IsCancellationRequested
@@ -643,7 +858,12 @@ public sealed class RemoteTaskRunner
             if (!daemonHandedOff && (outbox is null || handedBack))
             {
                 var released = releaseOnly
-                    ? await ReleaseWithRetryAsync(lease, "runner-process-missing")
+                    ? await ReleaseWithRetryAsync(
+                        lease,
+                        lostWorker.HasSalvage
+                            ? LostWorkerRecoveryPolicy.ReleaseOutcome
+                            : "runner-process-missing",
+                        lostWorker)
                     : await ReleaseAsync(lease, CancellationToken.None);
                 if (released)
                     _state.Delete(slot);
@@ -1665,7 +1885,8 @@ public sealed class RemoteTaskRunner
     private async Task<bool> ReleaseAsync(
         RunLeaseInfoDto lease,
         CancellationToken ct,
-        string outcome = "runner-process-missing")
+        string outcome = "runner-process-missing",
+        LostWorkerHandoff? handoff = null)
     {
         try
         {
@@ -1673,7 +1894,10 @@ public sealed class RemoteTaskRunner
                 lease.TaskKey, lease.LeaseId, lease.FencingToken, _options.RunnerId,
                 lease.AttemptId, lease.AuthorityEpoch,
                 $"release:{lease.AttemptId}:{lease.LeaseId}",
-                outcome), ct);
+                outcome,
+                handoff?.SalvageBranch,
+                handoff?.SalvageCommitSha,
+                handoff?.Detail), ct);
             _log($"lease released: {resp.Outcome}");
             return string.Equals(resp.Outcome, "Released", StringComparison.OrdinalIgnoreCase)
                    || string.Equals(resp.Outcome, "NotHeld", StringComparison.OrdinalIgnoreCase)
@@ -1690,14 +1914,15 @@ public sealed class RemoteTaskRunner
 
     private async Task<bool> ReleaseWithRetryAsync(
         RunLeaseInfoDto lease,
-        string outcome)
+        string outcome,
+        LostWorkerHandoff? handoff = null)
     {
         const int maximumAttempts = 3;
         for (var attempt = 1; attempt <= maximumAttempts; attempt++)
         {
             using var requestDeadline = new CancellationTokenSource(
                 TimeSpan.FromSeconds(_options.ServerRequestTimeoutSeconds));
-            if (await ReleaseAsync(lease, requestDeadline.Token, outcome))
+            if (await ReleaseAsync(lease, requestDeadline.Token, outcome, handoff))
                 return true;
             if (attempt == maximumAttempts)
                 break;

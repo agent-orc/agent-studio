@@ -129,18 +129,42 @@ public sealed record LeaseRenewRequest(
     int RequestedTtlSeconds = 120,
     RunnerProcessInventory? Inventory = null);
 
+/// <summary>
+/// The salvage a runner published before it released a lease it could not
+/// complete, and the diagnostic that explains why (AGT-2870). Both parts of the
+/// pair are required: a ref without a commit names no work, and a commit without
+/// a ref cannot be fetched by the next round.
+/// </summary>
+public sealed record LeaseReleaseSalvage(
+    string Branch,
+    string CommitSha,
+    string? Detail = null);
+
 public sealed record LeaseReleaseRequest(
     string RunnerId,
     string InstanceId,
     string LeaseId,
     long Fence,
-    string Outcome);
+    string Outcome,
+    LeaseReleaseSalvage? Salvage = null);
+
+/// <summary>
+/// Server -> Runner: an operator asked this attempt to stop. It travels on the
+/// lease renewal because the server never reaches into a remote host.
+/// </summary>
+public sealed record RunStopDirective(
+    string TaskKey,
+    string Reason,
+    DateTime RequestedAtUtc,
+    string? AttemptId = null,
+    string? RequestedBy = null);
 
 public sealed record LeaseResponse(
     string Status,
     LeaseDto? Lease = null,
     string? Message = null,
-    IReadOnlyList<RunnerReconciliationAction>? ReconciliationActions = null);
+    IReadOnlyList<RunnerReconciliationAction>? ReconciliationActions = null,
+    RunStopDirective? StopRequest = null);
 
 /// <summary>
 /// Comparable process truth reported by a runner on every claim poll and lease

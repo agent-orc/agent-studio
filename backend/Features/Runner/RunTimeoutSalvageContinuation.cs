@@ -137,6 +137,71 @@ public static class RunTimeoutSalvageContinuationPolicy
 }
 
 /// <summary>
+/// How the previous round ended, in the words the continuation prompt and the
+/// ledger use. One record keeps the AGT-2861 timeout wording and the AGT-2870
+/// worker-loss wording on the same builder instead of forking the prompt.
+/// </summary>
+/// <param name="Reason">
+/// Machine reason on the saved intent, the lane transition detail, and the
+/// timeline entry.
+/// </param>
+/// <param name="LaneCause">Prefix of the move cause, followed by the round counter.</param>
+/// <param name="Ending">What the previous round did, as a verb phrase.</param>
+/// <param name="RepeatNoun">What a second occurrence is called in the budget sentence.</param>
+/// <param name="Evidence">
+/// One optional sentence of diagnostic context (the lost worker's last words);
+/// null when the previous round left none.
+/// </param>
+/// <param name="StartsFromSalvage">
+/// Whether the next round's worktree is prepared on the salvage commit instead
+/// of the integration branch. Timeouts keep their AGT-2861 behaviour and start
+/// on the integration branch, because their agent is alive to fetch the ref
+/// itself; a lost worker's round starts on the rescued work.
+/// </param>
+public sealed record RunContinuationCause(
+    string Reason,
+    string LaneCause,
+    string Ending,
+    string RepeatNoun,
+    string? Evidence = null,
+    bool StartsFromSalvage = false)
+{
+    /// <summary>AGT-2861: the run hit its timeout with a salvaged worktree.</summary>
+    public static RunContinuationCause Timeout(string? reportedReason)
+        => new(
+            RunTimeoutSalvageContinuationPolicy.ContinuationReason,
+            "remote-run-timeout-continuation",
+            $"hit the run timeout{ReportedOutcome(reportedReason)}",
+            "timeout");
+
+    /// <summary>AGT-2870: the detached worker died before it recorded a result.</summary>
+    public static RunContinuationCause WorkerLost(string? reportedReason, string? crashLine)
+        => new(
+            LostWorkerContinuationPolicy.ContinuationReason,
+            "remote-worker-lost-continuation",
+            $"lost its worker process before it recorded a result{ReportedOutcome(reportedReason)}",
+            "loss",
+            ComposeEvidence(crashLine),
+            StartsFromSalvage: true);
+
+    public string Describe() => Ending;
+
+    private static string ReportedOutcome(string? reportedReason)
+    {
+        var reason = (reportedReason ?? string.Empty).Replace('\r', ' ').Replace('\n', ' ').Trim();
+        return reason.Length == 0 ? string.Empty : $" (reported outcome: {reason})";
+    }
+
+    private static string? ComposeEvidence(string? crashLine)
+    {
+        var line = (crashLine ?? string.Empty).Replace('\r', ' ').Replace('\n', ' ').Trim();
+        if (line.Length == 0) return null;
+        if (line.Length > 300) line = line[..300];
+        return $"The worker's last diagnostic line was: \"{line}\".";
+    }
+}
+
+/// <summary>
 /// Outcome of one attempt to open an automatic continuation round.
 /// <paramref name="Reason"/> carries the rendered continuation prompt when the
 /// round started and the refusal text when it did not.
@@ -202,11 +267,13 @@ public sealed class RunTimeoutContinuationService
         string reportedReason,
         string attemptId,
         AttemptWriteReference authorityWrite,
-        CancellationToken ct)
+        CancellationToken ct,
+        RunContinuationCause? cause = null)
     {
         var epoch = OperatorReviewRequeueService.ReadEpoch(task.FolderPath);
         var round = CountAutomaticRounds(task) + 1;
-        var prompt = BuildPrompt(task, salvage, reportedReason);
+        cause ??= RunContinuationCause.Timeout(reportedReason);
+        var prompt = BuildPrompt(task, salvage, cause);
 
         // The prompt note and the intent are written before the lane move so a
         // claim can never observe the card in Ready without its finishing
@@ -218,7 +285,7 @@ public sealed class RunTimeoutContinuationService
             task.Id,
             ContinueModes.Steer,
             prompt,
-            reason: RunTimeoutSalvageContinuationPolicy.ContinuationReason,
+            reason: cause.Reason,
             activeJobId: null,
             watchPath: task.WatchPath);
         if (intent is null)
@@ -229,16 +296,31 @@ public sealed class RunTimeoutContinuationService
         // left on the host.
         _mutations.SetContextModeOnFolder(task.FolderPath, CliContextModes.Clean);
 
+        // A round whose previous agent is gone cannot fetch the salvage itself,
+        // so the claim hands the ref to the runner and the next worktree is
+        // prepared on the rescued commit.
+        if (cause.StartsFromSalvage)
+        {
+            ContinuationBaseStore.Save(task.FolderPath, new ContinuationBaseRecord(
+                salvage.Branch.StartsWith("refs/heads/", StringComparison.Ordinal)
+                    ? salvage.Branch
+                    : $"refs/heads/{salvage.Branch}",
+                salvage.CommitSha,
+                cause.Reason,
+                attemptId,
+                DateTime.UtcNow));
+        }
+
         var move = await _transitions.MoveAsync(
             task.Id,
             TaskStates.Ready,
             task.WatchPath,
             ct,
-            cause: $"remote-run-timeout-continuation:{round}/{RunTimeoutSalvageContinuationPolicy.MaxAutomaticContinuationRounds}",
+            cause: $"{cause.LaneCause}:{round}/{RunTimeoutSalvageContinuationPolicy.MaxAutomaticContinuationRounds}",
             authorityWrite: authorityWrite,
             suppressProductExecution: true,
             transitionCause: LaneChangeCauses.RunnerRequeue,
-            transitionDetail: RunTimeoutSalvageContinuationPolicy.ContinuationReason);
+            transitionDetail: cause.Reason);
         if (move.Status != MoveJobStatus.Success)
         {
             _mutations.DiscardPendingIntent(task.FolderPath);
@@ -250,7 +332,7 @@ public sealed class RunTimeoutContinuationService
             task.Id,
             task.WatchPath,
             transitionCause: LaneChangeCauses.RunnerRequeue,
-            transitionDetail: RunTimeoutSalvageContinuationPolicy.ContinuationReason);
+            transitionDetail: cause.Reason);
         var queued = _scanner.FindJob(task.Id, task.WatchPath);
         var queuedFolder = queued?.FolderPath ?? move.NewFolderPath ?? task.FolderPath;
 
@@ -265,7 +347,7 @@ public sealed class RunTimeoutContinuationService
             {
                 ["automatic"] = "true",
                 ["attemptEpoch"] = Invariant(epoch),
-                ["reason"] = RunTimeoutSalvageContinuationPolicy.ContinuationReason,
+                ["reason"] = cause.Reason,
                 ["round"] = Invariant(round),
                 ["maximumRounds"] = Invariant(
                     RunTimeoutSalvageContinuationPolicy.MaxAutomaticContinuationRounds),
@@ -293,20 +375,21 @@ public sealed class RunTimeoutContinuationService
     internal static string BuildPrompt(
         TaskInfo task,
         RunSalvageReference salvage,
-        string? reportedReason)
+        RunContinuationCause cause)
     {
-        var cause = string.IsNullOrWhiteSpace(reportedReason)
+        var evidence = string.IsNullOrWhiteSpace(cause.Evidence)
             ? string.Empty
-            : $" (reported outcome: {reportedReason.Trim()})";
+            : $"{cause.Evidence!.Trim()} ";
         return
             "## STEER\n\n"
             + $"Continuation round for {task.Key ?? task.Id}. "
-            + $"Your previous round hit the run timeout{cause}; the worktree was salvaged as "
+            + $"Your previous round {cause.Describe()}; the worktree was salvaged as "
             + $"'{salvage.Branch}' at {salvage.CommitSha}. The work exists, it only lacks its finishing round. "
+            + evidence
             + $"Fetch '{salvage.Branch}', continue from {salvage.CommitSha}, and finish: rebase onto the current "
             + "integration branch, resolve every conflict conservatively without dropping the salvaged changes, "
             + "build, run the tests that cover the touched code, write results/status.md, and deliver. "
-            + "Budget your time: this is the last automatic round, so a second timeout parks the card for an operator.";
+            + $"Budget your time: this is the last automatic round, so a second {cause.RepeatNoun} parks the card for an operator.";
     }
 
     private static RunTimeoutContinuationResult Failed(string reason)
