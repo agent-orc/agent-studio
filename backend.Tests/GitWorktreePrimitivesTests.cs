@@ -453,6 +453,42 @@ public sealed class GitWorktreePrimitivesTests : IDisposable
         Assert.Equal(MergeIntoIntegrationOutcome.AgentRoundRequired, result.Outcome);
         // The conflict is made visible, not silent.
         Assert.Contains("shared.txt", result.ConflictedFiles);
+        var report = Assert.IsType<IntegrationConflictReport>(result.ConflictReport);
+        Assert.Equal(developTipBefore, report.IntegrationTipSha);
+        Assert.Equal(taskTipBefore, report.DeliverySha);
+        Assert.Equal(1, report.ConflictedFileCount);
+        Assert.Equal(["shared.txt"], report.ConflictedFiles);
+        Assert.False(report.ConflictedFilesTruncated);
+        Assert.Collection(
+            report.Stages,
+            direct =>
+            {
+                Assert.Equal("direct-merge", direct.Stage);
+                Assert.Equal("conflict", direct.Outcome);
+                Assert.Equal(1, direct.ConflictedFileCount);
+            },
+            mechanical =>
+            {
+                Assert.Equal("mechanical-merge", mechanical.Stage);
+                Assert.Equal("conflict", mechanical.Outcome);
+                Assert.Equal(1, mechanical.ConflictedFileCount);
+            },
+            rebase =>
+            {
+                Assert.Equal("rebase-fallback", rebase.Stage);
+                Assert.Equal("conflict", rebase.Outcome);
+                Assert.Equal(taskTipBefore, rebase.StoppedCommitSha);
+                Assert.Equal(1, rebase.StoppedCommitNumber);
+                Assert.Equal(1, rebase.TotalCommits);
+            });
+        Assert.StartsWith(
+            "Merge into develop conflicted (direct merge, mechanical merge and rebase fallback all failed)",
+            result.Error,
+            StringComparison.Ordinal);
+        Assert.Equal(3, result.Error!.Split('\n').Length);
+        Assert.Contains("rebase fallback: stopped at commit", result.Error, StringComparison.Ordinal);
+        Assert.DoesNotContain("Resolve all conflicts manually", result.Error, StringComparison.Ordinal);
+        Assert.DoesNotContain("hint:", result.Error, StringComparison.OrdinalIgnoreCase);
         // The merge was aborted: develop is unchanged, the tree is clean, and no
         // merge is in progress (MERGE_HEAD gone).
         Assert.Equal(developTipBefore, RunGit(repo, "rev-parse develop").Out.Trim());
@@ -460,6 +496,41 @@ public sealed class GitWorktreePrimitivesTests : IDisposable
         Assert.False(git.RepoHasUncommittedChanges(repo));
         Assert.NotEqual(0, RunGit(repo, "rev-parse --verify MERGE_HEAD").Code);
         Assert.Equal(worktreesBefore, git.ListWorktrees(repo).Select(item => item.Path));
+    }
+
+    [Fact]
+    public void MergeBranchIntoIntegration_ManyConflicts_CapsReportedFilesButRetainsTotal()
+    {
+        var repo = SeedRepo("merge-many-conflicts");
+        var git = BuildGitService(("Fixture", repo));
+        RunGit(repo, "checkout -q -b develop");
+        var paths = Enumerable.Range(1, IntegrationConflictReport.MaxReportedFiles + 2)
+            .Select(index => $"conflict-{index:D2}.txt")
+            .ToArray();
+        foreach (var path in paths)
+            File.WriteAllText(Path.Combine(repo, path), "base\n");
+        Commit(repo, "chore: add conflict fixtures");
+
+        RunGit(repo, "checkout -q -b task/many-conflicts");
+        foreach (var path in paths)
+            File.WriteAllText(Path.Combine(repo, path), "delivery\n");
+        Commit(repo, "feat: edit every fixture");
+
+        RunGit(repo, "checkout -q develop");
+        foreach (var path in paths)
+            File.WriteAllText(Path.Combine(repo, path), "integration\n");
+        Commit(repo, "chore: conflict every fixture");
+
+        var result = git.MergeBranchIntoIntegration(repo, "task/many-conflicts", "develop");
+
+        var report = Assert.IsType<IntegrationConflictReport>(result.ConflictReport);
+        Assert.Equal(paths.Length, report.ConflictedFileCount);
+        Assert.Equal(IntegrationConflictReport.MaxReportedFiles, report.ConflictedFiles.Count);
+        Assert.True(report.ConflictedFilesTruncated);
+        Assert.Contains(
+            $"{paths.Length} total, showing {IntegrationConflictReport.MaxReportedFiles}",
+            result.Error,
+            StringComparison.Ordinal);
     }
 
     [Fact]

@@ -142,7 +142,14 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
             stack.Timeline.ReadAll(escalated.FolderPath),
             entry => entry.Kind == TimelineEventKinds.LaneChanged
                      && entry.Details?.GetValueOrDefault("to") == TaskStates.Escalated);
-        Assert.Contains("1/1 conflict requeues", laneChange.Details!["reason"], StringComparison.Ordinal);
+        Assert.StartsWith(
+            $"automatic recovery budget used: 1/1 for delivery {deliverySha[..12]}",
+            laneChange.Details!["reason"],
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "legacy automatic recovery round without a delivery identifier",
+            laneChange.Details["reason"],
+            StringComparison.Ordinal);
 
         var secondSnapshot = await stack.Rail.RunOnceAsync();
         Assert.Equal(0, secondSnapshot.Escalated);

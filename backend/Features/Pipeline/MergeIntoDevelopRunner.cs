@@ -1730,6 +1730,7 @@ public sealed class MergeIntoDevelopRunner
             VerdictSummary = summary,
             Reason = reason,
             FailureCode = failure?.Code,
+            ConflictReport = result.ConflictReport,
         });
     }
 

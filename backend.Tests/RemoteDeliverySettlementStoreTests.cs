@@ -75,16 +75,20 @@ public sealed class RemoteDeliverySettlementStoreTests : IDisposable
     }
 
     [Fact]
-    public void Advancing_records_the_integration_outcome()
+    public void Advancing_records_the_integration_outcome_and_park_reason()
     {
         RemoteDeliverySettlementStore.Write(_folder, Record());
 
         Assert.True(RemoteDeliverySettlementStore.Advance(
-            _folder, RemoteDeliverySettlementStage.IntegrationSettled, "Merged"));
+            _folder,
+            RemoteDeliverySettlementStage.IntegrationSettled,
+            "AgentRoundRequired",
+            "automatic recovery budget used: 2/2"));
 
         var read = RemoteDeliverySettlementStore.Read(_folder)!;
         Assert.Equal(RemoteDeliverySettlementStage.IntegrationSettled, read.Stage);
-        Assert.Equal("Merged", read.IntegrationOutcome);
+        Assert.Equal("AgentRoundRequired", read.IntegrationOutcome);
+        Assert.Equal("automatic recovery budget used: 2/2", read.IntegrationDetail);
     }
 
     [Fact]

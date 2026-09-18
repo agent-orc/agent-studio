@@ -7,7 +7,7 @@ public static class AcceptanceRailDefaults
     public const string ConfigurationSection = "AcceptanceRail";
     public const bool Enabled = true;
     public const int IntervalSeconds = 180;
-    public const int MaxRequeues = 5;
+    public const int MaxRequeues = 2;
 
     /// <summary>
     /// Requeues the rail spends on one card for host or account faults
@@ -118,7 +118,7 @@ public static class AcceptanceRailPolicy
     {
         if (task.State is not (TaskStates.HumanReview or TaskStates.Escalated))
             return Ignore("outside-rail-lanes");
-        if (IsHeld(task, options.HoldList))
+        if (IsExplicitlyHeld(task, options.HoldList))
             return Ignore("operator-hold");
         if (!AcceptanceIntegrationPolicy.IsIntegrationRequired(task))
             return Ignore("no-code-acceptance");
@@ -151,6 +151,12 @@ public static class AcceptanceRailPolicy
                     AcceptanceRailAction.Escalate,
                     "integration-requeue-budget-exhausted");
         }
+
+        // A generic Human Review decision marker must not suppress recovery of
+        // a delivery whose review already passed. Genuine decision blockers
+        // still hold every non-conflict path.
+        if (IsHeld(task, options.HoldList))
+            return Ignore("operator-hold");
 
         // AGT-2749: a host or account fault says nothing about the reviewed
         // change, so parking the card asks an operator to judge a diff that was
@@ -227,6 +233,11 @@ public static class AcceptanceRailPolicy
             return true;
         }
 
+        return IsExplicitlyHeld(task, holdList);
+    }
+
+    private static bool IsExplicitlyHeld(TaskInfo task, IReadOnlySet<string> holdList)
+    {
         if (Matches(task.Id, holdList)
             || Matches(task.Key, holdList)
             || Matches(task.TaskKey, holdList))

@@ -9,30 +9,124 @@ public enum RemoteIntegrationContinuationAction
 
 /// <summary>
 /// Pure continuation policy for an integration result. A result that cannot
-/// retain unambiguous delivery SHA attribution receives one automatic steer
-/// round per operator-owned review epoch. Repeated ambiguity reaches Human
-/// Review instead of opening an unbounded coding loop.
+/// retain unambiguous delivery SHA attribution receives a bounded number of
+/// automatic steer rounds for that fenced delivery. Repeated ambiguity reaches
+/// Human Review instead of opening an unbounded coding loop.
 /// </summary>
 public static class RemoteIntegrationContinuationPolicy
 {
-    public const int MaxAutomaticAgentRounds = 1;
+    public const int MaxAutomaticAgentRounds = 2;
 
     public static RemoteIntegrationContinuationAction Decide(
         MergeIntoIntegrationOutcome outcome,
-        int automaticAgentRoundsUsed)
+        int automaticAgentRoundsUsed,
+        int maximumAgentRounds = MaxAutomaticAgentRounds)
     {
         if (outcome != MergeIntoIntegrationOutcome.AgentRoundRequired)
             return RemoteIntegrationContinuationAction.None;
 
-        return Math.Max(0, automaticAgentRoundsUsed) < MaxAutomaticAgentRounds
+        return Math.Max(0, automaticAgentRoundsUsed) < Math.Max(1, maximumAgentRounds)
             ? RemoteIntegrationContinuationAction.StartAgentRound
             : RemoteIntegrationContinuationAction.LeaveForHumanReview;
     }
 }
 
+public sealed record IntegrationRecoveryBudgetUsage(
+    string? DeliveryChainId,
+    string? DeliverySha,
+    int MatchingRounds,
+    int LegacyRounds)
+{
+    public int Used => MatchingRounds + LegacyRounds;
+
+    public string ExhaustedReason(int maximumRounds)
+    {
+        var limit = Math.Max(1, maximumRounds);
+        var used = Math.Min(Used, limit);
+        var delivery = string.IsNullOrWhiteSpace(DeliverySha)
+            ? ""
+            : $" for delivery {ShortSha(DeliverySha)}";
+        var legacy = LegacyRounds == 0
+            ? ""
+            : $" (includes {LegacyRounds} legacy automatic recovery {RoundWord(LegacyRounds)} without a delivery identifier)";
+        return $"automatic recovery budget used: {used}/{limit}{delivery}{legacy}";
+    }
+
+    private static string ShortSha(string sha)
+        => sha.Length > 12 ? sha[..12] : sha;
+
+    private static string RoundWord(int count)
+        => count == 1 ? "round" : "rounds";
+}
+
+/// <summary>
+/// Counts the shared integration-recovery budget for one immutable delivery.
+/// The result ref and delivered SHA form the durable delivery-chain identity,
+/// so another review of the same delivery shares its budget while a new fenced
+/// delivery starts a new one. Identifier-less historical rows are counted
+/// conservatively because they cannot be assigned safely to another delivery.
+/// </summary>
+public static class IntegrationRecoveryBudget
+{
+    public const string DeliveryChainIdKey = "deliveryChainId";
+
+    public static string DeliveryChainId(ReviewSubjectRecord subject)
+    {
+        ArgumentNullException.ThrowIfNull(subject);
+        var deliveryRef = subject.ImmutableResultRef ?? subject.ResultRef ?? "missing-ref";
+        return $"{deliveryRef.Trim()}@{subject.ResultSha.Trim().ToLowerInvariant()}";
+    }
+
+    public static IntegrationRecoveryBudgetUsage Count(
+        IEnumerable<TimelineEvent> entries,
+        ReviewSubjectRecord? subject)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+        var deliveryChainId = subject is null ? null : DeliveryChainId(subject);
+        var matching = 0;
+        var legacy = 0;
+        foreach (var entry in entries)
+        {
+            if (entry.Kind != TimelineEventKinds.IntegrationRecoveryQueued)
+                continue;
+
+            var details = entry.Details;
+            var automatic = details?.GetValueOrDefault("automatic") == "true"
+                            || string.Equals(
+                                details?.GetValueOrDefault("source"),
+                                "acceptance-rail",
+                                StringComparison.Ordinal);
+            if (!automatic) continue;
+
+            var recordedChainId = details?.GetValueOrDefault(DeliveryChainIdKey);
+            if (string.IsNullOrWhiteSpace(recordedChainId))
+            {
+                legacy++;
+                continue;
+            }
+            if (deliveryChainId is not null
+                && string.Equals(recordedChainId, deliveryChainId, StringComparison.Ordinal))
+            {
+                matching++;
+            }
+        }
+
+        return new IntegrationRecoveryBudgetUsage(
+            deliveryChainId,
+            subject?.ResultSha,
+            matching,
+            legacy);
+    }
+}
+
 public sealed record IntegrationAgentRoundStartResult(
     bool Started,
-    string Reason);
+    string Reason)
+{
+    public int BudgetUsed { get; init; }
+    public int BudgetLimit { get; init; }
+    public bool BudgetExhausted { get; init; }
+}
 
 /// <summary>
 /// Applies the bounded side effects for an automatic integration-recovery
@@ -49,19 +143,24 @@ public sealed class IntegrationAgentRoundService
     private readonly TaskStateMachine _states;
     private readonly TimelineLog _timeline;
     private readonly ILogger<IntegrationAgentRoundService> _logger;
+    private readonly int _maximumRecoveryRounds;
 
     public IntegrationAgentRoundService(
         TaskScannerService scanner,
         TaskMutationService mutations,
         TaskStateMachine states,
         TimelineLog timeline,
-        ILogger<IntegrationAgentRoundService> logger)
+        ILogger<IntegrationAgentRoundService> logger,
+        IConfiguration? configuration = null)
     {
         _scanner = scanner;
         _mutations = mutations;
         _states = states;
         _timeline = timeline;
         _logger = logger;
+        _maximumRecoveryRounds = configuration is null
+            ? RemoteIntegrationContinuationPolicy.MaxAutomaticAgentRounds
+            : AcceptanceRailOptions.FromConfiguration(configuration).MaxRequeues;
     }
 
     public Task<IntegrationAgentRoundStartResult> TryStartAsync(
@@ -72,34 +171,39 @@ public sealed class IntegrationAgentRoundService
         if (job is null)
             return Task.FromResult(Failed("The task disappeared before its automatic integration recovery round could start."));
 
-        var epoch = OperatorReviewRequeueService.ReadEpoch(job.FolderPath);
-        var automaticRoundsUsed = _timeline.ReadAll(job.FolderPath).Count(entry =>
-            entry.Kind == TimelineEventKinds.IntegrationRecoveryQueued
-            && entry.Details?.GetValueOrDefault("automatic") == "true"
-            && entry.Details?.GetValueOrDefault("attemptEpoch") == Invariant(epoch));
-        var action = RemoteIntegrationContinuationPolicy.Decide(
-            result.Outcome,
-            automaticRoundsUsed);
-        if (action == RemoteIntegrationContinuationAction.None)
+        if (result.Outcome != MergeIntoIntegrationOutcome.AgentRoundRequired)
             return Task.FromResult(Failed("The integration result does not require an agent continuation."));
-        if (action == RemoteIntegrationContinuationAction.LeaveForHumanReview)
+
+        var epoch = OperatorReviewRequeueService.ReadEpoch(job.FolderPath);
+        var subject = ReviewSubjectStore.Read(job.FolderPath);
+        if (subject is null || string.IsNullOrWhiteSpace(subject.ResultRef))
         {
-            var reason = $"Automatic integration recovery already used its {RemoteIntegrationContinuationPolicy.MaxAutomaticAgentRounds} agent round for review epoch {epoch}; leaving the repeated attribution ambiguity for Human Review.";
+            var reason = "The reviewed delivery has no fenced result ref for an automatic agent recovery round.";
             RecordFailure(job.FolderPath, request, result, reason, epoch);
             return Task.FromResult(Failed(reason));
+        }
+
+        var budget = IntegrationRecoveryBudget.Count(
+            _timeline.ReadAll(job.FolderPath),
+            subject);
+        var action = RemoteIntegrationContinuationPolicy.Decide(
+            result.Outcome,
+            budget.Used,
+            _maximumRecoveryRounds);
+        if (action == RemoteIntegrationContinuationAction.LeaveForHumanReview)
+        {
+            var reason = budget.ExhaustedReason(_maximumRecoveryRounds);
+            RecordFailure(job.FolderPath, request, result, reason, epoch, subject, budget);
+            return Task.FromResult(Failed(
+                reason,
+                budgetUsed: Math.Min(budget.Used, _maximumRecoveryRounds),
+                budgetLimit: _maximumRecoveryRounds,
+                budgetExhausted: true));
         }
 
         if (!string.Equals(job.State, TaskStates.AutoReview, StringComparison.Ordinal))
         {
             var reason = $"Automatic integration recovery expected {TaskStates.AutoReview}, but the task is in {job.State}.";
-            RecordFailure(job.FolderPath, request, result, reason, epoch);
-            return Task.FromResult(Failed(reason));
-        }
-
-        var subject = ReviewSubjectStore.Read(job.FolderPath);
-        if (subject is null || string.IsNullOrWhiteSpace(subject.ResultRef))
-        {
-            var reason = "The reviewed delivery has no fenced result ref for an automatic agent recovery round.";
             RecordFailure(job.FolderPath, request, result, reason, epoch);
             return Task.FromResult(Failed(reason));
         }
@@ -152,21 +256,30 @@ public sealed class IntegrationAgentRoundService
             {
                 ["automatic"] = "true",
                 ["attemptEpoch"] = Invariant(epoch),
+                [IntegrationRecoveryBudget.DeliveryChainIdKey] = budget.DeliveryChainId!,
                 ["deliveryRef"] = subject.ResultRef,
                 ["resultSha"] = subject.ResultSha,
                 ["integrationBranch"] = request.IntegrationBranch,
                 ["mode"] = ContinueModes.Steer,
                 ["reason"] = AttributionAmbiguousReason,
                 ["supersededCommits"] = Invariant(supersession.MarkedCommits),
+                ["budgetUsed"] = Invariant(budget.Used + 1),
+                ["budgetLimit"] = Invariant(_maximumRecoveryRounds),
+                ["legacyRecoveryRoundsCounted"] = Invariant(budget.LegacyRounds),
             });
         _logger.LogInformation(
-            "integration-agent-round-started project={Project} job={JobId} epoch={Epoch} position={Position} supersededCommits={SupersededCommits}",
+            "integration-agent-round-started project={Project} job={JobId} deliveryChain={DeliveryChain} epoch={Epoch} position={Position} supersededCommits={SupersededCommits}",
             request.Project,
             request.JobId,
+            budget.DeliveryChainId,
             epoch,
             position,
             supersession.MarkedCommits);
-        return Task.FromResult(new IntegrationAgentRoundStartResult(true, prompt));
+        return Task.FromResult(new IntegrationAgentRoundStartResult(true, prompt)
+        {
+            BudgetUsed = budget.Used + 1,
+            BudgetLimit = _maximumRecoveryRounds,
+        });
     }
 
     private void RecordFailure(
@@ -174,21 +287,34 @@ public sealed class IntegrationAgentRoundService
         RemoteDeliveryIntegrationRequest request,
         MergeIntoIntegrationResult result,
         string reason,
-        int epoch)
+        int epoch,
+        ReviewSubjectRecord? subject = null,
+        IntegrationRecoveryBudgetUsage? budget = null)
     {
+        var details = new Dictionary<string, string>
+        {
+            ["outcome"] = result.Outcome.ToString(),
+            ["integrationBranch"] = request.IntegrationBranch,
+            ["detail"] = result.Error ?? string.Empty,
+            ["attemptEpoch"] = Invariant(epoch),
+            ["stage"] = "pre-human-review",
+        };
+        if (subject is not null)
+        {
+            details[IntegrationRecoveryBudget.DeliveryChainIdKey] =
+                budget?.DeliveryChainId ?? IntegrationRecoveryBudget.DeliveryChainId(subject);
+            details["deliveryRef"] = subject.ResultRef ?? string.Empty;
+            details["resultSha"] = subject.ResultSha;
+        }
+        if (budget is not null)
+            details["legacyRecoveryRoundsCounted"] = Invariant(budget.LegacyRounds);
+
         _timeline.Append(
             folderPath,
             TimelineEventKinds.IntegrationFailed,
             TimelineActors.System,
             reason,
-            details: new Dictionary<string, string>
-            {
-                ["outcome"] = result.Outcome.ToString(),
-                ["integrationBranch"] = request.IntegrationBranch,
-                ["detail"] = result.Error ?? string.Empty,
-                ["attemptEpoch"] = Invariant(epoch),
-                ["stage"] = "pre-human-review",
-            });
+            details: details);
     }
 
     private static string BuildPrompt(
@@ -196,15 +322,32 @@ public sealed class IntegrationAgentRoundService
         ReviewSubjectRecord subject,
         RemoteDeliveryIntegrationRequest request,
         MergeIntoIntegrationResult result)
-        =>
-            $"Automatic integration recovery for {job.Key ?? job.Id}. "
+    {
+        var conflictedFiles = result.ConflictReport?.ConflictedFiles.Count > 0
+            ? string.Join(", ", result.ConflictReport.ConflictedFiles)
+            : result.ConflictedFiles.Count > 0
+                ? string.Join(", ", result.ConflictedFiles)
+                : "none recorded";
+        return $"Automatic integration recovery for {job.Key ?? job.Id}. "
             + $"The platform first tried a direct merge of delivery '{subject.ResultRef}' at {subject.ResultSha} into '{request.IntegrationBranch}', then a mechanical three-way/rerere merge, and only then a mechanical rebase. "
-            + $"Those paths could not preserve unambiguous commit attribution: {result.Error ?? "the delivery commit mapping changed"}. "
-            + "Continue from the existing delivery, resolve the integration conflict, and preserve a one-to-one delivery commit history: do not squash, split, drop, or combine delivery commits. "
-            + "Run the relevant tests and finish with the normal task terminal sentinel. Do not merge or push the integration branch yourself; publish only the updated delivery branch for a new delivery gate and review round.";
+            + "Produce a delivery state that integrates cleanly. Prefer merging the latest integration branch into the existing delivery branch and resolving conflicts there over rewriting delivery history. "
+            + $"Conflicted files from the integration report: {conflictedFiles}. "
+            + "If rewriting is unavoidable, retain a one-to-one delivery commit mapping: do not squash, split, drop, or combine delivery commits. "
+            + "Do not redo the feature work. Run the relevant tests and finish with the normal task terminal sentinel. "
+            + "Do not move or push the integration branch ref; publish only the updated delivery branch for a new delivery gate and review round.";
+    }
 
-    private static IntegrationAgentRoundStartResult Failed(string reason)
-        => new(false, reason);
+    private static IntegrationAgentRoundStartResult Failed(
+        string reason,
+        int budgetUsed = 0,
+        int budgetLimit = 0,
+        bool budgetExhausted = false)
+        => new(false, reason)
+        {
+            BudgetUsed = budgetUsed,
+            BudgetLimit = budgetLimit,
+            BudgetExhausted = budgetExhausted,
+        };
 
     private static string Invariant(int value)
         => value.ToString(System.Globalization.CultureInfo.InvariantCulture);
