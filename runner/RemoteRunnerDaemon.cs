@@ -113,6 +113,7 @@ public sealed class RemoteRunnerDaemon
             $"authenticated daemon '{_options.RunnerName}' with attribution '{clientId}'; " +
             $"slots={_client.HostMaxParallelism} " +
             $"admission={(_client.UsesHostOrchestrator ? "host-permits" : "claims")}");
+        AnnounceWorkerEnvelope(persistedAtStartup.Select(slot => slot.WorkerDirectory));
         var handoffRecovery = new DurableHandoffRecovery(_options, _client, _log);
 
         var inventory = new RunnerProcessInventoryTracker();
@@ -949,6 +950,29 @@ public sealed class RemoteRunnerDaemon
         if (_client.UsesDurableTaskServer)
             inventory.AcknowledgeReports(snapshot);
         inventory.Apply(response.ReconciliationActions);
+    }
+
+    /// <summary>
+    /// AGT-2866: state the per-worker resource envelope this daemon generation
+    /// will apply, and clear away the worker cgroups of a previous generation
+    /// whose processes are gone. A cgroup that still holds a surviving detached
+    /// worker is not empty and is therefore never swept.
+    /// </summary>
+    private void AnnounceWorkerEnvelope(IEnumerable<string> retainedWorkerDirectories)
+    {
+        if (!_options.WorkerEnvelopeEnabled)
+        {
+            _log("worker resource envelope disabled by RUNNER_WORKER_ENVELOPE=0; "
+                 + "detached workers run uncapped");
+            return;
+        }
+        var envelope = WorkerResourceEnvelope.FromOptions(_options);
+        _log($"worker resource envelope {envelope.Describe()} "
+             + $"(coding={_options.HostCodingSlots} review={_options.HostReviewSlots} "
+             + $"burst={_options.WorkerCpuBurst:0.0}x)");
+        var root = WorkerCgroup.EnsureDelegationRoot(message => _log(message));
+        if (root is not null)
+            WorkerCgroup.SweepAbandoned(root, retainedWorkerDirectories, message => _log(message));
     }
 
     private sealed record ActiveSlot(string? TaskKey, Task<int> Execution);

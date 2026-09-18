@@ -48,6 +48,41 @@ contention while unused host capacity remains available to other cgroups.
 turn a large build into an OOM failure without knowing the repository working
 set. Operators may set it deliberately after measuring the host.
 
+## Per-worker envelope below the role (AGT-2866)
+
+The role envelope above bounds a plane. It cannot stop one run inside that plane
+from consuming all of it, which is what happened on 17.09.2026 when three coding
+runs started 24, 49, and 104 CPU busy loops and drove a 12-core host to a load
+average of 76, 35, and 41 while an unrelated review suite flaked.
+
+Every detached worker therefore also carries its own cgroup below the role unit.
+The unit declares `Delegate=cpu pids` and `DelegateSubgroup=daemon` (systemd 254
+or newer), so systemd parks the daemon in a `daemon/` leaf and the daemon creates
+one `worker-<id>/` per worker with `cpu.max`, `cpu.weight`, and `pids.max`
+derived from the host slot split:
+
+| Value | Derivation | 12 cores, 2 coding + 2 review |
+|---|---|---:|
+| cores per slot | `cores / (RUNNER_HOST_CODING_SLOTS + RUNNER_HOST_REVIEW_SLOTS)` | 3.00 |
+| `cpu.max` | cores per slot x `RUNNER_WORKER_CPU_BURST` (2.0), at least one core, never more than the host | 600% |
+| `cpu.weight` | 100 per worker, 1000 for the `daemon/` leaf | 100 |
+| `pids.max` | cores per slot x 128, clamped to 192..4096 | 384 |
+
+The leaf is systemd's job on purpose. A daemon that moved itself out of the unit
+cgroup would leave that cgroup distributing controllers, and `KillMode=process`
+keeps it alive across a restart, so systemd could not attach the replacement main
+process to it: the unit then fails with `219/CGROUP` for as long as one worker
+survives.
+
+This layer is subordinate, not a replacement: the role `CPUQuota` and `CPUWeight`
+above remain the cross-plane arbitration this document decided, and the
+per-worker `cpu.weight` is uniform so that no worker of a role can starve a
+sibling or the daemon renewing its lease. Transient `systemd-run --scope` units
+were rejected for this layer: the service account would need a polkit grant to
+create one, and a scope would sit outside the role unit and escape the aggregate
+above. Operator detail is in
+[the Linux agent host runbook](../../setup/linux-runner-host.md#per-worker-resource-envelope).
+
 ## Convention and explicit profile
 
 There are no environment-specific resource overrides. Missing values are

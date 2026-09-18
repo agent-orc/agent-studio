@@ -195,6 +195,40 @@ public sealed class RunnerOptions
     /// </summary>
     public int HostMaxParallelism { get; init; }
 
+    /// <summary>
+    /// Coding worker slots this host offers, across roles
+    /// (<c>RUNNER_HOST_CODING_SLOTS</c>). Together with
+    /// <see cref="HostReviewSlots"/> it is the denominator of the per-worker
+    /// resource envelope (AGT-2866): a 12-core host with 2 coding and 2 review
+    /// slots offers 3 cores per slot. Both roles read both numbers, so a coding
+    /// daemon and a review daemon on the same machine agree on what one slot is
+    /// worth. Defaults to this service's own <see cref="HostMaxParallelism"/>,
+    /// which matches the symmetric two-plus-two install. Onboarding therefore
+    /// declares only the <em>other</em> role's count in each role environment
+    /// file: this role's own count is <c>RUNNER_MAX_PARALLELISM</c>, so a
+    /// sanctioned parallelism change moves the envelope with it instead of
+    /// leaving a stale number behind. A single-role host sets the other role
+    /// to 0.
+    /// </summary>
+    public int HostCodingSlots { get; init; }
+
+    /// <summary>Review worker slots this host offers (<c>RUNNER_HOST_REVIEW_SLOTS</c>).</summary>
+    public int HostReviewSlots { get; init; }
+
+    /// <summary>
+    /// How far above its fair share one worker may burst while the host is
+    /// otherwise idle (<c>RUNNER_WORKER_CPU_BURST</c>, default 2.0). The envelope
+    /// is meant to cap peaks, not to slow down a normal build on an empty host.
+    /// </summary>
+    public double WorkerCpuBurst { get; init; } = WorkerResourceEnvelope.DefaultCpuBurst;
+
+    /// <summary>
+    /// Escape hatch for a host whose cgroup delegation is broken
+    /// (<c>RUNNER_WORKER_ENVELOPE=0</c>). Off means workers launch exactly as
+    /// they did before AGT-2866, uncapped.
+    /// </summary>
+    public bool WorkerEnvelopeEnabled { get; init; } = true;
+
     /// <summary>Delay between empty daemon pickup polls.</summary>
     public int PollSeconds { get; init; }
 
@@ -291,6 +325,15 @@ public sealed class RunnerOptions
         => value.Trim() is { Length: > 0 } flag
            && (flag == "1" || string.Equals(flag, "true", StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>
+    /// Mirror of <see cref="OptIn"/> for a guard that is on by default: only an
+    /// explicit <c>0</c> / <c>false</c> switches it off, so a typo leaves the
+    /// protection in place.
+    /// </summary>
+    private static bool OptOut(string value)
+        => value.Trim() is not { Length: > 0 } flag
+           || !(flag == "0" || string.Equals(flag, "false", StringComparison.OrdinalIgnoreCase));
+
     public static double EnvDouble(string name, double fallback)
         => double.TryParse(
                Environment.GetEnvironmentVariable(name),
@@ -353,6 +396,15 @@ public sealed class RunnerOptions
             throw new ArgumentException("Configure only one of RUNNER_AUTH_TOKEN_FILE or RUNNER_AUTH_TOKEN.");
         var authToken = authTokenFile.Length > 0 ? ReadAuthTokenFile(authTokenFile) : directAuthToken;
 
+        // The slot budget is derived before the object initializer because both
+        // role slot counts default to this service's own ceiling.
+        var hostMaxParallelism =
+            overrides.TryGetValue("max-parallelism", out var maxParallelism)
+            && int.TryParse(maxParallelism, out var maxParallelismValue)
+            && maxParallelismValue > 0
+                ? maxParallelismValue
+                : EnvInt("RUNNER_MAX_PARALLELISM", 2);
+
         var options = new RunnerOptions
         {
             ServerUrl = Val("server", "RUNNER_SERVER_URL", "http://127.0.0.1:5030").TrimEnd('/'),
@@ -412,8 +464,13 @@ public sealed class RunnerOptions
                 ? drainTimeoutValue
                 : EnvInt("RUNNER_DRAIN_TIMEOUT_SECONDS", 3600),
             RunTimeoutSeconds = EnvInt("RUNNER_RUN_TIMEOUT_SECONDS", 3600),
-            HostMaxParallelism = overrides.TryGetValue("max-parallelism", out var max) && int.TryParse(max, out var maxV) && maxV > 0
-                ? maxV : EnvInt("RUNNER_MAX_PARALLELISM", 2),
+            HostMaxParallelism = hostMaxParallelism,
+            HostCodingSlots = EnvIntAllowingZero("RUNNER_HOST_CODING_SLOTS", hostMaxParallelism),
+            HostReviewSlots = EnvIntAllowingZero("RUNNER_HOST_REVIEW_SLOTS", hostMaxParallelism),
+            WorkerCpuBurst = EnvDouble(
+                "RUNNER_WORKER_CPU_BURST",
+                WorkerResourceEnvelope.DefaultCpuBurst),
+            WorkerEnvelopeEnabled = OptOut(Val("worker-envelope", "RUNNER_WORKER_ENVELOPE")),
             PollSeconds = overrides.TryGetValue("poll-seconds", out var poll) && int.TryParse(poll, out var pollV) && pollV > 0
                 ? pollV : EnvInt("RUNNER_POLL_SECONDS", 5),
             ServerRequestTimeoutSeconds = overrides.TryGetValue("server-request-timeout-seconds", out var requestTimeout)

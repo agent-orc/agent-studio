@@ -337,6 +337,7 @@ public sealed class RemoteReviewDaemon
             nextSlotReconciliation = DateTime.UtcNow.AddMinutes(1);
             idleWatchdog.RecordActiveSlots(active.Count);
             LogSlotHygiene(force: true);
+            AnnounceWorkerEnvelope(persistedAtStartup.Select(slot => slot.WorkerDirectory));
 
             var capabilityGeneration = DateTime.UtcNow.Ticks;
             await AdvertiseCapabilitiesWithControlAsync(capabilityGeneration, shutdown);
@@ -502,7 +503,12 @@ public sealed class RemoteReviewDaemon
                             admissionTelemetry,
                             active.Count,
                             slotCeiling,
-                            _options.ClaimMaxLoadPerCore);
+                            _options.ClaimMaxLoadPerCore,
+                            // AGT-2866: admission reads the same slot budget the
+                            // per-worker cgroup is derived from, so a centrally
+                            // raised ceiling can never admit a slot this host has
+                            // no envelope left for.
+                            WorkerResourceEnvelope.FromOptions(_options));
                     if (!admission.Admitted)
                     {
                         if (!admissionClosed)
@@ -721,6 +727,29 @@ public sealed class RemoteReviewDaemon
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// AGT-2866: state the per-worker resource envelope this daemon generation
+    /// will apply, and clear away the worker cgroups of a previous generation
+    /// whose processes are gone. A cgroup that still holds a surviving detached
+    /// worker is not empty and is therefore never swept.
+    /// </summary>
+    private void AnnounceWorkerEnvelope(IEnumerable<string> retainedWorkerDirectories)
+    {
+        if (!_options.WorkerEnvelopeEnabled)
+        {
+            _log("worker resource envelope disabled by RUNNER_WORKER_ENVELOPE=0; "
+                 + "detached review workers run uncapped");
+            return;
+        }
+        var envelope = WorkerResourceEnvelope.FromOptions(_options);
+        _log($"worker resource envelope {envelope.Describe()} "
+             + $"(coding={_options.HostCodingSlots} review={_options.HostReviewSlots} "
+             + $"burst={_options.WorkerCpuBurst:0.0}x)");
+        var root = WorkerCgroup.EnsureDelegationRoot(message => _log(message));
+        if (root is not null)
+            WorkerCgroup.SweepAbandoned(root, retainedWorkerDirectories, message => _log(message));
     }
 
     private sealed class ReviewStartupControlException : Exception

@@ -44,6 +44,56 @@ public sealed class RunnerServiceUnitTests
         Assert.DoesNotContain("PrivateTmp=true", lines);
     }
 
+    /// <summary>
+    /// AGT-2866: the per-worker envelope is written into a cgroup v2 subtree the
+    /// daemon owns, which only exists when the unit delegates the cpu and pids
+    /// controllers. Without these two lines every worker silently runs uncapped,
+    /// which is exactly the pre-AGT-2866 state the card exists to end.
+    ///
+    /// <para><c>DelegateSubgroup=daemon</c> is not optional decoration. A daemon
+    /// that moved itself out of the unit cgroup instead would leave that cgroup
+    /// distributing controllers, and <c>KillMode=process</c> keeps it alive
+    /// across a restart; systemd then cannot place the replacement main process
+    /// into it and the unit fails with <c>219/CGROUP</c>, "Failed to attach to
+    /// cgroup: Device or resource busy", for as long as one worker survives.</para>
+    /// </summary>
+    [Theory]
+    [InlineData("deploy/systemd/agent-host.service")]
+    [InlineData("scripts/remote-runner-onboard.sh")]
+    [InlineData("deploy/agent-host/systemd/10-agent-runner-hardening.conf")]
+    public void Installed_units_delegate_the_cpu_and_pids_controllers_to_a_daemon_subgroup(
+        string relativePath)
+    {
+        var lines = File.ReadAllLines(Path.Combine(RepoRoot(), relativePath))
+            .Select(line => line.Trim())
+            .ToArray();
+
+        Assert.Contains("Delegate=cpu pids", lines);
+        Assert.Contains("DelegateSubgroup=daemon", lines);
+    }
+
+    /// <summary>
+    /// Both roles derive the envelope from the same two slot numbers, so each
+    /// role environment file has to declare the other role's count. Its own
+    /// count stays RUNNER_MAX_PARALLELISM, which is what the sanctioned
+    /// parallelism helper changes; writing it twice would leave a stale number
+    /// behind after every raise.
+    /// </summary>
+    [Fact]
+    public void Onboarding_declares_the_peer_role_slot_count_for_the_envelope()
+    {
+        var content = File.ReadAllText(
+            Path.Combine(RepoRoot(), "scripts", "remote-runner-onboard.sh"));
+
+        Assert.Contains("RUNNER_HOST_REVIEW_SLOTS=2", content, StringComparison.Ordinal);
+        Assert.Contains("RUNNER_HOST_CODING_SLOTS=2", content, StringComparison.Ordinal);
+        var codingBranch = content.IndexOf("if [[ \"$role\" == \"coding\" ]]; then", StringComparison.Ordinal);
+        Assert.InRange(
+            content.IndexOf("RUNNER_HOST_REVIEW_SLOTS=2", StringComparison.Ordinal),
+            codingBranch,
+            content.IndexOf("RUNNER_HOST_CODING_SLOTS=2", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void Review_unit_refuses_direct_manual_stop_through_a_review_only_drop_in()
     {

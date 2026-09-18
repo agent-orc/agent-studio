@@ -822,7 +822,8 @@ public sealed class RemoteTaskRunner
                 // commands. Without the preparation's cache binding its first
                 // `--no-restore` build resolves against a package folder the
                 // prepare restore never wrote to (TE-52).
-                environment: projectPreparation.Environment);
+                environment: projectPreparation.Environment,
+                log: _log);
         }
         catch (Exception ex)
         {
@@ -888,6 +889,7 @@ public sealed class RemoteTaskRunner
                 if (observation.Result is { } result)
                 {
                     _state.Save(slot with { Phase = "finalizing", LastOutputSequence = sequence });
+                    ReportWorkerEnvelope(slot, shipper);
                     var processResult = new ProcessResult(result.ExitCode, result.StdOut, result.StdErr);
                     var invocation = AgentCliProcess.Resolve(_options, slot.RunSpec);
                     var providerAccess = ProviderAccessClassifier.Classify(
@@ -985,7 +987,8 @@ public sealed class RemoteTaskRunner
                             // same preparation cache binding, which a reattaching
                             // daemon can only read back from the first attempt's
                             // own worker specification.
-                            environment: DurableAgentProcess.TryReadEnvironment(slot.WorkerDirectory));
+                            environment: DurableAgentProcess.TryReadEnvironment(slot.WorkerDirectory),
+                            log: _log);
                         resumeSlot = _state.Save(resumeSlot with
                         {
                             ProcessId = resumed.ProcessId,
@@ -1041,6 +1044,28 @@ public sealed class RemoteTaskRunner
                 CancellationToken.None);
             throw;
         }
+    }
+
+    /// <summary>
+    /// AGT-2866 visibility: one line per finished worker naming the envelope it
+    /// ran under and what it actually consumed, in the journal and in the run
+    /// summary shipped with the delivery. A card that legitimately needed 2,000
+    /// CPU seconds is then distinguishable from one that spun, without an
+    /// operator having to have been watching at the time. Reading the counters
+    /// has to happen before the cgroup is removed.
+    /// </summary>
+    private void ReportWorkerEnvelope(PersistedRunnerSlot slot, LogShipper shipper)
+    {
+        var envelope = WorkerResourceEnvelope.FromOptions(_options);
+        var usage = WorkerCgroup.ReadUsageFor(slot.WorkerDirectory);
+        var line = usage is null
+            ? $"[runner] worker-envelope attempt={slot.AttemptId} applied=no {envelope.Describe()}; "
+              + "no per-worker cgroup on this host, so CPU seconds and peak tasks were not measured"
+            : $"[runner] worker-envelope attempt={slot.AttemptId} applied=yes "
+              + $"{envelope.Describe()} {usage.Describe()}";
+        _log(line);
+        shipper.Add("system", line);
+        WorkerCgroup.ReleaseFor(slot.WorkerDirectory);
     }
 
     private async Task<bool> HandOffForDaemonRestartAsync(
