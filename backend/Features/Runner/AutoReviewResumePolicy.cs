@@ -139,6 +139,24 @@ public static class AutoReviewResumePolicy
     }
 
     /// <summary>
+    /// Projects a resume decision onto the stable post-processing wait tokens.
+    /// Internal safety reasons remain canonical-review waits; a missing
+    /// settlement retains the existing "integration not started" label because
+    /// there is no durable evidence that integration returned.
+    /// </summary>
+    public static string ClassifyPostProcessingWait(AutoReviewResumeDecision decision)
+        => decision.Action switch
+        {
+            AutoReviewResumeAction.StartIntegration =>
+                PostProcessingCardResult.AwaitingDeliveryIntegration,
+            AutoReviewResumeAction.CompleteTransition =>
+                PostProcessingCardResult.AwaitingIntegrationCompletion,
+            _ when decision.Reason == Reasons.NoSettlementRecord =>
+                PostProcessingCardResult.AwaitingDeliveryIntegration,
+            _ => PostProcessingCardResult.AwaitingCanonicalReviewVerdict,
+        };
+
+    /// <summary>
     /// The two outcomes that earn integration. <see cref="ReviewTerminalOutcome.IntegrationBranchDefect"/>
     /// is admissible for the same reason the live gate admits it (AGT-2819):
     /// the red gate belongs to the branch, not to this delivery.

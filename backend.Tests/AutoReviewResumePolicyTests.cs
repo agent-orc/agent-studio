@@ -119,6 +119,9 @@ public sealed class AutoReviewResumePolicyTests
 
         Assert.Equal(AutoReviewResumeAction.CompleteTransition, decision.Action);
         Assert.Equal(PostProcessingCardResult.AwaitingIntegrationCompletion, decision.Reason);
+        Assert.Equal(
+            PostProcessingCardResult.AwaitingIntegrationCompletion,
+            AutoReviewResumePolicy.ClassifyPostProcessingWait(decision));
     }
 
     [Fact]
