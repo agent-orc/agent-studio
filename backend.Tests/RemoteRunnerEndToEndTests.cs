@@ -4847,6 +4847,9 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             repositoryPath: repository,
             primaryProjectName: deliveryProject);
         using var http = factory.CreateClient();
+        // This test owns acceptance below. The push worker otherwise triggers
+        // the automatic rail, which can move the folder while proof is read.
+        factory.Services.GetRequiredService<IConfiguration>()["AcceptanceRail:Enabled"] = "false";
         var scanner = factory.Services.GetRequiredService<TaskScannerService>();
         var seededTask = scanner.FindJob(TaskKey, _watchPath)!;
         var canonicalTaskKey = seededTask.Key ?? seededTask.TaskKey;
@@ -4892,6 +4895,10 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             new Contract.ReviewClaimRequest(reviewRunnerId, reviewInstance, 120),
             ct);
         Assert.Equal("claimed", claim.Status);
+        // AGT-2839: the executor reports the integration ref and the merge base
+        // it verified the delivery on, so the local gate can later tell an
+        // unchanged base from a moved one.
+        var reviewedBase = baseSha;
         var reportRequest = PassingV1ReviewReport(claim, "immediate-integration-review") with
         {
             Summary = "All applicable Remote gates passed; build/test is not applicable.",
@@ -4903,6 +4910,15 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                     "Verified",
                     "The immutable delivery is complete."),
             ],
+        };
+        reportRequest = reportRequest with
+        {
+            Workspace = reportRequest.Workspace with
+            {
+                IntegrationRef = "refs/heads/develop",
+                MergeBaseSha = reviewedBase,
+                IntegrationTipSha = reviewedBase,
+            },
         };
 
         var report = await reviewClient.ReportReviewAsync(
@@ -4935,6 +4951,22 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.True(
             IntegrationStatuses.IsMerged(integration.Status),
             $"the delivery is not merged into develop: {integration.Status} ({integration.Detail})");
+
+        // AGT-2839: the settle path records what the review verified, durably
+        // and synchronously - the merge gate reads it before the async evidence
+        // projection has run.
+        var verification = ReviewVerificationStore.Read(reviewed.FolderPath);
+        Assert.NotNull(verification);
+        Assert.Equal(claim.Attempt!.AttemptId, verification!.AttemptId);
+        Assert.Equal("Pass", verification.Outcome);
+        Assert.Equal(resultSha, verification.ResultSha);
+        Assert.Equal("refs/heads/develop", verification.IntegrationRef);
+        Assert.Equal(reviewedBase, verification.MergeBaseSha);
+        Assert.Equal(reviewedBase, verification.IntegrationTipSha);
+        Assert.Equal(reportRequest.Workspace.TreeHash, verification.TestedTreeSha);
+        // This plan declares no build/test aspect, so there is no test verdict
+        // to reuse and a later merge still runs the full gate.
+        Assert.Equal(ReviewBuildTestGateClasses.NotApplicable, verification.BuildTestGate);
 
         var timeline = factory.Services.GetRequiredService<TimelineLog>()
             .ReadAll(reviewed.FolderPath)

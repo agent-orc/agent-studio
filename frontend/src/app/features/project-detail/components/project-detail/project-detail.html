@@ -161,6 +161,31 @@
       </p>
     </section>
 
+    <section class="proj-detail__group">
+      <h3>Integration gate</h3>
+      <div class="proj-detail__model-row">
+        <select class="proj-detail__model-select"
+                data-testid="project-detail-integration-gate-reuse"
+                aria-label="Reuse the remote review verdict in the local integration gate"
+                [cacTooltip]="'Reuse requires the same integration tip and tested tree recorded by the remote review. A moved tip, changed tree, conflict resolution, replayed delivery, or missing proof runs the full gate.'"
+                [(ngModel)]="integrationGateReuseDraft"
+                (ngModelChange)="onIntegrationGateReuseChange()">
+          <option value="inherit">
+            Default ({{ settings()?.integrationGateReviewReuseEffective ? 'reuse on' : 'reuse off' }})
+          </option>
+          <option value="enabled">Reuse on unchanged integration tip</option>
+          <option value="disabled">Always run the full gate</option>
+        </select>
+        <span class="proj-detail__hint proj-detail__hint--inline">
+          Reuses the remote review verdict for the test and lint commands.
+        </span>
+      </div>
+      <p class="proj-detail__hint">
+        The default is on for projects that run remote review and off for projects that do not.
+        The integration tip and tested tree must match. The gate always compiles the merge result.
+      </p>
+    </section>
+
   }
 
   @if (view() === 'workflow') {

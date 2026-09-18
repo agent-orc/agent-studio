@@ -278,6 +278,21 @@ public sealed record ReviewDependencyCacheEvidenceDto(
     IReadOnlyList<string> Lockfiles,
     bool InstallRan);
 
+/// <param name="IntegrationRef">
+/// Integration line the executor resolved its review baseline against, from the
+/// immutable plan. Null when the plan carried none.
+/// </param>
+/// <param name="MergeBaseSha">
+/// Merge base between <paramref name="ExpectedResultSha"/> and a freshly fetched
+/// <paramref name="IntegrationRef"/> - the exact base this review verified the
+/// delivery on top of. Null when the executor could not resolve one; a consumer
+/// must then treat the reviewed base as unknown (AGT-2839).
+/// </param>
+/// <param name="IntegrationTipSha">
+/// Exact integration tip captured before verification commands. Null for legacy
+/// or resumed attempts without that provenance. TreeHash identifies the tested
+/// tree; merge-base equality alone never proves that an integration tip matches.
+/// </param>
 public sealed record ReviewWorkspaceProofDto(
     string RepositoryId,
     string ExpectedResultSha,
@@ -286,7 +301,10 @@ public sealed record ReviewWorkspaceProofDto(
     bool DirtyBefore,
     bool DirtyAfter,
     string WorkspaceIdentity,
-    string ResourceNamespace);
+    string ResourceNamespace,
+    string? IntegrationRef = null,
+    string? MergeBaseSha = null,
+    string? IntegrationTipSha = null);
 
 public sealed record ReviewEnvironmentDto(
     string HostId,

@@ -24,6 +24,7 @@ public sealed class RemoteReviewWorkspace
     private string? _initialTree;
     private string? _baselineSha;
     private string? _integrationHeadSha;
+    private string? _reviewedIntegrationTipSha;
     private bool _baselineCachePruned;
     private bool _dirtyBefore;
 
@@ -214,6 +215,23 @@ public sealed class RemoteReviewWorkspace
         string? reviewMaterial = null;
         try
         {
+            // Capture the integration tip before any verification. A resumed
+            // attempt may reuse older command results, so it cannot claim a new
+            // tip as their baseline and conservatively emits no reuse proof.
+            _reviewedIntegrationTipSha = null;
+            if (resume is null && !string.IsNullOrWhiteSpace(_subject.Plan.IntegrationRef))
+            {
+                try
+                {
+                    await ResolveBaselineShaAsync(ct);
+                    _reviewedIntegrationTipSha = _integrationHeadSha;
+                }
+                catch (ReviewInfrastructureException exception)
+                {
+                    _log($"review integration tip unavailable for reuse proof: {exception.Message}");
+                }
+            }
+
             candidateCache = await ExecutePreparationAsync(
                 RepositoryPath,
                 "candidate",
@@ -2072,7 +2090,13 @@ public sealed class RemoteReviewWorkspace
             _dirtyBefore,
             dirtyAfter,
             HashText(Path.GetFullPath(AttemptRoot)),
-            _lease.ResourceNamespace);
+            _lease.ResourceNamespace,
+            _subject.Plan.IntegrationRef,
+            // Reported only once actually resolved. Claiming a base the review
+            // never compared against would let the integration gate skip a
+            // suite on a state nobody verified (AGT-2839).
+            _baselineSha,
+            _reviewedIntegrationTipSha);
 
     private static ReviewVerdictDto ParseVerdict(ReviewCommandDto command, ProcessResult result)
     {

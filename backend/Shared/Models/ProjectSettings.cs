@@ -385,6 +385,19 @@ public record ProjectSettings
     public int? BuildTestGateTimeoutSeconds { get; init; }
 
     /// <summary>
+    /// AGT-2839: may the local integration gate stand on the Remote Review
+    /// verdict when the integration tip and tested tree match the review? When
+    /// it may, the gate keeps only the compile step on the merge result and
+    /// skips the test and lint commands the review just ran. Null resolves
+    /// through <see cref="AgentStudio.Pipeline.IntegrationGateReusePolicy.IsEnabled"/>:
+    /// on for a project that executes remotely (and therefore has Remote
+    /// Review), off for one that does not. A moved integration tip, a changed tree, a
+    /// mechanically replayed delivery, conflict resolution, or incomplete review proof
+    /// always runs the full gate regardless of this setting.
+    /// </summary>
+    public bool? IntegrationGateReviewReuse { get; init; }
+
+    /// <summary>
     /// AGT-2803: this project's additions to the areas registry. The ten
     /// product-default areas are inherited by every project and are not stored
     /// here; an entry with a product id only re-labels that area. The active
@@ -1041,6 +1054,15 @@ public static class TestExecutionLevels
     /// the full suite remains a promotion-only boundary.
     /// </summary>
     public const string BuildOnly = "build-only";
+
+    /// <summary>
+    /// Compile evidence and nothing else: only the derived build commands run,
+    /// the lint commands are left out along with every test command. This is
+    /// the stage the integration gate uses when it reuses a Remote Review
+    /// verdict (AGT-2839) - the merge result is a commit nobody compiled
+    /// before, while the tests and lint were just run on exactly this content.
+    /// </summary>
+    public const string CompileOnly = "compile-only";
     public const string Continuous = "continuous";
     public const string WorkPackage = "work-package";
     public const string Full = "full";
@@ -1049,6 +1071,7 @@ public static class TestExecutionLevels
         => value?.Trim().ToLowerInvariant() switch
         {
             BuildOnly => BuildOnly,
+            CompileOnly => CompileOnly,
             Continuous => Continuous,
             WorkPackage => WorkPackage,
             Full => Full,

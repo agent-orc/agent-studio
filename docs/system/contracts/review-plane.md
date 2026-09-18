@@ -128,6 +128,32 @@ registration), not on a 409 that no longer occurs.
   attempt had already settled server-side. A coding slot's reporting rule is
   unchanged.
 
+## Reported review baseline (AGT-2839)
+
+`ReviewWorkspaceProofDto` carries optional integration context beside the existing
+`ExpectedResultSha` and `TreeHash`:
+
+| Field | Meaning |
+|---|---|
+| `IntegrationRef` | Integration line from the immutable plan. |
+| `MergeBaseSha` | Merge base used for review material and baseline comparison. It does not prove integration-tip identity. |
+| `IntegrationTipSha` | Exact freshly fetched integration tip captured before verification commands. |
+| `TreeHash` | Existing proof field: the exact immutable delivery tree tested by the commands. |
+
+Optional fields default to null so older reports remain wire compatible. A
+missing or unfetchable integration ref leaves the tip unproven. Resumed review
+commands also leave the tip unproven rather than attaching a newly fetched tip
+to older test results. The final proof never fetches a later tip to claim as
+the one tested.
+
+The monolith persists these fields in `logs/review-verification.json` before
+integration, mapping `TreeHash` to `TestedTreeSha`. Reuse requires the current
+pre-merge integration tip to equal `IntegrationTipSha` and the merged tree to
+equal `TestedTreeSha`. A moved tip, changed tree, missing proof, replay, or
+conflict resolution keeps the full local gate. Merge-base equality alone never
+permits reuse. See
+[task integration and the worktree/merge workflow](../../concepts/task-integration-and-merge-workflow.md#integration-gate-reuse-of-the-remote-review-verdict-agt-2839).
+
 ## Telemetry
 
 - The report endpoint logs `review-report-accepted` /

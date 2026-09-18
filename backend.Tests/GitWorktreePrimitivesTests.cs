@@ -371,6 +371,7 @@ public sealed class GitWorktreePrimitivesTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "MachineBound")]
     public void MergeBranchIntoIntegration_DirectConflict_UsesRerereMergeWithoutRewritingDelivery()
     {
         var repo = SeedRepo("merge-rerere");
@@ -402,6 +403,7 @@ public sealed class GitWorktreePrimitivesTests : IDisposable
         Assert.Equal(MergeIntoIntegrationOutcome.Merged, result.Outcome);
         Assert.Empty(result.RebasedCommits);
         Assert.Equal(deliverySha, RunGit(repo, "rev-parse develop^2").Out.Trim());
+        Assert.True(result.ConflictsResolved);
         Assert.Equal(deliverySha, RunGit(repo, "rev-parse task/rerere").Out.Trim());
         Assert.Equal("combined resolution", File.ReadAllText(Path.Combine(repo, "shared.txt")).Trim());
         Assert.False(git.RepoHasUncommittedChanges(repo));

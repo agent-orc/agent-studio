@@ -156,6 +156,7 @@ public record MergeIntoIntegrationResult(
     string? PreviousIntegrationSha)
 {
     public IReadOnlyList<string> EvidenceShas { get; init; } = [];
+    public bool ConflictsResolved { get; init; }
     public static MergeIntoIntegrationResult Of(MergeIntoIntegrationOutcome outcome, string? mergedSha = null, string? error = null)
         => new(
             outcome,
@@ -4243,6 +4244,15 @@ public class GitService
         return string.IsNullOrWhiteSpace(sha) ? null : sha;
     }
 
+    /// <summary>Resolves the exact tracked tree for integration-gate identity.</summary>
+    public string? GetCommitTree(string repoRoot, string commit)
+    {
+        if (!ReviewSubjectStore.IsValidResultSha(commit)) return null;
+        var (output, _, code) = RunGitArgs(repoRoot, "rev-parse", "--verify", "--quiet", $"{commit}^{{tree}}");
+        var tree = output.Trim();
+        return code == 0 && ReviewSubjectStore.IsValidResultSha(tree) ? tree : null;
+    }
+
     /// <summary>
     /// Returns the first parent of a commit. A newly created integration merge
     /// uses this as its exact rollback anchor when the configured branch had to
@@ -5221,7 +5231,7 @@ public class GitService
                 mechanicalMerge.MergedSha);
             return MergeIntoIntegrationResult.Of(
                 MergeIntoIntegrationOutcome.Merged,
-                mergedSha: mechanicalMerge.MergedSha);
+                mergedSha: mechanicalMerge.MergedSha) with { ConflictsResolved = true };
         }
         if (mechanicalMerge.ConflictedFiles.Count == 0)
             return MergeIntoIntegrationResult.Of(
