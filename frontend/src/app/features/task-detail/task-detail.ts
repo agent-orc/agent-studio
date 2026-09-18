@@ -52,7 +52,7 @@ import { EpicRollupPaneComponent } from './components/epic-rollup-pane/epic-roll
 import { EpicMembershipBannerComponent } from './components/epic-membership-banner/epic-membership-banner.component';
 import { LogOverlayComponent } from './components/log-overlay/log-overlay.component';
 import { ProtocolPaneComponent } from './components/protocol-pane/protocol-pane/protocol-pane.component';
-import { deriveProtocolVerdict } from './components/protocol-pane/protocol-verdict';
+import { authoritativeDeliveryFacts, deriveProtocolVerdict } from './components/protocol-pane/protocol-verdict';
 import { classifyLatestActivityOutcome } from './components/agent-outcome.util';
 import { EscalationSummaryComponent } from './components/escalation-summary/escalation-summary.component';
 import { ParkedBlockerComponent } from './components/parked-blocker/parked-blocker.component';
@@ -725,7 +725,7 @@ export class TaskDetailComponent implements OnDestroy {
     outcomeIssue: this.detail().info.outcomeIssue,
     hasActivity: this.cliOutput().length > 0,
     laneState: this.detail().info.state,
-    orchestratorVerdict: this.detail().info.orchestratorVerdict,
+    orchestratorVerdict: this.detail().info.orchestratorVerdict, ...authoritativeDeliveryFacts(this.detail().info),
     statusSuperseded: this.statusIsSuperseded(),
     execution: this.detail().info.execution,
     pipelineExecution: this.taskPipelinePoll.pipeline()?.execution ?? null,

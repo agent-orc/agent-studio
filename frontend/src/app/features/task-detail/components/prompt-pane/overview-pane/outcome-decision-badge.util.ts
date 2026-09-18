@@ -27,6 +27,6 @@ export function outcomeDecisionBadge(outcome: ProtocolVerdict | null): DecisionB
     label: outcome.label,
     tone,
     severity,
-    tooltip: { title: `Run outcome: ${outcome.label}`, body: outcome.detail },
+    tooltip: { title: `Run outcome: ${outcome.label}`, body: outcome.tooltip },
   };
 }

@@ -19,6 +19,7 @@ function verdict(overrides: Partial<ProtocolVerdict> = {}): ProtocolVerdict {
     emoji: '🟢',
     label: 'Success',
     detail: 'Last run completed successfully.',
+    tooltip: 'from status.md Result line: Last run completed successfully.',
     lane: null,
     duration: null,
     ...overrides,

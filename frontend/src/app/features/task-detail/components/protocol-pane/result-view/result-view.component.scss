@@ -163,6 +163,12 @@
   }
 }
 
+.result__scan-hint {
+  color: var(--studio-fg-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 // --- 2. Overview ------------------------------------------------------------
 // One card, four per-case arrangements (concept doc §8.3). The tone accent and
 // the outer card are shared; `data-layout` reshapes the inner flow so a bugfix

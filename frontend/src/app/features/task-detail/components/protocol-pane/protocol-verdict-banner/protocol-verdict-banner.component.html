@@ -16,7 +16,7 @@
     <button type="button"
             class="protocol-verdict__line"
             data-testid="protocol-verdict-detail"
-            [cacTooltip]="expanded() ? '' : v.detail"
+            [cacTooltip]="expanded() ? '' : v.tooltip"
             [attr.aria-expanded]="expanded()"
             [attr.aria-controls]="expanded() && hasSignals() ? 'protocol-verdict-signals-list' : null"
             (click)="toggle()">
@@ -28,7 +28,7 @@
     <span class="protocol-verdict__label">{{ v.label }}</span>
     <span class="protocol-verdict__detail"
           data-testid="protocol-verdict-detail"
-          [cacTooltip]="v.detail">
+          [cacTooltip]="v.tooltip">
       <span class="protocol-verdict__detail-text">{{ v.detail }}</span>
     </span>
   }

@@ -8,7 +8,8 @@
               [attr.data-lane-tone]="laneTone()"
               [attr.data-outcome]="verdict().status || verdict().kind"
               data-testid="result-case-badge"
-              [cacTooltip]="verdict().detail">
+              [cacTooltip]="verdict().tooltip"
+              tooltipPosition="right">
           <span class="result__case-dot" data-testid="result-case-dot" aria-hidden="true"></span>
           <span class="result__case-label">{{ verdict().label }}</span>
         </span>
@@ -58,6 +59,14 @@
                 (click)="moreActions.emit($event)">⋯</button>
       </div>
     </header>
+
+    @if (textScanHint(); as hint) {
+      <div class="result__scan-hint"
+           data-testid="result-text-scan-hint"
+           [cacTooltip]="'from text scan: ' + hint.detail">
+        {{ hint.label }}
+      </div>
+    }
 
     @if (d.overview.synthesized && !d.overview.problem) {
       <aside class="result__overview" data-testid="result-scaffold-notice">

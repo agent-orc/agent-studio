@@ -53,7 +53,7 @@ import { FileSourceHistoryComponent } from '../../../../../components/file-sourc
 import { SourceViewerComponent, type SourceViewerRequest } from '../../source-viewer/source-viewer.component';
 import { MenuComponent } from '../../../../../components/menu';
 import type { MenuItem, MenuItemClickEvent } from '../../../../../components/menu';
-import { deriveProtocolVerdict, stripStatusHeader, type ProtocolVerdict } from '../protocol-verdict';
+import { authoritativeDeliveryFacts, deriveProtocolVerdict, stripStatusHeader, type ProtocolVerdict } from '../protocol-verdict';
 import { ProtocolVerdictBannerComponent } from '../protocol-verdict-banner/protocol-verdict-banner.component';
 import {
   buildInspectorTabs,
@@ -475,6 +475,7 @@ export class ProtocolPaneComponent implements OnDestroy {
       hasActivity: this.hasActivity(),
       laneState: this.detail().info.state,
       orchestratorVerdict: this.detail().info.orchestratorVerdict,
+      ...authoritativeDeliveryFacts(this.detail().info),
       statusSuperseded: this.statusIsSuperseded(),
       execution: this.detail().info.execution,
       pipelineExecution: this.pipelinePoll.pipeline()?.execution ?? null,

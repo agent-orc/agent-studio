@@ -1,5 +1,5 @@
 import { TaskState } from '../../../../models/task.model';
-import type { CliExecution, TaskOutcomeIssue, TaskSummaryStatus } from '../../../../models/task.model';
+import type { CliExecution, TaskInfo, TaskOutcomeIssue, TaskSummaryStatus } from '../../../../models/task.model';
 import { lanePresentation } from '../../../../models/lane-presentation';
 import type { PipelineExecutionRecord } from '../../../task-pipeline';
 import type { OutcomeAssessment } from '../agent-outcome.util';
@@ -13,6 +13,8 @@ export interface RunOutcomeSignal {
   status: AuthoritativeRunOutcomeStatus;
   label: string;
   detail: string;
+  /** Human-readable provenance used by the verdict tooltip. */
+  sourceLabel?: string;
   /**
    * Lane key this signal speaks for, set only on `source: 'lane'`. When such a
    * signal leads the verdict, the Result header wears that lane's tone instead
@@ -31,6 +33,8 @@ export interface ProtocolVerdict {
   emoji: string;
   label: string;
   detail: string;
+  /** Diagnostic hover copy that identifies the evidence behind the verdict. */
+  tooltip: string;
   /**
    * Lane key when the leading signal is the lane itself, else null. Lets the
    * Result header tint from the lane tone rather than the generic status tone
@@ -58,6 +62,10 @@ export interface ProtocolVerdictInputs {
   laneState?: string | null;
   /** Latest orchestrator-review verdict, used as one raw signal. */
   orchestratorVerdict?: 'pending' | 'reissue' | 'escalate' | 'accept' | null;
+  /** Git-derived containment fact from TaskInfo.integration. */
+  deliveryIntegrated?: boolean;
+  /** Whether the newest canonical review attempt has outcome Pass. */
+  lastReviewPassed?: boolean;
   /**
    * True when status.md provenance points at an older pipeline attempt than
    * the current execution. Its outcome is history and cannot lead the banner.
@@ -66,6 +74,15 @@ export interface ProtocolVerdictInputs {
   execution?: CliExecution | null;
   pipelineExecution?: PipelineExecutionRecord | null;
   activityOutcome?: OutcomeAssessment | null;
+}
+
+export function authoritativeDeliveryFacts(
+  info: Pick<TaskInfo, 'integration' | 'reviewProjection'>,
+): Pick<ProtocolVerdictInputs, 'deliveryIntegrated' | 'lastReviewPassed'> {
+  return {
+    deliveryIntegrated: ['integrated', 'merged-locally'].includes(info.integration?.status ?? ''),
+    lastReviewPassed: info.reviewProjection?.latestOutcome?.toLowerCase() === 'pass',
+  };
 }
 
 /**
@@ -157,8 +174,10 @@ function collectSignals(input: ProtocolVerdictInputs): RunOutcomeSignal[] {
       'A newer attempt is active. The previous status document is retained as historical evidence only.',
     ));
   }
-  const statusSignal = input.statusSuperseded ? null : markdownOutcome(input.statusMarkdown);
-  if (statusSignal) signals.push(statusSignal);
+  const statusSignals = input.statusSuperseded
+    ? []
+    : markdownOutcome(input.statusMarkdown, textScanMayLead(input));
+  signals.push(...statusSignals);
 
   const activity = input.activityOutcome;
   if (activity) signals.push(activitySignal(activity));
@@ -227,31 +246,64 @@ function executionOutcome(execution: CliExecution | null | undefined): RunOutcom
   }
 }
 
-function markdownOutcome(markdown: string | null | undefined): RunOutcomeSignal | null {
+function textScanMayLead(input: ProtocolVerdictInputs): boolean {
+  const deliverySettled = input.deliveryIntegrated || input.laneState === TaskState.Completed;
+  return !(deliverySettled && input.lastReviewPassed);
+}
+
+function markdownOutcome(
+  markdown: string | null | undefined,
+  scanMayLead: boolean,
+): RunOutcomeSignal[] {
   const sentinel = parseSentinel(markdown);
   if (sentinel) {
     const detail = sentinel.reason || `Agent emitted TASK_${sentinel.kind.toUpperCase()}.`;
-    if (sentinel.kind === 'done') return signal('status', 'succeeded', 'Done', detail);
-    if (sentinel.kind === 'noop') return signal('status', 'succeeded', 'No action needed', detail);
-    if (sentinel.kind === 'blocked') return signal('status', 'needs-decision', 'Blocked', detail);
-    return signal('status', 'needs-decision', 'Needs input', detail);
+    if (sentinel.kind === 'done') return [signal('status', 'succeeded', 'Done', detail, undefined, 'terminal sentinel')];
+    if (sentinel.kind === 'noop') return [signal('status', 'succeeded', 'No action needed', detail, undefined, 'terminal sentinel')];
+    if (sentinel.kind === 'blocked') return [signal('status', 'needs-decision', 'Blocked', detail, undefined, 'terminal sentinel')];
+    return [signal('status', 'needs-decision', 'Needs input', detail, undefined, 'terminal sentinel')];
   }
   const result = parseResultLine(markdown);
-  if (!result) return null;
-  if (result === 'failed') return signal('status', 'failed', 'Failed', 'status.md records Result: Failed.');
-  if (result === 'blocked') return signal('status', 'needs-decision', 'Blocked', 'status.md records Result: Blocked.');
-  if (result === 'partial') return signal('status', 'needs-decision', 'Partial', 'status.md records Result: Partial.');
-  if (result === 'needsinput') return signal('status', 'needs-decision', 'Needs input', 'status.md records Result: NeedsInput.');
+  if (!result) return [];
+  if (result === 'failed') return [resultLineSignal('failed', 'Failed', 'status.md records Result: Failed.')];
+  if (result === 'blocked') return [resultLineSignal('needs-decision', 'Blocked', 'status.md records Result: Blocked.')];
+  if (result === 'partial') return [resultLineSignal('needs-decision', 'Partial', 'status.md records Result: Partial.')];
+  if (result === 'needsinput') return [resultLineSignal('needs-decision', 'Needs input', 'status.md records Result: NeedsInput.')];
   if (result === 'success') {
     const blocker = scanForBlockers(markdown);
-    if (blocker) return signal(
-      'status',
-      'needs-decision',
-      'Blocked',
-      blocker.sentence ? `${blocker.section}: ${blocker.sentence}` : `${blocker.section} contains "${blocker.phrase}".`,
-    );
+    if (blocker) {
+      const detail = blocker.sentence
+        ? `${blocker.section}: ${blocker.sentence}`
+        : `${blocker.section} contains "${blocker.phrase}".`;
+      if (scanMayLead) {
+        return [signal('status', 'needs-decision', 'Blocked', detail, undefined, 'text scan')];
+      }
+      return [
+        resultLineSignal('succeeded', 'Success', 'status.md records Result: Success.'),
+        signal(
+          'status',
+          'succeeded',
+          `status text mentions: ${blocker.phrase}`,
+          detail,
+          undefined,
+          'text scan',
+        ),
+      ];
+    }
   }
-  return signal('status', 'succeeded', result === 'noop' ? 'No action needed' : 'Success', `status.md records Result: ${result}.`);
+  return [resultLineSignal(
+    'succeeded',
+    result === 'noop' ? 'No action needed' : 'Success',
+    `status.md records Result: ${result}.`,
+  )];
+}
+
+function resultLineSignal(
+  status: AuthoritativeRunOutcomeStatus,
+  label: string,
+  detail: string,
+): RunOutcomeSignal {
+  return signal('status', status, label, detail, undefined, 'status.md Result line');
 }
 
 function activitySignal(activity: OutcomeAssessment): RunOutcomeSignal {
@@ -269,8 +321,12 @@ function signal(
   label: string,
   detail: string,
   lane?: string,
+  sourceLabel?: string,
 ): RunOutcomeSignal {
-  return lane ? { source, status, label, detail, lane } : { source, status, label, detail };
+  const value: RunOutcomeSignal = { source, status, label, detail };
+  if (lane) value.lane = lane;
+  if (sourceLabel) value.sourceLabel = sourceLabel;
+  return value;
 }
 
 function presentation(
@@ -283,7 +339,35 @@ function presentation(
 ): ProtocolVerdict {
   const kind: ProtocolVerdictKind = status === 'failed' ? 'problem' : status === 'succeeded' ? 'ok' : 'unclear';
   const emoji = status === 'failed' ? '🔴' : status === 'succeeded' ? '🟢' : status === 'needs-decision' ? '🟠' : '🟡';
-  return { kind, status, signals, emoji, label, detail, lane, duration: parseDuration(markdown) };
+  const source = tooltipSource(signals, label);
+  const tooltipDetail = source === 'text scan' ? detail.replace(/^[^:]+:\s*/, '') : detail;
+  return {
+    kind,
+    status,
+    signals,
+    emoji,
+    label,
+    detail,
+    tooltip: `from ${source}: ${tooltipDetail}`,
+    lane,
+    duration: parseDuration(markdown),
+  };
+}
+
+function tooltipSource(signals: readonly RunOutcomeSignal[], leadingLabel: string): string {
+  const leading = signals.find(candidate => candidate.label === leadingLabel);
+  if (leading?.sourceLabel) return leading.sourceLabel;
+  switch (leading?.source) {
+    case 'review': return 'review outcome';
+    case 'runner': return 'runner outcome';
+    case 'execution': return 'terminal run outcome';
+    case 'pipeline': return 'pipeline outcome';
+    case 'activity': return 'activity classification';
+    case 'lane': return 'task lane';
+    case 'summary': return 'summary state';
+    case 'status': return 'status.md';
+    default: return 'outcome evidence';
+  }
 }
 
 const DURATION_RE = /^\s*-\s*Duration:\s*(.+?)\s*$/im;
@@ -372,11 +456,12 @@ function parseResultLine(markdown: string | null | undefined): ResultKind | null
   }
 }
 
-// Phrases that flip a Haiku "Success" verdict into a Blocked verdict when they
-// appear in the Notes / Open Items / What Was Done body of status.md. Keep one
-// phrase per line so the list reads as a lint surface. EN + DE because the agent
-// log can be either.
-const BLOCKER_PHRASES = [
+// Phrases that flag a Haiku "Success" verdict when they appear in the Notes /
+// Open Items / What Was Done body of status.md. The flag leads only without
+// integrated + passed-review facts; otherwise it remains a soft signal. Keep
+// one phrase per line so the list reads as a lint surface. EN + DE because the
+// agent log can be either.
+export const BLOCKER_PHRASES = [
   'blocked',
   'blocker',
   'could not',
@@ -430,16 +515,68 @@ function splitSections(markdown: string): { heading: string; body: string }[] {
 }
 
 function findBlockerPhrase(body: string): { phrase: string; sentence: string } | null {
-  const lower = body.toLowerCase();
+  const searchable = maskMarkdownCode(body);
   let best: { phrase: string; index: number } | null = null;
   for (const phrase of BLOCKER_PHRASES) {
-    const idx = lower.indexOf(phrase);
-    if (idx >= 0 && (best === null || idx < best.index)) {
-      best = { phrase, index: idx };
+    const matcher = new RegExp(`(?<![\\p{L}\\p{N}_-])${escapeRegExp(phrase)}(?![\\p{L}\\p{N}_-])`, 'giu');
+    let match: RegExpExecArray | null;
+    while ((match = matcher.exec(searchable)) !== null) {
+      if (isNegatedUse(searchable, match.index, phrase)) continue;
+      if (best === null || match.index < best.index) best = { phrase, index: match.index };
+      break;
     }
   }
   if (!best) return null;
   return { phrase: best.phrase, sentence: extractSentence(body, best.index) };
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Replace code with spaces so match offsets still address the original body. */
+function maskMarkdownCode(markdown: string): string {
+  const lines = markdown.replace(/\r\n/g, '\n').split('\n');
+  let fence: string | null = null;
+  return lines.map((line) => {
+    const fenceMatch = /^\s*(`{3,}|~{3,})/.exec(line);
+    if (fenceMatch) {
+      const marker = fenceMatch[1][0];
+      if (fence === null) fence = marker;
+      else if (fence === marker) fence = null;
+      return ' '.repeat(line.length);
+    }
+    if (fence !== null) return ' '.repeat(line.length);
+    return maskInlineCode(line);
+  }).join('\n');
+}
+
+function maskInlineCode(line: string): string {
+  let result = '';
+  for (let index = 0; index < line.length;) {
+    if (line[index] !== '`') {
+      result += line[index++];
+      continue;
+    }
+    let runLength = 1;
+    while (line[index + runLength] === '`') runLength++;
+    const delimiter = '`'.repeat(runLength);
+    const close = line.indexOf(delimiter, index + runLength);
+    if (close < 0) {
+      result += line[index++];
+      continue;
+    }
+    const end = close + runLength;
+    result += ' '.repeat(end - index);
+    index = end;
+  }
+  return result;
+}
+
+function isNegatedUse(text: string, index: number, phrase: string): boolean {
+  if (phrase !== 'blocked' && phrase !== 'blocker') return false;
+  const prefix = text.slice(Math.max(0, index - 48), index).toLowerCase();
+  return /\b(?:not|no|nothing)\b(?:\s+[\p{L}\p{N}_-]+){0,3}\s*$/u.test(prefix);
 }
 
 /**

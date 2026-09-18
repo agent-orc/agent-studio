@@ -13,6 +13,7 @@ function verdict(overrides: Partial<ProtocolVerdict> = {}): ProtocolVerdict {
     emoji: '🟢',
     label: 'Success',
     detail: 'Last run completed successfully.',
+    tooltip: 'from status.md Result line: Last run completed successfully.',
     lane: null,
     duration: '4 min',
     ...overrides,
@@ -83,6 +84,23 @@ async function build(d: TaskDetail, v: ProtocolVerdict) {
 }
 
 describe('ResultViewComponent', () => {
+  it('renders a protected blocker-text match as a soft hint below Success', async () => {
+    const fixture = await build(detail('# Status\n- Result: Success'), verdict({
+      signals: [{
+        source: 'status',
+        status: 'succeeded',
+        label: 'status text mentions: blocked',
+        detail: 'Notes: Blocked terminology is documented.',
+        sourceLabel: 'text scan',
+      }],
+    }));
+    const host = fixture.nativeElement as HTMLElement;
+
+    expect(host.querySelector('[data-testid="result-case-badge"]')?.textContent).toContain('Success');
+    expect(host.querySelector('[data-testid="result-text-scan-hint"]')?.textContent)
+      .toContain('status text mentions: blocked');
+  });
+
   it('renders the case badge and the overview problem/solution', async () => {
     const fixture = await build(detail(HEAD_ONLY), verdict());
     const el = fixture.nativeElement as HTMLElement;
