@@ -156,21 +156,62 @@ public sealed class RunnerBadgeProjectionTests
         Assert.Equal("agent-runner-01", result.RunnerId);
     }
 
-    // The same ownerless, remote-routed task once activity has gone stale is
-    // still presented as its remote runner (neutral, "reconnecting") - never a
-    // warning and never the sticky "Recovering" badge, because remote runs
-    // recover by replaying the job folder.
+    // AGT-2869: the same ownerless, remote-routed task once the replay has
+    // stopped is a phantom, not a live run. It stays its remote runner's card
+    // (never the sticky "Recovering" badge), but the state is remote-stale and
+    // the last runner event is named, so an operator can tell it apart from a
+    // host that is still working. This is the exact projection AGT-2867 showed
+    // as "Host running" for nine minutes while nobody was driving the run.
     [Fact]
-    public void ExecutionProjection_ProgressWithoutOwner_StaleRemote_StaysRemoteNotRecovering()
+    public void ExecutionProjection_ProgressWithoutOwner_StaleRemote_IsStaleNotRunning()
     {
         var result = TaskRunnerService.ProjectExecutionLocation(
             ProgressTask() with { LastActivity = Now.AddMinutes(-30) }, null,
             new TaskRunActivity { Kind = TaskRunActivityKinds.NoActiveRun },
             new RunLeaseInspection("none", null), "agent-runner-01", LocalIdentity(), null, Now);
 
-        Assert.Equal(TaskExecutionStates.RemoteRunning, result.State);
+        Assert.Equal(TaskExecutionStates.RemoteStale, result.State);
+        Assert.NotEqual(TaskExecutionStates.RemoteRunning, result.State);
         Assert.NotEqual(TaskExecutionStates.Recovering, result.State);
         Assert.Equal("reconnecting", result.ConnectionState);
+        Assert.Contains("no fenced authority", result.LastRunnerEvent);
+        Assert.Contains("nothing is driving this run", result.TrustReason);
+    }
+
+    // A heartbeat that stopped before its own lease ran out is the runner that
+    // is sitting on a result it cannot deliver. It is reported as remote-stale,
+    // separately from remote-disconnected, where the lease is still valid and
+    // only the link blipped.
+    [Fact]
+    public void ExecutionProjection_HeartbeatOlderThanItsLease_IsRemoteStale()
+    {
+        var expired = Lease("agent-runner-01", "agent-runner-01", "linux-01") with
+        {
+            LastHeartbeatAt = Now.AddMinutes(-9),
+        };
+
+        var result = TaskRunnerService.ProjectExecutionLocation(
+            ProgressTask(), null, null, new RunLeaseInspection("expired", expired),
+            "agent-runner-01", LocalIdentity(), Now.AddMinutes(-9), Now);
+
+        Assert.Equal(TaskExecutionStates.RemoteStale, result.State);
+        Assert.Equal("disconnected", result.ConnectionState);
+        Assert.Equal("expired", result.LeaseState);
+        Assert.Contains("Last runner event", result.LastRunnerEvent);
+        Assert.Contains("no authority is driving it", result.TrustReason);
+    }
+
+    [Fact]
+    public void ExecutionProjection_LiveRemoteRun_NamesNoRunnerEvent()
+    {
+        var lease = Lease("agent-runner-02", "runner two", "linux-02") with { LastHeartbeatAt = Now.AddSeconds(-5) };
+
+        var result = TaskRunnerService.ProjectExecutionLocation(
+            ProgressTask(), null, null, new RunLeaseInspection("active", lease),
+            "agent-runner-01", LocalIdentity(), Now.AddSeconds(-4), Now);
+
+        Assert.Equal(TaskExecutionStates.RemoteRunning, result.State);
+        Assert.Null(result.LastRunnerEvent);
     }
 
     // A locally-routed Progress task with no lease, no live process, and no
