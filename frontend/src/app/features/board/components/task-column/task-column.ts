@@ -324,7 +324,7 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
       } else if (status === 'failed' || status === 'cancelled' || status === 'stopped') {
         error++;
       }
-      if (j.pendingIntent) needsInput++;
+      if (j.pendingIntent && j.state !== TaskState.Completed && j.state !== TaskState.Archive) needsInput++;
     }
     return { running, needsInput, error, activeCli };
   });
