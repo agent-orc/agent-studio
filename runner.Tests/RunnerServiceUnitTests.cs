@@ -585,7 +585,7 @@ public sealed class RunnerServiceUnitTests
 
     [SkippableTheory]
     [InlineData("coding", "12", "CPUQuota=1200%\nCPUWeight=100\nIOWeight=100\n")]
-    [InlineData("review", "12", "CPUQuota=400%\nCPUWeight=30\nIOWeight=30\n")]
+    [InlineData("review", "12", "CPUQuota=600%\nCPUWeight=30\nIOWeight=30\n")]
     [InlineData("review", "2", "CPUQuota=100%\nCPUWeight=30\nIOWeight=30\n")]
     public void Agent_host_generates_role_quotas_from_host_cpu_count(
         string role,
@@ -602,6 +602,25 @@ public sealed class RunnerServiceUnitTests
 
         AssertScriptSucceeded(result);
         Assert.Equal(expected, result.StandardOutput.ReplaceLineEndings("\n"));
+    }
+
+    [SkippableFact]
+    public void Review_quota_is_derived_from_host_cores_and_declared_role_slots()
+    {
+        PlatformGate.RequiresPosixShell();
+        var profile = Path.Combine(Path.GetTempPath(), $"missing-agent-host-profile-{Guid.NewGuid():N}");
+
+        var result = RunResourceGovernance(
+            "--role", "review",
+            "--cpu-count", "12",
+            "--coding-slots", "2",
+            "--review-slots", "3",
+            "--profile", profile);
+
+        AssertScriptSucceeded(result);
+        Assert.Equal(
+            "CPUQuota=720%\nCPUWeight=30\nIOWeight=30\n",
+            result.StandardOutput.ReplaceLineEndings("\n"));
     }
 
     [SkippableFact]

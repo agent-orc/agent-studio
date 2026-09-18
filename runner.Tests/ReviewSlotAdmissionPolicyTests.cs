@@ -141,6 +141,36 @@ public sealed class ReviewSlotAdmissionPolicyTests
         Assert.DoesNotContain("envelope", decision.Reason, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Role_quota_clamps_a_centrally_raised_ceiling()
+    {
+        var decision = ReviewSlotAdmissionPolicy.Decide(
+            Sample(0.1, 12, activeSlots: 2),
+            activeSlots: 2,
+            slotCeiling: 3,
+            maxLoadPerCore: 1.5,
+            WorkerResourceEnvelope.Compute(hostCores: 12, codingSlots: 2, reviewSlots: 3),
+            roleQuotaCores: 4);
+
+        Assert.False(decision.Admitted);
+        Assert.Contains("role quota 4 cores supports 2 review workers", decision.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Role_quota_below_the_review_floor_closes_fresh_admission()
+    {
+        var decision = ReviewSlotAdmissionPolicy.Decide(
+            Sample(0.1, 4, activeSlots: 0),
+            activeSlots: 0,
+            slotCeiling: 1,
+            maxLoadPerCore: 1.5,
+            WorkerResourceEnvelope.Compute(hostCores: 4, codingSlots: 2, reviewSlots: 1),
+            roleQuotaCores: 1);
+
+        Assert.False(decision.Admitted);
+        Assert.Contains("supports 0 review workers", decision.Reason, StringComparison.Ordinal);
+    }
+
     private static HostTelemetrySample Sample(double? load, int cores, int activeSlots)
         => new(
             DateTime.UtcNow,

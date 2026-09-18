@@ -627,7 +627,10 @@ state.
   the same bounded command. The review runner adopts the review plane's
   parallelism recommendation as its slot ceiling from the capability
   advertisement's `RoleMaxParallelism`; `RUNNER_MAX_PARALLELISM` is only the
-  bootstrap value used until the first advertisement is answered.
+  bootstrap value used until the first advertisement is answered. The review
+  daemon also reads its role unit's `cpu.max` and `cpu.stat`, advertises plane
+  cores, per-worker envelope, rolling review duration, and throttled wall-time
+  share, and clamps local admission to one review worker per 2 role-quota cores.
 - Review and coding builds start with MSBuild node reuse off
   (`-nodeReuse:false` in the frozen plan, `MSBUILDDISABLENODEREUSE=1` in the
   review workspace, detached coding worker, and backend gate environments). A

@@ -201,7 +201,7 @@ public static class V1ReviewPlaneEndpoints
                 // capacity than the host itself claims to have.
                 if (registry.TryGetReviewExecutor(runnerId, request.InstanceId, out _))
                 {
-                    var recommended = reviewParallelism.Current.RecommendedParallelism;
+                    var recommended = reviewParallelism.Refresh().RecommendedParallelism;
                     var bootstrap = snapshot.RoleMaxParallelism ?? recommended;
                     snapshot = snapshot with
                     {
@@ -2624,6 +2624,27 @@ public sealed class V1ReviewExecutorRegistry
                         InstalledClis: Contract.InstalledCliProjection.FromCapabilities(capabilities));
                 })
                 .ToArray();
+        }
+    }
+
+    /// <summary>
+    /// The freshest review-role cgroup budget. The advisor is global today, so
+    /// multiple review identities are combined fail-safe by selecting the
+    /// smallest CPU plane; ties prefer the newest observation.
+    /// </summary>
+    public Contract.ReviewPlaneBudgetDto? LatestReviewPlaneBudget(DateTime nowUtc)
+    {
+        lock (_gate)
+        {
+            return _registrations
+                .Where(entry => entry.Value.Capabilities.Contains(Contract.ReviewCapabilities.ReviewExecutor))
+                .Select(entry => _capabilityStates.GetValueOrDefault(entry.Key)?.Telemetry?.ReviewPlane)
+                .Where(budget => budget is not null
+                                 && nowUtc.ToUniversalTime() - budget.ObservedAt.ToUniversalTime()
+                                 <= TimeSpan.FromMinutes(3))
+                .OrderBy(budget => budget!.PlaneCpuCores)
+                .ThenByDescending(budget => budget!.ObservedAt)
+                .FirstOrDefault();
         }
     }
 

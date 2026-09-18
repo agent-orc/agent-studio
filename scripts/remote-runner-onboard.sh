@@ -431,6 +431,8 @@ chmod 600 "$env_tmp"
 
 resource_policy="$(sudo /usr/local/libexec/agent-host-resource-governance \
   --role "$role" \
+  --coding-slots 2 \
+  --review-slots 2 \
   --profile /etc/agent-host/profile.conf \
   --drop-in-dir "/etc/systemd/system/${service_name}.service.d" \
   --migrate-drop-ins)"
