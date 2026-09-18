@@ -113,7 +113,12 @@ public sealed class RemoteRunnerDaemon
             $"authenticated daemon '{_options.RunnerName}' with attribution '{clientId}'; " +
             $"slots={_client.HostMaxParallelism} " +
             $"admission={(_client.UsesHostOrchestrator ? "host-permits" : "claims")}");
-        AnnounceWorkerEnvelope(persistedAtStartup);
+        WorkerCgroup.AnnounceEnvelope(
+            _options,
+            persistedAtStartup.Select(slot => slot.WorkerDirectory),
+            StraySweepContextFor(persistedAtStartup),
+            "detached workers",
+            _log);
         var handoffRecovery = new DurableHandoffRecovery(_options, _client, _log);
 
         var inventory = new RunnerProcessInventoryTracker();
@@ -972,39 +977,6 @@ public sealed class RemoteRunnerDaemon
         if (_client.UsesDurableTaskServer)
             inventory.AcknowledgeReports(snapshot);
         inventory.Apply(response.ReconciliationActions);
-    }
-
-    /// <summary>
-    /// AGT-2866: state the per-worker resource envelope this daemon generation
-    /// will apply, and clear away the worker cgroups of a previous generation
-    /// whose processes are gone. A cgroup that still holds a surviving detached
-    /// worker is not empty and is therefore never swept.
-    ///
-    /// <para>AGT-2868: the same startup pass empties the unit cgroup itself
-    /// first. Processes that no worker owns any more are the reason delegation
-    /// failed on a host that had run before, and without this the envelope would
-    /// report <c>applied=no</c> for the rest of that host's life.</para>
-    /// </summary>
-    private void AnnounceWorkerEnvelope(IReadOnlyList<PersistedRunnerSlot> retained)
-    {
-        if (!_options.WorkerEnvelopeEnabled)
-        {
-            _log("worker resource envelope disabled by RUNNER_WORKER_ENVELOPE=0; "
-                 + "detached workers run uncapped");
-            return;
-        }
-        var envelope = WorkerResourceEnvelope.FromOptions(_options);
-        _log($"worker resource envelope {envelope.Describe()} "
-             + $"(coding={_options.HostCodingSlots} review={_options.HostReviewSlots} "
-             + $"burst={_options.WorkerCpuBurst:0.0}x)");
-        var root = WorkerCgroup.EnsureDelegationRoot(
-            message => _log(message),
-            StraySweepContextFor(retained));
-        if (root is not null)
-            WorkerCgroup.SweepAbandoned(
-                root,
-                retained.Select(slot => slot.WorkerDirectory),
-                message => _log(message));
     }
 
     /// <summary>
