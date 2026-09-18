@@ -8,7 +8,7 @@ public sealed class AcceptanceRailPolicyTests
     private static readonly AcceptanceRailOptions Options = new(
         true,
         TimeSpan.FromMinutes(3),
-        5,
+        2,
         3,
         new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -28,7 +28,7 @@ public sealed class AcceptanceRailPolicyTests
 
         Assert.True(options.Enabled);
         Assert.Equal(TimeSpan.FromSeconds(180), options.Interval);
-        Assert.Equal(5, options.MaxRequeues);
+        Assert.Equal(2, options.MaxRequeues);
         Assert.Equal(AcceptanceRailDefaults.MaxInfrastructureRequeues, options.MaxInfrastructureRequeues);
         Assert.Contains(AcceptanceRailDefaults.OperatorHoldTag, options.HoldList);
     }
@@ -107,11 +107,39 @@ public sealed class AcceptanceRailPolicyTests
         var decision = AcceptanceRailPolicy.Decide(
             Card(),
             RecoverableConflict(),
-            conflictRequeues: 2,
+            conflictRequeues: 1,
             Options,
             Now);
 
         Assert.Equal(AcceptanceRailAction.Requeue, decision.Action);
+    }
+
+    [Fact]
+    public void DecisionCardMarker_DoesNotSuppressPassedReviewConflictRecovery()
+    {
+        var parked = new ParkedBlockerStatus(
+            ParkedBlockerCatalog.OperatorDecision,
+            ParkedBlockerConditionKinds.Manual,
+            "An operator decision was requested.",
+            DateTime.UtcNow,
+            0,
+            "review-verdict: AgentRoundRequired",
+            ParkedBlockerStatuses.Blocked,
+            null,
+            "AgentRoundRequired")
+        {
+            RequiresDecisionCard = true,
+        };
+
+        var decision = AcceptanceRailPolicy.Decide(
+            Card() with { ParkedBlocker = parked },
+            RecoverableConflict(),
+            conflictRequeues: 0,
+            Options,
+            Now);
+
+        Assert.Equal(AcceptanceRailAction.Requeue, decision.Action);
+        Assert.Equal("recoverable-integration-conflict", decision.Reason);
     }
 
     [Fact]

@@ -55,6 +55,7 @@ public sealed class RemoteReviewDaemon
             ct,
             RunnerActiveAttemptReporter.Review(state.LoadAll()));
         var active = new List<(Task<int> Run, string AttemptId, string ResourceNamespace)>();
+        var reviewStartedAt = new Dictionary<string, DateTime>(StringComparer.Ordinal);
         // AGT-2863: adopted attempts whose worker binary is a superseded release.
         // Reported always; in release-drain mode they also hold claim admission
         // until they finish. The workers themselves are never touched.
@@ -65,6 +66,7 @@ public sealed class RemoteReviewDaemon
             ReviewRestartGuardPolicy.IsBusyPhase(slot.Phase)));
         var connectivity = new TaskServerConnectivityMonitor(_log);
         var telemetry = new HostTelemetrySampler();
+        var planeBudgetProbe = new ReviewPlaneBudgetProbe();
         HostTelemetrySample? latestTelemetry = null;
         var nextSlotHygieneLog = DateTime.MinValue;
         var nextSlotReconciliation = DateTime.MinValue;
@@ -136,6 +138,7 @@ public sealed class RemoteReviewDaemon
                         executor.ReattachAsync(slot, shutdown),
                         slot.AttemptId,
                         slot.Claim.Lease.ResourceNamespace));
+                    reviewStartedAt[slot.AttemptId] = slot.CreatedAtUtc ?? DateTime.UtcNow;
                 }
                 else
                 {
@@ -150,6 +153,7 @@ public sealed class RemoteReviewDaemon
                             shutdown),
                         slot.AttemptId,
                         slot.Claim.Lease.ResourceNamespace));
+                    reviewStartedAt[slot.AttemptId] = slot.CreatedAtUtc ?? DateTime.UtcNow;
                 }
             }
 
@@ -265,12 +269,17 @@ public sealed class RemoteReviewDaemon
                 "review capability advertisement",
                 async operationToken =>
                 {
+                    var planeBudget = planeBudgetProbe.Sample(
+                        _options,
+                        _client.RoleMaxParallelism);
                     await _client.AdvertiseCapabilitiesAsync(
                         RunnerCapabilityProbe.Advertise(
                             _options,
                             gitPushReady: false,
                             connectivity: connectivity.Snapshot),
-                        RunnerCapabilityProbe.Telemetry(TakeTelemetry(force: true)),
+                        RunnerCapabilityProbe.Telemetry(
+                            TakeTelemetry(force: true),
+                            planeBudget),
                         generation,
                         operationToken);
                 },
@@ -368,6 +377,8 @@ public sealed class RemoteReviewDaemon
                     {
                         _log($"remote review slot failed after cleanup: {exception.Message}");
                     }
+                    if (reviewStartedAt.Remove(active[index].AttemptId, out var startedAt))
+                        planeBudgetProbe.RecordReviewDuration(DateTime.UtcNow - startedAt);
                     active.RemoveAt(index);
                 }
                 idleWatchdog.RecordActiveSlots(active.Count);
@@ -508,7 +519,11 @@ public sealed class RemoteReviewDaemon
                             // per-worker cgroup is derived from, so a centrally
                             // raised ceiling can never admit a slot this host has
                             // no envelope left for.
-                            WorkerResourceEnvelope.FromOptions(_options));
+                            WorkerResourceEnvelope.FromOptions(_options),
+                            // Admission polls read only cpu.max. The stateful
+                            // throttling delta belongs exclusively to the
+                            // minutely capability advertisement above.
+                            planeBudgetProbe.ReadRoleQuotaCores());
                     if (!admission.Admitted)
                     {
                         if (!admissionClosed)
@@ -582,6 +597,7 @@ public sealed class RemoteReviewDaemon
                                             shutdown),
                                         claim.Attempt.AttemptId,
                                         claim.Lease!.ResourceNamespace));
+                                    reviewStartedAt[claim.Attempt.AttemptId] = DateTime.UtcNow;
                                     idleWatchdog.RecordActiveSlots(active.Count);
                                 }
                                 else
@@ -590,6 +606,7 @@ public sealed class RemoteReviewDaemon
                                         executor.RunClaimedAsync(claim, shutdown),
                                         claim.Attempt.AttemptId,
                                         claim.Lease!.ResourceNamespace));
+                                    reviewStartedAt[claim.Attempt.AttemptId] = DateTime.UtcNow;
                                     idleWatchdog.RecordActiveSlots(active.Count);
                                 }
                             }

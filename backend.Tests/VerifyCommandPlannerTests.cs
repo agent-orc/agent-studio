@@ -1047,7 +1047,7 @@ public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
             TimeSpan.FromMilliseconds(100),
             CancellationToken.None);
 
-        Assert.Equal(BuildTestGateFailureKind.Timeout, result.FailureKind);
+        Assert.Equal(BuildTestGateFailureKind.Environment, result.FailureKind);
         Assert.NotNull(result.ViolatedBudget);
         Assert.Equal("gate-run", result.ViolatedBudget!.Name);
         Assert.InRange(result.ViolatedBudget.LimitMs, 95, 105);

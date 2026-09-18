@@ -1,5 +1,5 @@
 {
-  "version": "2026-09-13",
+  "version": "2026-09-18",
   "wikiPath": "docs/system/domains/model-routing-policy.md",
   "tiers": [
     {
@@ -69,6 +69,26 @@
       "score": 49
     }
   },
+  "providerRejectionFallbacks": [
+    {
+      "cliType": "codex",
+      "fromModel": "gpt-6-astra",
+      "toModel": "gpt-5.6-sol",
+      "reason": "The declared Codex sibling for provider request refusals."
+    },
+    {
+      "cliType": "claude",
+      "fromModel": "claude-opus-5",
+      "toModel": "claude-opus-4-8",
+      "reason": "The declared Anthropic Opus sibling for provider request refusals."
+    },
+    {
+      "cliType": "claude",
+      "fromModel": "claude-sonnet-5",
+      "toModel": "claude-sonnet-4-6",
+      "reason": "The declared Anthropic Sonnet sibling for provider request refusals."
+    }
+  ],
   "economyMode": {
     "downgradeSteps": 1,
     "label": "Economy mode"

@@ -29,6 +29,36 @@ function reviewSnapshot(overrides: Partial<ReviewQueueSnapshot> = {}): ReviewQue
  * (R3 sum invariant).
  */
 describe('RemoteHostsPanelComponent', () => {
+  it('shows provider request refusals by model and day', async () => {
+    await TestBed.configureTestingModule({
+      imports: [RemoteHostsPanelComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    }).compileComponents();
+    const service = TestBed.inject(RemoteHostsService);
+    service.providerRefusals.set([{
+      day: '2026-09-18',
+      model: 'gpt-6-astra',
+      count: 2,
+      refusals: ['unsupported_parameter access_programs.cyber'],
+    }]);
+
+    const fixture = TestBed.createComponent(RemoteHostsPanelComponent);
+    fixture.detectChanges();
+    const summary = (fixture.nativeElement as HTMLElement).querySelector(
+      '[data-testid="provider-refusal-summary"]',
+    );
+
+    expect(summary?.textContent).toContain('gpt-6-astra');
+    expect(summary?.textContent).toContain('2026-09-18');
+    expect(summary?.textContent).toContain('unsupported_parameter access_programs.cyber');
+    fixture.destroy();
+  });
+
   it('mounts, seeds the registry, and renders a sortable row per host', async () => {
     await TestBed.configureTestingModule({
       imports: [RemoteHostsPanelComponent],

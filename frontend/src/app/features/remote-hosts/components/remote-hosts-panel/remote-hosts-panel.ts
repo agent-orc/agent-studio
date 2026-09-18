@@ -67,6 +67,7 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   readonly loading = this.service.loading;
   readonly error = this.service.error;
   readonly identityDiagnostics = this.service.identityDiagnostics;
+  readonly providerRefusals = this.service.providerRefusals;
   readonly wizardOpen = signal(false);
   readonly purgeRetiredOpen = signal(false);
   readonly showRetired = signal(false);

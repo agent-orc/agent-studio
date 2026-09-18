@@ -38,6 +38,14 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+.role__plane,
+.role__alarm {
+  grid-column: 2 / -1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.role__plane { color: var(--studio-fg-muted); }
+.role__alarm { color: var(--severity-warn); font-weight: 650; }
 .role__status { gap: var(--studio-spacing-2); white-space: nowrap; }
 .role__link {
   display: block;

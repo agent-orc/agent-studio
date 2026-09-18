@@ -115,7 +115,8 @@ public sealed class AcceptanceRailHostedService : BackgroundService
                     failed++;
                     continue;
                 }
-                var used = CountConflictRequeues(job);
+                var recoveryBudget = CountConflictRequeues(job);
+                var used = recoveryBudget.Used;
                 var infrastructureUsed = CountInfrastructureRequeues(job);
                 var decision = AcceptanceRailPolicy.Decide(
                     job,
@@ -189,7 +190,7 @@ public sealed class AcceptanceRailHostedService : BackgroundService
                             else { failed++; RememberRefusal(job, fingerprint); }
                             break;
                         }
-                        if (await EscalateAsync(job, used, options.MaxRequeues, ct)) escalated++;
+                        if (await EscalateAsync(job, recoveryBudget, options.MaxRequeues, ct)) escalated++;
                         else { failed++; RememberRefusal(job, fingerprint); }
                         break;
                 }
@@ -429,11 +430,11 @@ public sealed class AcceptanceRailHostedService : BackgroundService
 
     private async Task<bool> EscalateAsync(
         TaskInfo job,
-        int used,
+        IntegrationRecoveryBudgetUsage budget,
         int maximum,
         CancellationToken ct)
     {
-        var reason = $"Integration recovery stopped after {used}/{maximum} conflict requeues. The card requires an operator decision instead of another automatic loop.";
+        var reason = budget.ExhaustedReason(maximum);
         var outcome = await _humanReviewEscalation.EscalateAsync(
             job.Id,
             job.WatchPath,
@@ -445,17 +446,14 @@ public sealed class AcceptanceRailHostedService : BackgroundService
 
         var moved = _scanner.FindJob(job.Id, job.WatchPath);
         if (moved is not null)
-            AppendAction(moved, "escalated", reason, used);
+            AppendAction(moved, "escalated", reason, budget.Used);
         return true;
     }
 
-    private int CountConflictRequeues(TaskInfo job)
-        => _timeline.ReadAll(job.FolderPath).Count(entry =>
-            entry.Kind == TimelineEventKinds.IntegrationRecoveryQueued
-            && string.Equals(
-                entry.Details?.GetValueOrDefault("source"),
-                TaskIntegrationRecoveryService.AcceptanceRailSource,
-                StringComparison.Ordinal));
+    private IntegrationRecoveryBudgetUsage CountConflictRequeues(TaskInfo job)
+        => IntegrationRecoveryBudget.Count(
+            _timeline.ReadAll(job.FolderPath),
+            ReviewSubjectStore.Read(job.FolderPath));
 
     /// <summary>
     /// Infrastructure replays already spent on this card, plus the instant of the

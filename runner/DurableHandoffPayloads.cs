@@ -13,6 +13,7 @@ public sealed record DurableCompletionPayload(
     AgentStudio.TaskServer.Contracts.ExecutionOutcomeDecision? OutcomeDecision = null,
     string? NeedsInputMessage = null,
     string? SalvageBranch = null,
+    string? SalvageCommitSha = null,
     // AGT-2820: the incident lines this completion carries. Journalled with the
     // payload so a replayed or recovered outbox item reports the same incident.
     IReadOnlyList<string>? GateItems = null);

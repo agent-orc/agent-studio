@@ -61,7 +61,10 @@ public sealed record AcceptedIntegrationFailure(
     string Reason,
     bool RebaseRecoveryAvailable,
     RunFailureClass FailureClass = RunFailureClass.Unknown,
-    string FailureSignature = RunFailureSignatures.Unclassified);
+    string FailureSignature = RunFailureSignatures.Unclassified)
+{
+    public IntegrationConflictReport? ConflictReport { get; init; }
+}
 
 /// <summary>
 /// Pure policy that turns a durable merge-step verdict into an operator-facing
@@ -96,6 +99,8 @@ public static class AcceptedIntegrationFailurePolicy
         var classified = RunFailureClassifier.Classify(new RunFailureEvidence
         {
             Text = reason ?? verdictSummary ?? string.Empty,
+            ParsedTestFailures = code == AcceptedIntegrationFailureCodes.BuildGateFailed
+                && reason?.Contains("failed tests were observed before cutoff", StringComparison.Ordinal) == true ? 1 : 0,
         });
 
         AcceptedIntegrationFailure failure = code switch
@@ -131,12 +136,12 @@ public static class AcceptedIntegrationFailurePolicy
                 RebaseRecoveryAvailable: true),
             AcceptedIntegrationFailureCodes.DeliveryAttributionAmbiguous => new(
                 code,
-                "Delivery attribution needs a new round",
+                "Merge conflict",
                 FirstNonBlank(
                     reason,
                     verdictSummary,
                     "Automatic integration could not retain a one-to-one delivery commit mapping."),
-                RebaseRecoveryAvailable: false),
+                RebaseRecoveryAvailable: true),
             AcceptedIntegrationFailureCodes.ReviewSubjectTaskKeyUnavailable => new(
                 code,
                 "Task key unavailable",
@@ -169,7 +174,7 @@ public static class AcceptedIntegrationFailurePolicy
                 FirstNonBlank(
                     reason,
                     verdictSummary,
-                    "The build/test gate failed before verification reached test discovery."),
+                    "The gate host or run budget prevented verification from completing."),
                 RebaseRecoveryAvailable: false),
             AcceptedIntegrationFailureCodes.GateInterrupted => new(
                 code,

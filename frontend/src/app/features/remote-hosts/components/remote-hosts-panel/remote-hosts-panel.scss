@@ -156,6 +156,51 @@
 }
 .rh__review--attention .rh__review-metric-value { color: var(--notify-warning-icon-fg); }
 
+.rh__refusals {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--studio-spacing-5);
+  margin-bottom: var(--studio-spacing-4);
+  padding: var(--studio-spacing-3) var(--studio-spacing-4);
+  background: var(--notify-warning-tint);
+}
+
+.rh__refusals-title {
+  margin: 0;
+  color: var(--notify-warning-icon-fg);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.rh__refusals-copy {
+  margin: var(--studio-spacing-1) 0 0;
+  color: var(--studio-fg-dim);
+  font-size: 11px;
+}
+
+.rh__refusal-rows {
+  display: grid;
+  gap: var(--studio-spacing-1);
+}
+
+.rh__refusal-row {
+  display: grid;
+  grid-template-columns: 7rem minmax(8rem, auto) 2rem minmax(12rem, 1fr);
+  gap: var(--studio-spacing-2);
+  align-items: baseline;
+  color: var(--studio-fg-dim);
+  font-size: 11px;
+}
+
+.rh__refusal-row strong { color: var(--studio-fg-strong); }
+.rh__refusal-count {
+  color: var(--notify-warning-icon-fg);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
 .rh__error {
   background: var(--notify-error-tint);
   color: var(--notify-error-icon-fg);

@@ -77,6 +77,12 @@ async function stubBackgroundApis(page: Page) {
   await page.route('**/api/v1/management/host-releases', json({
     observedAt: now, stable: { version: '0.3.0', commit: null, builtAt: null }, behindCount: 0, hosts: [],
   }));
+  await page.route('**/api/v1/management/provider-refusals?days=14', json([{
+    day: '2026-09-18',
+    model: 'gpt-6-astra',
+    count: 2,
+    refusals: ['unsupported_parameter access_programs.cyber'],
+  }]));
   await page.route('**/api/clients/*/telemetry?window=*', json({ clientId: 'mock', window: '14d', points: [{
     timestamp: now, cpuPercent: 7, load1: 0.1, load5: 0.1, load15: 0.1,
     memoryUsedBytes: 4_000_000_000, memoryTotalBytes: 16_000_000_000,
@@ -249,6 +255,20 @@ async function stubGroupedHostApis(page: Page) {
           memoryUsedBytes: 8_000_000_000,
           memoryTotalBytes: 16_000_000_000,
           cpuCores: 8,
+          reviewPlane: {
+            observedAt: observed,
+            cpuMax: '400000 100000',
+            planeCpuCores: 4,
+            cpuQuotaPercent: 400,
+            hostCores: 12,
+            workerEnvelopeCores: 2.4,
+            workerEnvelopeCpuQuotaPercent: 480,
+            currentCeiling: 2,
+            rollingReviewDurationSeconds: 2453,
+            throttledShare: 0.34,
+            sustainedThrottling: true,
+            alarmSuggestion: 'Raise the review role quota or lower the review ceiling.',
+          },
         },
         roleMaxParallelism: 6,
         effectiveMaxParallelism: null,
@@ -497,6 +517,24 @@ test.describe('Execution Hosts settings section', () => {
     await page.screenshot({ path: join(SHOT_DIR, 'execution-hosts-after-narrow-light--mocked.png'), fullPage: false });
     await setTheme(page, 'dark');
     await page.screenshot({ path: join(SHOT_DIR, 'execution-hosts-after-narrow-dark--mocked.png'), fullPage: false });
+  });
+
+  test('shows the review plane quota, adopted ceiling, throttling, and remediation alarm', async ({ page, devBackend: _devBackend }) => {
+    void _devBackend;
+    await stubGroupedHostApis(page);
+    await page.goto('/#/workspace/settings/execution-hosts');
+
+    const review = page.getByTestId('remote-host-role-row').filter({ hasText: 'Review' });
+    await expect(review.getByTestId('remote-host-review-plane'))
+      .toContainText('quota 400% · ceiling 2 · throttled 34%');
+    await expect(review.getByTestId('remote-host-review-throttled-share')).toHaveText('34%');
+    await expect(review.getByTestId('remote-host-review-plane-alarm'))
+      .toContainText('Raise the review role quota or lower the review ceiling.');
+
+    await setTheme(page, 'light');
+    await page.screenshot({ path: join(SHOT_DIR, 'execution-hosts-review-plane-light--mocked.png'), fullPage: false });
+    await setTheme(page, 'dark');
+    await page.screenshot({ path: join(SHOT_DIR, 'execution-hosts-review-plane-dark--mocked.png'), fullPage: false });
   });
 
   test('expanded machine starts with compact section summaries and reveals one section at a time', async ({ page, devBackend: _devBackend }) => {
@@ -1516,6 +1554,20 @@ test.describe('Execution Hosts settings section', () => {
     await remote.getByTestId('remote-host-action-setup').click();
     await expect(page.getByTestId('runner-setup-dialog')).toBeVisible();
     await page.screenshot({ path: join(SHOT_DIR, 'remote-host-runner-setup-light--mocked.png'), fullPage: false });
+  });
+
+  test('shows daily provider refusals in both themes', async ({ page }) => {
+    await page.goto('/#/workspace/settings/remote-hosts');
+    const summary = page.getByTestId('provider-refusal-summary');
+    await expect(summary).toContainText('gpt-6-astra');
+    await expect(summary).toContainText('unsupported_parameter access_programs.cyber');
+    mkdirSync(SHOT_DIR, { recursive: true });
+    for (const theme of ['dark', 'light'] as const) {
+      await setTheme(page, theme);
+      await summary.screenshot({
+        path: join(SHOT_DIR, `provider-request-refusals-${theme}--mocked.png`),
+      });
+    }
   });
 
   test('never renders stale CPU as live and captures dark-theme evidence', async ({ page }) => {

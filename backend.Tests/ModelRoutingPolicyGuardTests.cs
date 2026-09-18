@@ -74,6 +74,22 @@ public sealed class ModelRoutingPolicyGuardTests
         var registry = new ModelRoutingPolicyRegistry();
         Assert.NotEmpty(registry.Policy.Tiers);
         Assert.True(registry.Policy.Tiers.Any(t => t.Id == "sonnet-low"));
+        var astra = registry.ProviderRejectionFallback(CliTypes.Codex, ModelIds.Gpt6Astra);
+        Assert.Equal(ModelIds.Gpt56Sol, astra!.ToModel);
+    }
+
+    [Fact]
+    public void Provider_rejection_sibling_must_clear_the_cards_correctness_floor()
+    {
+        var registry = new ModelRoutingPolicyRegistry();
+        var critical = registry.CorrectnessFloor(
+            TaskTypes.Bug,
+            "Protect distributed lease ownership",
+            "Prevent stale-write data-loss in the runner.");
+
+        Assert.Equal("sol-xhigh", critical!.Id);
+        Assert.True(registry.RouteMeetsFloor(ModelIds.Gpt56Sol, "xhigh", critical));
+        Assert.False(registry.RouteMeetsFloor(ModelIds.Gpt56Sol, "medium", critical));
     }
 
     [Fact]

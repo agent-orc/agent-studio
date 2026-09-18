@@ -7,6 +7,7 @@ import type {
   HostRampStrategy,
   HostTelemetrySeries,
   PurgeRetiredClientsResponse,
+  ProviderRejectionDailyCount,
   RemoteRunnerLinkHealth,
   RemoteHost,
   TaskServerTelemetrySnapshot,
@@ -40,6 +41,7 @@ export class RemoteHostsService {
   readonly identityDiagnostics = signal<readonly ClientSummary[]>([]);
   /** The release every host row is measured against (AGT-2826). */
   readonly stableRelease = signal<StableReleaseIdentity | null>(null);
+  readonly providerRefusals = signal<readonly ProviderRejectionDailyCount[]>([]);
 
   private static readonly FRESH_CLIENT_MS = 90_000;
   private static readonly DEGRADED_CLIENT_MS = 5 * 60_000;
@@ -155,6 +157,7 @@ export class RemoteHostsService {
         this.hydrateCapabilityRegistry();
         this.hydrateLinkHealth();
         this.hydrateReleaseDrift();
+        this.hydrateProviderRefusals();
       },
       error: error => {
         this.identityDiagnostics.set([]);
@@ -165,6 +168,17 @@ export class RemoteHostsService {
           message: error?.message ?? 'unknown',
           durationMs: Math.round(performance.now() - startedAt),
         });
+      },
+    });
+  }
+
+  private hydrateProviderRefusals(): void {
+    if (!this.http) return;
+    this.http.get<ProviderRejectionDailyCount[]>('/api/v1/management/provider-refusals?days=14').subscribe({
+      next: refusals => this.providerRefusals.set(refusals ?? []),
+      error: error => {
+        this.providerRefusals.set([]);
+        this.log('provider-refusals-hydrate-failed', { message: error?.message ?? 'unknown' });
       },
     });
   }
@@ -200,6 +214,7 @@ export class RemoteHostsService {
               && now - lastSeenMs <= RemoteHostsService.DEGRADED_CLIENT_MS;
             const capabilityDegraded = snapshot.capabilities.some(capability =>
               !capability.isFresh || capability.healthState !== 'healthy' || capability.advertisedStatus !== 'ready');
+            const reviewPlaneAlarm = snapshot.telemetry?.reviewPlane?.sustainedThrottling === true;
             const hostDraining = snapshot.hostAdmission.admissionState !== 'open';
             const telemetryAt = snapshot.telemetry ? Date.parse(snapshot.telemetry.observedAt) : Number.NaN;
             const telemetryFresh = snapshot.telemetry && Number.isFinite(telemetryAt)
@@ -211,7 +226,9 @@ export class RemoteHostsService {
               ? 'draining'
               : !heartbeatFresh
                 ? current.status
-                : capabilityDegraded ? 'degraded' : current.status === 'offline' ? 'online' : current.status;
+                : capabilityDegraded || reviewPlaneAlarm
+                  ? 'degraded'
+                  : current.status === 'offline' ? 'online' : current.status;
             const stats = telemetryFresh && snapshot.telemetry
               ? telemetryStats(snapshot.telemetry)
               : status === 'offline' ? null : current.stats;
@@ -254,6 +271,9 @@ export class RemoteHostsService {
                 snapshot.roleMaxParallelism !== undefined
                   ? snapshot.roleMaxParallelism
                   : current.roleMaxParallelism ?? null,
+              reviewPlane: snapshot.telemetry
+                ? snapshot.telemetry.reviewPlane ?? null
+                : current.reviewPlane ?? null,
               restartedAt: snapshot.restartedAt ?? null,
               reviewsLost: snapshot.reviewsLost ?? 0,
               installedClis: snapshot.installedClis ?? current.installedClis ?? [],

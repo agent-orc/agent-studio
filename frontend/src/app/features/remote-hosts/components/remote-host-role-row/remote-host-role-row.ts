@@ -48,6 +48,15 @@ export class RemoteHostRoleRowComponent {
     releaseDriftTooltip(this.host().releaseDrift, this.stableRelease())
     ?? this.host().releaseId
     ?? null);
+  readonly reviewQuotaLabel = computed(() => {
+    const plane = this.host().reviewPlane;
+    if (!plane) return null;
+    return plane.cpuQuotaPercent === null ? 'quota max' : `quota ${plane.cpuQuotaPercent.toFixed(0)}%`;
+  });
+  readonly throttledShareLabel = computed(() => {
+    const share = this.host().reviewPlane?.throttledShare;
+    return share === null || share === undefined ? 'throttling n/a' : `throttled ${(share * 100).toFixed(0)}%`;
+  });
 
   emit(kind: HostActionKind): void {
     if (this.host().busyAction) return;
@@ -74,6 +83,11 @@ function runnerLinkTooltip(host: RemoteHost): string | null {
 }
 
 export function roleSlotTotal(host: RemoteHost): number | null {
+  if (host.serviceRole === 'review'
+    && host.reviewPlane?.currentCeiling !== null
+    && host.reviewPlane?.currentCeiling !== undefined) {
+    return host.reviewPlane.currentCeiling;
+  }
   if (host.serviceRole === 'review' && host.roleMaxParallelism) return host.roleMaxParallelism;
   if (host.runtimeCapacity) return host.runtimeCapacity.maxParallelism;
   if (host.effectiveMaxParallelism) return host.effectiveMaxParallelism;

@@ -4,12 +4,13 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { TestBed } from '@angular/core/testing';
 import { RemoteHostsService } from './remote-hosts.service';
 
-/** Side channels every reload fires: link health and the release-drift snapshot. */
+/** Side channels every reload fires. */
 function flushHostHydration(http: HttpTestingController): void {
   for (const request of http.match('/api/v1/management/links')) request.flush([]);
   for (const request of http.match('/api/v1/management/host-releases')) {
     request.flush({ observedAt: '2026-09-15T12:00:00Z', stable: { version: '0.3.0' }, behindCount: 0, hosts: [] });
   }
+  for (const request of http.match('/api/v1/management/provider-refusals?days=14')) request.flush([]);
 }
 
 describe('RemoteHostsService', () => {
@@ -87,6 +88,34 @@ describe('RemoteHostsService', () => {
 });
 
 describe('RemoteHostsService client registry hydration', () => {
+  it('hydrates daily provider refusal counts for fleet visibility', () => {
+    TestBed.configureTestingModule({
+      providers: [RemoteHostsService, provideHttpClient(), provideHttpClientTesting()],
+    });
+    const svc = TestBed.inject(RemoteHostsService);
+    const http = TestBed.inject(HttpTestingController);
+
+    svc.reload();
+    http.expectOne('/api/clients').flush([]);
+    http.expectOne('/api/v1/management/remote-hosts').flush([]);
+    http.expectOne('/api/v1/management/links').flush([]);
+    http.expectOne('/api/v1/management/host-releases').flush({
+      observedAt: '2026-09-18T12:00:00Z', stable: null, behindCount: 0, hosts: [],
+    });
+    http.expectOne('/api/v1/management/provider-refusals?days=14').flush([{
+      day: '2026-09-18',
+      model: 'gpt-6-astra',
+      count: 2,
+      refusals: ['unsupported_parameter access_programs.cyber'],
+    }]);
+
+    expect(svc.providerRefusals()).toEqual([expect.objectContaining({
+      model: 'gpt-6-astra',
+      count: 2,
+    })]);
+    http.verify();
+  });
+
   it('surfaces a corrupt identity and does not request telemetry for it', () => {
     TestBed.configureTestingModule({
       providers: [RemoteHostsService, provideHttpClient(), provideHttpClientTesting()],
@@ -740,6 +769,7 @@ describe('RemoteHostsService client registry hydration', () => {
     http.expectOne('/api/clients').flush([]);
     http.expectOne('/api/v1/management/remote-hosts').flush([]);
     for (const request of http.match('/api/v1/management/links')) request.flush([]);
+    http.expectOne('/api/v1/management/provider-refusals?days=14').flush([]);
 
     http.expectOne('/api/v1/management/host-releases').flush({
       observedAt: '2026-09-15T12:00:00Z',

@@ -342,6 +342,9 @@ public sealed record TaskIntegrationFailure
     /// <summary>Stable signature slug behind <see cref="FailureClass"/>.</summary>
     public string FailureSignature { get; init; }
         = AgentStudio.TaskServer.Contracts.RunFailureSignatures.Unclassified;
+
+    /// <summary>Structured three-stage conflict evidence, when available.</summary>
+    public IntegrationConflictReport? ConflictReport { get; init; }
 }
 
 /// <summary>

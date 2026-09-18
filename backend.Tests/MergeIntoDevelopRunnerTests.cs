@@ -944,6 +944,15 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         Assert.Equal("agent-round-required", step.Verdict);
         // The conflicted file is surfaced in the verdict summary tooltip.
         Assert.Contains("shared.txt", step.VerdictSummary);
+        Assert.NotNull(step.ConflictReport);
+        Assert.Equal(3, step.ConflictReport!.Stages.Count);
+        Assert.Equal(["shared.txt"], step.ConflictReport.ConflictedFiles);
+        Assert.Equal(3, step.Reason!.Split('\n').Length);
+        Assert.StartsWith(
+            "Merge into develop conflicted (direct merge, mechanical merge and rebase fallback all failed)",
+            step.Reason,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("hint:", step.Reason, StringComparison.OrdinalIgnoreCase);
     }
 
     // ---- AGT-1999: integration-branch push to origin -----------------------
@@ -1834,7 +1843,52 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         Assert.NotNull(step);
         Assert.Equal(PipelineStepStatus.Failed, step!.Status);
         Assert.Equal("gate-environment-failure", step.Verdict);
-        Assert.Contains("gate environment:", step.Reason);
+        Assert.Contains("GateEnvironment:", step.Reason);
+    }
+
+    [Theory]
+    [Trait("Category", "MachineBound")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Environment_retry_reuses_candidate_only_when_integration_inputs_are_unchanged(bool branchMoves)
+    {
+        var repo = SeedRepo("budget-candidate");
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "checkout -q -b task/62");
+        File.WriteAllText(Path.Combine(repo, "task.txt"), "task work");
+        Commit(repo, "feat: task work");
+        RunGit(repo, "checkout -q develop");
+        var (git, log, settings) = BuildWithSettings(repo);
+        settings.SetBuildProfile("Fixture", new BuildProfile { BuildCmds = ["cd ."] });
+        var failed = new CapturingBuildTestGateRunner(new BuildTestGateResult(
+            BuildTestGateVerdict.Fail, null, 1800164, "", "gate-run budget exceeded", false, false)
+        {
+            FailureKind = BuildTestGateFailureKind.Environment,
+            ViolatedBudget = new("gate-run", 1800000, 1800164, "verification"),
+        });
+        var queue = new IntegrationPushQueue();
+        var jobFolder = BeginRun(log, repo, jobId: "62");
+        var firstRunner = new MergeIntoDevelopRunner(git, log, NullLogger<MergeIntoDevelopRunner>.Instance,
+            pushQueue: queue, projectSettings: settings, preDevelopBuildGate: new PreDevelopBuildGate(failed));
+        Assert.Equal(MergeIntoIntegrationOutcome.GateEnvironmentFailure,
+            (await firstRunner.RunAsync("Fixture", "62", jobFolder, repo, "develop", CancellationToken.None)).Outcome);
+        var originalCandidate = failed.Request!.ExpectedSha;
+        Assert.False(queue.Reader.TryRead(out _));
+        if (branchMoves)
+        {
+            File.WriteAllText(Path.Combine(repo, "other.txt"), "another integration");
+            Commit(repo, "feat: another delivery");
+        }
+        var passed = new CapturingBuildTestGateRunner(new BuildTestGateResult(
+            BuildTestGateVerdict.Ok, 0, 10, "", "green", false, false));
+        var retryRunner = new MergeIntoDevelopRunner(git, log, NullLogger<MergeIntoDevelopRunner>.Instance,
+            pushQueue: queue, projectSettings: settings, preDevelopBuildGate: new PreDevelopBuildGate(passed));
+        var retry = await retryRunner.RunAsync("Fixture", "62", jobFolder, repo, "develop", CancellationToken.None);
+        Assert.True(retry.Outcome.IsSuccessfulIntegration(), retry.Error);
+        Assert.Equal(1, passed.Invocations);
+        Assert.Equal(!branchMoves, originalCandidate == passed.Request!.ExpectedSha);
+        Assert.Equal(passed.Request.ExpectedSha, retry.MergedSha);
+        Assert.True(queue.Reader.TryRead(out _));
     }
 
     [Fact]
@@ -2103,13 +2157,14 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
     /// End-to-end against the real <see cref="BuildTestGateRunner"/>: with no
     /// explicit timeout, a resolved budget from a tight project override, and a
     /// command that genuinely runs long, the merge rolls back classified
-    /// <see cref="BuildTestGateFailureKind.Timeout"/> - never
+    /// <see cref="BuildTestGateFailureKind.Environment"/> - never
     /// <see cref="BuildTestGateFailureKind.Code"/>, which would spend a
     /// rebase-recovery steer round chasing a budget problem the delivery cannot
     /// fix.
     /// </summary>
     [Fact]
-    public async Task RunAsync_DevelopTarget_ResolvedBudgetExceeded_RollsBackClassifiedTimeoutNotCode()
+    [Trait("Category", "MachineBound")]
+    public async Task RunAsync_DevelopTarget_ResolvedBudgetExceeded_RollsBackAsEnvironment()
     {
         var repo = SeedRepo("develop-gate-budget-exceeded");
         RunGit(repo, "checkout -q -b develop");
@@ -2133,7 +2188,7 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
             "Fixture", "73", jobFolder, repo, "develop", CancellationToken.None);
 
         // Rolled back, the same as any other red gate.
-        Assert.Equal(MergeIntoIntegrationOutcome.GateFailed, outcome.Outcome);
+        Assert.Equal(MergeIntoIntegrationOutcome.GateEnvironmentFailure, outcome.Outcome);
         Assert.Equal(developBefore, RunGit(repo, "rev-parse develop").Out.Trim());
 
         var evidencePath = Assert.Single(
@@ -2141,6 +2196,10 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         var evidence = File.ReadAllText(evidencePath);
         Assert.Contains("gate-run budget", evidence);
         Assert.Contains("budget=gate-run", evidence);
+        Assert.Contains("GateEnvironment", outcome.Error);
+        Assert.DoesNotContain("start a steer round", outcome.Error);
+        Assert.Contains("resource-evidence.json", evidence);
+        Assert.Contains("slowest-tests.json", evidence);
     }
 
     [Fact]

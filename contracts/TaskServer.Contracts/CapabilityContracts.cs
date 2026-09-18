@@ -87,7 +87,28 @@ public sealed record HostTelemetrySnapshotDto(
     DateTime? TaskServerConnectionEscalatedAt = null,
     string? TaskServerConnectionLastError = null,
     DateTime? TaskServerConnectionLastRecoveredAt = null,
-    long? CliProcessesReaped = null);
+    long? CliProcessesReaped = null,
+    ReviewPlaneBudgetDto? ReviewPlane = null);
+
+/// <summary>
+/// Review-role capacity observed from the role unit's cgroup. The raw
+/// <c>cpu.max</c> value is retained so an unlimited quota is distinguishable
+/// from a missing probe; <see cref="PlaneCpuCores"/> is the effective budget
+/// used by admission and central parallelism policy.
+/// </summary>
+public sealed record ReviewPlaneBudgetDto(
+    DateTime ObservedAt,
+    string CpuMax,
+    double PlaneCpuCores,
+    double? CpuQuotaPercent,
+    int HostCores,
+    double WorkerEnvelopeCores,
+    int WorkerEnvelopeCpuQuotaPercent,
+    int CurrentCeiling,
+    double? RollingReviewDurationSeconds,
+    double? ThrottledShare,
+    bool SustainedThrottling,
+    string? AlarmSuggestion = null);
 
 public sealed record CapabilityFailureRequest(
     string RunnerId,

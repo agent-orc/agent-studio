@@ -93,7 +93,7 @@ public static class GateEnvironmentRetryReasons
     {
         Disabled => "Gate-environment integration retries are disabled for this server.",
         OutsideLanes =>
-            $"Retrying an integration requires a task in {TaskStates.HumanReview} or {TaskStates.Escalated}.",
+            $"Retrying an integration requires a task in {TaskStates.AutoReview}, {TaskStates.HumanReview}, or {TaskStates.Escalated}.",
         NoCodeDelivery => "This task delivers no code, so there is no integration to retry.",
         AcceptanceIntegrationInFlight =>
             "An acceptance integration for this task is already running; wait for it to settle before retrying.",
@@ -155,6 +155,7 @@ public static class GateEnvironmentRetryPolicy
     /// </summary>
     public static readonly IReadOnlySet<string> Lanes = new HashSet<string>(StringComparer.Ordinal)
     {
+        TaskStates.AutoReview,
         TaskStates.HumanReview,
         TaskStates.Escalated,
     };
@@ -162,7 +163,7 @@ public static class GateEnvironmentRetryPolicy
     /// <param name="task">The delivered card.</param>
     /// <param name="integration">Its Git-derived integration verdict.</param>
     /// <param name="reviewPassed">
-    /// Whether the latest settled review for the card's current delivery SHA
+    /// Whether the latest review for the card's current delivery SHA
     /// ended in Pass. False refuses the retry: without a passed review there is
     /// nothing to reuse and the replay would integrate unreviewed work.
     /// </param>
@@ -216,7 +217,11 @@ public static class GateEnvironmentRetryPolicy
         // the retry that produced the current failure. A missing anchor (legacy
         // evidence without a timestamp) is treated as due now rather than as a
         // reason to never retry.
-        var anchor = spent == 0 ? failedAt ?? lastAttemptAt : lastAttemptAt ?? failedAt;
+        // A long gate can outlast its backoff. Wait from its completed failure,
+        // not only the receipt written before it started.
+        var anchor = failedAt is { } failure && lastAttemptAt is { } attempt
+            ? (failure > attempt ? failure : attempt)
+            : failedAt ?? lastAttemptAt;
         if (anchor is not { } from)
         {
             return new GateEnvironmentRetryDecision(
@@ -270,7 +275,7 @@ public static class GateEnvironmentRetryPolicy
         string? gateReason)
     {
         var detail = string.IsNullOrWhiteSpace(gateReason)
-            ? "The build/test gate failed before verification reached test discovery."
+            ? "The gate host or run budget prevented verification from completing."
             : gateReason.Trim();
         return $"Parked after {attempts} automatic gate-environment retries: the merge into "
                + $"{integrationBranch} keeps failing on the gate environment, not on the reviewed change. "

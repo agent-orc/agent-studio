@@ -326,7 +326,7 @@ public static class TimelineEventKinds
     /// may represent an operator action for a legacy conflict or the bounded
     /// automatic round used when a mechanical rebase cannot retain unambiguous
     /// SHA attribution. <see cref="TimelineEvent.Details"/> identifies whether
-    /// the round was automatic.
+    /// the round was automatic and records its fenced delivery-chain identity.
     /// </summary>
     public const string IntegrationRecoveryQueued = "integration_recovery_queued";
     /// <summary>
@@ -339,6 +339,11 @@ public static class TimelineEventKinds
     /// <c>run-timeout-with-salvage</c> reason.
     /// </summary>
     public const string ContinuationRoundStarted = "continuation_round_started";
+    /// <summary>
+    /// A provider refused the model request and the platform continued a
+    /// salvaged run on the explicitly declared sibling model.
+    /// </summary>
+    public const string ProviderRejectionContinuationStarted = "provider_rejection_continuation_started";
     /// <summary>
     /// The platform-owned acceptance rail accepted, requeued, or boundedly
     /// escalated this card without a session-bound orchestrator tick.

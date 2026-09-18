@@ -201,7 +201,7 @@ public static class V1ReviewPlaneEndpoints
                 // capacity than the host itself claims to have.
                 if (registry.TryGetReviewExecutor(runnerId, request.InstanceId, out _))
                 {
-                    var recommended = reviewParallelism.Current.RecommendedParallelism;
+                    var recommended = reviewParallelism.Refresh().RecommendedParallelism;
                     var bootstrap = snapshot.RoleMaxParallelism ?? recommended;
                     snapshot = snapshot with
                     {
@@ -880,6 +880,7 @@ public static class V1ReviewPlaneEndpoints
                 // Carried onto the Human Review lane row as the verdict's
                 // qualifier: the integration outcome behind the park.
                 string? integrationOutcome = null;
+                string? integrationParkReason = null;
                 // AGT-2839: record what this review actually verified - the
                 // integration ref, the merge base on it, and the immutable
                 // result SHA - beside the task, synchronously, before any
@@ -926,6 +927,7 @@ public static class V1ReviewPlaneEndpoints
                     {
                         var integrated = await remoteIntegration.EnqueueAsync(integrationRequest).ConfigureAwait(false);
                         integrationOutcome = integrated.Outcome.ToString();
+                        integrationParkReason = integrated.AutomaticRecoveryDetail;
                     }
                     else
                     {
@@ -938,6 +940,7 @@ public static class V1ReviewPlaneEndpoints
                         task.FolderPath,
                         RemoteDeliverySettlementStage.IntegrationSettled,
                         integrationOutcome,
+                        integrationParkReason,
                         logger);
                 }
 
@@ -949,6 +952,7 @@ public static class V1ReviewPlaneEndpoints
                         task.WatchPath,
                         ct,
                         cause: $"remote-review:{attemptId}",
+                        reason: integrationParkReason,
                         authorityWrite: new AttemptWriteReference(
                             attemptId,
                             request.Fence,
@@ -991,6 +995,7 @@ public static class V1ReviewPlaneEndpoints
                             moved.NewFolderPath ?? task.FolderPath,
                             RemoteDeliverySettlementStage.LaneSettled,
                             integrationOutcome,
+                            integrationParkReason,
                             logger);
                         // Board contract: the human-review park needs a journal
                         // verdict, or the boot-time verdict-less backfill later
@@ -1180,11 +1185,16 @@ public static class V1ReviewPlaneEndpoints
         string jobFolderPath,
         RemoteDeliverySettlementStage stage,
         string? integrationOutcome,
+        string? integrationDetail,
         ILogger logger)
     {
         try
         {
-            RemoteDeliverySettlementStore.Advance(jobFolderPath, stage, integrationOutcome);
+            RemoteDeliverySettlementStore.Advance(
+                jobFolderPath,
+                stage,
+                integrationOutcome,
+                integrationDetail);
         }
         catch (Exception ex)
         {
@@ -2640,6 +2650,27 @@ public sealed class V1ReviewExecutorRegistry
                         Release: registration.Release);
                 })
                 .ToArray();
+        }
+    }
+
+    /// <summary>
+    /// The freshest review-role cgroup budget. The advisor is global today, so
+    /// multiple review identities are combined fail-safe by selecting the
+    /// smallest CPU plane; ties prefer the newest observation.
+    /// </summary>
+    public Contract.ReviewPlaneBudgetDto? LatestReviewPlaneBudget(DateTime nowUtc)
+    {
+        lock (_gate)
+        {
+            return _registrations
+                .Where(entry => entry.Value.Capabilities.Contains(Contract.ReviewCapabilities.ReviewExecutor))
+                .Select(entry => _capabilityStates.GetValueOrDefault(entry.Key)?.Telemetry?.ReviewPlane)
+                .Where(budget => budget is not null
+                                 && nowUtc.ToUniversalTime() - budget.ObservedAt.ToUniversalTime()
+                                 <= TimeSpan.FromMinutes(3))
+                .OrderBy(budget => budget!.PlaneCpuCores)
+                .ThenByDescending(budget => budget!.ObservedAt)
+                .FirstOrDefault();
         }
     }
 

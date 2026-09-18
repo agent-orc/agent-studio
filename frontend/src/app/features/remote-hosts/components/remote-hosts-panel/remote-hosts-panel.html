@@ -7,32 +7,21 @@
       </p>
     </div>
     <div class="rh__actions">
-      <button class="rh__add"
-              type="button"
-              data-testid="remote-hosts-add"
-              (click)="openWizard()">
-        <span aria-hidden="true">+</span>
-        <span>Add execution host</span>
+      <button class="rh__add" type="button" data-testid="remote-hosts-add" (click)="openWizard()">
+        <span aria-hidden="true">+</span><span>Add execution host</span>
       </button>
       @if (retiredCount()) {
-        <button class="rh__refresh"
-                type="button"
-                data-testid="remote-hosts-purge-retired"
+        <button class="rh__refresh" type="button" data-testid="remote-hosts-purge-retired"
                 (click)="openPurgeRetired()">
           <span>Delete retired…</span>
         </button>
       }
-      <button class="rh__refresh"
-            type="button"
-            data-testid="remote-hosts-refresh"
-            [disabled]="loading()"
-            (click)="reload()">
-      {{ loading() ? '⏳' : '↻' }}
-      <span>Reload</span>
+      <button class="rh__refresh" type="button" data-testid="remote-hosts-refresh"
+              [disabled]="loading()" (click)="reload()">
+        {{ loading() ? '⏳' : '↻' }} <span>Reload</span>
       </button>
     </div>
   </header>
-
   <div class="rh__summary" data-testid="remote-hosts-summary">
     <span class="rh__count"><strong>{{ total() }}</strong> {{ total() === 1 ? 'machine' : 'machines' }}</span>
     <span class="rh__sep" aria-hidden="true">·</span>
@@ -59,7 +48,6 @@
       </button>
     }
   </div>
-
   @if (readyCandidateTasks().length > 0) {
     <section class="rh__candidates" data-testid="execution-host-candidates">
       <h3 class="rh__candidates-title">Ready routes with benchmark candidates</h3>
@@ -117,14 +105,31 @@
     </section>
   }
 
+  @if (providerRefusals().length) {
+    <section class="rh__refusals" data-testid="provider-refusal-summary">
+      <div>
+        <h3 class="rh__refusals-title">Provider request refusals · last 14 days</h3>
+        <p class="rh__refusals-copy">Model requests rejected by the provider for this organisation.</p>
+      </div>
+      <div class="rh__refusal-rows">
+        @for (refusal of providerRefusals(); track refusal.day + ':' + refusal.model) {
+          <div class="rh__refusal-row" data-testid="provider-refusal-row">
+            <time [attr.datetime]="refusal.day">{{ refusal.day }}</time>
+            <strong>{{ refusal.model }}</strong>
+            <span class="rh__refusal-count">{{ refusal.count }}</span>
+            <span>{{ refusal.refusals.join(', ') }}</span>
+          </div>
+        }
+      </div>
+    </section>
+  }
+
   @if (error(); as err) {
     <div class="rh__error" data-testid="remote-hosts-error">{{ err }}</div>
   }
 
   @if (identityDiagnostics().length) {
-    <section class="rh__identity-errors"
-             role="alert"
-             data-testid="remote-hosts-identity-errors">
+    <section class="rh__identity-errors" role="alert" data-testid="remote-hosts-identity-errors">
       <strong>Client identity registry needs repair</strong>
       <p>Affected runners cannot start until each identity file is restored.</p>
       <ul>
@@ -192,15 +197,10 @@
           </tr>
         </thead>
         @for (group of sortedHostGroups(); track group.id) {
-          <tbody appRemoteHostCard
-            [host]="group.machine"
-            [roles]="group.roles"
-            [roleActiveSlots]="roleSlots(group)"
-            [now]="now()"
-            [boardActiveSlots]="groupSlots(group)"
-            [projectSlots]="projectSlots(group.machine)"
-            [stableRelease]="stableRelease()"
-            [expanded]="isExpanded(group.id)"
+          <tbody appRemoteHostCard [host]="group.machine" [roles]="group.roles"
+            [roleActiveSlots]="roleSlots(group)" [now]="now()"
+            [boardActiveSlots]="groupSlots(group)" [projectSlots]="projectSlots(group.machine)"
+            [stableRelease]="stableRelease()" [expanded]="isExpanded(group.id)"
             (expandedChange)="setExpanded(group.id, $event)"
             (action)="onAction($event)"
             (capacityChange)="onCapacityChange($event)"

@@ -670,15 +670,21 @@ steer the pipeline in this policy version.
   retries the gate on its next pass instead of returning the card to an
   operator or spending a rebase-recovery steer round - a toolchain crash is
   never a product failure and the delivery cannot fix it (CAC-18).
+- AGT-2872: a gate-run budget cutoff without failed tests also projects as
+  `GateEnvironmentFailure`. Red test evidence wins over timeout classification.
+  Verification records process-tree CPU, wall time, and host saturation; sustained
+  external contention can earn one bounded extension. Runs at 80% of the original
+  budget or overrun record the ten slowest reported tests/collections. See the
+  [measurement thresholds and evidence contract](../../operations/testing/build-test-gate-flaky-rerun.md#budget-overruns-and-contention-agt-2872).
 - That accepted-integration sweep only re-drives cards in `6-completed` /
   `7-archive`, and the acceptance rail only reacts to `conflict-skipped`, which
   CAC-18 deliberately excludes this failure from. A delivery that failed its
   merge gate before Human Review therefore had nobody to honour the "will be
   retried" promise. `GateEnvironmentRetryService` owns that case (AGT-2824):
-  for a card in `5-human-review` / `5e-escalated` whose integration failure code
+  for a card in `4-auto-review` / `5-human-review` / `5e-escalated` whose integration failure code
   is `gate-environment-failure`, it replays **only the integration** of the
   unchanged delivery SHA on a bounded ladder of 5, 15, and 45 minutes. It never
-  creates a review attempt: it first checks that the latest settled review in
+  creates a review attempt: it first checks that the latest review in
   attempt authority for exactly that delivery SHA ended in `Pass`, and reuses
   it. See
   [task integration and merge workflow](../../concepts/task-integration-and-merge-workflow.md#gate-environment-retry-agt-2824)
@@ -1190,8 +1196,10 @@ operator changes cause the step to fail before its writer runs.
   intent, supersedes the current delivery generation, moves the card to the
   front of Ready, and writes `Automatically started a new agent round to
   preserve unambiguous delivery SHA attribution.` to the timeline. This loop is
-  limited to one automatic round per operator-owned review epoch. Repetition
-  reaches Human Review with the failed step and conflicted files visible. Every
+  limited to two automatic rounds per fenced delivery chain. Re-reviewing one
+  delivery shares the budget across review epochs; a newly published delivery
+  starts a fresh budget. Repetition reaches Human Review with the failed step
+  and conflicted files visible. Every
   failed attempt leaves the integration working tree clean. Once
   merge/gate/rollback starts, host cancellation
   does not interrupt that consistency boundary. `/healthz/drain` reports
@@ -1289,12 +1297,13 @@ broken. An operator had to requeue every one by hand.
   own `requeued-infrastructure` timeline receipts so the rail and the card
   projection agree on the retry number.
 - **Integration recovery round.** `RemoteIntegrationContinuationPolicy.Decide`
-  (`backend/Features/Pipeline/IntegrationAgentRoundService.cs`) opens exactly one
-  automatic steer round per operator-owned review epoch when the merge-first
+  (`backend/Features/Pipeline/IntegrationAgentRoundService.cs`) opens at most two
+  automatic steer rounds per fenced delivery chain when the merge-first
   integrator returns `AgentRoundRequired`, then leaves a repeat for Human Review.
   The round saves a `steer` pending intent, retains the ambiguous delivery as
   superseded history, queues the card at the front of Ready, and states itself as
-  `integration_recovery_queued` with `automatic=true`.
+  `integration_recovery_queued` with `automatic=true` and the persisted
+  `deliveryChainId`. Identifier-less legacy rows count conservatively.
 - **Run timeout with a salvage commit.** The same shape one step earlier
   (AGT-2861). `RunTimeoutSalvageContinuationPolicy.Decide`
   (`backend/Features/Runner/RunTimeoutSalvageContinuation.cs`) reads one remote

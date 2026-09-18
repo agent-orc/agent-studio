@@ -352,6 +352,11 @@ public sealed class RemoteRunnerDaemon
                 shutdown);
         }
 
+        var finalizationReconciler = new CodingFinalizationReconciler(
+            _options,
+            _client,
+            state,
+            _log);
         var loadGate = new RunnerLoadGate(
             _options.ClaimMaxLoadPerCore,
             TimeSpan.FromSeconds(_options.LoadGateSustainedSeconds));
@@ -390,6 +395,19 @@ public sealed class RemoteRunnerDaemon
             try
             {
                 await handoffRecovery.RecoverAllAsync(shutdown);
+                // AGT-2869: re-drive a finalization the Task Server was too busy
+                // restarting to accept. This runs before the claim path so a
+                // stranded delivery is always ahead of new work.
+                foreach (var redrive in await finalizationReconciler.DriveAsync(
+                             active.Where(slot => slot.TaskKey is not null)
+                                 .Select(slot => slot.TaskKey!)
+                                 .ToArray(),
+                             inventory,
+                             shutdown))
+                {
+                    active.Add(new ActiveSlot(redrive.TaskKey, redrive.Execution));
+                    idleWatchdog.RecordActiveSlots(active.Count);
+                }
                 var cliUpdate = await _client.GetCliUpdateAsync(shutdown);
                 if (cliUpdate is not null)
                 {

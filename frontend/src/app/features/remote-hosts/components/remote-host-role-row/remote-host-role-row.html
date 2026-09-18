@@ -10,6 +10,17 @@
         Restarted at {{ h.restartedAt | date:'short' }}, {{ h.reviewsLost ?? 0 }} reviews lost
       </span>
     }
+    @if (h.serviceRole === 'review' && reviewQuotaLabel()) {
+      <span class="role__plane" data-testid="remote-host-review-plane">
+        {{ reviewQuotaLabel() }} · ceiling {{ slotTotal() ?? 'n/a' }} · {{ throttledShareLabel() }}
+      </span>
+    }
+    @if (h.reviewPlane?.sustainedThrottling) {
+      <span class="role__alarm" data-testid="remote-host-review-plane-alarm"
+            [attr.title]="h.reviewPlane?.alarmSuggestion">
+        CPU throttling sustained. {{ h.reviewPlane?.alarmSuggestion }}
+      </span>
+    }
   </span>
 </td>
 <td>
@@ -28,7 +39,13 @@
 <td class="role__number" data-testid="remote-host-slots-summary">
   {{ activeSlots() }} / {{ slotTotal() ?? 'n/a' }}
 </td>
-<td class="role__load"><span class="role__placeholder" title="Reported once per machine">–</span></td>
+<td class="role__load role__number">
+  @if (h.reviewPlane?.throttledShare !== null && h.reviewPlane?.throttledShare !== undefined) {
+    <span data-testid="remote-host-review-throttled-share">{{ ((h.reviewPlane?.throttledShare ?? 0) * 100).toFixed(0) }}%</span>
+  } @else {
+    <span class="role__placeholder" title="Reported once per machine">–</span>
+  }
+</td>
 <td class="role__activity"><span class="role__placeholder" title="Reported once per machine">–</span></td>
 <td class="role__release" data-testid="remote-host-role-release" [attr.title]="releaseTooltip()">
   <app-host-release-identity [host]="h" [stableRelease]="stableRelease()"

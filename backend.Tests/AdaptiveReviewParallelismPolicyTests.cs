@@ -1,4 +1,5 @@
 using AgentStudio.Runner;
+using AgentStudio.TaskServer.Contracts;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -147,4 +148,77 @@ public sealed class AdaptiveReviewParallelismPolicyTests
         Assert.Equal(ReviewParallelismAction.Hold, decision.Action);
         Assert.Equal(Options.BaselineParallelism, decision.RecommendedParallelism);
     }
+
+    [Fact]
+    public void Evaluate_RefusesRaiseBeyondTheAdvertisedPlaneBudget()
+    {
+        var decision = AdaptiveReviewParallelismPolicy.Evaluate(
+            currentRecommendation: 2,
+            queueDepth: 9,
+            isStagnant: true,
+            Now,
+            lastChangeAtUtc: null,
+            queueEmptySinceUtc: null,
+            Options,
+            Plane(planeCores: 4, durationSeconds: 900, throttledShare: 0.02));
+
+        Assert.Equal(ReviewParallelismAction.Hold, decision.Action);
+        Assert.Equal(2, decision.RecommendedParallelism);
+        Assert.Contains("raise refused: plane 400% supports 2 workers at 2 cores each", decision.Reason);
+    }
+
+    [Fact]
+    public void Evaluate_WithdrawsRaiseWhenDurationRegressesUnderThrottling()
+    {
+        var decision = AdaptiveReviewParallelismPolicy.Evaluate(
+            currentRecommendation: 3,
+            queueDepth: 8,
+            isStagnant: false,
+            Now,
+            lastChangeAtUtc: Now.AddMinutes(-2),
+            queueEmptySinceUtc: null,
+            Options,
+            Plane(planeCores: 8, durationSeconds: 1_200, throttledShare: 0.35),
+            durationBeforeLastRaiseSeconds: 900);
+
+        Assert.Equal(ReviewParallelismAction.Lower, decision.Action);
+        Assert.Equal(2, decision.RecommendedParallelism);
+        Assert.Contains("raise withdrawn", decision.Reason);
+        Assert.Contains("throttled share", decision.Reason);
+    }
+
+    [Fact]
+    public void Evaluate_ClosesThePlaneWhenQuotaCannotSupplyTheDocumentedMinimum()
+    {
+        var decision = AdaptiveReviewParallelismPolicy.Evaluate(
+            currentRecommendation: 1,
+            queueDepth: 9,
+            isStagnant: true,
+            Now,
+            lastChangeAtUtc: null,
+            queueEmptySinceUtc: null,
+            Options,
+            Plane(planeCores: 1, durationSeconds: 900, throttledShare: 0.20));
+
+        Assert.Equal(ReviewParallelismAction.Lower, decision.Action);
+        Assert.Equal(0, decision.RecommendedParallelism);
+        Assert.Contains("supports 0 workers", decision.Reason);
+    }
+
+    private static ReviewPlaneBudgetDto Plane(
+        double planeCores,
+        double durationSeconds,
+        double throttledShare)
+        => new(
+            Now,
+            $"{planeCores * 100_000:0} 100000",
+            planeCores,
+            planeCores * 100,
+            HostCores: 12,
+            WorkerEnvelopeCores: 2.4,
+            WorkerEnvelopeCpuQuotaPercent: 480,
+            CurrentCeiling: 3,
+            durationSeconds,
+            throttledShare,
+            SustainedThrottling: throttledShare >= 0.1);
 }

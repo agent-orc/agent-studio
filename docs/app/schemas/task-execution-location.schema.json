@@ -8,8 +8,8 @@
   "properties": {
     "state": {
       "type": "string",
-      "enum": ["local-running", "remote-running", "remote-disconnected", "queued-remote", "recovering", "no-active-execution"],
-      "description": "Operator-facing execution and health state."
+      "enum": ["local-running", "remote-running", "remote-disconnected", "remote-stale", "queued-remote", "recovering", "no-active-execution"],
+      "description": "Operator-facing execution and health state. remote-disconnected is a quiet heartbeat under a still-valid lease; remote-stale is a run no authority covers any more."
     },
     "executionKind": { "type": "string", "enum": ["local", "remote", "none"], "description": "Actual location kind, or none when no runtime owns the task." },
     "runnerId": { "type": ["string", "null"], "description": "Stable identity of the actual lease or process owner." },
@@ -27,6 +27,7 @@
     "leaseState": { "type": "string", "description": "Active, expired, released, local-process, or none." },
     "trustReason": { "type": "string", "minLength": 1, "description": "Explanation of which authoritative runtime fact supports the projection." },
     "historical": { "type": "boolean", "description": "True for captured settled run attribution, which must render quietly." },
+    "lastRunnerEvent": { "type": ["string", "null"], "description": "Last runner event the server can name, shown for a disconnected or stale remote run. Null while the run is live." },
     "lastRejection": {
       "description": "Latest remote Runner refusal recorded during the task's current Ready-lane stay. Null when no current refusal exists.",
       "oneOf": [

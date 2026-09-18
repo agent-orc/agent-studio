@@ -162,6 +162,7 @@ public sealed class AutoReviewDeliveryResumeService
         var integrationOutcome = decision.Reason == AutoReviewResumePolicy.Reasons.DeliveryGateFailed
             ? AcceptedIntegrationFailureCodes.DeliveryGateFailed
             : settlement?.IntegrationOutcome;
+        var integrationDetail = settlement?.IntegrationDetail;
 
         if (decision.Action == AutoReviewResumeAction.StartIntegration)
         {
@@ -171,10 +172,12 @@ public sealed class AutoReviewDeliveryResumeService
             var request = BuildIntegrationRequest(task, settlement!);
             var result = await _integration.EnqueueAsync(request).ConfigureAwait(false);
             integrationOutcome = result.Outcome.ToString();
+            integrationDetail = result.AutomaticRecoveryDetail;
             RemoteDeliverySettlementStore.Advance(
                 task.FolderPath,
                 RemoteDeliverySettlementStage.IntegrationSettled,
-                integrationOutcome);
+                integrationOutcome,
+                integrationDetail);
         }
         else if (decision.Reason == AutoReviewResumePolicy.Reasons.DeliveryGateFailed)
         {
@@ -187,7 +190,14 @@ public sealed class AutoReviewDeliveryResumeService
                 integrationOutcome);
         }
 
-        return await CompleteTransitionAsync(task, review, decision, integrationOutcome, source, ct)
+        return await CompleteTransitionAsync(
+                task,
+                review,
+                decision,
+                integrationOutcome,
+                integrationDetail,
+                source,
+                ct)
             .ConfigureAwait(false);
     }
 
@@ -203,6 +213,7 @@ public sealed class AutoReviewDeliveryResumeService
         ReviewAttemptDto review,
         AutoReviewResumeDecision decision,
         string? integrationOutcome,
+        string? integrationDetail,
         string source,
         CancellationToken ct)
     {
@@ -213,6 +224,7 @@ public sealed class AutoReviewDeliveryResumeService
             task.WatchPath,
             ct,
             cause: $"remote-review-resume:{review.AttemptId}",
+            reason: integrationDetail,
             suppressProductExecution: true,
             expectedSourceState: TaskStates.AutoReview,
             transitionCause: LaneChangeCauses.ReviewVerdict,
@@ -249,7 +261,8 @@ public sealed class AutoReviewDeliveryResumeService
         RemoteDeliverySettlementStore.Advance(
             folder,
             RemoteDeliverySettlementStage.LaneSettled,
-            integrationOutcome);
+            integrationOutcome,
+            integrationDetail);
 
         _logger.LogInformation(
             "auto-review-delivery-resumed project={Project} job={JobId} attempt={AttemptId} action={Action} reason={Reason} integration={Integration} source={Source}",

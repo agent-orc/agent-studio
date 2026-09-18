@@ -157,6 +157,10 @@ public record MergeIntoIntegrationResult(
 {
     public IReadOnlyList<string> EvidenceShas { get; init; } = [];
     public bool ConflictsResolved { get; init; }
+    public IntegrationConflictReport? ConflictReport { get; init; }
+    public string? AutomaticRecoveryDetail { get; init; }
+    public int? AutomaticRecoveryBudgetUsed { get; init; }
+    public int? AutomaticRecoveryBudgetLimit { get; init; }
     public static MergeIntoIntegrationResult Of(MergeIntoIntegrationOutcome outcome, string? mergedSha = null, string? error = null)
         => new(
             outcome,
@@ -189,14 +193,18 @@ public record MergeIntoIntegrationResult(
 
     public static MergeIntoIntegrationResult RequiresAgentRound(
         IReadOnlyList<string> conflictedFiles,
-        string error)
+        string error,
+        IntegrationConflictReport? conflictReport = null)
         => new(
             MergeIntoIntegrationOutcome.AgentRoundRequired,
             null,
             error,
             conflictedFiles,
             Array.Empty<RebasedCommitReplacement>(),
-            null);
+            null)
+        {
+            ConflictReport = conflictReport,
+        };
 }
 
 /// <summary>
@@ -4279,6 +4287,15 @@ public class GitService
         return code == 0 && ReviewSubjectStore.IsValidResultSha(tree) ? tree : null;
     }
 
+    /// <summary>Exact tree and ordered parent identity, independent of merge timestamp.</summary>
+    internal bool HaveSameMergeInputs(string repoRoot, string left, string right)
+    {
+        if (!ReviewSubjectStore.IsValidResultSha(left) || !ReviewSubjectStore.IsValidResultSha(right)) return false;
+        var (output, _, code) = RunGitArgs(repoRoot, "show", "-s", "--format=%T %P", left, right, "--");
+        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return code == 0 && lines.Length == 2 && lines[0] == lines[1];
+    }
+
     /// <summary>
     /// Returns the first parent of a commit. A newly created integration merge
     /// uses this as its exact rollback anchor when the configured branch had to
@@ -5214,6 +5231,13 @@ public class GitService
                 MergeIntoIntegrationOutcome.Error,
                 error: $"Could not resolve the exact tip of integration branch '{integrationBranch}'.");
         }
+        var deliveryTip = GetBranchTip(repoRoot, sourceRef);
+        if (string.IsNullOrWhiteSpace(deliveryTip))
+        {
+            return MergeIntoIntegrationResult.Of(
+                MergeIntoIntegrationOutcome.Error,
+                error: $"Could not resolve the exact delivery tip of '{sourceRef}'.");
+        }
 
         var (_, directMergeError, directMergeCode) = RunGitArgs(
             repoRoot,
@@ -5267,16 +5291,25 @@ public class GitService
         var recovery = TryMechanicalRebase(repoRoot, sourceRef, integrationTip);
         if (!recovery.Success)
         {
-            return recovery.FailureKind is MechanicalRebaseFailureKind.Conflict
-                    or MechanicalRebaseFailureKind.AttributionAmbiguous
-                ? MergeIntoIntegrationResult.RequiresAgentRound(
-                    recovery.ConflictedFiles.Count > 0
-                        ? recovery.ConflictedFiles
-                        : mechanicalMerge.ConflictedFiles,
-                    recovery.Error ?? mechanicalMerge.Error ?? "Automatic integration recovery requires an agent round.")
-                : MergeIntoIntegrationResult.Of(
-                    MergeIntoIntegrationOutcome.Error,
-                    error: recovery.Error);
+            if (recovery.FailureKind is MechanicalRebaseFailureKind.Conflict
+                or MechanicalRebaseFailureKind.AttributionAmbiguous)
+            {
+                var report = BuildIntegrationConflictReport(
+                    integrationBranch,
+                    integrationTip,
+                    deliveryTip,
+                    directConflicts,
+                    mechanicalMerge.ConflictedFiles,
+                    recovery);
+                return MergeIntoIntegrationResult.RequiresAgentRound(
+                    report.ConflictedFiles,
+                    report.RenderDetail(),
+                    report);
+            }
+
+            return MergeIntoIntegrationResult.Of(
+                MergeIntoIntegrationOutcome.Error,
+                error: recovery.Error);
         }
 
         var currentIntegrationTip = GetBranchTip(repoRoot, integrationBranch);
@@ -5302,13 +5335,32 @@ public class GitService
         {
             var conflicted = ListUnmergedFiles(repoRoot);
             RunGitArgs(repoRoot, "merge", "--abort");
-            return conflicted.Count > 0
-                ? MergeIntoIntegrationResult.RequiresAgentRound(
-                    conflicted,
-                    $"The cardinality-preserving rebase succeeded, but its final merge conflicted: {mergeErr.Trim()}")
-                : MergeIntoIntegrationResult.Of(
-                    MergeIntoIntegrationOutcome.Error,
-                    error: $"The rebased delivery could not be merged: {mergeErr.Trim()}");
+            if (conflicted.Count > 0)
+            {
+                var finalMergeConflict = recovery with
+                {
+                    Success = false,
+                    ConflictedFiles = conflicted,
+                    Error = "The rebased delivery remained conflicted at the final merge.",
+                    FailureKind = MechanicalRebaseFailureKind.Conflict,
+                    Outcome = "final merge conflicted",
+                };
+                var report = BuildIntegrationConflictReport(
+                    integrationBranch,
+                    integrationTip,
+                    deliveryTip,
+                    directConflicts,
+                    mechanicalMerge.ConflictedFiles,
+                    finalMergeConflict);
+                return MergeIntoIntegrationResult.RequiresAgentRound(
+                    report.ConflictedFiles,
+                    report.RenderDetail(),
+                    report);
+            }
+
+            return MergeIntoIntegrationResult.Of(
+                MergeIntoIntegrationOutcome.Error,
+                error: $"The rebased delivery could not be merged: {mergeErr.Trim()}");
         }
 
         var mergedSha = ReadHeadShaAt(repoRoot);
@@ -5454,10 +5506,14 @@ public class GitService
                 if (rebaseCode != 0)
                 {
                     var conflictedFiles = ListUnmergedFiles(worktreePath);
+                    var stop = ParseRebaseStop(rebaseError, originalCommits);
                     attempt = conflictedFiles.Count > 0
                         ? MechanicalRebaseAttempt.Conflict(
                             conflictedFiles,
-                            $"Mechanical rebase conflicted and was aborted: {rebaseError.Trim()}")
+                            "Mechanical rebase conflicted and was aborted.",
+                            stop.Sha,
+                            stop.Number,
+                            originalCommits.Count)
                         : MechanicalRebaseAttempt.Failed(
                             $"Mechanical rebase failed before integration: {rebaseError.Trim()}");
                 }
@@ -5475,7 +5531,8 @@ public class GitService
                     {
                         attempt = MechanicalRebaseAttempt.AttributionAmbiguous(
                             rebasedRangeError
-                            ?? "Mechanical rebase changed the delivery commit cardinality; refusing ambiguous SHA attribution.");
+                            ?? "Mechanical rebase changed the delivery commit cardinality; refusing ambiguous SHA attribution.",
+                            originalCommits.Count);
                     }
                     else
                     {
@@ -5491,7 +5548,10 @@ public class GitService
                         attempt = replacements.Length == 0
                             ? MechanicalRebaseAttempt.Failed(
                                 "Mechanical rebase produced no replacement commit objects.")
-                            : MechanicalRebaseAttempt.Applied(rebasedTip, replacements);
+                            : MechanicalRebaseAttempt.Applied(
+                                rebasedTip,
+                                replacements,
+                                originalCommits.Count);
                     }
                 }
             }
@@ -5511,6 +5571,95 @@ public class GitService
             return MechanicalRebaseAttempt.Failed(cleanupError);
 
         return attempt;
+    }
+
+    private static IntegrationConflictReport BuildIntegrationConflictReport(
+        string integrationBranch,
+        string integrationTip,
+        string deliveryTip,
+        IReadOnlyList<string> directConflicts,
+        IReadOnlyList<string> mechanicalConflicts,
+        MechanicalRebaseAttempt rebase)
+    {
+        var allConflicts = directConflicts
+            .Concat(mechanicalConflicts)
+            .Concat(rebase.ConflictedFiles)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var reported = allConflicts
+            .Take(IntegrationConflictReport.MaxReportedFiles)
+            .ToList();
+        return new IntegrationConflictReport
+        {
+            IntegrationBranch = integrationBranch,
+            IntegrationTipSha = integrationTip,
+            DeliverySha = deliveryTip,
+            Stages =
+            [
+                new IntegrationConflictStageReport
+                {
+                    Stage = "direct-merge",
+                    Outcome = "conflict",
+                    ConflictedFileCount = directConflicts.Count,
+                },
+                new IntegrationConflictStageReport
+                {
+                    Stage = "mechanical-merge",
+                    Outcome = "conflict",
+                    ConflictedFileCount = mechanicalConflicts.Count,
+                },
+                new IntegrationConflictStageReport
+                {
+                    Stage = "rebase-fallback",
+                    Outcome = rebase.Outcome,
+                    ConflictedFileCount = rebase.ConflictedFiles.Count,
+                    StoppedCommitSha = rebase.StoppedCommitSha,
+                    StoppedCommitNumber = rebase.StoppedCommitNumber,
+                    TotalCommits = rebase.TotalCommits,
+                },
+            ],
+            ConflictedFileCount = allConflicts.Count,
+            ConflictedFiles = reported,
+            ConflictedFilesTruncated = allConflicts.Count > reported.Count,
+        };
+    }
+
+    private static RebaseStop ParseRebaseStop(
+        string output,
+        IReadOnlyList<string> originalCommits)
+    {
+        var applyMatch = Regex.Match(
+            output ?? string.Empty,
+            @"could not apply\s+(?<sha>[0-9a-f]{7,40})\b",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        var abbreviated = applyMatch.Success ? applyMatch.Groups["sha"].Value : null;
+        var commitNumber = abbreviated is null
+            ? null
+            : originalCommits
+                .Select((sha, index) => new { Sha = sha, Number = index + 1 })
+                .FirstOrDefault(item => item.Sha.StartsWith(
+                    abbreviated,
+                    StringComparison.OrdinalIgnoreCase))
+                ?.Number;
+
+        var progressMatches = Regex.Matches(
+            output ?? string.Empty,
+            @"Rebasing\s*\((?<number>\d+)\s*/\s*(?<total>\d+)\)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (commitNumber is null
+            && progressMatches.Count > 0
+            && int.TryParse(
+                progressMatches[^1].Groups["number"].Value,
+                out var parsedNumber))
+        {
+            commitNumber = parsedNumber;
+        }
+
+        var fullSha = commitNumber is > 0 && commitNumber <= originalCommits.Count
+            ? originalCommits[commitNumber.Value - 1]
+            : abbreviated;
+        return new RebaseStop(fullSha, commitNumber);
     }
 
     private IReadOnlyList<string>? ReadFirstParentRange(
@@ -5590,24 +5739,74 @@ public class GitService
         IReadOnlyList<RebasedCommitReplacement> Replacements,
         IReadOnlyList<string> ConflictedFiles,
         string? Error,
-        MechanicalRebaseFailureKind FailureKind)
+        MechanicalRebaseFailureKind FailureKind,
+        string Outcome,
+        string? StoppedCommitSha,
+        int? StoppedCommitNumber,
+        int? TotalCommits)
     {
         public static MechanicalRebaseAttempt Applied(
             string rebasedTip,
-            IReadOnlyList<RebasedCommitReplacement> replacements)
-            => new(true, rebasedTip, replacements, [], null, MechanicalRebaseFailureKind.None);
+            IReadOnlyList<RebasedCommitReplacement> replacements,
+            int totalCommits)
+            => new(
+                true,
+                rebasedTip,
+                replacements,
+                [],
+                null,
+                MechanicalRebaseFailureKind.None,
+                "applied",
+                null,
+                null,
+                totalCommits);
 
         public static MechanicalRebaseAttempt Conflict(
             IReadOnlyList<string> conflictedFiles,
-            string error)
-            => new(false, null, [], conflictedFiles, error, MechanicalRebaseFailureKind.Conflict);
+            string error,
+            string? stoppedCommitSha,
+            int? stoppedCommitNumber,
+            int totalCommits)
+            => new(
+                false,
+                null,
+                [],
+                conflictedFiles,
+                error,
+                MechanicalRebaseFailureKind.Conflict,
+                "conflict",
+                stoppedCommitSha,
+                stoppedCommitNumber,
+                totalCommits);
 
-        public static MechanicalRebaseAttempt AttributionAmbiguous(string error)
-            => new(false, null, [], [], error, MechanicalRebaseFailureKind.AttributionAmbiguous);
+        public static MechanicalRebaseAttempt AttributionAmbiguous(string error, int? totalCommits = null)
+            => new(
+                false,
+                null,
+                [],
+                [],
+                error,
+                MechanicalRebaseFailureKind.AttributionAmbiguous,
+                "could not retain one-to-one commit mapping",
+                null,
+                null,
+                totalCommits);
 
         public static MechanicalRebaseAttempt Failed(string error)
-            => new(false, null, [], [], error, MechanicalRebaseFailureKind.Error);
+            => new(
+                false,
+                null,
+                [],
+                [],
+                error,
+                MechanicalRebaseFailureKind.Error,
+                "failed",
+                null,
+                null,
+                null);
     }
+
+    private sealed record RebaseStop(string? Sha, int? Number);
 
     private enum MechanicalRebaseFailureKind
     {

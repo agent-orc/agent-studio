@@ -71,6 +71,8 @@ export interface PipelineStepExecution {
   reason?: string | null;
   /** Task-folder-relative detailed evidence artifact for this step. */
   evidenceRef?: string | null;
+  /** Structured evidence for a three-stage integration conflict. */
+  conflictReport?: IntegrationConflictReport | null;
   verdict?: string | null;
   /**
    * Human-readable concern detail for aspect steps with a non-pass
@@ -78,6 +80,25 @@ export interface PipelineStepExecution {
    * Drives the tooltip on the CONCERNS pill in the Overview pipeline.
    */
   verdictSummary?: string | null;
+}
+
+export interface IntegrationConflictStageReport {
+  stage: string;
+  outcome: string;
+  conflictedFileCount: number;
+  stoppedCommitSha?: string | null;
+  stoppedCommitNumber?: number | null;
+  totalCommits?: number | null;
+}
+
+export interface IntegrationConflictReport {
+  integrationBranch: string;
+  integrationTipSha: string;
+  deliverySha: string;
+  stages: IntegrationConflictStageReport[];
+  conflictedFileCount: number;
+  conflictedFiles: string[];
+  conflictedFilesTruncated: boolean;
 }
 
 /** The persisted execution record (null when the job never ran a pipeline). */

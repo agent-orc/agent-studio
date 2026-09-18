@@ -296,6 +296,15 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                     var continuation = await _startAgentRound(
                         delivery.Request,
                         result).ConfigureAwait(false);
+                    if (continuation.BudgetExhausted)
+                    {
+                        result = result with
+                        {
+                            AutomaticRecoveryDetail = continuation.Reason,
+                            AutomaticRecoveryBudgetUsed = continuation.BudgetUsed,
+                            AutomaticRecoveryBudgetLimit = continuation.BudgetLimit,
+                        };
+                    }
                     _logger.LogInformation(
                         "remote-delivery-integration continuation project={Project} job={JobId} started={Started} reason={Reason}",
                         delivery.Request.Project,
