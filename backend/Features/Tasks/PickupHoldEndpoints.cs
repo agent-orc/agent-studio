@@ -35,6 +35,24 @@ public static class PickupHoldEndpoints
                 items = items.Where(item => item.Hold.Unsatisfiable);
 
             var ordered = items.ToList();
+            var attention = ordered
+                .Where(item => item.Hold.Classification == PickupHoldClassifications.Stalled)
+                .Select(item => new
+                {
+                    Card = item,
+                    TargetKey = item.Hold.AttentionTargetKey,
+                })
+                .Where(item => item.TargetKey is not null)
+                .GroupBy(item => item.TargetKey!, StringComparer.OrdinalIgnoreCase)
+                .Select(group => new
+                {
+                    prerequisiteKey = group.Key,
+                    waitingCards = group.Count(),
+                    reason = group.First().Card.Hold.AttentionReason,
+                    sinceUtc = group.Min(item => item.Card.Hold.AttentionSinceUtc),
+                })
+                .OrderBy(item => item.sinceUtc)
+                .ToList();
             return Results.Ok(new
             {
                 total = ordered.Count,
@@ -42,6 +60,7 @@ public static class PickupHoldEndpoints
                 byMechanism = ordered
                     .GroupBy(item => item.Hold.Mechanism, StringComparer.Ordinal)
                     .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal),
+                attention,
                 items = ordered,
             });
         });

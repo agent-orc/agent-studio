@@ -1,8 +1,14 @@
 import { provideZonelessChangeDetection } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { of } from 'rxjs';
 import type { PickupHoldStatus, TaskInfo } from '../../models/task.model';
-import { PickupHoldComponent } from './pickup-hold.component';
+import { TaskService } from '../../services/task.service';
+import {
+  PICKUP_HOLD_RESOLUTION_ACTIONABILITY,
+  PICKUP_HOLD_RESOLUTION_KINDS,
+  PickupHoldComponent,
+} from './pickup-hold.component';
 
 function task(pickupHold: PickupHoldStatus | null): TaskInfo {
   return {
@@ -31,6 +37,7 @@ function task(pickupHold: PickupHoldStatus | null): TaskInfo {
 
 /** The reported AGT-2373 shape: an archived release gate, held for a month. */
 const ARCHIVED_GATE: PickupHoldStatus = {
+  classification: 'unsatisfiable',
   mechanism: 'dependency-gate',
   reason: 'AGT-2372 is archived and was never released, so no run is left that could open this gate.',
   sinceUtc: '2026-08-11T09:00:00Z',
@@ -38,15 +45,21 @@ const ARCHIVED_GATE: PickupHoldStatus = {
   unsatisfiable: true,
   resolutions: [
     {
-      kind: 'release-target',
-      label: 'Release AGT-2372',
-      detail: 'Releasing states that the validation this gate stands for no longer has to happen.',
+      kind: 'drop-dependency',
+      label: 'Drop the dependency',
+      detail: 'Remove this waits-on edge.',
       targetKey: 'AGT-2372',
     },
     {
-      kind: 'drop-release-gate',
-      label: 'Drop the release gate on AGT-2372',
-      detail: 'Remove the releaseGate edge through this card\'s references and re-plan the card.',
+      kind: 'repoint-dependency',
+      label: 'Point to a successor card',
+      detail: 'Replace the edge with its successor.',
+      targetKey: 'AGT-2372',
+    },
+    {
+      kind: 'archive-waiting-card',
+      label: 'Archive this waiting card',
+      detail: 'Close the waiting card.',
       targetKey: 'AGT-2372',
     },
   ],
@@ -71,11 +84,24 @@ const REFUSED_DISPATCH: PickupHoldStatus = {
 
 describe('PickupHoldComponent', () => {
   let fixture: ComponentFixture<PickupHoldComponent>;
+  const taskService = {
+    editTaskWaitsOn: vi.fn(),
+    moveJob: vi.fn(),
+  };
 
   beforeEach(async () => {
+    taskService.editTaskWaitsOn.mockReset();
+    taskService.editTaskWaitsOn.mockReturnValue(of({
+      waitsOn: [], changed: true, cycleResolved: true, message: 'The cycle is resolved.',
+    }));
+    taskService.moveJob.mockReset();
+    taskService.moveJob.mockReturnValue(of({}));
     await TestBed.configureTestingModule({
       imports: [PickupHoldComponent],
-      providers: [provideZonelessChangeDetection()],
+      providers: [
+        provideZonelessChangeDetection(),
+        { provide: TaskService, useValue: taskService },
+      ],
     }).compileComponents();
     fixture = TestBed.createComponent(PickupHoldComponent);
   });
@@ -107,16 +133,135 @@ describe('PickupHoldComponent', () => {
       .toContain('held for 34d');
   });
 
-  it('offers both ways out of an archived gate on the detail variant, and takes neither', () => {
+  it('offers all three operator decisions for an unsatisfiable gate', () => {
     const root = render(ARCHIVED_GATE, 'detail');
 
     const items = Array.from(root.querySelectorAll('[data-resolution-kind]'));
     expect(items.map(item => item.getAttribute('data-resolution-kind')))
-      .toEqual(['release-target', 'drop-release-gate']);
-    expect(items[0].textContent).toContain('Release AGT-2372');
-    expect(items[1].textContent).toContain('Drop the release gate on AGT-2372');
-    // Offered, never taken: the block carries no control that writes.
-    expect(root.querySelectorAll('button')).toHaveLength(0);
+      .toEqual(['drop-dependency', 'repoint-dependency', 'archive-waiting-card']);
+    expect(items[0].textContent).toContain('Drop the dependency');
+    expect(items[1].textContent).toContain('Point to a successor card');
+    expect(items[2].textContent).toContain('Archive this waiting card');
+    expect(root.querySelectorAll('button')).toHaveLength(3);
+  });
+
+  it('classifies every backend resolution kind as handled or explicitly non-actionable', () => {
+    const kinds = Object.values(PICKUP_HOLD_RESOLUTION_KINDS).sort();
+    const classified = Object.keys(PICKUP_HOLD_RESOLUTION_ACTIONABILITY).sort();
+
+    expect(classified).toEqual(kinds);
+    expect(Object.values(PICKUP_HOLD_RESOLUTION_ACTIONABILITY).every(
+      value => value === 'handled' || value === 'non-actionable')).toBe(true);
+    expect(Object.entries(PICKUP_HOLD_RESOLUTION_ACTIONABILITY)
+      .filter(([, value]) => value === 'handled')
+      .map(([kind]) => kind).sort()).toEqual([
+      'archive-waiting-card',
+      'drop-cycle-edge',
+      'drop-dependency',
+      'repoint-dependency',
+    ]);
+  });
+
+  it('renders an unhandled resolution kind as explanation, never as a button', () => {
+    const root = render({
+      ...ARCHIVED_GATE,
+      resolutions: [{
+        kind: 'release-target',
+        label: 'Release AGT-2372',
+        detail: 'This resolution does not have an inline handler.',
+        targetKey: 'AGT-2372',
+      }],
+    }, 'detail');
+
+    expect(root.querySelector('[data-resolution-kind="release-target"]')?.textContent)
+      .toContain('Release AGT-2372');
+    expect(root.querySelector('button')).toBeNull();
+  });
+
+  it('does not render a button when a handled edge action lacks its target', () => {
+    const root = render({
+      ...ARCHIVED_GATE,
+      resolutions: [{
+        kind: 'drop-dependency',
+        label: 'Drop the dependency',
+        detail: 'The malformed response omitted the target key.',
+      }],
+    }, 'detail');
+
+    expect(root.querySelector('[data-resolution-kind="drop-dependency"]')?.textContent)
+      .toContain('Drop the dependency');
+    expect(root.querySelector('button')).toBeNull();
+  });
+
+  it('wires every non-cycle actionable decision to its implemented mutation', () => {
+    const prompt = vi.spyOn(window, 'prompt').mockReturnValue('AGT-2400');
+    const root = render(ARCHIVED_GATE, 'detail');
+    const buttons = Array.from(root.querySelectorAll<HTMLButtonElement>('button'));
+
+    buttons[0].click();
+    expect(taskService.editTaskWaitsOn).toHaveBeenCalledWith('duplicate-cli-paths', {
+      remove: ['AGT-2372'],
+      reason: 'Operator dropped unsatisfiable dependency AGT-2372.',
+    }, '/workspace');
+
+    buttons[1].click();
+    expect(taskService.editTaskWaitsOn).toHaveBeenCalledWith('duplicate-cli-paths', {
+      remove: ['AGT-2372'], add: ['AGT-2400'],
+      reason: 'Operator re-pointed unsatisfiable dependency AGT-2372 to AGT-2400.',
+    }, '/workspace');
+
+    buttons[2].click();
+    expect(taskService.moveJob).toHaveBeenCalledWith(
+      'duplicate-cli-paths', '7-archive', '/workspace', undefined,
+      'Operator archived a card with an unsatisfiable dependency.');
+    prompt.mockRestore();
+  });
+
+  it('targets the selected source and target when dropping a cycle edge', () => {
+    const root = render({
+      ...ARCHIVED_GATE,
+      reason: "This card's dependsOn chain forms a cycle.",
+      resolutions: [
+        {
+          kind: 'drop-cycle-edge',
+          label: 'Drop APP-1 → APP-2',
+          detail: 'Remove the waits-on edge from APP-1 to APP-2.',
+          sourceKey: 'APP-1',
+          targetKey: 'APP-2',
+        },
+        {
+          kind: 'drop-cycle-edge',
+          label: 'Drop APP-2 → APP-3',
+          detail: 'Remove the waits-on edge from APP-2 to APP-3.',
+          sourceKey: 'APP-2',
+          targetKey: 'APP-3',
+        },
+        {
+          kind: 'drop-cycle-edge',
+          label: 'Drop APP-3 → APP-1',
+          detail: 'Remove the waits-on edge from APP-3 to APP-1.',
+          sourceKey: 'APP-3',
+          targetKey: 'APP-1',
+        },
+      ],
+    }, 'detail');
+
+    const buttons = Array.from(root.querySelectorAll<HTMLButtonElement>('[data-resolution-kind="drop-cycle-edge"] button'));
+    expect(buttons.map(button => button.textContent?.trim())).toEqual([
+      'Drop APP-1 → APP-2',
+      'Drop APP-2 → APP-3',
+      'Drop APP-3 → APP-1',
+    ]);
+
+    buttons[1].click();
+
+    expect(taskService.editTaskWaitsOn).toHaveBeenCalledWith('APP-2', {
+      remove: ['APP-3'],
+      reason: 'Operator dropped cycle edge APP-2 -> APP-3.',
+      requireCycleEdge: true,
+    });
+    fixture.detectChanges();
+    expect(root.textContent).toContain('The cycle is resolved.');
   });
 
   it('keeps the ways out off the board card, where the reason is the payload', () => {

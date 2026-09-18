@@ -64,6 +64,7 @@ const ARCHIVED_GATE_CARD = {
     }],
   },
   pickupHold: {
+    classification: 'unsatisfiable',
     mechanism: 'dependency-gate',
     reason: 'AGT-2372 is archived and was never released, so no run is left that could open this gate.',
     sinceUtc: '2026-08-11T09:00:00Z',
@@ -71,15 +72,21 @@ const ARCHIVED_GATE_CARD = {
     unsatisfiable: true,
     resolutions: [
       {
-        kind: 'release-target',
-        label: 'Release AGT-2372',
-        detail: 'Releasing states that the validation this gate stands for no longer has to happen. Only an operator may decide that.',
+        kind: 'drop-dependency',
+        label: 'Drop the dependency',
+        detail: 'Remove this waits-on edge. The platform never takes this decision automatically.',
         targetKey: 'AGT-2372',
       },
       {
-        kind: 'drop-release-gate',
-        label: 'Drop the release gate on AGT-2372',
-        detail: 'Remove the releaseGate edge through this card\'s references and re-plan the card.',
+        kind: 'repoint-dependency',
+        label: 'Point to a successor card',
+        detail: 'Replace the edge with the stable key of the card that now owns the prerequisite.',
+        targetKey: 'AGT-2372',
+      },
+      {
+        kind: 'archive-waiting-card',
+        label: 'Archive this waiting card',
+        detail: 'Close the waiting card without changing the prerequisite.',
         targetKey: 'AGT-2372',
       },
     ],
@@ -234,7 +241,7 @@ async function openBoard(page: Page): Promise<void> {
 }
 
 test.describe('pickup holds are visible where the card claims to be queued', () => {
-  test('an archived release gate says it can never open, names its age and both ways out', async ({ page }) => {
+  test('an archived release gate says it can never open and names its age', async ({ page }) => {
     mkdirSync(RESULTS, { recursive: true });
     await openBoard(page);
 
@@ -246,6 +253,7 @@ test.describe('pickup holds are visible where the card claims to be queued', () 
     await expect(card.getByTestId('pickup-hold-headline')).toContainText('cannot clear by itself');
     await expect(card.getByTestId('pickup-hold-reason')).toContainText('AGT-2372 is archived');
     await expect(card.getByTestId('pickup-hold-age')).toContainText('held for 34d');
+    await expect(card.getByTestId('pickup-hold-classification')).toContainText('Unsatisfiable');
     // The wait sentence and the configuration-error sentence are different.
     await expect(card.getByTestId('task-live-current')).toContainText('this gate can never open: AGT-2372');
     await expect(card.getByTestId('task-live-current')).not.toContainText('waits for release');
@@ -284,7 +292,7 @@ test.describe('pickup holds are visible where the card claims to be queued', () 
     }
   });
 
-  test('the opened card lists both ways out of the archived gate', async ({ page }) => {
+  test('the opened card offers all three explicit decisions for the archived gate', async ({ page }) => {
     mkdirSync(RESULTS, { recursive: true });
     await openBoard(page);
 
@@ -292,10 +300,9 @@ test.describe('pickup holds are visible where the card claims to be queued', () 
 
     const waysOut = page.getByTestId('pickup-hold-ways-out');
     await expect(waysOut).toBeVisible({ timeout: 15_000 });
-    await expect(waysOut).toContainText('Release AGT-2372');
-    await expect(waysOut).toContainText('Drop the release gate on AGT-2372');
-    // Offered, not taken: the block states the decision, it does not make it.
-    await expect(waysOut).toContainText('Only an operator may decide that');
+    await expect(waysOut.getByRole('button', { name: 'Drop the dependency' })).toBeVisible();
+    await expect(waysOut.getByRole('button', { name: 'Point to a successor card' })).toBeVisible();
+    await expect(waysOut.getByRole('button', { name: 'Archive this waiting card' })).toBeVisible();
 
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
@@ -303,6 +310,13 @@ test.describe('pickup holds are visible where the card claims to be queued', () 
         path: join(RESULTS, `pickup-hold-ways-out--${theme}--mocked.png`),
       });
     }
+
+    const editRequest = page.waitForRequest(request => request.method() === 'PUT'
+      && request.url().includes('/api/tasks/agt-2373/waits-on'));
+    await waysOut.getByRole('button', { name: 'Drop the dependency' }).click();
+    const body = (await editRequest).postDataJSON() as { remove: string[]; reason: string };
+    expect(body.remove).toEqual(['AGT-2372']);
+    expect(body.reason).toContain('Operator dropped unsatisfiable dependency AGT-2372');
   });
 
   test('a genuinely queued card carries no hold', async ({ page }) => {

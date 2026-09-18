@@ -248,7 +248,53 @@ public class WaitsOnEvaluatorTests
         var c = Task("c", "APP-3", TaskStates.Ready, deps: new[] { "APP-1" });
         var index = TaskReferenceIndex.Build(new[] { a, b, c });
 
-        Assert.True(index.EvaluateWaitsOn(a).CycleDetected);
+        var status = index.EvaluateWaitsOn(a);
+
+        Assert.True(status.CycleDetected);
+        Assert.Equal(new[] { "APP-1", "APP-2", "APP-3", "APP-1" }, status.CyclePath);
+        Assert.True(WaitsOnEvaluator.IsCycleEdge("APP-1", "APP-2", index.DependsOnGraph));
+        Assert.True(WaitsOnEvaluator.IsCycleEdge("APP-2", "APP-3", index.DependsOnGraph));
+        Assert.True(WaitsOnEvaluator.IsCycleEdge("APP-3", "APP-1", index.DependsOnGraph));
+    }
+
+    [Fact]
+    public void ThreeCardCycle_WithUnrelatedEdge_ExposesOnlyTheCyclePath()
+    {
+        var archived = Task("archived", "ARCH-9", TaskStates.Archive);
+        var a = Task("a", "APP-1", TaskStates.Ready) with
+        {
+            References = new TaskReferences
+            {
+                DependsOn =
+                [
+                    new TaskDependencyReference("APP-2", false),
+                    new TaskDependencyReference("ARCH-9", true),
+                ],
+            },
+        };
+        var b = Task("b", "APP-2", TaskStates.Ready, deps: ["APP-3"]);
+        var c = Task("c", "APP-3", TaskStates.Ready, deps: ["APP-1"]);
+        var index = TaskReferenceIndex.Build([a, b, c, archived]);
+
+        var status = index.EvaluateWaitsOn(a);
+
+        Assert.Equal(new[] { "APP-1", "APP-2", "APP-3", "APP-1" }, status.CyclePath);
+        Assert.False(WaitsOnEvaluator.IsCycleEdge("APP-1", "ARCH-9", index.DependsOnGraph));
+
+        var withoutCycleEdge = a with
+        {
+            References = new TaskReferences
+            {
+                DependsOn = [new TaskDependencyReference("ARCH-9", true)],
+            },
+        };
+        var after = TaskReferenceIndex.Build([withoutCycleEdge, b, c, archived]);
+
+        Assert.All(new[] { withoutCycleEdge, b, c }, task =>
+            Assert.False(after.EvaluateWaitsOn(task).CycleDetected));
+        var remaining = after.EvaluateWaitsOn(withoutCycleEdge);
+        Assert.True(remaining.UnsatisfiableGate);
+        Assert.Equal("ARCH-9", Assert.Single(remaining.Items).Key);
     }
 
     [Fact]
