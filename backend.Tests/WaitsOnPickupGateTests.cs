@@ -100,6 +100,19 @@ public sealed class WaitsOnPickupGateTests : IDisposable
     }
 
     [Fact]
+    public void RunnerQueue_ExcludesUnsatisfiableArchivedGate_FromIdleDetection()
+    {
+        WriteJob(_libWatch, TaskStates.Archive, "dep", "LIB-1", order: 1);
+        WriteJob(_appWatch, TaskStates.Ready, "consumer", "APP-1", order: 1,
+            dependsOn: new[] { "LIB-1" }, releaseGate: true);
+
+        var runner = BuildAppRunner();
+
+        Assert.Empty(runner.GetStatus().QueuedJobIds);
+        Assert.Null(runner.GetNextReadyJob());
+    }
+
+    [Fact]
     public void ReleaseGate_ExplicitReleasedFlag_AllowsPickup()
     {
         WriteJob(_libWatch, TaskStates.Completed, "dep", "LIB-1", order: 1, released: true);

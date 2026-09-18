@@ -17,6 +17,7 @@ namespace AgentStudio.Runner;
 public sealed class ReviewInfrastructureRetryScheduler : BackgroundService
 {
     public const int DefaultIntervalSeconds = 15;
+    public const int DefaultMissingAttemptTimeoutMinutes = 30;
 
     private readonly AttemptAuthorityService _authority;
     private readonly ReviewAttemptTaskLifecycleService _lifecycle;
@@ -73,6 +74,80 @@ public sealed class ReviewInfrastructureRetryScheduler : BackgroundService
                     item.AttemptId,
                     item.TaskKey);
             }
+        }
+        created += RecoverMissingReviewAttempts();
+        return created;
+    }
+
+    /// <summary>
+    /// Repairs an Auto Review card whose handoff never produced a canonical
+    /// ReviewAttempt. This is deliberately separate from AGT-2841: a terminal
+    /// ReviewInfra attempt with a scheduled successor is not "missing" and is
+    /// left to the bounded-backoff path above.
+    /// </summary>
+    private int RecoverMissingReviewAttempts()
+    {
+        var timeoutMinutes = Math.Clamp(
+            _configuration.GetValue<int?>("Runner:ReviewMissingAttemptTimeoutMinutes")
+            ?? DefaultMissingAttemptTimeoutMinutes,
+            1,
+            24 * 60);
+        var cutoff = DateTime.UtcNow.AddMinutes(-timeoutMinutes);
+        var created = 0;
+        foreach (var task in _scanner.ScanAllAutomationJobs()
+                     .Where(task => string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
+                     .Where(task => task.ParkedBlocker is null)
+                     .Where(task => task.EnteredLaneAt != default && task.EnteredLaneAt.ToUniversalTime() <= cutoff))
+        {
+            var candidateKeys = new[] { task.Key, task.Id, task.TaskKey }
+                .Where(key => !string.IsNullOrWhiteSpace(key))
+                .Select(key => key!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var taskKey = candidateKeys[0];
+            var projection = _authority.GetTaskProjection(taskKey);
+            foreach (var candidateKey in candidateKeys.Skip(1))
+            {
+                if (projection.CurrentRunAttempt is not null || projection.CurrentReviewAttempt is not null) break;
+                var candidate = _authority.GetTaskProjection(candidateKey!);
+                if (candidate.CurrentRunAttempt is null && candidate.CurrentReviewAttempt is null) continue;
+                taskKey = candidateKey!;
+                projection = candidate;
+            }
+            // Pending, leased, terminal, and scheduled ReviewInfra attempts all
+            // have canonical authority and must not be replaced by this sweep.
+            if (projection.CurrentReviewAttempt is not null) continue;
+            var run = projection.CurrentRunAttempt;
+            if (run is not { State: AttemptLifecycleState.Completed, ResultSha: { Length: > 0 }, ResultEnvelope: not null })
+                continue;
+
+            var project = _projects.FindByStorageLocation(task.WatchPath)
+                          ?? _projects.FindByIdOrDisplayName(task.ProjectName);
+            var taskSettings = _settings.Get(task.ProjectName);
+            var integrationRef = V1ReviewPlaneEndpoints
+                .ResolveBaselineBranch(task, project, _settings).IntegrationRef;
+            var repositoryPath = _git.ResolveRepoRootForWatchPath(task.WatchPath) ?? project?.RepositoryPath;
+            var plan = _remoteReviewPlans.Build(task, repositoryPath, taskSettings, integrationRef);
+            var requirementsPath = Path.Combine(task.FolderPath, "prompt.md");
+            var requirements = File.Exists(requirementsPath) ? File.ReadAllText(requirementsPath) : task.Id;
+            var result = _lifecycle.CreateReviewAttemptInAutoReview(task, new CreateReviewAttemptRequest(
+                taskKey,
+                run.RepositoryId,
+                run.ResultSha,
+                run.AttemptId,
+                AttemptAuthorityService.Hash(requirements),
+                AttemptAuthorityService.Hash("remote-review-policy:v1"),
+                run.EvidenceDigests,
+                $"missing-review-attempt:{run.AttemptId}",
+                RepositoryUrl: run.ResultEnvelope.RepositoryUrl,
+                ResultRef: run.ResultEnvelope.ImmutableRemoteRef,
+                Plan: plan));
+            if (!result.Accepted) continue;
+
+            created++;
+            _logger.LogWarning(
+                "review-missing-attempt-recovered task={TaskKey} runAttempt={RunAttemptId} reviewAttempt={ReviewAttemptId} timeoutMinutes={TimeoutMinutes}",
+                taskKey, run.AttemptId, result.AttemptId, timeoutMinutes);
         }
         return created;
     }

@@ -45,6 +45,14 @@ public record WaitsOnStatus
     public bool CycleDetected { get; init; }
 
     /// <summary>
+    /// The explicit closed path for <see cref="CycleDetected"/>, for example
+    /// <c>APP-1, APP-2, APP-3, APP-1</c>. The first node is chosen
+    /// deterministically so every card on the same cycle offers the same edge
+    /// decisions. Empty when there is no cycle through this card.
+    /// </summary>
+    public List<string> CyclePath { get; init; } = [];
+
+    /// <summary>
     /// AGT-2818: true when at least one edge is <see cref="WaitsOnItem.Unsatisfiable"/>,
     /// i.e. a gate that no run left in the system can open. Like
     /// <see cref="CycleDetected"/> this is a configuration error rather than a
@@ -123,6 +131,21 @@ public record WaitsOnItem
     /// <summary>Target task's lane state; null when unresolved.</summary>
     public string? TargetState { get; init; }
 
+    /// <summary>When the target entered its current lane; used to distinguish a live review from a stalled one.</summary>
+    public DateTime? TargetEnteredLaneAt { get; init; }
+
+    /// <summary>True when the canonical review authority has a pending or live-leased attempt for the target.</summary>
+    public bool TargetHasActiveReviewAttempt { get; init; }
+
+    /// <summary>True when the target has an explicit durable park/blocker record.</summary>
+    public bool TargetParked { get; init; }
+
+    /// <summary>The prerequisite's own blocker sentence, when it has one.</summary>
+    public string? TargetBlockerReason { get; init; }
+
+    /// <summary>When the prerequisite's blocker began, when recorded.</summary>
+    public DateTime? TargetBlockerSinceUtc { get; init; }
+
     /// <summary>Target task's watch path (for navigation); null when unresolved.</summary>
     public string? TargetWatchPath { get; init; }
 }
@@ -186,6 +209,7 @@ public static class WaitsOnEvaluator
         {
             var key = (dependency?.Key ?? "").Trim();
             if (key.Length == 0) continue;
+            var releaseGate = dependency?.ReleaseGate == true;
             // A self-edge can never gate the task and is rejected on write; skip
             // defensively so a stale self-edge on disk cannot self-block.
             if (self.Length > 0 && KeyComparer.Equals(key, self)) continue;
@@ -194,8 +218,8 @@ public static class WaitsOnEvaluator
             byKey.TryGetValue(key, out var target);
             var resolved = target != null;
             var terminal = resolved && IsFulfilledState(target!.State);
-            var waitingForRelease = terminal && dependency!.ReleaseGate && !target!.Released;
-            var fulfilled = terminal && (!dependency.ReleaseGate || target!.Released);
+            var waitingForRelease = terminal && releaseGate && !target!.Released;
+            var fulfilled = terminal && (!releaseGate || target!.Released);
             if (!fulfilled) blocked = true;
             var unsatisfiable = waitingForRelease && IsArchivedState(target?.State);
             if (unsatisfiable) unsatisfiableGate = true;
@@ -205,7 +229,7 @@ public static class WaitsOnEvaluator
                 Key = key,
                 Resolved = resolved,
                 Fulfilled = fulfilled,
-                ReleaseGate = dependency!.ReleaseGate,
+                ReleaseGate = releaseGate,
                 TargetReleased = target?.Released == true,
                 WaitingForRelease = waitingForRelease,
                 Unsatisfiable = unsatisfiable,
@@ -213,16 +237,21 @@ public static class WaitsOnEvaluator
                 TargetJobId = target?.Id,
                 TargetTitle = target?.Title,
                 TargetState = target?.State,
+                TargetEnteredLaneAt = target?.EnteredLaneAt,
+                TargetParked = target?.ParkedBlocker is not null,
+                TargetBlockerReason = target?.ParkedBlocker?.Reason,
+                TargetBlockerSinceUtc = target?.ParkedBlocker?.ParkedAt,
                 TargetWatchPath = target?.WatchPath,
             });
         }
 
-        var cycle = SitsOnCycle(self, dependsOnGraph);
+        var cyclePath = FindCyclePath(self, dependsOnGraph);
         return new WaitsOnStatus
         {
             Items = items,
             Blocked = blocked,
-            CycleDetected = cycle,
+            CycleDetected = cyclePath.Count > 0,
+            CyclePath = cyclePath,
             UnsatisfiableGate = unsatisfiableGate,
         };
     }
@@ -251,14 +280,25 @@ public static class WaitsOnEvaluator
     /// </summary>
     public static bool SitsOnCycle(
         string? start,
+        IReadOnlyDictionary<string, IReadOnlyCollection<string>> dependsOnGraph) =>
+        FindCyclePath(start, dependsOnGraph).Count > 0;
+
+    /// <summary>
+    /// Returns one explicit cycle through <paramref name="start"/> as a closed
+    /// path. Only adjacent pairs in this result are safe cycle-breaking
+    /// candidates. A cycle elsewhere in the graph is deliberately ignored.
+    /// </summary>
+    public static List<string> FindCyclePath(
+        string? start,
         IReadOnlyDictionary<string, IReadOnlyCollection<string>> dependsOnGraph)
     {
         var self = (start ?? "").Trim();
-        if (self.Length == 0) return false;
+        if (self.Length == 0) return [];
         if (!dependsOnGraph.TryGetValue(self, out var seedEdges) || seedEdges.Count == 0)
-            return false;
+            return [];
 
-        var onStack = new HashSet<string>(KeyComparer);
+        var path = new List<string> { self };
+        var onPath = new HashSet<string>(KeyComparer) { self };
         var done = new HashSet<string>(KeyComparer);
 
         IEnumerable<string> Edges(string node) =>
@@ -266,20 +306,78 @@ public static class WaitsOnEvaluator
 
         bool Dfs(string node)
         {
-            onStack.Add(node);
             foreach (var next in Edges(node))
             {
                 var n = (next ?? "").Trim();
                 if (n.Length == 0) continue;
-                if (KeyComparer.Equals(n, self)) return true;
-                if (onStack.Contains(n) || done.Contains(n)) continue;
+                if (KeyComparer.Equals(n, self))
+                {
+                    path.Add(self);
+                    return true;
+                }
+                if (onPath.Contains(n) || done.Contains(n)) continue;
+                path.Add(n);
+                onPath.Add(n);
                 if (Dfs(n)) return true;
+                onPath.Remove(n);
+                path.RemoveAt(path.Count - 1);
             }
-            onStack.Remove(node);
             done.Add(node);
             return false;
         }
 
-        return Dfs(self);
+        if (!Dfs(self)) return [];
+        return CanonicalizeClosedCycle(path);
+    }
+
+    /// <summary>True only when the named directed edge currently participates in a cycle.</summary>
+    public static bool IsCycleEdge(
+        string? source,
+        string? target,
+        IReadOnlyDictionary<string, IReadOnlyCollection<string>> dependsOnGraph)
+    {
+        var from = (source ?? "").Trim();
+        var to = (target ?? "").Trim();
+        if (from.Length == 0 || to.Length == 0) return false;
+        if (!dependsOnGraph.TryGetValue(from, out var edges)
+            || !edges.Any(edge => KeyComparer.Equals((edge ?? "").Trim(), to)))
+            return false;
+
+        return CanReach(to, from, dependsOnGraph);
+    }
+
+    private static bool CanReach(
+        string start,
+        string target,
+        IReadOnlyDictionary<string, IReadOnlyCollection<string>> graph)
+    {
+        var seen = new HashSet<string>(KeyComparer);
+        var pending = new Stack<string>();
+        pending.Push(start);
+        while (pending.TryPop(out var node))
+        {
+            if (!seen.Add(node)) continue;
+            if (KeyComparer.Equals(node, target)) return true;
+            if (!graph.TryGetValue(node, out var edges)) continue;
+            foreach (var edge in edges)
+            {
+                var next = (edge ?? "").Trim();
+                if (next.Length > 0) pending.Push(next);
+            }
+        }
+        return false;
+    }
+
+    private static List<string> CanonicalizeClosedCycle(IReadOnlyList<string> path)
+    {
+        var nodes = path.Take(path.Count - 1).ToList();
+        var first = Enumerable.Range(0, nodes.Count)
+            .OrderBy(index => nodes[index], KeyComparer)
+            .First();
+        var result = Enumerable.Range(0, nodes.Count)
+            .Select(offset => nodes[(first + offset) % nodes.Count])
+            .ToList();
+        result.Add(result[0]);
+        return result;
     }
 }

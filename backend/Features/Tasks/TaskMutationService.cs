@@ -1040,6 +1040,47 @@ public class TaskMutationService
         return Updated();
     }
 
+    /// <summary>Applies one audited incremental waits-on edit without replacing unrelated references.</summary>
+    public bool EditTaskWaitsOn(
+        string jobId,
+        IReadOnlyList<TaskDependencyReference> add,
+        IReadOnlyCollection<string> remove,
+        string reason,
+        string actor,
+        string? watchPath = null)
+    {
+        var info = _scanner.FindJob(jobId, watchPath);
+        if (info == null) return false;
+        var removed = remove.Where(key => !string.IsNullOrWhiteSpace(key))
+            .Select(key => key.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var dependencies = (info.References?.DependsOn ?? [])
+            .Where(edge => !removed.Contains(edge.Key))
+            .Concat(add)
+            .ToList();
+        var references = TaskReferenceValidator.Normalize((info.References ?? new TaskReferences()) with
+        {
+            DependsOn = dependencies,
+        });
+        TaskJsonFile.UpdateField(info.FolderPath, "references", references, _logger);
+        _timeline?.Append(info.FolderPath, new TimelineEvent
+        {
+            Ts = DateTime.UtcNow,
+            Kind = TimelineEventKinds.DependencyChanged,
+            Actor = actor,
+            Summary = $"Waits-on dependencies changed: {reason.Trim()}",
+            Details = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["added"] = string.Join(",", add.Select(edge => edge.Key)),
+                ["removed"] = string.Join(",", removed),
+                ["reason"] = reason.Trim(),
+            },
+        });
+        _logger.LogInformation(
+            "task-waits-on-edited job={JobId} actor={Actor} added={Added} removed={Removed} reason={Reason}",
+            jobId, actor, add.Count, removed.Count, reason.Trim());
+        return Updated(info);
+    }
+
     /// <summary>
     /// Sets the explicit content-release approval consumed by release-gated
     /// dependsOn edges. Terminal lane movement intentionally does not call this

@@ -373,7 +373,8 @@ internal static class TaskEndpointHelpers
     internal static DependencyGraphLookups BuildDependencyGraphLookups(
         IEnumerable<TaskInfo> jobs,
         TaskScannerService scanner,
-        IEnumerable<TaskInfo>? eligibleWaiters = null)
+        IEnumerable<TaskInfo>? eligibleWaiters = null,
+        AttemptAuthorityService? attemptAuthority = null)
     {
         var snapshot = jobs as IReadOnlyCollection<TaskInfo> ?? jobs.ToList();
         var withDeps = snapshot.Where(j => j.References?.DependsOn.Count > 0).ToList();
@@ -391,7 +392,23 @@ internal static class TaskEndpointHelpers
         var waitsOn = new Dictionary<string, WaitsOnStatus>(StringComparer.Ordinal);
         foreach (var job in withDeps)
         {
-            waitsOn[job.TaskKey] = index.EvaluateWaitsOn(job);
+            var status = index.EvaluateWaitsOn(job);
+            if (attemptAuthority is not null)
+            {
+                status = status with
+                {
+                    Items = status.Items.Select(item =>
+                    {
+                        if (!item.Resolved) return item;
+                        var review = attemptAuthority.GetTaskProjection(item.Key).CurrentReviewAttempt;
+                        var active = review is { State: AttemptLifecycleState.Pending }
+                            || review is { State: AttemptLifecycleState.Leased, Lease: { } lease }
+                               && lease.ExpiresAt > DateTime.UtcNow;
+                        return item with { TargetHasActiveReviewAttempt = active };
+                    }).ToList(),
+                };
+            }
+            waitsOn[job.TaskKey] = status;
         }
         var transitiveWaiters = new Dictionary<string, TransitiveWaitersStatus>(StringComparer.Ordinal);
         foreach (var job in humanReview)

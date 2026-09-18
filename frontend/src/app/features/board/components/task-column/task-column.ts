@@ -33,7 +33,7 @@ import { laneSortStrategyMeta, isManualStrategy } from '../../../../services/lan
 import { deriveStalledTaskState } from '../../../../services/run-activity.util';
 import { PostProcessingSummaryComponent } from '../post-processing-summary/post-processing-summary.component';
 import { BoardDragStateService } from '../../state/board-drag-state.service';
-
+import { isUnpullableDependencyHold } from './pullable-task.util';
 /** ASS-1727: Archive pagination and typed-filter debounce. */
 const ARCHIVE_PAGE_SIZE = 50;
 const ARCHIVE_SEARCH_DEBOUNCE_MS = 300;
@@ -56,7 +56,6 @@ const ARCHIVE_SEARCH_DEBOUNCE_MS = 300;
 export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   private readonly taskService = inject(TaskService);
   private readonly boardDrag = inject(BoardDragStateService);
-
   readonly title = input.required<string>();
   readonly icon = input<string>('');
   readonly state = input.required<string>();
@@ -86,11 +85,12 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
    * change detection is OnPush-friendly.
    */
   readonly nowMs = input<number>(0);
-
+  private readonly unpullableDependencyCount = computed(() => this.jobs().filter(isUnpullableDependencyHold).length);
   readonly stalledCount = computed(() => this.state() === TaskState.Progress
     ? this.jobs().filter((job) => deriveStalledTaskState(job, this.nowMs() || Date.now()) !== null).length
-    : 0);
-
+    : this.state() === TaskState.Ready ? this.unpullableDependencyCount() : 0);
+  readonly pullableCount = computed(() => this.state() === TaskState.Ready
+    ? this.jobs().length - this.unpullableDependencyCount() : this.jobs().length);
   readonly jobClick = output<TaskInfo>();
   // `targetIndex` is the 0-based insertion slot in this column the user
   // dropped the card on. Stable across silent polls because the backend
@@ -431,7 +431,7 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   readonly archiveIsEmpty = computed(() => this.archiveLoaded() && this.archiveTotal() === 0);
 
   /** Header/rail count: archived total for the archive lane, live job count otherwise. */
-  readonly headerCount = computed(() => (this.isArchive() ? this.archiveTotal() : this.jobs().length));
+  readonly headerCount = computed(() => (this.isArchive() ? this.archiveTotal() : this.pullableCount()));
 
   ngOnInit(): void {
     if (this.isArchive()) {

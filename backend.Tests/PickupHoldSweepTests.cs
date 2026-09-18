@@ -86,7 +86,7 @@ public sealed class PickupHoldSweepTests : IDisposable
         // A month of standstill, which is the number nobody could see.
         Assert.Equal(34, held.Hold.HeldForSeconds / 86400);
         Assert.Equal(
-            new[] { PickupHoldResolutionKinds.ReleaseTarget, PickupHoldResolutionKinds.DropReleaseGate },
+            new[] { PickupHoldResolutionKinds.DropDependency, PickupHoldResolutionKinds.RepointDependency, PickupHoldResolutionKinds.ArchiveWaitingCard },
             held.Hold.Resolutions.Select(resolution => resolution.Kind).ToArray());
     }
 

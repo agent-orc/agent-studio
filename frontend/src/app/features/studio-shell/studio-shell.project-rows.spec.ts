@@ -135,4 +135,18 @@ describe('Explorer lane dots mirror the visible board lanes', () => {
     expect(row.totalJobs).toBe(ready + progress + humanReview);
     expect(row.totalJobs).toBe(visibleBoardLaneCount(grouped));
   });
+
+  it('does not count stalled or unsatisfiable Ready cards as pullable work', () => {
+    const grouped = emptyGrouped();
+    grouped.ready = [
+      task('TE-1', '2-ready'),
+      task('TE-2', '2-ready', { pickupHold: { classification: 'stalled' } as TaskInfo['pickupHold'] }),
+      task('TE-3', '2-ready', { pickupHold: { classification: 'unsatisfiable' } as TaskInfo['pickupHold'] }),
+    ];
+
+    const row = buildProjectSidebarRows(grouped, [PROJECT], PROJECT)[0];
+
+    expect(row.laneCounts.ready).toBe(1);
+    expect(row.totalJobs).toBe(1);
+  });
 });

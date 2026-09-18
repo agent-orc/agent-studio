@@ -301,6 +301,167 @@ public sealed class WaitsOnEndpointsTests : IDisposable
     }
 
     [Fact]
+    public async Task PutWaitsOn_RepointsDependencyAtomically_AndAuditsReason()
+    {
+        WriteJob(_libWatch, TaskStates.Archive, "old-dep", "LIB-1");
+        WriteJob(_libWatch, TaskStates.Ready, "successor", "LIB-2");
+        WriteJob(_appWatch, TaskStates.Ready, "consumer", "APP-1", dependsOn: new[] { "LIB-1" });
+
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var watchPath = Uri.EscapeDataString(_appWatch);
+
+        using var response = await client.PutAsJsonAsync(
+            $"/api/tasks/APP-1/waits-on?watchPath={watchPath}",
+            new
+            {
+                add = new[] { "LIB-2" },
+                remove = new[] { "LIB-1" },
+                reason = "The successor owns the prerequisite.",
+            });
+
+        response.EnsureSuccessStatusCode();
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("LIB-2", Assert.Single(document.RootElement.GetProperty("waitsOn").EnumerateArray()).GetString());
+
+        var timelinePath = Path.Combine(_appWatch, TaskStates.Ready, "consumer", "logs", "timeline.jsonl");
+        var audit = await File.ReadAllTextAsync(timelinePath);
+        Assert.Contains("dependency_changed", audit, StringComparison.Ordinal);
+        Assert.Contains("The successor owns the prerequisite.", audit, StringComparison.Ordinal);
+        Assert.Contains("human:local-default", audit, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PutWaitsOn_DropsUnsatisfiableDependency_AndReleasesReadyCard()
+    {
+        WriteJob(_libWatch, TaskStates.Archive, "old-dep", "LIB-1");
+        WriteJob(_appWatch, TaskStates.Ready, "consumer", "APP-1",
+            dependsOn: new[] { "LIB-1" }, releaseGate: true);
+
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var watchPath = Uri.EscapeDataString(_appWatch);
+
+        using var response = await client.PutAsJsonAsync(
+            $"/api/tasks/consumer/waits-on?watchPath={watchPath}",
+            new
+            {
+                remove = new[] { "LIB-1" },
+                reason = "The archived prerequisite will not be delivered.",
+            });
+
+        response.EnsureSuccessStatusCode();
+        using var written = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Empty(written.RootElement.GetProperty("waitsOn").EnumerateArray());
+
+        using var detail = JsonDocument.Parse(await client.GetStringAsync(
+            $"/api/tasks/consumer?watchPath={watchPath}"));
+        var info = detail.RootElement.GetProperty("info");
+        Assert.Equal(JsonValueKind.Null, info.GetProperty("waitsOn").ValueKind);
+        Assert.Equal(JsonValueKind.Null, info.GetProperty("pickupHold").ValueKind);
+    }
+
+    [Fact]
+    public async Task PutWaitsOn_CycleDecision_OffersOnlyCycleEdges_AndPreservesUnrelatedDependency()
+    {
+        WriteJob(_libWatch, TaskStates.Archive, "archived", "ARCH-9");
+        WriteJob(_appWatch, TaskStates.Ready, "a", "APP-1",
+            dependsOn: ["APP-2", "ARCH-9"], releaseGate: true);
+        WriteJob(_appWatch, TaskStates.Ready, "b", "APP-2", dependsOn: ["APP-3"]);
+        WriteJob(_appWatch, TaskStates.Ready, "c", "APP-3", dependsOn: ["APP-1"]);
+
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var watchPath = Uri.EscapeDataString(_appWatch);
+
+        using var before = JsonDocument.Parse(await client.GetStringAsync(
+            $"/api/tasks/a?watchPath={watchPath}"));
+        var candidates = before.RootElement.GetProperty("info").GetProperty("pickupHold")
+            .GetProperty("resolutions").EnumerateArray()
+            .Select(item => $"{item.GetProperty("sourceKey").GetString()}->{item.GetProperty("targetKey").GetString()}")
+            .ToArray();
+        Assert.Equal(new[] { "APP-1->APP-2", "APP-2->APP-3", "APP-3->APP-1" }, candidates);
+
+        using var response = await client.PutAsJsonAsync(
+            $"/api/tasks/APP-2/waits-on?watchPath={watchPath}",
+            new
+            {
+                remove = new[] { "APP-3" },
+                reason = "Operator selected the APP-2 -> APP-3 cycle edge.",
+                requireCycleEdge = true,
+            });
+        response.EnsureSuccessStatusCode();
+        using var result = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.True(result.RootElement.GetProperty("changed").GetBoolean());
+        Assert.True(result.RootElement.GetProperty("cycleResolved").GetBoolean());
+
+        foreach (var slug in new[] { "a", "b", "c" })
+        {
+            using var detail = JsonDocument.Parse(await client.GetStringAsync(
+                $"/api/tasks/{slug}?watchPath={watchPath}"));
+            var waitsOn = detail.RootElement.GetProperty("info").GetProperty("waitsOn");
+            if (waitsOn.ValueKind != JsonValueKind.Null)
+                Assert.False(waitsOn.GetProperty("cycleDetected").GetBoolean());
+        }
+
+        using var after = JsonDocument.Parse(await client.GetStringAsync(
+            $"/api/tasks/a?watchPath={watchPath}"));
+        var afterInfo = after.RootElement.GetProperty("info");
+        var remainingKeys = afterInfo.GetProperty("waitsOn").GetProperty("items").EnumerateArray()
+            .Select(item => item.GetProperty("key").GetString()).ToArray();
+        Assert.Equal(new[] { "APP-2", "ARCH-9" }, remainingKeys);
+        var separateDecision = afterInfo.GetProperty("pickupHold");
+        Assert.Equal("unsatisfiable", separateDecision.GetProperty("classification").GetString());
+        Assert.Contains("ARCH-9", separateDecision.GetProperty("reason").GetString()!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PutWaitsOn_StaleCycleDecision_IsNoOpWithMessage()
+    {
+        WriteJob(_appWatch, TaskStates.Ready, "a", "APP-1", dependsOn: ["APP-2"]);
+        WriteJob(_appWatch, TaskStates.Ready, "b", "APP-2", dependsOn: ["APP-3"]);
+        WriteJob(_appWatch, TaskStates.Ready, "c", "APP-3", dependsOn: ["APP-1"]);
+
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var watchPath = Uri.EscapeDataString(_appWatch);
+
+        using var first = await client.PutAsJsonAsync(
+            $"/api/tasks/APP-2/waits-on?watchPath={watchPath}",
+            new
+            {
+                remove = new[] { "APP-3" },
+                reason = "Another operator broke the cycle.",
+                requireCycleEdge = true,
+            });
+        first.EnsureSuccessStatusCode();
+
+        using var stale = await client.PutAsJsonAsync(
+            $"/api/tasks/APP-1/waits-on?watchPath={watchPath}",
+            new
+            {
+                remove = new[] { "APP-2" },
+                reason = "Stale cycle decision.",
+                requireCycleEdge = true,
+            });
+        stale.EnsureSuccessStatusCode();
+        using var result = JsonDocument.Parse(await stale.Content.ReadAsStringAsync());
+        Assert.False(result.RootElement.GetProperty("changed").GetBoolean());
+        Assert.True(result.RootElement.GetProperty("cycleResolved").GetBoolean());
+        Assert.Contains("already broken", result.RootElement.GetProperty("message").GetString()!,
+            StringComparison.OrdinalIgnoreCase);
+
+        using var detail = JsonDocument.Parse(await client.GetStringAsync(
+            $"/api/tasks/a?watchPath={watchPath}"));
+        Assert.Equal("APP-2", Assert.Single(detail.RootElement.GetProperty("info")
+            .GetProperty("waitsOn").GetProperty("items").EnumerateArray()).GetProperty("key").GetString());
+    }
+
+    [Fact]
     public async Task PutReferences_SelfReference_Returns400_WithErrorShape()
     {
         WriteJob(_appWatch, TaskStates.Ready, "consumer", "APP-1");
