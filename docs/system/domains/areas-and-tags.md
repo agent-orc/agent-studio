@@ -168,6 +168,55 @@ unapproved, undersized, malformed, or out-of-registry data produces an explicit
 report status instead of a metric claim. The repository does not ship an
 agent-authored golden set as ground truth.
 
+### Filesystem and report contract
+
+The durable maintenance report for project `<project>` is
+`<TaskRepository>/tag-maintenance/<sha256(project)>.json`, where the digest is
+the lowercase hexadecimal SHA-256 of the exact project name. It is a JSON
+object with these arrays:
+
+| Field | Schema |
+|---|---|
+| `runs[]` | `id`, `startedAt`, `status` (`running`, `reported`, or `failed`), `model`, `thinkingLevel`, `itemsReviewed`, `eligibleItems`, `textOffset`, `excerptLimit`, `globalUsage` (tag-id to count), nullable `error`, `decisions[]` (decision ids), and `goldenSet` |
+| `decisions[]` | `id`, `cardId`, `proposal`, exact `changes[]` (`kind`, `project`, `id`, serialized `before`, serialized `after`), `status` (`pending`, `applying`, `partial`, `applied`, or `rejected`), and nullable `error` |
+| `audit[]` | `at`, `decisionId`, `actor`, `outcome`, and `detail`; approval is written before mutations, every completed write is recorded, and partial/application outcomes are appended |
+
+Within a decision, `proposal` contains `kind`, `source`, `target`, `label`,
+`reason`, `evidence[]`, `area`, and `terms[]`; each term contains `term`,
+`definition`, and `synonyms[]`. The serialized `before` and `after` values in a
+change are JSON strings because they are also the optimistic-concurrency
+preimages verified immediately before application.
+
+Each run's `goldenSet` object contains `status`, `metrics`, `path`, `message`,
+`cardCount`, `dossierCount`, `selectedTier`, and `tiers[]`. Each tier row contains
+`tier`, `model`, `thinkingLevel`, `items`, `precision`, `recall`, and
+`meanConfidence`. Without an operator-approved file, the report says
+`metrics: "unavailable (no approved golden set)"`, leaves `tiers` empty, and
+does not emit precision or recall numbers.
+
+The evaluation harness reads
+`<TaskRepository>/tag-golden-sets/<sha256(project)>.json` by default. Its schema
+is `approvedBy` (non-empty string), `approvedAt` (timestamp), and `items[]`.
+Each item has `kind` (`card` or `dossier`), `id`, `title`, `text`, and a non-empty
+`tags[]` drawn from the effective closed registry. `(kind, id)` pairs are
+unique. A usable file contains at least 60 cards and 20 Dossiers. Invalid,
+unapproved, undersized, or out-of-registry input is reported as unavailable or
+invalid and never treated as ground truth.
+
+### Configuration
+
+| Key | Default | Meaning |
+|---|---|---|
+| `TagMaintenance:Enabled` | `true` | Enables the hosted periodic sweep. `false` skips all projects; the explicit run API remains available. |
+| `TagMaintenance:Projects:<project>:Enabled` | `true` | Enables the hosted sweep for one exact project name. `false` skips that project; the explicit run API remains available. |
+| `TagMaintenance:IntervalHours` | `168` | Cadence after the most recent successful (`reported`) run. Values are clamped to 1 through 8760 hours. |
+| `TagMaintenance:RetryDelayMinutes` | `60` | Delay after the most recent failed attempt since the last success. Values are clamped to 1 through 1440 minutes. Cancellation creates no run and does not alter due time. |
+| `TagMaintenance:GoldenSetPath` | `<TaskRepository>/tag-golden-sets/<sha256(project)>.json` | Optional golden-set path override. Every `{project}` token is replaced with the exact project name, then the result is resolved to an absolute path. |
+
+`TaskRepository` is the required workspace root for both report and default
+golden-set paths. The hosted worker checks eligibility every 15 minutes; that
+poll interval is fixed and is not a `TagMaintenance` configuration key.
+
 ## Tests
 
 `backend.Tests/AreaTaxonomyTests.cs`, `AreaGlossaryDocumentTests.cs`,

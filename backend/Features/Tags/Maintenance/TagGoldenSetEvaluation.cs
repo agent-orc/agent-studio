@@ -41,6 +41,7 @@ public sealed record TagTierMetrics
 public sealed record TagGoldenSetReport
 {
     public string Status { get; init; } = "not-available";
+    public string Metrics { get; init; } = "unavailable (no approved golden set)";
     public string? Path { get; init; }
     public string? Message { get; init; }
     public int CardCount { get; init; }
@@ -125,7 +126,8 @@ public sealed class TagGoldenSetEvaluator(ITagGoldenSetClassifier classifier, IC
             }
             return new()
             {
-                Status = "evaluated", Path = path, CardCount = cards, DossierCount = dossiers,
+                Status = "evaluated", Metrics = "available", Path = path,
+                CardCount = cards, DossierCount = dossiers,
                 SelectedTier = selectedTier, Tiers = tiers,
                 Message = selectedTier == 2
                     ? "Tier 1 precision fell below 0.9; classification was automatically routed to tier 2."

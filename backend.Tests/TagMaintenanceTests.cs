@@ -99,6 +99,10 @@ public sealed class TagMaintenanceTests : IDisposable
         Assert.Empty(workspace.Writes);
         Assert.Contains("Keep", workspace.Cards[0]);
         Assert.Contains("Apply", workspace.Cards[0]);
+        var reportJson = File.ReadAllText(Path.Combine(_root, "tag-maintenance",
+            TagMaintenancePolicy.Fingerprint("Project") + ".json"));
+        Assert.Contains("\"metrics\":\"unavailable (no approved golden set)\"", reportJson);
+        Assert.DoesNotContain("\"precision\":", reportJson);
         Assert.Null(await Service(workspace).RunAsync("Project"));
         await service.RunAsync("Project", true);
         Assert.Single(workspace.Cards);
@@ -236,6 +240,7 @@ public sealed class TagMaintenanceTests : IDisposable
         var report = await new TagGoldenSetEvaluator(classifier, configuration)
             .EvaluateAsync("Project", Snapshot(), CancellationToken.None);
         Assert.Equal("evaluated", report.Status);
+        Assert.Equal("available", report.Metrics);
         Assert.Equal(2, report.SelectedTier);
         Assert.Equal(2, report.Tiers.Count);
         Assert.Equal(0, report.Tiers[0].Precision);
@@ -251,6 +256,7 @@ public sealed class TagMaintenanceTests : IDisposable
         var report = await new TagGoldenSetEvaluator(new FakeClassifier(), configuration)
             .EvaluateAsync("Project", Snapshot(), CancellationToken.None);
         Assert.Equal("not-available", report.Status);
+        Assert.Equal("unavailable (no approved golden set)", report.Metrics);
         Assert.Empty(report.Tiers);
         Assert.Contains("no precision or recall is claimed", report.Message);
     }
