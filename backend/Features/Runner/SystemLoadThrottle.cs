@@ -84,9 +84,9 @@ public sealed class SystemLoadThrottle : BackgroundService, ILoadThrottleGate
             _logger.LogWarning("load_throttle_state_changed active={Active} cpuPercent={CpuPercent:0.#} sustainedSeconds={SustainedSeconds:0}", Current.Throttle, percent, Current.SustainedFor.TotalSeconds);
     }
 
-    private readonly record struct CpuTicks(ulong Idle, ulong Total);
+    internal readonly record struct CpuTicks(ulong Idle, ulong Total);
 
-    private static class SystemCpuReader
+    internal static class SystemCpuReader
     {
         public static bool TryRead(out CpuTicks ticks)
         {

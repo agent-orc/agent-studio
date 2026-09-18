@@ -81,7 +81,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Remote infrastructure scenario result contract | [contracts/remote-run-result.md](../system/contracts/remote-run-result.md) |
 | Deployment regression scenario (one seeded fixture, three targets, the gate every deployment card and release proves itself against; AGT-2739) | [operations/testing/deployment-scenario.md](../operations/testing/deployment-scenario.md) |
 | Restart continuity release drill for one local and one Remote in-flight run (AGT-2780) | [operations/testing/restart-continuity-drill.md](../operations/testing/restart-continuity-drill.md) |
-| Build/test gate flaky re-run: when the integration gate re-runs only the failed tests once, how that is charged to the same gate budget, and where the `FlakyQuarantine` list is readable (AGT-2853) | [operations/testing/build-test-gate-flaky-rerun.md](../operations/testing/build-test-gate-flaky-rerun.md) |
+| Build/test gate recovery: targeted flaky re-runs, budget environment retries, contention thresholds, and slow-test evidence (AGT-2853, AGT-2872) | [operations/testing/build-test-gate-flaky-rerun.md](../operations/testing/build-test-gate-flaky-rerun.md) |
 | ADR archive | [architecture/decisions/adr-archive.md](../system/architecture/decisions/adr-archive.md) |
 | Architecture model | [architecture/model.md](../system/architecture/model.md) |
 | Architecture and Quality layer (Project Map, mapped guides, analysis inventory, component grading) | [concept](../concepts/architecture-quality-layer.md) · [interactive Dossier](../quality/architecture-quality-layer/index.html) |
