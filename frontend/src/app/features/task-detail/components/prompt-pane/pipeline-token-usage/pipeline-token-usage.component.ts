@@ -1,7 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, input, signal } from '@angular/core';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { DisclosureMarkerComponent } from '../../../../../components/disclosure-marker/disclosure-marker.component';
-import { formatTokens } from '../../../../../services/format.util';
 import type {
   PipelineModelTokenUsage,
   PipelineModelUsageSummary,
@@ -13,6 +12,7 @@ import {
   formatTokenCostDisplay,
   incompleteTokenCostLabel,
 } from '../../../../tokens';
+import { formatTokens } from '../overview-pane/overview-pane-formatters';
 import { TokenModelIdentityComponent } from './token-model-identity/token-model-identity.component';
 
 /** The task-wide total (every model summed over every run). */
@@ -32,12 +32,10 @@ interface TaskTotal {
  * so a single token number per run hides where the spend went.
  *
  * Two collapsible levels on one quiet surface (no special boxes):
- *  - TOKENS ACROSS ALL RUNS (primary, collapsed by default) shows the lifetime
- *    total; expanding it reveals the per-(model, level) breakdown inline. It is
- *    deliberately NOT called "task total": the pipeline step list right above
- *    already ends in a `Task total SUM` row over a different set of summands,
- *    and one label over two quantities is what made the panel read as noise
- *    (operator, 2026-09-14).
+ *  - ALL RUNS / TASK TOTAL (primary, collapsed by default on multi-run tasks)
+ *    shows the lifetime total; expanding it reveals the per-(model, level)
+ *    breakdown inline. A single-run task suppresses this duplicate because its
+ *    pipeline footer already has exactly the same scope.
  *  - TOKENS BY RUN lists every run newest-first, each run collapsed by default;
  *    expanding a run reveals its per-(model, level) rows. Default-collapsed
  *    scales to dozens of runs.
@@ -69,6 +67,8 @@ interface TaskTotal {
 })
 export class PipelineTokenUsageComponent {
   readonly summary = input<PipelineModelUsageSummary | null>(null);
+  /** False when the single run's pipeline footer already represents the task total. */
+  readonly showTaskTotal = input(true);
 
   /** Runs oldest-first (Run #1 -> latest), matching the run switcher. */
   readonly runs = computed<PipelineRunTokenUsage[]>(() => this.summary()?.runs ?? []);

@@ -69,12 +69,13 @@ export function stepStatusLabel(status: PipelineDisplayStatus): string {
  */
 export const laneLabel = laneName;
 
+/** Compact token count used consistently throughout the Overview tab. */
 export function formatTokens(value: number): string {
-  if (value <= 0) return '—';
+  if (!value) return '0';
   if (value < 1000) return String(value);
-  const scale = value < 1_000_000 ? 1000 : 1_000_000;
-  const suffix = value < 1_000_000 ? 'k' : 'm';
-  return `${(value / scale).toFixed(1).replace(/\.0$/, '')}${suffix}`;
+  if (value < 1_000_000) return `${Math.round(value / 1000)}k`;
+  const millions = (value / 1_000_000).toFixed(2).replace(/0$/, '');
+  return `${millions}M`;
 }
 
 export function formatDuration(seconds: number): string {

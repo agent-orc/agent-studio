@@ -7,9 +7,9 @@
     <div class="ov-agent-work__row">
       <span class="ov-agent-work__marker" aria-hidden="true"></span>
       <span class="ov-agent-work__kind" aria-hidden="true"></span>
-      <span class="ov-agent-work__label">Calls</span>
+      <span class="ov-agent-work__label">CLI sessions</span>
       <span class="ov-agent-work__value" data-testid="agent-work-calls">
-        <span class="studio-count-badge">{{ aw.calls }} calls</span>
+        <span class="studio-count-badge">{{ aw.calls }} session{{ aw.calls === 1 ? '' : 's' }}</span>
         @if (aw.recovered) {
           <span class="studio-pill studio-pill--warn"
                 [cacTooltip]="'At least one CLI invocation could not resume the prior session and reconstructed context from disk.'">
@@ -18,19 +18,23 @@
         }
       </span>
       <span class="ov-agent-work__timing">
-        <span class="ov-agent-work__started ov-value--mono"
+        <span class="ov-agent-work__time-fact">
+          <span class="ov-agent-work__time-label">First start</span>
+          <span class="ov-agent-work__started ov-value--mono"
               data-testid="agent-work-started"
               [cacTooltip]="aw.startedAt ? 'Started ' + formatAbsoluteTime(aw.startedAt) : 'Start time not recorded'">
-          {{ aw.startedAt ? formatRelativeTime(aw.startedAt) : '-' }}
+            {{ aw.startedAt ? formatRelativeTime(aw.startedAt) : 'not recorded' }}
+          </span>
         </span>
-        <span class="ov-agent-work__last-touch ov-value--mono"
+        <span class="ov-agent-work__time-fact">
+          <span class="ov-agent-work__time-label">Last activity</span>
+          <span class="ov-agent-work__last-touch ov-value--mono"
               data-testid="agent-work-last-touch"
               [cacTooltip]="aw.lastTouchAt ? 'Last touch ' + formatAbsoluteTime(aw.lastTouchAt) : 'Last touch not recorded'">
-          {{ aw.lastTouchAt ? formatRelativeTime(aw.lastTouchAt) : '-' }}
+            {{ aw.lastTouchAt ? formatRelativeTime(aw.lastTouchAt) : 'not recorded' }}
+          </span>
         </span>
       </span>
-      <span class="ov-agent-work__tokens ov-value--mono">-</span>
-      <span class="ov-agent-work__cost ov-value--mono">-</span>
     </div>
 
     @if (aw.toolCalls > 0) {

@@ -4,10 +4,9 @@ import type { CliType } from '../../../../../../models/task.model';
 import {
   cliTypeLabel,
   formatCompactDateTime,
-  formatTokens,
   shortModelName,
 } from '../../../../../../services/format.util';
-import { formatDuration } from '../overview-pane-formatters';
+import { formatDuration, formatTokens } from '../overview-pane-formatters';
 
 const KNOWN_CLIS: readonly CliType[] = ['claude', 'codex', 'gemini'];
 
