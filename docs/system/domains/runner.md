@@ -815,7 +815,11 @@ state.
   refused or reset, `ResponseEnded`, an HTTP timeout, 5xx), the Coding slot stays
   persisted in phase `finalizing` with its retry bookkeeping and the delivery it
   already secured, the worktree and the durable worker result are retained, and
-  the lease is not released. The running daemon's poll loop then probes
+  the lease is not released. Deferral additionally requires the persisted
+  `result-ready` finalization stage and the detached worker's durable result; a
+  transport fault before that boundary follows the existing failure and
+  lease-release path. The optional stage field keeps older slot files compatible
+  with startup reconciliation. The running daemon's poll loop then probes
   `/api/system/about` and re-drives the very same attempt through the startup
   reconciliation step (`RemoteTaskRunner.ReattachAsync`), with a 15 s / 30 s /
   60 s backoff that then stays at 60 s. Retries never stop: outliving the run

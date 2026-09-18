@@ -738,6 +738,22 @@ public sealed class RemoteTaskRunner
             && heartbeat.StopRequest is null
             && !heartbeat.LeaseLost)
         {
+            var latest = _state.LoadAll().FirstOrDefault(item =>
+                             string.Equals(item.AttemptId, slot.AttemptId, StringComparison.Ordinal))
+                         ?? slot;
+            var durableResultReady = DurableAgentProcess
+                .InspectForReattach(latest)
+                .Result is not null;
+            if (!FinalizationRetryPolicy.CanDefer(
+                    latest.FinalizationStage,
+                    durableResultReady))
+            {
+                // This transport fault happened before the worker established
+                // the durable result boundary. It is not safe to invent a
+                // finalization retry that the poll loop can never deliver.
+                throw;
+            }
+
             // AGT-2869: the Task Server is restarting (connection refused or
             // reset, a prematurely ended response, 502/503/504). The worker's
             // result is on disk and this attempt's authority is persisted, so
@@ -746,9 +762,6 @@ public sealed class RemoteTaskRunner
             // again. Releasing or tearing down here would strand the delivery.
             finalizationDeferred = true;
             var reason = DescribeTransportFault(ex);
-            var latest = _state.LoadAll().FirstOrDefault(item =>
-                             string.Equals(item.AttemptId, slot.AttemptId, StringComparison.Ordinal))
-                         ?? slot;
             var pending = FinalizationRetryPolicy.Schedule(
                 latest.Finalization ?? slot.Finalization,
                 reason,
@@ -1204,7 +1217,12 @@ public sealed class RemoteTaskRunner
                 var observation = DurableAgentProcess.InspectForReattach(slot);
                 if (observation.Result is { } result)
                 {
-                    _state.Save(slot with { Phase = "finalizing", LastOutputSequence = sequence });
+                    slot = _state.Save(slot with
+                    {
+                        Phase = FinalizationRetryPolicy.Phase,
+                        FinalizationStage = FinalizationRetryPolicy.ResultReadyStage,
+                        LastOutputSequence = sequence,
+                    });
                     ReportWorkerEnvelope(slot, shipper);
                     var processResult = new ProcessResult(result.ExitCode, result.StdOut, result.StdErr);
                     var invocation = AgentCliProcess.Resolve(_options, slot.RunSpec);

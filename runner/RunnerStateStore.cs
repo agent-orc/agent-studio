@@ -40,7 +40,13 @@ public sealed record PersistedRunnerSlot(
     // attempt already secured, so the daemon's own poll loop can re-drive the
     // slot without a daemon restart. Optional for persistence compatibility:
     // state written before this field loads as null and behaves as before.
-    PendingFinalization? Finalization = null);
+    PendingFinalization? Finalization = null,
+    // Explicitly records that the detached worker has written its durable
+    // result and the runner has entered finalization. Transport failures may
+    // only create Finalization retry state after this marker is persisted.
+    // Optional so startup reconciliation can adopt slots written by an older
+    // runner exactly as it did before this guard existed.
+    string? FinalizationStage = null);
 
 /// <summary>Atomic JSON persistence under RUNNER_STATE_DIR.</summary>
 public sealed class RunnerStateStore

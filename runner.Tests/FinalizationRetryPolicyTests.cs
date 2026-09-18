@@ -27,6 +27,22 @@ public sealed class FinalizationRetryPolicyTests
             FinalizationRetryPolicy.DelayAfter(attempts));
     }
 
+    [Theory]
+    [InlineData(null, false, false)]
+    [InlineData(null, true, false)]
+    [InlineData("running", true, false)]
+    [InlineData(FinalizationRetryPolicy.ResultReadyStage, false, false)]
+    [InlineData(FinalizationRetryPolicy.ResultReadyStage, true, true)]
+    public void Deferral_requires_the_explicit_stage_and_the_durable_result(
+        string? stage,
+        bool durableResultReady,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            FinalizationRetryPolicy.CanDefer(stage, durableResultReady));
+    }
+
     [Fact]
     public void First_failure_starts_the_pending_window_and_keeps_the_secured_delivery()
     {

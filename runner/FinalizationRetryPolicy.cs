@@ -58,6 +58,12 @@ public static class FinalizationRetryPolicy
     /// <summary>The slot phase a deferred finalization stays in.</summary>
     public const string Phase = "finalizing";
 
+    /// <summary>
+    /// Persisted once the detached worker result exists and before any result
+    /// transfer, completion recording, or hand-back call is attempted.
+    /// </summary>
+    public const string ResultReadyStage = "result-ready";
+
     internal static readonly TimeSpan FirstDelay = TimeSpan.FromSeconds(15);
     internal static readonly TimeSpan SecondDelay = TimeSpan.FromSeconds(30);
     internal static readonly TimeSpan SteadyDelay = TimeSpan.FromSeconds(60);
@@ -69,6 +75,19 @@ public static class FinalizationRetryPolicy
         2 => SecondDelay,
         _ => SteadyDelay,
     };
+
+    /// <summary>
+    /// A transport fault belongs to finalization retry only when both durable
+    /// facts agree: the run crossed the persisted finalization boundary and the
+    /// worker result is still present. Earlier faults retain the normal failure
+    /// and lease-release behavior.
+    /// </summary>
+    public static bool CanDefer(string? finalizationStage, bool durableResultReady)
+        => durableResultReady
+           && string.Equals(
+               finalizationStage,
+               ResultReadyStage,
+               StringComparison.Ordinal);
 
     /// <summary>Records one more failed finalization attempt and schedules the next one.</summary>
     public static PendingFinalization Schedule(

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using AgentRunner;
 using AgentStudio.TestSupport;
 using Xunit;
@@ -57,6 +58,7 @@ public sealed class CodingFinalizationRetryTests : IDisposable
         // bookkeeping and the attempt identity survive the failed transfer.
         var deferred = Assert.Single(new RunnerStateStore(options.StateDir).LoadAll());
         Assert.Equal("finalizing", deferred.Phase);
+        Assert.Equal(FinalizationRetryPolicy.ResultReadyStage, deferred.FinalizationStage);
         Assert.NotNull(deferred.Finalization);
         Assert.Equal(1, deferred.Finalization!.Attempts);
         Assert.False(string.IsNullOrWhiteSpace(deferred.Finalization.LastReason));
@@ -101,6 +103,46 @@ public sealed class CodingFinalizationRetryTests : IDisposable
 
     [SkippableFact]
     [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
+    public async Task Transport_failure_before_the_durable_result_uses_the_existing_failure_path()
+    {
+        PlatformGate.LinuxOnly("the runner fixture uses the Linux detached-worker boundary");
+
+        var origin = Path.Combine(_root, "origin.git");
+        await CreateOriginAsync(origin, Path.Combine(_root, "seed"));
+        var options = Options(origin);
+        var lease = Lease(options);
+        var server = new RestartingTaskServer(
+            lease,
+            refuseArtifactUploads: 0,
+            refusePromptReads: 1);
+        var logs = new ConcurrentQueue<string>();
+
+        using var client = Client(server, options);
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        var daemon = new RemoteRunnerDaemon(options, client, logs.Enqueue);
+        var run = daemon.RunAsync(stop.Token);
+
+        await WaitForLogAsync(
+            logs,
+            line => line.Contains("slot failed:", StringComparison.Ordinal)
+                    && line.Contains("ResponseEnded", StringComparison.Ordinal),
+            stop.Token);
+
+        await stop.CancelAsync();
+        try { await run.WaitAsync(TimeSpan.FromSeconds(20)); }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
+
+        Assert.DoesNotContain(
+            logs,
+            line => line.Contains("coding-finalization-deferred", StringComparison.Ordinal)
+                    || line.Contains("coding-finalization-redrive", StringComparison.Ordinal));
+        Assert.Empty(new RunnerStateStore(options.StateDir).LoadAll());
+        Assert.Equal(1, server.ReleaseCount);
+        Assert.Equal(0, server.CompletionCount);
+    }
+
+    [SkippableFact]
+    [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
     public async Task Startup_reconciliation_still_delivers_a_slot_whose_daemon_died_mid_retry()
     {
         PlatformGate.LinuxOnly("the detached worker result is verified through /proc");
@@ -130,7 +172,17 @@ public sealed class CodingFinalizationRetryTests : IDisposable
 
         var retained = Assert.Single(new RunnerStateStore(options.StateDir).LoadAll());
         Assert.Equal("finalizing", retained.Phase);
+        Assert.Equal(FinalizationRetryPolicy.ResultReadyStage, retained.FinalizationStage);
         Assert.NotNull(retained.Finalization);
+
+        // A pre-stage slot remains a valid startup-reconciliation input. Remove
+        // the additive property to reproduce the exact JSON an older runner
+        // persisted, then prove the replacement daemon still adopts it.
+        var slotPath = Assert.Single(Directory.EnumerateFiles(options.StateDir, "*.slot.json"));
+        var legacyJson = JsonNode.Parse(await File.ReadAllTextAsync(slotPath))!.AsObject();
+        Assert.True(legacyJson.Remove("finalizationStage"));
+        await File.WriteAllTextAsync(slotPath, legacyJson.ToJsonString(Json));
+        Assert.Null(Assert.Single(new RunnerStateStore(options.StateDir).LoadAll()).FinalizationStage);
 
         using var replacementClient = Client(server, options);
         using var stopReplacement = new CancellationTokenSource(TimeSpan.FromSeconds(90));
@@ -280,11 +332,14 @@ public sealed class CodingFinalizationRetryTests : IDisposable
     /// </summary>
     private sealed class RestartingTaskServer(
         RunLeaseInfoDto initialLease,
-        int refuseArtifactUploads) : HttpMessageHandler
+        int refuseArtifactUploads,
+        int refusePromptReads = 0) : HttpMessageHandler
     {
         private readonly object _gate = new();
         private int _claimCount;
         private int _artifactCount;
+        private int _promptReadCount;
+        private int _releaseCount;
 
         public TaskCompletionSource Completion { get; } = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -293,6 +348,7 @@ public sealed class CodingFinalizationRetryTests : IDisposable
         public List<string> CompletionIdempotencyKeys { get; } = [];
         public List<string> ResultShas { get; } = [];
         public int CompletionCount { get; private set; }
+        public int ReleaseCount => Volatile.Read(ref _releaseCount);
 
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
@@ -305,6 +361,13 @@ public sealed class CodingFinalizationRetryTests : IDisposable
 
             if (path == $"/api/tasks/{initialLease.TaskKey}/files/prompt.md")
             {
+                if (Interlocked.Increment(ref _promptReadCount) <= refusePromptReads)
+                {
+                    throw new HttpRequestException(
+                        "The response ended prematurely. (ResponseEnded)",
+                        null,
+                        HttpStatusCode.ServiceUnavailable);
+                }
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent("Deliver the result."),
@@ -326,10 +389,7 @@ public sealed class CodingFinalizationRetryTests : IDisposable
                 "/api/runner/logs" => new LogIngestResponse(initialLease.TaskKey, 2),
                 "/api/runner/artifacts" => Artifacts(body),
                 "/api/runner/completion" => Complete(body),
-                "/api/runner/lease/release" => new RunLeaseResponse(
-                    "Released",
-                    false,
-                    initialLease),
+                "/api/runner/lease/release" => Release(),
                 _ => throw new InvalidOperationException(
                     $"Unexpected fake Task Server request: {request.Method} {path}"),
             };
@@ -362,6 +422,12 @@ public sealed class CodingFinalizationRetryTests : IDisposable
                 ExpiresAt = DateTime.UtcNow.AddSeconds(request.RequestedTtlSeconds ?? 120),
                 LastHeartbeatAt = DateTime.UtcNow,
             });
+        }
+
+        private RunLeaseResponse Release()
+        {
+            Interlocked.Increment(ref _releaseCount);
+            return new RunLeaseResponse("Released", false, initialLease);
         }
 
         private ArtifactIngestResponse Artifacts(string body)
