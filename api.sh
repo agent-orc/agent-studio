@@ -395,16 +395,12 @@ cmd_names_backend() {
   return 1
 }
 
-# Does this command line belong to THIS checkout's backend server?
+# Matches the exact backend project or its build output for this checkout.
 # A backend launched by hand with a relative --project path is not recognised
 # here; it is still caught as a port listener, which is the tier that does not
 # depend on identity at all.
-matches_project() {
+matches_project_path() {
   local cmd="$1" lc_cmd lc_dir
-  case "${cmd}" in *"${PROJECT_MARKER}"*) ;; *) return 1 ;; esac
-  case "${cmd}" in
-    *.Tests*|*vstest*|*testhost*|*MSBuild.dll*|*msbuild*|*"/nodemode:"*) return 1 ;;
-  esac
   cmd_names_backend "${cmd}" "${SCRIPT_DIR}" "OrchestratorApi.csproj" && return 0
   [[ -n "${NATIVE_SCRIPT_DIR}" && "${NATIVE_SCRIPT_DIR}" != "${SCRIPT_DIR}" ]] || return 1
   # Windows command lines differ in case and separator from this shell's view
@@ -413,6 +409,17 @@ matches_project() {
   lc_cmd="$(printf '%s' "${cmd}" | tr 'A-Z\\' 'a-z/')"
   lc_dir="$(printf '%s' "${NATIVE_SCRIPT_DIR}" | tr 'A-Z\\' 'a-z/')"
   cmd_names_backend "${lc_cmd}" "${lc_dir}" "orchestratorapi.csproj"
+}
+
+# Does this command line belong to THIS checkout's backend server? Build and
+# test workers are excluded because this matcher is also used by stop/kill.
+matches_project() {
+  local cmd="$1"
+  case "${cmd}" in *"${PROJECT_MARKER}"*) ;; *) return 1 ;; esac
+  case "${cmd}" in
+    *.Tests*|*vstest*|*testhost*|*MSBuild.dll*|*msbuild*|*"/nodemode:"*) return 1 ;;
+  esac
+  matches_project_path "${cmd}"
 }
 
 # Loosened version of matches_project for "is a build or run for this
@@ -424,12 +431,7 @@ matches_project() {
 # from matching OrchestratorApi.Tests.csproj or an unrelated project that
 # merely references OrchestratorApi, so it is safe to drop the exclusion here.
 matches_project_build() {
-  local cmd="$1" lc_cmd lc_dir
-  cmd_names_backend "${cmd}" "${SCRIPT_DIR}" "OrchestratorApi.csproj" && return 0
-  [[ -n "${NATIVE_SCRIPT_DIR}" && "${NATIVE_SCRIPT_DIR}" != "${SCRIPT_DIR}" ]] || return 1
-  lc_cmd="$(printf '%s' "${cmd}" | tr 'A-Z\\' 'a-z/')"
-  lc_dir="$(printf '%s' "${NATIVE_SCRIPT_DIR}" | tr 'A-Z\\' 'a-z/')"
-  cmd_names_backend "${lc_cmd}" "${lc_dir}" "orchestratorapi.csproj"
+  matches_project_path "$1"
 }
 
 # PIDs of anything still building or running this launch's project. On
@@ -444,6 +446,15 @@ launch_activity_pids() {
     [[ "${pid}" =~ ^[0-9]+$ ]] || continue
     matches_project_build "${cmd}" && printf '%s\n' "${pid}"
   done | sort -u
+}
+
+# Keep polling PIDs already found by launch_activity_pids. A new full process
+# table scan is only needed after every known build/run process has exited.
+live_pids() {
+  local pid
+  for pid in $1; do
+    pid_alive "${pid}" && printf '%s\n' "${pid}"
+  done
 }
 
 # Every process of this checkout's backend, listening or not. This is what
@@ -823,7 +834,7 @@ cmd_start() {
 
   # Wait for the health endpoint to come up, bounded by START_TIMEOUT_SECS.
   local max_attempts=$(( $(printf '%.0f' "${START_TIMEOUT_SECS}") * 2 ))
-  local attempts=0 lp code impostors listener_pid activity
+  local attempts=0 lp code impostors listener_pid activity=""
   while (( attempts < max_attempts )); do
     sleep 0.5
     attempts=$((attempts + 1))
@@ -836,7 +847,10 @@ cmd_start() {
       # owns the port, so it can exit minutes before the real work is done.
       # Only call this a crash when nothing tied to this project is doing
       # anything either; otherwise keep polling within the budget.
-      activity="$(launch_activity_pids | tr '\n' ' ')"
+      activity="$(live_pids "${activity}" | tr '\n' ' ')"
+      if [[ -z "${activity// /}" ]]; then
+        activity="$(launch_activity_pids | tr '\n' ' ')"
+      fi
       if [[ -z "${activity// /}" ]]; then
         echo "ERROR: the backend exited before it started listening on port ${PORT}." >&2
         echo "       Last lines of ${LOG_ERR}:" >&2

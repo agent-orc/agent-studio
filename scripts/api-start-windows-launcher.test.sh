@@ -28,6 +28,7 @@ bad() { echo "FAIL: $*"; fail=$((fail+1)); }
 
 fake_bin="${test_root}/bin"
 mkdir -p "${fake_bin}"
+real_ps="$(command -v ps)"
 
 # Reads FAKE_LISTEN_MARKER/FAKE_WORKER_PIDFILE/FAKE_PORT at runtime, so one
 # stub set serves every scenario below.
@@ -52,34 +53,51 @@ EOF
 
 # Simulates the Windows Git Bash launcher: exits almost immediately. When
 # FAKE_SPAWN_WORKER=1 it first backgrounds fake-worker (the process doing the
-# "real" compiling/serving), which is what a genuine crash must NOT leave
-# behind.
+# "real" compiler), which is what a genuine crash must NOT leave behind.
 cat > "${fake_bin}/dotnet" <<EOF
 #!/usr/bin/env bash
 set -u
 if [[ "\${FAKE_SPAWN_WORKER:-1}" == "1" ]]; then
-  "${fake_bin}/fake-worker" "\$@" &
+  "${fake_bin}/fake-worker" MSBuild.dll "\$@" &
   disown
 fi
 sleep 0.2
 exit 0
 EOF
 
-# The "real" worker: records its own PID immediately (so the fake lsof can
-# report it once it starts listening), waits FAKE_WORKER_DELAY seconds to
-# simulate a cold compile, then marks itself listening and keeps running.
-# Its argv (via "\$@") carries the --project path api.sh launched it with,
-# which is what makes it visible to api.sh's own process-table matching.
+# Records only full command-line process-table scans, then delegates to the
+# host ps. Per-PID liveness checks use /proc on Linux and do not pass here.
+cat > "${fake_bin}/ps" <<EOF
+#!/usr/bin/env bash
+if [[ "\$*" == "-eww -o pid=,args=" && -n "\${FAKE_PROCESS_SCAN_LOG:-}" ]]; then
+  printf 'scan\n' >> "\${FAKE_PROCESS_SCAN_LOG}"
+fi
+exec "${real_ps}" "\$@"
+EOF
+
+# The "real" worker: records its own PID immediately, waits
+# FAKE_WORKER_DELAY seconds to simulate a cold MSBuild compile, then replaces
+# itself with the fake server. Its argv carries both MSBuild.dll and the
+# --project path, proving that the build matcher deliberately accepts a
+# process which the stop/kill matcher excludes.
 cat > "${fake_bin}/fake-worker" <<'EOF'
 #!/usr/bin/env bash
 set -u
 echo $$ > "${FAKE_WORKER_PIDFILE}"
 sleep "${FAKE_WORKER_DELAY:-0}"
+shift
+exec "$(dirname "$0")/fake-server" "$@"
+EOF
+
+cat > "${fake_bin}/fake-server" <<'EOF'
+#!/usr/bin/env bash
+set -u
 : > "${FAKE_LISTEN_MARKER}"
 sleep 999
 EOF
 
-chmod +x "${fake_bin}/lsof" "${fake_bin}/curl" "${fake_bin}/dotnet" "${fake_bin}/fake-worker"
+chmod +x "${fake_bin}/lsof" "${fake_bin}/curl" "${fake_bin}/dotnet" \
+  "${fake_bin}/fake-worker" "${fake_bin}/fake-server" "${fake_bin}/ps"
 
 # Fresh isolated checkout per scenario: name ends in -stable so the ADR-0044
 # dev-backend gate does not need to be acknowledged, and its own pidfiles/logs
@@ -95,11 +113,13 @@ new_checkout() {
 echo "== scenario: launcher exits while the build is still active =="
 checkout_a="${test_root}/proj-a-stable"
 new_checkout "${checkout_a}"
+scan_log_a="${test_root}/process-scans-a"
 out_a="$(cd "${checkout_a}" && env -u PORT -u API_PORT_OVERRIDE \
   PATH="${fake_bin}:${PATH}" \
-  FAKE_SPAWN_WORKER=1 FAKE_WORKER_DELAY=2 \
+  FAKE_SPAWN_WORKER=1 FAKE_WORKER_DELAY=3 \
   FAKE_LISTEN_MARKER="${test_root}/listening-a" \
   FAKE_WORKER_PIDFILE="${test_root}/worker-pid-a" \
+  FAKE_PROCESS_SCAN_LOG="${scan_log_a}" \
   FAKE_PORT=5031 \
   API_START_TIMEOUT_SECS=10 \
   bash ./api.sh start 2>&1)"; rc_a=$?
@@ -112,6 +132,12 @@ if echo "${out_a}" | grep -qi "exited before it started listening"; then
   bad "must not report the launcher exit as a crash while the build is still active"
 else
   ok "did not misreport the launcher exit as a crash"
+fi
+scan_count_a="$(wc -l < "${scan_log_a}" 2>/dev/null || printf '0')"
+if (( scan_count_a <= 3 )); then
+  ok "reuses discovered build PIDs instead of scanning the full process table on every poll (${scan_count_a} scans)"
+else
+  bad "scanned the full process table ${scan_count_a} times while one discovered build PID stayed alive"
 fi
 
 echo "== scenario: genuine crash (nothing survives the launcher) =="
