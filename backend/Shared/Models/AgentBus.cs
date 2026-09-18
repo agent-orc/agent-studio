@@ -96,7 +96,14 @@ public sealed record AgentMessageTokens(
     /// models that have no level dimension; consumers render that as
     /// "level unknown" and never guess a level.
     /// </summary>
-    [property: JsonPropertyName("thinkingLevel")] string? ThinkingLevel = null);
+    [property: JsonPropertyName("thinkingLevel")] string? ThinkingLevel = null,
+    /// <summary>
+    /// True when the provider's raw input counter included cache hits. The
+    /// persisted <see cref="Input"/> value is normalized uncached input either
+    /// way; null identifies legacy rows that predate this provenance field.
+    /// </summary>
+    [property: JsonPropertyName("inputIncludesCached")] bool? InputIncludesCached = null,
+    [property: JsonPropertyName("usageNormalization")] string? UsageNormalization = null);
 
 /// <summary>
 /// Snapshot of the model's context-window state at the moment one turn completed.
@@ -110,8 +117,9 @@ public sealed record AgentMessageTokens(
 /// second lookup.
 /// </para>
 /// <para>
-/// <see cref="Used"/> = input_tokens + cache_read_input_tokens (everything the
-/// model loaded for this turn, cached or not). Cache hits still occupy context.
+/// <see cref="Used"/> is everything the model loaded for the turn. For Claude
+/// that is input_tokens + cache_read_input_tokens. For OpenAI it is the raw
+/// input_tokens value, which already includes cached_input_tokens.
 /// </para>
 /// </remarks>
 public sealed record AgentMessageContextWindow(

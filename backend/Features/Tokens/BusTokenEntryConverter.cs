@@ -21,7 +21,7 @@ internal static class BusTokenEntryConverter
     /// </summary>
     public static OrchestratorLogEntry ToEntry(AgentMessage m, bool includeParticipant = true)
     {
-        var t = m.Tokens;
+        var t = m.Tokens is null ? null : StoredUsageNormalization.Normalize(m.Tokens);
         var usage = t is null
             ? null
             : new OrchestratorTokenUsage
@@ -32,6 +32,8 @@ internal static class BusTokenEntryConverter
                 CacheReadTokens = SafeInt(t.CacheRead ?? 0),
                 CacheCreationTokens = SafeInt(t.CacheWrite ?? 0),
                 ThinkingLevel = t.ThinkingLevel,
+                InputIncludesCached = t.InputIncludesCached,
+                UsageNormalization = t.UsageNormalization,
             };
 
         return new OrchestratorLogEntry

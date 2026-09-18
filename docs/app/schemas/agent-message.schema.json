@@ -131,6 +131,14 @@
           "type": ["string", "null"],
           "description": "Effective reasoning / thinking level the call ran at, e.g. medium. Recorded at call time by the producer; null when the producer does not know it or the model has no level. Model and level together identify what spent the tokens."
         },
+        "inputIncludesCached": {
+          "type": ["boolean", "null"],
+          "description": "Provider semantics at capture time. True means the raw provider input counter included cache hits; persisted input is nevertheless normalized to uncached input. False means input and cache-read were reported separately. Null identifies legacy rows."
+        },
+        "usageNormalization": {
+          "type": ["string", "null"],
+          "description": "Stable repair marker when a legacy stored row was normalized after capture, for example openai-input-includes-cached-v1."
+        },
         "dollars": {
           "type": ["number", "null"],
           "minimum": 0
@@ -141,7 +149,7 @@
           "description": "Optional snapshot of the model's context-window state at the moment this turn completed. All fields optional; populated as the CLI surfaces them.",
           "properties": {
             "totalSize": { "type": ["integer", "null"], "minimum": 0, "description": "Model context-window limit in tokens (from local model-registry, not CLI)." },
-            "used": { "type": ["integer", "null"], "minimum": 0, "description": "input + cacheRead - everything the model loaded this turn." },
+            "used": { "type": ["integer", "null"], "minimum": 0, "description": "Everything the model loaded this turn: Claude input + cacheRead, or the raw OpenAI input counter which already included cached input." },
             "remaining": { "type": ["integer", "null"], "minimum": 0, "description": "totalSize - used. Convenience field." },
             "systemPromptTokens": { "type": ["integer", "null"], "minimum": 0 },
             "conversationTokens": { "type": ["integer", "null"], "minimum": 0 },

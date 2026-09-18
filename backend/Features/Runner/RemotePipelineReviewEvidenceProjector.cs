@@ -139,6 +139,7 @@ public sealed class RemotePipelineReviewEvidenceProjector
             OutputTokens = command.OutputTokens,
             CacheReadTokens = command.CacheReadTokens,
             CacheCreationTokens = command.CacheCreationTokens,
+            InputIncludesCached = command.InputIncludesCached,
             Reason = summary,
             ExecutionLocation = "remote",
             ExecutionHostId = review.Lease?.HostId ?? report.Environment.HostId,

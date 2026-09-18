@@ -232,9 +232,10 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.Equal(ReviewCommandKinds.AgentAspect, executed.ExecutionKind);
         Assert.Equal("gpt-5.4-mini", executed.Model);
         Assert.Equal("high", executed.ThinkingLevel);
-        Assert.Equal(21, executed.InputTokens);
+        Assert.Equal(16, executed.InputTokens);
         Assert.Equal(8, executed.OutputTokens);
         Assert.Equal(5, executed.CacheReadTokens);
+        Assert.True(executed.InputIncludesCached);
         Assert.Contains(evidence.Artifacts, artifact =>
             artifact.Sha256 == executed.StdoutSha256 && artifact.ContentBase64 is not null);
         Assert.Equal("pass", Assert.Single(evidence.Verdicts).Status);

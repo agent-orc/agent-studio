@@ -94,12 +94,13 @@ public sealed class CodexTurnUsageBusEmitTests : IDisposable
 
         Assert.NotNull(msg.Tokens);
         Assert.Equal("gpt-5-codex", msg.Tokens!.Model);
-        Assert.Equal(92303, msg.Tokens.Input);
+        Assert.Equal(13071, msg.Tokens.Input);
         Assert.Equal(830, msg.Tokens.Output);
         Assert.Equal(79232, msg.Tokens.CacheRead);
+        Assert.True(msg.Tokens.InputIncludesCached);
         Assert.NotNull(msg.Tokens.ContextWindow);
         Assert.Equal(272_000, msg.Tokens.ContextWindow!.TotalSize);
-        Assert.Equal(92303 + 79232, msg.Tokens.ContextWindow.Used);
+        Assert.Equal(92303, msg.Tokens.ContextWindow.Used);
     }
 
     /// <summary>

@@ -107,7 +107,7 @@ internal sealed class RemoteReviewAgentCommandRunner
                 started,
                 DateTime.UtcNow,
                 timedOut ? "timeout" : null,
-                ParseUsage(raw.StdOut, command.Model));
+                ParseUsage(raw.StdOut, command.Model, command.CliType));
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -132,9 +132,9 @@ internal sealed class RemoteReviewAgentCommandRunner
                 CodingAgentRunner.Model.CliPermissionModes.ReadOnly,
                 CodingAgentRunner.Model.CliContextModes.Clean));
 
-    private static RemoteAgentUsage ParseUsage(string stdout, string model)
+    private static RemoteAgentUsage ParseUsage(string stdout, string model, string cliType)
     {
-        var result = new RemoteAgentUsage(model, 0, 0, 0, 0);
+        var result = new RemoteAgentUsage(model, 0, 0, 0, 0, null);
         foreach (var line in stdout.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
         {
             try
@@ -143,13 +143,30 @@ internal sealed class RemoteReviewAgentCommandRunner
                 if (!TryJsonProperty(document.RootElement, "usage", out var usage)
                     || usage.ValueKind != JsonValueKind.Object)
                     continue;
-                result = new RemoteAgentUsage(
-                    model,
-                    JsonLong(usage, "input_tokens"),
-                    JsonLong(usage, "output_tokens"),
-                    Math.Max(JsonLong(usage, "cached_input_tokens"),
-                        JsonLong(usage, "cache_read_input_tokens")),
-                    JsonLong(usage, "cache_creation_input_tokens"));
+                var cached = Math.Max(JsonLong(usage, "cached_input_tokens"),
+                    JsonLong(usage, "cache_read_input_tokens"));
+                if (string.Equals(cliType, AgentCliProcess.CodexCli, StringComparison.OrdinalIgnoreCase))
+                {
+                    var normalized = ProviderUsageNormalization.OpenAi(
+                        JsonLong(usage, "input_tokens"), cached);
+                    result = new RemoteAgentUsage(
+                        model,
+                        normalized.InputTokens,
+                        JsonLong(usage, "output_tokens"),
+                        normalized.CacheReadTokens,
+                        JsonLong(usage, "cache_creation_input_tokens"),
+                        normalized.InputIncludesCached);
+                }
+                else
+                {
+                    result = new RemoteAgentUsage(
+                        model,
+                        JsonLong(usage, "input_tokens"),
+                        JsonLong(usage, "output_tokens"),
+                        cached,
+                        JsonLong(usage, "cache_creation_input_tokens"),
+                        false);
+                }
             }
             catch (JsonException)
             {

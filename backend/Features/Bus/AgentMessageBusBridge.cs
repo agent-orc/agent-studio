@@ -675,7 +675,8 @@ public sealed class AgentMessageBusBridge
             CacheWrite: cacheWrite == 0 ? null : cacheWrite,
             Model: usage.Model,
             Dollars: null,
-            ThinkingLevel: usage.ThinkingLevel);
+            ThinkingLevel: usage.ThinkingLevel,
+            InputIncludesCached: usage.InputIncludesCached);
 
         var msg = NewMessage(
             participantId: participantId,

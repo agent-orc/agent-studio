@@ -1155,6 +1155,7 @@ public sealed class RemoteReviewWorkspace
             agentUsage?.OutputTokens ?? 0,
             agentUsage?.CacheReadTokens ?? 0,
             agentUsage?.CacheCreationTokens ?? 0,
+            agentUsage?.InputIncludesCached,
             reusedFromAttemptId ?? comparison?.ReusedFromAttemptId,
             (long)Math.Max(0, (reusedAge ?? comparison?.ReusedAge ?? TimeSpan.Zero).TotalSeconds),
             comparison?.BaselineExitCode);
@@ -2545,7 +2546,8 @@ internal sealed record RemoteAgentUsage(
     long InputTokens,
     long OutputTokens,
     long CacheReadTokens,
-    long CacheCreationTokens);
+    long CacheCreationTokens,
+    bool? InputIncludesCached);
 
 internal sealed record BaselineComparison(
     string BaselineSha,

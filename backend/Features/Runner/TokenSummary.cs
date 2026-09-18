@@ -168,6 +168,8 @@ public class TokenSummaryService
                 OutputTokens = u.OutputTokens,
                 CacheReadTokens = u.CacheReadTokens,
                 CacheCreationTokens = u.CacheCreationTokens,
+                InputIncludesCached = u.InputIncludesCached,
+                UsageNormalization = u.UsageNormalization,
                 EstimatedApiCostUsd = cost.Total,
                 ModelPriced = cost.ModelKnown,
             });

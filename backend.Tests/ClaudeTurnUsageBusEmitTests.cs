@@ -100,6 +100,7 @@ public sealed class ClaudeTurnUsageBusEmitTests : IDisposable
         Assert.Equal(911, msg.Tokens.Output);
         Assert.Equal(48230, msg.Tokens.CacheRead);
         Assert.Equal(2010, msg.Tokens.CacheWrite);
+        Assert.False(msg.Tokens.InputIncludesCached);
         Assert.NotNull(msg.Tokens.ContextWindow);
         Assert.Equal(200_000, msg.Tokens.ContextWindow!.TotalSize);
         Assert.Equal(1542 + 48230, msg.Tokens.ContextWindow.Used);

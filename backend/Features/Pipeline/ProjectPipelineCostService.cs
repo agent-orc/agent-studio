@@ -296,6 +296,7 @@ public sealed class ProjectPipelineCostService
                         OutputTokens = usage.OutputTokens,
                         CacheReadTokens = usage.CacheReadTokens,
                         CacheCreationTokens = usage.CacheCreationTokens,
+                        InputIncludesCached = usage.InputIncludesCached,
                         TokenUsageSource = "Durable task token receipt",
                     },
                 ],

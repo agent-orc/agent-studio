@@ -460,6 +460,7 @@ public sealed class AspectRunnerService
                 OutputTokens = callUsage?.OutputTokens ?? 0,
                 CacheReadTokens = callUsage?.CacheReadTokens ?? 0,
                 CacheCreationTokens = callUsage?.CacheCreationTokens ?? 0,
+                InputIncludesCached = callUsage?.InputIncludesCached,
                 Verdict = verdict.IsInfraFailure ? "environmental" : AspectVerdictParsing.StatusToken(verdict.Status),
                 Reason = verdict.IsInfraFailure
                     ? "aspect-runner-infra-crash"

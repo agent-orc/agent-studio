@@ -219,6 +219,7 @@ public sealed record ReviewCommandEvidenceDto(
     long OutputTokens = 0,
     long CacheReadTokens = 0,
     long CacheCreationTokens = 0,
+    bool? InputIncludesCached = null,
     string? BaselineReusedFromAttemptId = null,
     long BaselineReusedAgeSeconds = 0,
     /// <summary>

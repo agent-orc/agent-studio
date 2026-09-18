@@ -104,4 +104,19 @@ public sealed class TokenSummaryCacheStore
             _logger.LogWarning(ex, "Failed to persist token-aggregate cache to {Path}", _path);
         }
     }
+
+    public void Invalidate()
+    {
+        try
+        {
+            lock (_writeLock)
+            {
+                if (File.Exists(_path)) File.Delete(_path);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to invalidate token-aggregate cache at {Path}", _path);
+        }
+    }
 }
