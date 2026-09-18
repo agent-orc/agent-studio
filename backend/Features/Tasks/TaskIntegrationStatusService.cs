@@ -357,7 +357,8 @@ public sealed class TaskIntegrationStatusService
         var deliveryRef = DeliveryRefFor(job);
         // A reconciled history can still carry the first run's result envelope.
         // Select a landed, current delivery ref when supersession proves it stale.
-        if (superseded.Count > 0 && !string.IsNullOrWhiteSpace(delivery?.DeliveryRef ?? delivery?.Branch))
+        if (superseded.Count > 0 && delivery is not null
+            && !string.IsNullOrWhiteSpace(delivery.DeliveryRef ?? delivery.Branch))
             deliveryRef = TaskIntegrationBranch.Name(delivery.DeliveryRef ?? delivery.Branch, deliveryRef ?? "");
         if (currentTotal > 0 && missingByRepository.Count == 0
             && repositoryEntries.All(entry => entry.OnIntegrationBranch))
