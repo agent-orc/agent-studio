@@ -16,23 +16,6 @@ namespace AgentRunner;
 internal static class ReviewReleaseDrainPolicy
 {
     /// <summary>
-    /// Adopted attempts whose worker build differs from the daemon that just
-    /// adopted them, mapped to the release that build reports.
-    /// </summary>
-    internal static IReadOnlyDictionary<string, string> SupersededAttempts(
-        IEnumerable<PersistedReviewSlot> adopted,
-        string daemonReleaseId)
-        => adopted
-            .Where(slot => ReviewWorkerProvenancePolicy.ReleasesDiffer(
-                slot.WorkerReleaseId,
-                daemonReleaseId))
-            .GroupBy(slot => slot.AttemptId, StringComparer.Ordinal)
-            .ToDictionary(
-                group => group.Key,
-                group => group.First().WorkerReleaseId!,
-                StringComparer.Ordinal);
-
-    /// <summary>
     /// The superseded attempts that are still running. An attempt that has left
     /// the active set no longer holds the gate, even if its slot record has not
     /// been reaped yet.
