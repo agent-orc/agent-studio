@@ -192,6 +192,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Common problems | [common-problems/README.md](../operations/common-problems/README.md) |
 | Ready shows waiting for sign-in but the host is logged in | [common-problems/ready-sign-in-runner-link-down/](../operations/common-problems/ready-sign-in-runner-link-down/) |
 | claude CLI not available right after a CLI auto-update (launcher stub) | [common-problems/claude-launcher-stub-after-autoupdate/](../operations/common-problems/claude-launcher-stub-after-autoupdate/) |
+| Every process of the runner account dies in one second (sentinel pid broadcast kill) | [common-problems/sentinel-pid-broadcast-kill/](../operations/common-problems/sentinel-pid-broadcast-kill/) |
 | Designated topics (AGENTS/wiki-sync current-state index; post-agents-wiki-sync) | [concepts/designated-topics/README.md](../concepts/designated-topics/README.md) |
 | API project identity / watchPath | [concepts/api-project-identity-and-watchpath.md](../concepts/api-project-identity-and-watchpath.md) |
 | Workflow arguments become unbounded fan-out | [common-problems/workflow-args-json-string-fanout/](../operations/common-problems/workflow-args-json-string-fanout/) |
