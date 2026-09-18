@@ -10,7 +10,7 @@ public sealed class TaskFileHistoryService
 {
     private const char UnitSeparator = '\x1f';
     private const char RecordSeparator = '\x1e';
-    private static readonly TimeSpan GitTimeout = TimeSpan.FromSeconds(30);
+    internal const string GitBudgetExhausted = "The git history budget for this request is exhausted.";
     private static readonly JsonSerializerOptions ReadOpts = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -20,14 +20,23 @@ public sealed class TaskFileHistoryService
     private readonly GitService _git;
     private readonly ILogger<TaskFileHistoryService> _logger;
 
+    /// <summary>
+    /// Budget every lookup of this service starts with. Overridable so tests can
+    /// pin an exhausted budget instead of waiting one out; production leaves it
+    /// at the policy default.
+    /// </summary>
+    private readonly TimeSpan _gitCallBudget;
+
     public TaskFileHistoryService(
         TaskScannerService scanner,
         GitService git,
-        ILogger<TaskFileHistoryService> logger)
+        ILogger<TaskFileHistoryService> logger,
+        TimeSpan? gitCallBudget = null)
     {
         _scanner = scanner;
         _git = git;
         _logger = logger;
+        _gitCallBudget = gitCallBudget ?? GitCallBudgetPolicy.DefaultTotalBudget;
     }
 
     public TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>> GetHistory(
@@ -36,7 +45,10 @@ public sealed class TaskFileHistoryService
         string requestPath,
         string? scope)
     {
-        var resolved = ResolveCandidates(jobId, watchPath, requestPath, scope);
+        // One budget for the whole lookup, so the deadline the caller sees is
+        // this method's and not the sum of however many commits the file has.
+        var budget = new GitCallBudget(_gitCallBudget);
+        var resolved = ResolveCandidates(budget, jobId, watchPath, requestPath, scope);
         if (!resolved.Success) return TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>>.Fail(resolved.StatusCode, resolved.Error);
 
         var sw = Stopwatch.StartNew();
@@ -45,11 +57,13 @@ public sealed class TaskFileHistoryService
             if (candidate.GitRoot == null)
             {
                 if (resolved.IsExplicitScope)
-                    return TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>>.Fail(StatusCodes.Status400BadRequest, "The selected file source is not in a git repository.");
+                    return TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>>.Fail(
+                        StatusCodes.Status400BadRequest,
+                        budget.IsExhausted ? GitBudgetExhausted : "The selected file source is not in a git repository.");
                 continue;
             }
 
-            var result = ReadHistory(candidate);
+            var result = ReadHistory(budget, candidate);
             if (!result.Success)
             {
                 if (resolved.IsExplicitScope)
@@ -76,12 +90,13 @@ public sealed class TaskFileHistoryService
         string? scope)
     {
         if (string.IsNullOrWhiteSpace(at))
-            return ReadLiveFile(jobId, watchPath, requestPath, scope);
+            return ReadLiveFile(new GitCallBudget(_gitCallBudget), jobId, watchPath, requestPath, scope);
 
         if (!IsSha(at))
             return TaskFileLookupResult<TaskFileContent>.Fail(StatusCodes.Status400BadRequest, "Invalid commit SHA.");
 
-        var resolved = ResolveCandidates(jobId, watchPath, requestPath, scope);
+        var budget = new GitCallBudget(_gitCallBudget);
+        var resolved = ResolveCandidates(budget, jobId, watchPath, requestPath, scope);
         if (!resolved.Success) return TaskFileLookupResult<TaskFileContent>.Fail(resolved.StatusCode, resolved.Error);
 
         var sw = Stopwatch.StartNew();
@@ -90,11 +105,13 @@ public sealed class TaskFileHistoryService
             if (candidate.GitRoot == null)
             {
                 if (resolved.IsExplicitScope)
-                    return TaskFileLookupResult<TaskFileContent>.Fail(StatusCodes.Status400BadRequest, "The selected file source is not in a git repository.");
+                    return TaskFileLookupResult<TaskFileContent>.Fail(
+                        StatusCodes.Status400BadRequest,
+                        budget.IsExhausted ? GitBudgetExhausted : "The selected file source is not in a git repository.");
                 continue;
             }
 
-            var show = RunGit(candidate.GitRoot, "show", $"{at}:{candidate.GitPath}");
+            var show = RunGit(budget, candidate.GitRoot, "show", $"{at}:{candidate.GitPath}");
             if (show.Code == 0)
             {
                 LogSlow(sw, "show", jobId, candidate.Source, candidate.RequestPath);
@@ -128,14 +145,15 @@ public sealed class TaskFileHistoryService
         var info = _scanner.FindJob(jobId, watchPath);
         if (info is null)
             return TaskFileLookupResult<IReadOnlyList<WorkspaceResultFileVersion>>.Fail(404, "Job not found.");
-        var candidate = BuildWorkspaceCandidate(info, "status.md");
+        var budget = new GitCallBudget(_gitCallBudget);
+        var candidate = BuildWorkspaceCandidate(budget, info, "status.md");
         if (candidate?.GitRoot is null)
             return TaskFileLookupResult<IReadOnlyList<WorkspaceResultFileVersion>>.Ok([], TaskFileSources.Workspace);
 
         var possiblePaths = LanePaths(candidate.GitPath, info.State).Distinct(StringComparer.Ordinal).ToList();
         var args = new List<string> { "log", "--all", "--format=%H", "--" };
         args.AddRange(possiblePaths);
-        var log = RunGit(candidate.GitRoot, args.ToArray());
+        var log = RunGit(budget, candidate.GitRoot, args.ToArray());
         if (log.Code != 0)
             return TaskFileLookupResult<IReadOnlyList<WorkspaceResultFileVersion>>.Fail(400, log.Err);
 
@@ -144,11 +162,12 @@ public sealed class TaskFileHistoryService
                      .Distinct(StringComparer.OrdinalIgnoreCase))
         {
             var historicalPath = possiblePaths.FirstOrDefault(path =>
-                RunGit(candidate.GitRoot, "cat-file", "-e", $"{sha}:{path}").Code == 0);
+                RunGit(budget, candidate.GitRoot, "cat-file", "-e", $"{sha}:{path}").Code == 0);
             if (historicalPath is null) continue;
-            var content = RunGit(candidate.GitRoot, "show", $"{sha}:{historicalPath}");
+            var content = RunGit(budget, candidate.GitRoot, "show", $"{sha}:{historicalPath}");
             if (content.Code != 0) continue;
             var commit = RunGit(
+                budget,
                 candidate.GitRoot,
                 "show",
                 "-s",
@@ -173,6 +192,7 @@ public sealed class TaskFileHistoryService
                 JobFolderPath = Path.Combine(candidate.GitRoot, historicalFolder.Replace('/', Path.DirectorySeparatorChar)),
             };
             var taskJson = ReadFirstAt(
+                budget,
                 candidate.GitRoot,
                 sha,
                 $"{historicalFolder}/task.json",
@@ -189,7 +209,7 @@ public sealed class TaskFileHistoryService
                         TaskFileSources.Workspace,
                         historicalPath,
                         NullIfEmpty(ReadTrailer(body, "Steps")),
-                        ReadGenerationAt(historicalCandidate, sha))),
+                        ReadGenerationAt(budget, historicalCandidate, sha))),
                 content.Out,
                 taskJson));
         }
@@ -211,11 +231,11 @@ public sealed class TaskFileHistoryService
         }
     }
 
-    private static string? ReadFirstAt(string gitRoot, string sha, params string[] paths)
+    private static string? ReadFirstAt(GitCallBudget budget, string gitRoot, string sha, params string[] paths)
     {
         foreach (var path in paths)
         {
-            var value = RunGit(gitRoot, "show", $"{sha}:{path}");
+            var value = RunGit(budget, gitRoot, "show", $"{sha}:{path}");
             if (value.Code == 0) return value.Out;
         }
         return null;
@@ -225,12 +245,13 @@ public sealed class TaskFileHistoryService
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private TaskFileLookupResult<TaskFileContent> ReadLiveFile(
+        GitCallBudget budget,
         string jobId,
         string? watchPath,
         string requestPath,
         string? scope)
     {
-        var resolved = ResolveCandidates(jobId, watchPath, requestPath, scope);
+        var resolved = ResolveCandidates(budget, jobId, watchPath, requestPath, scope);
         if (!resolved.Success) return TaskFileLookupResult<TaskFileContent>.Fail(resolved.StatusCode, resolved.Error);
 
         foreach (var candidate in resolved.Candidates)
@@ -258,7 +279,7 @@ public sealed class TaskFileHistoryService
         return TaskFileLookupResult<TaskFileContent>.Fail(StatusCodes.Status404NotFound, "File not found.");
     }
 
-    private CandidateResolution ResolveCandidates(string jobId, string? watchPath, string requestPath, string? scope)
+    private CandidateResolution ResolveCandidates(GitCallBudget budget, string jobId, string? watchPath, string requestPath, string? scope)
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null)
@@ -277,7 +298,7 @@ public sealed class TaskFileHistoryService
 
         if (includeWorkspace)
         {
-            var workspaceCandidate = BuildWorkspaceCandidate(info, normalized);
+            var workspaceCandidate = BuildWorkspaceCandidate(budget, info, normalized);
             if (workspaceCandidate != null)
                 candidates.Add(workspaceCandidate);
             else if (normalizedScope == TaskFileSources.Workspace)
@@ -286,7 +307,7 @@ public sealed class TaskFileHistoryService
 
         if (includeCode)
         {
-            var codeCandidate = BuildCodeCandidate(info, watchPath, normalized);
+            var codeCandidate = BuildCodeCandidate(budget, info, watchPath, normalized);
             if (codeCandidate != null)
                 candidates.Add(codeCandidate);
             else if (normalizedScope == TaskFileSources.Code)
@@ -299,13 +320,13 @@ public sealed class TaskFileHistoryService
         return CandidateResolution.Ok(candidates, normalizedScope != TaskFileSources.Auto);
     }
 
-    private TaskFileCandidate? BuildWorkspaceCandidate(TaskInfo info, string requestPath)
+    private TaskFileCandidate? BuildWorkspaceCandidate(GitCallBudget budget, TaskInfo info, string requestPath)
     {
         var jobRoot = Path.GetFullPath(info.FolderPath);
         var livePath = Path.GetFullPath(Path.Combine(jobRoot, requestPath.Replace('/', Path.DirectorySeparatorChar)));
         if (!IsWithin(jobRoot, livePath)) return null;
 
-        var gitRoot = ResolveGitRoot(jobRoot);
+        var gitRoot = ResolveGitRoot(budget, jobRoot);
         var gitPath = gitRoot == null
             ? requestPath
             : Path.GetRelativePath(gitRoot, livePath).Replace('\\', '/');
@@ -322,7 +343,7 @@ public sealed class TaskFileHistoryService
             info.FolderPath);
     }
 
-    private TaskFileCandidate? BuildCodeCandidate(TaskInfo info, string? watchPath, string requestPath)
+    private TaskFileCandidate? BuildCodeCandidate(GitCallBudget budget, TaskInfo info, string? watchPath, string requestPath)
     {
         var repoRoot = _git.ResolveRepoRoot(info.Id, watchPath);
         if (string.IsNullOrWhiteSpace(repoRoot)) return null;
@@ -331,7 +352,7 @@ public sealed class TaskFileHistoryService
         var livePath = Path.GetFullPath(Path.Combine(root, requestPath.Replace('/', Path.DirectorySeparatorChar)));
         if (!IsWithin(root, livePath)) return null;
 
-        var gitRoot = ResolveGitRoot(root);
+        var gitRoot = ResolveGitRoot(budget, root);
         var gitPath = gitRoot == null
             ? requestPath
             : Path.GetRelativePath(gitRoot, livePath).Replace('\\', '/');
@@ -348,9 +369,10 @@ public sealed class TaskFileHistoryService
             info.FolderPath);
     }
 
-    private GitValue<IReadOnlyList<TaskFileHistoryEntry>> ReadHistory(TaskFileCandidate candidate)
+    private GitValue<IReadOnlyList<TaskFileHistoryEntry>> ReadHistory(GitCallBudget budget, TaskFileCandidate candidate)
     {
         var log = RunGit(
+            budget,
             candidate.GitRoot!,
             "log",
             "--follow",
@@ -387,7 +409,7 @@ public sealed class TaskFileHistoryService
             var verdict = ReadTrailer(body, "Verdict");
             var steps = ReadTrailer(body, "Steps");
             var generation = candidate.Source == TaskFileSources.Workspace
-                ? ReadGenerationAt(candidate, sha)
+                ? ReadGenerationAt(budget, candidate, sha)
                 : null;
 
             entries.Add(new TaskFileHistoryEntry(
@@ -407,14 +429,14 @@ public sealed class TaskFileHistoryService
         return GitValue<IReadOnlyList<TaskFileHistoryEntry>>.Ok(entries);
     }
 
-    private FileGenerationMeta? ReadGenerationAt(TaskFileCandidate candidate, string sha)
+    private FileGenerationMeta? ReadGenerationAt(GitCallBudget budget, TaskFileCandidate candidate, string sha)
     {
         var metaPath = Path.Combine(candidate.JobFolderPath, ".metadata", "files.json");
         var rel = Path.GetRelativePath(candidate.GitRoot!, metaPath).Replace('\\', '/');
         if (Path.IsPathRooted(rel) || rel.StartsWith("..", StringComparison.Ordinal))
             return null;
 
-        var show = RunGit(candidate.GitRoot!, "show", $"{sha}:{rel}");
+        var show = RunGit(budget, candidate.GitRoot!, "show", $"{sha}:{rel}");
         if (show.Code != 0 || string.IsNullOrWhiteSpace(show.Out))
             return null;
 
@@ -487,9 +509,9 @@ public sealed class TaskFileHistoryService
         return true;
     }
 
-    private static string? ResolveGitRoot(string path)
+    private static string? ResolveGitRoot(GitCallBudget budget, string path)
     {
-        var result = RunGit(path, "rev-parse", "--show-toplevel");
+        var result = RunGit(budget, path, "rev-parse", "--show-toplevel");
         if (result.Code != 0 || string.IsNullOrWhiteSpace(result.Out)) return null;
         return Path.GetFullPath(result.Out.Trim());
     }
@@ -554,8 +576,18 @@ public sealed class TaskFileHistoryService
             operation, jobId, source, path, sw.ElapsedMilliseconds);
     }
 
-    private static GitProcessResult RunGit(string cwd, params string[] args)
+    /// <summary>
+    /// Runs one git call against the lookup's shared
+    /// <see cref="GitCallBudget"/>. The budget, not a fixed per-call constant,
+    /// supplies the timeout, so a lookup that walks many commits stays bounded as
+    /// a whole (AGT-2867).
+    /// </summary>
+    private static GitProcessResult RunGit(GitCallBudget budget, string cwd, params string[] args)
     {
+        var timeout = budget.NextCallTimeout();
+        if (timeout <= TimeSpan.Zero)
+            return new GitProcessResult("", GitBudgetExhausted, -1);
+
         var psi = new ProcessStartInfo
         {
             FileName = "git",
@@ -574,7 +606,7 @@ public sealed class TaskFileHistoryService
 
         var stdout = p.StandardOutput.ReadToEndAsync();
         var stderr = p.StandardError.ReadToEndAsync();
-        if (!p.WaitForExit((int)GitTimeout.TotalMilliseconds))
+        if (!p.WaitForExit((int)timeout.TotalMilliseconds))
         {
             try { p.Kill(entireProcessTree: true); } catch (Exception __ex) { SilentCatch.Note(__ex, "TaskFileHistoryService:523"); }
             return new GitProcessResult("", "git timed out.", -1);

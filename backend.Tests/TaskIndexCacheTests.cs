@@ -250,6 +250,7 @@ public class TaskIndexCacheTests : IDisposable
     public void UnchangedArchiveFolder_IsHydratedOnceAcrossSnapshotRefreshes()
     {
         WriteJob(TaskStates.Archive, "archived-1", "Archived");
+        SettleWriteTime(TaskStates.Archive, "archived-1");
         var first = Assert.Single(_scanner.ScanArchivedJobs());
 
         _cache.Invalidate(TaskIndexCache.InvalidationSource.Mutation);
@@ -608,6 +609,24 @@ public class TaskIndexCacheTests : IDisposable
         Assert.Equal("job-2", Assert.Single(cache.GetSnapshot()).Id);
         Assert.Equal(2, Volatile.Read(ref scans));
         Assert.Equal(2, cache.Misses);
+    }
+
+    /// <summary>
+    /// Moves a folder's <c>task.json</c> write time clear of the filesystem's
+    /// timestamp granule, which is what the scanner requires before it will
+    /// memoize the folder at all.
+    ///
+    /// <para>A write that recent cannot be told apart from the next write of
+    /// equal length - both land on the same coarse stamp - so the scanner
+    /// deliberately re-parses such a folder instead of trusting the fingerprint
+    /// (<c>TaskFolderMemoPolicy</c>, AGT-2867). Back-dating the stamp is the
+    /// deterministic form of letting that granule pass, with no sleep and no
+    /// dependency on how fast the host runs.</para>
+    /// </summary>
+    private void SettleWriteTime(string state, string slug)
+    {
+        var taskJson = Path.Combine(_watchPath, state, slug, "task.json");
+        File.SetLastWriteTimeUtc(taskJson, DateTime.UtcNow.AddMinutes(-5));
     }
 
     private void WriteJob(string state, string slug, string title)

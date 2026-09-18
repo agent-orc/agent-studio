@@ -39,7 +39,7 @@ public class TaskScannerLiveFolderMemoTests : IDisposable
         try { Directory.Delete(_watchPath, recursive: true); } catch { /* best-effort */ }
     }
 
-    private TaskScannerService BuildScanner()
+    private TaskScannerService BuildScanner(TimeSpan? timestampGranularity = null)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -49,7 +49,11 @@ public class TaskScannerLiveFolderMemoTests : IDisposable
             })
             .Build();
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
-        return new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
+        return new TaskScannerService(
+            config,
+            NullLogger<TaskScannerService>.Instance,
+            summary,
+            folderMemoTimestampGranularity: timestampGranularity);
     }
 
     private string SeedJob(string slug, string state, string taskJson)
@@ -163,6 +167,33 @@ public class TaskScannerLiveFolderMemoTests : IDisposable
         var second = Scan(scanner, "memo-hit");
         Assert.Equal("AAAAAAAAAA", second!.Title);   // gated parse reused
         Assert.Equal("r2", second.QuotaWait!.Reason); // marker re-applied on hit
+    }
+
+    [Fact]
+    public void SameLengthRewriteInsideTheTimestampGranule_IsStillSeenOnTheNextScan()
+    {
+        // The counterpart of the hit above: when the previous write is still
+        // inside the filesystem's timestamp granule, a second write of the same
+        // length would leave the fingerprint identical, so the folder must not be
+        // memoized at all. Reproduced deterministically by pinning both writes to
+        // one instant and telling the scanner that instant is racily fresh -
+        // which is what the kernel's coarse clock does on its own for 94% of
+        // back-to-back rewrites on the review host (AGT-2867).
+        var scanner = BuildScanner(timestampGranularity: TimeSpan.FromDays(3650));
+        var dir = SeedJob("same-granule", TaskStates.Progress,
+            HeaderJson("same-granule", TaskStates.Progress, "AAAAAAAAAA"));
+        var taskJsonPath = Path.Combine(dir, "task.json");
+
+        PinStats(dir, taskJsonPath);
+        Assert.Equal("AAAAAAAAAA", Scan(scanner, "same-granule")!.Title);
+
+        // Equal length, so only the last-write time could tell the two versions
+        // apart - and it cannot, because both land on the pinned instant.
+        File.WriteAllText(taskJsonPath,
+            HeaderJson("same-granule", TaskStates.Progress, "BBBBBBBBBB"));
+        PinStats(dir, taskJsonPath);
+
+        Assert.Equal("BBBBBBBBBB", Scan(scanner, "same-granule")!.Title);
     }
 
     private static readonly DateTime PinnedInstant = new(2027, 1, 1, 0, 0, 0, DateTimeKind.Utc);
