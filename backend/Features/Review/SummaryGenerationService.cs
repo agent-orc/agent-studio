@@ -6,8 +6,8 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace AgentStudio.Review;
 
 /// <summary>
-/// Builds the post-run <c>status.md</c> protocol by handing the tail of the CLI
-/// output log to a one-shot Claude Haiku subprocess. Normal completion awaits
+/// Builds the post-run <c>status.md</c> protocol from bounded task-level evidence
+/// through the project's configured one-shot CLI route. Normal completion awaits
 /// the bounded Result-finalization gate. State is in-memory only; after a
 /// backend restart, jobs fall back to <c>None|Ready|Degraded</c> based on the
 /// presence and provenance marker of <c>status.md</c> on disk.
@@ -15,8 +15,7 @@ namespace AgentStudio.Review;
 public sealed class SummaryGenerationService
 {
     public const int DefaultFinalizationMaxAttempts = 3;
-    private const int MaxLogChars = 60_000;
-    private const int HaikuTimeoutSeconds = 90;
+    private const int SummaryTimeoutSeconds = 90;
     private static readonly Regex ProtocolImagePathRegex = new(
         @"(?<![\w./\\-])(?<path>(?:results|attachments)[/\\][^\s`'""<>)\]]+\.(?:png|jpe?g|gif|webp|bmp|svg))(?:[.,;:!?])?(?![\w./\\-])",
         RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
@@ -27,6 +26,9 @@ public sealed class SummaryGenerationService
     private readonly AdHocUsageRecorder? _usage;
     private readonly FileGenerationIndex? _fileGenerationIndex;
     private readonly ResultVersionStore? _resultVersions;
+    private readonly ProjectSettingsService? _projectSettings;
+    private readonly PipelineExecutionLog? _pipelineLog;
+    private readonly Func<GitService>? _gitFactory;
     private readonly ConcurrentDictionary<string, TaskSummaryState> _states = new();
 
     public SummaryGenerationService(ILogger<SummaryGenerationService> logger, IConfiguration configuration)
@@ -41,7 +43,10 @@ public sealed class SummaryGenerationService
         AdHocUsageRecorder? usage = null,
         CliOneShotRegistry? oneShotRegistry = null,
         FileGenerationIndex? fileGenerationIndex = null,
-        ResultVersionStore? resultVersions = null)
+        ResultVersionStore? resultVersions = null,
+        ProjectSettingsService? projectSettings = null,
+        PipelineExecutionLog? pipelineLog = null,
+        Func<GitService>? gitFactory = null)
     {
         _logger = logger;
         _configuration = configuration;
@@ -50,6 +55,9 @@ public sealed class SummaryGenerationService
         _oneShotRegistry = oneShotRegistry;
         _fileGenerationIndex = fileGenerationIndex;
         _resultVersions = resultVersions;
+        _projectSettings = projectSettings;
+        _pipelineLog = pipelineLog;
+        _gitFactory = gitFactory;
     }
 
     private readonly CliOneShotRegistry? _oneShotRegistry;
@@ -61,7 +69,7 @@ public sealed class SummaryGenerationService
     /// Pure inflight check used by <see cref="GenerateAsync"/> and exposed
     /// for tests. A job is considered "still generating" when its previous
     /// state is <see cref="TaskSummaryStatus.Generating"/> AND the
-    /// <see cref="TaskSummaryState.StartedAt"/> is younger than the Haiku
+    /// <see cref="TaskSummaryState.StartedAt"/> is younger than the summary
     /// timeout. Older Generating entries are treated as stuck and
     /// overwritten so the user can recover via the regenerate button.
     /// </summary>
@@ -159,13 +167,13 @@ public sealed class SummaryGenerationService
         var runIndex = _fileGenerationIndex?.CurrentRunIndex(info.FolderPath);
 
         // Inflight guard: if a previous GenerateAsync for the same job is
-        // still inside its Haiku window, dropping this duplicate avoids
+        // still inside its bounded generation window, dropping this duplicate avoids
         // racing two subprocesses against the same status.md (manual
         // Regenerate clicked while the post-run auto-call is still in
         // flight, or the runner re-fires after a missed completion). The
         // outstanding call will publish either Ready or Failed when it
         // returns; the user-visible spinner stays where it was.
-        if (_states.TryGetValue(key, out var prev) && IsInflight(prev, DateTime.UtcNow, HaikuTimeoutSeconds))
+        if (_states.TryGetValue(key, out var prev) && IsInflight(prev, DateTime.UtcNow, SummaryTimeoutSeconds))
         {
             _logger.LogDebug("Skipping summary generation for {JobId}: prior call still in flight (started {StartedAt:o})",
                 info.Id, prev.StartedAt);
@@ -188,16 +196,17 @@ public sealed class SummaryGenerationService
             }
 
             var rawLog = await File.ReadAllTextAsync(logPath, ct);
-            var truncated = TruncateTail(rawLog, MaxLogChars);
             runOutcome ??= TerminalRunOutcomeClassifier.TryClassifyRenderedLog(rawLog)?.Outcome;
+            var inputs = SummaryInputBuilder.Build(info, rawLog, ResolveGitService());
+            var route = ResolveRoute(info);
             var prompt = _prompts.Render(RuntimePromptService.SummaryProtocol,
-                BuildSummarySlots(info, truncated, runOutcome?.ProtocolResult ?? "unknown"),
-                new PromptCallContext(info.ProjectName, "summary", SummaryModel()));
+                BuildSummarySlots(info, inputs, runOutcome?.ProtocolResult ?? "unknown"),
+                new PromptCallContext(info.ProjectName, PipelineCatalogue.SummaryStepId, route.Model));
 
-            var result = await RunHaikuAsync(prompt, info.FolderPath, ct);
+            var result = await RunSummaryAsync(info, prompt, route, ct);
             if (!result.Ok || string.IsNullOrWhiteSpace(result.Summary))
             {
-                Fail(key, result.Error ?? "Empty Haiku response");
+                Fail(key, result.Error ?? "Empty summary response");
                 return;
             }
 
@@ -262,7 +271,7 @@ public sealed class SummaryGenerationService
     /// <summary>
     /// One-shot interim summary against the current cli-output.log. Unlike
     /// <see cref="GenerateAsync"/>, this method:
-    ///   - returns the Haiku markdown to the caller instead of writing it to
+    ///   - returns the generated markdown to the caller instead of writing it to
     ///     <c>status.md</c> (the post-run summary still owns that file),
     ///   - does not update <see cref="_states"/>, so the protocol-pane's
     ///     "Ready / Generating / Failed" state stays anchored to the real run
@@ -296,22 +305,23 @@ public sealed class SummaryGenerationService
             return InterimSummaryResult.Failure("cli-output.log is empty - the agent hasn't streamed any output yet.");
         }
 
-        var truncated = TruncateTail(rawLog, MaxLogChars);
+        var inputs = SummaryInputBuilder.Build(info, rawLog, ResolveGitService());
+        var route = ResolveRoute(info);
         // Interim peek: the run is still alive, so there is no terminal outcome
         // to feed the classifier. Say so explicitly instead of guessing one.
         var prompt = _prompts.Render(RuntimePromptService.SummaryProtocol,
-            BuildSummarySlots(info, truncated, "in progress"),
-            new PromptCallContext(info.ProjectName, "summary", SummaryModel()));
+            BuildSummarySlots(info, inputs, "in progress"),
+            new PromptCallContext(info.ProjectName, PipelineCatalogue.SummaryStepId, route.Model));
 
         var sw = Stopwatch.StartNew();
-        var result = await RunHaikuAsync(prompt, info.FolderPath, ct);
+        var result = await RunSummaryAsync(info, prompt, route, ct);
         sw.Stop();
 
         if (!result.Ok || string.IsNullOrWhiteSpace(result.Summary))
         {
             _logger.LogInformation("Interim summary failed for {JobId} after {ElapsedMs}ms: {Error}",
                 info.Id, sw.ElapsedMilliseconds, result.Error);
-            return InterimSummaryResult.Failure(result.Error ?? "Empty Haiku response");
+            return InterimSummaryResult.Failure(result.Error ?? "Empty summary response");
         }
 
         var markdown = ApplyProtocolImageReferences(result.Summary, rawLog, info.FolderPath, out var appendedImageCount);
@@ -331,13 +341,6 @@ public sealed class SummaryGenerationService
         };
     }
 
-    private static string TruncateTail(string text, int maxChars)
-    {
-        if (text.Length <= maxChars) return text;
-        var tail = text[^maxChars..];
-        return "[earlier output truncated]\n" + tail;
-    }
-
     /// <summary>
     /// Builds the placeholder set for <c>summary-protocol.md</c>. Besides the
     /// log tail, it feeds the task metadata (<c>taskType</c> / <c>mode</c>) and
@@ -347,54 +350,87 @@ public sealed class SummaryGenerationService
     /// the same signals independently, so these slots only need to nudge the
     /// model; a missing or wrong value degrades to the client-side heuristic.
     /// Exposed for the prompt-contract test that pins this wiring without a
-    /// billable Haiku round-trip.
+    /// billable one-shot call.
     /// </summary>
-    public static Dictionary<string, string?> BuildSummarySlots(TaskInfo info, string log, string outcome)
-        => new()
-        {
-            ["log"] = log,
-            ["taskType"] = info.TaskType,
-            ["mode"] = info.Mode,
-            ["outcome"] = outcome,
-        };
+    public static Dictionary<string, string?> BuildSummarySlots(
+        TaskInfo info,
+        SummaryInputs inputs,
+        string outcome)
+        => SummaryInputBuilder.ToSlots(info, inputs, outcome);
 
-    private async Task<HaikuSummaryResult> RunHaikuAsync(
-        string prompt, string workingDirectory, CancellationToken ct)
+    /// <summary>Compatibility overload for focused prompt tests and old callers.</summary>
+    public static Dictionary<string, string?> BuildSummarySlots(TaskInfo info, string log, string outcome)
+        => BuildSummarySlots(info, new SummaryInputs(
+            info.Title,
+            "Task prompt unavailable.",
+            "Run 1, initial: structured round evidence unavailable.",
+            "Not provided.",
+            "No structured delivery facts were recorded.",
+            log), outcome);
+
+    private async Task<SummaryCallResult> RunSummaryAsync(
+        TaskInfo info,
+        string prompt,
+        SummaryRoute route,
+        CancellationToken ct)
     {
-        var model = SummaryModel();
         var startedAt = DateTime.UtcNow;
         var sw = Stopwatch.StartNew();
-
-        var oneShot = _oneShotRegistry?.Get("claude");
-        if (oneShot != null)
+        var oneShot = _oneShotRegistry?.Get(route.CliType);
+        if (oneShot is not null)
         {
-            var r = await oneShot.RunAsync(new CliOneShotRequest(
-                CliType: "claude", Model: model, Prompt: prompt)
+            var response = await oneShot.RunAsync(new CliOneShotRequest(
+                route.CliType, route.Model, prompt)
             {
-                WorkingDirectory = Directory.Exists(workingDirectory) ? workingDirectory : null,
-                Timeout = TimeSpan.FromSeconds(HaikuTimeoutSeconds),
+                ThinkingLevel = route.ThinkingLevel,
+                WorkingDirectory = Directory.Exists(info.FolderPath) ? info.FolderPath : null,
+                Timeout = TimeSpan.FromSeconds(SummaryTimeoutSeconds),
                 Source = AdHocUsageSources.SummaryGeneration,
-                RecordUsage = false, // We record below with parsed text + usage
+                Project = info.ProjectName,
+                JobId = info.Id,
+                RecordUsage = false,
+                JobFolderPath = info.FolderPath,
+                StepId = PipelineCatalogue.SummaryStepId,
+                TemplateRef = "summary-protocol.md",
+                WatchPath = info.WatchPath,
             }, ct).ConfigureAwait(false);
-
             sw.Stop();
             var endedAt = DateTime.UtcNow;
-            AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.SummaryGeneration, model, r.Usage,
-                (long)r.Duration.TotalMilliseconds, ok: r.Ok);
-            if (!r.Ok) return HaikuSummaryResult.Failure(model, r.Error, startedAt, endedAt, sw.ElapsedMilliseconds);
-            return HaikuSummaryResult.Success(model, r.Usage, SanitizeMarkdown(r.ParsedText), startedAt, endedAt,
-                (long)r.Duration.TotalMilliseconds);
+            var effectiveCli = response.EffectiveCliType ?? route.CliType;
+            var effectiveModel = response.EffectiveModel ?? response.Usage?.Model ?? route.Model;
+            var effectiveLevel = response.EffectiveThinkingLevel ?? route.ThinkingLevel;
+            var callOk = response.Ok && !string.IsNullOrWhiteSpace(response.ParsedText);
+            var callError = response.Error ?? (callOk ? null : "Empty summary response");
+            RecordSummaryUsage(info, effectiveCli, effectiveModel, effectiveLevel,
+                response.Usage, (long)response.Duration.TotalMilliseconds, callOk, endedAt);
+            RecordPipelineStep(info, effectiveModel, effectiveLevel, response.Usage,
+                startedAt, endedAt, (long)response.Duration.TotalMilliseconds, callOk, callError);
+            return callOk
+                ? SummaryCallResult.Success(effectiveCli, effectiveModel, effectiveLevel, response.Usage,
+                    SanitizeMarkdown(response.ParsedText), startedAt, endedAt, (long)response.Duration.TotalMilliseconds)
+                : SummaryCallResult.Failure(effectiveCli, effectiveModel, effectiveLevel, callError,
+                    startedAt, endedAt, sw.ElapsedMilliseconds);
         }
 
-        var claudePath = _configuration["ClaudeCli:Path"] ?? "claude";
+        // Compatibility only: production registers every CLI through
+        // CliOneShotRegistry. Direct process launch remains a Claude-only
+        // fallback for narrow tests and recovery deployments.
+        if (!string.Equals(route.CliType, CliTypes.Claude, StringComparison.OrdinalIgnoreCase))
+        {
+            var endedAt = DateTime.UtcNow;
+            var error = $"No one-shot implementation is registered for CLI '{route.CliType}'.";
+            RecordSummaryUsage(info, route.CliType, route.Model, route.ThinkingLevel,
+                null, sw.ElapsedMilliseconds, false, endedAt);
+            RecordPipelineStep(info, route.Model, route.ThinkingLevel, null,
+                startedAt, endedAt, sw.ElapsedMilliseconds, false, error);
+            return SummaryCallResult.Failure(route.CliType, route.Model, route.ThinkingLevel,
+                error, startedAt, endedAt, sw.ElapsedMilliseconds);
+        }
 
-        // Feed the prompt via stdin instead of a positional `-p <prompt>`
-        // argument. See OneShot service for the production path; this
-        // fallback is for tests that build the service without DI.
         var psi = new ProcessStartInfo
         {
-            FileName = GenericCliExecutionService.ResolveExecutable(claudePath),
-            WorkingDirectory = Directory.Exists(workingDirectory) ? workingDirectory : Directory.GetCurrentDirectory(),
+            FileName = GenericCliExecutionService.ResolveExecutable(_configuration["ClaudeCli:Path"] ?? "claude"),
+            WorkingDirectory = Directory.Exists(info.FolderPath) ? info.FolderPath : Directory.GetCurrentDirectory(),
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -402,57 +438,169 @@ public sealed class SummaryGenerationService
             CreateNoWindow = true,
             StandardInputEncoding = System.Text.Encoding.UTF8,
             StandardOutputEncoding = System.Text.Encoding.UTF8,
-            StandardErrorEncoding = System.Text.Encoding.UTF8
+            StandardErrorEncoding = System.Text.Encoding.UTF8,
         };
-        foreach (var arg in AdHocClaudeInvoker.BuildArgs(model)) psi.ArgumentList.Add(arg);
+        foreach (var arg in AdHocClaudeInvoker.BuildArgs(route.Model)) psi.ArgumentList.Add(arg);
 
         try
         {
-            using var p = Process.Start(psi);
-            if (p == null) return HaikuSummaryResult.Failure(model, "Process.Start returned null", startedAt, DateTime.UtcNow, sw.ElapsedMilliseconds);
-
-            // Write the prompt up front, then close stdin so Claude can finalise
-            // the request. WriteAsync is awaited so the OS pipe buffer can drain
-            // before we move on to reading stdout.
-            await p.StandardInput.WriteAsync(prompt.AsMemory(), ct);
-            p.StandardInput.Close();
-
-            var stdoutTask = p.StandardOutput.ReadToEndAsync(ct);
-            var stderrTask = p.StandardError.ReadToEndAsync(ct);
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(TimeSpan.FromSeconds(HaikuTimeoutSeconds));
-            await p.WaitForExitAsync(cts.Token);
-
+            using var process = Process.Start(psi);
+            if (process is null)
+            {
+                sw.Stop();
+                var startFailedAt = DateTime.UtcNow;
+                const string error = "Process.Start returned null";
+                RecordSummaryUsage(info, CliTypes.Claude, route.Model, route.ThinkingLevel,
+                    null, sw.ElapsedMilliseconds, false, startFailedAt);
+                RecordPipelineStep(info, route.Model, route.ThinkingLevel, null,
+                    startedAt, startFailedAt, sw.ElapsedMilliseconds, false, error);
+                return SummaryCallResult.Failure(CliTypes.Claude, route.Model, route.ThinkingLevel,
+                    error, startedAt, startFailedAt, sw.ElapsedMilliseconds);
+            }
+            await process.StandardInput.WriteAsync(prompt.AsMemory(), ct);
+            process.StandardInput.Close();
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
+            var stderrTask = process.StandardError.ReadToEndAsync(ct);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(SummaryTimeoutSeconds));
+            await process.WaitForExitAsync(timeout.Token);
             var stdout = await stdoutTask;
             var stderr = await stderrTask;
             sw.Stop();
             var endedAt = DateTime.UtcNow;
-            if (p.ExitCode != 0)
+            if (process.ExitCode != 0)
             {
-                AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.SummaryGeneration, model, null, sw.ElapsedMilliseconds, ok: false);
-                return HaikuSummaryResult.Failure(model, $"claude exited {p.ExitCode}: {stderr.Trim()}", startedAt, endedAt, sw.ElapsedMilliseconds);
+                RecordSummaryUsage(info, CliTypes.Claude, route.Model, route.ThinkingLevel,
+                    null, sw.ElapsedMilliseconds, false, endedAt);
+                RecordPipelineStep(info, route.Model, route.ThinkingLevel, null,
+                    startedAt, endedAt, sw.ElapsedMilliseconds, false, stderr.Trim());
+                return SummaryCallResult.Failure(CliTypes.Claude, route.Model, route.ThinkingLevel,
+                    $"claude exited {process.ExitCode}: {stderr.Trim()}", startedAt, endedAt, sw.ElapsedMilliseconds);
             }
-
-            var (text, usage) = AdHocClaudeInvoker.ParseOrFallback(stdout, model);
-            AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.SummaryGeneration, model, usage, sw.ElapsedMilliseconds, ok: true);
-            return HaikuSummaryResult.Success(model, usage, SanitizeMarkdown(text), startedAt, endedAt, sw.ElapsedMilliseconds);
+            var (text, usage) = AdHocClaudeInvoker.ParseOrFallback(stdout, route.Model);
+            var callOk = !string.IsNullOrWhiteSpace(text);
+            var callError = callOk ? null : "Empty summary response";
+            RecordSummaryUsage(info, CliTypes.Claude, route.Model, route.ThinkingLevel,
+                usage, sw.ElapsedMilliseconds, callOk, endedAt);
+            RecordPipelineStep(info, route.Model, route.ThinkingLevel, usage,
+                startedAt, endedAt, sw.ElapsedMilliseconds, callOk, callError);
+            return callOk
+                ? SummaryCallResult.Success(CliTypes.Claude, route.Model, route.ThinkingLevel,
+                    usage, SanitizeMarkdown(text), startedAt, endedAt, sw.ElapsedMilliseconds)
+                : SummaryCallResult.Failure(CliTypes.Claude, route.Model, route.ThinkingLevel,
+                    callError, startedAt, endedAt, sw.ElapsedMilliseconds);
         }
         catch (OperationCanceledException)
         {
             sw.Stop();
-            return HaikuSummaryResult.Failure(model, $"Haiku timed out after {HaikuTimeoutSeconds}s", startedAt, DateTime.UtcNow, sw.ElapsedMilliseconds);
+            var endedAt = DateTime.UtcNow;
+            var error = $"Summary timed out after {SummaryTimeoutSeconds}s";
+            RecordSummaryUsage(info, CliTypes.Claude, route.Model, route.ThinkingLevel,
+                null, sw.ElapsedMilliseconds, false, endedAt);
+            RecordPipelineStep(info, route.Model, route.ThinkingLevel, null,
+                startedAt, endedAt, sw.ElapsedMilliseconds, false, error);
+            return SummaryCallResult.Failure(CliTypes.Claude, route.Model, route.ThinkingLevel,
+                error, startedAt, endedAt, sw.ElapsedMilliseconds);
         }
         catch (Exception ex)
         {
             sw.Stop();
-            return HaikuSummaryResult.Failure(model, ex.Message, startedAt, DateTime.UtcNow, sw.ElapsedMilliseconds);
+            var endedAt = DateTime.UtcNow;
+            RecordSummaryUsage(info, CliTypes.Claude, route.Model, route.ThinkingLevel,
+                null, sw.ElapsedMilliseconds, false, endedAt);
+            RecordPipelineStep(info, route.Model, route.ThinkingLevel, null,
+                startedAt, endedAt, sw.ElapsedMilliseconds, false, ex.Message);
+            return SummaryCallResult.Failure(CliTypes.Claude, route.Model, route.ThinkingLevel,
+                ex.Message, startedAt, endedAt, sw.ElapsedMilliseconds);
         }
     }
 
-    private string SummaryModel() =>
-        _configuration["ClaudeCli:SummaryModel"] ?? ModelFamilyResolver.Resolve(ModelFamilies.ClaudeHaiku);
+    private SummaryRoute ResolveRoute(TaskInfo info)
+    {
+        var settings = PipelineTypeSettings.ForTask(_projectSettings?.Get(info.ProjectName), info);
+        var step = PipelineCatalogue.SummaryStep;
+        var cli = PipelineStepConfigResolver.ResolveCliType(settings, step)
+            ?? step.CliType
+            ?? PipelineStepModelDefaults.DefaultCli;
+        var model = PipelineStepConfigResolver.ResolveModel(settings, step, ModelIds.Gpt56Luna);
+        var thinking = PipelineStepConfigResolver.ResolveThinkingLevel(
+            settings, step, cli, model, "medium") ?? "medium";
+        return new SummaryRoute(cli, model, thinking);
+    }
 
-    private void RegisterGeneratedStatus(TaskInfo info, HaikuSummaryResult result, int? runIndex)
+    private GitService? ResolveGitService()
+        => _gitFactory?.Invoke();
+
+    private void RecordSummaryUsage(
+        TaskInfo info,
+        string cli,
+        string model,
+        string? thinkingLevel,
+        OrchestratorTokenUsage? usage,
+        long durationMs,
+        bool ok,
+        DateTime endedAt)
+    {
+        if (_usage is null) return;
+        var cost = TokenPricing.Estimate(model,
+            usage?.InputTokens ?? 0,
+            usage?.OutputTokens ?? 0,
+            usage?.CacheReadTokens ?? 0,
+            usage?.CacheCreationTokens ?? 0,
+            endedAt);
+        _usage.Record(new AdHocUsageRecord
+        {
+            Ts = endedAt,
+            Source = AdHocUsageSources.SummaryGeneration,
+            CliType = cli,
+            Model = model,
+            ThinkingLevel = thinkingLevel,
+            InputTokens = usage?.InputTokens ?? 0,
+            OutputTokens = usage?.OutputTokens ?? 0,
+            CacheReadTokens = usage?.CacheReadTokens ?? 0,
+            CacheCreationTokens = usage?.CacheCreationTokens ?? 0,
+            DurationMs = durationMs,
+            Ok = ok,
+            Project = info.ProjectName,
+            JobId = info.Id,
+            TaskKey = info.TaskKey,
+            RunNumber = _pipelineLog?.Read(info.FolderPath)?.Attempt,
+            EstimatedCostUsd = cost.ModelKnown ? cost.Total : null,
+        });
+    }
+
+    private void RecordPipelineStep(
+        TaskInfo info,
+        string model,
+        string? thinkingLevel,
+        OrchestratorTokenUsage? usage,
+        DateTime startedAt,
+        DateTime endedAt,
+        long durationMs,
+        bool ok,
+        string? error)
+    {
+        _pipelineLog?.RecordStep(info.FolderPath, new PipelineStepExecution
+        {
+            StepId = PipelineCatalogue.SummaryStepId,
+            Kind = StepKind.Orchestrator,
+            Model = model,
+            ThinkingLevel = thinkingLevel,
+            Status = ok ? PipelineStepStatus.Passed : PipelineStepStatus.Failed,
+            StartedAt = startedAt,
+            CompletedAt = endedAt,
+            DurationMs = durationMs,
+            InputTokens = usage?.InputTokens ?? 0,
+            OutputTokens = usage?.OutputTokens ?? 0,
+            CacheReadTokens = usage?.CacheReadTokens ?? 0,
+            CacheCreationTokens = usage?.CacheCreationTokens ?? 0,
+            TokenUsageSource = "RESULT SUMMARY (CLI ONE-SHOT) / reported",
+            Reason = ok ? null : error,
+            EvidenceRef = ok ? "status.md" : null,
+        }, accumulateUsage: true);
+    }
+
+    private void RegisterGeneratedStatus(TaskInfo info, SummaryCallResult result, int? runIndex)
     {
         if (_fileGenerationIndex == null) return;
         try
@@ -463,7 +611,8 @@ public sealed class SummaryGenerationService
                 File = "status.md",
                 Kind = "status",
                 Model = usage?.Model ?? result.Model,
-                Cli = CliTypes.Claude,
+                Cli = result.CliType,
+                ThinkingLevel = result.ThinkingLevel,
                 TokensIn = usage?.InputTokens ?? 0,
                 TokensOut = usage?.OutputTokens ?? 0,
                 TokensTotal = (usage?.InputTokens ?? 0)
@@ -474,7 +623,14 @@ public sealed class SummaryGenerationService
                 EndedAt = result.EndedAt,
                 DurationMs = result.DurationMs,
                 RunIndex = runIndex,
-                StepId = AdHocUsageSources.SummaryGeneration,
+                StepId = PipelineCatalogue.SummaryStepId,
+                EstimatedCostUsd = TokenPricing.Estimate(
+                    usage?.Model ?? result.Model,
+                    usage?.InputTokens ?? 0,
+                    usage?.OutputTokens ?? 0,
+                    usage?.CacheReadTokens ?? 0,
+                    usage?.CacheCreationTokens ?? 0,
+                    result.EndedAt).Total,
             });
         }
         catch (Exception ex)
@@ -539,7 +695,7 @@ public sealed class SummaryGenerationService
     private static string SanitizeMarkdown(string raw)
     {
         var trimmed = raw.Trim();
-        // Strip a wrapping ```markdown ... ``` fence if Haiku adds one despite instructions.
+        // Strip a wrapping ```markdown ... ``` fence if the model adds one despite instructions.
         if (trimmed.StartsWith("```"))
         {
             var firstNewline = trimmed.IndexOf('\n');
@@ -686,33 +842,41 @@ public sealed class SummaryGenerationService
         if (last != null) throw last;
     }
 
-    private sealed record HaikuSummaryResult(
+    private sealed record SummaryCallResult(
         bool Ok,
         string? Summary,
         string? Error,
+        string CliType,
         string Model,
+        string? ThinkingLevel,
         OrchestratorTokenUsage? Usage,
         long DurationMs,
         DateTime StartedAt,
         DateTime EndedAt)
     {
-        public static HaikuSummaryResult Success(
+        public static SummaryCallResult Success(
+            string cliType,
             string model,
+            string? thinkingLevel,
             OrchestratorTokenUsage? usage,
             string? summary,
             DateTime startedAt,
             DateTime endedAt,
             long durationMs)
-            => new(true, summary, null, model, usage, durationMs, startedAt, endedAt);
+            => new(true, summary, null, cliType, model, thinkingLevel, usage, durationMs, startedAt, endedAt);
 
-        public static HaikuSummaryResult Failure(
+        public static SummaryCallResult Failure(
+            string cliType,
             string model,
+            string? thinkingLevel,
             string? error,
             DateTime startedAt,
             DateTime endedAt,
             long durationMs)
-            => new(false, null, error, model, null, durationMs, startedAt, endedAt);
+            => new(false, null, error, cliType, model, thinkingLevel, null, durationMs, startedAt, endedAt);
     }
+
+    private sealed record SummaryRoute(string CliType, string Model, string? ThinkingLevel);
 }
 
 public sealed record ResultFinalizationOutcome(
@@ -726,7 +890,7 @@ public sealed record ResultFinalizationOutcome(
 
 /// <summary>
 /// Result of <see cref="SummaryGenerationService.GenerateInterimAsync"/>.
-/// On success carries the Haiku markdown and the call duration so the UI
+/// On success carries the generated markdown and the call duration so the UI
 /// can show how long the peek took; on failure carries a user-facing error
 /// string that the frontend renders in the interim-summary banner.
 /// </summary>

@@ -159,6 +159,7 @@ export interface PipelineKindSeries {
 export interface PipelineStepCostSeries {
   stepId: string;
   kind: PipelineStepKindKey;
+  calls?: number;
   totalTokens: number;
   totalCostUsd: number;
   anyModelUnknown: boolean;

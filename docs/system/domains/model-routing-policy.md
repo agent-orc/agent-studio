@@ -1,6 +1,6 @@
 # Model Routing Policy
 
-Version: 2026-09-13
+Version: 2026-09-18
 
 Status: Canonical policy, initial hypothesis based on the 2026-07-23 historical benchmark
 
@@ -28,6 +28,14 @@ should explain when a pin is below the policy floor.
 | `gpt-5.6-sol` / `medium` | Demanding implementation, investigation, or analysis with several interacting concepts, a broad context search, or two to three subsystems. | Correctness-critical control-plane work that meets a hard floor. | Sol/medium had seven standard chore/feature runs with zero reissues. Five had known grades and all five were A or B. This is the strongest favorable historical signal, although the sample is still small and observational. |
 | `gpt-5.6-sol` / `xhigh` | Correctness-critical work: P0, fencing, leases, distributed authority, security boundaries, destructive migrations, data-loss prevention, or subtle concurrent state machines. | Routine work merely because quota is available. More thinking is not a substitute for tighter scope or deterministic tests. | The xhigh cohort was heavily selected for difficult and incident-driven work: 78 runs, 32 reissued, with only 22 known grades. Its high reissue rate is a warning about cohort and pipeline churn, not proof that xhigh causes poor outcomes. This tier is selected by the correctness floor while controlled benchmarks remain open. |
 | `gpt-5.4-mini` / `high` | Bounded orchestrator and supporting-pipeline decisions over compact, structured evidence, with a deterministic output contract. Examples: aspect verdicts, the final route decision, and post-abort classification. | Core code implementation, open-ended architecture, ambiguous product decisions, or a context set too large to fit in the bounded decision prompt. | The historical task benchmark had only two Mini/medium task records, both grade B and neither reissued. That does not validate Mini for core tasks. The `high` pipeline route instead follows the existing bounded-support contract in `PipelineStepModelDefaults`; use a stronger tier when the decision itself is correctness-critical or unbounded. |
+
+The task Result `summary` step is a deliberate bounded-output exception to the
+Mini support default. It uses `gpt-5.6-luna` / `medium` by default because it
+synthesises task intent, acceptance criteria, several rounds, and delivery facts
+for the product owner. Projects can configure its CLI, model, and thinking level
+through the normal `summary` pipeline-step settings. All routes execute through
+`CliOneShotRegistry`; the direct Claude process path is compatibility fallback
+only.
 
 `high` and `ultra` are supported reasoning levels but are not default core-task
 routes in this policy. Add a default tier only after controlled comparisons
@@ -230,7 +238,7 @@ Available/Deprecated flags when discovery has not run yet:
 | `gpt-flagship` | detected gpt-5.6-\* else gpt-5.5 | alias of the existing Codex detection layer (`ModelMetadataRegistry.DefaultForCli`) |
 
 Every former hardcoded `ModelIds.ClaudeHaiku45` / `ModelIds.Gpt54Mini` runtime
-default (`OrchestratorRunner.DefaultModel`, `SummaryGenerationService`,
+default (`OrchestratorRunner.DefaultModel`,
 `TitleGenerationService`, `PromptEnhancementService`, `WikiSearchService`,
 `SoftReasoningHostedService`, `CodePatternDriftAnalysisService`,
 `ProjectProposalDraftingService`, `GenericCliExecutionService.DefaultOpusModel`,
@@ -238,7 +246,7 @@ default (`OrchestratorRunner.DefaultModel`, `SummaryGenerationService`,
 `DriftPostStepRunner.DefaultModel`, `GitService`'s commit-message model, and both
 Codex supporting-call defaults in `ReviewDecisionOrchestrator`) now resolves
 through this family layer instead of a pinned literal. Configuration keys
-(e.g. `ClaudeCli:SummaryModel`) still win when an operator sets one - a
+still win when an operator sets one - a
 configuration pin is an explicit choice and is never overridden.
 
 There is deliberately no Haiku-5 or newer gpt-mini entry: the 2026-09-06 fact

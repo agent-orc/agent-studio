@@ -164,6 +164,7 @@ public class TokenSummaryService
                 DisplayModel = displayModel,
                 ThinkingLevel = string.IsNullOrWhiteSpace(u.ThinkingLevel) ? null : u.ThinkingLevel.Trim(),
                 ParticipantId = entry.ParticipantId,
+                Topic = entry.Topic,
                 InputTokens = u.InputTokens,
                 OutputTokens = u.OutputTokens,
                 CacheReadTokens = u.CacheReadTokens,

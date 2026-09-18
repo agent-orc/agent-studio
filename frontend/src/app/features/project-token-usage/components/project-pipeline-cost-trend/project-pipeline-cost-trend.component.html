@@ -9,6 +9,12 @@
       <strong>Pipeline cost data may be incomplete.</strong> {{ warning }}
     </div>
   }
+  @if (resultSummaries(); as summaries) {
+    <p class="trend__summary" data-testid="pipeline-cost-result-summaries">
+      Result summaries: {{ summaries.calls ?? 0 }} calls,
+      {{ costDisplay(summaries.totalCostUsd, summaries.totalTokens, summaries.unpricedRuns ?? 0) }}
+    </p>
+  }
   @if (!timeline()?.hasData) {
     <p class="trend__empty" data-testid="pipeline-cost-empty">
       No readable pipeline cost telemetry was recorded in this window.

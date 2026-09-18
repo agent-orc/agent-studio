@@ -4,7 +4,7 @@ using System.Text.Json;
 namespace AgentStudio.AdHoc;
 
 /// <summary>
-/// Workspace-wide append-only log of ad-hoc Haiku CLI invocations.
+/// Workspace-wide append-only log of ad-hoc CLI invocations.
 /// One JSONL line per <see cref="AdHocUsageRecord"/>, written under
 /// <c>&lt;LocalAppData&gt;/agent-taskboard/adhoc-usage.jsonl</c> (or under
 /// <c>TaskRepository</c> when configured, mirroring <c>TagRegistryService</c>).
@@ -19,7 +19,7 @@ namespace AgentStudio.AdHoc;
 ///
 /// <para>
 /// Why a separate log instead of folding into the per-project
-/// <c>orchestrator.jsonl</c>? Most ad-hoc Haiku calls are not tied to a
+/// <c>orchestrator.jsonl</c>? Most ad-hoc calls are not tied to a
 /// single watched project (the title-generate dialog runs before a job
 /// is even created; prompt-enhance runs against the current edit
 /// buffer). A workspace-wide log lets the status-bar usage modal show
