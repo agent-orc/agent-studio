@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BLOCKER_PHRASES,
   deriveProtocolVerdict,
   parseDuration,
   resolveAuthoritativeRunOutcome,
@@ -443,6 +444,11 @@ describe('deriveProtocolVerdict', () => {
   });
 
   describe('scanForBlockers', () => {
+    it.each(BLOCKER_PHRASES)('detects the configured phrase "%s" as a whole phrase', (phrase) => {
+      const hit = scanForBlockers(`## Notes\n- Operation ${phrase} because the dependency is unavailable.`);
+      expect(hit?.phrase).toBe(phrase);
+    });
+
     it('returns the matched phrase, sentence, and section heading', () => {
       const md = [
         '## Notes',
@@ -467,6 +473,97 @@ describe('deriveProtocolVerdict', () => {
       expect(scanForBlockers(null)).toBeNull();
       expect(scanForBlockers('')).toBeNull();
       expect(scanForBlockers('# Status\n- Result: Success')).toBeNull();
+    });
+
+    it('ignores inline code, fenced code, partial words, and negated blocker language', () => {
+      const harmless = [
+        '## What Was Done',
+        '- Added `frontend/src/app/features/task-detail/parked-blocker/`.',
+        '- Added the `parked-blocker` marker.',
+        '- Added the cutover-blocker table.',
+        '- These are concerns, not acceptance blockers.',
+        '- There are no blockers and nothing blocked.',
+        '- The queue is unblocked.',
+        '```sh',
+        'echo "blocked on missing credentials"',
+        '```',
+      ].join('\n');
+
+      expect(scanForBlockers(harmless)).toBeNull();
+    });
+
+    it.each([
+      'Could not push: access denied',
+      'Blocked on missing credentials',
+    ])('keeps a true non-integrated blocker positive: %s', (sentence) => {
+      const md = `# Status\n- Result: Success\n\n## Notes\n- ${sentence}`;
+      const verdict = deriveProtocolVerdict(baseInputs({ statusMarkdown: md }));
+
+      expect(verdict.status).toBe('needs-decision');
+      expect(verdict.label).toBe('Blocked');
+      expect(verdict.tooltip).toContain(`from text scan: ${sentence}`);
+    });
+  });
+
+  describe('completed delivery text-scan precedence (AGT-2883)', () => {
+    const realFalsePositives = [
+      'Added the task-detail component in `frontend/src/app/features/task-detail/parked-blocker/`.',
+      'Added the marker name `parked-blocker`.',
+      'Added the cutover-blocker table.',
+      'The validator now rejects blocked material.',
+      'These are review concerns, not acceptance blockers.',
+      'The remaining concerns are not acceptance blockers.',
+    ];
+
+    it.each(realFalsePositives)('keeps an integrated, passed card successful: %s', (sentence) => {
+      const md = `# Status\n- Result: Success\n\n## What Was Done\n- ${sentence}`;
+      const verdict = deriveProtocolVerdict(baseInputs({
+        statusMarkdown: md,
+        deliveryIntegrated: true,
+        lastReviewPassed: true,
+      }));
+
+      expect(verdict.status).toBe('succeeded');
+      expect(verdict.label).toBe('Success');
+    });
+
+    it('also trusts the completed lane when the latest review passed', () => {
+      const verdict = deriveProtocolVerdict(baseInputs({
+        statusMarkdown: '# Status\n- Result: Success\n\n## Notes\n- Blocked on missing credentials.',
+        laneState: '6-completed',
+        lastReviewPassed: true,
+      }));
+
+      expect(verdict.status).toBe('succeeded');
+      expect(verdict.signals).toContainEqual(expect.objectContaining({
+        label: 'status text mentions: blocked',
+        sourceLabel: 'text scan',
+      }));
+    });
+
+    it.each([
+      { deliveryIntegrated: true, lastReviewPassed: false },
+      { deliveryIntegrated: false, lastReviewPassed: true },
+    ])('requires both settled delivery and a passed review: %o', (facts) => {
+      const verdict = deriveProtocolVerdict(baseInputs({
+        statusMarkdown: '# Status\n- Result: Success\n\n## Notes\n- Blocked on missing credentials.',
+        ...facts,
+      }));
+
+      expect(verdict.status).toBe('needs-decision');
+      expect(verdict.label).toBe('Blocked');
+    });
+  });
+
+  describe('diagnostic verdict tooltip provenance', () => {
+    it('names the status.md Result line source', () => {
+      const verdict = deriveProtocolVerdict(baseInputs({ statusMarkdown: '# Status\n- Result: Success' }));
+      expect(verdict.tooltip).toBe('from status.md Result line: status.md records Result: success.');
+    });
+
+    it('names the review outcome source when it leads', () => {
+      const verdict = deriveProtocolVerdict(baseInputs({ orchestratorVerdict: 'accept', hasActivity: false }));
+      expect(verdict.tooltip).toContain('from review outcome:');
     });
   });
 

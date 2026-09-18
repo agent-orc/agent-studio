@@ -54,6 +54,9 @@ export class ResultViewComponent {
 
   readonly doc = computed(() => buildResultDocument(this.detail(), this.verdict()));
   readonly caseMeta = computed(() => RESULT_CASE_META[this.doc().case.case]);
+  readonly textScanHint = computed(() => this.verdict().signals.find(
+    signal => signal.sourceLabel === 'text scan' && signal.label.startsWith('status text mentions:'),
+  ) ?? null);
   readonly outcomeTone = computed(() => {
     const status = this.verdict().status;
     if (status === 'failed') return 'problem';

@@ -164,6 +164,107 @@ test.describe('Protocol pane - verdict chip + interim status', () => {
     });
   });
 
+  test('integrated passed delivery stays successful and explains the verdict source', async ({ page }) => {
+    await page.setViewportSize({ width: 1600, height: 1100 });
+
+    const target = { id: 'agt-2883-verdict', watchPath: '/e2e/agt-2883' };
+    const statusMarkdown = [
+      '# Status',
+      '- Result: Success',
+      '',
+      '## What Was Done',
+      '- The validator now rejects blocked material.',
+    ].join('\n');
+    const detail = buildCompletedJobDetail(target.id, target.watchPath, statusMarkdown);
+    Object.assign(detail.info, {
+      state: '6-completed',
+      folderPath: `${target.watchPath}/.orchestrator/jobs/6-completed/${target.id}`,
+      integration: { status: 'integrated' },
+      reviewProjection: {
+        attempts: [], rounds: 1, latestPlane: 'remote', latestOutcome: 'Pass', latestReceivedAt: null,
+        blockingAspects: [], delivery: { status: 'integrated', reason: null },
+        decisionRequired: { required: false, source: null, reason: null },
+      },
+    });
+    await page.route('**/api/**', async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+    });
+    await page.route('**/api/auth/status', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }),
+      });
+    });
+    await page.route('**/api/watch-paths', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([{ name: 'fixture', path: target.watchPath, rootPath: target.watchPath }]),
+      });
+    });
+    await page.route('**/api/tasks**', async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([detail.info]) });
+    });
+    await page.route('**/api/tasks/grouped**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [], failedPickup: [],
+          codeNotComplete: [], autoReview: [], humanReview: [], escalated: [], review: [],
+          completed: [detail.info], archive: [], gitStateAt: null, stale: false,
+        }),
+      });
+    });
+    await page.route('**/api/runner/status', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ projects: { fixture: { projectName: 'fixture', mode: 'manual', activeJobId: null } } }),
+      });
+    });
+    await installCompletedJobMocks(page, target, statusMarkdown, detail);
+    await page.route(`**/api/tasks/${encodeURIComponent(target.id)}/pipeline?**`, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          pipeline: { id: 'fixture', displayName: 'Fixture', version: 1, pre: [], core: [], post: [], allSteps: [] },
+          execution: null,
+          cost: { steps: [], totalTokens: 0, totalCostUsd: 0, anyModelUnknown: false },
+          config: {}, resultFiles: {}, onDemand: null,
+        }),
+      });
+    });
+
+    const evidenceDir = resolve(process.env.JOB_RESULTS_DIR ?? join('..', 'results', 'AGT-2883'));
+    mkdirSync(evidenceDir, { recursive: true });
+    await page.addInitScript(() => localStorage.setItem('atp.studio.theme', 'dark'));
+    for (const theme of ['dark', 'light'] as const) {
+      await page.goto(`/?job=${encodeURIComponent(target.id)}&watchPath=${encodeURIComponent(target.watchPath)}`);
+      await page.evaluate((value) => {
+        document.documentElement.dataset['studioTheme'] = value;
+        localStorage.setItem('atp.studio.theme', value);
+      }, theme);
+      await page.addStyleTag({ content: 'app-error-dialog { display: none !important; }' });
+
+      const badge = page.getByTestId('result-case-badge');
+      await expect(badge).toBeVisible({ timeout: 15_000 });
+      await expect(badge).toContainText('Success');
+      await expect(badge).not.toContainText('Blocked');
+      await expect(page.getByTestId('result-text-scan-hint')).toContainText('status text mentions: blocked');
+
+      await page.getByTestId('error-dialog-close').click().catch(() => { /* mocked shell has no hub */ });
+      await badge.hover();
+      await expect(page.getByTestId('cac-tooltip')).toContainText('from status.md Result line');
+      await page.screenshot({
+        path: join(evidenceDir, `agt-2883--completed-verdict-source-tooltip--${theme}--mocked.png`),
+        fullPage: false,
+      });
+    }
+  });
+
   test('pipeline failure is the only primary outcome across Result and Pipeline', async ({ page, devBackend }, testInfo) => {
     test.setTimeout(60_000);
     void devBackend;
