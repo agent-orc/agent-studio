@@ -43,6 +43,7 @@ public sealed record TagMaintenanceRun
     public Dictionary<string, int> GlobalUsage { get; set; } = [];
     public string? Error { get; set; }
     public List<string> Decisions { get; init; } = [];
+    public TagGoldenSetReport GoldenSet { get; set; } = new();
 }
 public sealed record TagMaintenanceAudit(DateTimeOffset At, string DecisionId, string Actor,
     string Outcome, string Detail);
@@ -60,8 +61,17 @@ public static class TagMaintenancePolicy
     public static string Encode<T>(T value) => JsonSerializer.Serialize(value, Json);
     public static string Fingerprint(string value) => Convert.ToHexString(
         SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
-    public static bool Due(TagMaintenanceState state, DateTimeOffset now, TimeSpan interval) =>
-        state.Runs.Count == 0 || now - state.Runs.Max(run => run.StartedAt) >= interval;
+    public static bool Due(TagMaintenanceState state, DateTimeOffset now, TimeSpan interval,
+        TimeSpan retryDelay)
+    {
+        var successful = state.Runs.Where(run => run.Status == "reported")
+            .OrderByDescending(run => run.StartedAt).FirstOrDefault();
+        var failedSinceSuccess = state.Runs.Where(run => run.Status == "failed"
+                && (successful == null || run.StartedAt > successful.StartedAt))
+            .OrderByDescending(run => run.StartedAt).FirstOrDefault();
+        if (failedSinceSuccess != null) return now - failedSinceSuccess.StartedAt >= retryDelay;
+        return successful == null || now - successful.StartedAt >= interval;
+    }
 
     public static List<TagMaintenanceChange> Plan(string project, TagMaintenanceSnapshot snapshot,
         TagMaintenanceProposal proposal)
