@@ -1305,6 +1305,97 @@ public sealed class TaskServerStoreTests
     }
 
     [Fact]
+    public async Task Provider_rejection_with_salvage_returns_task_ready_on_declared_sibling_route()
+    {
+        const string salvageRef = "refs/heads/agent-studio/salvage/runner/AGT-2874/run-1/fence-1/1111111";
+        const string salvageSha = "1111111111111111111111111111111111111111";
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        var decision = ProviderRefusalDecision(claim.Run!.RunId, "gpt-6-astra");
+
+        await store.CompleteRunAsync(
+            claim.Run.RunId,
+            new CompleteRunRequest(
+                "runner-a",
+                "instance-a",
+                claim.Lease!.LeaseId,
+                claim.Lease.Fence,
+                decision.Outcome.ToString(),
+                IdempotencyKey: $"completion:{claim.Run.RunId}:provider-refusal",
+                Sequence: 1,
+                OutcomeDecision: decision,
+                SalvageBranch: salvageRef,
+                SalvageCommitSha: salvageSha),
+            "runner-a",
+            default);
+
+        Assert.Equal("2-ready", (await store.GetTaskAsync(project.ProjectId, task.TaskKey, default))!.State);
+        var continuation = await store.ClaimAsync(
+            new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal("gpt-6-astra", continuation.ModelFallback!.From);
+        Assert.Equal("gpt-5.6-sol", continuation.ModelFallback.To);
+        Assert.Equal("high", continuation.ModelFallback.ThinkingLevel);
+        Assert.False(continuation.ModelFallback.CardPinned);
+        Assert.Equal(salvageRef, continuation.ContinuationBaseRef);
+        Assert.Equal(salvageSha, continuation.ContinuationBaseSha);
+        var fleet = Assert.Single(await store.ListProviderRejectionCountsAsync(14, default));
+        Assert.Equal("gpt-6-astra", fleet.Model);
+        Assert.Equal(1, fleet.Count);
+        Assert.Equal("unsupported_parameter access_programs.cyber", Assert.Single(fleet.Refusals));
+    }
+
+    [Fact]
+    public async Task Provider_rejection_without_declared_sibling_escalates_instead_of_retrying_same_model()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        var decision = ProviderRefusalDecision(claim.Run!.RunId, "gpt-5.5");
+
+        await store.CompleteRunAsync(
+            claim.Run.RunId,
+            new CompleteRunRequest(
+                "runner-a",
+                "instance-a",
+                claim.Lease!.LeaseId,
+                claim.Lease.Fence,
+                decision.Outcome.ToString(),
+                IdempotencyKey: $"completion:{claim.Run.RunId}:provider-refusal",
+                Sequence: 1,
+                OutcomeDecision: decision,
+                SalvageBranch: "refs/heads/runner/salvage/AGT-2874",
+                SalvageCommitSha: "2222222222222222222222222222222222222222"),
+            "runner-a",
+            default);
+
+        Assert.Equal("5-human-review", (await store.GetTaskAsync(project.ProjectId, task.TaskKey, default))!.State);
+    }
+
+    private static ExecutionOutcomeDecision ProviderRefusalDecision(string runId, string model)
+    {
+        const string frame = """
+            {"type":"turn.failed","error":{"type":"error","error":{"type":"invalid_request_error","code":"unsupported_parameter","message":"The access_programs parameter is not enabled for this organization.","param":"access_programs.cyber"},"status":400}}
+            """;
+        return ExecutionOutcomeAdapter.Classify(new ExecutionRawFacts(
+            runId,
+            ExecutionAttemptKind.Coding,
+            ProviderTerminalEvent: frame,
+            ExitCode: 1,
+            DurableOutputState: DurableOutputState.Published,
+            DurableOutputReference: "refs/heads/runner/salvage/AGT-2874",
+            EffectiveCliType: "codex",
+            EffectiveModel: model,
+            EffectiveThinkingLevel: "high"));
+    }
+
+    [Fact]
     public async Task Needs_input_completion_persists_question_and_salvage_branch_and_routes_to_human_review()
     {
         using var temp = new TempDirectory();

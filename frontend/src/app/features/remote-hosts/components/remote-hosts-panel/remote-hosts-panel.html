@@ -108,6 +108,25 @@
     </section>
   }
 
+  @if (providerRefusals().length) {
+    <section class="rh__refusals" data-testid="provider-refusal-summary">
+      <div>
+        <h3 class="rh__refusals-title">Provider request refusals · last 14 days</h3>
+        <p class="rh__refusals-copy">Model requests rejected by the provider for this organisation.</p>
+      </div>
+      <div class="rh__refusal-rows">
+        @for (refusal of providerRefusals(); track refusal.day + ':' + refusal.model) {
+          <div class="rh__refusal-row" data-testid="provider-refusal-row">
+            <time [attr.datetime]="refusal.day">{{ refusal.day }}</time>
+            <strong>{{ refusal.model }}</strong>
+            <span class="rh__refusal-count">{{ refusal.count }}</span>
+            <span>{{ refusal.refusals.join(', ') }}</span>
+          </div>
+        }
+      </div>
+    </section>
+  }
+
   @if (error(); as err) {
     <div class="rh__error" data-testid="remote-hosts-error">{{ err }}</div>
   }

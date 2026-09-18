@@ -13,6 +13,7 @@ public enum ExecutionOutcomeKind
 {
     AuthenticationFailure,
     QuotaExceeded,
+    ProviderRejectedRequest,
     InvalidModelOrConfiguration,
     LaunchFailure,
     CliCrash,
@@ -111,7 +112,20 @@ public sealed record ExecutionRawFacts(
     string? DurableOutputReference = null,
     int SameSessionResumeAttempts = 0,
     int FreshSalvageAttempts = 0,
-    ImmutableReviewSubject? ReviewSubject = null);
+    ImmutableReviewSubject? ReviewSubject = null,
+    string? EffectiveCliType = null,
+    string? EffectiveModel = null,
+    string? EffectiveThinkingLevel = null);
+
+/// <summary>
+/// Safe provider refusal evidence. The request and raw response are deliberately
+/// excluded: operators need the provider code, parameter, and message only.
+/// </summary>
+public sealed record ProviderRequestRejection(
+    string? Code,
+    string? Parameter,
+    string Message,
+    int? HttpStatus = null);
 
 public sealed record ExecutionOutcomeDecision(
     string ClassifierVersion,
@@ -125,7 +139,8 @@ public sealed record ExecutionOutcomeDecision(
     bool ConsumesCodingReworkBudget,
     bool InvokesCodingModel,
     ExecutionRawFacts RawFacts,
-    string? Detail = null);
+    string? Detail = null,
+    ProviderRequestRejection? ProviderRejection = null);
 
 public sealed record ProviderOutputEvidence(
     string? TerminalEvent,
@@ -214,6 +229,30 @@ public static class ExecutionOutcomeAdapter
             return Decide(facts, ExecutionOutcomeKind.OutOfMemory, OutcomeConfidence.High, null, infrastructure: true);
         if (facts.SessionState == ExecutionSessionState.Invalid || (!honestTerminal && InvalidSession.IsMatch(diagnostic)))
             return Decide(facts, ExecutionOutcomeKind.InvalidSession, OutcomeConfidence.High, null, infrastructure: true);
+        if (!honestTerminal
+            && ProviderRequestRejectionClassifier.TryClassify(
+                diagnostic,
+                out var providerRejection))
+        {
+            // execution.outcome.classified is durable. Persist only the bounded,
+            // safe refusal fields, never a provider frame that could grow to
+            // include a request body or credential-bearing metadata.
+            var safeFacts = facts with
+            {
+                ProviderTerminalEvent = null,
+                FinalAssistantOutput = null,
+                StdOut = null,
+                StdErr = null,
+            };
+            return Decide(
+                safeFacts,
+                ExecutionOutcomeKind.ProviderRejectedRequest,
+                OutcomeConfidence.High,
+                null,
+                infrastructure: true,
+                detail: providerRejection.Message,
+                providerRejection: providerRejection);
+        }
         var providerAccess = ProviderAccessClassifier.Classify(
             facts.ExitCode ?? (providerFailed ? 1 : 0),
             failedStdOut,
@@ -270,7 +309,8 @@ public static class ExecutionOutcomeAdapter
         OutcomeConfidence confidence,
         string? ambiguity,
         bool infrastructure,
-        string? detail = null)
+        string? detail = null,
+        ProviderRequestRejection? providerRejection = null)
     {
         var recovery = SelectRecovery(facts, outcome);
         var invokesCoding = facts.AttemptKind == ExecutionAttemptKind.Coding
@@ -288,7 +328,8 @@ public static class ExecutionOutcomeAdapter
             ConsumesCodingReworkBudget: false,
             InvokesCodingModel: invokesCoding,
             RawFacts: facts,
-            Detail: detail);
+            Detail: detail,
+            ProviderRejection: providerRejection);
     }
 
     private static ExecutionRecoveryAction SelectRecovery(
@@ -314,6 +355,14 @@ public static class ExecutionOutcomeAdapter
             or ExecutionOutcomeKind.InvalidModelOrConfiguration
             or ExecutionOutcomeKind.LaunchFailure)
             return ExecutionRecoveryAction.WaitForCapabilityRecovery;
+
+        if (outcome == ExecutionOutcomeKind.ProviderRejectedRequest)
+        {
+            return !string.IsNullOrWhiteSpace(facts.DurableOutputReference)
+                   && facts.DurableOutputState is DurableOutputState.Published or DurableOutputState.Acknowledged
+                ? ExecutionRecoveryAction.StartFreshAttemptFromSalvage
+                : ExecutionRecoveryAction.AskForHumanInput;
+        }
 
         if (outcome is ExecutionOutcomeKind.LeaseLoss or ExecutionOutcomeKind.OperatorCancellation)
             return ExecutionRecoveryAction.TerminateHonestly;
@@ -341,6 +390,28 @@ public static class ExecutionOutcomeAdapter
             return ExecutionRecoveryAction.StartFreshAttemptFromSalvage;
 
         return ExecutionRecoveryAction.TerminateHonestly;
+    }
+
+    /// <summary>
+    /// Rebinds a classified decision to later durable-output facts without
+    /// asking the classifier to rediscover evidence that was intentionally
+    /// redacted from a provider-rejection decision.
+    /// </summary>
+    public static ExecutionOutcomeDecision WithUpdatedFacts(
+        ExecutionOutcomeDecision decision,
+        ExecutionRawFacts facts)
+    {
+        if (decision.Outcome != ExecutionOutcomeKind.ProviderRejectedRequest)
+            return Classify(facts);
+
+        var recovery = SelectRecovery(facts, decision.Outcome);
+        return decision with
+        {
+            RawFacts = facts,
+            RecoveryAction = recovery,
+            InvokesCodingModel = facts.AttemptKind == ExecutionAttemptKind.Coding
+                                 && recovery == ExecutionRecoveryAction.StartFreshAttemptFromSalvage,
+        };
     }
 
     private static SentinelEvidence? LastSentinel(string text)

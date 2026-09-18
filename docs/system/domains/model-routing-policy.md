@@ -1,6 +1,6 @@
 # Model Routing Policy
 
-Version: 2026-09-13
+Version: 2026-09-18
 
 Status: Canonical policy, initial hypothesis based on the 2026-07-23 historical benchmark
 
@@ -384,6 +384,21 @@ quiet wait when the run is cheap, with no explicit
 `high`/`xhigh`/`ultra`/`max` reasoning pin. An expensive run switches
 immediately when the equivalent provider has headroom, and waits when no route
 can preserve its floor.
+
+### Provider request refusals
+
+A provider-side HTTP 400, 403, or 404 model-request refusal is distinct from
+quota and authentication. The versioned policy document declares same-provider
+sibling routes for this condition: `gpt-6-astra` to `gpt-5.6-sol`, Anthropic
+Opus 5 to Opus 4.8, and Anthropic Sonnet 5 to Sonnet 4.6. The continuation keeps
+the original thinking level and must still clear the card's correctness floor.
+
+The first refusal uses a run-scoped `modelFallback` and leaves the card's model
+unchanged. A second refusal of the same configured model pins the card to the
+sibling and records that change. A missing sibling, a sibling below the floor,
+or a refusal of the sibling escalates with the provider message; none returns
+the card to Ready on the refused model. Run history stores `{from, to, reason}`,
+and Execution Hosts aggregates refusals per model per UTC day.
 
 ## Roadmap: what happens next
 

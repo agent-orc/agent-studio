@@ -91,7 +91,20 @@ public record PendingIntent
     public string SavedReason { get; init; } = FollowUpQueueReasons.ProjectBusy;
     /// <summary>Diagnostic only: which job was active when this was saved.</summary>
     public string? SavedAgainstActiveJobId { get; init; }
+    /// <summary>
+    /// Run-scoped route override for a provider-refusal continuation. It is
+    /// intentionally stored on the pending intent instead of task.json so the
+    /// card's configured model stays unchanged after one refusal.
+    /// </summary>
+    public ModelFallbackInfo? ModelFallback { get; init; }
 }
+
+public sealed record ModelFallbackInfo(
+    string From,
+    string To,
+    string Reason,
+    string? CliType = null,
+    string? ThinkingLevel = null);
 
 /// <summary>
 /// String values accepted on <see cref="ContinueJobRequest.Mode"/>. Kept as
