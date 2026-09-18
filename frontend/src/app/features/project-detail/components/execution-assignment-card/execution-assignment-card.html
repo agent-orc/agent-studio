@@ -71,6 +71,14 @@
     </p>
   }
 
+  @if (latestProviderRefusal(); as refusal) {
+    <p class="execution-card__provider-refusal" data-testid="project-provider-refusal">
+      <strong>Provider request refusal.</strong>
+      {{ refusal.model }} was refused {{ refusal.count }} {{ refusal.count === 1 ? 'time' : 'times' }}
+      on {{ refusal.day }}{{ refusal.refusals.length ? ': ' + refusal.refusals.join(', ') : '.' }}
+    </p>
+  }
+
   @if (saveError()) {
     <p class="execution-card__error" role="alert">{{ saveError() }}</p>
   }

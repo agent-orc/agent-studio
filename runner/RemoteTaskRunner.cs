@@ -1116,9 +1116,11 @@ public sealed class RemoteTaskRunner
                         processResult.ExitCode,
                         processResult.StdOut,
                         processResult.StdErr);
-                    var providerAuth = ProviderAuthProbe.Shared.RecordProcessResult(
-                        invocation.FileName,
-                        processResult);
+                    var providerAuth = providerAccess.Kind == ProviderAccessEvidenceKind.RequestRejected
+                        ? null
+                        : ProviderAuthProbe.Shared.RecordProcessResult(
+                            invocation.FileName,
+                            processResult);
                     if (providerAccess.Kind == ProviderAccessEvidenceKind.AuthenticationFailure)
                     {
                         var provider = invocation.CliType;
@@ -1149,13 +1151,23 @@ public sealed class RemoteTaskRunner
                     {
                         shipper.Add(
                             "system",
-                            $"[runner] provider-auth state=limited provider={invocation.CliType} until={providerAuth.LimitedUntil:o}; claims wait for provider recovery, not sign-in");
+                            $"[runner] provider-auth state=limited provider={invocation.CliType} until={providerAuth!.LimitedUntil:o}; claims wait for provider recovery, not sign-in");
                     }
                     else if (providerAccess.Kind == ProviderAccessEvidenceKind.TransientFailure)
                     {
                         shipper.Add(
                             "system",
                             $"[runner] provider-auth state=retrying provider={invocation.CliType}; last-good capability retained");
+                    }
+                    else if (providerAccess.Kind == ProviderAccessEvidenceKind.RequestRejected)
+                    {
+                        // A model request refusal proves neither logout nor a
+                        // transient auth failure. Leave provider-auth capability
+                        // state exactly as it was and let the typed outcome drive
+                        // a model-specific continuation.
+                        shipper.Add(
+                            "system",
+                            $"[runner] provider rejected model request provider={invocation.CliType}; provider-auth capability unchanged");
                     }
                     var classified = result.TimedOut
                         ? ClassifyTimedOutResult(slot.Lease, workspace, result, sameSessionResumeAttempts)
@@ -1164,7 +1176,8 @@ public sealed class RemoteTaskRunner
                             workspace,
                             processResult,
                             result.LaunchFailed,
-                            sameSessionResumeAttempts);
+                            sameSessionResumeAttempts,
+                            invocation);
                     if (classified.Decision.RecoveryAction == ExecutionRecoveryAction.ResumeSameSession
                         && sameSessionResumeAttempts < ExecutionOutcomeAdapter.MaxSameSessionResumeAttempts)
                     {
@@ -1377,7 +1390,8 @@ public sealed class RemoteTaskRunner
         GitWorkspace workspace,
         ProcessResult result,
         bool launchFailed,
-        int sameSessionResumeAttempts)
+        int sameSessionResumeAttempts,
+        AgentCliProcess.CliInvocation? invocation = null)
     {
         var provider = ProviderOutputEvidenceExtractor.Extract(result.StdOut);
         // Resume stays gated on a configured RUNNER_CLI_RESUME_ARGS on BOTH
@@ -1404,7 +1418,10 @@ public sealed class RemoteTaskRunner
             LaunchFailed: launchFailed,
             SessionState: sessionState,
             SessionId: provider.SessionId,
-            SameSessionResumeAttempts: sameSessionResumeAttempts);
+            SameSessionResumeAttempts: sameSessionResumeAttempts,
+            EffectiveCliType: invocation?.CliType,
+            EffectiveModel: invocation?.Model,
+            EffectiveThinkingLevel: invocation?.ThinkingLevel);
         var typed = ExecutionOutcomeAdapter.Classify(factsAfterExit);
         var sentinelOutcome = SentinelScanner.Scan(result.StdOut);
         var outcome = BuildRunOutcome(typed, provider, sentinelOutcome, result.StdErr);
@@ -1985,7 +2002,7 @@ public sealed class RemoteTaskRunner
         var state = string.IsNullOrWhiteSpace(reference)
             ? decision.RawFacts.DurableOutputState
             : DurableOutputState.Acknowledged;
-        return ExecutionOutcomeAdapter.Classify(decision.RawFacts with
+        return ExecutionOutcomeAdapter.WithUpdatedFacts(decision, decision.RawFacts with
         {
             DurableOutputState = state,
             DurableOutputReference = reference ?? decision.RawFacts.DurableOutputReference,
@@ -2016,7 +2033,10 @@ public sealed class RemoteTaskRunner
         ExecutionSessionState SessionState = ExecutionSessionState.Unsupported,
         string? SessionId = null,
         int SameSessionResumeAttempts = 0,
-        int FreshSalvageAttempts = 0)
+        int FreshSalvageAttempts = 0,
+        string? EffectiveCliType = null,
+        string? EffectiveModel = null,
+        string? EffectiveThinkingLevel = null)
         => new(
             lease.AttemptId ?? lease.LeaseId,
             ExecutionAttemptKind.Coding,
@@ -2038,7 +2058,11 @@ public sealed class RemoteTaskRunner
             DurableOutputState.LocalOnly,
             workspace.RepoPath,
             SameSessionResumeAttempts,
-            FreshSalvageAttempts);
+            FreshSalvageAttempts,
+            ReviewSubject: null,
+            EffectiveCliType,
+            EffectiveModel,
+            EffectiveThinkingLevel);
 
     internal static async Task<T> RetryEnvironmentPreparationAsync<T>(
         Func<CancellationToken, Task<T>> prepare,

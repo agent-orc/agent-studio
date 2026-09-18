@@ -1350,6 +1350,9 @@ public sealed partial class TaskServerStore
                 return;
             }
 
+            var modelFallback = await ReadProviderFallbackForClaimAsync(
+                connection, transaction, task, ct);
+
             var fence = Convert.ToInt64(await ScalarAsync(connection,
                 "SELECT last_fence FROM fence_counters WHERE task_id = $task;", ct, transaction, ("$task", task.TaskId))
                 ?? 0L, CultureInfo.InvariantCulture) + 1;
@@ -1405,7 +1408,8 @@ public sealed partial class TaskServerStore
                 ReconciliationActions: reconciliationActions,
                 RequiredCapabilities: capabilityAdmission.Required,
                 CanaryCapabilities: capabilityAdmission.Canaries,
-                RuntimeCapacity: runtimeCapacity);
+                RuntimeCapacity: runtimeCapacity,
+                ModelFallback: modelFallback);
         }, ct);
         return response!;
     }
@@ -1655,7 +1659,10 @@ public sealed partial class TaskServerStore
             throw new ArgumentException("NeedsInputMessage exceeds the 16 KiB completion-envelope limit.");
         var gateItems = NormalizeGateItems(request.GateItems);
         var needsInput = !string.IsNullOrWhiteSpace(request.NeedsInputMessage);
-        var nextState = needsInput ? "5-human-review" : "4-auto-review";
+        var providerRejected = request.OutcomeDecision?.Outcome == ExecutionOutcomeKind.ProviderRejectedRequest;
+        var nextState = needsInput || providerRejected ? "5-human-review" : "4-auto-review";
+        var effectiveSummary = request.Summary;
+        ProviderRejectionRecoveryPlan? providerRecovery = null;
         RunDto? completed = null;
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
@@ -1776,6 +1783,21 @@ public sealed partial class TaskServerStore
                 var persisted = await ReadEventByIdempotencyKeyAsync(connection, transaction, outcomeKey, ct);
                 ValidateEventReplay(persisted, runId, lease.TaskId, eventRequest);
             }
+            providerRecovery = await PlanProviderRejectionAsync(
+                connection, transaction, lease.TaskId, request, ct);
+            if (providerRecovery?.Fallback is { } fallback)
+            {
+                nextState = "2-ready";
+                effectiveSummary =
+                    $"Provider refused the request ({DescribeProviderRejection(providerRecovery.Rejection)}); continued on {fallback.To}."
+                    + (fallback.CardPinned ? $" Card pinned to {fallback.To} after 2 refusals." : string.Empty);
+                if (fallback.CardPinned)
+                    await PinProviderFallbackAsync(connection, transaction, lease.TaskId, fallback, now, ct);
+            }
+            else if (providerRecovery is not null)
+            {
+                effectiveSummary = providerRecovery.EscalationReason;
+            }
             await ExecuteAsync(connection, """
                 UPDATE leases SET status = 'completed' WHERE run_id = $run;
                 UPDATE runs
@@ -1800,7 +1822,7 @@ public sealed partial class TaskServerStore
                 """, ct, transaction,
                 ("$run", runId),
                 ("$outcome", request.Outcome),
-                ("$summary", request.Summary),
+                ("$summary", effectiveSummary),
                 ("$envelope_digest", request.ResultEnvelopeDigest),
                 ("$sequence", request.Sequence),
                 ("$key", request.IdempotencyKey),
@@ -1833,7 +1855,7 @@ public sealed partial class TaskServerStore
                 new
                 {
                     request.Outcome,
-                    request.Summary,
+                    Summary = effectiveSummary,
                     authority = "task-server",
                     nextState,
                     needsInputFirstLine = FirstNonEmptyLine(request.NeedsInputMessage),
@@ -1843,6 +1865,9 @@ public sealed partial class TaskServerStore
                     // carries. Omitted entirely when there are none, so an
                     // ordinary completion reads exactly as it did before.
                     gateItems = gateItems.Count == 0 ? null : gateItems,
+                    modelFallback = providerRecovery?.Fallback is { } lifecycleFallback
+                        ? new { from = lifecycleFallback.From, to = lifecycleFallback.To, lifecycleFallback.Reason, lifecycleFallback.CardPinned }
+                        : null,
                 },
                 ct);
             await AppendLifecycleEventAsync(
@@ -1863,7 +1888,7 @@ public sealed partial class TaskServerStore
                 {
                     request.Fence,
                     request.Outcome,
-                    request.Summary,
+                    Summary = effectiveSummary,
                     request.ResultEnvelopeDigest,
                     request.Sequence,
                     request.IdempotencyKey,
@@ -1872,6 +1897,7 @@ public sealed partial class TaskServerStore
                     gateItems = gateItems.Count == 0 ? null : gateItems,
                     classifierVersion = request.OutcomeDecision?.ClassifierVersion,
                     recoveryAction = request.OutcomeDecision?.RecoveryAction.ToString(),
+                    modelFallback = providerRecovery?.Fallback,
                 }), ct);
             completed = new RunDto(
                 runId,

@@ -728,7 +728,14 @@ public sealed class TaskServerClient : IDisposable
             DefaultBranch: _options?.BaseBranch,
             RunId: claim.Run.RunId,
             LeaseInstanceId: RunnerInstanceId,
-            ReconciliationActions: FromContract(claim.ReconciliationActions));
+            ReconciliationActions: FromContract(claim.ReconciliationActions),
+            RunSpec: claim.ModelFallback is null
+                ? null
+                : new RunSpecDto(
+                    claim.ModelFallback.CliType,
+                    claim.ModelFallback.To,
+                    claim.ModelFallback.ThinkingLevel,
+                    ContextMode: CodingAgentRunner.Model.CliContextModes.Clean));
     }
 
     private void AdoptRuntimeCapacity(Contract.RuntimeCapacitySettingsDto? capacity)

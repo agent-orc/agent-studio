@@ -578,6 +578,8 @@ builder.Services.AddSingleton<RunTimeoutContinuationService>();
 // AGT-2870: operator stops for remotely executed runs. The request is parked
 // here until the owning runner picks it up on its next lease renewal.
 builder.Services.AddSingleton<RemoteRunStopRequestStore>();
+builder.Services.AddSingleton<ProviderRejectionContinuationService>();
+builder.Services.AddSingleton<AgentStudio.Management.ProviderRejectionFleetService>();
 builder.Services.AddSingleton<AgentMessageBusStore>();
 builder.Services.AddSingleton<AgentMessageBusBridge>();
 builder.Services.AddSingleton<ICliModelRegistry, CliModelRegistry>();
