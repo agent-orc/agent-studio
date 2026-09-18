@@ -1514,6 +1514,58 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Proof_keeps_the_integration_tip_from_before_commands_when_branch_advances()
+    {
+        var (baseline, subject) = await SeedSubjectBranchAsync();
+        var (workspace, _) = Workspace("tip-proof", subject,
+            [BaselineCommand("exit 0")], 26100,
+            resultRef: "refs/heads/task/new-failure", integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+        var seed = Path.Combine(_root, "seed");
+
+        var evidence = await workspace.ExecutePlanAsync(default, null, async (_, ct) =>
+        {
+            await GitAsync(seed, "checkout", "main");
+            await File.WriteAllTextAsync(Path.Combine(seed, "unrelated.txt"), "advanced", ct);
+            await GitAsync(seed, "add", ".");
+            await GitAsync(seed, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                "commit", "-m", "unrelated integration advance");
+            await GitAsync(seed, "push", "origin", "main");
+        });
+
+        Assert.Equal("Pass", evidence.Outcome);
+        Assert.Equal(baseline, evidence.Workspace.IntegrationTipSha);
+        Assert.Equal(baseline, evidence.Workspace.MergeBaseSha);
+        Assert.Equal(subject, evidence.Workspace.ActualHead);
+        Assert.Equal((await GitAsync(seed, "rev-parse", $"{subject}^{{tree}}")).StdOut.Trim(),
+            evidence.Workspace.TreeHash);
+        Assert.NotEqual(baseline, (await GitAsync(seed, "rev-parse", "main")).StdOut.Trim());
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Resumed_commands_do_not_acquire_a_new_integration_tip_proof()
+    {
+        var (_, subject) = await SeedSubjectBranchAsync();
+        var (workspace, _) = Workspace("resume-tip-proof", subject,
+            [BaselineCommand("exit 0")], 26200,
+            resultRef: "refs/heads/task/new-failure", integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+        ReviewExecutionCheckpoint? saved = null;
+        await workspace.ExecutePlanAsync(default, null, (value, _) =>
+        {
+            saved = value;
+            return Task.CompletedTask;
+        });
+
+        var evidence = await workspace.ExecutePlanAsync(default, saved, null);
+
+        Assert.Equal("Pass", evidence.Outcome);
+        Assert.Null(evidence.Workspace.IntegrationTipSha);
+    }
+
+    [Fact]
     public async Task An_unfetchable_integration_ref_is_reported_with_an_unresolved_base()
     {
         var (_, subjectSha) = await SeedSubjectBranchAsync();

@@ -22,12 +22,9 @@ public static class ReviewBuildTestGateClasses
 /// every card (AGT-2839).
 ///
 /// <para>
-/// The triple that carries the decision is <see cref="IntegrationRef"/>,
-/// <see cref="MergeBaseSha"/>, and <see cref="ResultSha"/>: the integration
-/// line the review compared against, the merge base it computed on that line,
-/// and the immutable delivery it verified. A review executor that reported no
-/// merge base leaves <see cref="MergeBaseSha"/> null; the gate then has nothing
-/// to compare and runs in full.
+/// IntegrationTipSha records the ref fetched before review commands. TestedTreeSha
+/// records the tree those commands tested. Legacy records missing either field
+/// keep the full gate. MergeBaseSha remains review context, never tip identity.
 /// </para>
 /// </summary>
 public sealed record ReviewVerificationRecord
@@ -50,6 +47,12 @@ public sealed record ReviewVerificationRecord
 
     /// <summary>Merge base the review computed on <see cref="IntegrationRef"/>.</summary>
     public string? MergeBaseSha { get; init; }
+
+    /// <summary>Integration tip captured before the verification commands.</summary>
+    public string? IntegrationTipSha { get; init; }
+
+    /// <summary>Exact Git tree tested by the review commands.</summary>
+    public string? TestedTreeSha { get; init; }
 
     /// <summary>One of <see cref="ReviewBuildTestGateClasses"/>.</summary>
     public string BuildTestGate { get; init; } = ReviewBuildTestGateClasses.Failed;

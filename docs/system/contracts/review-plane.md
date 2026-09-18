@@ -130,26 +130,29 @@ registration), not on a 409 that no longer occurs.
 
 ## Reported review baseline (AGT-2839)
 
-`ReviewWorkspaceProofDto` carries two optional fields beside the existing
-`ExpectedResultSha`:
+`ReviewWorkspaceProofDto` carries optional integration context beside the existing
+`ExpectedResultSha` and `TreeHash`:
 
 | Field | Meaning |
 |---|---|
-| `IntegrationRef` | The integration line from the immutable plan that the executor resolved its baseline against. |
-| `MergeBaseSha` | The merge base between `ExpectedResultSha` and a freshly fetched `IntegrationRef` - the exact base this review verified the delivery on top of. |
+| `IntegrationRef` | Integration line from the immutable plan. |
+| `MergeBaseSha` | Merge base used for review material and baseline comparison. It does not prove integration-tip identity. |
+| `IntegrationTipSha` | Exact freshly fetched integration tip captured before verification commands. |
+| `TreeHash` | Existing proof field: the exact immutable delivery tree tested by the commands. |
 
-Both are optional and default to null, so a report from an older executor stays
-valid on the wire. The executor fills them from the same baseline it already
-resolves for review material and baseline-compared commands; a plan without an
-integration ref, or a ref that cannot be fetched, reports null rather than
-failing the report.
+Optional fields default to null so older reports remain wire compatible. A
+missing or unfetchable integration ref leaves the tip unproven. Resumed review
+commands also leave the tip unproven rather than attaching a newly fetched tip
+to older test results. The final proof never fetches a later tip to claim as
+the one tested.
 
-The monolith persists the triple into `logs/review-verification.json` beside the
-task when the report settles, ahead of any integration. The local integration
-gate consumes it to reuse the review verdict on an unchanged base instead of
-re-running the suite; see
+The monolith persists these fields in `logs/review-verification.json` before
+integration, mapping `TreeHash` to `TestedTreeSha`. Reuse requires the current
+pre-merge integration tip to equal `IntegrationTipSha` and the merged tree to
+equal `TestedTreeSha`. A moved tip, changed tree, missing proof, replay, or
+conflict resolution keeps the full local gate. Merge-base equality alone never
+permits reuse. See
 [task integration and the worktree/merge workflow](../../concepts/task-integration-and-merge-workflow.md#integration-gate-reuse-of-the-remote-review-verdict-agt-2839).
-A report without `MergeBaseSha` is not an error: the gate then runs in full.
 
 ## Telemetry
 

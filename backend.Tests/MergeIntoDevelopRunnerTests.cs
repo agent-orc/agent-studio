@@ -2192,10 +2192,11 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
     /// records which review attempt it stood on.
     /// </summary>
     [Fact]
+    [Trait("Category", "MachineBound")]
     public async Task RunAsync_UnchangedReviewedBase_ReusesTheReviewVerdictAndCompilesOnly()
     {
         var (repo, jobFolder, gateRunner, runner, delivery, mergeBase) = SeedReviewedDelivery("reuse-green");
-        WriteReviewVerification(jobFolder, delivery, mergeBase, "refs/heads/develop");
+        WriteReviewVerification(repo, jobFolder, delivery, mergeBase, "refs/heads/develop");
 
         var outcome = await runner.RunAsync(
             "Fixture", "reuse-green", jobFolder, repo, "develop", CancellationToken.None);
@@ -2205,7 +2206,7 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         Assert.Equal(TestExecutionLevels.CompileOnly, gateRunner.Request!.RequiredTestLevel);
         var evidence = ReadGateEvidence(jobFolder);
         Assert.Contains("reviewReuse=reused attempt=rev_1", evidence);
-        Assert.Contains("unchanged develop base", evidence);
+        Assert.Contains("unchanged develop tip", evidence);
     }
 
     /// <summary>
@@ -2213,11 +2214,12 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
     /// reviewed verdict says nothing about the merge result - full gate.
     /// </summary>
     [Fact]
+    [Trait("Category", "MachineBound")]
     public async Task RunAsync_MovedBaseSinceTheReview_RunsTheFullGateAndSaysWhy()
     {
         var (repo, jobFolder, gateRunner, runner, delivery, _) = SeedReviewedDelivery("reuse-moved");
         var olderBase = RunGit(repo, "rev-parse develop~1").Out.Trim();
-        WriteReviewVerification(jobFolder, delivery, olderBase, "refs/heads/develop");
+        WriteReviewVerification(repo, jobFolder, delivery, olderBase, "refs/heads/develop");
 
         var outcome = await runner.RunAsync(
             "Fixture", "reuse-moved", jobFolder, repo, "develop", CancellationToken.None);
@@ -2230,15 +2232,36 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         Assert.Contains("develop moved since the review", evidence);
     }
 
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task RunAsync_UnrelatedIntegrationAdvanceWithSameMergeBase_RunsFullGate()
+    {
+        var (repo, jobFolder, gateRunner, runner, delivery, mergeBase) = SeedReviewedDelivery("reuse-unrelated");
+        WriteReviewVerification(repo, jobFolder, delivery, mergeBase, "refs/heads/develop");
+        File.WriteAllText(Path.Combine(repo, "unrelated.txt"), "integration advanced after review");
+        Commit(repo, "chore: unrelated integration change");
+        Assert.Equal(mergeBase, RunGit(repo, $"merge-base develop {delivery}").Out.Trim());
+
+        var outcome = await runner.RunAsync(
+            "Fixture", "reuse-unrelated", jobFolder, repo, "develop", CancellationToken.None);
+
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
+        Assert.Equal(1, gateRunner.Invocations);
+        Assert.Equal(TestExecutionLevels.BuildOnly, gateRunner.Request!.RequiredTestLevel);
+        Assert.Contains("reviewReuse=full attempt=rev_1", ReadGateEvidence(jobFolder));
+        Assert.Contains("develop moved since the review", ReadGateEvidence(jobFolder));
+    }
+
     /// <summary>
     /// AGT-2839: a review report that carries no merge base leaves nothing to
     /// compare, so the gate never guesses one.
     /// </summary>
     [Fact]
+    [Trait("Category", "MachineBound")]
     public async Task RunAsync_ReviewReportWithoutABase_RunsTheFullGate()
     {
         var (repo, jobFolder, gateRunner, runner, delivery, _) = SeedReviewedDelivery("reuse-no-base");
-        WriteReviewVerification(jobFolder, delivery, mergeBaseSha: null, "refs/heads/develop");
+        WriteReviewVerification(repo, jobFolder, delivery, mergeBaseSha: null, "refs/heads/develop");
 
         var outcome = await runner.RunAsync(
             "Fixture", "reuse-no-base", jobFolder, repo, "develop", CancellationToken.None);
@@ -2250,17 +2273,53 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         Assert.Contains("records no merge base", evidence);
     }
 
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task RunAsync_LegacyReviewWithoutIntegrationTip_RunsFullGateAndRecordsEvidence()
+    {
+        var (repo, jobFolder, gateRunner, runner, delivery, mergeBase) = SeedReviewedDelivery("reuse-no-tip");
+        WriteReviewVerification(repo, jobFolder, delivery, mergeBase, "refs/heads/develop");
+        ReviewVerificationStore.Write(jobFolder,
+            ReviewVerificationStore.Read(jobFolder)! with { IntegrationTipSha = null });
+
+        await runner.RunAsync("Fixture", "reuse-no-tip", jobFolder, repo, "develop", CancellationToken.None);
+
+        Assert.Equal(TestExecutionLevels.BuildOnly, gateRunner.Request!.RequiredTestLevel);
+        Assert.Contains("reviewReuse=full attempt=rev_1", ReadGateEvidence(jobFolder));
+        Assert.Contains("records no integration tip", ReadGateEvidence(jobFolder));
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task RunAsync_UnchangedTipButUntestedMergeTree_RunsFullGate()
+    {
+        var (repo, jobFolder, gateRunner, runner, delivery, mergeBase) = SeedReviewedDelivery("reuse-tree");
+        File.WriteAllText(Path.Combine(repo, "unrelated.txt"), "integration changed before review");
+        Commit(repo, "chore: integration ahead of delivery");
+        var reviewedTip = RunGit(repo, "rev-parse develop").Out.Trim();
+        WriteReviewVerification(repo, jobFolder, delivery, mergeBase, "refs/heads/develop");
+        ReviewVerificationStore.Write(jobFolder,
+            ReviewVerificationStore.Read(jobFolder)! with { IntegrationTipSha = reviewedTip });
+
+        await runner.RunAsync("Fixture", "reuse-tree", jobFolder, repo, "develop", CancellationToken.None);
+
+        Assert.Equal(TestExecutionLevels.BuildOnly, gateRunner.Request!.RequiredTestLevel);
+        Assert.Contains("reviewReuse=full attempt=rev_1", ReadGateEvidence(jobFolder));
+        Assert.Contains("merge result tree differs", ReadGateEvidence(jobFolder));
+    }
+
     /// <summary>
     /// AGT-2839: the project opted out, so an otherwise reusable merge still
     /// runs the full gate and the evidence names the setting as the cause.
     /// </summary>
     [Fact]
+    [Trait("Category", "MachineBound")]
     public async Task RunAsync_ReuseDisabledForTheProject_RunsTheFullGate()
     {
         var (repo, jobFolder, gateRunner, runner, delivery, mergeBase, settings) =
             SeedReviewedDeliveryWithSettings("reuse-off");
         settings.SetIntegrationGateReviewReuse("Fixture", false);
-        WriteReviewVerification(jobFolder, delivery, mergeBase, "refs/heads/develop");
+        WriteReviewVerification(repo, jobFolder, delivery, mergeBase, "refs/heads/develop");
 
         await runner.RunAsync(
             "Fixture", "reuse-off", jobFolder, repo, "develop", CancellationToken.None);
@@ -2322,6 +2381,7 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
     }
 
     private static void WriteReviewVerification(
+        string repo,
         string jobFolder,
         string deliverySha,
         string? mergeBaseSha,
@@ -2335,6 +2395,8 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
             ResultSha = deliverySha,
             IntegrationRef = integrationRef,
             MergeBaseSha = mergeBaseSha,
+            IntegrationTipSha = mergeBaseSha,
+            TestedTreeSha = RunGit(repo, $"rev-parse {deliverySha}^{{tree}}").Out.Trim(),
             BuildTestGate = ReviewBuildTestGateClasses.Passed,
             VerifiedAtUtc = DateTimeOffset.UtcNow,
         });

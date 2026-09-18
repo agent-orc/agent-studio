@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
-import { provideHttpClientTesting } from '@angular/common/http/testing';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { ProjectDetailComponent } from './project-detail';
@@ -98,6 +98,44 @@ describe('ProjectDetailComponent (smoke)', () => {
     // the control binds to and is the honest assertion at this point.
     expect(fixture.componentInstance.integrationGateReuseDraft).toBe('inherit');
     expect(host.textContent ?? '').toContain('Integration gate');
+  });
+
+  it('persists enabled, disabled and inherited reuse choices and refreshes the control', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ProjectDetailComponent],
+      providers: [
+        provideZonelessChangeDetection(), provideHttpClient(),
+        provideHttpClientTesting(), provideRouter([]),
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(ProjectDetailComponent);
+    fixture.componentRef.setInput('projectName', 'demo');
+    fixture.componentRef.setInput('view', 'settings');
+    fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    const snapshot = (enabled: boolean | null) => ({
+      settings: { integrationGateReviewReuse: enabled, integrationGateReviewReuseEffective: enabled ?? true },
+    });
+    http.expectOne('/api/projects/demo/snapshot').flush(snapshot(null));
+    await fixture.whenStable();
+    const select = (fixture.nativeElement as HTMLElement).querySelector<HTMLSelectElement>(
+      '[data-testid="project-detail-integration-gate-reuse"]',
+    )!;
+    expect(select.value).toBe('inherit');
+
+    for (const [choice, enabled] of [['enabled', true], ['disabled', false], ['inherit', null]] as const) {
+      select.value = choice;
+      select.dispatchEvent(new Event('change'));
+      const write = http.expectOne('/api/projects/demo/integration-gate-review-reuse');
+      expect(write.request.method).toBe('PUT');
+      expect(write.request.body).toEqual({ enabled });
+      write.flush({ integrationGateReviewReuse: enabled, integrationGateReviewReuseEffective: enabled ?? true });
+      http.expectOne('/api/projects/demo/snapshot').flush(snapshot(enabled));
+      await fixture.whenStable();
+      expect(select.value).toBe(choice);
+      expect(fixture.componentInstance.settings()?.integrationGateReviewReuse).toBe(enabled);
+    }
+    fixture.destroy();
   });
 
   it('keeps the retired legacy overview free of machine plumbing', async () => {

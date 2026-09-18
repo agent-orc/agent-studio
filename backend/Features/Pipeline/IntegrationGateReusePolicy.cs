@@ -7,9 +7,8 @@ namespace AgentStudio.Pipeline;
 /// <param name="Enabled">Resolved project setting.</param>
 /// <param name="Review">Record of what the Remote Review verified, or null.</param>
 /// <param name="IntegrationBranch">Branch this merge targets.</param>
-/// <param name="CurrentMergeBaseSha">
-/// Merge base between the pre-merge integration tip and the reviewed delivery,
-/// computed now. Null when it could not be derived.
+/// <param name="PreMergeTipSha">
+/// Exact integration tip immediately before this merge. Null when it could not be derived.
 /// </param>
 /// <param name="DeliveryContainedInMergeResult">
 /// True when the reviewed result SHA is an ancestor of (or equal to) the merge
@@ -24,9 +23,11 @@ public sealed record IntegrationGateReuseInput(
     bool Enabled,
     ReviewVerificationRecord? Review,
     string IntegrationBranch,
-    string? CurrentMergeBaseSha,
+    string? PreMergeTipSha,
     bool DeliveryContainedInMergeResult,
-    bool DeliveryWasReplayed);
+    bool DeliveryWasReplayed,
+    string? MergeResultTreeSha = null,
+    bool ConflictsResolved = false);
 
 /// <summary>What the gate does with this merge.</summary>
 public enum IntegrationGateReuseState
@@ -37,7 +38,7 @@ public enum IntegrationGateReuseState
     /// <summary>
     /// Reuse the Remote Review verdict for the tests and lint, and keep only
     /// the compile step, because the merge result is the exact state the review
-    /// verified on the exact base it verified it against.
+    /// tested, with the same integration tip.
     /// </summary>
     Reused,
 }
@@ -61,15 +62,11 @@ public sealed record IntegrationGateReuseDecision(
 /// verdict instead of running the suite the review just ran (AGT-2839).
 ///
 /// <para>
-/// The whole question is whether the merge that is about to land is still the
-/// same subject the review verified. It is, and only is, when the reviewed
-/// delivery is contained in the merge result unchanged, the review compared
-/// against this integration line, and the merge base on that line is still the
-/// exact commit the review recorded. Anything else - a moved base, a mechanical
-/// replay, a review report without a base, a review that never ran build/tests,
-/// a project that opted out - falls back to the full gate. The compile step
-/// always runs: the merge result is a commit nobody has built before, and that
-/// is the one thing the review provably did not check.
+/// Reuse requires the exact integration tip captured before review commands
+/// and a merge tree identical to the tested tree. Merge-base equality cannot
+/// prove this: unrelated integration commits leave the merge base unchanged.
+/// Missing proof, conflict resolution, replay, or a changed tip/tree keeps the
+/// full gate. The compile step always runs on the local merge result.
 /// </para>
 /// </summary>
 public static class IntegrationGateReusePolicy
@@ -114,6 +111,12 @@ public static class IntegrationGateReusePolicy
         if (string.IsNullOrWhiteSpace(review.MergeBaseSha))
             return Full("the Remote Review report records no merge base", review.AttemptId);
 
+        if (string.IsNullOrWhiteSpace(review.IntegrationTipSha))
+            return Full("the Remote Review report records no integration tip", review.AttemptId);
+
+        if (input.ConflictsResolved)
+            return Full("the merge required conflict resolution", review.AttemptId);
+
         var reviewed = TaskIntegrationBranch.Name(review.IntegrationRef, fallback: string.Empty);
         var target = TaskIntegrationBranch.Name(input.IntegrationBranch, fallback: string.Empty);
         if (reviewed.Length == 0)
@@ -140,24 +143,31 @@ public static class IntegrationGateReusePolicy
                 review.AttemptId);
         }
 
-        if (string.IsNullOrWhiteSpace(input.CurrentMergeBaseSha))
-            return Full("the current merge base could not be determined", review.AttemptId);
+        if (string.IsNullOrWhiteSpace(input.PreMergeTipSha))
+            return Full("the pre-merge integration tip could not be determined", review.AttemptId);
 
         if (!string.Equals(
-                input.CurrentMergeBaseSha,
-                review.MergeBaseSha,
+                input.PreMergeTipSha,
+                review.IntegrationTipSha,
                 StringComparison.OrdinalIgnoreCase))
         {
             return Full(
-                $"{target} moved since the review: base is {Short(input.CurrentMergeBaseSha)}, "
-                + $"the review verified {Short(review.MergeBaseSha)}",
+                $"{target} moved since the review: tip is {Short(input.PreMergeTipSha)}, "
+                + $"the review verified {Short(review.IntegrationTipSha)}",
                 review.AttemptId);
         }
 
+        if (string.IsNullOrWhiteSpace(review.TestedTreeSha)
+            || string.IsNullOrWhiteSpace(input.MergeResultTreeSha))
+            return Full("the reviewed or merged tree proof is missing", review.AttemptId);
+
+        if (!string.Equals(review.TestedTreeSha, input.MergeResultTreeSha, StringComparison.OrdinalIgnoreCase))
+            return Full("the merge result tree differs from the tree tested by the Remote Review", review.AttemptId);
+
         return new IntegrationGateReuseDecision(
             IntegrationGateReuseState.Reused,
-            $"the Remote Review verified {Short(review.ResultSha)} on the unchanged {target} base "
-            + $"{Short(review.MergeBaseSha)}; only the compile step runs on the merge result",
+            $"the Remote Review verified {Short(review.ResultSha)} on the unchanged {target} tip "
+            + $"{Short(review.IntegrationTipSha)} with tested tree {Short(review.TestedTreeSha)}; only the compile step runs on the merge result",
             review.AttemptId);
     }
 

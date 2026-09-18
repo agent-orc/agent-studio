@@ -113,7 +113,7 @@ public class ProjectSettingsService
 
     /// <summary>
     /// AGT-2839: may the local integration gate stand on the Remote Review
-    /// verdict on an unchanged merge base? Null clears the override and falls
+    /// verdict with the same integration tip and tested tree? Null clears the override and falls
     /// back to <see cref="IntegrationGateReusePolicy.IsEnabled"/>.
     /// </summary>
     public void SetIntegrationGateReviewReuse(string projectName, bool? enabled)

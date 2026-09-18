@@ -386,13 +386,13 @@ public record ProjectSettings
 
     /// <summary>
     /// AGT-2839: may the local integration gate stand on the Remote Review
-    /// verdict when the merge lands on the exact base the review verified? When
+    /// verdict when the integration tip and tested tree match the review? When
     /// it may, the gate keeps only the compile step on the merge result and
     /// skips the test and lint commands the review just ran. Null resolves
     /// through <see cref="AgentStudio.Pipeline.IntegrationGateReusePolicy.IsEnabled"/>:
     /// on for a project that executes remotely (and therefore has Remote
-    /// Review), off for one that does not. A moved integration base, a
-    /// mechanically replayed delivery, or a review report without a merge base
+    /// Review), off for one that does not. A moved integration tip, a changed tree, a
+    /// mechanically replayed delivery, conflict resolution, or incomplete review proof
     /// always runs the full gate regardless of this setting.
     /// </summary>
     public bool? IntegrationGateReviewReuse { get; init; }
@@ -420,7 +420,6 @@ public sealed record ProjectAreaSetting
     public string Id { get; init; } = "";
     public string Label { get; init; } = "";
     public string Description { get; init; } = "";
-
 }
 
 public sealed record ProjectExecutionDefinitionOverride(

@@ -794,7 +794,7 @@ public sealed class MergeIntoDevelopRunner
 
         // AGT-2839: the Remote Review already built, tested, and linted this
         // delivery. Reuse its verdict for the tests and lint - and only for them
-        // - when the merge landed on the exact base the review compared against.
+        // - when the merge landed on the exact integration tip and tree the review verified.
         var reuse = DecideGateReuse(
             project, repoRoot, integrationBranch, jobFolderPath, gatedSha, preMergeTip, result);
 
@@ -930,16 +930,15 @@ public sealed class MergeIntoDevelopRunner
 
     /// <summary>
     /// Whether this merge may stand on the Remote Review verdict for its tests
-    /// and lint (AGT-2839). Gathers the three Git facts the pure
+    /// and lint (AGT-2839). Gathers the Git facts the pure
     /// <see cref="IntegrationGateReusePolicy"/> needs - is the reviewed delivery
-    /// really inside this merge result, was it replayed on the way in, and is
-    /// the merge base on the integration line still the one the review recorded
-    /// - and never decides anything itself.
+    /// really inside this merge result, was it replayed or conflict-resolved, and
+    /// do the integration tip and merged tree match the review proof.
     ///
     /// <para>
     /// Only a plain fresh merge produced by this invocation has a trustworthy
     /// pre-merge anchor. An <c>AlreadyMerged</c> recovery inherits history it
-    /// did not create, so it reports no current merge base and runs in full.
+    /// did not create, so it reports no reviewed integration tip and runs in full.
     /// </para>
     /// </summary>
     private IntegrationGateReuseDecision DecideGateReuse(
@@ -961,12 +960,12 @@ public sealed class MergeIntoDevelopRunner
             IntegrationGateReusePolicy.IsEnabled(ProjectSettingsFor(project)),
             review,
             integrationBranch,
-            anchored && ReviewSubjectStore.IsValidResultSha(reviewedSha)
-                ? _git.GetMergeBase(repoRoot, preMergeTip!, reviewedSha!)
-                : null,
+            anchored ? preMergeTip : null,
             ReviewSubjectStore.IsValidResultSha(reviewedSha)
                 && _git.IsAncestor(repoRoot, reviewedSha!, gatedSha),
-            replayed));
+            replayed,
+            _git.GetCommitTree(repoRoot, gatedSha),
+            result.ConflictsResolved));
     }
 
     /// <summary>

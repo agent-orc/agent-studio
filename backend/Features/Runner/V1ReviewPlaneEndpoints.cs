@@ -1249,6 +1249,8 @@ public static class V1ReviewPlaneEndpoints
                 IntegrationRef = request.Workspace.IntegrationRef
                                  ?? review.Subject.Plan?.IntegrationRef,
                 MergeBaseSha = request.Workspace.MergeBaseSha,
+                IntegrationTipSha = request.Workspace.IntegrationTipSha,
+                TestedTreeSha = request.Workspace.TreeHash,
                 BuildTestGate = buildTestGate switch
                 {
                     RemoteBuildTestGateClass.Passed => ReviewBuildTestGateClasses.Passed,

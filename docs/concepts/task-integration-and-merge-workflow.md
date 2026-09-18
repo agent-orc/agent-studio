@@ -84,7 +84,7 @@ Local worktree runs and fenced Remote deliveries now share the same policy: a gr
   `GateEnvironmentRetryService` replays the integration alone on a bounded
   ladder; see [Gate environment retry (AGT-2824)](#gate-environment-retry-agt-2824).
 - Review-verdict reuse: when the merge result is still the subject the
-  Remote Review verified on an unchanged merge base,
+  Remote Review verified with the same integration tip and tested tree,
   `IntegrationGateReusePolicy` reduces the gate to its compile step instead
   of re-running the suite the review just ran; see
   [Integration gate reuse of the Remote Review verdict (AGT-2839)](#integration-gate-reuse-of-the-remote-review-verdict-agt-2839).
@@ -162,56 +162,40 @@ about seven minutes per card, one card at a time. With a queue of passed cards
 behind the review executor, that gate was the second bottleneck, and it re-ran
 exactly the suite the review had just run on the same result SHA.
 
-The local gate now reuses that verdict when, and only when, the merge result is
-still the subject the review verified.
+The local gate reuses that verdict only when the merge result is the state the
+review tested:
 
-- **What the review records.** A settled Remote Review writes
-  `logs/review-verification.json` beside the task
-  (`ReviewVerificationStore`): review attempt, outcome, the immutable
-  `resultSha`, the `integrationRef` the executor compared against, the
-  `mergeBaseSha` it resolved on that ref, and the class of its build/test
-  aspect. The ref and base come from the executor's own workspace proof
-  (`ReviewWorkspaceProofDto.IntegrationRef` / `.MergeBaseSha`), so the record
-  states what the executor actually compared, not what the server assumed. The
-  write is synchronous in the report endpoint, ahead of any integration;
-  evidence projection is asynchronous and would race the merge.
-- **When the verdict is reused.** `IntegrationGateReusePolicy` is the single
-  decision. It grants reuse when the project setting allows it, the review
-  passed with a green build/test aspect, the record carries an integration ref
-  and a merge base, that ref is this merge's integration line, the merge result
-  contains the reviewed delivery, the delivery was not mechanically replayed on
-  the way in, and the merge base computed now equals the one the review
-  recorded.
-- **What still runs.** The compile step, always. The merge result is a commit no
-  earlier gate has built, and that is exactly the thing the review provably did
-  not check. The reused level is `compile-only` (`TestExecutionLevels`): build
-  commands only, test *and* lint commands omitted. This is one step below the
-  existing `build-only` stage, which still runs lint.
-- **When the full gate runs.** A moved base, a mechanically replayed delivery, a
-  review report without a merge base or integration ref, a review that did not
-  pass or had no applicable build/test aspect, a merge result that does not
-  contain the reviewed delivery, an `AlreadyMerged` recovery with no trustworthy
-  pre-merge anchor, or a project that opted out. Every one of these keeps
-  today's behaviour.
-- **Evidence.** The gate-evidence log
-  (`post-steps/pre-develop-build-gate-N.log`) carries a `reviewReuse=` line
-  naming the outcome, the reused review attempt, and the concrete reason, in
-  both the reused and the full-run case. It is appended after the three-line
-  durable-recovery header, so `IntegrationGateReceipts.ReadExact` is
-  unaffected.
-- **The setting.** `ProjectSettings.IntegrationGateReviewReuse`
-  (`PUT /api/projects/{project}/integration-gate-review-reuse`, and the
-  "Integration gate" control in Project settings). Null is the safe default: on
-  for a project whose execution is placed on a remote runner, and therefore has
-  a Remote Review to reuse, off for a locally executing project that never
-  produces one.
-
-Residual risk, stated plainly: a non-fast-forward merge onto an integration
-branch that gained unrelated commits keeps the same merge base, so it is
-eligible for reuse even though the merged content is not byte-identical to what
-the review built. The compile step on the merge result is what covers that
-window; a semantic conflict between two independently green deliveries is caught
-at the promotion boundary, where the mandatory full suite still runs.
+- **Review proof.** The report endpoint writes `logs/review-verification.json`
+  (`ReviewVerificationStore`) before integration. It records the attempt, Pass
+  outcome, green build/test verdict, immutable result SHA, integration ref,
+  merge base, exact integration tip, and tested Git tree. The executor captures
+  the integration tip before running verification commands. A resumed attempt
+  that may reuse older command results emits no tip proof and keeps the full gate.
+- **Reuse decision.** `IntegrationGateReusePolicy` requires the current pre-merge
+  integration tip to equal `IntegrationTipSha` exactly, and the local merge tree
+  to equal `TestedTreeSha`. It also requires the same integration line, unchanged
+  delivery ancestry, and no replay or conflict resolution. Merge-base equality
+  is not evidence that the integration tip stayed unchanged: an unrelated commit
+  can advance the branch without changing its merge base.
+- **Compile still runs.** The `compile-only` level keeps build commands and
+  omits test and lint commands. `TestSelectionPlanner` records both omitted
+  inventories in its audit.
+- **Full gate.** Any advance of the integration branch runs the full gate, even
+  when the merge base or tree stays the same. A different merged tree also runs
+  the full gate: current Remote Review tests the immutable delivery, so a clean
+  merge that adds integration-only changes is not eligible. Legacy proof without
+  an integration tip, tree, merge base, or ref; a replayed or conflict-resolved
+  merge; an `AlreadyMerged` recovery without a trustworthy anchor; and an
+  opted-out project all keep the full gate.
+- **Evidence.** `post-steps/pre-develop-build-gate-N.log` records `reviewReuse=`,
+  the review attempt, and the reason for both reuse and fallback. Reuse evidence
+  names the unchanged tip and tested tree. This follows the existing three-line
+  durable-recovery header, preserving `IntegrationGateReceipts.ReadExact`.
+- **Setting.** `ProjectSettings.IntegrationGateReviewReuse`, exposed through
+  `PUT /api/projects/{project}/integration-gate-review-reuse` and the
+  "Integration gate" control in Project settings, defaults on for remotely
+  executing projects and off for locally executing projects. Explicit on never
+  bypasses the proof checks.
 
 ### Incidents: 2026-07-24 and 2026-07-28 bulk acceptance
 
@@ -328,7 +312,7 @@ Defined in `backend/Shared/Models/ProjectSettings.cs`. Read live on each transit
 | `IntegrationStrategy` | `string`, `direct-merge` | `direct-merge` or `pull-request`. Run-end integration, immediate Remote integration, and operator acceptance consult it. A pull-request handoff remains in Human Review instead of claiming that it merged. |
 | `AutoCommit` | `bool`, `true` | When true, auto-commit dirty changes on `3-progress -> 4-auto-review` (sequential). Read-only modes skip it. |
 | `AutoPushStrategy` | `string`, `always-immediate` | `never` / `on-completed` / `always-immediate` - when committed work is queued for push to origin. |
-| `IntegrationGateReviewReuse` | `bool?`, `null` | Whether the local build/test gate may reuse a passed Remote Review verdict on an unchanged merge base and run its compile step only. `null` = the safe default: on for a project whose execution is placed on a remote runner, off for a locally executing project that has no Remote Review to reuse. |
+| `IntegrationGateReviewReuse` | `bool?`, `null` | Whether the local build/test gate may reuse a passed Remote Review verdict with the exact reviewed integration tip and tested tree and run its compile step only. `null` = the safe default: on for a project whose execution is placed on a remote runner, off for a locally executing project that has no Remote Review to reuse. |
 
 ## Known sharp edges (under review)
 

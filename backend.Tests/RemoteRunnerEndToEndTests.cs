@@ -4847,6 +4847,9 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             repositoryPath: repository,
             primaryProjectName: deliveryProject);
         using var http = factory.CreateClient();
+        // This test owns acceptance below. The push worker otherwise triggers
+        // the automatic rail, which can move the folder while proof is read.
+        factory.Services.GetRequiredService<IConfiguration>()["AcceptanceRail:Enabled"] = "false";
         var scanner = factory.Services.GetRequiredService<TaskScannerService>();
         var seededTask = scanner.FindJob(TaskKey, _watchPath)!;
         var canonicalTaskKey = seededTask.Key ?? seededTask.TaskKey;
@@ -4914,6 +4917,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             {
                 IntegrationRef = "refs/heads/develop",
                 MergeBaseSha = reviewedBase,
+                IntegrationTipSha = reviewedBase,
             },
         };
 
@@ -4958,6 +4962,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Equal(resultSha, verification.ResultSha);
         Assert.Equal("refs/heads/develop", verification.IntegrationRef);
         Assert.Equal(reviewedBase, verification.MergeBaseSha);
+        Assert.Equal(reviewedBase, verification.IntegrationTipSha);
+        Assert.Equal(reportRequest.Workspace.TreeHash, verification.TestedTreeSha);
         // This plan declares no build/test aspect, so there is no test verdict
         // to reuse and a later merge still runs the full gate.
         Assert.Equal(ReviewBuildTestGateClasses.NotApplicable, verification.BuildTestGate);

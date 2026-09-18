@@ -149,6 +149,9 @@ internal static class RemoteReviewReportEvidence
         text.AppendLine($"- Expected result: `{request.Workspace.ExpectedResultSha}`");
         text.AppendLine($"- Materialized result: `{request.Workspace.ActualHead}`");
         text.AppendLine($"- Tree: `{request.Workspace.TreeHash}`");
+        text.AppendLine($"- Integration ref: `{request.Workspace.IntegrationRef ?? "unknown"}`");
+        text.AppendLine($"- Reviewed integration tip: `{request.Workspace.IntegrationTipSha ?? "unknown"}`");
+        text.AppendLine($"- Merge base: `{request.Workspace.MergeBaseSha ?? "unknown"}`");
         text.AppendLine($"- Dirty before: `{request.Workspace.DirtyBefore.ToString().ToLowerInvariant()}`");
         text.AppendLine($"- Dirty after: `{request.Workspace.DirtyAfter.ToString().ToLowerInvariant()}`");
         text.AppendLine($"- Executor: `{request.ExecutorId}`");

@@ -24,6 +24,7 @@ public sealed class RemoteReviewWorkspace
     private string? _initialTree;
     private string? _baselineSha;
     private string? _integrationHeadSha;
+    private string? _reviewedIntegrationTipSha;
     private bool _baselineCachePruned;
     private bool _dirtyBefore;
 
@@ -214,6 +215,23 @@ public sealed class RemoteReviewWorkspace
         string? reviewMaterial = null;
         try
         {
+            // Capture the integration tip before any verification. A resumed
+            // attempt may reuse older command results, so it cannot claim a new
+            // tip as their baseline and conservatively emits no reuse proof.
+            _reviewedIntegrationTipSha = null;
+            if (resume is null && !string.IsNullOrWhiteSpace(_subject.Plan.IntegrationRef))
+            {
+                try
+                {
+                    await ResolveBaselineShaAsync(ct);
+                    _reviewedIntegrationTipSha = _integrationHeadSha;
+                }
+                catch (ReviewInfrastructureException exception)
+                {
+                    _log($"review integration tip unavailable for reuse proof: {exception.Message}");
+                }
+            }
+
             candidateCache = await ExecutePreparationAsync(
                 RepositoryPath,
                 "candidate",
@@ -1177,20 +1195,6 @@ public sealed class RemoteReviewWorkspace
 
     private async Task<ReviewWorkspaceProofDto> CurrentProofAsync(CancellationToken ct)
     {
-        // AGT-2839: the final proof carries the base this review compared
-        // against, so the integration gate can tell an unchanged base from a
-        // moved one. A plan without an integration ref, or a ref that cannot be
-        // fetched, simply reports no base - it never fails the report.
-        if (_baselineSha is null
-            && !string.IsNullOrWhiteSpace(_subject.Plan.IntegrationRef))
-        {
-            try { await ResolveBaselineShaAsync(ct); }
-            catch (ReviewInfrastructureException exception)
-            {
-                _log($"review baseline unavailable for the workspace proof: {exception.Message}");
-            }
-        }
-
         var finalHead = await GitValueAsync("rev-parse", "HEAD", ct);
         var finalTree = await GitValueAsync("rev-parse", "HEAD^{tree}", ct);
         var status = await GitValueAsync("status", "--porcelain", "--untracked-files=all", ct);
@@ -2091,7 +2095,8 @@ public sealed class RemoteReviewWorkspace
             // Reported only once actually resolved. Claiming a base the review
             // never compared against would let the integration gate skip a
             // suite on a state nobody verified (AGT-2839).
-            _baselineSha);
+            _baselineSha,
+            _reviewedIntegrationTipSha);
 
     private static ReviewVerdictDto ParseVerdict(ReviewCommandDto command, ProcessResult result)
     {

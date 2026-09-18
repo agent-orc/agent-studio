@@ -47,7 +47,9 @@ public sealed class RemoteReviewReportEvidenceTests : IDisposable
             "Dependency preparation directory is missing: /review/repository/stale-salvage",
             new ReviewWorkspaceProofDto(
                 "repo", new string('a', 40), new string('a', 40), new string('b', 40),
-                false, false, "workspace", "review-attempt-f1"),
+                false, false, "workspace", "review-attempt-f1",
+                IntegrationRef: "refs/heads/develop", MergeBaseSha: new string('c', 40),
+                IntegrationTipSha: new string('d', 40)),
             new ReviewEnvironmentDto(
                 "host", "reviewer", "instance", "linux", "x64", "10.0",
                 new Dictionary<string, string>(),
@@ -70,6 +72,9 @@ public sealed class RemoteReviewReportEvidenceTests : IDisposable
 
         var report = await File.ReadAllTextAsync(Path.Combine(_root, reportFile));
         Assert.Contains("| preparation | candidate | prepare-dependencies |", report, StringComparison.Ordinal);
+        Assert.Contains("- Integration ref: `refs/heads/develop`", report);
+        Assert.Contains($"- Reviewed integration tip: `{new string('d', 40)}`", report);
+        Assert.Contains($"- Tree: `{new string('b', 40)}`", report);
         Assert.Contains(
             "`/bin/bash -lc dotnet restore Studio.slnx && npm --prefix frontend ci`",
             report,

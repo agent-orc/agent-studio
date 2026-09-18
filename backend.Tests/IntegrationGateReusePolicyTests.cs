@@ -15,22 +15,22 @@ public sealed class IntegrationGateReusePolicyTests
     private const string Result = "3333333333333333333333333333333333333333";
 
     [Fact]
-    public void Unchanged_base_reuses_the_review_verdict_and_names_the_attempt()
+    public void Unchanged_tip_reuses_the_review_verdict_and_names_the_attempt()
     {
         var decision = IntegrationGateReusePolicy.Decide(Input());
 
         Assert.True(decision.Reused);
         Assert.Equal("reused", decision.Token);
         Assert.Equal("rev_1", decision.ReviewAttemptId);
-        Assert.Contains("unchanged develop base", decision.Reason);
+        Assert.Contains("unchanged develop tip", decision.Reason);
         Assert.Contains(Base[..8], decision.Reason);
     }
 
     [Fact]
-    public void Moved_base_runs_the_full_gate_and_names_both_bases()
+    public void Moved_tip_with_unchanged_merge_base_runs_the_full_gate_and_names_both_tips()
     {
         var decision = IntegrationGateReusePolicy.Decide(
-            Input() with { CurrentMergeBaseSha = MovedBase });
+            Input() with { PreMergeTipSha = MovedBase });
 
         Assert.False(decision.Reused);
         Assert.Equal("full", decision.Token);
@@ -57,6 +57,34 @@ public sealed class IntegrationGateReusePolicyTests
 
         Assert.False(decision.Reused);
         Assert.Equal("the Remote Review report records no integration ref", decision.Reason);
+    }
+
+    [Fact]
+    public void Legacy_proof_without_an_integration_tip_runs_the_full_gate()
+    {
+        var decision = IntegrationGateReusePolicy.Decide(
+            Input() with { Review = Review() with { IntegrationTipSha = null } });
+        Assert.False(decision.Reused);
+        Assert.Contains("records no integration tip", decision.Reason);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(Base)]
+    public void A_missing_or_different_tested_tree_runs_the_full_gate(string? testedTree)
+    {
+        var decision = IntegrationGateReusePolicy.Decide(
+            Input() with { Review = Review() with { TestedTreeSha = testedTree } });
+        Assert.False(decision.Reused);
+        Assert.Contains("tree", decision.Reason);
+    }
+
+    [Fact]
+    public void Conflict_resolution_runs_the_full_gate_even_with_identical_tip_and_tree()
+    {
+        var decision = IntegrationGateReusePolicy.Decide(Input() with { ConflictsResolved = true });
+        Assert.False(decision.Reused);
+        Assert.Contains("conflict resolution", decision.Reason);
     }
 
     [Fact]
@@ -136,7 +164,7 @@ public sealed class IntegrationGateReusePolicyTests
     public void An_underivable_merge_base_runs_the_full_gate()
     {
         var decision = IntegrationGateReusePolicy.Decide(
-            Input() with { CurrentMergeBaseSha = null });
+            Input() with { PreMergeTipSha = null });
 
         Assert.False(decision.Reused);
         Assert.Contains("could not be determined", decision.Reason);
@@ -181,9 +209,10 @@ public sealed class IntegrationGateReusePolicyTests
         Enabled: true,
         Review: Review(),
         IntegrationBranch: "develop",
-        CurrentMergeBaseSha: Base,
+        PreMergeTipSha: Base,
         DeliveryContainedInMergeResult: true,
-        DeliveryWasReplayed: false);
+        DeliveryWasReplayed: false,
+        MergeResultTreeSha: Result);
 
     private static ReviewVerificationRecord Review() => new()
     {
@@ -194,6 +223,8 @@ public sealed class IntegrationGateReusePolicyTests
         ResultSha = Result,
         IntegrationRef = "refs/heads/develop",
         MergeBaseSha = Base,
+        IntegrationTipSha = Base,
+        TestedTreeSha = Result,
         BuildTestGate = ReviewBuildTestGateClasses.Passed,
         VerifiedAtUtc = DateTimeOffset.UtcNow,
     };
