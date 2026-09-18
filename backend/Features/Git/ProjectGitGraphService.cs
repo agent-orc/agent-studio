@@ -420,7 +420,8 @@ public sealed partial class ProjectGitGraphService
         => task.Commits.LastOrDefault()?.Sha ?? task.Commit?.Sha;
 
     private static GitTaskBadge Card(TaskInfo task)
-        => new(task.TaskKey, DisplayKey(task), task.Title, task.State);
+        => new(task.TaskKey, DisplayKey(task), task.Title, task.State,
+            task.Commits.LastOrDefault()?.RunAttemptId ?? task.Runner?.AttemptId);
 
     private static string? MergeTaskKey(string subject)
     {

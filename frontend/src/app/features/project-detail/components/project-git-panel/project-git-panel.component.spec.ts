@@ -133,6 +133,26 @@ function setup() {
 }
 
 describe('ProjectGitPanelComponent', () => {
+  it('opens commit details on selection and closes them on a second click', () => {
+    const { fixture, http, root } = setup();
+    http.expectOne(request => request.url === '/api/git/inventory').flush(inventoryFixture());
+    fixture.detectChanges();
+
+    const row = root.querySelector<HTMLElement>('[data-testid="git-commit-row"]')!;
+    row.click();
+    fixture.detectChanges();
+    http.expectOne(request => request.url === '/api/git/project-commit/files')
+      .flush({ sha: COMMIT_SHA, files: [{ status: 'M', path: 'src/thing.ts', added: 3, removed: 1 }] });
+    fixture.detectChanges();
+
+    expect(root.querySelector('[data-testid="git-commit-details"]')?.textContent).toContain(COMMIT_SHA);
+    expect(root.querySelector('[data-testid="git-commit-details"]')?.textContent).toContain('src/thing.ts');
+    row.click();
+    fixture.detectChanges();
+    expect(root.querySelector('[data-testid="git-commit-details"]')).toBeNull();
+    http.verify();
+  });
+
   it('renders active checkouts and semantic chips beside the enriched commit graph', () => {
     const { fixture, http, root, openTaskKey } = setup();
     http.expectOne(request => request.url === '/api/git/inventory').flush(inventoryFixture());

@@ -1,4 +1,4 @@
-<section class="history" data-testid="git-history">
+<section class="history" data-testid="git-history" tabindex="0" (keydown)="containScrollKeys($event)">
   <header class="history__header">
     <div>
       <h2>Commit graph</h2>
@@ -46,7 +46,10 @@
       <article class="history__row" role="listitem"
                [class.history__row--selected]="selectedSha() === row.commit.sha"
                [attr.aria-current]="selectedSha() === row.commit.sha ? 'true' : null"
-               data-testid="git-commit-row" [attr.data-sha]="row.commit.sha">
+               data-testid="git-commit-row" [attr.data-sha]="row.commit.sha"
+               tabindex="0" (click)="commitSelected.emit(row.commit)"
+               (keydown.enter)="commitSelected.emit(row.commit)"
+               (keydown.space)="$event.preventDefault(); commitSelected.emit(row.commit)">
         <span class="history__graph" aria-hidden="true" data-testid="git-graph-lanes"
               [style.width.px]="row.width" [style.min-height.px]="row.height">
           <svg [attr.viewBox]="'0 0 ' + row.width + ' ' + row.height" preserveAspectRatio="none">
@@ -60,7 +63,7 @@
              [attr.data-lane]="row.lane % 4" [style.left.px]="row.nodeX"></i>
         </span>
 
-        <button type="button" class="history__summary" (click)="commitSelected.emit(row.commit)">
+        <button type="button" class="history__summary">
           <span class="history__subject">{{ row.commit.subject }}</span>
           <span class="history__byline">
             <code>{{ row.commit.shortSha }}</code>
@@ -84,11 +87,12 @@
           }
         </div>
 
-        <button type="button" class="history__changes" (click)="changesRequested.emit(row.commit)"
+        <button type="button" class="history__changes" (click)="$event.stopPropagation(); changesRequested.emit(row.commit)"
                 [attr.aria-label]="'Inspect changes in ' + row.commit.shortSha">
-          {{ row.commit.filesChanged }} {{ row.commit.filesChanged === 1 ? 'file' : 'files' }}
-          @if (row.commit.added > 0) { <span class="history__added">+{{ row.commit.added }}</span> }
-          @if (row.commit.removed > 0) { <span class="history__removed">-{{ row.commit.removed }}</span> }
+          <span class="history__changes-icon" aria-hidden="true">▤</span>
+          <span class="history__changes-label">{{ row.commit.filesChanged }} {{ row.commit.filesChanged === 1 ? 'file' : 'files' }}</span>
+          @if (row.commit.added > 0) { <span class="history__added history__changes-stat">+{{ row.commit.added }}</span> }
+          @if (row.commit.removed > 0) { <span class="history__removed history__changes-stat">-{{ row.commit.removed }}</span> }
         </button>
       </article>
     } @empty {

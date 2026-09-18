@@ -145,7 +145,7 @@
                      (change)="toggleCandidate(candidate)"
                      [attr.aria-label]="'Select ' + candidate.ref" />
               <span class="swp__row-main">
-                <span class="swp__row-name mono">{{ candidate.ref }}</span>
+                <span class="swp__row-name mono" [title]="candidate.ref">{{ compactRef(candidate.ref) }}</span>
                 <span class="swp__tag">{{ candidate.class }}</span>
                 @if (candidate.taskKey) { <span class="swp__tag">{{ candidate.taskKey }}</span> }
                 @if (candidate.ageDays !== null) {

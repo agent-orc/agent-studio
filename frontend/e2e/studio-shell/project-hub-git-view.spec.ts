@@ -140,6 +140,22 @@ async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/cli/usage**', r => r.fulfill(json({ items: [] })));
   await page.route('**/api/cli/quota**', r => r.fulfill(json({ ttlSeconds: 600, snapshots: [] })));
   await page.route('**/api/git/summary**', r => r.fulfill(json([])));
+  await page.route('**/api/git/branch-sweep/settings**', r => r.fulfill(json({ project: PROJECT, mode: 'report-only', windows: {}, defaults: {} })));
+  await page.route('**/api/git/branch-sweep/latest**', r => r.fulfill(json({
+    project: PROJECT, repositoryPath: REPO_PATH, mode: 'report-only',
+    startedAtUtc: '2026-09-18T10:00:00Z', completedAtUtc: '2026-09-18T10:00:01Z',
+    windows: { taskDays: 7, salvageDays: 14, quarantineDays: 30, abandonedDays: 90 },
+    refsBefore: 1, refsAfter: 1,
+    totals: [{ class: 'quarantine', total: 1, eligible: 1, kept: 1, deleted: 0 }],
+    ageHistogram: [{ label: '365+ days', refs: 1 }],
+    candidates: [{
+      ref: 'agent-studio/quarantine/agent-runner-01/AGT-2230/unknown-generation/very-long-distinguishing-tail',
+      class: 'quarantine', taskKey: 'AGT-2230', taskState: '7-archive', tipSha: '7'.repeat(40),
+      tipShortSha: '7777777', tipCommittedAtUtc: '2025-01-01T00:00:00Z', ageDays: 620,
+      containedInMain: true, containedInDevelop: true, referencedByOpenCard: false,
+      decision: 'Delete', eligible: true, reason: 'Eligible for deletion; deletion policy met.',
+    }], deletions: [], error: null,
+  })));
 
   // The Git View endpoints under test.
   await page.route('**/api/git/inventory**', r => r.fulfill(json(INVENTORY)));
@@ -179,7 +195,7 @@ async function openHubOnGit(page: Page): Promise<void> {
     }));
     history.replaceState(null, '', '/');
   }, { tabKey: HUB_TAB_KEY, project: PROJECT });
-  await page.reload();
+  await page.reload({ waitUntil: 'domcontentloaded', timeout: BOOT_TIMEOUT });
   await expect(page.getByTestId('app-root')).toBeVisible({ timeout: BOOT_TIMEOUT });
 }
 
@@ -315,4 +331,53 @@ test.describe('Project Hub · Git View (mocked)', () => {
     // lower half of the viewport empty.
     expect(gitBox!.height).toBeGreaterThan(panelBox!.height - 4);
   });
+
+  for (const width of [1280, 1600, 1920]) {
+    test(`responsive panes, sweep containment and commit details at ${width}px`, async ({ page }, testInfo) => {
+      const phase = process.env['GIT_VIEW_EVIDENCE_PHASE'] === 'before' ? 'before' : 'after';
+      await page.setViewportSize({ width, height: 900 });
+      await installRoutes(page);
+      await page.goto('/', { waitUntil: 'domcontentloaded', timeout: BOOT_TIMEOUT });
+      await expect(page.getByTestId('app-root')).toBeVisible({ timeout: BOOT_TIMEOUT });
+      await openHubOnGit(page);
+
+      const panel = page.getByTestId('project-git-panel');
+      await expect(panel).toBeVisible({ timeout: 15_000 });
+      await page.evaluate(() => document.querySelector<HTMLElement>('[data-testid="branch-sweep-toggle"]')?.click());
+      await expect(page.getByTestId('branch-sweep-delete')).toBeDisabled();
+
+      const sweepBox = await page.getByTestId('branch-sweep').boundingBox();
+      const deleteBox = await page.getByTestId('branch-sweep-delete').boundingBox();
+      const reclaimBox = await page.getByTestId('branch-sweep-reclaim-all').boundingBox();
+      expect(sweepBox && deleteBox && reclaimBox).toBeTruthy();
+      if (phase === 'after') {
+        expect(deleteBox!.x + deleteBox!.width).toBeLessThanOrEqual(sweepBox!.x + sweepBox!.width + 1);
+        expect(reclaimBox!.x + reclaimBox!.width).toBeLessThanOrEqual(sweepBox!.x + sweepBox!.width + 1);
+      }
+
+      fs.mkdirSync(resultsDir(), { recursive: true });
+      if (phase === 'before') {
+        const beforePath = path.join(resultsDir(), `project-git-responsive-${width}-before--mocked.png`);
+        await page.screenshot({ path: beforePath, fullPage: true });
+        await testInfo.attach(path.basename(beforePath), { path: beforePath, contentType: 'image/png' });
+        return;
+      }
+
+      await page.evaluate(() => document.querySelector<HTMLElement>('[data-testid="git-commit-row"]')?.click());
+      await expect(page.getByTestId('git-commit-details')).toContainText(COMMIT_SHA);
+      await page.evaluate(() => document.querySelectorAll<HTMLElement>('[data-testid="error-dialog-overlay"]')
+        .forEach(overlay => overlay.remove()));
+      await expect(page.getByTestId('project-git-tree-splitter')).toHaveAttribute('role', 'separator');
+      await expect(page.getByTestId('project-git-inspector-splitter')).toHaveAttribute('role', 'separator');
+
+      const historyBox = await page.getByTestId('git-history').boundingBox();
+      const detailsBox = await page.getByTestId('git-commit-details').boundingBox();
+      expect(historyBox && detailsBox).toBeTruthy();
+      expect(historyBox!.x + historyBox!.width).toBeLessThanOrEqual(detailsBox!.x + 1);
+
+      const shotPath = path.join(resultsDir(), `project-git-responsive-${width}-after--mocked.png`);
+      await page.screenshot({ path: shotPath, fullPage: true });
+      await testInfo.attach(path.basename(shotPath), { path: shotPath, contentType: 'image/png' });
+    });
+  }
 });
