@@ -14,6 +14,9 @@ release yet.
 
 ### Fixed
 
+- Lost-worker recovery now retains the latest diagnostic stderr and system
+  lines across long worker logs, so earlier crash evidence is not silently
+  dropped after each 2,000 scanned lines (AGT-2870).
 - Worker resource envelope: the task ceiling is 512 per core of fair share
   (minimum 1024) instead of 128. `pids.max` counts threads, and a worker with a
   .NET test host hit the 307-task ceiling of a 12-core, 5-slot host; the

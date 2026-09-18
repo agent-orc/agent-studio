@@ -70,6 +70,25 @@ public sealed class LostWorkerSalvageTests : IDisposable
     }
 
     [Fact]
+    public void Crash_evidence_keeps_diagnostic_lines_across_long_logs()
+    {
+        var workerDirectory = Path.Combine(_root, "worker-long-log");
+        Directory.CreateDirectory(workerDirectory);
+        var lines = new List<string>
+        {
+            Log(1, "stderr", "terminate called after throwing an instance of 'PAL_SEHException'"),
+        };
+        for (var i = 2; i <= 2102; i++)
+            lines.Add(Log(i, "stdout", $"{{\"type\":\"assistant\",\"turn\":{i}}}"));
+        File.WriteAllLines(Path.Combine(workerDirectory, "output.jsonl"), lines);
+
+        var evidence = WorkerCrashEvidenceReader.Read(workerDirectory);
+
+        Assert.Single(evidence.Lines);
+        Assert.Contains("PAL_SEHException", evidence.CrashLine);
+    }
+
+    [Fact]
     public void Crash_evidence_of_a_worker_that_logged_nothing_is_empty_not_an_exception()
     {
         var evidence = WorkerCrashEvidenceReader.Read(Path.Combine(_root, "absent"));
