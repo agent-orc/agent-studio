@@ -226,7 +226,8 @@ public sealed record RunnerClaimResponse(
     // continuation round prepares its worktree on the rescued commit instead of
     // on the integration branch.
     string? ContinuationBaseRef = null,
-    string? ContinuationBaseSha = null);
+    string? ContinuationBaseSha = null,
+    IReadOnlyList<string>? ReprobeCapabilities = null);
 
 /// <summary>Fenced request for the server-rendered Epic decomposition prompt.</summary>
 public sealed record RemoteEpicPlanningPromptRequest(
