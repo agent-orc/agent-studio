@@ -30,6 +30,7 @@ public sealed record AcceptanceRailSnapshot
 public sealed class AcceptanceRailHostedService : BackgroundService
 {
     private readonly TaskScannerService _scanner;
+    private readonly IntegrationGenerationReconcileSweep? _generationReconcile;
     private readonly TaskIntegrationStatusService _integrationStatus;
     private readonly TaskTransitionService _transitions;
     private readonly TaskIntegrationRecoveryService _recovery;
@@ -60,9 +61,11 @@ public sealed class AcceptanceRailHostedService : BackgroundService
         HumanReviewEscalation humanReviewEscalation,
         TimelineLog timeline,
         IConfiguration configuration,
-        ILogger<AcceptanceRailHostedService> logger)
+        ILogger<AcceptanceRailHostedService> logger,
+        IntegrationGenerationReconcileSweep? generationReconcile = null)
     {
         _scanner = scanner;
+        _generationReconcile = generationReconcile;
         _integrationStatus = integrationStatus;
         _transitions = transitions;
         _recovery = recovery;
@@ -106,6 +109,12 @@ public sealed class AcceptanceRailHostedService : BackgroundService
             try
             {
                 statusByKey.TryGetValue(job.TaskKey, out var status);
+                if (status is not null && _generationReconcile?.Reconcile(job, status) == false)
+                {
+                    _logger.LogWarning("integration-generation-reconcile write failed for {TaskKey}", job.TaskKey);
+                    failed++;
+                    continue;
+                }
                 var used = CountConflictRequeues(job);
                 var infrastructureUsed = CountInfrastructureRequeues(job);
                 var decision = AcceptanceRailPolicy.Decide(
@@ -131,7 +140,8 @@ public sealed class AcceptanceRailHostedService : BackgroundService
                 // refused attempt is not retried until a new fact arrives. This
                 // is what keeps a card that cannot be accepted from re-running
                 // the move - and re-logging the refusal - on every interval.
-                var fingerprint = AcceptanceRailAttemptPolicy.Fingerprint(job, status, decision);
+                var fingerprint = AcceptanceRailAttemptPolicy.Fingerprint(
+                    job, status, decision, _integrationStatus.ReadLatestMergeStep(job)?.Reason);
                 if (decision.Action != AcceptanceRailAction.Ignore
                     && !AcceptanceRailAttemptPolicy.ShouldAttempt(fingerprint, LastRefusal(job)))
                 {

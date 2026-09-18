@@ -404,6 +404,76 @@ public class TaskCommitBindingTests : IDisposable
     }
 
     [Fact]
+    public void RemoteGenerations_KeepInheritedCurrentWorkAndReplayIdempotently()
+    {
+        var (scanner, mutations) = Build();
+        var folder = SeedJobFolder("numbered", TaskStates.HumanReview, legacyCommit: null);
+        var old = MakeCommit("aaaaaaa", "old", 1, "2026-09-13T10:00:00Z");
+        var inherited = MakeCommit("bbbbbbb", "inherited", 1, "2026-09-14T10:00:00Z");
+        var current = MakeCommit("ccccccc", "current", 1, "2026-09-18T10:00:00Z") with
+        { Branch = "agent-studio/results/current" };
+        Assert.True(mutations.SetRemoteCommitAttributionOnFolder(folder, "run-1", "runner", inherited.Sha, [old, inherited]));
+        Assert.True(mutations.SetRemoteCommitAttributionOnFolder(folder, "run-2", "runner", current.Sha, [inherited, current]));
+        Assert.True(mutations.SetRemoteCommitAttributionOnFolder(folder, "run-2", "runner", current.Sha, [inherited, current]));
+        var commits = scanner.FindJob("numbered", _watchPath)!.Commits;
+        Assert.Equal([1, 2, 2], commits.Select(commit => commit.DeliveryGeneration));
+        Assert.Equal("run-1", commits[1].RunAttemptId);
+        Assert.Equal("run-2", commits[1].DeliveryAttemptId);
+        Assert.Equal(current.Branch, commits[2].DeliveryRef);
+    }
+
+    [Fact]
+    public void RemoteGeneration_RequeuedInheritedCommit_RemainsACurrentExpectation()
+    {
+        var (scanner, mutations) = Build();
+        var folder = SeedJobFolder("requeued-inherited", TaskStates.HumanReview, legacyCommit: null);
+        var inherited = MakeCommit("aaaaaaa", "inherited", 1, "2026-09-13T10:00:00Z");
+        var current = MakeCommit("bbbbbbb", "current", 1, "2026-09-18T10:00:00Z");
+        Assert.True(mutations.SetRemoteCommitAttributionOnFolder(folder, "run-1", "runner", inherited.Sha, [inherited]));
+        Assert.True(mutations.SupersedeCurrentDeliveryOnFolder(folder, TaskCommitSupersession.PendingAttempt).Succeeded);
+        Assert.True(mutations.SetRemoteCommitAttributionOnFolder(folder, "run-2", "runner", current.Sha, [inherited, current]));
+
+        var commits = scanner.FindJob("requeued-inherited", _watchPath)!.Commits;
+        var decisions = DeliveryGenerationPolicy.Evaluate(commits, sha => sha == current.Sha, _ => false, _ => false);
+
+        Assert.Equal(CommitIntegrationRules.Missing, decisions[0].IntegrationRule);
+        Assert.False(TaskCommitSupersession.IsSuperseded(commits[0]));
+        Assert.Equal([inherited.Sha, current.Sha], commits.Select(commit => commit.Sha));
+        Assert.Equal("run-1", commits[0].RunAttemptId);
+        Assert.Equal(2, commits[0].DeliveryGeneration);
+    }
+
+    [Fact]
+    public void Reconciliation_PersistsEveryRuleByRepositoryWithoutDroppingHistory()
+    {
+        var (scanner, mutations) = Build();
+        var folder = SeedJobFolder("reconciled", TaskStates.HumanReview, legacyCommit: null);
+        var first = MakeCommit("aaaaaaa", "studio", 1, "2026-09-13T10:00:00Z") with { Repository = "studio" };
+        var second = MakeCommit("bbbbbbb", "runner", 1, "2026-09-18T10:00:00Z") with { Repository = "runner" };
+        Assert.True(mutations.SetCommitAttributionOnFolder(folder, [first, second]));
+        var task = scanner.FindJob("reconciled", _watchPath)!;
+        var status = new TaskIntegrationStatus
+        {
+            Repositories =
+            [
+                new() { Repository = "studio", Commits = [new() { Sha = first.Sha, Repository = first.Repository, IntegrationRule = CommitIntegrationRules.Ancestor }] },
+                new() { Repository = "runner", Commits = [new() { Sha = second.Sha, Repository = second.Repository, IntegrationRule = CommitIntegrationRules.Missing }] },
+            ],
+        };
+        var sweep = new IntegrationGenerationReconcileSweep(mutations);
+        Assert.True(sweep.Reconcile(task, status));
+        var commits = scanner.FindJob("reconciled", _watchPath)!.Commits;
+        Assert.Equal([first.Sha, second.Sha], commits.Select(commit => commit.Sha));
+        Assert.Equal([CommitIntegrationRules.Ancestor, CommitIntegrationRules.Missing], commits.Select(commit => commit.IntegrationRule));
+        var persisted = File.ReadAllText(Path.Combine(folder, "task.json"));
+        using var document = JsonDocument.Parse(persisted);
+        Assert.Equal("missing", document.RootElement.GetProperty("commits")[1].GetProperty("integrationRule").GetString());
+        Assert.True(sweep.Reconcile(task, status));
+        Assert.Equal(persisted, File.ReadAllText(Path.Combine(folder, "task.json")));
+        Assert.Equal(task.EnteredLaneAt, scanner.FindJob("reconciled", _watchPath)!.EnteredLaneAt);
+    }
+
+    [Fact]
     public void RequeueSupersession_PreservesHistory_AndResolvesToNextRunAttempt()
     {
         var (scanner, mutations) = Build();

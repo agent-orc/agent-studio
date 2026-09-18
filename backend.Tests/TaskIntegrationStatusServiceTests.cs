@@ -170,7 +170,7 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
 
         Assert.Equal(IntegrationStatuses.Integrated, status.Status);
         Assert.Equal(rebasedSha[..7], status.Sha);
-        Assert.Equal("anchor-ancestor", status.Detail);
+        Assert.Contains("superseded", status.Detail);
     }
 
     [Fact]
@@ -292,6 +292,7 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         Assert.Contains(notLanded[..7], status.Detail);
         Assert.Contains("1/2", status.Detail!);
         Assert.DoesNotContain(landed[..7], status.Detail!);
+        Assert.Equal(CommitIntegrationRules.Missing, status.Repositories[0].Commits[1].IntegrationRule);
     }
 
     [Fact]
@@ -395,7 +396,8 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
 
         Assert.Equal(IntegrationStatuses.Integrated, status.Status);
         Assert.Equal(replacement[..7], status.Sha);
-        Assert.Equal("anchor-ancestor", status.Detail);
+        Assert.Contains("superseded", status.Detail);
+        Assert.Equal(CommitIntegrationRules.Superseded, status.Repositories[0].Commits[0].IntegrationRule);
     }
 
     [Fact]
@@ -1047,6 +1049,7 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         Assert.Equal(IntegrationStatuses.Integrated, alone.Status);
         Assert.Equal("reviewed-result-ancestor", alone.Detail);
         Assert.Equal(delivered[..7], alone.Sha);
+        Assert.Empty(alone.Repositories);
         Assert.Equal(batched.Status, alone.Status);
         Assert.Equal(batched.Detail, alone.Detail);
         Assert.Equal(batched.Sha, alone.Sha);
@@ -1072,6 +1075,128 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         Assert.Equal(IntegrationStatuses.Integrated, lookup[autoReview.TaskKey].Status);
         Assert.True(lookup.ContainsKey(completed.TaskKey));
         Assert.Equal(IntegrationStatuses.Integrated, lookup[completed.TaskKey].Status);
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public void BuildLookup_LegacyContentEqualCommit_IsIntegratedByContent()
+    {
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q -b task/legacy develop");
+        File.WriteAllText(Path.Combine(repo, "feature.txt"), "delivered");
+        Commit(repo, "feat: old delivery");
+        var oldSha = RunGit(repo, "rev-parse HEAD").Out.Trim();
+        RunGit(repo, "checkout -q develop");
+        File.WriteAllText(Path.Combine(repo, "feature.txt"), "delivered");
+        Commit(repo, "feat: rewritten delivery");
+        var service = BuildService(repo, out var project, out var log);
+        var job = Job("legacy-content", "AGT-2871", project, repo, log,
+            commits: [Commit(oldSha) with { Files = ["feature.txt"], FilesChanged = 1 }]);
+
+        var status = service.BuildLookup([job])[job.TaskKey];
+
+        Assert.Equal(IntegrationStatuses.Integrated, status.Status);
+        Assert.Contains("integrated-by-content", status.Detail);
+        Assert.Equal(CommitIntegrationRules.IntegratedByContent, status.Repositories[0].Commits[0].IntegrationRule);
+
+        RunGit(repo, "reset -q --hard HEAD^");
+        var afterReset = service.BuildLookup([job])[job.TaskKey];
+        Assert.Equal(IntegrationStatuses.Pending, afterReset.Status);
+        Assert.Equal(CommitIntegrationRules.Missing, afterReset.Repositories[0].Commits[0].IntegrationRule);
+    }
+
+    [Theory]
+    [Trait("Category", "MachineBound")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void BuildLookup_TwoRepositoriesWithLegacySupersession_IntegratesOnlyAfterBothLand(bool numbered)
+    {
+        var studio = SeedDevelopMainRepo();
+        RunGit(studio, "checkout -q -b task/old develop");
+        File.WriteAllText(Path.Combine(studio, "feature.txt"), "old delivery");
+        Commit(studio, "wip(runner): salvage before teardown - outcome Done");
+        var oldSha = RunGit(studio, "rev-parse HEAD").Out.Trim();
+        RunGit(studio, "checkout -q develop");
+        File.WriteAllText(Path.Combine(studio, "feature.txt"), "replacement delivery");
+        Commit(studio, "feat: final delivery");
+        var newSha = RunGit(studio, "rev-parse HEAD").Out.Trim();
+        var runner = SeedDevelopMainRepo();
+        RunGit(runner, "checkout -q -b task/pending main");
+        File.WriteAllText(Path.Combine(runner, "runner.txt"), "runner delivery");
+        Commit(runner, "feat: runner delivery");
+        var runnerSha = RunGit(runner, "rev-parse HEAD").Out.Trim();
+        var (service, project, log) = BuildMultiRepositoryService(studio, runner);
+        var job = Job("multi-generation", "AGT-2871", project, studio, log, commits:
+        [
+            Commit(oldSha) with { Repository = "agent-studio", Files = [], FilesChanged = 1, DeliveryGeneration = numbered ? 1 : null },
+            Commit(newSha) with { Repository = "agent-studio", Files = [], FilesChanged = 1, DeliveryGeneration = numbered ? 3 : null },
+            Commit(runnerSha) with { Repository = "runner", Files = ["runner.txt"], FilesChanged = 1, DeliveryGeneration = numbered ? 1 : null },
+        ]);
+
+        var partial = service.BuildLookup([job])[job.TaskKey];
+        Assert.Equal(IntegrationStatuses.Partial, partial.Status);
+        Assert.Contains("runner:", partial.Detail);
+        Assert.DoesNotContain("agent-studio:", partial.Detail);
+        Assert.True(partial.Repositories[0].OnIntegrationBranch);
+        Assert.False(partial.Repositories[1].OnIntegrationBranch);
+        Assert.Equal(CommitIntegrationRules.Superseded, partial.Repositories[0].Commits[0].IntegrationRule);
+        Assert.Equal(CommitIntegrationRules.Ancestor, partial.Repositories[0].Commits[1].IntegrationRule);
+        Assert.Equal(CommitIntegrationRules.Missing, partial.Repositories[1].Commits[0].IntegrationRule);
+
+        RunGit(runner, $"branch -f main {runnerSha}");
+        var integrated = service.BuildLookup([job])[job.TaskKey];
+        Assert.Equal(IntegrationStatuses.Integrated, integrated.Status);
+        Assert.All(integrated.Repositories, repository => Assert.True(repository.OnIntegrationBranch));
+        Assert.Contains("superseded", integrated.Detail);
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public void BuildLookup_CurrentGenerationMissingCommit_BlocksUntilItLandsAndThenUpdatesDeliveryRef()
+    {
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q -b task/old develop");
+        File.WriteAllText(Path.Combine(repo, "old.txt"), "old salvage");
+        Commit(repo, "wip(runner): salvage before teardown - outcome Done");
+        var oldSha = RunGit(repo, "rev-parse HEAD").Out.Trim();
+        RunGit(repo, "checkout -q develop");
+        File.WriteAllText(Path.Combine(repo, "final.txt"), "final");
+        Commit(repo, "feat: final delivery");
+        var finalSha = RunGit(repo, "rev-parse HEAD").Out.Trim();
+        RunGit(repo, "checkout -q -b task/current");
+        File.WriteAllText(Path.Combine(repo, "missing.txt"), "still missing");
+        Commit(repo, "feat: current unmerged work");
+        var missingSha = RunGit(repo, "rev-parse HEAD").Out.Trim();
+        var service = BuildService(repo, out var project, out var log);
+        var job = Job("current-missing", "AGT-2871", project, repo, log, commits:
+        [
+            Commit(oldSha) with { DeliveryGeneration = 1, Branch = "agent-studio/results/old", FilesChanged = 1 },
+            Commit(finalSha) with { DeliveryGeneration = 3, Branch = "agent-studio/results/final", FilesChanged = 1 },
+            Commit(missingSha) with { DeliveryGeneration = 3, Branch = "agent-studio/results/final", FilesChanged = 1 },
+        ]);
+        ReviewSubjectStore.Write(job.FolderPath, new ReviewSubjectRecord
+        {
+            TaskKey = "AGT-2871", RunAttemptId = "old-run", Project = project,
+            Repository = repo, ResultSha = oldSha, AttemptChainId = "chain",
+            ResultRef = "refs/heads/agent-studio/results/old",
+            ImmutableResultRef = "refs/heads/agent-studio/results/old",
+        });
+        var partial = service.BuildLookup([job])[job.TaskKey];
+        Assert.Equal(IntegrationStatuses.Partial, partial.Status);
+        Assert.Contains("1/2", partial.Detail);
+        Assert.Contains(missingSha[..7], partial.Detail);
+        Assert.Equal(CommitIntegrationRules.Missing, partial.Repositories[0].Commits[2].IntegrationRule);
+        var archived = job with { State = TaskStates.Archive };
+        var archivedStatus = service.BuildLookup([archived])[archived.TaskKey];
+        Assert.Equal(CommitIntegrationRules.Missing, archivedStatus.Repositories[0].Commits[2].IntegrationRule);
+
+        RunGit(repo, $"branch -f develop {missingSha}");
+        var integrated = service.BuildLookup([job])[job.TaskKey];
+        Assert.Equal(IntegrationStatuses.Integrated, integrated.Status);
+        Assert.Contains("generation 3", integrated.Detail);
+        Assert.Contains("1 earlier generation commits superseded", integrated.Detail);
+        Assert.Equal("agent-studio/results/final", integrated.DeliveryRef);
+        Assert.Equal(3, integrated.Repositories[0].Commits.Count);
     }
 
     // --- helpers -----------------------------------------------------------

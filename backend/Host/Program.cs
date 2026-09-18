@@ -817,6 +817,7 @@ if (!publicDemoExecutionProfile)
 // recover both an interrupted accept transaction and a successful merge whose
 // queued origin push was dropped by restart.
 builder.Services.AddSingleton<AgentStudio.Pipeline.AcceptedIntegrationBackstopHostedService>();
+builder.Services.AddSingleton<IntegrationGenerationReconcileSweep>();
 builder.Services.AddSingleton<AcceptanceRailHostedService>();
 // AGT-2824: a gate environment failure rolls the merge back and says it will
 // be retried. The accepted-integration backstop only re-drives accepted cards
