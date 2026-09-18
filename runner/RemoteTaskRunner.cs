@@ -340,6 +340,25 @@ public sealed class RemoteTaskRunner
         }
     }
 
+    /// <summary>
+    /// Purges a deferred finalization whose delivery has meanwhile reached the
+    /// Task Server on the durable plane. The outbox recovery pass owns that
+    /// replay, so re-driving the worker here would journal and upload the same
+    /// artifacts a second time under fresh sequences.
+    /// </summary>
+    public async Task<bool> ReleaseSettledAsync(PersistedRunnerSlot slot, string reason)
+    {
+        _log($"releasing settled persisted attempt task={slot.TaskKey} attempt={slot.AttemptId}: {reason}");
+        if (await ReleaseWithRetryAsync(slot.Lease, "runner-finalization-settled"))
+        {
+            _state.Delete(slot);
+            return true;
+        }
+
+        _log($"settled attempt state retained for release retry: {slot.TaskKey}");
+        return false;
+    }
+
     private async Task<int> RunPersistedAsync(
         PersistedRunnerSlot slot,
         GitWorkspace workspace,
@@ -409,7 +428,28 @@ public sealed class RemoteTaskRunner
         var releaseOnly = false;
         var daemonHandedOff = false;
         var lostWorker = LostWorkerHandoff.None;
+        // AGT-2869: a finalization that could not reach a restarting Task
+        // Server is deferred, not abandoned. The slot stays persisted in
+        // "finalizing" and the daemon's poll loop re-drives this exact attempt.
+        var finalizationDeferred = false;
+        var finalizationRetries = slot.Finalization?.Attempts ?? 0;
+        var securedTeardown = slot.Finalization?.Teardown;
         DurableArtifactManifest? artifactManifest = null;
+        if (finalizationRetries > 0)
+        {
+            // "retry=N" counts the finalization attempts that already failed,
+            // so the in-flight line, the journal, and the completion all quote
+            // the same number.
+            var pending = slot.Finalization!;
+            _log(
+                $"coding-finalization-redrive task={taskKey} attempt={slot.AttemptId} "
+                + $"retry={finalizationRetries} pendingSince={pending.PendingSinceUtc:o} "
+                + $"lastReason={pending.LastReason}");
+            shipper.Add(
+                "system",
+                $"[runner] finalization-retry {finalizationRetries} "
+                + $"pendingSince={pending.PendingSinceUtc:O} lastReason={pending.LastReason}");
+        }
         try
         {
             var execution = reattach
@@ -466,12 +506,13 @@ public sealed class RemoteTaskRunner
             }
             else if (outbox is not null)
             {
-                teardown = await SecureForHandoffWithRetryAsync(
+                teardown = securedTeardown ?? await SecureForHandoffWithRetryAsync(
                     taskKey,
                     workspace,
                     outcome,
                     outbox,
                     stopRun.Token);
+                securedTeardown = teardown;
                 var dependencyIdentities = await workspace.ReadDependencyIdentitiesAsync(shutdown);
                 var repositoryId = !string.IsNullOrWhiteSpace(slot.ProjectId)
                     ? slot.ProjectId
@@ -530,12 +571,27 @@ public sealed class RemoteTaskRunner
             }
             else
             {
-                teardown = await workspace.TeardownAsync(
+                // A re-driven finalization finds the worktree already removed by
+                // the attempt that failed afterwards. Reusing that attempt's
+                // secured delivery keeps the retry from recording a completion
+                // without the refs it has already pushed.
+                teardown = securedTeardown ?? await workspace.TeardownAsync(
                     outcome.Kind.ToString(),
                     lease.AttemptId,
                     CancellationToken.None);
+                securedTeardown = teardown;
             }
             outcomeDecision = WithDurableOutput(outcomeDecision, teardown);
+            if (finalizationRetries > 0)
+            {
+                // Delivery evidence: the card must say that this completion is
+                // the late one, not a second run.
+                var delivered =
+                    $"[runner] finalization-delivered retries={finalizationRetries} "
+                    + $"pendingSince={slot.Finalization!.PendingSinceUtc:O}";
+                shipper.Add("system", delivered);
+                await shipper.FlushAsync(stopRun.Token);
+            }
             if (outbox is not null)
             {
                 // The isolated checkout has now either been removed after a
@@ -601,7 +657,11 @@ public sealed class RemoteTaskRunner
                     shutdown);
             }
             handedBack = true;
-            _log($"task '{taskKey}' handed back to the local board: {outcome.Kind}");
+            _log(
+                $"task '{taskKey}' handed back to the local board: {outcome.Kind}"
+                + (finalizationRetries > 0
+                    ? $"; finalizationRetries={finalizationRetries}"
+                    : string.Empty));
             return outcome.Kind is RunOutcomeKind.Done or RunOutcomeKind.NoOp ? 0 : 1;
         }
         catch (DetachedWorkerLostException ex)
@@ -670,6 +730,40 @@ public sealed class RemoteTaskRunner
             await ReportUnsecuredWorktreeAsync(taskKey, lease, ex);
             handedBack = true;
             return 1;
+        }
+        catch (Exception ex) when (
+            RemoteRunnerDaemon.IsTransientServerFault(ex)
+            && !shutdown.IsCancellationRequested
+            && !daemonShutdown.IsCancellationRequested
+            && heartbeat.StopRequest is null
+            && !heartbeat.LeaseLost)
+        {
+            // AGT-2869: the Task Server is restarting (connection refused or
+            // reset, a prematurely ended response, 502/503/504). The worker's
+            // result is on disk and this attempt's authority is persisted, so
+            // the slot stays in "finalizing" and the daemon's own poll loop
+            // re-drives the very same idempotent steps once the server answers
+            // again. Releasing or tearing down here would strand the delivery.
+            finalizationDeferred = true;
+            var reason = DescribeTransportFault(ex);
+            var latest = _state.LoadAll().FirstOrDefault(item =>
+                             string.Equals(item.AttemptId, slot.AttemptId, StringComparison.Ordinal))
+                         ?? slot;
+            var pending = FinalizationRetryPolicy.Schedule(
+                latest.Finalization ?? slot.Finalization,
+                reason,
+                securedTeardown,
+                DateTime.UtcNow);
+            _state.Save(latest with
+            {
+                Phase = FinalizationRetryPolicy.Phase,
+                Finalization = pending,
+            });
+            _log(
+                $"coding-finalization-deferred task={taskKey} attempt={slot.AttemptId} "
+                + $"retry={pending.Attempts} pendingSince={pending.PendingSinceUtc:o} "
+                + $"nextAttempt={pending.NextAttemptAtUtc:o} reason={reason}");
+            return 5;
         }
         catch (OperationCanceledException) when (
             heartbeat.StopRequest is not null && !heartbeat.LeaseLost)
@@ -766,6 +860,7 @@ public sealed class RemoteTaskRunner
             // local content, but it must not publish a delivery candidate.
             // Preserve that content under a generation-specific quarantine ref.
             if (!daemonHandedOff
+                && !finalizationDeferred
                 && heartbeat.LeaseLost
                 && !epicPlanning
                 && Directory.Exists(workspace.RepoPath))
@@ -793,6 +888,7 @@ public sealed class RemoteTaskRunner
             // exception before the normal completion handoff. Salvage uses an
             // independent token because SIGINT has already cancelled the run.
             if (!daemonHandedOff
+                && !finalizationDeferred
                 && outbox is null
                 && !teardownAttempted
                 && Directory.Exists(workspace.RepoPath))
@@ -855,7 +951,7 @@ public sealed class RemoteTaskRunner
 
             // Completion is fenced by the live lease, so release only after the
             // normal or fail-closed handoff has finished.
-            if (!daemonHandedOff && (outbox is null || handedBack))
+            if (!daemonHandedOff && !finalizationDeferred && (outbox is null || handedBack))
             {
                 var released = releaseOnly
                     ? await ReleaseWithRetryAsync(
@@ -1948,6 +2044,25 @@ public sealed class RemoteTaskRunner
     private static readonly Regex CredentialedHttpUrl = new(
         @"(?<scheme>https?://)[^/@\s]+(?::[^/@\s]+)?@",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// One short, credential-free line naming why the Task Server could not be
+    /// reached. It is what the journal, the persisted slot, and the operator
+    /// feed all quote, so it must stay one line.
+    /// </summary>
+    internal static string DescribeTransportFault(Exception exception)
+    {
+        var status = exception is TaskServerException server ? $"HTTP {server.StatusCode}: " : string.Empty;
+        var inner = exception.InnerException?.Message;
+        var message = string.IsNullOrWhiteSpace(inner) ? exception.Message : $"{exception.Message} ({inner})";
+        var sanitized = CredentialedHttpUrl
+            .Replace(message, "${scheme}***@")
+            .Replace('\r', ' ')
+            .Replace('\n', ' ')
+            .Trim();
+        var line = $"{status}{sanitized}";
+        return line.Length <= 300 ? line : line[..300];
+    }
 
     private static string DescribePreparationFailure(Exception exception)
         => DescribePreparationFailure(exception.Message);

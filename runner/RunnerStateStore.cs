@@ -34,7 +34,13 @@ public sealed record PersistedRunnerSlot(
     string? BaseSha = null,
     // The execution spec includes the server-composed mode and enrichment
     // framing. Persisting the one spec keeps daemon replacement deterministic.
-    RunSpecDto? RunSpec = null);
+    RunSpecDto? RunSpec = null,
+    // AGT-2869: set while a finalization waits for a Task Server that is
+    // restarting. It carries the retry bookkeeping and the delivery this
+    // attempt already secured, so the daemon's own poll loop can re-drive the
+    // slot without a daemon restart. Optional for persistence compatibility:
+    // state written before this field loads as null and behaves as before.
+    PendingFinalization? Finalization = null);
 
 /// <summary>Atomic JSON persistence under RUNNER_STATE_DIR.</summary>
 public sealed class RunnerStateStore
