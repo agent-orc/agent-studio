@@ -45,11 +45,14 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
         Git(_repo, "commit", "-q", "-m", "seed");
     }
 
-    [Fact]
-    public async Task Sweep_WhenTheFirstRungIsDue_IntegratesWithoutSpendingANewReview()
+    [Theory]
+    [InlineData(TaskStates.HumanReview)]
+    [InlineData(TaskStates.AutoReview)]
+    public async Task Sweep_WhenTheFirstRungIsDue_IntegratesWithoutSpendingANewReview(string state)
     {
         var stack = Build();
-        var delivery = SeedGateEnvironmentFailure(stack, "due", failedMinutesAgo: 6);
+        var delivery = SeedGateEnvironmentFailure(stack, "due", failedMinutesAgo: 6, state: state,
+            failureReason: "GateEnvironment: gate-run budget exceeded (limit=1800000ms, consumed=1800164ms); no failed tests.");
         var reviewsBefore = stack.Authority.GetTaskProjection(stack.TaskKey("due")).ReviewAttempts.Count;
 
         var sweep = await stack.Retries.RunOnceAsync();
@@ -85,11 +88,14 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
         Assert.Empty(Receipts(stack, "early"));
     }
 
-    [Fact]
-    public async Task Sweep_AfterTheLastRung_ParksWithAReasonNamingTheEnvironmentFailure()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Sweep_AfterTheLastRung_ParksWithAReasonNamingTheEnvironmentFailure(bool budgetOverrun)
     {
         var stack = Build();
-        var delivery = SeedGateEnvironmentFailure(stack, "spent", failedMinutesAgo: 600);
+        var delivery = SeedGateEnvironmentFailure(stack, "spent", failedMinutesAgo: 600,
+            failureReason: budgetOverrun ? "GateEnvironment: gate-run budget exceeded limit=1800000ms consumed=1800164ms" : null);
         for (var rung = 1; rung <= 3; rung++) SeedRetryReceipt(stack, "spent", delivery, rung);
 
         var sweep = await stack.Retries.RunOnceAsync();
@@ -106,7 +112,8 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
             status.Failure.Reason,
             StringComparison.Ordinal);
         // The original gate evidence survives inside the parked reason.
-        Assert.Contains("does not match .nvmrc", status.Failure.Reason, StringComparison.Ordinal);
+        Assert.Contains(budgetOverrun ? "gate-run budget exceeded" : "does not match .nvmrc", status.Failure.Reason, StringComparison.Ordinal);
+        Assert.Contains("Gate evidence:", status.Failure.Reason);
 
         // Idempotent: the next sweep must not append a second parked receipt.
         var second = await stack.Retries.RunOnceAsync();
@@ -368,7 +375,9 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
         string id,
         int failedMinutesAgo,
         bool passedReview = true,
-        string failureCode = AcceptedIntegrationFailureCodes.GateEnvironmentFailure)
+        string failureCode = AcceptedIntegrationFailureCodes.GateEnvironmentFailure,
+        string state = TaskStates.HumanReview,
+        string? failureReason = null)
     {
         Git(_repo, "checkout", "-q", "-b", "task/" + id, "develop");
         File.WriteAllText(Path.Combine(_repo, id + ".txt"), id + "\n");
@@ -377,7 +386,7 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
         var deliverySha = Git(_repo, "rev-parse", "HEAD");
         Git(_repo, "checkout", "-q", "develop");
 
-        var folder = Path.Combine(_watchPath, TaskStates.HumanReview, id);
+        var folder = Path.Combine(_watchPath, state, id);
         Directory.CreateDirectory(folder);
         File.WriteAllText(
             Path.Combine(folder, "task.json"),
@@ -387,7 +396,7 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
                     id,
                     key = "AGT-2811",
                     title = id,
-                    state = TaskStates.HumanReview,
+                    state,
                     order = 1,
                     agent = "codex",
                     cliType = "codex",
@@ -424,7 +433,7 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
             CompletedAt = failedAt,
             Verdict = failureCode,
             VerdictSummary = "The build gate rejected the merged result.",
-            Reason = "The build gate blocked the merge into develop: "
+            Reason = failureReason ?? "The build gate blocked the merge into develop: "
                      + "Tool 'node' version v24.18.0 does not match .nvmrc. develop was rolled back "
                      + "and nothing was pushed; gate environment: the build/test gate failed before "
                      + "verification could run and will be retried.",

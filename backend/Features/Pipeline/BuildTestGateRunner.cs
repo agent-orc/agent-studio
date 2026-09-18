@@ -33,8 +33,8 @@ public enum BuildTestGateFailureKind
     /// A verify command's own toolchain/bundler crashed before it reached test
     /// discovery (e.g. vite's case-insensitive-filesystem probe throwing while
     /// loading its config, or a relative worker missing from a package under
-    /// node_modules) rather than running to completion and reporting a product
-    /// result. Never a product failure; see CAC-18 and WEB-19.
+    /// node_modules), or its gate-run budget expired without a red test.
+    /// Never a product failure; see CAC-18, WEB-19, and AGT-2872.
     /// </summary>
     Environment,
 }
@@ -91,6 +91,12 @@ public sealed record BuildTestGateRequest(
 
 public sealed record BuildTestGateProcessEvidence
 {
+    public GateResourceEvidence? Resources { get; init; }
+    public GateBudgetExtensionEvidence? BudgetExtension { get; init; }
+    public bool FailedTestsObserved { get; init; }
+    public IReadOnlyList<GateSlowTest> SlowTests { get; init; } = [];
+    public long OriginalBudgetMs { get; init; }
+
     /// <summary>
     /// <c>preparation</c>, <c>verification</c>, or (AGT-2853)
     /// <c>flaky-rerun</c> for the one targeted re-run of a red test step. The
@@ -281,6 +287,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
     private readonly ITestSelectionAdvisor? _testSelectionAdvisor;
     private readonly IPipelineHealthSensor? _health;
     private readonly BuildTestMachineGateMode _machineGateMode;
+    private readonly Func<int, IGateProcessResources> _resourceFactory = pid => new GateProcessResources(pid);
 
     public BuildTestGateRunner(
         ILogger<BuildTestGateRunner> logger,
@@ -298,10 +305,12 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
     internal BuildTestGateRunner(
         ILogger<BuildTestGateRunner> logger,
         BuildTestMachineGateMode machineGateMode,
-        string? preparationCacheRoot = null)
+        string? preparationCacheRoot = null,
+        Func<int, IGateProcessResources>? resourceFactory = null)
         : this(logger)
     {
         _machineGateMode = machineGateMode;
+        if (resourceFactory is not null) _resourceFactory = resourceFactory;
         if (!string.IsNullOrWhiteSpace(preparationCacheRoot))
             _preparationCacheRoot = preparationCacheRoot;
     }
@@ -538,9 +547,11 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                             completed.DurationMs,
                             (long)(DateTimeOffset.UtcNow - startedAt).TotalMilliseconds),
                         Output = AppendOutput(completed.Output, cleanupError.Evidence),
-                        Reason = cleanupReason,
-                        ViolatedBudget = cleanupError.ViolatedBudget,
-                    }, cleanupError.FailureKind);
+                        Reason = completed.FailureKind == BuildTestGateFailureKind.Code
+                            ? completed.Reason + "; " + cleanupReason : cleanupReason,
+                        ViolatedBudget = completed.ViolatedBudget ?? cleanupError.ViolatedBudget,
+                    }, completed.FailureKind == BuildTestGateFailureKind.Code
+                        ? BuildTestGateFailureKind.Code : cleanupError.FailureKind);
                 }
             }
 
@@ -670,6 +681,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
+        var budget = new GateContentionBudget(timeout);
         var output = new RingOutput(MaxOutputLines);
         var evidence = new List<BuildTestGateProcessEvidence>();
         var findings = new List<BuildTestGateFinding>();
@@ -730,8 +742,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 workingDirectory,
                 command.Command,
                 command.Shell,
-                Remaining(timeout, elapsedBefore),
-                timeout,
+                budget,
                 elapsedBefore,
                 output,
                 ct,
@@ -794,8 +805,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 workingDirectory,
                 command.Command,
                 command.Shell,
-                Remaining(timeout, elapsedBefore),
-                timeout,
+                budget,
                 elapsedBefore,
                 output,
                 ct,
@@ -806,7 +816,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
             if (process.ExitCode != 0 || process.TimedOut || process.Cancelled || process.LaunchError is not null)
             {
                 var kind = ClassifyFailure(process);
-                if (kind == BuildTestGateFailureKind.Code && !command.BlocksWorkPackage)
+                if (process.TimedOut && findings.Count > 0) kind = BuildTestGateFailureKind.Code;
+                if (kind == BuildTestGateFailureKind.Code && !command.BlocksWorkPackage && !process.TimedOut)
                 {
                     findings.Add(new BuildTestGateFinding(
                         "out-of-work-package-test-failure",
@@ -828,7 +839,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                     kind,
                     command.Command,
                     $"{process.StandardOutput}\n{process.StandardError}",
-                    Remaining(timeout, sw.Elapsed, allowExhausted: true));
+                    Remaining(budget.Limit, sw.Elapsed, allowExhausted: true));
                 output.AppendLine(
                     $"# flaky re-run decision: {rerun.Reason} " +
                     $"failed={(rerun.FailedTests.Count == 0 ? "none" : string.Join(", ", rerun.FailedTests))}");
@@ -840,8 +851,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                         workingDirectory,
                         rerun.Command!,
                         command.Shell,
-                        Remaining(timeout, rerunElapsedBefore),
-                        timeout,
+                        budget,
                         rerunElapsedBefore,
                         output,
                         ct,
@@ -986,6 +996,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         string suffix = "")
     {
         var excerpt = FailureOutputExcerpt(process);
+        if (process.FailedTestsObserved && process.TimedOut) commandDescription += "; failed tests were observed before cutoff";
         if (process.ViolatedBudget is not null)
             return BudgetFailureReason(
                 commandDescription + suffix,
@@ -1549,22 +1560,28 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         string workingDirectory,
         string command,
         VerifyCommandShell shell,
-        TimeSpan processTimeout,
-        TimeSpan budgetLimit,
+        GateContentionBudget budget,
         TimeSpan elapsedBefore,
         RingOutput output,
         CancellationToken ct,
         string phase,
         ProjectPreparationResult? projectPreparation)
     {
+        var executableCommand = command;
+        string? reportDirectory = null;
+        if (GateFlakyRerunPolicy.IsTargetableDotNetTest(command))
+        {
+            reportDirectory = Path.Combine(Path.GetTempPath(), "agentstudio-gate-tests-" + Guid.NewGuid().ToString("N"));
+            executableCommand += $" --logger \"trx;LogFilePrefix=gate\" --logger \"console;verbosity=normal\" --results-directory \"{reportDirectory.Replace('\\', '/')}\"";
+        }
         var (fileName, args) = shell == VerifyCommandShell.Bash
-            ? (BashExecutable.Path, (IReadOnlyList<string>)["-lc", command])
+            ? (BashExecutable.Path, (IReadOnlyList<string>)["-lc", executableCommand])
             : OperatingSystem.IsWindows()
-                ? ("cmd.exe", (IReadOnlyList<string>)["/c", command])
-                : ("/bin/sh", (IReadOnlyList<string>)["-c", command]);
+                ? ("cmd.exe", (IReadOnlyList<string>)["/c", executableCommand])
+                : ("/bin/sh", (IReadOnlyList<string>)["-c", executableCommand]);
         return RunProcessAsync(
-            workingDirectory, command, fileName, args, processTimeout,
-            budgetLimit, elapsedBefore, output, ct, phase, projectPreparation);
+            workingDirectory, command, fileName, args,
+            budget, elapsedBefore, output, ct, phase, projectPreparation, reportDirectory);
     }
 
     private async Task<BuildTestGateProcessEvidence> RunProcessAsync(
@@ -1572,13 +1589,13 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         string command,
         string fileName,
         IReadOnlyList<string> args,
-        TimeSpan processTimeout,
-        TimeSpan budgetLimit,
+        GateContentionBudget budget,
         TimeSpan elapsedBefore,
         RingOutput output,
         CancellationToken ct,
         string phase,
-        ProjectPreparationResult? projectPreparation)
+        ProjectPreparationResult? projectPreparation,
+        string? reportDirectory)
     {
         var startedAt = DateTimeOffset.UtcNow;
         var psi = new ProcessStartInfo
@@ -1642,19 +1659,45 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         using (process)
         using (var bounded = CancellationTokenSource.CreateLinkedTokenSource(ct))
         {
-            bounded.CancelAfter(processTimeout);
-            var stdoutTask = process.StandardOutput.ReadToEndAsync();
-            var stderrTask = process.StandardError.ReadToEndAsync();
+            var timings = new GateTestTiming();
+            using var resources = _resourceFactory(process.Id);
+            var processClock = Stopwatch.StartNew();
+            var stdoutTask = ReadTestOutputAsync(process.StandardOutput, timings);
+            var stderrTask = ReadTestOutputAsync(process.StandardError, timings);
+            var measurement = resources.Sample();
             var timedOut = false;
             var cancelled = false;
             try
             {
-                await process.WaitForExitAsync(bounded.Token).ConfigureAwait(false);
+                var exit = process.WaitForExitAsync(bounded.Token);
+                while (!exit.IsCompleted)
+                {
+                    var remaining = budget.Limit - elapsedBefore - processClock.Elapsed;
+                    if (remaining <= TimeSpan.Zero)
+                    {
+                        measurement = resources.Sample();
+                        if (phase != "preparation" && budget.TryExtend(measurement, timings.Failed))
+                        {
+                            output.AppendLine($"# contention budget extended once: {budget.Extension}");
+                            continue;
+                        }
+                        bounded.Cancel();
+                        break;
+                    }
+                    using var sampleWait = CancellationTokenSource.CreateLinkedTokenSource(bounded.Token);
+                    var delay = Task.Delay(remaining < TimeSpan.FromSeconds(5) ? remaining : TimeSpan.FromSeconds(5), sampleWait.Token);
+                    await Task.WhenAny(exit, delay).ConfigureAwait(false);
+                    await sampleWait.CancelAsync().ConfigureAwait(false);
+                    measurement = resources.Sample();
+                    bounded.Token.ThrowIfCancellationRequested();
+                }
+                await exit.ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
                 cancelled = ct.IsCancellationRequested;
                 timedOut = !cancelled;
+                measurement = resources.Sample();
                 try { process.Kill(entireProcessTree: true); }
                 catch (Exception ex) { SilentCatch.Note(ex, "BuildTestGateRunner: process tree kill"); }
                 try { await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false); }
@@ -1663,6 +1706,16 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
 
             var stdout = await stdoutTask.ConfigureAwait(false);
             var stderr = await stderrTask.ConfigureAwait(false);
+            measurement = resources.Sample();
+            if (reportDirectory is not null)
+            {
+                if (Directory.Exists(reportDirectory))
+                    foreach (var report in Directory.EnumerateFiles(reportDirectory, "*.trx", SearchOption.AllDirectories))
+                        timings.ReadTrx(report);
+                try { if (Directory.Exists(reportDirectory)) Directory.Delete(reportDirectory, recursive: true); }
+                catch (Exception ex) { SilentCatch.Note(ex, "BuildTestGateRunner: test report cleanup"); }
+            }
+            budget.FailedTestsObserved |= timings.Failed;
             output.AppendBlock("stdout", stdout);
             output.AppendBlock("stderr", stderr);
             var completedAt = DateTimeOffset.UtcNow;
@@ -1670,7 +1723,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
             if (timedOut)
             {
                 var consumed = elapsedBefore + (completedAt - startedAt);
-                violatedBudget = NewBudgetEvidence("gate-run", budgetLimit, consumed, phase);
+                violatedBudget = NewBudgetEvidence("gate-run", budget.Limit, consumed, phase);
                 output.AppendLine(
                     $"{fileName} violated gate-run budget " +
                     $"limit={violatedBudget.LimitMs}ms consumed={violatedBudget.ConsumedMs}ms phase={phase}");
@@ -1688,8 +1741,24 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 StandardOutput = stdout,
                 StandardError = stderr,
                 ViolatedBudget = violatedBudget,
+                Resources = measurement,
+                BudgetExtension = budget.Extension,
+                OriginalBudgetMs = (long)budget.OriginalLimit.TotalMilliseconds,
+                FailedTestsObserved = timings.Failed,
+                SlowTests = timings.Slowest,
             };
         }
+    }
+
+    private static async Task<string> ReadTestOutputAsync(StreamReader reader, GateTestTiming timings)
+    {
+        var text = new StringBuilder();
+        while (await reader.ReadLineAsync().ConfigureAwait(false) is { } line)
+        {
+            text.AppendLine(line);
+            timings.Observe(line);
+        }
+        return text.ToString();
     }
 
     private static BuildTestGateProcessEvidence NewProcessEvidence(
@@ -1725,9 +1794,13 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
 
     internal static BuildTestGateFailureKind ClassifyFailure(BuildTestGateProcessEvidence process)
     {
+        if (process.FailedTestsObserved || GateTestTiming.HasFailedTests(process.StandardOutput + "\n" + process.StandardError))
+            return BuildTestGateFailureKind.Code;
         if (process.LaunchError is not null) return BuildTestGateFailureKind.ProcessLaunch;
         if (process.Cancelled) return BuildTestGateFailureKind.Cancellation;
-        if (process.TimedOut) return BuildTestGateFailureKind.Timeout;
+        if (process.TimedOut) return process.ViolatedBudget?.Name == "gate-run"
+            ? BuildTestGateFailureKind.Environment
+            : BuildTestGateFailureKind.Timeout;
         if (process.ExitCode == 137 || string.Equals(process.TerminationSignal, "SIGKILL", StringComparison.Ordinal))
             return BuildTestGateFailureKind.OutOfMemory;
         var evidence = process.StandardError + "\n" + process.StandardOutput;

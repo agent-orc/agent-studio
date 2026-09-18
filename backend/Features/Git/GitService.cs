@@ -4243,6 +4243,15 @@ public class GitService
         return string.IsNullOrWhiteSpace(sha) ? null : sha;
     }
 
+    /// <summary>Exact tree and ordered parent identity, independent of merge timestamp.</summary>
+    internal bool HaveSameMergeInputs(string repoRoot, string left, string right)
+    {
+        if (!ReviewSubjectStore.IsValidResultSha(left) || !ReviewSubjectStore.IsValidResultSha(right)) return false;
+        var (output, _, code) = RunGitArgs(repoRoot, "show", "-s", "--format=%T %P", left, right, "--");
+        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return code == 0 && lines.Length == 2 && lines[0] == lines[1];
+    }
+
     /// <summary>
     /// Returns the first parent of a commit. A newly created integration merge
     /// uses this as its exact rollback anchor when the configured branch had to

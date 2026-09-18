@@ -2576,6 +2576,20 @@
             Registered as <code>completion.run-timeout-salvage-continuation</code> in the loop inventory.
           </td>
         </tr>
+        <tr id="case-agt-2872-gate-budget-overrun">
+          <td>2026-09-16 to 2026-09-18</td>
+          <td><code>AGT-2872</code><br>gate-budget-overrun</td>
+          <td>AGT-2839, AGT-2826, and AGT-2869 passed review but their Windows integration
+            verification was killed just beyond its wall budget, without a failed test.</td>
+          <td>The gate projected a delivery failure and requested a steer round. Host contention
+            was not measured, and the environment retry ladder excluded Auto Review.</td>
+          <td>Observed terminal: rolled back and parked in <code>4-auto-review</code> with
+            <code>conflict-skipped</code>, requiring manual full reviews. Corrected path:
+            <code>GateEnvironment</code>, unchanged rollback, and the existing bounded environment
+            ladder reuses the passed review. Exhaustion leaves a visible parked reason with gate
+            evidence. One measured contention allowance and the top ten test durations make the
+            next decision attributable. Red tests always retain their delivery-failure verdict.</td>
+        </tr>
       </tbody>
     </table>
 
