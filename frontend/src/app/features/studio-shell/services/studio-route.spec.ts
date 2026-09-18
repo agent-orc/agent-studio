@@ -152,12 +152,14 @@ describe('Studio route contract', () => {
   });
 
   it('round-trips Task detail and inspector tab state without adding history', () => {
-    history.replaceState(null, '', '/#/tasks/AGT-2291&filters=x');
+    const taskHistoryState = { studioTaskPager: { lane: '5-human-review', index: 2 } };
+    history.replaceState(taskHistoryState, '', '/#/tasks/AGT-2291&filters=x');
     const replace = vi.spyOn(history, 'replaceState');
 
     replaceTaskViewRoute('code-review', 'activity');
 
     expect(replace).toHaveBeenCalledTimes(1);
+    expect(history.state).toEqual(taskHistoryState);
     expect(location.hash).toBe('#/tasks/AGT-2291?view=code-review%3Aactivity&filters=x');
     expect(parseStudioRoute(location.hash)).toEqual({
       kind: 'task',

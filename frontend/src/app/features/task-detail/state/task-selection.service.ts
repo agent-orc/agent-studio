@@ -4,7 +4,7 @@ import { TaskDetail, TaskInfo, TaskState } from '../../../models/task.model';
 import { TaskService } from '../../../services/task.service';
 import { NotificationService } from '../../../services/notification.service';
 import { TaskDetailPrefetchService } from './task-detail-prefetch.service';
-import { LanePagerService, type LanePagerEntry } from './lane-pager.service';
+import { LanePagerService, type LanePagerEntry, type LanePagerSnapshot } from './lane-pager.service';
 import { BoardFiltersService } from '../../board/state/board-filters.service';
 import { laneLabelFor } from './triage-actions.model';
 import { perfMark, perfMeasure } from '../../../utils/perf-tracker';
@@ -20,6 +20,12 @@ import { ProjectLookupService } from '../../../services/project-lookup.service';
 export interface TaskDetailLoadError {
   taskLabel: string;
   message: string;
+}
+
+const TASK_PAGER_HISTORY_STATE = 'studioTaskPager';
+
+interface TaskBrowserHistoryState {
+  [TASK_PAGER_HISTORY_STATE]?: LanePagerSnapshot | null;
 }
 
 /**
@@ -116,6 +122,8 @@ export class TaskSelectionService {
   }
 
   private lastEnsuredJobKey: string | null = null;
+  private pendingTaskTabReplacement: string | null = null;
+  private browserHistoryTaskKey: string | null = null;
 
   /**
    * Set to `true` when the user starts a triage decision (accept etc.)
@@ -254,12 +262,25 @@ export class TaskSelectionService {
   syncTaskUrl(info: TaskInfo, mode: TaskUrlHistoryMode = 'replace'): boolean {
     const key = taskUrlKey(info);
     if (!key) return false;
-    writeTaskUrl(key, mode);
+    writeTaskUrl(key, mode, this.taskHistoryState());
     return true;
+  }
+
+  /** Consume the one-shot tab-reuse intent attached to an in-place task navigation. */
+  consumeTaskTabReplacement(taskKey: string): boolean {
+    if (this.pendingTaskTabReplacement !== taskKey) return false;
+    this.pendingTaskTabReplacement = null;
+    return true;
+  }
+
+  /** Whether this selection intentionally restored an older browser-history entry. */
+  isBrowserHistorySelection(taskKey: string): boolean {
+    return this.browserHistoryTaskKey === taskKey;
   }
 
   /** Select a detail already fetched by another shell surface. */
   selectResolvedDetail(detail: TaskDetail, mode: TaskUrlHistoryMode = 'push'): void {
+    this.browserHistoryTaskKey = null;
     this.syncTaskUrl(detail.info, mode);
     const token = ++this.openDetailToken;
     this.triageLaneState = detail.info.state;
@@ -333,6 +354,7 @@ export class TaskSelectionService {
    * the in-progress iteration is preserved rather than re-captured.
    */
   openDetail(job: TaskInfo, opts: { keepPagerSnapshot?: boolean } = {}): void {
+    this.browserHistoryTaskKey = null;
     // Step 1 of the perf-baseline contract: job-select click span. The
     // accept-to-next-task pipeline owns its own marks via markAcceptClick;
     // this one covers ad-hoc board clicks where no accept-click preceded.
@@ -342,7 +364,6 @@ export class TaskSelectionService {
     // detail request and all child-section requests can now run after the
     // route is visible instead of holding the user on the board.
     this.detailPreview.set(job);
-    this.syncTaskUrl(job, 'push');
     this.triageLaneState = job.state;
     if (!opts.keepPagerSnapshot) {
       // Capture peers for `job.state` directly: at this point `selected`
@@ -352,6 +373,7 @@ export class TaskSelectionService {
       // list. `peersForLane` looks up the live grouped lane.
       this.pager.capture(job.state, this.peersForLane(job.state), job.taskKey);
     }
+    this.syncTaskUrl(job, 'push');
     const token = ++this.openDetailToken;
     // Instant-paint path: serve a prefetched detail synchronously when
     // one is on hand, then re-fetch in the background so the panel
@@ -425,6 +447,7 @@ export class TaskSelectionService {
    * a step actually happened.
    */
   pagerStep(direction: -1 | 1): boolean {
+    this.persistCurrentPagerInHistory();
     const entry = this.pager.step(direction);
     if (!entry) return false;
     this.loadPagerEntry(entry);
@@ -432,8 +455,9 @@ export class TaskSelectionService {
   }
 
   private loadPagerEntry(entry: LanePagerEntry): void {
+    this.browserHistoryTaskKey = null;
     this.prepareDetailLoad(() => this.loadPagerEntry(entry));
-    if (entry.routeKey) writeTaskUrl(entry.routeKey, 'push');
+    if (entry.routeKey) writeTaskUrl(entry.routeKey, 'push', this.taskHistoryState());
     const token = ++this.openDetailToken;
     const cached = this.prefetch.take(entry.id, entry.watchPath);
     if (cached) {
@@ -478,6 +502,7 @@ export class TaskSelectionService {
     this.detailPreview.set(null);
     this.selected.set(null);
     this.triageLaneState = null;
+    this.browserHistoryTaskKey = null;
     this.pager.clear();
     clearTaskUrl('push');
   }
@@ -493,6 +518,7 @@ export class TaskSelectionService {
    * `#/tasks/<AGT-NNN>` route. The watch path never enters browser history.
    */
   openDetailByTaskKey(taskKey: string): void {
+    if (this.browserHistoryTaskKey !== taskKey) this.browserHistoryTaskKey = null;
     const liveInfo = this.jobService.jobs().find(task => task.taskKey === taskKey);
     const sep = taskKey.lastIndexOf('::');
     if (!liveInfo && sep < 0) {
@@ -551,6 +577,7 @@ export class TaskSelectionService {
     this.detailPreview.set(null);
     this.selected.set(null);
     this.triageLaneState = null;
+    this.browserHistoryTaskKey = null;
     this.pager.clear();
     this.clearTaskParamsFromUrl();
   }
@@ -575,6 +602,14 @@ export class TaskSelectionService {
     const legacyWatchPath = params.get('watchPath')?.trim() || null;
     const legacy = !taskReference && !!legacyJobId;
     const canonicalWithLegacyResidue = !!taskReference && (!!legacyJobId || !!legacyWatchPath);
+
+    if (fromPopState) {
+      const restoredPager = this.pagerSnapshotFromHistory();
+      if (restoredPager !== undefined) {
+        if (restoredPager) this.pager.restore(restoredPager);
+        else this.pager.clear();
+      }
+    }
 
     if (!taskReference && !legacyJobId) {
       if (fromPopState) {
@@ -605,6 +640,12 @@ export class TaskSelectionService {
         // Legacy locators are redirected once, and mixed URLs are scrubbed
         // after the server proves which stable key owns the reference.
         if (legacy || canonicalWithLegacyResidue) this.syncTaskUrl(detail.info, 'replace');
+        if (fromPopState) {
+          this.pendingTaskTabReplacement = detail.info.taskKey;
+          this.browserHistoryTaskKey = detail.info.taskKey;
+        } else {
+          this.browserHistoryTaskKey = null;
+        }
         this.selected.set(detail);
 
         const snap = this.pager.snapshot();
@@ -632,8 +673,14 @@ export class TaskSelectionService {
    * publish an intermediate state). Caller is responsible for the
    * URL update + token check; we just set the signal.
    */
-  setSelectedFromAdvance(detail: TaskDetail, expectedToken: number): void {
+  setSelectedFromAdvance(
+    detail: TaskDetail,
+    expectedToken: number,
+    replaceCurrentTaskTab = false,
+  ): void {
     if (expectedToken !== this.openDetailToken) return;
+    if (this.browserHistoryTaskKey !== detail.info.taskKey) this.browserHistoryTaskKey = null;
+    if (replaceCurrentTaskTab) this.pendingTaskTabReplacement = detail.info.taskKey;
     this.selected.set(detail);
     this.markNextTaskRendered();
   }
@@ -656,6 +703,7 @@ export class TaskSelectionService {
   advanceAfterMutation(departingJobKey: string): boolean {
     const snapBefore = this.pager.snapshot();
     const wasInSnapshot = !!snapBefore && snapBefore.jobs.some(j => j.taskKey === departingJobKey);
+    if (wasInSnapshot) this.persistCurrentPagerInHistory();
     const entry = this.pager.removeAndAdvance(departingJobKey);
     if (!entry) {
       if (wasInSnapshot) {
@@ -674,8 +722,9 @@ export class TaskSelectionService {
   }
 
   private loadAdvancedEntry(entry: LanePagerEntry): void {
+    this.browserHistoryTaskKey = null;
     this.prepareDetailLoad(() => this.loadAdvancedEntry(entry));
-    if (entry.routeKey) writeTaskUrl(entry.routeKey, 'replace');
+    if (entry.routeKey) writeTaskUrl(entry.routeKey, 'push', this.taskHistoryState());
     const token = ++this.openDetailToken;
     // Optimistic-navigation path: serve a prefetched detail synchronously
     // when one is on hand so the panel re-renders without waiting for the
@@ -684,6 +733,7 @@ export class TaskSelectionService {
     const cached = this.prefetch.take(entry.id, entry.watchPath);
     if (cached) {
       this.detailLoading.set(false);
+      this.pendingTaskTabReplacement = cached.info.taskKey;
       this.selected.set(cached);
       this.markNextTaskRendered();
     } else {
@@ -692,9 +742,10 @@ export class TaskSelectionService {
     this.getDetailForPagerEntry(entry).subscribe({
       next: (detail) => {
         if (token !== this.openDetailToken) return;
-        if (!entry.routeKey) this.syncTaskUrl(detail.info, 'replace');
+        if (!entry.routeKey) this.syncTaskUrl(detail.info, 'push');
         this.detailLoading.set(false);
         this.clearDetailLoadFailure();
+        this.pendingTaskTabReplacement = detail.info.taskKey;
         this.selected.set(detail);
         if (!cached) this.markNextTaskRendered();
       },
@@ -714,6 +765,28 @@ export class TaskSelectionService {
   private prepareDetailLoad(retry: () => void): void {
     this.detailLoadRetry = retry;
     this.detailLoadError.set(null);
+  }
+
+  private taskHistoryState(): TaskBrowserHistoryState {
+    if (typeof history === 'undefined') {
+      return { [TASK_PAGER_HISTORY_STATE]: this.pager.snapshot() };
+    }
+    const current = history.state;
+    const base = current && typeof current === 'object' ? current as Record<string, unknown> : {};
+    return { ...base, [TASK_PAGER_HISTORY_STATE]: this.pager.snapshot() };
+  }
+
+  private persistCurrentPagerInHistory(): void {
+    const current = this.selected();
+    if (current) this.syncTaskUrl(current.info, 'replace');
+  }
+
+  private pagerSnapshotFromHistory(): LanePagerSnapshot | null | undefined {
+    if (typeof history === 'undefined') return undefined;
+    const current = history.state;
+    if (!current || typeof current !== 'object'
+      || !(TASK_PAGER_HISTORY_STATE in current)) return undefined;
+    return (current as TaskBrowserHistoryState)[TASK_PAGER_HISTORY_STATE] ?? null;
   }
 
   private clearDetailLoadFailure(): void {

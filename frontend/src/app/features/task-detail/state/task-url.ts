@@ -51,12 +51,15 @@ export function taskReferenceFromUrl(current: URL): string | null {
   return current.searchParams.get('task')?.trim() || null;
 }
 
-export function writeTaskUrl(reference: string, mode: TaskUrlHistoryMode): void {
+export function writeTaskUrl(reference: string, mode: TaskUrlHistoryMode, state?: unknown): void {
   if (typeof window === 'undefined') return;
   const next = taskUrl(reference, new URL(window.location.href));
   const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-  if (next === current) return;
-  window.history[mode === 'push' ? 'pushState' : 'replaceState'](null, '', next);
+  if (next === current) {
+    if (state !== undefined) window.history.replaceState(state, '', next);
+    return;
+  }
+  window.history[mode === 'push' ? 'pushState' : 'replaceState'](state ?? null, '', next);
 }
 
 export function clearTaskUrl(mode: TaskUrlHistoryMode = 'replace'): void {
