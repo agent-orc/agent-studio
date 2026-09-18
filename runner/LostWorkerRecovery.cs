@@ -123,9 +123,6 @@ public static class WorkerCrashEvidenceReader
     /// <summary>How many trailing worker lines are worth carrying on a card.</summary>
     public const int MaxLines = 5;
 
-    /// <summary>Bound on the tail that is parsed, so a multi-megabyte log cannot be read into memory.</summary>
-    private const int MaxScannedLines = 2000;
-
     public static WorkerCrashEvidence Read(string workerDirectory, int maxLines = MaxLines)
         => new(ReadDiagnosticLines(workerDirectory, maxLines), WorkerCgroup.ReadPressureFor(workerDirectory));
 
@@ -139,14 +136,8 @@ public static class WorkerCrashEvidenceReader
             using var stream = new FileStream(
                 path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             using var reader = new StreamReader(stream);
-            var scanned = 0;
             while (reader.ReadLine() is { } raw)
             {
-                if (++scanned > MaxScannedLines)
-                {
-                    scanned = 0;
-                    tail.Clear();
-                }
                 if (!TryReadDiagnostic(raw, out var text)) continue;
                 tail.Enqueue(text);
                 if (tail.Count > maxLines) tail.Dequeue();
