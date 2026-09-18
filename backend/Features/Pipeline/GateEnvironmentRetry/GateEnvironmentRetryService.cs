@@ -303,7 +303,7 @@ public sealed class GateEnvironmentRetryService
     }
 
     /// <summary>
-    /// True when the <em>latest</em> settled review for exactly the delivery SHA
+    /// True when the <em>latest</em> review for exactly the delivery SHA
     /// the card would integrate ended in <c>Pass</c>.
     /// <para>
     /// Two SHAs of scoping matter here. A review that passed for an older SHA is
@@ -311,7 +311,8 @@ public sealed class GateEnvironmentRetryService
     /// for this SHA is not enough either: a delivery can be re-reviewed without
     /// changing, and an older <c>Pass</c> that a later <c>ProductFailure</c>
     /// overturned is not a green light. Only the last word on this delivery
-    /// counts, exactly as the integration rail treats it.
+    /// counts, exactly as the integration rail treats it. An unfinished newer
+    /// review also refuses replay.
     /// </para>
     /// </summary>
     private bool HasPassedReview(string taskKey, string? deliverySha)
@@ -324,7 +325,6 @@ public sealed class GateEnvironmentRetryService
             // two reviews settled in the same tick still resolve to the later
             // one rather than to an arbitrary winner.
             var latest = projection.ReviewAttempts
-                .Where(attempt => attempt.Outcome is not null)
                 .Where(attempt => string.Equals(
                     attempt.Subject.ExpectedResultSha,
                     deliverySha,
@@ -441,7 +441,7 @@ public sealed class GateEnvironmentRetryService
         var reason = GateEnvironmentRetryPolicy.ParkedReason(
             evaluation.Decision.AttemptsSpent,
             evaluation.IntegrationBranch,
-            step.Reason);
+            step.Reason) + " Gate evidence: post-steps/pre-develop-build-gate-*.log (resource measurements and slow tests).";
         _pipelineLog.RecordStep(job.FolderPath, step with { Reason = reason });
         GateEnvironmentRetryReceipts.RecordParked(
             _timeline,
