@@ -7,6 +7,7 @@ import {
   dossierReferenceCandidates, resolveDossierReference,
   type DossierIndex, type DossierReference,
 } from './dossier-reference.util';
+import { RenderedReferenceHydrator } from './rendered-reference-hydrator';
 
 const SCOPE_SELECTOR = '[data-dossier-reference-scope]';
 const ROOT_SELECTOR = `cac-markdown, ${SCOPE_SELECTOR}`;
@@ -30,59 +31,23 @@ interface Occurrence { node: Text; start: number; end: number; reference: Dossie
  * not a reference.
  */
 @Injectable({ providedIn: 'root' })
-export class DossierReferenceHydratorService {
+export class DossierReferenceHydratorService extends RenderedReferenceHydrator {
   private readonly catalogue = inject(DossierCatalogueService);
   private readonly app = inject(ApplicationRef);
   private readonly injector = inject(EnvironmentInjector);
   private readonly components = new Map<HTMLElement, ComponentRef<DossierReferenceChipComponent>>();
-  private observer: MutationObserver | null = null;
-  private timer: ReturnType<typeof setTimeout> | null = null;
-
-  start(): void {
-    if (this.observer || typeof document === 'undefined') return;
-    queueMicrotask(() => {
-      this.observer = new MutationObserver(records => {
-        this.cleanup(records);
-        this.schedule();
-      });
-      this.observer.observe(document.body,
-        { childList: true, subtree: true, characterData: true, attributes: true });
-      this.schedule();
-    });
-  }
-
-  /** Run one immediate pass. Used after a catalogue reload and by tests. */
+  /** Run one immediate pass. Used by tests and explicit surface refreshes. */
   refresh(): void {
-    if (this.timer) clearTimeout(this.timer);
-    this.scan();
+    this.refreshNow();
   }
 
-  private schedule(): void {
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.scan(), 60);
-  }
-
-  private scan(): void {
-    this.timer = null;
-    const roots = this.collectRoots();
+  protected override scan(): void {
+    const roots = this.collectRoots(ROOT_SELECTOR);
     if (!roots.length) return;
     this.catalogue.ensureLoaded().subscribe(index => {
       if (!index.size) return;
       for (const root of roots) this.hydrateRoot(root, index);
     });
-  }
-
-  private collectRoots(): HTMLElement[] {
-    const roots = Array.from(document.querySelectorAll<HTMLElement>(ROOT_SELECTOR));
-    document.querySelectorAll<HTMLIFrameElement>('[data-testid="project-wiki-html-frame"]')
-      .forEach(frame => {
-        try {
-          if (frame.contentDocument?.body) roots.push(frame.contentDocument.body);
-        } catch {
-          // Sandboxed cross-origin documents remain isolated and render unchanged.
-        }
-      });
-    return roots;
   }
 
   private hydrateRoot(root: HTMLElement, index: DossierIndex): void {
@@ -109,13 +74,8 @@ export class DossierReferenceHydratorService {
 
   private hydrateText(root: HTMLElement, index: DossierIndex, hint: string | null): void {
     const occurrences: Occurrence[] = [];
-    const walker = (root.ownerDocument ?? document).createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-      acceptNode: node => node.parentElement?.closest(SKIP_TEXT_PARENTS)
-        ? NodeFilter.FILTER_REJECT
-        : NodeFilter.FILTER_ACCEPT,
-    });
-    while (walker.nextNode()) {
-      const node = walker.currentNode as Text;
+    for (const node of this.textNodes(root,
+      node => !node.parentElement?.closest(SKIP_TEXT_PARENTS))) {
       for (const candidate of dossierReferenceCandidates(node.textContent || '')) {
         const reference = resolveDossierReference(candidate.token, index, hint);
         if (reference) occurrences.push({ node, ...candidate, reference });
@@ -146,7 +106,9 @@ export class DossierReferenceHydratorService {
   }
 
   private createHost(reference: DossierReference, ownerDocument: Document): HTMLElement {
-    if (ownerDocument !== document) prepareFrameStyles(ownerDocument);
+    if (ownerDocument !== document) {
+      this.prepareFrameStyles(ownerDocument, 'dossierReferenceStyles', { copyStudioTheme: true });
+    }
     const host = ownerDocument.createElement(HOST_TAG);
     host.dataset['dossierId'] = reference.id;
     const ref = createComponent(DossierReferenceChipComponent,
@@ -158,20 +120,8 @@ export class DossierReferenceHydratorService {
     return host;
   }
 
-  private cleanup(records: readonly MutationRecord[]): void {
-    for (const record of records) for (const removed of Array.from(record.removedNodes)) {
-      if (!(removed instanceof HTMLElement)) continue;
-      const hosts = removed.matches(HOST_TAG)
-        ? [removed]
-        : Array.from(removed.querySelectorAll<HTMLElement>(HOST_TAG));
-      for (const host of hosts) {
-        const ref = this.components.get(host);
-        if (!ref) continue;
-        this.app.detachView(ref.hostView);
-        ref.destroy();
-        this.components.delete(host);
-      }
-    }
+  protected override cleanup(records: readonly MutationRecord[]): void {
+    this.cleanupComponents(records, HOST_TAG, this.components, this.app);
   }
 }
 
@@ -184,18 +134,4 @@ function projectHint(root: HTMLElement): string | null {
 /** An `<a href>` may carry a hash route, a query, or a plain repo-relative path. */
 function hrefToken(value: string): string {
   return value.trim().split(/[?#]/)[0];
-}
-
-function prepareFrameStyles(frameDocument: Document): void {
-  if (frameDocument.head.dataset['dossierReferenceStyles'] === 'true') return;
-  frameDocument.head.dataset['dossierReferenceStyles'] = 'true';
-  for (const style of Array.from(
-    document.head.querySelectorAll('style, link[rel="stylesheet"]'))) {
-    frameDocument.head.append(style.cloneNode(true));
-  }
-  // The chip reads semantic tokens, and the token set is selected by the host
-  // theme marker; without it the frame would render one theme only.
-  frameDocument.documentElement.className = document.documentElement.className;
-  const theme = document.documentElement.dataset['studioTheme'];
-  if (theme) frameDocument.documentElement.dataset['studioTheme'] = theme;
 }

@@ -1,6 +1,7 @@
 import { ApplicationRef, ComponentRef, EnvironmentInjector, Injectable, createComponent, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { TaskReferenceMicrocardComponent, TaskReferenceStatus } from '../components/task-reference-microcard/task-reference-microcard';
+import { RenderedReferenceHydrator } from './rendered-reference-hydrator';
 
 interface StatusResponse { items: TaskReferenceStatus[]; }
 interface Occurrence { node: Text; start: number; end: number; key: string; }
@@ -8,34 +9,13 @@ interface Occurrence { node: Text; start: number; end: number; key: string; }
 const KEY_PATTERN = /(^|[^A-Za-z0-9_-])([A-Z][A-Z0-9]{1,5}-\d+)(?=$|[^A-Za-z0-9_-])/gi;
 
 @Injectable({ providedIn: 'root' })
-export class TaskReferenceMicrocardHydratorService {
+export class TaskReferenceMicrocardHydratorService extends RenderedReferenceHydrator {
   private readonly http = inject(HttpClient);
   private readonly app = inject(ApplicationRef);
   private readonly injector = inject(EnvironmentInjector);
   private readonly cache = new Map<string, TaskReferenceStatus | null>();
   private readonly components = new Map<HTMLElement, ComponentRef<TaskReferenceMicrocardComponent>>();
-  private observer: MutationObserver | null = null;
-  private timer: ReturnType<typeof setTimeout> | null = null;
-
-  start(): void {
-    if (this.observer || typeof document === 'undefined') return;
-    queueMicrotask(() => {
-      this.observer = new MutationObserver(records => {
-        this.cleanup(records);
-        this.schedule();
-      });
-      this.observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true });
-      this.schedule();
-    });
-  }
-
-  private schedule(): void {
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.scan(), 60);
-  }
-
-  private scan(): void {
-    this.timer = null;
+  protected override scan(): void {
     const occurrences = this.collectOccurrences();
     if (!occurrences.length) return;
     const keys = [...new Set(occurrences.map(o => o.key))];
@@ -59,24 +39,14 @@ export class TaskReferenceMicrocardHydratorService {
 
   private collectOccurrences(): Occurrence[] {
     const result: Occurrence[] = [];
-    const roots: ParentNode[] = Array.from(document.querySelectorAll('cac-markdown'));
-    document.querySelectorAll<HTMLIFrameElement>('[data-testid="project-wiki-html-frame"]').forEach(frame => {
-      try {
-        if (frame.contentDocument?.body) roots.push(frame.contentDocument.body);
-      } catch {
-        // Sandboxed cross-origin documents remain isolated and render unchanged.
-      }
-    });
+    const roots = this.collectRoots('cac-markdown');
     roots.forEach(root => {
-      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-        acceptNode: node => {
-          const parent = node.parentElement;
-          if (!parent || parent.closest('code, pre, kbd, samp, app-task-reference-microcard')) return NodeFilter.FILTER_REJECT;
-          return taskReferenceCandidates(node.textContent || '').length ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
-        },
-      });
-      while (walker.nextNode()) {
-        const node = walker.currentNode as Text;
+      for (const node of this.textNodes(root, node => {
+        const parent = node.parentElement;
+        return !!parent
+          && !parent.closest('code, pre, kbd, samp, app-task-reference-microcard')
+          && taskReferenceCandidates(node.textContent || '').length > 0;
+      })) {
         const text = node.textContent || '';
         for (const candidate of taskReferenceCandidates(text)) {
           result.push({ node, ...candidate });
@@ -118,7 +88,9 @@ export class TaskReferenceMicrocardHydratorService {
   }
 
   private createHost(status: TaskReferenceStatus, key: string, ownerDocument: Document): HTMLElement {
-    if (ownerDocument !== document) this.prepareFrameStyles(ownerDocument);
+    if (ownerDocument !== document) {
+      this.prepareFrameStyles(ownerDocument, 'taskReferenceStyles', { copyBodyClass: true });
+    }
     const host = ownerDocument.createElement('app-task-reference-microcard');
     host.dataset['taskReferenceKey'] = key;
     const ref = createComponent(TaskReferenceMicrocardComponent, { hostElement: host, environmentInjector: this.injector });
@@ -129,25 +101,8 @@ export class TaskReferenceMicrocardHydratorService {
     return host;
   }
 
-  private prepareFrameStyles(frameDocument: Document): void {
-    if (frameDocument.head.dataset['taskReferenceStyles'] === 'true') return;
-    frameDocument.head.dataset['taskReferenceStyles'] = 'true';
-    for (const style of Array.from(document.head.querySelectorAll('style, link[rel="stylesheet"]'))) {
-      frameDocument.head.append(style.cloneNode(true));
-    }
-    frameDocument.documentElement.className = document.documentElement.className;
-    frameDocument.body.className = document.body.className;
-  }
-
-  private cleanup(records: MutationRecord[]): void {
-    for (const record of records) for (const removed of Array.from(record.removedNodes)) {
-      if (!(removed instanceof HTMLElement)) continue;
-      const hosts = removed.matches('app-task-reference-microcard') ? [removed] : Array.from(removed.querySelectorAll<HTMLElement>('app-task-reference-microcard'));
-      for (const host of hosts) {
-        const ref = this.components.get(host);
-        if (ref) { this.app.detachView(ref.hostView); ref.destroy(); this.components.delete(host); }
-      }
-    }
+  protected override cleanup(records: readonly MutationRecord[]): void {
+    this.cleanupComponents(records, 'app-task-reference-microcard', this.components, this.app);
   }
 }
 
