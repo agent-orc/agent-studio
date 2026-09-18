@@ -422,7 +422,8 @@ public sealed partial class TaskServerStore
         string Version,
         string WikiPath,
         IReadOnlyList<ModelRoutingTierDto> Tiers,
-        IReadOnlyList<ModelRoutingTaskTypeDefaultDto> TaskTypeDefaults);
+        IReadOnlyList<ModelRoutingTaskTypeDefaultDto> TaskTypeDefaults,
+        IReadOnlyList<ProviderModelFallback> ProviderRejectionFallbacks);
 
     private static readonly Lazy<ModelRoutingPolicyDocumentData> ModelRoutingPolicyDocument = new(LoadModelRoutingPolicyDocument);
 
@@ -449,10 +450,19 @@ public sealed partial class TaskServerStore
                 property.Value.TryGetProperty("hardFloorTier", out var hardFloor) ? hardFloor.GetString() : null,
                 property.Value.GetProperty("score").GetInt32()))
             .ToList();
+        var providerFallbacks = root.GetProperty("providerRejectionFallbacks").EnumerateArray()
+            .Select(fallback => new ProviderModelFallback(
+                fallback.GetProperty("fromModel").GetString()!,
+                fallback.GetProperty("toModel").GetString()!,
+                fallback.GetProperty("reason").GetString()!,
+                fallback.GetProperty("cliType").GetString()!,
+                ThinkingLevel: null))
+            .ToList();
         return new ModelRoutingPolicyDocumentData(
             root.GetProperty("version").GetString()!,
             root.GetProperty("wikiPath").GetString()!,
             tiers,
-            taskTypeDefaults);
+            taskTypeDefaults,
+            providerFallbacks);
     }
 }

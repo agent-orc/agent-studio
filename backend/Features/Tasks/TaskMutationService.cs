@@ -1896,7 +1896,8 @@ public class TaskMutationService
         string prompt,
         string reason,
         string? activeJobId,
-        string? watchPath = null)
+        string? watchPath = null,
+        ModelFallbackInfo? modelFallback = null)
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return null;
@@ -1906,7 +1907,8 @@ public class TaskMutationService
             Prompt = prompt ?? string.Empty,
             SavedAt = DateTime.UtcNow,
             SavedReason = string.IsNullOrWhiteSpace(reason) ? "project-busy" : reason,
-            SavedAgainstActiveJobId = activeJobId
+            SavedAgainstActiveJobId = activeJobId,
+            ModelFallback = modelFallback,
         };
         try
         {

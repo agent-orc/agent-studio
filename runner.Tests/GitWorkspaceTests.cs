@@ -647,6 +647,31 @@ public sealed class GitWorkspaceTests : IDisposable
     }
 
     [Fact]
+    public async Task Provider_refusal_continuation_starts_from_the_claimed_salvage_commit()
+    {
+        await SeedOriginAsync();
+        const string salvageBranch =
+            "agent-studio/salvage/runner-test/AGT-2147/refused/fence-1/continuation";
+        await GitAsync(_origin, "branch", salvageBranch, "main");
+        var salvageSha = await PublishRemoteCommitAsync(
+            salvageBranch,
+            "provider-refusal-work.txt",
+            "work preserved before provider refusal",
+            "preserve refused run work");
+
+        var continuation = CreateWorkspace(
+            continuationBaseRef: $"refs/heads/{salvageBranch}",
+            continuationBaseSha: salvageSha);
+        var source = await continuation.PrepareAsync(CancellationToken.None);
+
+        Assert.Equal(salvageBranch, source);
+        Assert.Equal(salvageSha, (await GitAsync(continuation.RepoPath, "rev-parse", "HEAD")).StdOut);
+        Assert.Equal(
+            "work preserved before provider refusal",
+            await File.ReadAllTextAsync(Path.Combine(continuation.RepoPath, "provider-refusal-work.txt")));
+    }
+
+    [Fact]
     public async Task Retained_local_ahead_tip_fast_forwards_canonical_salvage_ref_and_starts_pickup()
     {
         await SeedOriginAsync();
@@ -777,7 +802,9 @@ public sealed class GitWorkspaceTests : IDisposable
     private GitWorkspace CreateWorkspace(
         Action<string>? log = null,
         string? sourceRunAttemptId = null,
-        long? fencingToken = null)
+        long? fencingToken = null,
+        string? continuationBaseRef = null,
+        string? continuationBaseSha = null)
         => new(new RunnerOptions
         {
             ServerUrl = "http://localhost",
@@ -795,7 +822,9 @@ public sealed class GitWorkspaceTests : IDisposable
             "AGT-2147",
             log ?? (_ => { }),
             sourceRunAttemptId: sourceRunAttemptId,
-            fencingToken: fencingToken);
+            fencingToken: fencingToken,
+            continuationBaseRef: continuationBaseRef,
+            continuationBaseSha: continuationBaseSha);
 
     private GitWorkspace CreateProjectWorkspace(string? repositoryUrl, Action<string>? log = null)
         => new(new RunnerOptions

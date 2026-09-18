@@ -83,6 +83,33 @@ public sealed class RunnerCapabilityProbeTests
             new ProcessResult(1, "", message)));
     }
 
+    [Fact]
+    public void Unsupported_provider_parameter_is_not_authentication_or_transient_access_failure()
+    {
+        const string frame = """
+            {"type":"turn.failed","error":{"type":"error","error":{"type":"invalid_request_error","code":"unsupported_parameter","message":"The access_programs parameter is not enabled for this organization.","param":"access_programs.cyber"},"status":400}}
+            """;
+
+        var evidence = ProviderAccessClassifier.Classify(1, frame, null);
+
+        Assert.Equal(ProviderAccessEvidenceKind.RequestRejected, evidence.Kind);
+        Assert.False(RunnerCapabilityProbe.IsProviderAuthenticationFailure(
+            new ProcessResult(1, frame, "")));
+    }
+
+    [Fact]
+    public void Multi_frame_codex_refusal_is_request_rejected_without_provider_auth_mutation_signal()
+    {
+        const string frames = """
+            {"type":"error","message":"{ \"type\": \"error\", \"error\": { \"type\": \"invalid_request_error\", \"code\": \"unsupported_parameter\", \"message\": \"The access_programs parameter is not enabled for this organization.\", \"param\": \"access_programs.cyber\" }, \"status\": 400 }"}
+            {"type":"turn.failed","error":{"type":"error","error":{"type":"invalid_request_error","code":"unsupported_parameter","message":"The access_programs parameter is not enabled for this organization.","param":"access_programs.cyber"},"status":400}}
+            """;
+
+        var evidence = ProviderAccessClassifier.Classify(1, frames, null);
+
+        Assert.Equal(ProviderAccessEvidenceKind.RequestRejected, evidence.Kind);
+    }
+
     [Theory]
     [InlineData("/usr/local/bin/codex", "codex")]
     [InlineData("claude.exe", "claude")]

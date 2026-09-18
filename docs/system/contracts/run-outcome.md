@@ -13,7 +13,7 @@ state, provider session state, and durable output state. A terminal sentinel and
 an exit code are evidence, not independent routing authorities.
 
 The adapter emits a typed outcome, confidence or ambiguity, one recovery
-action, and an optional detail. Authentication, quota, invalid
+action, and an optional detail. Authentication, quota, provider request refusal, invalid
 model/configuration, launch failure, CLI crash, timeout, OOM, transport loss,
 host shutdown, lease loss, invalid session, explicit blocker, successful
 completion, and protocol-inconclusive are distinct. `ExplicitAgentBlocker`
@@ -25,6 +25,15 @@ sentinel, bounded to 16 KiB. The Task Server preserves the question and salvage
 branch on idempotent completion replay, while compatibility execution writes
 the same payload to `results/needs-input.md` before teardown or capped-log
 cleanup.
+
+`ProviderRejectedRequest` is the provider's HTTP 400, 403, or 404 refusal of
+the model request, including `invalid_request_error`, `unsupported_parameter`,
+and model or feature availability errors. Its durable evidence is limited to
+the provider `code`, `param`, message, and HTTP status. Raw provider frames,
+request bodies, and credentials are not persisted in the classified event.
+This outcome is neither `CliCrash` nor provider authentication state. A
+published salvage may select a fresh attempt on a declared sibling model;
+without a safe sibling it selects human input instead of a same-model retry.
 
 Review infrastructure recovery is constrained by an immutable
 `RepositoryIdentity + ResultSha|ArtifactDigest` subject and can only select

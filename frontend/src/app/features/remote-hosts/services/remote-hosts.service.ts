@@ -7,6 +7,7 @@ import type {
   HostRampStrategy,
   HostTelemetrySeries,
   PurgeRetiredClientsResponse,
+  ProviderRejectionDailyCount,
   RemoteRunnerLinkHealth,
   RemoteHost,
   TaskServerTelemetrySnapshot,
@@ -34,6 +35,7 @@ export class RemoteHostsService {
   readonly loading = signal<boolean>(false);
   readonly error = signal<string | null>(null);
   readonly identityDiagnostics = signal<readonly ClientSummary[]>([]);
+  readonly providerRefusals = signal<readonly ProviderRejectionDailyCount[]>([]);
 
   private static readonly FRESH_CLIENT_MS = 90_000;
   private static readonly DEGRADED_CLIENT_MS = 5 * 60_000;
@@ -148,6 +150,7 @@ export class RemoteHostsService {
         }
         this.hydrateCapabilityRegistry();
         this.hydrateLinkHealth();
+        this.hydrateProviderRefusals();
       },
       error: error => {
         this.identityDiagnostics.set([]);
@@ -158,6 +161,17 @@ export class RemoteHostsService {
           message: error?.message ?? 'unknown',
           durationMs: Math.round(performance.now() - startedAt),
         });
+      },
+    });
+  }
+
+  private hydrateProviderRefusals(): void {
+    if (!this.http) return;
+    this.http.get<ProviderRejectionDailyCount[]>('/api/v1/management/provider-refusals?days=14').subscribe({
+      next: refusals => this.providerRefusals.set(refusals ?? []),
+      error: error => {
+        this.providerRefusals.set([]);
+        this.log('provider-refusals-hydrate-failed', { message: error?.message ?? 'unknown' });
       },
     });
   }

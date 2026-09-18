@@ -6,6 +6,7 @@ import { RemoteHostsService } from './remote-hosts.service';
 
 function flushLinkHealth(http: HttpTestingController): void {
   for (const request of http.match('/api/v1/management/links')) request.flush([]);
+  for (const request of http.match('/api/v1/management/provider-refusals?days=14')) request.flush([]);
 }
 
 describe('RemoteHostsService', () => {
@@ -83,6 +84,31 @@ describe('RemoteHostsService', () => {
 });
 
 describe('RemoteHostsService client registry hydration', () => {
+  it('hydrates daily provider refusal counts for fleet visibility', () => {
+    TestBed.configureTestingModule({
+      providers: [RemoteHostsService, provideHttpClient(), provideHttpClientTesting()],
+    });
+    const svc = TestBed.inject(RemoteHostsService);
+    const http = TestBed.inject(HttpTestingController);
+
+    svc.reload();
+    http.expectOne('/api/clients').flush([]);
+    http.expectOne('/api/v1/management/remote-hosts').flush([]);
+    http.expectOne('/api/v1/management/links').flush([]);
+    http.expectOne('/api/v1/management/provider-refusals?days=14').flush([{
+      day: '2026-09-18',
+      model: 'gpt-6-astra',
+      count: 2,
+      refusals: ['unsupported_parameter access_programs.cyber'],
+    }]);
+
+    expect(svc.providerRefusals()).toEqual([expect.objectContaining({
+      model: 'gpt-6-astra',
+      count: 2,
+    })]);
+    http.verify();
+  });
+
   it('surfaces a corrupt identity and does not request telemetry for it', () => {
     TestBed.configureTestingModule({
       providers: [RemoteHostsService, provideHttpClient(), provideHttpClientTesting()],

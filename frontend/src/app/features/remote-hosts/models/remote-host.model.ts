@@ -162,6 +162,14 @@ export interface TaskServerConnectionTelemetry {
 
 export type HostLiveDataState = 'loading' | 'ready' | 'error';
 
+/** Daily fleet count of provider-side model request refusals. */
+export interface ProviderRejectionDailyCount {
+  day: string;
+  model: string;
+  count: number;
+  refusals: readonly string[];
+}
+
 export type CapabilityHealthState = 'healthy' | 'suspect' | 'draining' | 'half-open';
 
 export interface CapabilityRecoveryEvent {

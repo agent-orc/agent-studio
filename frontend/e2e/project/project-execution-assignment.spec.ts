@@ -124,7 +124,7 @@ test('keeps pickup mode and execution location as independent controls', async (
   });
 });
 
-test('shows the assigned host project delivery failure', async ({ page, devBackend }) => {
+test('shows the assigned host project delivery failure beside provider refusals', async ({ page, devBackend }) => {
   const projectName = 'Agent Studio Worktree';
   await page.route('**/api/crash-recovery/pending', route => route.fulfill({
     status: 200, contentType: 'application/json', body: '[]',
@@ -158,16 +158,30 @@ test('shows the assigned host project delivery failure', async ({ page, devBacke
       }],
     }]),
   }));
+  await page.route('**/api/v1/management/provider-refusals?days=14', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify([{
+      day: '2026-09-18',
+      model: 'gpt-6-astra',
+      count: 1,
+      refusals: ['unsupported_parameter access_programs.cyber'],
+    }]),
+  }));
 
   await page.goto(`/#/projects/${slugFor(projectName)}/settings`, { waitUntil: 'domcontentloaded' });
   const card = page.getByTestId('project-execution-card');
   const failure = card.getByTestId('project-delivery-preflight');
+  const refusal = card.getByTestId('project-provider-refusal');
   await expect(failure).toContainText('blocked');
   await expect(failure).toContainText('Target develop');
   await expect(failure).toContainText('permission denied');
+  await expect(refusal).toContainText('gpt-6-astra');
+  await expect(refusal).toContainText('unsupported_parameter access_programs.cyber');
   await setTheme(page, 'light');
   await card.screenshot({ path: path.join(SCREENSHOT_DIR, 'project-delivery-preflight-failed--mocked.png') });
   await setTheme(page, 'dark');
   await expect(failure).toContainText('permission denied');
+  await expect(refusal).toContainText('gpt-6-astra');
   await card.screenshot({ path: path.join(SCREENSHOT_DIR, 'project-delivery-preflight-failed-dark--mocked.png') });
 });

@@ -61,6 +61,9 @@ export class ExecutionAssignmentCardComponent implements OnInit {
       preflight.projectName.localeCompare(this.projectName(), undefined, { sensitivity: 'accent' }) === 0,
     ) ?? null,
   );
+  readonly latestProviderRefusal = computed(() =>
+    this.hostRegistry.providerRefusals()[0] ?? null,
+  );
   readonly probePassed = computed(() =>
     this.checks().every((check) => check.state === 'passed'),
   );
