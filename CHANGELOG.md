@@ -14,6 +14,9 @@ release yet.
 
 ### Fixed
 
+- Automatic timeout-salvage continuation now rolls back its prompt note and
+  clean-context override when the card cannot be moved to Ready, so a refused
+  continuation does not leave partial preparation on the task (AGT-2861).
 - Worker resource envelope: the task ceiling is 512 per core of fair share
   (minimum 1024) instead of 128. `pids.max` counts threads, and a worker with a
   .NET test host hit the 307-task ceiling of a 12-core, 5-slot host; the

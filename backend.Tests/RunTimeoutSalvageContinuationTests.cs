@@ -220,6 +220,41 @@ public sealed class RunTimeoutSalvageContinuationTests : IDisposable
     }
 
     [Fact]
+    public async Task A_refused_lane_move_rolls_back_the_prepared_prompt_intent_and_context_mode()
+    {
+        WriteJob(TaskStates.Progress);
+        var original = _scanner.FindJob(JobId, _watchPath)!;
+        var promptPath = Path.Combine(original.FolderPath, "prompt.md");
+        var originalPrompt = File.ReadAllText(promptPath);
+
+        // A file at the destination path makes the state-machine move fail
+        // without changing the source folder.
+        File.WriteAllText(Path.Combine(_watchPath, TaskStates.Ready, JobId), "collision");
+
+        var result = await BuildService().StartAsync(
+            original,
+            new RunSalvageReference(SalvageBranch, SalvageSha),
+            "Timeout",
+            "attempt-1",
+            Write(),
+            default);
+
+        Assert.False(result.Started);
+        Assert.Contains(nameof(MoveJobStatus.TargetFolderExists), result.Reason);
+
+        var unchanged = _scanner.FindJob(JobId, _watchPath)!;
+        Assert.Equal(TaskStates.Progress, unchanged.State);
+        Assert.Equal(originalPrompt, File.ReadAllText(promptPath));
+        Assert.Null(unchanged.PendingIntent);
+        Assert.Null(unchanged.ContextMode);
+        using var taskJson = JsonDocument.Parse(File.ReadAllText(Path.Combine(unchanged.FolderPath, "task.json")));
+        Assert.False(taskJson.RootElement.TryGetProperty("contextMode", out _));
+        Assert.DoesNotContain(
+            _timeline.ReadAll(unchanged.FolderPath),
+            evt => evt.Kind == TimelineEventKinds.ContinuationRoundStarted);
+    }
+
+    [Fact]
     public async Task An_operator_requeue_opens_a_fresh_continuation_budget()
     {
         WriteJob(TaskStates.Progress);

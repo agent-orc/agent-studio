@@ -274,6 +274,9 @@ public sealed class RunTimeoutContinuationService
         var round = CountAutomaticRounds(task) + 1;
         cause ??= RunContinuationCause.Timeout(reportedReason);
         var prompt = BuildPrompt(task, salvage, cause);
+        var promptPath = Path.Combine(task.FolderPath, "prompt.md");
+        var previousPrompt = File.Exists(promptPath) ? File.ReadAllText(promptPath) : null;
+        var previousContextMode = task.ContextMode;
 
         // The prompt note and the intent are written before the lane move so a
         // claim can never observe the card in Ready without its finishing
@@ -324,6 +327,22 @@ public sealed class RunTimeoutContinuationService
         if (move.Status != MoveJobStatus.Success)
         {
             _mutations.DiscardPendingIntent(task.FolderPath);
+            if (!_mutations.RestorePromptOnFolder(task.FolderPath, previousPrompt))
+            {
+                _logger.LogWarning(
+                    "continuation-prompt-rollback-failed task={TaskKey} attempt={AttemptId} folder={Folder}",
+                    task.TaskKey,
+                    attemptId,
+                    task.FolderPath);
+            }
+            if (!_mutations.RestoreContextModeOnFolder(task.FolderPath, previousContextMode))
+            {
+                _logger.LogWarning(
+                    "continuation-context-mode-rollback-failed task={TaskKey} attempt={AttemptId} folder={Folder}",
+                    task.TaskKey,
+                    attemptId,
+                    task.FolderPath);
+            }
             return Failed(
                 $"The continuation round was prepared, but the lane move was refused: {move.Status} {move.Message}");
         }
