@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { dismissDevErrorDialog } from '../helpers/theme';
 
 const JOB_ID = 'core-token-usage-fixture';
 const WATCH_PATH = 'C:/fixtures/agent-taskboard';
@@ -61,7 +62,7 @@ function jobDetail() {
   };
 }
 
-function pipeline() {
+function pipeline(runCount = 4) {
   const coreStep = {
     id: 'core-agent-run',
     displayName: 'Agent execution',
@@ -73,6 +74,43 @@ function pipeline() {
   };
   const startedAt = '2026-06-06T20:00:00Z';
   const completedAt = '2026-06-06T20:02:05Z';
+  const currentModel = {
+    model: 'claude-opus-4-8',
+    modelKnown: true,
+    thinkingLevel: 'high',
+    steps: 1,
+    inputTokens: 2500,
+    outputTokens: 195600,
+    cacheReadTokens: 18500000,
+    cacheCreationTokens: 1000000,
+    totalTokens: 19698100,
+    costUsd: 20.4025,
+  };
+  const runs = Array.from({ length: runCount }, (_, index) => {
+    const current = index === runCount - 1;
+    const scale = current ? 1 : (index + 1) / 20;
+    return {
+      attempt: current ? 8 : index + 1,
+      current,
+      startedAt: `2026-06-06T${String(17 + index).padStart(2, '0')}:00:00Z`,
+      completedAt: current ? completedAt : `2026-06-06T${String(17 + index).padStart(2, '0')}:05:00Z`,
+      models: [{
+        ...currentModel,
+        inputTokens: Math.round(currentModel.inputTokens * scale),
+        outputTokens: Math.round(currentModel.outputTokens * scale),
+        cacheReadTokens: Math.round(currentModel.cacheReadTokens * scale),
+        cacheCreationTokens: Math.round(currentModel.cacheCreationTokens * scale),
+        totalTokens: Math.round(currentModel.totalTokens * scale),
+        costUsd: currentModel.costUsd * scale,
+      }],
+      totalTokens: Math.round(currentModel.totalTokens * scale),
+      totalCostUsd: currentModel.costUsd * scale,
+      anyModelUnknown: false,
+      tokenUsageAvailable: true,
+    };
+  });
+  const allTokens = runs.reduce((sum, run) => sum + run.totalTokens, 0);
+  const allCost = runs.reduce((sum, run) => sum + run.totalCostUsd, 0);
   return {
     pipeline: {
       id: 'standard-task-pipeline',
@@ -140,6 +178,22 @@ function pipeline() {
       totalCostUsd: 20.4025,
       anyModelUnknown: false,
     },
+    tokensByModel: {
+      runs,
+      totalByModel: [{
+        ...currentModel,
+        steps: runCount,
+        totalTokens: allTokens,
+        inputTokens: runs.reduce((sum, run) => sum + run.models[0].inputTokens, 0),
+        outputTokens: runs.reduce((sum, run) => sum + run.models[0].outputTokens, 0),
+        cacheReadTokens: runs.reduce((sum, run) => sum + run.models[0].cacheReadTokens, 0),
+        cacheCreationTokens: runs.reduce((sum, run) => sum + run.models[0].cacheCreationTokens, 0),
+        costUsd: allCost,
+      }],
+      totalTokens: allTokens,
+      totalCostUsd: allCost,
+      anyModelUnknown: false,
+    },
     config: {},
   };
 }
@@ -173,8 +227,11 @@ function runTimeline() {
   };
 }
 
-async function installFixtureRoutes(page: Page) {
+async function installFixtureRoutes(page: Page, tokenRunCount = 4) {
   await page.route('**/api/**', route => route.fulfill(json([])));
+  await page.route('**/api/auth/status', route => route.fulfill(json({
+    profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
+  })));
   await page.route('**/api/tasks/grouped**', route => route.fulfill(json({
     preparation: [],
     orchestratorPrep: [],
@@ -202,7 +259,7 @@ async function installFixtureRoutes(page: Page) {
   })));
 
   const id = JOB_ID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  await page.route(new RegExp(`/api/tasks/${id}/pipeline(\\?|$)`), route => route.fulfill(json(pipeline())));
+  await page.route(new RegExp(`/api/tasks/${id}/pipeline(\\?|$)`), route => route.fulfill(json(pipeline(tokenRunCount))));
   await page.route(new RegExp(`/api/tasks/${id}/runs(\\?|$)`), route => route.fulfill(json(runTimeline())));
   await page.route(new RegExp(`/api/tasks/${id}/output(\\?|$)`), route => route.fulfill(json([])));
   await page.route(new RegExp(`/api/tasks/${id}/session-events(\\?|$)`), route => route.fulfill(json({ events: [], sessionChain: [] })));
@@ -220,7 +277,46 @@ async function saveShot(page: Page, name: string) {
   await writeFile(join(RESULTS_DIR, name), buf);
 }
 
-test('task detail pipeline shows CORE CLI-footer usage, SUM footer, and API-price disclaimer', async ({ page }) => {
+async function paintLegacyFinding(page: Page, calls: number) {
+  await page.evaluate((sessionCalls) => {
+    const pipelineLabel = document.querySelector<HTMLElement>('[data-testid="overview-pipeline-total-label"]');
+    if (pipelineLabel) {
+      pipelineLabel.dataset['legacyOriginal'] = pipelineLabel.innerHTML;
+      pipelineLabel.innerHTML = 'Task total <span>SUM</span>';
+    }
+    const taskLabel = document.querySelector<HTMLElement>('.ptu__sum-title');
+    if (taskLabel) taskLabel.textContent = 'Tokens across all runs';
+    else document.querySelector<HTMLElement>('[data-testid="pipeline-token-usage"]')?.insertAdjacentHTML(
+      'afterbegin',
+      '<div class="legacy-total" style="padding:6px 20px;font:12px var(--font-mono)">&gt; &nbsp; TOKENS ACROSS ALL RUNS</div>',
+    );
+    document.querySelectorAll<HTMLElement>('.studio-disclosure__marker').forEach((marker) => {
+      marker.style.visibility = 'hidden';
+      marker.insertAdjacentHTML('afterend', '<span class="legacy-marker" aria-hidden="true" style="padding-inline:8px">&gt;</span>');
+    });
+    const tokenUsage = document.querySelector<HTMLElement>('[data-testid="pipeline-token-usage"]');
+    tokenUsage?.insertAdjacentHTML('afterend', `
+      <section class="legacy-agent-work" style="width:100%;margin-top:8px;font:12px var(--font-mono);color:var(--studio-fg-muted)">
+        <strong style="display:block;padding:4px 8px;background:var(--studio-bg-hover);color:var(--studio-fg-strong)">AGENT WORK</strong>
+        <div style="display:grid;grid-template-columns:1fr auto auto auto auto;gap:12px;padding:6px 20px">
+          <span>Calls &nbsp; ${sessionCalls} calls</span><span>2d ago</span><span>1d ago</span><span>-</span><span>-</span>
+        </div>
+      </section>`);
+  }, calls);
+}
+
+async function restoreCurrentFinding(page: Page) {
+  await page.evaluate(() => {
+    const pipelineLabel = document.querySelector<HTMLElement>('[data-testid="overview-pipeline-total-label"]');
+    if (pipelineLabel?.dataset['legacyOriginal']) pipelineLabel.innerHTML = pipelineLabel.dataset['legacyOriginal'];
+    const taskLabel = document.querySelector<HTMLElement>('.ptu__sum-title');
+    if (taskLabel) taskLabel.textContent = 'All runs · task total';
+    document.querySelectorAll<HTMLElement>('.studio-disclosure__marker').forEach(marker => marker.style.visibility = '');
+    document.querySelectorAll('.legacy-marker, .legacy-total, .legacy-agent-work').forEach(node => node.remove());
+  });
+}
+
+test('task detail pipeline names run and task totals, aligns disclosures, and explains API pricing', async ({ page }) => {
   await page.addInitScript(() => {
     try {
       localStorage.setItem('taskboard.panesVisible', JSON.stringify({ prompt: true, protocol: false, git: false }));
@@ -232,24 +328,71 @@ test('task detail pipeline shows CORE CLI-footer usage, SUM footer, and API-pric
 
   const pipelineBlock = page.getByTestId('overview-pipeline');
   await expect(pipelineBlock).toBeVisible({ timeout: 10000 });
+  await dismissDevErrorDialog(page);
+  await page.getByTestId('overview-pipeline-phase').click();
   await expect(page.getByTestId('overview-pipeline-step-name')).toContainText('Agent execution');
   await expect(page.getByTestId('overview-pipeline-agent-runs')).toContainText('8 runs');
-  await expect(page.getByTestId('overview-pipeline-step-tokens')).toContainText('19.70M');
+  await expect(page.getByTestId('overview-pipeline-step-tokens')).toContainText('19.7M');
   await expect(page.getByTestId('overview-pipeline-step-cost')).toContainText('$20.40');
-  await expect(page.getByTestId('overview-pipeline-total')).toContainText('SUM');
-  await expect(page.getByTestId('overview-pipeline-total-tokens')).toContainText('19.70M');
+  await expect(page.getByTestId('overview-pipeline-total')).toContainText('This run · pipeline total');
+  await expect(page.getByTestId('overview-pipeline-total')).toContainText('Run #8 incl. pre/post/review steps');
+  await expect(page.getByTestId('overview-pipeline-total')).not.toContainText('SUM');
+  await expect(page.getByTestId('overview-pipeline-total-tokens')).toContainText('19.7M');
+  await expect(page.getByTestId('pipeline-token-usage-total')).toContainText('All runs · task total');
 
   await pipelineBlock.screenshot({ path: RESULTS_DIR ? join(RESULTS_DIR, 'pipeline-core-token-usage.png') : 'test-results/pipeline-core-token-usage.png' });
 
   await page.getByTestId('overview-pipeline-step-tokens').hover();
   const tooltip = page.getByTestId('cac-tooltip');
   await expect(tooltip).toContainText('Source: AGENT (CLI FOOTER) / reported');
-  await expect(tooltip).toContainText('Input: 2.5k');
-  await expect(tooltip).toContainText('Output: 195.6k');
-  await expect(tooltip).toContainText('Cache read: 18.50M');
-  await expect(tooltip).toContainText('Cache creation: 1.00M');
-  await expect(tooltip).toContainText('Total API price estimate: $20.40');
-  await expect(tooltip).toContainText('API price estimate only');
-  await expect(tooltip).toContainText('Actual CLI billing uses the subscription or plan, not these API rates');
+  await expect(tooltip).toContainText('Input: 3k');
+  await expect(tooltip).toContainText('Output: 196k');
+  await expect(tooltip).toContainText('Cache read: 18.5M');
+  await expect(tooltip).toContainText('Cache creation: 1.0M');
+  await expect(tooltip).toContainText('Estimated cost: $20.40');
+  await expect(tooltip).toContainText('historical list prices');
   await saveShot(page, 'pipeline-core-token-tooltip.png');
 });
+
+for (const runCase of [
+  { name: 'multi-run', count: 4 },
+  { name: 'single-run', count: 1 },
+] as const) {
+  for (const theme of ['light', 'dark'] as const) {
+    for (const viewport of [
+      { name: 'desktop', width: 1440, height: 900 },
+      { name: '400px', width: 400, height: 900 },
+    ] as const) {
+      test(`${runCase.name} totals remain clear at ${viewport.name} in ${theme}`, async ({ page }) => {
+        await page.setViewportSize({ width: viewport.width, height: viewport.height });
+        await page.addInitScript(({ selectedTheme }) => {
+          localStorage.setItem('taskboard.panesVisible', JSON.stringify({ prompt: true, protocol: false, git: false }));
+          localStorage.setItem('atp.studio.theme', selectedTheme);
+        }, { selectedTheme: theme });
+        await installFixtureRoutes(page, runCase.count);
+        await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+
+        const overview = page.getByTestId('overview-tab');
+        await expect(overview).toBeVisible({ timeout: 10_000 });
+        await dismissDevErrorDialog(page);
+        await paintLegacyFinding(page, runCase.count);
+        await overview.screenshot({
+          path: join(RESULTS_DIR || 'test-results', `overview-totals-before-${runCase.name}-${viewport.name}-${theme}--composite.png`),
+        });
+
+        await restoreCurrentFinding(page);
+        if (runCase.count === 1) {
+          await expect(page.getByTestId('overview-pipeline-total')).toContainText('All runs · task total');
+          await expect(page.getByTestId('pipeline-token-usage-total')).toHaveCount(0);
+        } else {
+          await expect(page.getByTestId('overview-pipeline-total')).toContainText('This run · pipeline total');
+          await expect(page.getByTestId('pipeline-token-usage-total')).toContainText('All runs · task total');
+        }
+
+        await overview.screenshot({
+          path: join(RESULTS_DIR || 'test-results', `overview-totals-after-${runCase.name}-${viewport.name}-${theme}--mocked.png`),
+        });
+      });
+    }
+  }
+}
