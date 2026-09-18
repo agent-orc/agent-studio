@@ -152,6 +152,36 @@ public class PickupHoldPolicyTests
     }
 
     [Fact]
+    public void Limited_dispatch_hold_preserves_reset_and_run_evidence()
+    {
+        var hold = Evaluate(Card(), rejection: new RemoteDispatchRejection
+        {
+            Code = "capability-mismatch",
+            RunnerName = "agent-runner-01",
+            Reason = "Required capability 'provider-auth:claude' is limited until 12:40 UTC " +
+                     "(evidence: run run-2870, 'usage limit reached; resets at 12:40').",
+            RejectedAtUtc = new DateTime(2026, 9, 18, 10, 6, 0, DateTimeKind.Utc),
+        });
+
+        Assert.Contains("limited until 12:40 UTC", hold!.Reason, StringComparison.Ordinal);
+        Assert.Contains("evidence: run run-2870", hold.Reason, StringComparison.Ordinal);
+        Assert.Contains("usage limit reached", hold.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Capability_mismatch_requests_only_named_provider_auth_reprobe()
+    {
+        var requested = AgentStudio.Tasks.LeaseEndpoints.ProviderAuthReprobeRequest(
+            eligible: false,
+            ["executor:coding", "provider-auth:claude", "provider-auth:claude"]);
+
+        Assert.Equal(["provider-auth:claude"], requested);
+        Assert.Null(AgentStudio.Tasks.LeaseEndpoints.ProviderAuthReprobeRequest(
+            eligible: true,
+            ["provider-auth:claude"]));
+    }
+
+    [Fact]
     public void DependencyGate_OutranksAStaleDispatchRejection()
     {
         // A card the local gate already refuses was never offered to a runner,

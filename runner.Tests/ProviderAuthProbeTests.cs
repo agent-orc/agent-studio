@@ -312,7 +312,7 @@ public sealed class ProviderAuthProbeTests
         Assert.Equal(ProviderAuthProbe.Ready, recovered.Status);
         Assert.False(recovered.ProbeDegraded);
         Assert.Contains(logs, line => line.StartsWith(
-            "runner-provider-auth-probe-recovered ",
+            "provider-auth status=ready binary=claude ",
             StringComparison.Ordinal));
     }
 
@@ -380,6 +380,156 @@ public sealed class ProviderAuthProbeTests
         Assert.Equal(ready, afterRun);
         Assert.Equal(ProviderAuthProbe.Ready, afterRun.Status);
         Assert.Null(afterRun.LimitedUntil);
+    }
+
+    [Fact]
+    public async Task Allowed_warning_event_at_84_percent_weekly_is_authenticated()
+    {
+        const string eventLine =
+            "{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed_warning\"," +
+            "\"rateLimitType\":\"seven_day\",\"utilization\":0.84,\"resetsAt\":1790000000}}";
+        var probe = Probe(Answers(0, "Logged in"));
+        await probe.RefreshAsync("claude", CancellationToken.None);
+
+        var afterRun = probe.RecordProcessResult(
+            "claude",
+            new ProcessResult(1, eventLine, "usage limit warning"),
+            evidenceId: "run-84-percent");
+
+        Assert.Equal(ProviderAuthProbe.Ready, afterRun.Status);
+        Assert.Null(afterRun.LimitedUntil);
+    }
+
+    [Theory]
+    [InlineData(143, 15)]
+    [InlineData(137, 9)]
+    public async Task Recorded_signal_terminated_run_never_contributes_rate_limit_evidence(
+        int exitCode,
+        int signal)
+    {
+        var probe = Probe(Answers(0, "Logged in"));
+        var ready = await probe.RefreshAsync("claude", CancellationToken.None);
+
+        var afterRun = probe.RecordProcessResult(
+            "claude",
+            new ProcessResult(exitCode, "", "usage limit reached; resets at 2026-09-19T12:40:00Z"),
+            evidenceId: "operator-stopped-run",
+            signal: signal);
+
+        Assert.Equal(ready, afterRun);
+        Assert.Equal(ProviderAuthProbe.Ready, afterRun.Status);
+    }
+
+    [Fact]
+    public async Task High_nonzero_exit_without_recorded_signal_keeps_provider_refusal_evidence()
+    {
+        var probe = Probe(Answers(0, "Logged in"));
+        await probe.RefreshAsync("claude", CancellationToken.None);
+
+        var afterRun = probe.RecordProcessResult(
+            "claude",
+            new ProcessResult(143, "", "usage limit reached; resets at 2026-09-19T12:40:00Z"),
+            evidenceId: "ordinary-high-exit");
+
+        Assert.Equal(ProviderAuthProbe.Limited, afterRun.Status);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task Operator_or_host_terminated_run_never_contributes_rate_limit_evidence(
+        bool operatorStopped,
+        bool hostShutdown)
+    {
+        var probe = Probe(Answers(0, "Logged in"));
+        var ready = await probe.RefreshAsync("claude", CancellationToken.None);
+
+        var afterRun = probe.RecordProcessResult(
+            "claude",
+            new ProcessResult(1, "", "usage limit reached; resets at 2026-09-19T12:40:00Z"),
+            evidenceId: "terminated-run",
+            operatorStopped: operatorStopped,
+            hostShutdown: hostShutdown);
+
+        Assert.Equal(ready, afterRun);
+    }
+
+    [Fact]
+    public async Task Limit_transition_logs_and_advertises_scrubbed_evidence()
+    {
+        var logs = new List<string>();
+        var now = new DateTimeOffset(2026, 9, 18, 10, 0, 0, TimeSpan.Zero);
+        var probe = Probe(Answers(0, "Logged in"), clock: () => now, diagnosticLog: logs.Add);
+        await probe.RefreshAsync("claude", CancellationToken.None);
+
+        var status = probe.RecordProcessResult(
+            "claude",
+            new ProcessResult(1, "", "usage limit reached; resets at 2026-09-18T12:40:00Z"),
+            evidenceId: "run-2870");
+
+        Assert.Equal("run-2870", status.EvidenceId);
+        Assert.Contains("usage limit reached", status.EvidenceExcerpt, StringComparison.Ordinal);
+        Assert.Contains(logs, line =>
+            line.Contains("provider-auth status=limited binary=claude", StringComparison.Ordinal)
+            && line.Contains("until=2026-09-18T12:40:00.0000000Z", StringComparison.Ordinal)
+            && line.Contains("evidence=run-2870", StringComparison.Ordinal));
+        var advertised = RunnerCapabilityProbe.Advertise(
+            CodingOptions(),
+            gitPushReady: true,
+            providerAuth: probe);
+        var capability = Assert.Single(advertised, item =>
+            item.Key == CapabilityProtocol.ProviderAuthentication("claude"));
+        Assert.Equal("run-2870", capability.EvidenceId);
+        Assert.Contains("usage limit reached", capability.EvidenceExcerpt, StringComparison.Ordinal);
+        Assert.Equal(status.LimitedUntil?.UtcDateTime, capability.LimitedUntil);
+    }
+
+    [Fact]
+    public async Task Active_same_provider_run_downgrades_limit_to_claimable_degraded()
+    {
+        var probe = Probe(Answers(0, "Logged in"));
+        await probe.RefreshAsync("claude", CancellationToken.None);
+        probe.RecordRunStarted("claude");
+        try
+        {
+            var status = probe.RecordProcessResult(
+                "claude",
+                new ProcessResult(1, "", "usage limit reached; resets at 2026-09-19T12:40:00Z"),
+                evidenceId: "other-run");
+
+            Assert.Equal(ProviderAuthProbe.Degraded, status.Status);
+            Assert.Contains("counter-evidence", status.Detail, StringComparison.Ordinal);
+        }
+        finally
+        {
+            probe.RecordRunCompleted("claude");
+        }
+    }
+
+    [Fact]
+    public async Task Expired_limit_becomes_claimable_and_forces_auth_reprobe()
+    {
+        var calls = 0;
+        var now = new DateTimeOffset(2026, 9, 18, 10, 0, 0, TimeSpan.Zero);
+        var probe = Probe(
+            (_, _, _) =>
+            {
+                Interlocked.Increment(ref calls);
+                return Task.FromResult(new ProcessResult(0, "Logged in", ""));
+            },
+            clock: () => now);
+        await probe.RefreshAsync("claude", CancellationToken.None);
+        probe.RecordProcessResult(
+            "claude",
+            new ProcessResult(1, "", "usage limit reached; resets at 2026-09-18T10:01:00Z"),
+            evidenceId: "run-expiring");
+
+        now = now.AddMinutes(2);
+        var duringReprobe = probe.Current("claude");
+
+        Assert.Equal(ProviderAuthProbe.Degraded, duringReprobe.Status);
+        await WaitUntil(() => probe.Current("claude").Status == ProviderAuthProbe.Ready);
+        Assert.Equal(ProviderAuthProbe.Ready, probe.Current("claude").Status);
     }
 
     [Fact]
