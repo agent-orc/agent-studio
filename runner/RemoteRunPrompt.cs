@@ -13,6 +13,22 @@ namespace AgentRunner;
 /// </summary>
 public static class RemoteRunPrompt
 {
+    public static string ApplyClaimedFollowUp(
+        string taskPrompt,
+        AgentStudio.TaskServer.Contracts.FollowUpDeliveryDto? followUp)
+    {
+        ArgumentNullException.ThrowIfNull(taskPrompt);
+        if (followUp is null
+            || taskPrompt.Contains(followUp.Prompt, StringComparison.Ordinal))
+            return taskPrompt;
+
+        return taskPrompt.TrimEnd()
+            + Environment.NewLine + Environment.NewLine
+            + "---" + Environment.NewLine + Environment.NewLine
+            + $"## Follow-up for this run ({followUp.Mode})" + Environment.NewLine + Environment.NewLine
+            + followUp.Prompt.Trim() + Environment.NewLine;
+    }
+
     public const string ModelRoutingPolicyInstruction =
         "Consult `docs/system/domains/model-routing-policy.md` as the authoritative source whenever " +
         "you select, recommend, override, or explain a model and thinking level. Never let quota or " +

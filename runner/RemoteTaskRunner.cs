@@ -378,6 +378,17 @@ public sealed class RemoteTaskRunner
             _log,
             inventory: _inventory,
             authority: authority);
+        if (reattach
+            && slot.ProcessId is > 0
+            && slot.RunSpec?.FollowUp is { } reattachedFollowUp)
+        {
+            // The daemon may have stopped after the worker was launched but
+            // before its start acknowledgement reached the Task Server. The
+            // persisted run spec is the durable proof of which prompt started
+            // that still-running process, so repeat the idempotent hash on the
+            // replacement heartbeat.
+            heartbeat.ConfirmWorkerStartedWithPrompt(reattachedFollowUp.PromptSha256);
+        }
         using var heartbeatShutdown = CancellationTokenSource.CreateLinkedTokenSource(
             shutdown,
             daemonShutdown);
@@ -428,7 +439,8 @@ public sealed class RemoteTaskRunner
                     stopRun,
                     shutdown,
                     daemonShutdown,
-                    epicPlanning);
+                    epicPlanning,
+                    heartbeat);
             outcome = execution.Outcome;
             outcomeDecision = execution.Decision;
             outputLines = execution.OutputLines;
@@ -874,7 +886,8 @@ public sealed class RemoteTaskRunner
     private async Task<RemoteExecutionResult> ExecuteAsync(
         PersistedRunnerSlot slot, GitWorkspace workspace, LogShipper shipper,
         DurableRunOutbox? outbox, CancellationTokenSource stopRun,
-        CancellationToken shutdown, CancellationToken daemonShutdown, bool epicPlanning)
+        CancellationToken shutdown, CancellationToken daemonShutdown, bool epicPlanning,
+        LeaseHeartbeat heartbeat)
     {
         var taskKey = slot.TaskKey;
         var lease = slot.Lease;
@@ -985,10 +998,13 @@ public sealed class RemoteTaskRunner
         {
             var taskPrompt = await _client.ReadTaskFileAsync(taskKey, "prompt.md", shutdown)
                              ?? throw new InvalidOperationException($"Task '{taskKey}' has no prompt.md to run.");
-            prompt = RemoteRunPrompt.Build(taskPrompt, runSpec?.ModeFraming, ResultsDir(taskKey));
-            shipper.Add("system", string.IsNullOrWhiteSpace(runSpec?.ModeFraming)
-                ? "[runner] results-dir context + remote-completion-protocol appended to task prompt"
-                : "[runner] server-composed mode framing + results-dir context + remote-completion-protocol appended to task prompt");
+            var deliveredPrompt = RemoteRunPrompt.ApplyClaimedFollowUp(taskPrompt, runSpec?.FollowUp);
+            prompt = RemoteRunPrompt.Build(deliveredPrompt, runSpec?.ModeFraming, ResultsDir(taskKey));
+            shipper.Add("system", runSpec?.FollowUp is null
+                ? string.IsNullOrWhiteSpace(runSpec?.ModeFraming)
+                    ? "[runner] results-dir context + remote-completion-protocol appended to task prompt"
+                    : "[runner] server-composed mode framing + results-dir context + remote-completion-protocol appended to task prompt"
+                : $"[runner] claimed follow-up mode={runSpec.FollowUp.Mode} hash={runSpec.FollowUp.PromptSha256} delivered as this run's prompt");
         }
 
         // T0b proof line: which CLI, model and reasoning level this run actually
@@ -1057,6 +1073,34 @@ public sealed class RemoteTaskRunner
             Phase = "running",
         });
         _inventory.AttachProcess(slot.RunId ?? slot.AttemptId, process.ProcessId);
+        if (runSpec?.FollowUp is { } followUp)
+        {
+            heartbeat.ConfirmWorkerStartedWithPrompt(followUp.PromptSha256);
+            try
+            {
+                var acknowledged = await _client.RenewLeaseAsync(
+                    new RunLeaseHeartbeatRequest(
+                        taskKey,
+                        lease.LeaseId,
+                        lease.FencingToken,
+                        _options.RunnerId,
+                        _options.TtlSeconds,
+                        lease.AttemptId,
+                        lease.AuthorityEpoch,
+                        $"worker-start:{slot.AttemptId}:{followUp.PromptSha256}",
+                        _inventory.Snapshot(),
+                        followUp.PromptSha256),
+                    shutdown);
+                if (!acknowledged.Granted)
+                    throw new InvalidOperationException(
+                        $"Task Server refused the worker-start prompt acknowledgement: {acknowledged.Outcome} {acknowledged.Message}");
+            }
+            catch
+            {
+                process.Kill();
+                throw;
+            }
+        }
         _log($"detached worker started task={taskKey} pid={process.ProcessId} attempt={slot.AttemptId}");
         var executed = await AwaitDetachedAsync(
             slot,

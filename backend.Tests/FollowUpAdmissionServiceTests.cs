@@ -188,13 +188,228 @@ public sealed class FollowUpAdmissionServiceTests : IDisposable
         Assert.Null(ReadIntent(progressFolder));
     }
 
+    [Fact]
+    public void ClaimedFollowUp_IsStashedUntilMatchingWorkerStart_ThenRecordedInHistory()
+    {
+        const string slug = "remote-follow-up";
+        WriteJob(slug, TaskStates.Ready);
+        var harness = Build();
+        const string prompt = "Use the already approved recovery branch.";
+        var saved = harness.Mutations.SavePendingIntent(
+            slug,
+            ContinueModes.Steer,
+            prompt,
+            FollowUpQueueReasons.RemoteExecution,
+            activeJobId: null,
+            watchPath: _watchPath,
+            author: "human:owner")!;
+        var folder = Path.Combine(_watchPath, TaskStates.Ready, slug);
+
+        var stashed = harness.Mutations.ReadAndStashPendingIntent(folder);
+
+        Assert.Equal(saved.Prompt, stashed!.Prompt);
+        Assert.False(File.Exists(Path.Combine(folder, "pending-intent.json")));
+        Assert.True(File.Exists(Path.Combine(folder, "pending-intent.consumed.json")));
+        Assert.Equal(
+            PendingIntentAcknowledgeResult.HashMismatch,
+            harness.Mutations.AcknowledgeStashedPendingIntent(folder, "wrong", "run-1"));
+
+        var result = harness.Mutations.AcknowledgeStashedPendingIntent(
+            folder,
+            AgentStudio.TaskServer.Contracts.FollowUpPromptDigest.Compute(prompt),
+            "run-1",
+            source: "remote-heartbeat");
+
+        Assert.Equal(PendingIntentAcknowledgeResult.Consumed, result);
+        Assert.False(File.Exists(Path.Combine(folder, "pending-intent.consumed.json")));
+        var receipt = Assert.Single(
+            harness.Timeline.ReadAll(folder),
+            row => row.Kind == TimelineEventKinds.FollowUpConsumed);
+        Assert.Equal("run-1", receipt.RunId);
+        Assert.Equal("steer", receipt.Details!["mode"]);
+        Assert.Equal("human:owner", receipt.Details["author"]);
+    }
+
+    [Fact]
+    public void FailedClaim_RollsStashedFollowUpBackToTheQueue()
+    {
+        const string slug = "failed-claim";
+        WriteJob(slug, TaskStates.Ready);
+        var harness = Build();
+        var folder = Path.Combine(_watchPath, TaskStates.Ready, slug);
+        harness.Mutations.SavePendingIntent(
+            slug, ContinueModes.Continue, "Try this again.", "remote-claim",
+            activeJobId: null, watchPath: _watchPath);
+
+        Assert.NotNull(harness.Mutations.ReadAndStashPendingIntent(folder));
+        harness.Mutations.RollbackStashedPendingIntent(folder);
+
+        Assert.NotNull(ReadIntent(folder));
+        Assert.False(File.Exists(Path.Combine(folder, "pending-intent.consumed.json")));
+    }
+
+    [Fact]
+    public async Task EnteringTerminalLane_SupersedesQueuedFollowUpIntoHistory()
+    {
+        const string slug = "completed-with-follow-up";
+        WriteJob(slug, TaskStates.Ready);
+        var harness = Build();
+        harness.Mutations.SavePendingIntent(
+            slug, ContinueModes.Continue, "This must not replay.", "operator-continue",
+            activeJobId: null, watchPath: _watchPath);
+        Assert.NotNull(harness.Mutations.ReadAndStashPendingIntent(
+            Path.Combine(_watchPath, TaskStates.Ready, slug)));
+
+        var moved = await harness.Transitions.MoveAsync(
+            slug,
+            TaskStates.Archive,
+            _watchPath,
+            suppressProductExecution: true);
+
+        Assert.Equal(MoveJobStatus.Success, moved.Status);
+        var folder = Path.Combine(_watchPath, TaskStates.Archive, slug);
+        Assert.Null(ReadIntent(folder));
+        var receipt = Assert.Single(
+            harness.Timeline.ReadAll(folder),
+            row => row.Kind == TimelineEventKinds.FollowUpSuperseded);
+        Assert.Equal("superseded-by-completion", receipt.Details!["state"]);
+    }
+
+    [Theory]
+    [InlineData("review")]
+    [InlineData("lane_changed")]
+    public void StartupReconciliation_UnrelatedLaterActivityLeavesIntentQueued(string eventKind)
+    {
+        WriteJob("queued", TaskStates.HumanReview);
+        var harness = Build();
+        var intent = harness.Mutations.SavePendingIntent(
+            "queued", ContinueModes.Steer, "Still queued.", "remote-execution",
+            activeJobId: null, watchPath: _watchPath)!;
+        harness.Sessions.AppendSessionEvent(
+            "queued",
+            new SessionEvent
+            {
+                Ts = intent.SavedAt.AddSeconds(1),
+                Kind = eventKind,
+                Cli = "remote-runner",
+                RunAttemptId = "unrelated-event",
+                FinishedAt = intent.SavedAt.AddSeconds(2),
+                Result = "done",
+            },
+            _watchPath);
+
+        var outcome = harness.Transitions.ReconcilePendingIntents();
+
+        Assert.Equal(1, outcome.Inspected);
+        Assert.Equal(0, outcome.Delivered);
+        Assert.Single(outcome.Undecided);
+        Assert.Equal("Still queued.", ReadIntent(
+            Path.Combine(_watchPath, TaskStates.HumanReview, "queued"))!.Prompt);
+    }
+
+    [Fact]
+    public void StartupReconciliation_MatchingPromptHashConvertsIntentWithoutTerminalOutcome()
+    {
+        WriteJob("acknowledged", TaskStates.HumanReview);
+        var harness = Build();
+        var intent = harness.Mutations.SavePendingIntent(
+            "acknowledged", ContinueModes.Steer, "Already delivered.", "remote-execution",
+            activeJobId: null, watchPath: _watchPath)!;
+        harness.Sessions.AppendSessionEvent(
+            "acknowledged",
+            new SessionEvent
+            {
+                Ts = intent.SavedAt.AddSeconds(1),
+                Kind = "continue",
+                Cli = "remote-runner",
+                RunAttemptId = "run-acknowledged",
+                StartedPromptSha256 = AgentStudio.TaskServer.Contracts.FollowUpPromptDigest.Compute(intent.Prompt),
+            },
+            _watchPath);
+
+        var outcome = harness.Transitions.ReconcilePendingIntents();
+
+        Assert.Equal(1, outcome.Inspected);
+        Assert.Equal(1, outcome.Delivered);
+        Assert.Empty(outcome.Undecided);
+        Assert.Empty(outcome.Failures);
+        var folder = Path.Combine(_watchPath, TaskStates.HumanReview, "acknowledged");
+        Assert.Null(ReadIntent(folder));
+        Assert.Contains(
+            harness.Timeline.ReadAll(folder),
+            row => row.Kind == TimelineEventKinds.FollowUpConsumed
+                   && row.RunId == "run-acknowledged");
+    }
+
+    [Fact]
+    public void StartupReconciliation_LegacyCodingRunWithTerminalOutcomeConvertsIntent()
+    {
+        WriteJob("legacy", TaskStates.HumanReview);
+        var harness = Build();
+        var intent = harness.Mutations.SavePendingIntent(
+            "legacy", ContinueModes.Continue, "Legacy delivered prompt.", "remote-execution",
+            activeJobId: null, watchPath: _watchPath)!;
+        var startedAt = intent.SavedAt.AddSeconds(1);
+        harness.Sessions.AppendSessionEvent(
+            "legacy",
+            new SessionEvent
+            {
+                Ts = startedAt,
+                Kind = "start",
+                Cli = "remote-runner",
+                RunAttemptId = "run-legacy",
+                FinishedAt = startedAt.AddMinutes(2),
+                Result = "done",
+                Status = "completed",
+            },
+            _watchPath);
+
+        var outcome = harness.Transitions.ReconcilePendingIntents();
+
+        Assert.Equal(1, outcome.Delivered);
+        Assert.Empty(outcome.Undecided);
+        Assert.Null(ReadIntent(Path.Combine(_watchPath, TaskStates.HumanReview, "legacy")));
+    }
+
+    [Fact]
+    public void StartupReconciliation_PreStartClaimFailureLeavesIntentQueued()
+    {
+        WriteJob("pre-start-failure", TaskStates.HumanReview);
+        var harness = Build();
+        var intent = harness.Mutations.SavePendingIntent(
+            "pre-start-failure", ContinueModes.Continue, "Retry after rollback.", "remote-execution",
+            activeJobId: null, watchPath: _watchPath)!;
+        harness.Sessions.AppendSessionEvent(
+            "pre-start-failure",
+            new SessionEvent
+            {
+                Ts = intent.SavedAt.AddSeconds(1),
+                Kind = "start",
+                Cli = "remote-runner",
+                RunAttemptId = "run-never-started",
+                Status = "claim-failed",
+            },
+            _watchPath);
+
+        var outcome = harness.Transitions.ReconcilePendingIntents();
+
+        Assert.Equal(0, outcome.Delivered);
+        Assert.Single(outcome.Undecided);
+        Assert.Equal("Retry after rollback.", ReadIntent(
+            Path.Combine(_watchPath, TaskStates.HumanReview, "pre-start-failure"))!.Prompt);
+    }
+
     // ── fixture ───────────────────────────────────────────────────────────────
 
     private sealed record Harness(
         TaskRunnerService Service,
         TaskScannerService Scanner,
         ProjectSettingsService Settings,
-        CliRouter Router);
+        CliRouter Router,
+        TaskMutationService Mutations,
+        TaskTransitionService Transitions,
+        TaskSessionLog Sessions,
+        TimelineLog Timeline);
 
     private Harness Build()
     {
@@ -215,12 +430,14 @@ public sealed class FollowUpAdmissionServiceTests : IDisposable
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
         var states = new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance);
         var sessions = new TaskSessionLog(scanner, NullLogger<TaskSessionLog>.Instance);
+        var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
         var mutations = new TaskMutationService(
             scanner,
             new ClientIdentityStore(config, NullLogger<ClientIdentityStore>.Instance),
             new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance),
             new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance),
-            NullLogger<TaskMutationService>.Instance);
+            NullLogger<TaskMutationService>.Instance,
+            timeline);
         var claude = GenericCliExecutionService.ForClaude(NullLogger<GenericCliExecutionService>.Instance, config);
         var codex = GenericCliExecutionService.ForCodex(
             NullLogger<GenericCliExecutionService>.Instance, config,
@@ -233,7 +450,8 @@ public sealed class FollowUpAdmissionServiceTests : IDisposable
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config, prompts);
         var transitions = new TaskTransitionService(
-            scanner, states, mutations, git, settings, NullLogger<TaskTransitionService>.Instance);
+            scanner, states, mutations, git, settings, NullLogger<TaskTransitionService>.Instance,
+            sessions: sessions);
         var chatLog = new OrchestratorChatLog(NullLogger<OrchestratorChatLog>.Instance);
         var orchestratorLog = new OrchestratorLog(NullLogger<OrchestratorLog>.Instance);
         var orchestratorRunner = new OrchestratorRunner(claude, NullLogger<OrchestratorRunner>.Instance);
@@ -253,8 +471,6 @@ public sealed class FollowUpAdmissionServiceTests : IDisposable
         var taskAccess = new AgentStudio.TaskAccess.TaskAccessService(
             scanner, mutations, states, transitions, indexCache,
             NullLogger<AgentStudio.TaskAccess.TaskAccessService>.Instance);
-        var timeline = new AgentStudio.Tasks.TimelineLog(NullLogger<AgentStudio.Tasks.TimelineLog>.Instance);
-
         // A persisted orchestrator session makes ProjectRunner's boot a no-op,
         // so activating the runner never reaches for a real CLI.
         orchestratorSessions.Write(_watchPath, new OrchestratorSession(
@@ -280,7 +496,7 @@ public sealed class FollowUpAdmissionServiceTests : IDisposable
             runnerIdentity: RunnerIdentity.Resolve(config));
 
         Assert.True(service.EnsureRunner(scanner.GetWatchPaths().First()), "the test runner must activate");
-        return new Harness(service, scanner, settings, router);
+        return new Harness(service, scanner, settings, router, mutations, transitions, sessions, timeline);
     }
 
     private static ProjectRunner ResolveRunner(TaskRunnerService service)

@@ -23,7 +23,7 @@ import type {
   CliType,
   ReviewEvidenceEntry,
 } from '../../models/task.model';
-import { CLI_TYPES, TaskState } from '../../models/task.model';
+import { CLI_TYPES, TaskState, isTerminalTaskState } from '../../models/task.model';
 import type { CliModelInfo } from '../../features/cli';
 import { TaskService } from '../../services/task.service';
 import { CliCatalogStore } from '../cli';
@@ -784,7 +784,7 @@ export class TaskDetailComponent implements OnDestroy {
   });
 
   readonly showQueuedFollowUp = computed<boolean>(() => {
-    if (this.isRunning()) return false;
+    if (this.isRunning() || isTerminalTaskState(this.detail().info.state)) return false;
     return this.queuedFollowUp() || !!this.detail().info.pendingIntent;
   });
 
@@ -794,7 +794,7 @@ export class TaskDetailComponent implements OnDestroy {
    * steer is gone" without opening the job folder (AGT-2747).
    */
   readonly showPendingFollowUp = computed<boolean>(() => {
-    if (this.isRunning()) return false;
+    if (this.isRunning() || isTerminalTaskState(this.detail().info.state)) return false;
     return !!this.detail().info.pendingIntent;
   });
 

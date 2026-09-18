@@ -40,6 +40,25 @@ describe('task timeline presentation', () => {
     expect(timelineDetailEntries(completed)).toEqual([]);
   });
 
+  it('identifies the run that consumed a follow-up and completion supersession', () => {
+    const delivered = event({
+      kind: TIMELINE_KIND.followUpConsumed,
+      runId: 'run-42',
+      summary: 'Follow-up delivered to run run-42 (steer).',
+      details: { state: 'delivered', mode: 'steer', author: 'human:owner' },
+    });
+    const superseded = event({
+      kind: TIMELINE_KIND.followUpSuperseded,
+      summary: 'Queued follow-up superseded by task completion.',
+      details: { state: 'superseded-by-completion' },
+    });
+
+    expect(timelineEventTitle(delivered)).toBe('Follow-up delivered to run run-42');
+    expect(timelineEventTitle(superseded)).toBe('Follow-up superseded by completion');
+    expect(timelineEventSummary(delivered)).toBeNull();
+    expect(timelineEventSummary(superseded)).toBeNull();
+  });
+
   it('removes generated lifecycle wording already carried by the title', () => {
     const started = event({
       kind: TIMELINE_KIND.agentRunStarted,
