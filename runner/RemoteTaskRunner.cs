@@ -1058,14 +1058,16 @@ public sealed class RemoteTaskRunner
     {
         var envelope = WorkerResourceEnvelope.FromOptions(_options);
         var usage = WorkerCgroup.ReadUsageFor(slot.WorkerDirectory);
+        // AGT-2868: the release kills whatever the run left behind in its own
+        // cgroup, so the count has to be taken before the line is composed.
+        var leftovers = WorkerCgroup.ReleaseFor(slot.WorkerDirectory);
         var line = usage is null
             ? $"[runner] worker-envelope attempt={slot.AttemptId} applied=no {envelope.Describe()}; "
               + "no per-worker cgroup on this host, so CPU seconds and peak tasks were not measured"
             : $"[runner] worker-envelope attempt={slot.AttemptId} applied=yes "
-              + $"{envelope.Describe()} {usage.Describe()}";
+              + $"{envelope.Describe()} {usage.Describe()} killedLeftovers={leftovers}";
         _log(line);
         shipper.Add("system", line);
-        WorkerCgroup.ReleaseFor(slot.WorkerDirectory);
     }
 
     private async Task<bool> HandOffForDaemonRestartAsync(

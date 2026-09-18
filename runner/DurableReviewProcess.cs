@@ -107,6 +107,7 @@ internal sealed class DurableReviewProcess
             WorkingDirectory = slot.WorkspacePath,
         };
         foreach (var argument in launch.Arguments) start.ArgumentList.Add(argument);
+        ApplyWorkerEnvironment(start.Environment);
         var process = Process.Start(start)
                       ?? throw new InvalidOperationException("Failed to start detached review worker.");
         var started = process.StartTime.ToUniversalTime();
@@ -122,6 +123,20 @@ internal sealed class DurableReviewProcess
         process.Dispose();
         return handle;
     }
+
+    /// <summary>
+    /// AGT-2868: the review worker carries the same build-server fence as the
+    /// coding worker. <see cref="ReviewBuildServerIsolation"/> already fences a
+    /// prepared review plan's own commands, but the fence has to exist one level
+    /// higher as well: the seven 1.7-day-old MSBuild nodes that blocked cgroup
+    /// delegation on <c>agent-runner-review</c> on 18.09.2026 came from builds
+    /// started before a plan's environment applied, and a node started with
+    /// reuse enabled outlives the worker whatever the plan does afterwards.
+    /// Credentials are not filtered here: a review worker resolves them from its
+    /// own spec through <see cref="RunnerOptions.ReviewCredentialEnvironment"/>.
+    /// </summary>
+    internal static void ApplyWorkerEnvironment(IDictionary<string, string?> environment)
+        => WorkerBuildServerHygiene.ApplyTo(environment);
 
     /// <summary>
     /// Fills in worker provenance a pre-AGT-2863 daemon never stamped, using the
@@ -361,7 +376,7 @@ internal sealed class DurableReviewProcess
                 ?? RunnerOptions.EnvIntAllowingZero("RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS", 900),
         };
 
-    public static async Task<int> RunWorkerAsync(string specPath)
+    public static async Task<int> RunWorkerAsync(string specPath, bool shutdownBuildServers = false)
     {
         var spec = JsonSerializer.Deserialize<DetachedReviewSpec>(
                        await File.ReadAllTextAsync(specPath),
@@ -428,6 +443,11 @@ internal sealed class DurableReviewProcess
                 $"Detached review worker failed: {exception.Message}",
                 DateTime.UtcNow);
         }
+
+        // AGT-2868: ahead of the result file, which is what lets the daemon tear
+        // this worker's cgroup down. A shutdown started afterwards would race
+        // that teardown and be counted as a leftover it had to kill.
+        if (shutdownBuildServers) WorkerBuildServerHygiene.ShutdownBuildServers();
 
         if (!await WriteAtomicAsync(
             Path.Combine(directory, "review-result.json"),

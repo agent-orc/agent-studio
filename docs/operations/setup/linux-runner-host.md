@@ -221,6 +221,33 @@ sudo npm install --global --prefix /usr/local \
 npx playwright install --with-deps chromium
 ```
 
+### Kernel limits for parallel test suites
+
+An agent host runs several .NET and Node test suites at once, and each `dotnet
+test`, file watcher, and dev-stack fixture takes inotify instances per process.
+On 18.09.2026 four parallel `backend.Tests` suites exhausted the kernel default
+of 128 instances and 18 unrelated `TaskServer.Tests` in the concurrent promotion
+gate failed with `The configured user limit (128) on the number of inotify
+instances has been reached`. That is an infrastructure failure graded as a
+product failure, so the host declares the limits instead of discovering them.
+
+`remote-runner-onboard.sh` writes and applies them; a host provisioned by hand
+needs the same file:
+
+```bash
+sudo tee /etc/sysctl.d/90-agent-runner.conf >/dev/null <<'EOF'
+fs.inotify.max_user_instances = 1024
+fs.inotify.max_user_watches = 1048576
+EOF
+sudo sysctl --load /etc/sysctl.d/90-agent-runner.conf
+sysctl -n fs.inotify.max_user_instances fs.inotify.max_user_watches
+```
+
+Host checklist: `fs.inotify.max_user_instances` is at least **1024** and
+`fs.inotify.max_user_watches` is at least **1048576**. Onboarding fails the
+kernel-limits phase rather than continuing when either value is still below
+target after applying the file.
+
 ### CLI version policy and managed updates
 
 The Task Server release owns pinned targets for Codex CLI and Claude Code. The
@@ -850,18 +877,56 @@ reattaches exactly as before and reads the same `cpu.stat`. Worker cgroups of a
 previous generation whose processes are gone are swept at daemon start; one that
 still holds a worker is not empty and is never removed.
 
+**Nothing outlives its worker (AGT-2868).** The first rollout of the envelope
+delegated on neither role unit of this host. cgroup v2 refuses to enable
+controllers while any process sits directly in the unit cgroup, and what sat
+there were seven MSBuild worker nodes on the review unit, two more plus six
+`qs-dev-stack` fixture servers and a stopped `git remote-https` on the coding
+unit, between 1.7 and 20 days old. No worker owned them any more, and
+`KillMode=process` carried them across every restart. The envelope logged
+`applied=no` and every run continued uncapped, so the protection did not exist
+on a host that had run anything before. Three changes close that, in the order
+a leftover would have to get past them:
+
+1. *No build server is started in the first place.* Every detached coding and
+   review worker is launched with `MSBUILDDISABLENODEREUSE=1` and
+   `DOTNET_CLI_USE_MSBUILD_SERVER=0`, which every build the agent starts
+   inherits. This is the only place the runner can fence it: the agent writes
+   its own `dotnet` command lines. The worker additionally runs
+   `dotnet build-server shutdown` once its work is done and before it writes its
+   result file, because that file is what releases the cgroup below. A fenced
+   review plan keeps its own stricter isolation on top (see *Review parallelism
+   and build-server isolation*).
+2. *Worker teardown kills the worker's cgroup.* A worker's process tree is its
+   cgroup, so whatever is still in `worker-<attempt>/` when the run ends is a
+   leftover by definition: test fixtures, dev servers, and watchers cannot
+   survive the run. The `worker-envelope` line reports how many were killed.
+3. *Daemon start empties the unit cgroup.* Before asking for delegation, the
+   daemon lists `cgroup.procs` of its own unit cgroup, logs everything that is
+   not itself with pid, age, command, and the worker generation it belonged to
+   when that can be resolved, and moves it into a `strays/` leaf. A stray that
+   belongs to a generation this daemon is not adopting and is older than
+   `RUNNER_RUN_TIMEOUT_SECONDS` is also killed. Parked strays are judged again on
+   every start, so one that was merely too young or not yet attributable does
+   not retire in the leaf. Membership in the unit cgroup is the only signal;
+   there is no name matching, so an operator shell or an unrelated build on the
+   host is never a target.
+
 **Reading the report.** Every finished run logs one line, in the journal and in
 the run summary shipped with the delivery:
 
 ```
 [runner] worker-envelope attempt=<id> applied=yes cores=12 slots=4 coresPerSlot=3.00 \
-  cpuQuota=600% cpuWeight=100 tasksMax=384 cpuSeconds=2000.5 peakTasks=271
+  cpuQuota=600% cpuWeight=100 tasksMax=384 cpuSeconds=2000.5 peakTasks=271 \
+  killedLeftovers=0
 ```
 
 `applied=no` means the host could not carry an envelope; the line then names
 what is missing and the run continues uncapped. `cpuSeconds` is what the card
 actually cost, so a run that needed 2,000 CPU seconds of real work is
-distinguishable from one that spun.
+distinguishable from one that spun. `killedLeftovers` above zero means the run
+left processes behind in its own cgroup; they are gone, but a fixture that keeps
+appearing there is a test defect worth a card.
 
 ```bash
 # What is in force right now for a running worker.
@@ -869,15 +934,25 @@ systemctl show agent-runner.service -p Delegate -p DelegateSubgroup
 cat /sys/fs/cgroup/system.slice/agent-runner.service/worker-*/cpu.max
 cat /sys/fs/cgroup/system.slice/agent-runner.service/worker-*/pids.max
 
-# What the envelope refused.
+# Processes no worker owns any more. Empty on a healthy host; the daemon parks
+# whatever it finds in the unit cgroup here at start.
+cat /sys/fs/cgroup/system.slice/agent-runner.service/cgroup.procs
+cat /sys/fs/cgroup/system.slice/agent-runner.service/strays/cgroup.procs
+
+# What the envelope refused, and what the startup sweep found.
 journalctl -u agent-runner -g 'worker-envelope|worker cgroup attach failed'
+journalctl -u agent-runner -g 'unit cgroup stray|unit cgroup sweep'
 ```
 
 **Troubleshooting.** `... not in a 'daemon' subgroup` means the unit is missing
 `DelegateSubgroup=daemon` (or the host predates systemd 254);
 `... cannot delegate ...` means it is missing `Delegate=cpu pids`. Both are
 fixed by re-running `remote-runner-onboard.sh` for that role followed by
-`systemctl daemon-reload`. `... the cpu and pids controllers are not delegated
+`systemctl daemon-reload`. `... cannot delegate ... (Device or resource busy)`
+on a host that has run before was the AGT-2868 failure: processes no worker owns
+any more were sitting in the unit cgroup. The startup sweep now moves them out
+before the controller write, so this should not recur; if it does, the sweep
+lines in the journal name every process it found and what it did with it. `... the cpu and pids controllers are not delegated
 to this subtree` means the lines are present but systemd has not applied them
 yet, which a restart of that role fixes. A card that legitimately
 needs more than its envelope is a slot-count question, not a quota question:

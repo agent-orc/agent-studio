@@ -337,7 +337,7 @@ public sealed class RemoteReviewDaemon
             nextSlotReconciliation = DateTime.UtcNow.AddMinutes(1);
             idleWatchdog.RecordActiveSlots(active.Count);
             LogSlotHygiene(force: true);
-            AnnounceWorkerEnvelope(persistedAtStartup.Select(slot => slot.WorkerDirectory));
+            AnnounceWorkerEnvelope(persistedAtStartup);
 
             var capabilityGeneration = DateTime.UtcNow.Ticks;
             await AdvertiseCapabilitiesWithControlAsync(capabilityGeneration, shutdown);
@@ -735,7 +735,7 @@ public sealed class RemoteReviewDaemon
     /// whose processes are gone. A cgroup that still holds a surviving detached
     /// worker is not empty and is therefore never swept.
     /// </summary>
-    private void AnnounceWorkerEnvelope(IEnumerable<string> retainedWorkerDirectories)
+    private void AnnounceWorkerEnvelope(IReadOnlyList<PersistedReviewSlot> retained)
     {
         if (!_options.WorkerEnvelopeEnabled)
         {
@@ -747,9 +747,39 @@ public sealed class RemoteReviewDaemon
         _log($"worker resource envelope {envelope.Describe()} "
              + $"(coding={_options.HostCodingSlots} review={_options.HostReviewSlots} "
              + $"burst={_options.WorkerCpuBurst:0.0}x)");
-        var root = WorkerCgroup.EnsureDelegationRoot(message => _log(message));
+        var root = WorkerCgroup.EnsureDelegationRoot(
+            message => _log(message),
+            StraySweepContextFor(retained));
         if (root is not null)
-            WorkerCgroup.SweepAbandoned(root, retainedWorkerDirectories, message => _log(message));
+            WorkerCgroup.SweepAbandoned(
+                root,
+                retained.Select(slot => slot.WorkerDirectory),
+                message => _log(message));
+    }
+
+    /// <summary>
+    /// AGT-2868: which directories can name the generation a stray belonged to.
+    /// The review unit is where the seven orphaned MSBuild nodes were found, and
+    /// they were all started below the review work root, so the attempt
+    /// directory alone already attributes them.
+    /// </summary>
+    private StraySweepContext StraySweepContextFor(IReadOnlyList<PersistedReviewSlot> retained)
+    {
+        var roots = new List<StrayGenerationRoot>
+        {
+            new(_options.ReviewWorkDir),
+            new(_options.StateDir),
+        };
+        foreach (var slot in retained)
+        {
+            var attemptId = slot.Claim.Attempt?.AttemptId;
+            if (attemptId is null) continue;
+            roots.Add(new StrayGenerationRoot(slot.WorkspacePath, attemptId));
+            roots.Add(new StrayGenerationRoot(slot.WorkerDirectory, attemptId));
+        }
+        return new StraySweepContext(
+            TimeSpan.FromSeconds(Math.Max(1, _options.RunTimeoutSeconds)),
+            roots);
     }
 
     private sealed class ReviewStartupControlException : Exception

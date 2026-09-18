@@ -446,13 +446,16 @@ public sealed class RemoteReviewExecutor
     {
         var envelope = WorkerResourceEnvelope.FromOptions(_options);
         var usage = WorkerCgroup.ReadUsageFor(slot.WorkerDirectory);
+        // AGT-2868: releasing the cgroup kills the test fixtures, dev servers,
+        // and watchers a review plan left running, so the count is taken before
+        // the line is composed.
+        var leftovers = WorkerCgroup.ReleaseFor(slot.WorkerDirectory);
         _log(usage is null
             ? $"review worker-envelope attempt={slot.Claim.Attempt!.AttemptId} applied=no "
               + $"{envelope.Describe()}; no per-worker cgroup on this host, so CPU seconds "
               + "and peak tasks were not measured"
             : $"review worker-envelope attempt={slot.Claim.Attempt!.AttemptId} applied=yes "
-              + $"{envelope.Describe()} {usage.Describe()}");
-        WorkerCgroup.ReleaseFor(slot.WorkerDirectory);
+              + $"{envelope.Describe()} {usage.Describe()} killedLeftovers={leftovers}");
     }
 
     private async Task<int> SubmitReportAndCleanupAsync(

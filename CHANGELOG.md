@@ -12,6 +12,24 @@ release yet.
 
 ## [Unreleased]
 
+### Fixed
+
+- Runner hosts no longer accumulate processes that outlive their run. Detached
+  coding and review workers start with `MSBUILDDISABLENODEREUSE=1` and
+  `DOTNET_CLI_USE_MSBUILD_SERVER=0` and shut the build servers down on teardown,
+  worker teardown kills whatever is left in the worker cgroup and reports the
+  count on the `worker-envelope` line, and daemon start moves processes no
+  worker owns any more out of the unit cgroup (killing only aged strays of
+  finished attempts) so cgroup delegation succeeds on a host that has run
+  before instead of logging `applied=no` and running uncapped (AGT-2868).
+
+### Added
+
+- Onboarding declares the kernel limits parallel test suites need:
+  `/etc/sysctl.d/90-agent-runner.conf` sets `fs.inotify.max_user_instances` to
+  1024 and `fs.inotify.max_user_watches` to 1048576, applies them, and verifies
+  both before the systemd phase (AGT-2868).
+
 ## [0.8.0] - 2026-09-18
 
 Operations release. Every detached coding and review worker on a Linux runner

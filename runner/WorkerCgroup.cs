@@ -148,8 +148,13 @@ internal sealed class WorkerCgroup
     /// Resolve (once) the cgroup directory this daemon may create children in,
     /// stepping into the <c>daemon/</c> leaf first when systemd has not already
     /// placed us in one.
+    ///
+    /// <para><paramref name="strays"/> is supplied by the daemon's startup
+    /// announcement and by nobody else. Resolution is cached, so the sweep it
+    /// carries runs exactly once per daemon generation, before the first worker
+    /// asks for an envelope (AGT-2868).</para>
     /// </summary>
-    internal static string? EnsureDelegationRoot(Action<string> log)
+    internal static string? EnsureDelegationRoot(Action<string> log, StraySweepContext? strays = null)
     {
         lock (ResolveGate)
         {
@@ -161,7 +166,7 @@ internal sealed class WorkerCgroup
                 log("[runner] worker resource envelope unavailable: /proc/self/cgroup has no unified entry");
                 return _delegationRoot = null;
             }
-            _delegationRoot = TryPrepareDelegationRoot(DefaultMountRoot, relative, log);
+            _delegationRoot = TryPrepareDelegationRoot(DefaultMountRoot, relative, log, strays);
             return _delegationRoot;
         }
     }
@@ -175,7 +180,8 @@ internal sealed class WorkerCgroup
     internal static string? TryPrepareDelegationRoot(
         string mountRoot,
         string selfCgroupRelativePath,
-        Action<string> log)
+        Action<string> log,
+        StraySweepContext? strays = null)
     {
         var own = Path.GetFullPath(Path.Combine(
             mountRoot,
@@ -212,6 +218,12 @@ internal sealed class WorkerCgroup
         {
             if (!File.Exists(Path.Combine(root, "cgroup.subtree_control")))
                 throw new IOException($"{root} is not a cgroup v2 directory");
+            // AGT-2868: processes no worker owns any more sit directly in the
+            // unit cgroup on every host that has run before, and cgroup v2
+            // refuses the controller write below while any of them is there.
+            // Emptying the cgroup first is what makes delegation succeed on a
+            // used host instead of logging applied=no for the rest of its life.
+            if (strays is not null) UnitCgroupStraySweep.Sweep(root, strays, log);
             EnableControllers(root);
             // The daemon leaf outranks its workers so lease renewal cannot be
             // starved by the run it is keeping alive.
@@ -330,11 +342,52 @@ internal sealed class WorkerCgroup
         }
     }
 
-    /// <summary>Remove the worker cgroup of a finished run. Silent when there was none.</summary>
-    internal static void ReleaseFor(string workerDirectory)
+    /// <summary>
+    /// Tear down the worker cgroup of a finished run and return how many
+    /// processes were still in it. Silent when there was none.
+    ///
+    /// <para>AGT-2868: a worker's process tree is its cgroup, so whatever is
+    /// still in <c>worker-&lt;attempt&gt;/</c> after the worker wrote its
+    /// terminal result is a leftover by definition, whether it is an MSBuild
+    /// node, a <c>qs-dev-stack</c> fixture, a dev server, or a file watcher.
+    /// Before this, such a process was reparented to init, kept the run's
+    /// working directory alive, and survived every later daemon restart because
+    /// <c>KillMode=process</c> deliberately does not touch it. The count is
+    /// reported on the <c>worker-envelope</c> line so a fixture that leaks is
+    /// visible in the journal instead of only in a cgroup listing days
+    /// later.</para>
+    /// </summary>
+    internal static int ReleaseFor(string workerDirectory)
     {
         var directory = ReadMarker(workerDirectory);
-        if (directory is not null) TryRemove(directory);
+        if (directory is null) return 0;
+        var killed = KillResidents(directory);
+        TryRemove(directory);
+        return killed;
+    }
+
+    /// <summary>
+    /// Kill everything left in one worker cgroup and return how many processes
+    /// that was. <c>cgroup.kill</c> (kernel 5.14 and newer) kills the whole
+    /// subtree atomically, which is the only variant a forking leftover cannot
+    /// escape; older kernels fall back to a signal per pid.
+    /// </summary>
+    internal static int KillResidents(string cgroupDirectory)
+    {
+        var procs = Path.Combine(cgroupDirectory, "cgroup.procs");
+        var residents = ReadResidentPids(procs);
+        if (residents.Count == 0) return 0;
+
+        var killSwitch = Path.Combine(cgroupDirectory, "cgroup.kill");
+        if (!TryWriteValue(killSwitch, "1"))
+            foreach (var pid in residents) TryKill(pid);
+
+        // The kernel reaps asynchronously, and rmdir below refuses while the
+        // cgroup is still populated. A short bounded wait keeps the directory
+        // from being left behind for the next generation's sweep.
+        for (var attempt = 0; attempt < 20 && ReadResidentPids(procs).Count > 0; attempt++)
+            Thread.Sleep(50);
+        return residents.Count;
     }
 
     /// <summary>
@@ -429,6 +482,61 @@ internal sealed class WorkerCgroup
             exception is IOException or UnauthorizedAccessException or ArgumentException)
         {
             return false;
+        }
+    }
+
+    private static IReadOnlyList<int> ReadResidentPids(string procsPath)
+    {
+        try
+        {
+            if (!File.Exists(procsPath)) return [];
+            return File.ReadAllLines(procsPath)
+                .Select(line => line.Trim())
+                .Where(line => line.Length > 0)
+                .Select(line => int.TryParse(line, NumberStyles.Integer, CultureInfo.InvariantCulture, out var pid)
+                    ? pid
+                    : 0)
+                .Where(pid => pid > 0)
+                .Distinct()
+                .ToArray();
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return [];
+        }
+    }
+
+    private static bool TryWriteValue(string path, string value)
+    {
+        try
+        {
+            if (!File.Exists(path)) return false;
+            File.WriteAllText(path, value);
+            return true;
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    private static void TryKill(int pid)
+    {
+        try
+        {
+            using var process = System.Diagnostics.Process.GetProcessById(pid);
+            process.Kill(entireProcessTree: false);
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException
+                or InvalidOperationException
+                or System.ComponentModel.Win32Exception
+                or NotSupportedException)
+        {
+            // Already gone, or not ours to kill. The next generation's startup
+            // sweep sees whatever survives.
         }
     }
 
