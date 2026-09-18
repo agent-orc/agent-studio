@@ -25,17 +25,20 @@ public sealed class PickupHoldSweep
     private readonly ProjectSettingsService _projectSettings;
     private readonly ILogger<PickupHoldSweep> _logger;
     private readonly TimeProvider _clock;
+    private readonly AttemptAuthorityService? _attemptAuthority;
 
     public PickupHoldSweep(
         TaskScannerService scanner,
         ProjectSettingsService projectSettings,
         ILogger<PickupHoldSweep> logger,
-        TimeProvider? clock = null)
+        TimeProvider? clock = null,
+        AttemptAuthorityService? attemptAuthority = null)
     {
         _scanner = scanner;
         _projectSettings = projectSettings;
         _logger = logger;
         _clock = clock ?? TimeProvider.System;
+        _attemptAuthority = attemptAuthority;
     }
 
     /// <summary>
@@ -62,6 +65,20 @@ public sealed class PickupHoldSweep
             if (!PickupHoldPolicy.IsPickupLane(task.State)) continue;
 
             var waitsOn = task.References?.DependsOn.Count > 0 ? index.EvaluateWaitsOn(task) : null;
+            if (waitsOn is not null && _attemptAuthority is not null)
+            {
+                waitsOn = waitsOn with
+                {
+                    Items = waitsOn.Items.Select(item =>
+                    {
+                        var review = _attemptAuthority.GetTaskProjection(item.Key).CurrentReviewAttempt;
+                        var active = review is { State: AttemptLifecycleState.Pending }
+                            || review is { State: AttemptLifecycleState.Leased, Lease: { } lease }
+                               && lease.ExpiresAt > now;
+                        return item with { TargetHasActiveReviewAttempt = active };
+                    }).ToList(),
+                };
+            }
             var hold = PickupHoldPolicy.Evaluate(new PickupHoldFacts(
                 Task: task,
                 WaitsOn: waitsOn,

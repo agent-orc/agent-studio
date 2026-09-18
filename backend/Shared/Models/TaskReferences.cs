@@ -143,7 +143,7 @@ public static class TaskReferenceKinds
 /// <summary>
 /// Body for <c>PUT /api/tasks/{id}/references</c>. Replace-all: each supplied
 /// list becomes the full set for that relation kind. A null list is treated as
-/// empty so a partial body clears the omitted kinds — callers should send the
+/// empty so a partial body clears the omitted kinds; callers should send the
 /// whole desired state. The endpoint validates the result before persisting.
 /// </summary>
 public record SetTaskReferencesRequest
@@ -167,6 +167,24 @@ public record SetTaskReferencesRequest
         RaisedFollowUps = RaisedFollowUps ?? [],
         Workbenches = Workbenches ?? [],
     });
+}
+
+/// <summary>
+/// Audited incremental edit for <c>PUT /api/tasks/{id}/waits-on</c>. Add and
+/// remove may be combined to re-point an edge atomically. A human-readable
+/// reason is mandatory because changing execution order is an operator decision.
+/// </summary>
+public sealed record EditTaskWaitsOnRequest
+{
+    public List<TaskDependencyReference> Add { get; init; } = [];
+    public List<string> Remove { get; init; } = [];
+    public string Reason { get; init; } = "";
+
+    /// <summary>
+    /// Refuse to remove an edge unless it still participates in a cycle. Used
+    /// by cycle decision cards so a stale click cannot delete an unrelated edge.
+    /// </summary>
+    public bool RequireCycleEdge { get; init; }
 }
 
 /// <summary>Failure category for a single rejected reference edge.</summary>

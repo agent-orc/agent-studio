@@ -1,6 +1,8 @@
-import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
-import type { PickupHoldStatus, TaskInfo } from '../../models/task.model';
+import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
+import type { PickupHoldResolution, PickupHoldStatus, TaskInfo } from '../../models/task.model';
 import { AppTooltipDirective } from '../tooltip/app-tooltip.directive';
+import { TaskService } from '../../services/task.service';
+import type { Observable } from 'rxjs';
 
 export type PickupHoldVariant = 'card' | 'detail';
 
@@ -11,6 +13,50 @@ const MECHANISM_LABELS: Record<string, string> = {
   'epic-container': 'Epic container',
   'crash-backoff': 'Crash cooldown',
   'pickup-policy': 'Pickup policy',
+};
+
+export const PICKUP_HOLD_RESOLUTION_KINDS = {
+  dropDependency: 'drop-dependency',
+  repointDependency: 'repoint-dependency',
+  archiveWaitingCard: 'archive-waiting-card',
+  dropCycleEdge: 'drop-cycle-edge',
+  releaseTarget: 'release-target',
+  dropReleaseGate: 'drop-release-gate',
+  awaitTarget: 'await-target',
+  restoreRunnerCapability: 'restore-runner-capability',
+  retryDispatch: 'retry-dispatch',
+  decomposeEpic: 'decompose-epic',
+  waitOutBackoff: 'wait-out-backoff',
+  assignAgent: 'assign-agent',
+  passIntake: 'pass-intake',
+  decideEscalation: 'decide-escalation',
+} as const;
+
+export type PickupHoldResolutionKind =
+  typeof PICKUP_HOLD_RESOLUTION_KINDS[keyof typeof PICKUP_HOLD_RESOLUTION_KINDS];
+export type PickupHoldResolutionActionability = 'handled' | 'non-actionable';
+
+/**
+ * Complete UI contract for every resolution kind emitted by the backend.
+ * A new kind must be deliberately assigned before it can become clickable.
+ */
+export const PICKUP_HOLD_RESOLUTION_ACTIONABILITY: Readonly<
+  Record<PickupHoldResolutionKind, PickupHoldResolutionActionability>
+> = {
+  'drop-dependency': 'handled',
+  'repoint-dependency': 'handled',
+  'archive-waiting-card': 'handled',
+  'drop-cycle-edge': 'handled',
+  'release-target': 'non-actionable',
+  'drop-release-gate': 'non-actionable',
+  'await-target': 'non-actionable',
+  'restore-runner-capability': 'non-actionable',
+  'retry-dispatch': 'non-actionable',
+  'decompose-epic': 'non-actionable',
+  'wait-out-backoff': 'non-actionable',
+  'assign-agent': 'non-actionable',
+  'pass-intake': 'non-actionable',
+  'decide-escalation': 'non-actionable',
 };
 
 /**
@@ -24,9 +70,8 @@ const MECHANISM_LABELS: Record<string, string> = {
  *
  * The projection behind it (`TaskInfo.pickupHold`) is derived server-side from
  * the same facts the runner admission gate consults, so this component states
- * the decision rather than re-deriving it. It offers the ways out and never
- * takes one: releasing a validation gate is an operator decision about whether
- * the validation still has to happen.
+ * the decision rather than re-deriving it. Only resolution kinds with complete
+ * handlers are interactive; the others remain explanatory text.
  */
 @Component({
   selector: 'app-pickup-hold',
@@ -37,13 +82,21 @@ const MECHANISM_LABELS: Record<string, string> = {
   styleUrl: './pickup-hold.component.scss',
 })
 export class PickupHoldComponent {
+  private readonly tasks = inject(TaskService, { optional: true });
   readonly task = input.required<TaskInfo>();
   readonly variant = input<PickupHoldVariant>('card');
 
   readonly hold = computed<PickupHoldStatus | null>(() => this.task().pickupHold ?? null);
 
   /** `open` for an honest wait, `blocked` for a gate that can never open. */
-  readonly tone = computed(() => (this.hold()?.unsatisfiable ? 'blocked' : 'open'));
+  readonly tone = computed(() => ((this.hold()?.classification === 'unsatisfiable' || this.hold()?.unsatisfiable) ? 'blocked'
+    : this.hold()?.classification === 'stalled' ? 'stalled' : 'open'));
+
+  readonly classificationLabel = computed(() => {
+    const classification = this.hold()?.classification
+      ?? (this.hold()?.unsatisfiable ? 'unsatisfiable' : 'satisfiable-soon');
+    return titleCase(classification);
+  });
 
   readonly mechanismLabel = computed(() => {
     const mechanism = this.hold()?.mechanism ?? '';
@@ -57,8 +110,10 @@ export class PickupHoldComponent {
   readonly headline = computed(() => {
     const hold = this.hold();
     if (!hold) return '';
-    return hold.unsatisfiable
+    return hold.classification === 'unsatisfiable' || hold.unsatisfiable
       ? 'Held: this cannot clear by itself'
+      : hold.classification === 'stalled'
+        ? 'Held: prerequisite needs attention'
       : 'Held: not pickable right now';
   });
 
@@ -91,8 +146,85 @@ export class PickupHoldComponent {
   });
 
   readonly resolutions = computed(() => this.hold()?.resolutions ?? []);
+  readonly mutationPending = signal(false);
+  readonly mutationError = signal<string | null>(null);
+  readonly mutationNotice = signal<string | null>(null);
 
-  readonly resolutionKind = (_: number, resolution: { kind: string }): string => resolution.kind;
+  readonly resolutionIdentity = (_: number, resolution: PickupHoldResolution): string =>
+    `${resolution.kind}:${resolution.sourceKey ?? ''}:${resolution.targetKey ?? ''}`;
+
+  canApplyResolution(resolution: PickupHoldResolution): boolean {
+    const kind = resolution.kind as PickupHoldResolutionKind;
+    if (PICKUP_HOLD_RESOLUTION_ACTIONABILITY[kind] !== 'handled') return false;
+    const target = resolution.targetKey?.trim();
+    const source = resolution.sourceKey?.trim();
+    switch (kind) {
+      case 'drop-cycle-edge': return Boolean(source && target);
+      case 'drop-dependency':
+      case 'repoint-dependency': return Boolean(target);
+      case 'archive-waiting-card': return true;
+      default: return false;
+    }
+  }
+
+  applyResolution(resolution: PickupHoldResolution): void {
+    if (this.mutationPending() || !this.canApplyResolution(resolution)) return;
+    if (!this.tasks) {
+      this.mutationError.set('The dependency decision service is unavailable.');
+      return;
+    }
+    const task = this.task();
+    const target = resolution.targetKey?.trim();
+    const source = resolution.sourceKey?.trim();
+    if (resolution.kind === 'drop-cycle-edge' && source && target) {
+      this.runMutation(this.tasks.editTaskWaitsOn(source, {
+        remove: [target],
+        reason: `Operator dropped cycle edge ${source} -> ${target}.`,
+        requireCycleEdge: true,
+      }));
+      return;
+    }
+    if (resolution.kind === 'drop-dependency' && target) {
+      this.runMutation(this.tasks.editTaskWaitsOn(task.id, {
+        remove: [target],
+        reason: `Operator dropped unsatisfiable dependency ${target}.`,
+      }, task.watchPath));
+      return;
+    }
+    if (resolution.kind === 'repoint-dependency' && target) {
+      const successor = window.prompt(`Successor task key for ${target}`)?.trim();
+      if (!successor) return;
+      this.runMutation(this.tasks.editTaskWaitsOn(task.id, {
+        remove: [target], add: [successor],
+        reason: `Operator re-pointed unsatisfiable dependency ${target} to ${successor}.`,
+      }, task.watchPath));
+      return;
+    }
+    if (resolution.kind === 'archive-waiting-card') {
+      this.runMutation(this.tasks.moveJob(
+        task.id, '7-archive', task.watchPath, undefined,
+        'Operator archived a card with an unsatisfiable dependency.'));
+    }
+  }
+
+  private runMutation(request: Observable<unknown>): void {
+    this.mutationPending.set(true);
+    this.mutationError.set(null);
+    this.mutationNotice.set(null);
+    request.subscribe({
+      next: response => {
+        this.mutationPending.set(false);
+        if (response && typeof response === 'object' && 'message' in response
+            && typeof response.message === 'string') {
+          this.mutationNotice.set(response.message);
+        }
+      },
+      error: () => {
+        this.mutationPending.set(false);
+        this.mutationError.set('The dependency decision could not be applied.');
+      },
+    });
+  }
 }
 
 function titleCase(value: string): string {
