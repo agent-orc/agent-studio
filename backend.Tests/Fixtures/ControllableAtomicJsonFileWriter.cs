@@ -10,6 +10,21 @@ internal sealed class ControllableAtomicJsonFileWriter : IAtomicJsonFileWriter
 
     public void Write(string path, string content)
     {
+        CountAndMaybeFail(path);
+        _inner.Write(path, content);
+    }
+
+    // Forwarded rather than left on the interface default so code under test
+    // keeps the real "never re-create the folder" behaviour while the failure
+    // injection above still applies.
+    public void ReplaceExisting(string path, string content)
+    {
+        CountAndMaybeFail(path);
+        _inner.ReplaceExisting(path, content);
+    }
+
+    private void CountAndMaybeFail(string path)
+    {
         int writeNumber;
         lock (_gate)
         {
@@ -20,8 +35,6 @@ internal sealed class ControllableAtomicJsonFileWriter : IAtomicJsonFileWriter
 
         if (ShouldFail?.Invoke(path, writeNumber) == true)
             throw new IOException($"Forced JSON write failure for test: {path} (write {writeNumber}).");
-
-        _inner.Write(path, content);
     }
 
     public int WritesFor(string path)

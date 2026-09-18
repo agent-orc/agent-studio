@@ -74,6 +74,13 @@ public class TaskScannerService : ITaskScanner
     private sealed record LiveFolderSnapshot(LiveFolderFingerprint Fingerprint, TaskInfo Task);
 
     /// <summary>
+    /// Window <see cref="TaskFolderMemoPolicy"/> judges a folder fingerprint
+    /// against. Overridable so tests can pin the decision instead of racing the
+    /// filesystem clock; production leaves it at the policy default.
+    /// </summary>
+    private readonly TimeSpan _folderMemoTimestampGranularity;
+
+    /// <summary>
     /// Watch paths that resolved to a non-existent folder and have already
     /// been warned about. <see cref="ScanAllJobsRaw"/> runs on every cache
     /// refresh, which a busy job's FileSystemWatcher churn can trigger many
@@ -98,13 +105,16 @@ public class TaskScannerService : ITaskScanner
         ILogger<TaskScannerService> logger,
         SummaryGenerationService summaryService,
         FileGenerationIndex? fileGenerationIndex = null,
-        AgentStudio.Registry.ProjectRegistry? projectRegistry = null)
+        AgentStudio.Registry.ProjectRegistry? projectRegistry = null,
+        TimeSpan? folderMemoTimestampGranularity = null)
     {
         _config = config;
         _logger = logger;
         _summaryService = summaryService;
         _fileGenerationIndex = fileGenerationIndex;
         _projectRegistry = projectRegistry;
+        _folderMemoTimestampGranularity =
+            folderMemoTimestampGranularity ?? TaskFolderMemoPolicy.DefaultTimestampGranularity;
     }
 
     /// <summary>
@@ -737,27 +747,45 @@ public class TaskScannerService : ITaskScanner
                 ExternalCompletion = ReadExternalCompletion(raw),
                 RemoteDispatchRejection = ReadRemoteDispatchRejection(raw)
             };
+            // Re-stat first so a self-heal this scan performed itself (the
+            // divergent-id repair above, the ownerClientId migration below) is
+            // captured in the fingerprint; otherwise the next scan sees a fresh
+            // mtime and needlessly misses. A write that recent is also the one
+            // case the fingerprint cannot represent, so it is memoized only once
+            // it has aged past FileTimestampGranularity.
+            taskJsonInfo.Refresh();
+            var memoizable = TaskFolderMemoPolicy.IsMemoizable(
+                taskJsonInfo.LastWriteTimeUtc, DateTime.UtcNow, _folderMemoTimestampGranularity);
             if (isArchive)
             {
-                taskJsonInfo.Refresh();
                 archiveManifestInfo.Refresh();
-                _archivedFolders[jobDir] = new ArchivedFolderSnapshot(
-                    taskJsonInfo.Length,
-                    taskJsonInfo.LastWriteTimeUtc,
-                    archiveManifestInfo.Exists ? archiveManifestInfo.Length : -1L,
-                    archiveManifestInfo.Exists ? archiveManifestInfo.LastWriteTimeUtc : default,
-                    info);
                 _liveFolders.TryRemove(jobDir, out _);
+                if (memoizable)
+                {
+                    _archivedFolders[jobDir] = new ArchivedFolderSnapshot(
+                        taskJsonInfo.Length,
+                        taskJsonInfo.LastWriteTimeUtc,
+                        archiveManifestInfo.Exists ? archiveManifestInfo.Length : -1L,
+                        archiveManifestInfo.Exists ? archiveManifestInfo.LastWriteTimeUtc : default,
+                        info);
+                }
+                else
+                {
+                    _archivedFolders.TryRemove(jobDir, out _);
+                }
             }
             else
             {
                 _archivedFolders.TryRemove(jobDir, out _);
-                // Re-stat first so a divergent-id self-heal (legacy layout, above)
-                // that rewrote task.json this scan is captured in the fingerprint;
-                // otherwise the next scan sees a fresh mtime and needlessly misses.
-                taskJsonInfo.Refresh();
-                _liveFolders[jobDir] = new LiveFolderSnapshot(
-                    ComputeLiveFingerprint(jobDir, taskJsonInfo), info);
+                if (memoizable)
+                {
+                    _liveFolders[jobDir] = new LiveFolderSnapshot(
+                        ComputeLiveFingerprint(jobDir, taskJsonInfo), info);
+                }
+                else
+                {
+                    _liveFolders.TryRemove(jobDir, out _);
+                }
             }
             return info;
         }
@@ -1120,9 +1148,12 @@ public class TaskScannerService : ITaskScanner
         }
         // Migration: stamp the default identity on legacy jobs so attribution is
         // non-null everywhere. Idempotent against re-scans because subsequent
-        // reads find the value above.
-        TaskJsonFile.UpdateField(jobDir, "ownerClientId", DefaultClientIdentity.Id, _logger);
-        _logger.LogInformation("Migrated job folder '{Dir}' to ownerClientId='{Owner}'", jobDir, DefaultClientIdentity.Id);
+        // reads find the value above. The stamp is the one write on this read
+        // path, so it is also the one that can lose a race with a lane writer:
+        // report it only when it actually landed, and let the unwritten case fall
+        // through to the same default the next scan will try to stamp again.
+        if (TaskJsonFile.UpdateField(jobDir, "ownerClientId", DefaultClientIdentity.Id, _logger))
+            _logger.LogInformation("Migrated job folder '{Dir}' to ownerClientId='{Owner}'", jobDir, DefaultClientIdentity.Id);
         return DefaultClientIdentity.Id;
     }
 

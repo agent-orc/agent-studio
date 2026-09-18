@@ -133,6 +133,50 @@ public sealed class AtomicJsonFileWriterTests : IDisposable
         Assert.Equal(["state.json"], Directory.GetFiles(_dir).Select(Path.GetFileName));
     }
 
+    [Fact]
+    public void ReplaceExisting_WhenTheFolderIsGone_FailsInsteadOfRecreatingIt()
+    {
+        // A task.json rewrite belongs to a folder another writer owns and may
+        // move or delete. Re-creating that folder around the swap is what put the
+        // same task in two lanes at once (AGT-2867), so the write has to fail and
+        // leave the tree exactly as the other writer left it.
+        var folder = Path.Combine(_dir, "3-progress", "moved-away");
+        var path = Path.Combine(folder, "task.json");
+        var writer = new AtomicJsonFileWriter();
+        writer.Write(path, """{"id":"moved-away"}""");
+        Directory.Delete(folder, recursive: true);
+
+        Assert.Throws<DirectoryNotFoundException>(
+            () => writer.ReplaceExisting(path, """{"id":"moved-away","ownerClientId":"local-default"}"""));
+        Assert.False(Directory.Exists(folder));
+    }
+
+    [Fact]
+    public void ReplaceExisting_WhenTheFolderIsThere_SwapsTheContentLikeWrite()
+    {
+        var path = Path.Combine(_dir, "state.json");
+        var writer = new AtomicJsonFileWriter();
+        writer.Write(path, """{"version":1}""");
+
+        writer.ReplaceExisting(path, """{"version":2}""");
+
+        Assert.Equal("""{"version":2}""", File.ReadAllText(path));
+        Assert.Equal(["state.json"], Directory.GetFiles(_dir).Select(Path.GetFileName));
+    }
+
+    [Fact]
+    public void Write_KeepsCreatingTheFolder_ForStoresThatOwnTheirOwnDirectory()
+    {
+        // The contrast that keeps the two entry points apart: a state store such
+        // as the project registry legitimately materialises its own folder.
+        var folder = Path.Combine(_dir, "metadata");
+        var path = Path.Combine(folder, "projects.json");
+
+        new AtomicJsonFileWriter().Write(path, """{"projects":[]}""");
+
+        Assert.True(Directory.Exists(folder));
+    }
+
     private static bool IsSharingViolation(IOException exception)
     {
         if (exception is FileNotFoundException or DirectoryNotFoundException) return false;
