@@ -1,6 +1,6 @@
 # Frontend Domain Map
 
-Version: 2026-09-11
+Version: 2026-09-19
 Status: System-of-record map for frontend changes.
 
 Use this when a change touches Angular code, visual design, task-detail,
@@ -123,6 +123,14 @@ Forward resolve the same per-tab entry. The persisted tab collection stores
 the bounded stack with the current target; transient viewer modes remain local
 component state. On hydration, an explicit stable route still wins over the
 persisted active target and reconciles the matching document history entry.
+
+The tab strip keeps project or task identity in a compact prefix chip and the
+title on the same line. Wiki targets carry the catalogue title derived from
+front matter or the first H1, with a humanized path only as a loading fallback.
+Long visible titles are shortened at a word boundary while the full title and
+path remain in the tooltip. Tabs have a legible minimum width and horizontal
+overflow instead of shrinking below that width; active styling and close-button
+alignment are stable in both themes.
 
 The workspace Activity Feed is the embedded `#/feed` main view and is opened
 by the Activity icon. Its 500-event backend snapshot is rendered through a

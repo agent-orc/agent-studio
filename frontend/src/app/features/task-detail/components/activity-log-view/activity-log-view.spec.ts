@@ -338,6 +338,28 @@ describe('ActivityLogViewComponent — conversation history window', () => {
   });
 });
 
+describe('ActivityLogViewComponent runtime sentinels', () => {
+  it('renders known markers as verdict and terminal UI while retaining raw trace text', async () => {
+    const marker = '[[ASPECT_VERDICT: status=concerns; summary=One issue remains; evidence_checked=a.ts,b.spec.ts; missing=none]] [[TASK_DONE]]';
+    const fixture = await renderConversation([{
+      timestamp: '2026-09-18T12:00:00.000Z',
+      stream: 'stdout',
+      text: marker,
+    }]);
+    const host = fixture.nativeElement as HTMLElement;
+
+    expect(host.querySelector('[data-testid="activity-aspect-verdict"]')?.textContent)
+      .toContain('One issue remains');
+    expect(host.querySelector('[data-testid="activity-terminal-sentinel"]')?.textContent)
+      .toContain('Task complete');
+    expect(host.querySelector('[data-testid="activity-log-conversation"]')?.textContent)
+      .not.toContain('[[ASPECT_VERDICT:');
+    expect(fixture.componentInstance.visibleTraceGroups().some(group =>
+      group.lines.some(line => line.text.includes('[[ASPECT_VERDICT:')))).toBe(true);
+    fixture.destroy();
+  });
+});
+
 // AGT-2812: an agent turn that names a Dossier reads as the Dossier, not as a
 // bare key, on the same terms as every other document surface.
 describe('ActivityLogViewComponent - Dossier references', () => {

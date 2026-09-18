@@ -20,13 +20,11 @@
   --ov-label-col: 100px;
   --ov-pipeline-status-col: 16px;
   --ov-pipeline-kind-col: 26px;
-  // The step name is the row's primary information and owns twice the flexible
-  // space of metadata. Both tracks must be allowed to contract all the way to
-  // zero so a split detail pane cannot force the grid wider than its container.
-  // The visible label ellipsizes while its complete explanation stays in the
-  // existing tooltip.
-  --ov-pipeline-name-col: minmax(0, 2fr);
-  --ov-pipeline-meta-col: minmax(0, 1fr);
+  // Aspect conclusions and evidence actions need more room than the step name.
+  // Both tracks can contract to zero; the complete name and summary remain in
+  // their tooltips when the split detail pane is narrow.
+  --ov-pipeline-name-col: minmax(0, 1fr);
+  --ov-pipeline-meta-col: minmax(0, 2fr);
   --ov-pipeline-time-col: 96px;
   --ov-pipeline-tokens-col: 56px;
   --ov-pipeline-cost-col: 11rem;
@@ -744,7 +742,7 @@
     display: flex;
     align-items: center;
     gap: var(--studio-spacing-1);
-    overflow: hidden;
+    overflow: visible;
     white-space: nowrap;
   }
 
@@ -939,8 +937,8 @@
     --ov-pl-grid-cols:
       var(--ov-pipeline-status-col)
       var(--ov-pipeline-kind-col)
-      minmax(0, 3fr)
       minmax(0, 2fr)
+      minmax(0, 3fr)
       var(--ov-pipeline-time-col);
   }
 

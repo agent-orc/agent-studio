@@ -76,6 +76,31 @@ describe('projectStructuredActivityContent', () => {
     expect(JSON.stringify(result.events)).not.toContain('[runner-log-delivery:');
   });
 
+  it('projects aspect and terminal sentinels as status rows without raw marker text', () => {
+    const lines: CliOutputLine[] = [
+      { timestamp: '2026-09-18T10:00:00Z', stream: 'stderr', text: 'OpenAI Codex v0.144.1' },
+      { timestamp: '2026-09-18T10:00:01Z', stream: 'stderr', text: 'codex' },
+      { timestamp: '2026-09-18T10:00:02Z', stream: 'stderr', text: 'Review complete.' },
+      { timestamp: '2026-09-18T10:00:03Z', stream: 'stderr', text: '[[ASPECT_VERDICT: status=concerns; summary=Dead assertion; evidence_checked=a.spec.ts; missing=none]] [[TASK_DONE]]' },
+    ];
+
+    const result = projectStructuredActivityContent(lines, 'AGT-2794');
+
+    expect(result.events).toContainEqual(expect.objectContaining({
+      kind: 'system.status',
+      category: 'aspect-verdict',
+      label: 'Passed with concerns',
+      explanation: expect.stringContaining('Evidence: a.spec.ts'),
+    }));
+    expect(result.events).toContainEqual(expect.objectContaining({
+      kind: 'system.status',
+      category: 'result',
+      label: 'Task complete',
+    }));
+    expect(JSON.stringify(result.events)).not.toContain('ASPECT_VERDICT');
+    expect(JSON.stringify(result.events)).not.toContain('TASK_DONE');
+  });
+
   it('keeps markup file-tool payloads out of agent Markdown', () => {
     const at = (index: number) => `2026-07-29T22:15:${String(index).padStart(2, '0')}.000Z`;
     const lines: CliOutputLine[] = [

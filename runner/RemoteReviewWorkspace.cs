@@ -2100,18 +2100,24 @@ public sealed class RemoteReviewWorkspace
 
     private static ReviewVerdictDto ParseVerdict(ReviewCommandDto command, ProcessResult result)
     {
-        var marker = result.StdOut.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
-            .LastOrDefault(line => line.Contains("[[ASPECT_VERDICT:", StringComparison.Ordinal));
+        var marker = AspectVerdictMarkerParser.ParseLast(result.StdOut);
         if (marker is not null)
         {
-            var status = Field(marker, "status") ?? (result.Success ? "pass" : "block");
+            var status = string.IsNullOrWhiteSpace(marker.Status)
+                ? result.Success ? "pass" : "block"
+                : marker.Status;
+            var summary = string.IsNullOrWhiteSpace(marker.Summary)
+                ? $"Remote aspect '{command.Aspect}' returned {status}."
+                : marker.Summary;
+            if (!string.IsNullOrWhiteSpace(marker.Detail))
+                summary += $" Detail: {marker.Detail}";
             return new ReviewVerdictDto(
                 command.Aspect,
                 status,
-                Field(marker, "classification") ?? "RemoteAspectVerdict",
-                Field(marker, "summary") ?? $"Remote aspect '{command.Aspect}' returned {status}.",
-                Field(marker, "evidence_checked"),
-                Field(marker, "missing"));
+                AspectVerdictMarkerParser.ClassificationWithMalformed(marker, "RemoteAspectVerdict"),
+                summary,
+                marker.EvidenceChecked,
+                marker.Missing);
         }
         return new ReviewVerdictDto(
             command.Aspect,
@@ -2350,18 +2356,6 @@ public sealed class RemoteReviewWorkspace
     private static readonly Regex AnsiEscapeSequence = new(
         "\\x1B(?:\\[[0-?]*[ -/]*[@-~]|\\][^\\x07]*(?:\\x07|\\x1B\\\\))",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
-    private static string? Field(string marker, string key)
-    {
-        var content = marker[(marker.IndexOf(':') + 1)..].Replace("]]", string.Empty, StringComparison.Ordinal);
-        foreach (var field in content.Split(';', StringSplitOptions.TrimEntries))
-        {
-            var split = field.IndexOf('=');
-            if (split > 0 && string.Equals(field[..split].Trim(), key, StringComparison.OrdinalIgnoreCase))
-                return field[(split + 1)..].Trim();
-        }
-        return null;
-    }
 
     private static bool AgentCommandUnavailable(ReviewCommandDto command, ProcessResult result)
         => ReviewCommandKinds.IsAgent(command.ExecutionKind)

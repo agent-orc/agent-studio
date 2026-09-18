@@ -80,6 +80,24 @@
         testId="result-test-evidence" />
     }
 
+    @if (latestAspectVerdicts().length > 0) {
+      <section class="result__aspect-table" data-testid="result-aspect-verdicts">
+        <h4>Aspect results</h4>
+        @for (aspect of latestAspectVerdicts(); track aspect.aspect) {
+          <button type="button"
+                  class="result__aspect-row"
+                  [attr.data-status]="aspect.status"
+                  [cacTooltip]="aspect.summary"
+                  (click)="openDocument.emit('aspect-' + aspect.aspect + '.md')">
+            <span class="result__aspect-status">{{ aspect.status }}</span>
+            <span class="result__aspect-name">{{ aspect.aspect }}</span>
+            <span class="result__aspect-summary">{{ aspect.summary }}</span>
+            <span>Report</span>
+          </button>
+        }
+      </section>
+    }
+
     <!-- 2. Overview: the shareable "problem -> solution", laid out per case.
          data-layout drives visibly distinct arrangements (concept doc §8.3):
          sequence (arrow flow), before-after (two columns), blocker (warn
@@ -126,7 +144,7 @@
           [jobId]="detail().info.id"
           [watchPath]="detail().info.watchPath"
           [projectName]="detail().info.projectName"
-          (openSource)="openSource.emit($event)"
+          (openSource)="openResultReference($event)"
           (openWiki)="openWiki.emit($event)"
           (openTask)="openTask.emit($event)" />
       </section>

@@ -129,9 +129,10 @@ public sealed class RemotePipelineReviewEvidenceProjector
             Attempt = pipelineAttempt,
             Model = command.Model,
             ThinkingLevel = command.ThinkingLevel,
-            Status = status == AspectStatus.Pass
-                ? PipelineStepStatus.Passed
-                : PipelineStepStatus.Failed,
+            // The step executed successfully even when its semantic verdict
+            // reports concerns or a block. This is the same status/verdict
+            // split used by AspectRunnerService for local execution.
+            Status = PipelineStepStatus.Passed,
             StartedAt = command.StartedAt,
             CompletedAt = command.FinishedAt,
             DurationMs = duration,
@@ -139,7 +140,9 @@ public sealed class RemotePipelineReviewEvidenceProjector
             OutputTokens = command.OutputTokens,
             CacheReadTokens = command.CacheReadTokens,
             CacheCreationTokens = command.CacheCreationTokens,
-            Reason = summary,
+            Verdict = AspectVerdictParsing.StatusToken(status),
+            VerdictSummary = summary,
+            EvidenceRef = markdownName,
             ExecutionLocation = "remote",
             ExecutionHostId = review.Lease?.HostId ?? report.Environment.HostId,
             ExecutionExecutorId = review.Lease?.ExecutorId ?? report.ExecutorId,

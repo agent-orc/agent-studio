@@ -312,7 +312,7 @@
                 [resultFile]="resultForRow(row)?.fileName ?? null"
                 [resultHeader]="resultForRow(row)?.header ?? null"
                 [concernTitle]="row.concernTooltip?.title ?? null"
-                [concernBody]="row.concernTooltip?.body ?? null" />
+                [concernBody]="row.concernTooltip?.body ?? null" [aspectEvidence]="row.aspectEvidence" (documentRequested)="documentRequested.emit($event)" />
               @if (selectedPipelineIsCurrent() && canConfigurePendingPipelineSteps() && row.canDisable && !row.hasExecution) {
                 <app-pipeline-step-toggle
                   class="ov-pl-step__toggle"
@@ -357,7 +357,7 @@
                     [cacTooltip]="row.concernTooltip"
                     [tooltipSeverity]="visibleVerdict === 'block' || visibleVerdict === 'loop-detected' ? 'error' : 'warn'"
                     data-testid="overview-pipeline-step-verdict">{{ visibleVerdict }}@if (row.historical) { · superseded }</span>
-            }
+            } @if (row.kind === 'aspect') { <app-pipeline-aspect-result [row]="row" [reportFile]="resultForRow(row)?.fileName ?? null" (documentRequested)="documentRequested.emit($event)" /> }
             @if (selectedPipelineIsCurrent() && row.kind === 'core' && agentRunCount() > 0) {
               <app-pipeline-run-history
                 class="ov-pl-step__runs"

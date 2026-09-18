@@ -1515,11 +1515,28 @@ describe('OverviewPaneComponent (smoke)', () => {
         startedAt: new Date().toISOString(), completedAt: new Date().toISOString(),
         steps: [
           { stepId: 'aspect-requirement-fit', kind: 'aspect', model: 'm', status: 'passed', durationMs: 1, inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0, verdict: 'concerns', verdictSummary: 'Acceptance item 3 (empty-state tooltip) has no evidence.' },
-          { stepId: 'aspect-code-quality', kind: 'aspect', model: 'm', status: 'passed', durationMs: 1, inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0, verdict: 'pass' },
+          { stepId: 'aspect-code-quality', kind: 'aspect', model: 'm', status: 'passed', durationMs: 1, inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0, verdict: 'pass', verdictSummary: 'No maintainability issues found.' },
         ],
       },
       cost: emptyCost(),
       config: {},
+      resultFiles: {
+        'aspect-requirement-fit': 'aspect-requirement-fit.md',
+        'aspect-code-quality': 'aspect-code-quality.md',
+      },
+      aspectEvidence: {
+        'aspect-requirement-fit': [{
+          attemptId: 'review_latest',
+          reportFile: 'aspect-requirement-fit.md',
+          rawLogFile: 'remote-review-review_latest-candidate_aspect_requirement_fit_stdout_log',
+          reviewGradeFile: 'remote-review-grade-review_latest.md',
+        }, {
+          attemptId: 'review_earlier',
+          reportFile: 'aspect-requirement-fit.md',
+          rawLogFile: 'remote-review-review_earlier-candidate_aspect_requirement_fit_stdout_log',
+          reviewGradeFile: 'remote-review-grade-review_earlier.md',
+        }],
+      },
     };
     TestBed.inject(TaskPipelinePollService).pipeline.set(pipe);
     try { fixture.detectChanges(); } catch { /* ignore */ }
@@ -1530,11 +1547,26 @@ describe('OverviewPaneComponent (smoke)', () => {
     expect(concerned.concernTooltip).not.toBeNull();
     expect(concerned.concernTooltip!.title).toBe('Requirement fit · Concerns');
     expect(concerned.concernTooltip!.body).toContain('Acceptance item 3');
+    expect(concerned.statusTooltip?.title).toBe('Requirement fit: Passed with concerns');
+    expect(concerned.aspectSummary).toContain('Acceptance item 3');
 
     // A pass verdict (or a verdict with no summary) must not grow a tooltip.
     const passing = rows.find(r => r.id === 'aspect-code-quality')!;
     expect(passing.verdict).toBe('pass');
     expect(passing.concernTooltip).toBeNull();
+    expect(passing.aspectSummary).toBe('No maintainability issues found.');
+
+    const row = fixture.nativeElement.querySelector('[data-step-id="aspect-requirement-fit"]') as HTMLElement;
+    expect(row.querySelector('[data-testid="overview-pipeline-step-summary"]')?.textContent)
+      .toContain('Acceptance item 3');
+    expect(row.querySelector('[data-testid="overview-pipeline-step-report"]')?.textContent).toContain('Report');
+    expect(row.querySelector('[data-testid="overview-pipeline-step-raw-log"]')?.textContent).toContain('Raw log');
+    expect(row.querySelector('[data-testid="overview-pipeline-step-review-grade"]')?.textContent).toContain('Review grade');
+    expect(row.querySelector('.aspect-result__evidence-menu')?.textContent).toContain('review_earlier');
+    const opened: string[] = [];
+    fixture.componentInstance.documentRequested.subscribe(file => opened.push(file));
+    (row.querySelector('[data-testid="overview-pipeline-step-report"]') as HTMLButtonElement).click();
+    expect(opened).toEqual(['aspect-requirement-fit.md']);
   });
 
   it('pipeline block: model qualification renders selected model, reasoning, and override explanation', async () => {
