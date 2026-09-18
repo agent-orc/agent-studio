@@ -114,6 +114,11 @@ public static class SupersededCommitSweepPolicy
 
     private static bool IsDifferentGeneration(TaskCommitInfo older, TaskCommitInfo newer)
     {
+        // Inherited commits retain their original producer id. The numbered
+        // delivery membership must win over those differing producer identities.
+        if (older.DeliveryGeneration is { } generation)
+            return newer.DeliveryGeneration is { } replacement && generation < replacement;
+
         if (!string.IsNullOrWhiteSpace(older.RunAttemptId)
             && !string.IsNullOrWhiteSpace(newer.RunAttemptId))
         {

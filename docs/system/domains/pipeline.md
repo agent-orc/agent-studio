@@ -1397,6 +1397,50 @@ whose `task.integration` said `integrated`. Two defects met.
   operator-decision blocker) stays in Human Review with its integration proof
   on the card and produces no warning, however often the rail sweeps.
 
+### Delivery generation reconciliation (AGT-2871)
+
+`TaskIntegrationStatusService` groups the complete attribution history by
+repository identity and resolves each group's own checkout and configured
+integration branch. `DeliveryGenerationPolicy` evaluates each group before the
+card status is folded. A newer generation in one repository cannot supersede a
+missing current commit in another. The existing published-branch boundary also
+applies: a locally merged current commit still reads `merged-locally` until the
+origin integration branch contains it.
+
+Remote attribution adds `deliveryGeneration`, `deliveryAttemptId`, and
+`deliveryRef` to each commit. These describe the latest verified delivery that
+contains it; `runAttemptId`, `runnerId`, and `resultSha` retain its original
+producer. Replayed attribution keeps the same generation number. Inherited
+commits remain current expectations, while earlier numbered generations remain
+visible history with the `superseded` rule. A missing current generation commit
+always blocks full integration, even when another commit touches the same files.
+
+For legacy commits without a numbered generation, a conflict-free
+`git merge-tree --write-tree` result equal to the published integration tree
+proves `integrated-by-content` for unscoped history or a known earlier attempt.
+A known current attempt remains ancestry-only. Otherwise, a later attributed ancestor in the
+same repository can supersede an unnumbered commit when it covers all its
+changed paths and is not from the same known attempt. Missing file metadata is
+read from that repository's Git objects. Tree and path probes are bounded and
+cached; conflicts and unavailable Git evidence cannot prove content equality.
+
+Every normal projection includes an `integrationRule` per repository commit:
+`ancestor`, `integrated-by-content`, `superseded`, `missing`, or the existing
+non-delivery exception `lifecycle-marker`. Superseded history is excluded from
+current totals, and the card detail names it and the integrated generation.
+When the old result reference is superseded, `deliveryRef` selects the current
+integrated delivery's reference.
+
+`IntegrationGenerationReconcileSweep` persists these same decisions through
+`TaskMutationService` during each acceptance-rail pass, preserving all attributed
+history. It does not resolve repositories or run an independent classification.
+Thus existing Human Review cards are re-evaluated and can complete on the next
+rail pass without an operator move. Persisted rules are evidence only and are
+recomputed after branch changes. Legacy lane-entry timestamps are preserved so
+evidence writes do not reopen unchanged, refused rail actions. The fingerprint
+also includes the integration attempt reason, so a changed conflict remains a
+new fact even when its operator-facing summary is unchanged.
+
 ## Verification
 
 - Catalogue changes need `PipelineCatalogueTests` and any step-specific test

@@ -51,6 +51,34 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ReconciledGeneration_IsAutoAcceptedAndRetainsCommitDecisions()
+    {
+        var stack = Build();
+        var oldSha = CreateUnintegratedDelivery("earlier");
+        RunGit(_repo, "checkout", "-q", "develop");
+        File.WriteAllText(Path.Combine(_repo, "final.txt"), "final delivery");
+        RunGit(_repo, "add", "-A");
+        RunGit(_repo, "commit", "-q", "-m", "final generation");
+        var finalSha = Git(_repo, "rev-parse", "HEAD");
+        var folder = SeedTask(stack, "reconciled", finalSha);
+        TaskJsonFile.UpdateField(folder, "commits", new[]
+        {
+            new TaskCommitInfo { Sha = oldSha, FilesChanged = 1, DeliveryGeneration = 1, Branch = "agent-studio/results/old" },
+            new TaskCommitInfo { Sha = finalSha, FilesChanged = 1, DeliveryGeneration = 3, Branch = "agent-studio/results/final" },
+        }, NullLogger.Instance);
+        stack.Scanner.InvalidateCache();
+
+        var snapshot = await stack.Rail.RunOnceAsync();
+
+        Assert.True(snapshot.Accepted == 1, Describe(stack, snapshot));
+        var completed = stack.Scanner.FindJob("reconciled", _watchPath)!;
+        Assert.Equal(TaskStates.Completed, completed.State);
+        Assert.Equal([oldSha, finalSha], completed.Commits.Select(commit => commit.Sha));
+        Assert.Equal([CommitIntegrationRules.Superseded, CommitIntegrationRules.Ancestor],
+            completed.Commits.Select(commit => commit.IntegrationRule));
+    }
+
+    [Fact]
     public async Task HoldCard_IsUntouched()
     {
         var stack = Build();
@@ -431,7 +459,8 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
             escalation,
             timeline,
             configuration,
-            new CollectingLogger<AcceptanceRailHostedService>(logs));
+            new CollectingLogger<AcceptanceRailHostedService>(logs),
+            new IntegrationGenerationReconcileSweep(mutations));
         return new Stack(scanner, timeline, pipeline, rail, logs);
     }
 

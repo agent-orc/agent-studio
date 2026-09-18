@@ -313,6 +313,10 @@ public sealed record TaskRepositoryIntegrationStatus
 public sealed record TaskRepositoryCommitMembership
 {
     public string Sha { get; init; } = "";
+    public string? Repository { get; init; }
+    public int? DeliveryGeneration { get; init; }
+    public string IntegrationRule { get; init; } = CommitIntegrationRules.Missing;
+    public string? SupersededBySha { get; init; }
     public bool OnIntegrationBranch { get; init; }
     public bool OnReleaseBranch { get; init; }
 }

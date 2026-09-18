@@ -48,6 +48,16 @@ public record TaskCommitInfo
     /// Verified result tip whose delivery range proved this commit reachable.
     /// </summary>
     public string? ResultSha { get; init; }
+    /// <summary>Most recent verified delivery containing this commit; null on legacy history.</summary>
+    [JsonPropertyName("deliveryGeneration")]
+    public int? DeliveryGeneration { get; init; }
+    [JsonPropertyName("deliveryAttemptId")]
+    public string? DeliveryAttemptId { get; init; }
+    [JsonPropertyName("deliveryRef")]
+    public string? DeliveryRef { get; init; }
+    /// <summary>Last reconciled decision, derived afresh by the integration projection.</summary>
+    [JsonPropertyName("integrationRule")]
+    public string? IntegrationRule { get; init; }
     /// <summary>
     /// Exact replacement object produced when the platform replayed this commit
     /// mechanically onto a newer integration base. The historical entry remains
@@ -309,4 +319,14 @@ public static class CommitExclusionReasons
             if (string.Equals(r, v, StringComparison.OrdinalIgnoreCase)) return r;
         return Other;
     }
+}
+
+/// <summary>Per-commit integration evidence; persisted decisions never replace fresh Git facts.</summary>
+public static class CommitIntegrationRules
+{
+    public const string Ancestor = "ancestor";
+    public const string IntegratedByContent = "integrated-by-content";
+    public const string Superseded = "superseded";
+    public const string Missing = "missing";
+    public const string LifecycleMarker = "lifecycle-marker";
 }
