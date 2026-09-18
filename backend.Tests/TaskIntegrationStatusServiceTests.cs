@@ -170,7 +170,11 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
 
         Assert.Equal(IntegrationStatuses.Integrated, status.Status);
         Assert.Equal(rebasedSha[..7], status.Sha);
-        Assert.Equal("anchor-ancestor", status.Detail);
+        Assert.StartsWith(
+            $"integrated via {rebasedSha[..7]} (generation 2)",
+            status.Detail,
+            StringComparison.Ordinal);
+        Assert.Contains("1 earlier generation commit superseded", status.Detail!, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -395,7 +399,15 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
 
         Assert.Equal(IntegrationStatuses.Integrated, status.Status);
         Assert.Equal(replacement[..7], status.Sha);
-        Assert.Equal("anchor-ancestor", status.Detail);
+        // AGT-2871: the detail names the generation that landed and says what
+        // happened to the round it replaced, instead of the bare token that
+        // never mentioned the superseded commit at all.
+        Assert.StartsWith(
+            $"integrated via {replacement[..7]} (generation 2)",
+            status.Detail,
+            StringComparison.Ordinal);
+        Assert.Contains("1 earlier generation commit superseded", status.Detail!, StringComparison.Ordinal);
+        Assert.Contains(superseded[..7], status.Detail!, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -453,11 +465,217 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
     }
 
     [Fact]
-    public void BuildLookup_MissingCommitNotCoveredByAnyLaterCommit_StillReportsPartial()
+    public void BuildLookup_LegacySalvageCommitRewrittenByTheMergedGeneration_IsIntegrated()
     {
-        // Guard rail: a genuinely missing commit whose content is NOT contained
-        // in any later integrated commit must still read as "partial", not be
-        // swallowed into a false "superseded" claim.
+        // AGT-2871, the exact nine-card shape: a first-round
+        // "wip(runner): salvage before teardown" commit carries no generation
+        // marker, was never merged, and the generation that WAS reviewed and
+        // merged re-authored the same files plus a lot more. The old commit can
+        // never become an ancestor, so the card read partial/pending forever.
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "checkout -q -b task/agt-2871-legacy");
+        File.WriteAllText(Path.Combine(repo, "feature.txt"), "first round");
+        File.WriteAllText(Path.Combine(repo, "policy.txt"), "first round policy");
+        Commit(repo, "wip(runner): salvage before teardown - outcome Done");
+        var salvage = RunGit(repo, "rev-parse task/agt-2871-legacy").Out.Trim();
+
+        RunGit(repo, "checkout -q develop");
+        File.WriteAllText(Path.Combine(repo, "feature.txt"), "final round");
+        File.WriteAllText(Path.Combine(repo, "policy.txt"), "final round policy");
+        foreach (var extra in new[] { "sweep.txt", "doc-a.txt", "doc-b.txt", "doc-c.txt", "doc-d.txt" })
+            File.WriteAllText(Path.Combine(repo, extra), extra);
+        Commit(repo, "feat: final generation");
+        var merged = RunGit(repo, "rev-parse develop").Out.Trim();
+
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job(
+            "agt-2871-legacy",
+            "AGT-2810",
+            project,
+            repo,
+            log,
+            commits:
+            [
+                Commit(salvage) with
+                {
+                    FilesChanged = 2,
+                    Files = ["feature.txt", "policy.txt"],
+                },
+                Commit(merged) with
+                {
+                    FilesChanged = 7,
+                    Files =
+                    [
+                        "feature.txt", "policy.txt", "sweep.txt",
+                        "doc-a.txt", "doc-b.txt", "doc-c.txt", "doc-d.txt",
+                    ],
+                },
+            ]);
+
+        var status = svc.BuildLookup([job])[job.TaskKey];
+
+        Assert.Equal(IntegrationStatuses.Integrated, status.Status);
+        Assert.Equal(merged[..7], status.Sha);
+        Assert.Contains($"integrated via {merged[..7]}", status.Detail!, StringComparison.Ordinal);
+        Assert.Contains(
+            $"{salvage[..7]} superseded by {merged[..7]}",
+            status.Detail!,
+            StringComparison.Ordinal);
+        var repository = Assert.Single(status.Repositories);
+        Assert.Equal(
+            CommitIntegrationEvidence.PathSuperseded,
+            repository.Commits.Single(commit => commit.Sha == salvage).Evidence);
+        Assert.Equal(
+            CommitIntegrationEvidence.Ancestor,
+            repository.Commits.Single(commit => commit.Sha == merged).Evidence);
+    }
+
+    [Fact]
+    public void BuildLookup_PersistedContentEqualEvidence_IsIntegratedWithoutAContentProbe()
+    {
+        // The reconcile pass proved with merge-tree that merging the old commit
+        // adds nothing and wrote that verdict onto the card. The board read has
+        // to honour it: it must not spend a git process per commit to re-derive
+        // the same answer.
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "checkout -q -b task/agt-2871-content");
+        File.WriteAllText(Path.Combine(repo, "gone.txt"), "dropped again later");
+        Commit(repo, "wip(runner): salvage before teardown - outcome Done");
+        var salvage = RunGit(repo, "rev-parse task/agt-2871-content").Out.Trim();
+
+        RunGit(repo, "checkout -q develop");
+        File.WriteAllText(Path.Combine(repo, "feature.txt"), "final round");
+        Commit(repo, "feat: final generation");
+        var merged = RunGit(repo, "rev-parse develop").Out.Trim();
+
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job(
+            "agt-2871-content",
+            "AGT-2827",
+            project,
+            repo,
+            log,
+            commits:
+            [
+                Commit(salvage) with
+                {
+                    FilesChanged = 1,
+                    Files = ["gone.txt"],
+                    IntegrationEvidence = CommitIntegrationEvidence.ContentEqual,
+                },
+                Commit(merged) with { FilesChanged = 1, Files = ["feature.txt"] },
+            ]);
+
+        var status = svc.BuildLookup([job])[job.TaskKey];
+
+        Assert.Equal(IntegrationStatuses.Integrated, status.Status);
+        Assert.Contains("integrated by content", status.Detail!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildLookup_DeliveryRef_NamesTheGenerationThatWasMerged()
+    {
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "checkout -q -b task/agt-2871-ref");
+        File.WriteAllText(Path.Combine(repo, "feature.txt"), "first round");
+        Commit(repo, "wip(runner): salvage before teardown - outcome Done");
+        var salvage = RunGit(repo, "rev-parse task/agt-2871-ref").Out.Trim();
+
+        RunGit(repo, "checkout -q develop");
+        File.WriteAllText(Path.Combine(repo, "feature.txt"), "final round");
+        Commit(repo, "feat: final generation");
+        var merged = RunGit(repo, "rev-parse develop").Out.Trim();
+
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job(
+            "agt-2871-ref",
+            "AGT-2818",
+            project,
+            repo,
+            log,
+            commits:
+            [
+                Commit(salvage) with
+                {
+                    Branch = "agent-studio/results/run_408c",
+                    FilesChanged = 1,
+                    Files = ["feature.txt"],
+                },
+                Commit(merged) with
+                {
+                    Branch = "agent-studio/results/run_9f21",
+                    FilesChanged = 1,
+                    Files = ["feature.txt"],
+                },
+            ]);
+
+        var status = svc.BuildLookup([job])[job.TaskKey];
+
+        Assert.Equal(IntegrationStatuses.Integrated, status.Status);
+        // Not the first round's result ref, which is what the nine cards kept
+        // advertising days after a later generation had been merged.
+        Assert.Equal("agent-studio/results/run_9f21", status.DeliveryRef);
+    }
+
+    [Fact]
+    public void BuildLookup_MissingCommitOfTheCurrentGeneration_StillReportsPartial()
+    {
+        // AGT-2871 guard rail: generation awareness must not swallow a hole in
+        // the generation that is being delivered right now. Both commits carry
+        // the SAME run attempt, so the missing one is part of the current
+        // expectation and has to keep blocking acceptance exactly as before.
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "checkout -q -b task/agt-2871-current");
+        File.WriteAllText(Path.Combine(repo, "unrelated.txt"), "unrelated content");
+        Commit(repo, "feat: unrelated work");
+        var notLanded = RunGit(repo, "rev-parse task/agt-2871-current").Out.Trim();
+
+        RunGit(repo, "checkout -q develop");
+        File.WriteAllText(Path.Combine(repo, "other.txt"), "other content");
+        Commit(repo, "feat: other landed work");
+        var landed = RunGit(repo, "rev-parse develop").Out.Trim();
+
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job(
+            "agt-2871-current",
+            "AGT-2871",
+            project,
+            repo,
+            log,
+            commits:
+            [
+                Commit(notLanded) with
+                {
+                    RunAttemptId = "round-2",
+                    FilesChanged = 1,
+                    Files = ["unrelated.txt"],
+                },
+                Commit(landed) with
+                {
+                    RunAttemptId = "round-2",
+                    FilesChanged = 1,
+                    Files = ["other.txt"],
+                },
+            ]);
+
+        var status = svc.BuildLookup([job])[job.TaskKey];
+
+        Assert.Equal(IntegrationStatuses.Partial, status.Status);
+        Assert.Contains(notLanded[..7], status.Detail);
+        Assert.DoesNotContain("superseded", status.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void BuildLookup_LegacyUnmarkedMissingCommitNotCoveredByLaterCommit_StillReportsPartial()
+    {
+        // The same guard rail for legacy records: without generation markers
+        // nothing proves the earlier commit belongs to a replaced round, and
+        // its path was never touched again, so it stays a genuine hole rather
+        // than a false "superseded" claim.
         var repo = SeedDevelopMainRepo();
         RunGit(repo, "checkout -q develop");
         RunGit(repo, "checkout -q -b task/agt-partial-2");
@@ -479,18 +697,8 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
             log,
             commits:
             [
-                Commit(notLanded) with
-                {
-                    RunAttemptId = "round-1",
-                    FilesChanged = 1,
-                    Files = ["unrelated.txt"],
-                },
-                Commit(landed) with
-                {
-                    RunAttemptId = "round-2",
-                    FilesChanged = 1,
-                    Files = ["other.txt"],
-                },
+                Commit(notLanded) with { FilesChanged = 1, Files = ["unrelated.txt"] },
+                Commit(landed) with { FilesChanged = 1, Files = ["other.txt"] },
             ]);
 
         var status = svc.BuildLookup([job])[job.TaskKey];

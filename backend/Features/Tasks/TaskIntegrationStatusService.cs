@@ -296,13 +296,14 @@ public sealed class TaskIntegrationStatusService
         }
 
         var repositoryEntries = new List<TaskRepositoryIntegrationStatus>(groups.Count);
-        // Parallel accumulators for the supersession-aware top-level aggregate:
-        // a missing commit covered by a later, integrated, different-generation
-        // commit of the same repository does not count as missing (see the
-        // breadth heuristic reused from SupersededCommitSweepPolicy below).
-        var effectiveIntegratedTotal = 0;
-        var trulyMissingByRepository = new List<string>();
-        var supersessionNotes = new List<string>();
+        // Generation-aware accumulators (AGT-2871). A commit of a superseded
+        // delivery generation is neither integrated nor missing: it is history,
+        // so it never enters the expectation the aggregate is measured against.
+        var verdicts = new List<DeliveryGenerationCommit>();
+        var generationCount = 0;
+        var integratedTotal = 0;
+        var expectedTotal = 0;
+        var missingByRepository = new List<string>();
         // AGT-2849: commits that are in a repository's graph but not reachable
         // from its pushed integration branch. One such commit anywhere keeps the
         // aggregate out of "integrated".
@@ -316,27 +317,26 @@ public sealed class TaskIntegrationStatusService
                 !IsZeroFileLifecycleMarker(commit)
                 || reach is not null && AncestorSetContains(reach.DevelopAncestors, commit.Sha))
                 .ToList();
-            var memberships = effectiveCommits.Select(commit => new TaskRepositoryCommitMembership
+            if (effectiveCommits.Count == 0) continue;
+
+            // Ancestry only: the content rule needs one git process per commit,
+            // which the hot path must not spend. The reconcile pass decides it
+            // off the hot path and persists the verdict this read then honours.
+            var verdict = DeliveryGenerationPolicy.Evaluate(
+                effectiveCommits,
+                sha => reach is not null && AncestorSetContains(reach.DevelopAncestors, sha));
+            var memberships = verdict.Commits.Select(commit => new TaskRepositoryCommitMembership
             {
                 Sha = commit.Sha,
-                OnIntegrationBranch = reach is not null
-                    && AncestorSetContains(reach.DevelopAncestors, commit.Sha),
+                OnIntegrationBranch = string.Equals(
+                    commit.Evidence,
+                    CommitIntegrationEvidence.Ancestor,
+                    StringComparison.Ordinal),
                 OnReleaseBranch = reach is not null
                     && AncestorSetContains(reach.ReleaseAncestors, commit.Sha),
+                Evidence = commit.Evidence,
+                Generation = commit.Generation,
             }).ToList();
-            if (memberships.Count == 0) continue;
-
-            var supersededBy = reach is null
-                ? []
-                : SupersededCommitSweepPolicy.Evaluate(
-                        effectiveCommits,
-                        sha => AncestorSetContains(reach.DevelopAncestors, sha),
-                        isCandidate: static _ => true)
-                    .Replacements
-                    .ToDictionary(
-                        replacement => replacement.SupersededSha,
-                        replacement => replacement.ReplacementSha,
-                        StringComparer.OrdinalIgnoreCase);
 
             if (reach is not null)
             {
@@ -346,73 +346,71 @@ public sealed class TaskIntegrationStatusService
                     .Select(commit => $"{group.Repository} {Short(commit.Sha)}"));
             }
 
-            var integratedCount = memberships.Count(commit => commit.OnIntegrationBranch);
-            var releasedCount = memberships.Count(commit => commit.OnReleaseBranch);
-            var missingMemberships = memberships.Where(commit => !commit.OnIntegrationBranch).ToList();
-            var trulyMissing = missingMemberships
-                .Where(commit => !supersededBy.ContainsKey(commit.Sha))
-                .Select(commit => Short(commit.Sha))
-                .ToList();
-            var supersededMissing = missingMemberships
-                .Where(commit => supersededBy.ContainsKey(commit.Sha))
-                .ToList();
-            var effectiveIntegratedCount = integratedCount + supersededMissing.Count;
-            var repositorySupersessionNotes = supersededMissing
-                .Select(commit => $"{Short(commit.Sha)} superseded by {Short(supersededBy[commit.Sha])}")
-                .ToList();
-            var supersededSuffix = repositorySupersessionNotes.Count == 0
-                ? string.Empty
-                : " (" + string.Join("; ", repositorySupersessionNotes) + ")";
+            // Release membership is rolled up over the current expectation, for
+            // the same reason as integration membership: a superseded
+            // generation cannot keep a shipped card out of the released line.
+            var expected = verdict.Commits.Where(commit => !commit.IsSuperseded).ToList();
+            var releasedCount = expected.Count(commit => reach is not null
+                && AncestorSetContains(reach.ReleaseAncestors, commit.Sha));
+            var missing = verdict.Missing.Select(commit => Short(commit.Sha)).ToList();
+            var supersededSuffix = DeliveryGenerationDetail.SupersessionSuffix(verdict);
 
             var branch = reach?.IntegrationBranch ?? group.IntegrationBranch;
             var detail = reach is null
-                ? $"Repository checkout is unavailable; {memberships.Count} commit(s) could not be evaluated."
-                : trulyMissing.Count == 0
-                    ? releasedCount == memberships.Count
-                        ? $"{effectiveIntegratedCount}/{memberships.Count} on {branch} and {BoardMergeStatusService.ReleaseBranch}.{supersededSuffix}"
-                        : $"{effectiveIntegratedCount}/{memberships.Count} on {branch}; {releasedCount}/{memberships.Count} on {BoardMergeStatusService.ReleaseBranch}.{supersededSuffix}"
-                    : $"{effectiveIntegratedCount}/{memberships.Count} on {branch}; missing: {string.Join(", ", trulyMissing)}{supersededSuffix}.";
+                ? $"Repository checkout is unavailable; {expected.Count} commit(s) could not be evaluated.{supersededSuffix}"
+                : missing.Count == 0
+                    ? releasedCount == expected.Count
+                        ? $"{verdict.Integrated.Count}/{expected.Count} on {branch} and {BoardMergeStatusService.ReleaseBranch}.{supersededSuffix}"
+                        : $"{verdict.Integrated.Count}/{expected.Count} on {branch}; {releasedCount}/{expected.Count} on {BoardMergeStatusService.ReleaseBranch}.{supersededSuffix}"
+                    : $"{verdict.Integrated.Count}/{expected.Count} on {branch}; missing: {string.Join(", ", missing)}{supersededSuffix}.";
             repositoryEntries.Add(new TaskRepositoryIntegrationStatus
             {
                 Repository = group.Repository,
                 Commits = memberships,
                 IntegrationBranch = branch,
                 ReleaseBranch = BoardMergeStatusService.ReleaseBranch,
-                OnIntegrationBranch = memberships.Count > 0 && trulyMissing.Count == 0,
-                OnReleaseBranch = memberships.Count > 0 && releasedCount == memberships.Count,
+                // A repository whose whole expectation is superseded history
+                // does not block: the card-level anchor check below is what
+                // refuses to claim an integration without positive proof.
+                OnIntegrationBranch = missing.Count == 0,
+                OnReleaseBranch = expected.Count > 0 && releasedCount == expected.Count,
                 Detail = detail,
             });
-            effectiveIntegratedTotal += effectiveIntegratedCount;
-            if (trulyMissing.Count > 0)
-                trulyMissingByRepository.Add($"{group.Repository}: {string.Join(", ", trulyMissing)}");
-            supersessionNotes.AddRange(repositorySupersessionNotes);
+            verdicts.AddRange(verdict.Commits);
+            generationCount = Math.Max(generationCount, verdict.GenerationCount);
+            integratedTotal += verdict.Integrated.Count;
+            expectedTotal += expected.Count;
+            if (missing.Count > 0)
+                missingByRepository.Add($"{group.Repository}: {string.Join(", ", missing)}");
         }
 
         var projectedBranch = repositoryEntries.FirstOrDefault()?.IntegrationBranch ?? primaryBranch;
-        var total = repositoryEntries.Sum(entry => entry.Commits.Count);
-        var allIntegrated = repositoryEntries.Count > 0
-            && repositoryEntries.All(entry => entry.OnIntegrationBranch);
-        if (allIntegrated)
+        var cardVerdict = new DeliveryGenerationVerdict(verdicts, generationCount);
+        var anchor = cardVerdict.Anchor;
+        // Every repository's expectation is met and at least one commit proves
+        // it. A card whose only remaining commits are superseded history has
+        // nothing that proves a delivery, so it stays on the honest
+        // not-integrated reading instead of claiming an integration.
+        if (missingByRepository.Count == 0 && anchor is not null)
         {
-            var anchor = repositoryEntries.SelectMany(entry => entry.Commits).Last().Sha;
-            var detail = supersessionNotes.Count == 0
-                ? "anchor-ancestor"
-                : $"anchor-ancestor ({string.Join("; ", supersessionNotes)})";
+            var detail = DeliveryGenerationDetail.Integrated(cardVerdict);
+            var deliveryRef = DeliveryRefFor(job, anchor.Sha);
             var verdict = unpublished.Count == 0
-                ? Integrated(Short(anchor), projectedBranch, DeliveryRefFor(job), detail)
-                : MergedLocally(projectedBranch, DeliveryRefFor(job), detail, unpublished);
+                ? Integrated(Short(anchor.Sha), projectedBranch, deliveryRef, detail)
+                : MergedLocally(projectedBranch, deliveryRef, detail, unpublished);
             return verdict with { Repositories = repositoryEntries };
         }
 
-        if (effectiveIntegratedTotal > 0)
+        if (integratedTotal > 0)
         {
             return new TaskIntegrationStatus
             {
                 Status = IntegrationStatuses.Partial,
-                DeliveryRef = DeliveryRefFor(job),
+                DeliveryRef = DeliveryRefFor(job, anchor?.Sha),
                 IntegrationBranch = projectedBranch,
-                Detail = $"{effectiveIntegratedTotal}/{total} attributed commits integrated; "
-                         + $"missing by repository: {string.Join("; ", trulyMissingByRepository)}",
+                Detail = $"{integratedTotal}/{expectedTotal} attributed commits integrated; "
+                         + $"missing by repository: {string.Join("; ", missingByRepository)}"
+                         + DeliveryGenerationDetail.SupersessionSuffix(cardVerdict),
                 Repositories = repositoryEntries,
             };
         }
@@ -436,8 +434,18 @@ public sealed class TaskIntegrationStatusService
 
     private List<RepositoryCommitGroup> BuildRepositoryGroups(TaskInfo job)
     {
-        var commits = AttributedCommitRecords(job);
+        // AGT-2871: grouping reads the full commit history, including entries a
+        // later delivery generation replaced, because the generation policy
+        // needs them to tell "superseded" from "missing". Which repositories
+        // the card is answered from is still decided by its current
+        // expectation, so a repository that only carries superseded history
+        // produces no group - exactly as before.
+        var commits = AllAttributedCommitRecords(job);
         if (commits.Count == 0) return [];
+        var expectedShas = AttributedCommitRecords(job)
+            .Select(commit => commit.Sha)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (expectedShas.Count == 0) return [];
 
         var primaryRoot = _git.ResolveRepoRootForWatchPath(job.WatchPath);
         var primaryOrigin = string.IsNullOrWhiteSpace(primaryRoot)
@@ -458,6 +466,7 @@ public sealed class TaskIntegrationStatusService
                     RepositoryIdentity(commit, primaryOrigin),
                     registeredProjects),
                 StringComparer.OrdinalIgnoreCase)
+            .Where(group => group.Any(commit => expectedShas.Contains(commit.Sha)))
             .Select(group => ResolveRepositoryGroup(
                 job,
                 group.Key,
@@ -616,79 +625,35 @@ public sealed class TaskIntegrationStatusService
         if (attributed.Count == 0)
             return ClassifyNotIntegrated(job, branchName, deliveryRef);
 
-        var missing = new List<string>();
-        foreach (var sha in attributed)
-            if (!AncestorSetContains(reach.DevelopAncestors, sha)) missing.Add(sha);
-
-        // NONE of the attributed commits landed → conflict-skipped / pending
-        // (no-branch is impossible here: there IS attributed work).
-        if (missing.Count == attributed.Count)
+        // Generation-aware verdict over the card's own commit history. Same
+        // policy as the repository-grouped path, so a single-repository read and
+        // a grouped read never disagree about the same delivery.
+        var verdict = DeliveryGenerationPolicy.Evaluate(
+            RecordsFor(job, attributed),
+            sha => AncestorSetContains(reach.DevelopAncestors, sha));
+        var anchor = verdict.Anchor;
+        if (verdict.Missing.Count > 0 && anchor is null)
             return ClassifyNotIntegrated(job, branchName, deliveryRef);
 
-        var newest = attributed[^1];
-
-        // ALL attributed commits landed. Attempt history and recorded merge
-        // provenance are deliberately irrelevant to this result.
-        if (missing.Count == 0)
+        if (anchor is not null && verdict.Missing.Count == 0)
         {
             return IntegratedOrLocal(
                 reach,
-                attributed,
+                verdict.Integrated.Select(commit => commit.Sha),
                 branchName,
-                deliveryRef,
-                Short(newest),
-                "anchor-ancestor");
-        }
-
-        // A missing commit is not necessarily a hole in the delivery: a later,
-        // already-integrated attributed commit of a different generation can
-        // carry the same content (plus more, e.g. an added ADR note). That is
-        // supersession, not a gap, so it must not read as "partial". Reuses the
-        // same conservative breadth heuristic as the one-time superseded-commit
-        // migration, but live and for any attributed commit, not only a runner
-        // lifecycle fence.
-        var supersededBy = SupersededCommitSweepPolicy.Evaluate(
-                commits: RecordsFor(job, attributed),
-                isIntegrated: sha => AncestorSetContains(reach.DevelopAncestors, sha),
-                isCandidate: static _ => true)
-            .Replacements
-            .ToDictionary(
-                replacement => replacement.SupersededSha,
-                replacement => replacement.ReplacementSha,
-                StringComparer.OrdinalIgnoreCase);
-        var trulyMissing = missing.Where(sha => !supersededBy.ContainsKey(sha)).ToList();
-        var supersededMissing = missing.Where(sha => supersededBy.ContainsKey(sha)).ToList();
-
-        if (trulyMissing.Count == 0)
-        {
-            var supersessionNote = string.Join(
-                "; ",
-                supersededMissing.Select(sha => $"{Short(sha)} superseded by {Short(supersededBy[sha])}"));
-            return IntegratedOrLocal(
-                reach,
-                attributed.Except(supersededMissing, StringComparer.OrdinalIgnoreCase),
-                branchName,
-                deliveryRef,
-                Short(newest),
-                $"anchor-ancestor ({supersessionNote})");
+                DeliveryRefFor(job, anchor.Sha),
+                Short(anchor.Sha),
+                DeliveryGenerationDetail.Integrated(verdict));
         }
 
         // SOME landed, some did not → partial, naming the missing short-SHAs so the
         // tooltip says exactly which attributed commits are not in develop yet.
-        var integratedCount = attributed.Count - trulyMissing.Count;
-        var missingShort = string.Join(", ", trulyMissing.Select(Short));
-        var supersededDetail = supersededMissing.Count == 0
-            ? string.Empty
-            : "; superseded: " + string.Join(
-                "; ",
-                supersededMissing.Select(sha => $"{Short(sha)} by {Short(supersededBy[sha])}"));
         return new TaskIntegrationStatus
         {
             Status = IntegrationStatuses.Partial,
-            DeliveryRef = deliveryRef,
+            DeliveryRef = DeliveryRefFor(job, anchor?.Sha),
             IntegrationBranch = branchName,
-            Detail = $"{integratedCount}/{attributed.Count} attributed commits integrated; "
-                     + $"missing: {missingShort}{supersededDetail}",
+            Detail = DeliveryGenerationDetail.Partial(verdict),
         };
     }
 
@@ -857,15 +822,36 @@ public sealed class TaskIntegrationStatusService
     /// provenance proves that a local task branch actually existed; otherwise
     /// it would recreate the ghost badge this projection is meant to remove.
     /// </summary>
-    internal static string? DeliveryRefFor(TaskInfo job)
+    internal static string? DeliveryRefFor(TaskInfo job) => DeliveryRefFor(job, null);
+
+    /// <summary>
+    /// AGT-2871 - the ref of the generation that was merged. When the commit
+    /// that proves the integration names its own delivery branch, that branch
+    /// is the card's delivery ref: the nine cards of this finding still
+    /// advertised the first round's result ref long after a later generation had
+    /// been reviewed and merged.
+    /// </summary>
+    internal static string? DeliveryRefFor(TaskInfo job, string? mergedAnchorSha)
     {
         var resolved = DeliveryRefResolver.Resolve(job.Id, job.FolderPath);
+        var mergedBranch = string.IsNullOrWhiteSpace(mergedAnchorSha)
+            ? null
+            : AllAttributedCommitRecords(job)
+                .LastOrDefault(commit =>
+                    string.Equals(commit.Sha, mergedAnchorSha, StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrWhiteSpace(commit.Branch))
+                ?.Branch;
+        if (!string.IsNullOrWhiteSpace(mergedBranch))
+            return TaskIntegrationBranch.Name(mergedBranch, resolved.Ref);
+
         if (resolved.Source != DeliveryRefSource.LocalTaskFallback)
             return resolved.Ref;
 
         var attributedBranch = job.Commits
-            .LastOrDefault(commit => !string.IsNullOrWhiteSpace(commit.Branch))
+            .LastOrDefault(commit => !string.IsNullOrWhiteSpace(commit.Branch)
+                && !TaskCommitSupersession.IsReplaced(commit))
             ?.Branch
+            ?? job.Commits.LastOrDefault(commit => !string.IsNullOrWhiteSpace(commit.Branch))?.Branch
             ?? job.Commit?.Branch;
         if (!string.IsNullOrWhiteSpace(attributedBranch))
             return TaskIntegrationBranch.Name(attributedBranch, resolved.Ref);
@@ -1025,13 +1011,23 @@ public sealed class TaskIntegrationStatusService
         => AttributedCommits(job, null);
 
     internal static IReadOnlyList<TaskCommitInfo> AttributedCommitRecords(TaskInfo job)
+        => AllAttributedCommitRecords(job)
+            .Where(commit => !TaskCommitSupersession.IsSuperseded(commit))
+            .ToList();
+
+    /// <summary>
+    /// AGT-2871 - every attributed commit record, superseded history included,
+    /// oldest to newest. The generation policy needs the replaced entries: they
+    /// are what turns "this SHA is not in develop" into "an earlier delivery
+    /// generation produced it and the card was re-delivered".
+    /// </summary>
+    internal static IReadOnlyList<TaskCommitInfo> AllAttributedCommitRecords(TaskInfo job)
     {
         var source = job.Commits.Count > 0
             ? job.Commits
             : job.Commit is null ? [] : [job.Commit];
         return source
-            .Where(commit => !string.IsNullOrWhiteSpace(commit.Sha)
-                && !TaskCommitSupersession.IsSuperseded(commit))
+            .Where(commit => !string.IsNullOrWhiteSpace(commit.Sha))
             .Select(TaskCommitRepository.NormalizeLegacy)
             .ToList();
     }

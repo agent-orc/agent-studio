@@ -4212,6 +4212,55 @@ public class GitService
     }
 
     /// <summary>
+    /// AGT-2871 - true when merging <paramref name="commit"/> into
+    /// <paramref name="branchRef"/> would add nothing at all: the merge result
+    /// is the branch's own tree (<c>git merge-tree --write-tree</c>). This is
+    /// the content answer for an attributed commit that is not an ancestor
+    /// because a later delivery generation re-authored the same work; the old
+    /// commit is then integrated by content, not missing. A conflicting merge,
+    /// an unreadable ref, or any git failure answers false, so the caller keeps
+    /// the conservative "still outstanding" reading.
+    ///
+    /// <para>
+    /// Off the hot path only: this is one git process per commit. The
+    /// reconciliation pass calls it and persists what it decided
+    /// (<see cref="CommitIntegrationEvidence.ContentEqual"/>), so the board
+    /// projection keeps answering from memory.
+    /// </para>
+    /// </summary>
+    public bool IsContentContainedInBranch(string repoRoot, string commit, string branchRef)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot)) return false;
+        if (!IsLikelyBranchName(commit) || !IsLikelyBranchName(branchRef)) return false;
+
+        var (branchTreeOutput, _, branchCode) = RunGitArgs(
+            repoRoot,
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            branchRef + "^{tree}");
+        if (branchCode != 0) return false;
+        var branchTree = branchTreeOutput.Trim();
+        if (branchTree.Length == 0) return false;
+
+        // Exit code 0 is a clean merge; 1 means conflicts, which is itself
+        // proof that the commit is not contained.
+        var (mergedOutput, _, mergeCode) = RunGitArgs(
+            repoRoot,
+            "merge-tree",
+            "--write-tree",
+            branchRef,
+            commit);
+        if (mergeCode != 0) return false;
+        var mergedTree = mergedOutput
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .FirstOrDefault()
+            ?.Trim();
+        return !string.IsNullOrEmpty(mergedTree)
+               && string.Equals(mergedTree, branchTree, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
     /// The merge-base (fork point) SHA of two refs, or null when either ref is
     /// missing / they share no history. ASS-1724 uses this to capture a task
     /// branch's <c>base</c> - the commit <c>task/&lt;id&gt;</c> was cut from off the

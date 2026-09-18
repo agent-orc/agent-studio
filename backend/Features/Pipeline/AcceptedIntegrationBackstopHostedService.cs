@@ -22,6 +22,7 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
     private readonly PipelineExecutionLog? _pipelineLog;
     private readonly HistoricalIntegrationVerificationSweep? _historicalSweep;
     private readonly AcceptedIntegrationInventorySweep? _historicalInventory;
+    private readonly IntegrationGenerationReconciler? _generationReconciler;
     private readonly object _alertGate = new();
     private readonly AcceptedIntegrationAlertLogState _alertLog = new();
     private AcceptedIntegrationAlertSnapshot _currentAlert = new()
@@ -42,7 +43,8 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
         TimelineLog? timeline = null,
         PipelineExecutionLog? pipelineLog = null,
         HistoricalIntegrationVerificationSweep? historicalSweep = null,
-        AcceptedIntegrationInventorySweep? historicalInventory = null)
+        AcceptedIntegrationInventorySweep? historicalInventory = null,
+        IntegrationGenerationReconciler? generationReconciler = null)
     {
         _scanner = scanner;
         _settings = settings;
@@ -56,6 +58,7 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
         _pipelineLog = pipelineLog;
         _historicalSweep = historicalSweep;
         _historicalInventory = historicalInventory;
+        _generationReconciler = generationReconciler;
     }
 
     public AcceptedIntegrationAlertSnapshot CurrentAlert
@@ -315,6 +318,25 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
         using var timer = new PeriodicTimer(interval);
         while (!stoppingToken.IsCancellationRequested)
         {
+            // AGT-2871: resolve the delivery generations of Human Review cards
+            // that still read pending/partial before the recovery loop reads
+            // their verdict, so a card whose only outstanding commit belongs to
+            // a superseded generation is not driven as an unfinished delivery.
+            // The first iteration runs right after startup, which is the
+            // one-off pass the nine stuck cards needed.
+            try
+            {
+                _generationReconciler?.RunOnce(stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Integration generation reconcile failed");
+            }
+
             try
             {
                 RunOnce();

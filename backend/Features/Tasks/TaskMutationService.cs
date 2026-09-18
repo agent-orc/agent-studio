@@ -655,6 +655,53 @@ public class TaskMutationService
     }
 
     /// <summary>
+    /// AGT-2871 - persists the per-commit integration verdict a reconciliation
+    /// pass decided (<see cref="CommitIntegrationOutcome"/>): which rule
+    /// answered, plus the replacement generation when the rule named one. Only
+    /// the two evidence fields of the named entries change; no history entry is
+    /// rewritten, reordered, or dropped, and a commit that already carries a
+    /// named successor keeps it.
+    /// </summary>
+    public CommitSupersessionWriteResult MarkCommitIntegrationEvidenceOnFolder(
+        string folderPath,
+        IReadOnlyDictionary<string, CommitIntegrationOutcome> outcomes)
+    {
+        if (!Directory.Exists(folderPath)) return new CommitSupersessionWriteResult(false, 0);
+        if (outcomes.Count == 0) return new CommitSupersessionWriteResult(true, 0);
+        var persisted = ReadPersistedCommitChain(folderPath);
+        if (persisted is null) return new CommitSupersessionWriteResult(false, 0);
+
+        var changed = 0;
+        var updated = persisted.Select(commit =>
+        {
+            if (!outcomes.TryGetValue(commit.Sha, out var outcome)) return commit;
+            var evidence = CommitIntegrationEvidence.Normalize(outcome.Evidence);
+            if (evidence is null || !CommitIntegrationEvidence.IsDurable(evidence)) return commit;
+
+            var replacement = TaskCommitSupersession.IsSuperseded(commit)
+                ? commit.SupersededByAttempt
+                : string.IsNullOrWhiteSpace(outcome.SupersededByAttempt)
+                    ? commit.SupersededByAttempt
+                    : outcome.SupersededByAttempt.Trim();
+            if (string.Equals(commit.IntegrationEvidence, evidence, StringComparison.Ordinal)
+                && string.Equals(commit.SupersededByAttempt, replacement, StringComparison.Ordinal))
+            {
+                return commit;
+            }
+
+            changed++;
+            return commit with
+            {
+                IntegrationEvidence = evidence,
+                SupersededByAttempt = replacement,
+            };
+        }).ToList();
+        if (changed == 0) return new CommitSupersessionWriteResult(true, 0);
+        var written = WriteCommitState(folderPath, updated);
+        return new CommitSupersessionWriteResult(written, written ? changed : 0);
+    }
+
+    /// <summary>
     /// Persists completed-push backstop bookkeeping (<see cref="CommitPushOutcome"/>)
     /// for a subset of a task's commits, keyed by SHA. Every history entry not
     /// named in <paramref name="outcomes"/> is left untouched.

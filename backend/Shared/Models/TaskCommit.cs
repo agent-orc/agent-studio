@@ -64,6 +64,18 @@ public record TaskCommitInfo
     /// </summary>
     [JsonPropertyName("supersededByAttempt")]
     public string? SupersededByAttempt { get; init; }
+    /// <summary>
+    /// AGT-2871 - which rule last decided this commit's integration verdict,
+    /// one of <see cref="CommitIntegrationEvidence"/>. Only the rules that are
+    /// expensive or impossible to re-derive on the board hot path are persisted
+    /// (<see cref="CommitIntegrationEvidence.ContentEqual"/>,
+    /// <see cref="CommitIntegrationEvidence.GenerationSuperseded"/>,
+    /// <see cref="CommitIntegrationEvidence.PathSuperseded"/>); plain
+    /// target-branch ancestry is re-read every time and never written here.
+    /// Null on entries no reconciliation pass has classified yet.
+    /// </summary>
+    [JsonPropertyName("integrationEvidence")]
+    public string? IntegrationEvidence { get; init; }
     public int FilesChanged { get; init; }
     public List<string> Files { get; init; } = [];
     public DateTime At { get; init; }
@@ -196,6 +208,73 @@ public static class CommitSupersessionStates
     public static readonly string[] All = [Current, ReplacementPending, Replaced];
 }
 
+/// <summary>
+/// AGT-2871 - the rule that decided one attributed commit's integration
+/// verdict. Every delivered card's projection reports one of these per commit,
+/// so "this is in the branch", "this adds nothing to the branch", and "a later
+/// delivery generation replaced this" stop collapsing into the single word
+/// "missing". Kept as string constants for the same reason as
+/// <see cref="CommitAttributionKinds"/>: the wire and disk format stays a
+/// readable literal.
+/// </summary>
+public static class CommitIntegrationEvidence
+{
+    /// <summary>The commit is an ancestor of the integration branch.</summary>
+    public const string Ancestor = "ancestor";
+
+    /// <summary>
+    /// Merging the commit into the integration branch yields the branch's own
+    /// tree (<c>git merge-tree --write-tree</c>), so it adds nothing that is
+    /// not already integrated.
+    /// </summary>
+    public const string ContentEqual = "content-equal";
+
+    /// <summary>
+    /// The commit belongs to a delivery generation the card left behind: a
+    /// proven earlier generation, or an explicitly recorded replacement.
+    /// </summary>
+    public const string GenerationSuperseded = "generation-superseded";
+
+    /// <summary>
+    /// Legacy fallback for records without generation markers: a later
+    /// attributed commit of the same card is integrated and covers this
+    /// commit's changed paths.
+    /// </summary>
+    public const string PathSuperseded = "path-superseded";
+
+    /// <summary>None of the rules above applies; the commit is a genuine hole.</summary>
+    public const string Missing = "missing";
+
+    public static readonly string[] All =
+        [Ancestor, ContentEqual, GenerationSuperseded, PathSuperseded, Missing];
+
+    /// <summary>Null for a blank or unknown value, so an unclassified entry stays unclassified.</summary>
+    public static string? Normalize(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var candidate = value.Trim();
+        foreach (var known in All)
+            if (string.Equals(known, candidate, StringComparison.OrdinalIgnoreCase)) return known;
+        return null;
+    }
+
+    /// <summary>The commit counts as delivered into the integration branch.</summary>
+    public static bool IsIntegrated(string? evidence)
+        => Normalize(evidence) is Ancestor or ContentEqual;
+
+    /// <summary>The commit belongs to a delivery generation that no longer has to integrate.</summary>
+    public static bool IsSuperseded(string? evidence)
+        => Normalize(evidence) is GenerationSuperseded or PathSuperseded;
+
+    /// <summary>
+    /// Whether a reconciliation pass may persist this verdict. Ancestry is
+    /// re-derived per read and a missing commit is not a durable fact, so only
+    /// the resolved non-ancestor rules are written to <c>task.json</c>.
+    /// </summary>
+    public static bool IsDurable(string? evidence)
+        => Normalize(evidence) is ContentEqual or GenerationSuperseded or PathSuperseded;
+}
+
 /// <summary>Terminal <see cref="TaskCommitInfo.PushStatus"/> values the completed-push backstop persists.</summary>
 public static class CommitPushStatuses
 {
@@ -228,6 +307,16 @@ public sealed record CommitPushOutcome(
     public static CommitPushOutcome Rejected(int attempts, string? error)
         => new(CommitPushStatuses.Rejected, attempts, null, error);
 }
+
+/// <summary>
+/// AGT-2871 - the generation verdict a reconciliation pass decided for one
+/// commit: the rule that answered, and the replacement delivery generation when
+/// that rule named one. Applied by
+/// <see cref="TaskMutationService.MarkCommitIntegrationEvidenceOnFolder"/>.
+/// </summary>
+public sealed record CommitIntegrationOutcome(
+    string Evidence,
+    string? SupersededByAttempt = null);
 
 /// <summary>
 /// One commit that the deterministic attribution rule subtracted from a

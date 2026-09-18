@@ -47,9 +47,18 @@ public static class DeliveryRefResolver
                 IsRemote: true);
         }
 
-        var attributed = card.Commits
+        // AGT-2871: a commit whose delivery generation was replaced does not
+        // name the card's delivery ref. The card is continued and re-delivered
+        // often enough that the first round's result ref otherwise outlives the
+        // generation that was actually reviewed and merged. The unfiltered
+        // fallback stays, so a card with only superseded history still resolves
+        // the ref it used to.
+        var branchCommits = card.Commits
             .Where(commit => !string.IsNullOrWhiteSpace(commit.Branch))
-            .LastOrDefault();
+            .ToList();
+        var attributed = branchCommits
+                             .LastOrDefault(commit => !TaskCommitSupersession.IsReplaced(commit))
+                         ?? branchCommits.LastOrDefault();
         var attributedRef = NormalizeBranch(attributed?.Branch);
         if (attributedRef is not null)
         {

@@ -313,8 +313,26 @@ public sealed record TaskRepositoryIntegrationStatus
 public sealed record TaskRepositoryCommitMembership
 {
     public string Sha { get; init; } = "";
+
+    /// <summary>
+    /// Literal target-branch ancestry. A commit that is integrated by content
+    /// or superseded by a later generation reports false here and says so in
+    /// <see cref="Evidence"/>, so this field stays the plain git answer.
+    /// </summary>
     public bool OnIntegrationBranch { get; init; }
     public bool OnReleaseBranch { get; init; }
+
+    /// <summary>
+    /// AGT-2871 - which rule decided this commit's verdict, one of
+    /// <see cref="CommitIntegrationEvidence"/>.
+    /// </summary>
+    public string Evidence { get; init; } = CommitIntegrationEvidence.Missing;
+
+    /// <summary>
+    /// AGT-2871 - 1-based delivery generation the commit belongs to. Cards that
+    /// were continued and re-delivered carry more than one.
+    /// </summary>
+    public int Generation { get; init; } = 1;
 }
 
 /// <summary>

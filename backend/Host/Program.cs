@@ -416,6 +416,11 @@ builder.Services.AddSingleton<ProjectGitGraphService>();
 builder.Services.AddSingleton<TaskIntegrationStatusService>();
 builder.Services.AddSingleton<TaskIntegrationRecoveryService>();
 builder.Services.AddSingleton<SupersededCommitSweep>();
+// AGT-2871: the recurring half of the same problem. The one-time sweep above
+// repaired the cards that existed when it ran; this reconciler re-evaluates
+// Human Review cards whose verdict still mixes delivery generations, off the
+// board hot path, and persists which rule decided per commit.
+builder.Services.AddSingleton<IntegrationGenerationReconciler>();
 builder.Services.AddSingleton<RemoteTokenReceiptService>();
 builder.Services.AddSingleton<RemoteCompletionAttributionSweep>();
 builder.Services.AddSingleton<TaskListGitProjectionCache>();
