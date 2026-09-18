@@ -70,9 +70,10 @@ public sealed class CodingDaemonRestartTests : IDisposable
         var reattachedSlot = Assert.Single(
             new RunnerStateStore(options.StateDir).LoadAll());
         Assert.Equal(_worker.Id, reattachedSlot.ProcessId);
-        Assert.Contains(logs, line => line.Contains(
-            "recovered 1 persisted slot(s)",
-            StringComparison.Ordinal));
+        await WaitForLogAsync(
+            logs,
+            line => line.Contains("recovered 1 persisted slot(s)", StringComparison.Ordinal),
+            stopReplacement.Token);
         await File.WriteAllTextAsync(continueFile, "continue", stopReplacement.Token);
         await server.Completion.Task.WaitAsync(TimeSpan.FromSeconds(30));
 

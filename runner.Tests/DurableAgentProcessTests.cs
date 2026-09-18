@@ -10,6 +10,7 @@ public sealed class DurableAgentProcessTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "runner-restart-tests", Guid.NewGuid().ToString("N"));
 
     [Fact]
+    [Trait("Category", "MachineBound")]
     public async Task Replacement_daemon_reattaches_live_fake_job_and_reads_its_terminal_result()
     {
         var worktree = Path.Combine(_root, "worktree");
@@ -17,8 +18,10 @@ public sealed class DurableAgentProcessTests : IDisposable
         var stateRoot = Path.Combine(_root, "state");
         Directory.CreateDirectory(worktree);
         Directory.CreateDirectory(results);
+        var releasePath = Path.Combine(results, "fake-job-release");
         var options = Options(stateRoot, worktree,
-            "-c \"sleep 1; printf 'before-restart\\n[[TASK_DONE]]\\n'\"");
+            WaitForReleaseCommand(releasePath, "before-restart\\n[[TASK_DONE]]\\n"),
+            runTimeoutSeconds: 60);
         var lease = Lease("AGT-RESTART");
         var firstStore = new RunnerStateStore(stateRoot);
         var slot = firstStore.Create(lease.TaskKey, lease, worktree);
@@ -31,25 +34,45 @@ public sealed class DurableAgentProcessTests : IDisposable
             Phase = "running",
         });
 
-        // A replacement store/handle has no Process object or inherited pipe
-        // from the starter. It can adopt only from the durable PID + cwd proof.
-        var replacementStore = new RunnerStateStore(stateRoot);
-        var recovered = Assert.Single(replacementStore.LoadAll());
-        Assert.True(DurableAgentProcess.VerifyLive(recovered, out var proof), proof);
-        var attached = DurableAgentProcess.Attach(recovered);
-
         DetachedJobResult? result = null;
-        for (var i = 0; i < 40 && result is null; i++)
+        try
         {
-            await Task.Delay(100);
-            result = attached.ReadResult();
-        }
+            // One deadline covers the complete handoff. The fake job remains alive
+            // until the replacement has observed every durable prerequisite, so host
+            // scheduling can delay a condition without making the condition vanish.
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            await WaitUntilAsync(
+                () => File.Exists(original.IdentityPath),
+                "the detached worker to publish its handoff identity",
+                deadline.Token);
 
-        Assert.NotNull(result);
-        Assert.Equal(0, result!.ExitCode);
-        Assert.Contains("[[TASK_DONE]]", result.StdOut);
-        Assert.Contains(attached.ReadAfter(0), line => line.Text == "before-restart");
-        Assert.Contains(attached.ReadAfter(0), line => line.Text == "[[TASK_DONE]]");
+            // A replacement store/handle has no Process object or inherited pipe
+            // from the starter. It can adopt only from the durable PID + cwd proof.
+            var replacementStore = new RunnerStateStore(stateRoot);
+            var recovered = Assert.Single(replacementStore.LoadAll());
+            var proof = string.Empty;
+            await WaitUntilAsync(
+                () => DurableAgentProcess.VerifyLive(recovered, out proof),
+                "the replacement daemon to verify the persisted process generation",
+                deadline.Token);
+            var attached = DurableAgentProcess.Attach(recovered);
+            await WaitUntilAsync(
+                () => attached.ReadAfter(0).Any(line => line.Text == "fake-job-ready"),
+                "the fake job to publish its readiness marker",
+                deadline.Token);
+
+            await File.WriteAllTextAsync(releasePath, "continue", deadline.Token);
+            result = await WaitForResultAsync(attached, deadline.Token);
+
+            Assert.Equal(0, result.ExitCode);
+            Assert.Contains("[[TASK_DONE]]", result.StdOut);
+            Assert.Contains(attached.ReadAfter(0), line => line.Text == "before-restart");
+            Assert.Contains(attached.ReadAfter(0), line => line.Text == "[[TASK_DONE]]");
+        }
+        finally
+        {
+            if (result is null) original.Kill();
+        }
     }
 
     [Fact]
@@ -80,8 +103,9 @@ public sealed class DurableAgentProcessTests : IDisposable
     // Gating, not filtering: this reports as Skipped with its reason, so nobody
     // mistakes the Windows run for coverage of the PID-reuse defence.
     [SkippableFact]
+    [Trait("Category", "MachineBound")]
     [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
-    public async Task Pid_with_a_different_worktree_is_not_adopted()
+    public void Pid_with_a_different_worktree_is_not_adopted()
     {
         PlatformGate.LinuxOnly("the worktree proof reads /proc/<pid>/cwd");
 
@@ -92,30 +116,39 @@ public sealed class DurableAgentProcessTests : IDisposable
         Directory.CreateDirectory(actual);
         Directory.CreateDirectory(claimed);
         Directory.CreateDirectory(results);
-        var options = Options(stateRoot, actual, "-c \"sleep 2\"");
+        var releasePath = Path.Combine(results, "fake-job-release");
+        var options = Options(
+            stateRoot,
+            actual,
+            WaitForReleaseCommand(releasePath, "done\\n"),
+            runTimeoutSeconds: 60);
         var lease = Lease("AGT-MISMATCH");
         var store = new RunnerStateStore(stateRoot);
         var slot = store.Create(lease.TaskKey, lease, claimed);
         var process = DurableAgentProcess.Start(options, slot.WorkerDirectory, actual, "", results);
-        slot = store.Save(slot with
+        try
         {
-            ProcessId = process.ProcessId,
-            ProcessStartedAtUtc = process.ProcessStartedAtUtc,
-            Phase = "running",
-        });
+            slot = store.Save(slot with
+            {
+                ProcessId = process.ProcessId,
+                ProcessStartedAtUtc = process.ProcessStartedAtUtc,
+                Phase = "running",
+            });
 
-        Assert.False(DurableAgentProcess.VerifyLive(slot, out var reason));
-        Assert.Contains("does not match worktree", reason);
-        process.Kill();
-        await Task.Delay(50);
+            Assert.False(DurableAgentProcess.VerifyLive(slot, out var reason));
+            Assert.Contains("does not match worktree", reason);
+        }
+        finally
+        {
+            process.Kill();
+        }
     }
 
-    // Wall-clock racer: polls 400x5ms against a real "sleep 1" process, so it
-    // fails under load on an otherwise untouched tree. It produced the false
-    // ProductFailure verdicts on AGT-2457 and AGT-2458, whose diffs do not touch
-    // this file. Marked per the AGT-2484 contract so a non-reproducing failure
-    // is quarantined instead of blocking; a reproduced failure still blocks.
+    // This used to poll 400x5ms against a real "sleep 1" process, so it failed
+    // under load on otherwise untouched trees. The worker now stays alive until
+    // the observable identity condition is proven or the shared deadline expires.
     [Fact]
+    [Trait("Category", "MachineBound")]
     [Trait("Category", "ReviewFlaky")]
     public async Task Worker_identity_closes_the_process_start_to_slot_save_restart_window()
     {
@@ -124,7 +157,12 @@ public sealed class DurableAgentProcessTests : IDisposable
         var stateRoot = Path.Combine(_root, "state");
         Directory.CreateDirectory(worktree);
         Directory.CreateDirectory(results);
-        var options = Options(stateRoot, worktree, "-c \"sleep 1; printf 'done\\n'\"");
+        var releasePath = Path.Combine(results, "fake-job-release");
+        var options = Options(
+            stateRoot,
+            worktree,
+            WaitForReleaseCommand(releasePath, "done\\n"),
+            runTimeoutSeconds: 60);
         var lease = Lease("AGT-LAUNCH-WINDOW");
         var firstStore = new RunnerStateStore(stateRoot);
         var slot = firstStore.Create(lease.TaskKey, lease, worktree);
@@ -132,34 +170,42 @@ public sealed class DurableAgentProcessTests : IDisposable
 
         var worker = DurableAgentProcess.Start(
             options, slot.WorkerDirectory, worktree, "", results);
-        var replacementSlot = Assert.Single(new RunnerStateStore(stateRoot).LoadAll());
-
-        PersistedRunnerSlot recovered = replacementSlot;
-        var reason = string.Empty;
-        var identityProven = false;
-        // Poll tightly: recovery is only observable while the worker is alive, and
-        // on a host where the faked CLI binary does not exist (Windows, /bin/sh)
-        // that window is tens of milliseconds. The contract under test is the
-        // recovery itself, so the loop must not be able to step over the window.
-        for (var i = 0; i < 400 && !identityProven; i++)
+        try
         {
-            identityProven = DurableAgentProcess.TryRecoverIdentity(replacementSlot, out recovered, out reason);
-            if (!identityProven) await Task.Delay(5);
-        }
+            var replacementSlot = Assert.Single(new RunnerStateStore(stateRoot).LoadAll());
 
-        // TryRecoverIdentity returns true only after it has verified the live PID
-        // generation, so this single assertion covers both halves of the contract.
-        // Re-verifying liveness afterwards would race the worker's own exit.
-        Assert.True(identityProven, reason);
-        Assert.Equal(worker.ProcessId, recovered.ProcessId);
-        Assert.InRange(
-            Math.Abs((worker.ProcessStartedAtUtc - recovered.ProcessStartedAtUtc!.Value).TotalSeconds),
-            0,
-            2);
-        worker.Kill();
+            PersistedRunnerSlot recovered = replacementSlot;
+            var reason = string.Empty;
+            var identityProven = false;
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            await WaitUntilAsync(
+                () => identityProven = DurableAgentProcess.TryRecoverIdentity(
+                    replacementSlot,
+                    out recovered,
+                    out reason),
+                "the detached worker identity to become recoverable",
+                deadline.Token);
+
+            // TryRecoverIdentity returns true only after it has verified the live PID
+            // generation, so this single assertion covers both halves of the contract.
+            Assert.True(identityProven, reason);
+            Assert.Equal(worker.ProcessId, recovered.ProcessId);
+            Assert.InRange(
+                Math.Abs((worker.ProcessStartedAtUtc - recovered.ProcessStartedAtUtc!.Value).TotalSeconds),
+                0,
+                2);
+        }
+        finally
+        {
+            worker.Kill();
+        }
     }
 
-    private static RunnerOptions Options(string stateRoot, string worktree, string cliArgs) => new()
+    private static RunnerOptions Options(
+        string stateRoot,
+        string worktree,
+        string cliArgs,
+        int runTimeoutSeconds = 10) => new()
     {
         ServerUrl = "http://localhost",
         RunnerId = "runner-restart-test",
@@ -180,10 +226,46 @@ public sealed class DurableAgentProcessTests : IDisposable
         CliArgs = cliArgs,
         TtlSeconds = 120,
         HeartbeatSeconds = 30,
-        RunTimeoutSeconds = 10,
+        RunTimeoutSeconds = runTimeoutSeconds,
         HostMaxParallelism = 1,
         PollSeconds = 1,
     };
+
+    private static string WaitForReleaseCommand(string releasePath, string terminalOutput)
+    {
+        var shellReleasePath = PosixShell.ToShellPath(releasePath).Replace("'", "'\"'\"'");
+        return $"-c \"printf 'fake-job-ready\\n'; "
+               + $"while [ ! -f '{shellReleasePath}' ]; do sleep 0.05; done; "
+               + $"printf '{terminalOutput}'\"";
+    }
+
+    private static async Task WaitUntilAsync(
+        Func<bool> condition,
+        string description,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!condition())
+                await Task.Delay(50, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException($"Timed out waiting for {description}.");
+        }
+    }
+
+    private static async Task<DetachedJobResult> WaitForResultAsync(
+        DurableAgentProcess process,
+        CancellationToken cancellationToken)
+    {
+        DetachedJobResult? result = null;
+        await WaitUntilAsync(
+            () => (result = process.ReadResult()) is not null,
+            "the detached worker to atomically publish its complete terminal result",
+            cancellationToken);
+        return result!;
+    }
 
     private static RunLeaseInfoDto Lease(string taskKey) => new(
         taskKey,
