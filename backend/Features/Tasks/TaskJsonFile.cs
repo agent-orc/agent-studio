@@ -52,6 +52,19 @@ internal static class TaskJsonFile
             UpdateFieldOrThrow(jobDir, fieldName, value, fileWriter);
             return true;
         }
+        catch (Exception ex) when (ex is DirectoryNotFoundException or FileNotFoundException)
+        {
+            // Same routine case as the missing file above, just observed one step
+            // later: the lane folder was moved or deleted between the existence
+            // check and the swap. The write is deliberately not retried at a new
+            // location - re-creating the folder there is what produced duplicate
+            // lane entries (AGT-2867) - so this stays a reported non-write.
+            logger.LogDebug(
+                ex,
+                "Cannot update field {Field}: the task folder vanished under the write at {Dir}",
+                fieldName, jobDir);
+            return false;
+        }
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to update field {Field} in task.json at {Dir}", fieldName, jobDir);
@@ -233,9 +246,16 @@ internal static class TaskJsonFile
         }
     }
 
+    /// <summary>
+    /// Every write here rewrites a <c>task.json</c> that already exists inside a
+    /// lane folder, so it goes through
+    /// <see cref="IAtomicJsonFileWriter.ReplaceExisting"/>: a folder that a
+    /// concurrent lane writer moved or deleted must make the rewrite fail, never
+    /// re-create the folder around it (AGT-2867).
+    /// </summary>
     private static void Write(
         string path,
         Dictionary<string, object> value,
         IAtomicJsonFileWriter? fileWriter = null) =>
-        (fileWriter ?? FileWriter).Write(path, JsonSerializer.Serialize(value, WriteOpts));
+        (fileWriter ?? FileWriter).ReplaceExisting(path, JsonSerializer.Serialize(value, WriteOpts));
 }

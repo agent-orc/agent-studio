@@ -7,6 +7,26 @@ namespace AgentStudio.Persistence;
 public interface IAtomicJsonFileWriter
 {
     void Write(string path, string content);
+
+    /// <summary>
+    /// Rewrites a file whose directory must already exist, and fails instead of
+    /// re-creating it.
+    ///
+    /// <para><see cref="Write"/> creates the destination directory, which is
+    /// right for a store that owns its own folder (the project registry, a
+    /// settings file) but wrong for a file that lives inside a folder another
+    /// writer may move or delete underneath it. A <c>task.json</c> rewrite that
+    /// races a lane move re-created the vanished source folder and re-seeded it
+    /// with the pre-move content, so the same task appeared in two lanes at once:
+    /// the scanner then reported a duplicate id, and the next delete removed the
+    /// resurrected ghost while the real folder stayed in the target lane (AGT-2867).
+    /// Refusing to create the directory turns that into a clean failed write the
+    /// caller already knows how to report.</para>
+    ///
+    /// <para>The default implementation keeps existing writers (including test
+    /// doubles that only override <see cref="Write"/>) working unchanged.</para>
+    /// </summary>
+    void ReplaceExisting(string path, string content) => Write(path, content);
 }
 
 public sealed class AtomicJsonFileWriter : IAtomicJsonFileWriter
@@ -28,7 +48,22 @@ public sealed class AtomicJsonFileWriter : IAtomicJsonFileWriter
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         var directory = Path.GetDirectoryName(path);
         if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
+        Swap(path, content);
+    }
 
+    /// <inheritdoc />
+    public void ReplaceExisting(string path, string content)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        // No Directory.CreateDirectory: the temp file is a sibling of the
+        // destination, so a folder that a lane writer moved or deleted while we
+        // were preparing the content makes the temp write fail with
+        // DirectoryNotFoundException instead of resurrecting the folder.
+        Swap(path, content);
+    }
+
+    private static void Swap(string path, string content)
+    {
         var tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
         try
         {
