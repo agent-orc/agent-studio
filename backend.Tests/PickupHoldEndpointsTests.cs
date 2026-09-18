@@ -47,7 +47,7 @@ public sealed class PickupHoldEndpointsTests : IDisposable
     }
 
     [Fact]
-    public async Task Detail_ArchivedReleaseGate_CardSaysTheGateCanNeverOpenAndNamesBothWaysOut()
+    public async Task Detail_ArchivedReleaseGate_CardSaysTheGateCanNeverOpenAndNamesAllDecisions()
     {
         WriteJob(_libWatch, TaskStates.Archive, "parity-suite", "AGT-2372");
         WriteJob(_appWatch, TaskStates.Ready, "duplicate-cli-paths", "AGT-2373",
@@ -63,6 +63,7 @@ public sealed class PickupHoldEndpointsTests : IDisposable
 
         var hold = info.GetProperty("pickupHold");
         Assert.Equal("dependency-gate", hold.GetProperty("mechanism").GetString());
+        Assert.Equal("unsatisfiable", hold.GetProperty("classification").GetString());
         Assert.True(hold.GetProperty("unsatisfiable").GetBoolean());
         Assert.Contains("AGT-2372", hold.GetProperty("reason").GetString()!, StringComparison.Ordinal);
         Assert.Contains("archived", hold.GetProperty("reason").GetString()!, StringComparison.OrdinalIgnoreCase);
@@ -71,7 +72,7 @@ public sealed class PickupHoldEndpointsTests : IDisposable
         var kinds = hold.GetProperty("resolutions").EnumerateArray()
             .Select(resolution => resolution.GetProperty("kind").GetString())
             .ToArray();
-        Assert.Equal(new[] { "release-target", "drop-release-gate" }, kinds);
+        Assert.Equal(new[] { "drop-dependency", "repoint-dependency", "archive-waiting-card" }, kinds);
 
         // The distinction also rides on the dependency edge itself, so the
         // dependency chip can say "can never open" instead of "waiting".
@@ -151,6 +152,28 @@ public sealed class PickupHoldEndpointsTests : IDisposable
             await client.GetStringAsync("/api/pickup-holds?unsatisfiableOnly=true"));
         var only = Assert.Single(filtered.RootElement.GetProperty("items").EnumerateArray());
         Assert.Equal("AGT-2373", only.GetProperty("key").GetString());
+    }
+
+    [Fact]
+    public async Task PickupHolds_DeduplicatesStalledAttentionByPrerequisite()
+    {
+        WriteJob(_libWatch, TaskStates.Escalated, "operator-decision", "AGT-2736",
+            enteredLaneAt: "2026-09-11T09:00:00Z");
+        WriteJob(_appWatch, TaskStates.Ready, "waiter-one", "AGT-2738", dependsOn: "AGT-2736");
+        WriteJob(_appWatch, TaskStates.Ready, "waiter-two", "AGT-2739", dependsOn: "AGT-2736");
+
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient();
+        using var doc = JsonDocument.Parse(await client.GetStringAsync("/api/pickup-holds"));
+
+        var attention = Assert.Single(doc.RootElement.GetProperty("attention").EnumerateArray());
+        Assert.Equal("AGT-2736", attention.GetProperty("prerequisiteKey").GetString());
+        Assert.Equal(2, attention.GetProperty("waitingCards").GetInt32());
+        Assert.Contains("operator decision", attention.GetProperty("reason").GetString()!,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(
+            "2026-09-11T09:00:00Z",
+            attention.GetProperty("sinceUtc").GetDateTime().ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ"));
     }
 
     private static JsonElement FindCard(JsonElement lane, string id)

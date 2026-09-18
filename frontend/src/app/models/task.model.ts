@@ -314,14 +314,16 @@ export interface WaitsOnStatus {
   blocked: boolean;
   /** The card sits on a dependsOn cycle - a configuration error. */
   cycleDetected: boolean;
+  /** Closed, deterministic cycle path, e.g. A, B, C, A. */
+  cyclePath?: string[];
   /** AGT-2818: at least one edge is a gate that can never open. */
   unsatisfiableGate?: boolean;
 }
 
 /**
  * AGT-2818: one way an operator can clear a pickup hold. Mirrors backend
- * `PickupHoldResolution`. Offered, never taken: releasing a validation gate is
- * a decision about whether the validation still has to happen.
+ * `PickupHoldResolution`. The UI renders a control only for kinds with an
+ * implemented handler; all other kinds remain explanatory text.
  */
 export interface PickupHoldResolution {
   /** Machine-readable kind, e.g. `release-target` / `drop-release-gate`. */
@@ -332,6 +334,8 @@ export interface PickupHoldResolution {
   detail: string;
   /** The stable key the resolution acts on, when it has one. */
   targetKey?: string | null;
+  /** The stable source key for an edge decision; null means the waiting card. */
+  sourceKey?: string | null;
 }
 
 /**
@@ -341,6 +345,8 @@ export interface PickupHoldResolution {
  * on every card that is genuinely pickup-eligible.
  */
 export interface PickupHoldStatus {
+  /** Dependency liveness: `satisfiable-soon`, `stalled`, or `unsatisfiable`. */
+  classification?: 'satisfiable-soon' | 'stalled' | 'unsatisfiable' | string;
   /**
    * `dependency-gate` | `dispatch-rejection` | `epic-container` |
    * `crash-backoff` | `pickup-policy`.

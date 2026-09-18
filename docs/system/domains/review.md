@@ -7,6 +7,14 @@ Use this when a change touches ReviewSubject preparation, aspect prompts,
 review-report verdicts, reissue or escalation decisions, the isolation of
 concurrent review attempts, or the evidence shown for a remote grade.
 
+An Auto Review card may not remain ownerless. The
+`ReviewInfrastructureRetryScheduler` owns both AGT-2841's bounded replacement
+after a terminal ReviewInfra result and the missing-handoff repair: after
+`Runner:ReviewMissingAttemptTimeoutMinutes` (30 by default), a card with a
+completed immutable run, no canonical ReviewAttempt, and no durable park gets
+one idempotent replacement attempt. A scheduled ReviewInfra retry is canonical
+authority and is never treated as missing.
+
 ## Review material contract
 
 `runner/RemoteReviewWorkspace.cs` materializes the immutable delivery

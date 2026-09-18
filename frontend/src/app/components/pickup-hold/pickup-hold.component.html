@@ -9,6 +9,9 @@
       <span class="pickup-hold__dot" aria-hidden="true"></span>
       <span class="pickup-hold__headline" data-testid="pickup-hold-headline">{{ headline() }}</span>
       <span class="pickup-hold__mechanism" data-testid="pickup-hold-mechanism">{{ mechanismLabel() }}</span>
+      @if (held.mechanism === 'dependency-gate') {
+        <span class="pickup-hold__mechanism" data-testid="pickup-hold-classification">{{ classificationLabel() }}</span>
+      }
       <span class="pickup-hold__age"
             data-testid="pickup-hold-age"
             [appTooltip]="sinceTooltip()">{{ age() }}</span>
@@ -22,14 +25,29 @@
           {{ resolutions().length === 1 ? 'Way out' : 'Ways out' }}
         </span>
         <ul class="pickup-hold__list">
-          @for (resolution of resolutions(); track resolutionKind($index, resolution)) {
+          @for (resolution of resolutions(); track resolutionIdentity($index, resolution)) {
             <li class="pickup-hold__item" [attr.data-resolution-kind]="resolution.kind">
-              <span class="pickup-hold__item-label">{{ resolution.label }}</span>
+              @if ((held.classification === 'unsatisfiable' || held.unsatisfiable)
+                  && canApplyResolution(resolution)) {
+                <button type="button"
+                        class="pickup-hold__decision"
+                        [disabled]="mutationPending()"
+                        [attr.data-testid]="'pickup-hold-decision-' + resolution.kind"
+                        (click)="applyResolution(resolution)">{{ resolution.label }}</button>
+              } @else {
+                <span class="pickup-hold__item-label">{{ resolution.label }}</span>
+              }
               <span class="pickup-hold__item-detail">{{ resolution.detail }}</span>
             </li>
           }
         </ul>
       </div>
+    }
+    @if (mutationError(); as error) {
+      <p class="pickup-hold__error" role="alert">{{ error }}</p>
+    }
+    @if (mutationNotice(); as notice) {
+      <p class="pickup-hold__notice" role="status">{{ notice }}</p>
     }
   </section>
 }

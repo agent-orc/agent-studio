@@ -56,6 +56,13 @@ state.
   `RunnerLinks` entry.
 - `backend/Services/Runner/ProjectRunner.cs`: per-project pickup tick, active
   job latch, progress-first resume, dead-letter handling, and CLI spawn path.
+- `backend/Shared/Models/PickupHold.cs`: pure dependency-hold classification.
+  `satisfiable-soon` means the prerequisite is executing or has an active
+  review attempt; `stalled` means it is parked, escalated, or has exceeded the
+  Auto Review timeout without an attempt; `unsatisfiable` covers an archived
+  unreleased gate, a missing/deleted target, or a cycle. Stalled and
+  unsatisfiable Ready cards remain visible but are excluded from pullable queue
+  counts and runner queue positions.
 - `backend/Shared/Runner/FollowUpAdmissionPolicy.cs`: the pure lane / phase /
   execution-location decision that gates whether a user follow-up may spawn a
   local process or has to be queued as a saved intent. See
@@ -885,7 +892,10 @@ state.
   (the card's waits-on chip, which distinguishes completion from release),
   never a silent deadlock. A `dependsOn` cycle is a
   configuration error: it is reported once per card (`waits-on-cycle` warning)
-  and skipped, never deadlocked.
+  and skipped, never deadlocked. `WaitsOnEvaluator` projects one deterministic
+  closed cycle path, and the decision surface offers only its directed edges as
+  drop candidates. Unrelated unsatisfiable edges remain separate decisions
+  after the cycle is broken.
   `ProjectRunnerStatus.queuedJobIds` reuses this exact pickup-candidate order.
   It is the single source for runner queue counts and one-based positions, so a
   card held by a dependency or another pickup gate occupies no displayed slot

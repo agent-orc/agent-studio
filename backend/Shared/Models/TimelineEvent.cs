@@ -220,6 +220,8 @@ public static class TimelineEventKinds
     /// new epoch, and rotated artefact count.
     /// </summary>
     public const string OperatorRequeued = "operator_requeued";
+    /// <summary>An operator added, removed, or re-pointed a waits-on edge.</summary>
+    public const string DependencyChanged = "dependency_changed";
     /// <summary>
     /// A fenced remote review report arrived after an operator had already
     /// accepted or archived the task. The report remains evidence, but cannot

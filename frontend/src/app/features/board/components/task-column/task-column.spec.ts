@@ -45,6 +45,27 @@ describe('TaskColumnComponent (smoke)', () => {
     expect(fixture.componentInstance).toBeTruthy();
   });
 
+  it('Ready header counts pullable cards and names held stalled cards separately', async () => {
+    await TestBed.configureTestingModule({
+      imports: [TaskColumnComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(TaskColumnComponent);
+    fixture.componentRef.setInput('title', 'Ready');
+    fixture.componentRef.setInput('state', '2-ready');
+    fixture.componentRef.setInput('jobs', [
+      makeJob({ id: 'pullable' }),
+      makeJob({ id: 'stalled', pickupHold: { classification: 'stalled' } as TaskInfo['pickupHold'] }),
+      makeJob({ id: 'impossible', pickupHold: { classification: 'unsatisfiable' } as TaskInfo['pickupHold'] }),
+    ]);
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.headerCount()).toBe(1);
+    expect(fixture.componentInstance.stalledCount()).toBe(2);
+    expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="lane-count-2-ready"]')?.textContent)
+      .toContain('1');
+  });
+
   // ─────────────────────────────────────────────────────────────────────
   // Lane status cluster (BUG: lane status not clearly showing auto-pickup)
   //

@@ -247,6 +247,14 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   How the API identifies a project (raw `watchPath` today, `shortCode`/`projectId`
   target) is documented in
   [../concepts/api-project-identity-and-watchpath.md](../../concepts/api-project-identity-and-watchpath.md).
+- `PUT /api/tasks/{key}/waits-on` is the incremental dependency mutation. Its
+  `add` and `remove` lists may be combined for an atomic re-point, and `reason`
+  is mandatory. The mutation preserves every unrelated reference and appends a
+  `dependency_changed` timeline row with the operator identity and reason.
+  Dependencies are never dropped automatically. A cycle decision sends
+  `requireCycleEdge: true`; the API removes the named edge only while it still
+  participates in a cycle, otherwise it returns an unchanged result with the
+  message that another edit already broke the cycle.
 - If an operation is missing from the API, create a follow-up task instead of
   reaching around the API.
 - Multi-task lane moves use the asynchronous batch contract. Send up to 500

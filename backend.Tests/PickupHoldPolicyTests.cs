@@ -53,9 +53,10 @@ public class PickupHoldPolicyTests
         Assert.Equal(MonthAgo, hold.SinceUtc);
         Assert.Equal(34 * 86400, hold.HeldForSeconds);
 
-        // Exactly the two ways out the card names, offered and not taken.
+        // Exactly the three explicit decisions, offered and never taken automatically.
+        Assert.Equal(PickupHoldClassifications.Unsatisfiable, hold.Classification);
         Assert.Equal(
-            new[] { PickupHoldResolutionKinds.ReleaseTarget, PickupHoldResolutionKinds.DropReleaseGate },
+            new[] { PickupHoldResolutionKinds.DropDependency, PickupHoldResolutionKinds.RepointDependency, PickupHoldResolutionKinds.ArchiveWaitingCard },
             hold.Resolutions.Select(resolution => resolution.Kind).ToArray());
         Assert.All(hold.Resolutions, resolution => Assert.Equal("AGT-2372", resolution.TargetKey));
     }
@@ -83,6 +84,7 @@ public class PickupHoldPolicyTests
 
         Assert.NotNull(hold);
         Assert.False(hold!.Unsatisfiable);
+        Assert.Equal(PickupHoldClassifications.SatisfiableSoon, hold.Classification);
         Assert.Contains(TaskStates.Progress, hold.Reason, StringComparison.Ordinal);
         Assert.Equal(
             PickupHoldResolutionKinds.AwaitTarget,
@@ -96,15 +98,55 @@ public class PickupHoldPolicyTests
 
         Assert.NotNull(hold);
         Assert.Contains("does not exist", hold!.Reason, StringComparison.Ordinal);
-        Assert.Equal(
-            PickupHoldResolutionKinds.CreateOrDropTarget,
-            Assert.Single(hold.Resolutions).Kind);
+        Assert.Equal(PickupHoldClassifications.Unsatisfiable, hold.Classification);
+        Assert.Equal(3, hold.Resolutions.Count);
     }
 
     [Fact]
-    public void DependencyCycle_IsUnsatisfiable_AndOutranksTheIndividualEdges()
+    public void EscalatedPrerequisite_IsStalled()
     {
-        var status = WaitsOn(Item(key: "APP-2", fulfilled: false)) with { CycleDetected = true };
+        var hold = Evaluate(Card(), waitsOn: WaitsOn(Item(
+            key: "AGT-2736", fulfilled: false, targetState: TaskStates.Escalated)));
+
+        Assert.Equal(PickupHoldClassifications.Stalled, hold!.Classification);
+        Assert.Contains("AGT-2736", hold.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AutoReviewWithoutActiveAttemptPastTimeout_IsStalled()
+    {
+        var hold = Evaluate(Card(), waitsOn: WaitsOn(Item(
+            key: "AGT-2803", fulfilled: false, targetState: TaskStates.AutoReview,
+            targetEnteredLaneAt: Now.AddHours(-2), targetHasActiveReviewAttempt: false)));
+
+        Assert.Equal(PickupHoldClassifications.Stalled, hold!.Classification);
+    }
+
+    [Fact]
+    public void AutoReviewWithActiveAttempt_IsSatisfiableSoon()
+    {
+        var hold = Evaluate(Card(), waitsOn: WaitsOn(Item(
+            key: "AGT-2803", fulfilled: false, targetState: TaskStates.AutoReview,
+            targetEnteredLaneAt: Now.AddHours(-2), targetHasActiveReviewAttempt: true)));
+
+        Assert.Equal(PickupHoldClassifications.SatisfiableSoon, hold!.Classification);
+    }
+
+    [Fact]
+    public void DependencyCycle_OffersExactlyItsThreeEdges_AndKeepsUnrelatedDecisionSeparate()
+    {
+        var unrelated = Item(
+            key: "ARCH-9", fulfilled: false, releaseGate: true,
+            waitingForRelease: true, unsatisfiable: true,
+            unsatisfiableReason: WaitsOnEvaluator.ArchivedGateReason("ARCH-9"));
+        var status = new WaitsOnStatus
+        {
+            Items = [Item(key: "APP-2", fulfilled: false), unrelated],
+            Blocked = true,
+            CycleDetected = true,
+            CyclePath = ["APP-1", "APP-2", "APP-3", "APP-1"],
+            UnsatisfiableGate = true,
+        };
 
         var hold = Evaluate(Card(), waitsOn: status);
 
@@ -112,7 +154,28 @@ public class PickupHoldPolicyTests
         Assert.Equal(PickupHoldMechanisms.DependencyGate, hold!.Mechanism);
         Assert.True(hold.Unsatisfiable);
         Assert.Contains("cycle", hold.Reason, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(PickupHoldResolutionKinds.BreakCycle, Assert.Single(hold.Resolutions).Kind);
+        Assert.Equal(
+            new[]
+            {
+                PickupHoldResolutionKinds.DropCycleEdge,
+                PickupHoldResolutionKinds.DropCycleEdge,
+                PickupHoldResolutionKinds.DropCycleEdge,
+            },
+            hold.Resolutions.Select(resolution => resolution.Kind).ToArray());
+        Assert.Equal(
+            new[] { "APP-1->APP-2", "APP-2->APP-3", "APP-3->APP-1" },
+            hold.Resolutions.Select(resolution => $"{resolution.SourceKey}->{resolution.TargetKey}").ToArray());
+        Assert.DoesNotContain(hold.Resolutions, resolution => resolution.TargetKey == "ARCH-9");
+
+        var afterCycleBreak = Evaluate(Card(), waitsOn: status with
+        {
+            CycleDetected = false,
+            CyclePath = [],
+        });
+
+        Assert.Equal(PickupHoldClassifications.Unsatisfiable, afterCycleBreak!.Classification);
+        Assert.Contains("ARCH-9", afterCycleBreak.Reason, StringComparison.Ordinal);
+        Assert.All(afterCycleBreak.Resolutions, resolution => Assert.Equal("ARCH-9", resolution.TargetKey));
     }
 
     [Fact]
@@ -299,7 +362,9 @@ public class PickupHoldPolicyTests
         bool waitingForRelease = false,
         bool unsatisfiable = false,
         string unsatisfiableReason = "",
-        string? targetState = null) => new()
+        string? targetState = null,
+        DateTime? targetEnteredLaneAt = null,
+        bool targetHasActiveReviewAttempt = false) => new()
     {
         Key = key,
         Resolved = resolved,
@@ -309,5 +374,7 @@ public class PickupHoldPolicyTests
         Unsatisfiable = unsatisfiable,
         UnsatisfiableReason = unsatisfiableReason,
         TargetState = targetState,
+        TargetEnteredLaneAt = targetEnteredLaneAt,
+        TargetHasActiveReviewAttempt = targetHasActiveReviewAttempt,
     };
 }
