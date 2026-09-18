@@ -12,8 +12,9 @@ owns a glossary: the ubiquitous language an agent must use for that area. A
 - **facet tags** name a cross-cutting aspect (a quality domain such as
   `testing`, or a document kind such as `decision`).
 
-Auto-tagging is a separate card (AGT-2804). Nothing in this domain assigns a
-tag by itself; it defines the vocabulary, the storage, and the API.
+Auto-tagging is delivered separately by AGT-2804. Tag maintenance reviews the
+resulting vocabulary and usage, but changes it only after an operator approves
+the exact proposal.
 
 ## Ownership
 
@@ -26,6 +27,9 @@ tag by itself; it defines the vocabulary, the storage, and the API.
 | Glossary page read and write | `backend/Features/Areas/AreaGlossaryService.cs` |
 | Workspace tag registry (`tags.json`) | `backend/Features/Tags/TagRegistryService.cs` |
 | Dossier `tags[]` write boundary | `backend/Features/Docs/WorkbenchTagService.cs` |
+| Periodic usage review and durable per-project reports | `backend/Features/Tags/Maintenance/TagMaintenanceService.cs` |
+| Proposal validation and exact before/after plans | `backend/Features/Tags/Maintenance/TagMaintenancePolicy.cs` (pure) |
+| Card, Dossier, wiki, registry, and glossary reads and writes | `backend/Features/Tags/Maintenance/TagMaintenanceWorkspace.cs` |
 
 ## The ten product areas
 
@@ -101,6 +105,9 @@ the write path lives in one place and the wiki-path guard covers it.
 | `GET /api/tasks?area=&tag=` | Filter the task list |
 | `GET /api/projects/{project}/workbenches?area=&tag=` | Filter the Dossier list |
 | `GET /api/projects/{project}/wiki/tree?area=&tag=` | Prune the wiki tree |
+| `GET /api/projects/{project}/tag-maintenance` | Read the project's run, decision, and audit report |
+| `POST /api/projects/{project}/tag-maintenance/run` | Start an immediate review in addition to the periodic schedule |
+| `POST /api/projects/{project}/tag-maintenance/decisions/{id}` | Apply or keep one proposal with an explicit operator identity |
 
 Filter semantics: ids inside one parameter are alternatives, the two parameters
 are a conjunction. A folder survives the wiki-tree filter only while it still
@@ -120,9 +127,99 @@ has a matching descendant.
 - **Platform stamps** (for example the orchestrator provenance tag) keep using
   the merge-add writer, which is not a public boundary.
 
+## Periodic maintenance
+
+The hosted maintenance step checks every project every 15 minutes and starts a
+review when its configured interval is due (seven days by default). Only a
+successful report advances that cadence. A failed attempt becomes eligible for
+a bounded retry after 60 minutes by default, while cancellation propagates and
+leaves no run record. It uses a
+Sonnet-class synthesis route at high thinking over the closed registry,
+glossaries, global usage counts, and a rotating bounded sample of active cards,
+Dossiers, and wiki articles. Each run leaves a durable per-project report under
+the task repository. The step proposes at most 20 changes across four kinds:
+
+- retire a facet only when it has no references in any project or history,
+- merge near-duplicate facets only when every affected item belongs to the
+  approving project,
+- add a facet only with at least three distinct active source items, and
+- add glossary terms only when an active decision-bearing Dossier or ADR is
+  cited.
+
+Every proposal becomes a `decision` card containing Keep and Apply options,
+their consequences, evidence, and the exact before/after write plan. These are
+prose decision cards until the structured decision-card surface from AGT-W54 is
+available. Creating, moving, or running the card never applies the proposal.
+
+Application requires an explicit `apply` choice and `X-Client-Id`. Before the
+first write, the service verifies every preimage and checks for new references.
+Writes use the existing owning services, verify their result, retain a
+write-ahead approval and per-write audit, and can resume idempotently after a
+partial failure. The alternative `keep` choice records rejection without any
+registry, glossary, or subject write. Area ids and platform provenance tags are
+never eligible for retirement or merge.
+
+When an operator-approved golden-set file is present, the same run also records
+micro precision and recall per classification tier. The file is accepted only
+with approval metadata and at least 60 cards plus 20 Dossiers. Tier 1 uses the
+Sonnet-class route at low thinking. Precision below 0.9 automatically evaluates
+and selects tier 2 on the Sonnet-class route at high thinking. Missing,
+unapproved, undersized, malformed, or out-of-registry data produces an explicit
+report status instead of a metric claim. The repository does not ship an
+agent-authored golden set as ground truth.
+
+### Filesystem and report contract
+
+The durable maintenance report for project `<project>` is
+`<TaskRepository>/tag-maintenance/<sha256(project)>.json`, where the digest is
+the lowercase hexadecimal SHA-256 of the exact project name. It is a JSON
+object with these arrays:
+
+| Field | Schema |
+|---|---|
+| `runs[]` | `id`, `startedAt`, `status` (`running`, `reported`, or `failed`), `model`, `thinkingLevel`, `itemsReviewed`, `eligibleItems`, `textOffset`, `excerptLimit`, `globalUsage` (tag-id to count), nullable `error`, `decisions[]` (decision ids), and `goldenSet` |
+| `decisions[]` | `id`, `cardId`, `proposal`, exact `changes[]` (`kind`, `project`, `id`, serialized `before`, serialized `after`), `status` (`pending`, `applying`, `partial`, `applied`, or `rejected`), and nullable `error` |
+| `audit[]` | `at`, `decisionId`, `actor`, `outcome`, and `detail`; approval is written before mutations, every completed write is recorded, and partial/application outcomes are appended |
+
+Within a decision, `proposal` contains `kind`, `source`, `target`, `label`,
+`reason`, `evidence[]`, `area`, and `terms[]`; each term contains `term`,
+`definition`, and `synonyms[]`. The serialized `before` and `after` values in a
+change are JSON strings because they are also the optimistic-concurrency
+preimages verified immediately before application.
+
+Each run's `goldenSet` object contains `status`, `metrics`, `path`, `message`,
+`cardCount`, `dossierCount`, `selectedTier`, and `tiers[]`. Each tier row contains
+`tier`, `model`, `thinkingLevel`, `items`, `precision`, `recall`, and
+`meanConfidence`. Without an operator-approved file, the report says
+`metrics: "unavailable (no approved golden set)"`, leaves `tiers` empty, and
+does not emit precision or recall numbers.
+
+The evaluation harness reads
+`<TaskRepository>/tag-golden-sets/<sha256(project)>.json` by default. Its schema
+is `approvedBy` (non-empty string), `approvedAt` (timestamp), and `items[]`.
+Each item has `kind` (`card` or `dossier`), `id`, `title`, `text`, and a non-empty
+`tags[]` drawn from the effective closed registry. `(kind, id)` pairs are
+unique. A usable file contains at least 60 cards and 20 Dossiers. Invalid,
+unapproved, undersized, or out-of-registry input is reported as unavailable or
+invalid and never treated as ground truth.
+
+### Configuration
+
+| Key | Default | Meaning |
+|---|---|---|
+| `TagMaintenance:Enabled` | `true` | Enables the hosted periodic sweep. `false` skips all projects; the explicit run API remains available. |
+| `TagMaintenance:Projects:<project>:Enabled` | `true` | Enables the hosted sweep for one exact project name. `false` skips that project; the explicit run API remains available. |
+| `TagMaintenance:IntervalHours` | `168` | Cadence after the most recent successful (`reported`) run. Values are clamped to 1 through 8760 hours. |
+| `TagMaintenance:RetryDelayMinutes` | `60` | Delay after the most recent failed attempt since the last success. Values are clamped to 1 through 1440 minutes. Cancellation creates no run and does not alter due time. |
+| `TagMaintenance:GoldenSetPath` | `<TaskRepository>/tag-golden-sets/<sha256(project)>.json` | Optional golden-set path override. Every `{project}` token is replaced with the exact project name, then the result is resolved to an absolute path. |
+
+`TaskRepository` is the required workspace root for both report and default
+golden-set paths. The hosted worker checks eligibility every 15 minutes; that
+poll interval is fixed and is not a `TagMaintenance` configuration key.
+
 ## Tests
 
 `backend.Tests/AreaTaxonomyTests.cs`, `AreaGlossaryDocumentTests.cs`,
 `TagFilterTests.cs`, `AreaRegistryServiceTests.cs`,
 `AreaGlossaryServiceTests.cs`, `WorkbenchTagServiceTests.cs`,
-`WikiArticleTagsTests.cs`.
+`WikiArticleTagsTests.cs`, `TagMaintenanceTests.cs`.
