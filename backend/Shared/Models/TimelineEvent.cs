@@ -326,7 +326,7 @@ public static class TimelineEventKinds
     /// may represent an operator action for a legacy conflict or the bounded
     /// automatic round used when a mechanical rebase cannot retain unambiguous
     /// SHA attribution. <see cref="TimelineEvent.Details"/> identifies whether
-    /// the round was automatic.
+    /// the round was automatic and records its fenced delivery-chain identity.
     /// </summary>
     public const string IntegrationRecoveryQueued = "integration_recovery_queued";
     /// <summary>

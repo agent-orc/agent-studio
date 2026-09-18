@@ -35,7 +35,7 @@ public sealed class AcceptedIntegrationFailurePolicyTests
             "agent-round-required",
             "Mechanical rebase changed the delivery commit cardinality.",
             AcceptedIntegrationFailureCodes.DeliveryAttributionAmbiguous,
-            false
+            true
         },
         {
             "error",

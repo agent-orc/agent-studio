@@ -1196,8 +1196,10 @@ operator changes cause the step to fail before its writer runs.
   intent, supersedes the current delivery generation, moves the card to the
   front of Ready, and writes `Automatically started a new agent round to
   preserve unambiguous delivery SHA attribution.` to the timeline. This loop is
-  limited to one automatic round per operator-owned review epoch. Repetition
-  reaches Human Review with the failed step and conflicted files visible. Every
+  limited to two automatic rounds per fenced delivery chain. Re-reviewing one
+  delivery shares the budget across review epochs; a newly published delivery
+  starts a fresh budget. Repetition reaches Human Review with the failed step
+  and conflicted files visible. Every
   failed attempt leaves the integration working tree clean. Once
   merge/gate/rollback starts, host cancellation
   does not interrupt that consistency boundary. `/healthz/drain` reports
@@ -1295,12 +1297,13 @@ broken. An operator had to requeue every one by hand.
   own `requeued-infrastructure` timeline receipts so the rail and the card
   projection agree on the retry number.
 - **Integration recovery round.** `RemoteIntegrationContinuationPolicy.Decide`
-  (`backend/Features/Pipeline/IntegrationAgentRoundService.cs`) opens exactly one
-  automatic steer round per operator-owned review epoch when the merge-first
+  (`backend/Features/Pipeline/IntegrationAgentRoundService.cs`) opens at most two
+  automatic steer rounds per fenced delivery chain when the merge-first
   integrator returns `AgentRoundRequired`, then leaves a repeat for Human Review.
   The round saves a `steer` pending intent, retains the ambiguous delivery as
   superseded history, queues the card at the front of Ready, and states itself as
-  `integration_recovery_queued` with `automatic=true`.
+  `integration_recovery_queued` with `automatic=true` and the persisted
+  `deliveryChainId`. Identifier-less legacy rows count conservatively.
 - **Run timeout with a salvage commit.** The same shape one step earlier
   (AGT-2861). `RunTimeoutSalvageContinuationPolicy.Decide`
   (`backend/Features/Runner/RunTimeoutSalvageContinuation.cs`) reads one remote

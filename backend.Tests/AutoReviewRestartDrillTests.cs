@@ -225,6 +225,30 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         Assert.Equal(tipAfterFirst, Git(_repo, "rev-parse", "develop"));
     }
 
+    [Fact]
+    public async Task Spent_integration_recovery_budget_parks_with_the_exact_reason()
+    {
+        var seeded = Build();
+        var card = SeedPassedDelivery(seeded, "spent-recovery-budget");
+        RemoteDeliverySettlementStore.Write(
+            card.FolderPath,
+            Settlement(card, shouldIntegrate: true) with
+            {
+                Stage = RemoteDeliverySettlementStage.IntegrationSettled,
+                IntegrationOutcome = MergeIntoIntegrationOutcome.AgentRoundRequired.ToString(),
+                IntegrationDetail = "automatic recovery budget used: 2/2",
+            });
+
+        var restarted = Build();
+        var report = await restarted.Resume.RunOnceAsync("restart-drill");
+
+        Assert.Equal(1, report.Completed);
+        var parked = restarted.Scanner.FindJob(card.Id, _watchPath)!;
+        Assert.Equal(TaskStates.HumanReview, parked.State);
+        Assert.Equal("automatic recovery budget used: 2/2", parked.ParkedBlocker?.Reason);
+        Assert.True(parked.ParkedBlocker?.RequiresDecisionCard);
+    }
+
     /// <summary>
     /// AGT-2849 owns the branch repair; until it has judged an interrupted gate,
     /// the merge on the branch may be exactly the one about to be rolled back.

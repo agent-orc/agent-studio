@@ -269,6 +269,11 @@ public sealed record PipelineStepExecution
     /// <summary>Task-folder-relative artifact containing the step's detailed evidence.</summary>
     public string? EvidenceRef { get; init; }
     /// <summary>
+    /// Structured evidence for a delivery that exhausted every integration
+    /// stage. Null for successful integration and non-conflict failures.
+    /// </summary>
+    public IntegrationConflictReport? ConflictReport { get; init; }
+    /// <summary>
     /// Stable machine-readable classification for a failed step. The reason
     /// remains human evidence; consumers use this code for card state and
     /// recovery eligibility without parsing prose.
