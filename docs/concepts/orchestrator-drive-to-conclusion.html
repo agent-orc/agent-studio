@@ -2013,9 +2013,31 @@
             <span class="pill ok">fixed in dev</span> integration now tries a direct merge, then a mechanical three-way
             <code>ort</code>/<code>rerere</code> merge, and only then a rebase with unchanged cardinality and a one-to-one
             SHA map. Merge success retains every delivery SHA and adds only one merge commit. A conflict or ambiguous map
-            starts one automatic Steer round per review epoch, moves the card to Ready, and writes
+            starts one of at most two automatic Steer rounds per review epoch, moves the card to Ready, and writes
             <em>Automatically started a new agent round to preserve unambiguous delivery SHA attribution.</em> to the
-            timeline. A repeated ambiguity reaches Human Review after the bounded round.
+            timeline. A repeated ambiguity reaches Human Review after the bounded budget.
+          </td>
+        </tr>
+        <tr>
+          <td>2026-09-18</td>
+          <td><code>AGT-2875</code><br><span class="small">three-stage conflict evidence collapsed to rebase stderr</span></td>
+          <td>
+            AGT-2826 and AGT-2839 both passed Remote Review and conflicted with a newer integration branch. One card
+            received an automatic recovery round while the other parked with
+            <code>review-verdict: AgentRoundRequired</code>. The visible detail showed only raw rebase stderr, so it
+            looked as if rebase were the primary integration strategy.
+          </td>
+          <td>
+            The git boundary returned only the last stage's error, the immediate path and acceptance rail used different
+            budgets and counters, and the generic operator-decision park check ran before recoverable-conflict admission.
+            The spent-budget result also was not carried into the Human Review park reason.
+          </td>
+          <td>
+            <span class="pill ok">fixed in dev</span> the merge step now persists one structured report for direct merge,
+            mechanical merge, and rebase fallback, including capped conflict files and both tips. Passed-review conflicts
+            enter the same two-round per-epoch recovery budget even with a generic decision marker. Exhaustion parks with
+            <em>automatic recovery budget used: 2/2</em>, and the steer prompt prefers resolving a merge of the integration
+            branch into the delivery branch over rewriting history.
           </td>
         </tr>
         <tr>

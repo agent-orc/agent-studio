@@ -105,11 +105,11 @@ Each entry uses the same fields:
 - **Kind:** Post-Guard
 - **Where:** [`backend/Features/Pipeline/IntegrationAgentRoundService.cs`](../../../backend/Features/Pipeline/IntegrationAgentRoundService.cs) (`RemoteIntegrationContinuationPolicy` and `IntegrationAgentRoundService`), invoked by `RemoteDeliveryIntegrationCoordinator` after `MergeIntoIntegrationOutcome.AgentRoundRequired`.
 - **Re-entry trigger:** Direct merge and mechanical three-way/rerere merge both conflict, then the fallback rebase conflicts or cannot preserve a one-to-one delivery commit mapping.
-- **Budget:** `RemoteIntegrationContinuationPolicy.MaxAutomaticAgentRounds` (exactly 1 automatic agent round per operator-owned review epoch). Prior firings are counted from durable `integration_recovery_queued` timeline events with the same `attemptEpoch`.
-- **Action when budget exhausted:** Do not requeue again. Persist the integration failure and let the settled Remote Review move the task to Human Review with the ambiguous-attribution evidence.
+- **Budget:** `RemoteIntegrationContinuationPolicy.MaxAutomaticAgentRounds` (exactly 2 automatic agent rounds per operator-owned review epoch). Prior firings are counted from durable automatic `integration_recovery_queued` timeline events with the same `attemptEpoch`, including rounds started by immediate integration and the acceptance rail.
+- **Action when budget exhausted:** Do not requeue again. Persist the integration failure and let the settled Remote Review move the task to Human Review with `automatic recovery budget used: 2/2` as the park reason.
 - **Breaker test:** [`backend.Tests/Architecture/IntegrationAgentRoundBreakerTest.cs`](../../../backend.Tests/Architecture/IntegrationAgentRoundBreakerTest.cs)
 - **Last fired:** 2026-08-11, AGT-2563 follow-up. A mechanical rebase changed delivery commit cardinality and correctly refused ambiguous SHA attribution, but the card remained in Review until manual requeue.
-- **Notes:** The automatic round saves a `steer` pending intent, retains the prior delivery as superseded history, and queues the original card at the front of Ready. An explicit operator requeue opens a new review epoch and therefore a new bounded opportunity. Automatic moves never increment the epoch.
+- **Notes:** The automatic round saves a `steer` pending intent, retains the prior delivery as superseded history, and queues the original card at the front of Ready. Its prompt lists the structured conflict report's files and prefers merging the integration branch into the delivery branch over rewriting delivery history. An explicit operator requeue opens a new review epoch and therefore a new bounded opportunity. Automatic moves never increment the epoch.
 
 ### completion.run-timeout-salvage-continuation
 

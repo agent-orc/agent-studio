@@ -386,9 +386,11 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   when the same Git-derived projection says the delivery is merged
   (`integrated` or `merged-locally`); concept and other
   no-code cards remain for human review. A recoverable `conflict-skipped` card
-  in `5-human-review` or `5e-escalated` receives the shared rebase steer and is
-  promoted to the top of `2-ready`. After five rail requeues it stays escalated
-  with an explicit exhaustion reason. The `orchestrator-hold` tag and entries
+  in `5-human-review` or `5e-escalated` receives the shared integration-recovery
+  steer and is promoted to the top of `2-ready`. A generic decision-card marker
+  cannot suppress this recovery after a passed review. After two automatic
+  recovery rounds it stays escalated with the exact reason
+  `automatic recovery budget used: 2/2`. The `orchestrator-hold` tag and entries
   in `AcceptanceRail:HoldList` match task id, key, or tag and suppress every
   automatic action. `AcceptanceRail:Enabled`, `IntervalSeconds`, and
   `MaxRequeues` configure the bounded loop. Each action is written to

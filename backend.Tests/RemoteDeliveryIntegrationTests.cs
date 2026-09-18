@@ -149,7 +149,8 @@ public sealed class RemoteDeliveryIntegrationCoordinatorTests
     [InlineData(MergeIntoIntegrationOutcome.Merged, 0, RemoteIntegrationContinuationAction.None)]
     [InlineData(MergeIntoIntegrationOutcome.Conflict, 0, RemoteIntegrationContinuationAction.None)]
     [InlineData(MergeIntoIntegrationOutcome.AgentRoundRequired, 0, RemoteIntegrationContinuationAction.StartAgentRound)]
-    [InlineData(MergeIntoIntegrationOutcome.AgentRoundRequired, 1, RemoteIntegrationContinuationAction.LeaveForHumanReview)]
+    [InlineData(MergeIntoIntegrationOutcome.AgentRoundRequired, 1, RemoteIntegrationContinuationAction.StartAgentRound)]
+    [InlineData(MergeIntoIntegrationOutcome.AgentRoundRequired, 2, RemoteIntegrationContinuationAction.LeaveForHumanReview)]
     public void ContinuationPolicy_BoundsAutomaticAgentRound(
         MergeIntoIntegrationOutcome outcome,
         int roundsUsed,
@@ -179,6 +180,31 @@ public sealed class RemoteDeliveryIntegrationCoordinatorTests
 
         Assert.Equal(MergeIntoIntegrationOutcome.AgentRoundRequired, result.Outcome);
         Assert.Equal("cardinality", startedFor?.JobId);
+    }
+
+    [Fact]
+    public async Task EnqueueAsync_RecoveryBudgetSpent_ProjectsExactParkReason()
+    {
+        var coordinator = new RemoteDeliveryIntegrationCoordinator(
+            _ => Task.FromResult(MergeIntoIntegrationResult.RequiresAgentRound(
+                ["shared.txt"],
+                "Merge into develop conflicted.")),
+            NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance,
+            startAgentRound: (_, _) => Task.FromResult(
+                new IntegrationAgentRoundStartResult(
+                    false,
+                    "automatic recovery budget used: 2/2")
+                {
+                    BudgetUsed = 2,
+                    BudgetLimit = 2,
+                    BudgetExhausted = true,
+                }));
+
+        var result = await coordinator.EnqueueAsync(Request("spent", 1));
+
+        Assert.Equal("automatic recovery budget used: 2/2", result.AutomaticRecoveryDetail);
+        Assert.Equal(2, result.AutomaticRecoveryBudgetUsed);
+        Assert.Equal(2, result.AutomaticRecoveryBudgetLimit);
     }
 
     [Fact]

@@ -75,6 +75,9 @@ public sealed record RemoteDeliverySettlementRecord
     /// <summary>Outcome string of the integration run, once one returned.</summary>
     public string? IntegrationOutcome { get; init; }
 
+    /// <summary>Operator-facing integration continuation detail, when one exists.</summary>
+    public string? IntegrationDetail { get; init; }
+
     public DateTimeOffset RecordedAtUtc { get; init; }
 }
 
@@ -151,7 +154,8 @@ public static class RemoteDeliverySettlementStore
     public static bool Advance(
         string taskFolder,
         RemoteDeliverySettlementStage stage,
-        string? integrationOutcome = null)
+        string? integrationOutcome = null,
+        string? integrationDetail = null)
     {
         var current = Read(taskFolder);
         if (current is null) return false;
@@ -161,6 +165,7 @@ public static class RemoteDeliverySettlementStore
         {
             Stage = current.Stage >= stage ? current.Stage : stage,
             IntegrationOutcome = integrationOutcome ?? current.IntegrationOutcome,
+            IntegrationDetail = integrationDetail ?? current.IntegrationDetail,
             RecordedAtUtc = DateTimeOffset.UtcNow,
         });
         return true;

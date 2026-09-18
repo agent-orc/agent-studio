@@ -15,16 +15,17 @@ public enum RemoteIntegrationContinuationAction
 /// </summary>
 public static class RemoteIntegrationContinuationPolicy
 {
-    public const int MaxAutomaticAgentRounds = 1;
+    public const int MaxAutomaticAgentRounds = 2;
 
     public static RemoteIntegrationContinuationAction Decide(
         MergeIntoIntegrationOutcome outcome,
-        int automaticAgentRoundsUsed)
+        int automaticAgentRoundsUsed,
+        int maximumAgentRounds = MaxAutomaticAgentRounds)
     {
         if (outcome != MergeIntoIntegrationOutcome.AgentRoundRequired)
             return RemoteIntegrationContinuationAction.None;
 
-        return Math.Max(0, automaticAgentRoundsUsed) < MaxAutomaticAgentRounds
+        return Math.Max(0, automaticAgentRoundsUsed) < Math.Max(1, maximumAgentRounds)
             ? RemoteIntegrationContinuationAction.StartAgentRound
             : RemoteIntegrationContinuationAction.LeaveForHumanReview;
     }
@@ -32,7 +33,12 @@ public static class RemoteIntegrationContinuationPolicy
 
 public sealed record IntegrationAgentRoundStartResult(
     bool Started,
-    string Reason);
+    string Reason)
+{
+    public int BudgetUsed { get; init; }
+    public int BudgetLimit { get; init; }
+    public bool BudgetExhausted { get; init; }
+}
 
 /// <summary>
 /// Applies the bounded side effects for an automatic integration-recovery
@@ -49,19 +55,24 @@ public sealed class IntegrationAgentRoundService
     private readonly TaskStateMachine _states;
     private readonly TimelineLog _timeline;
     private readonly ILogger<IntegrationAgentRoundService> _logger;
+    private readonly int _maximumRecoveryRounds;
 
     public IntegrationAgentRoundService(
         TaskScannerService scanner,
         TaskMutationService mutations,
         TaskStateMachine states,
         TimelineLog timeline,
-        ILogger<IntegrationAgentRoundService> logger)
+        ILogger<IntegrationAgentRoundService> logger,
+        IConfiguration? configuration = null)
     {
         _scanner = scanner;
         _mutations = mutations;
         _states = states;
         _timeline = timeline;
         _logger = logger;
+        _maximumRecoveryRounds = configuration is null
+            ? RemoteIntegrationContinuationPolicy.MaxAutomaticAgentRounds
+            : AcceptanceRailOptions.FromConfiguration(configuration).MaxRequeues;
     }
 
     public Task<IntegrationAgentRoundStartResult> TryStartAsync(
@@ -79,14 +90,19 @@ public sealed class IntegrationAgentRoundService
             && entry.Details?.GetValueOrDefault("attemptEpoch") == Invariant(epoch));
         var action = RemoteIntegrationContinuationPolicy.Decide(
             result.Outcome,
-            automaticRoundsUsed);
+            automaticRoundsUsed,
+            _maximumRecoveryRounds);
         if (action == RemoteIntegrationContinuationAction.None)
             return Task.FromResult(Failed("The integration result does not require an agent continuation."));
         if (action == RemoteIntegrationContinuationAction.LeaveForHumanReview)
         {
-            var reason = $"Automatic integration recovery already used its {RemoteIntegrationContinuationPolicy.MaxAutomaticAgentRounds} agent round for review epoch {epoch}; leaving the repeated attribution ambiguity for Human Review.";
+            var reason = $"automatic recovery budget used: {automaticRoundsUsed}/{_maximumRecoveryRounds}";
             RecordFailure(job.FolderPath, request, result, reason, epoch);
-            return Task.FromResult(Failed(reason));
+            return Task.FromResult(Failed(
+                reason,
+                budgetUsed: automaticRoundsUsed,
+                budgetLimit: _maximumRecoveryRounds,
+                budgetExhausted: true));
         }
 
         if (!string.Equals(job.State, TaskStates.AutoReview, StringComparison.Ordinal))
@@ -158,6 +174,8 @@ public sealed class IntegrationAgentRoundService
                 ["mode"] = ContinueModes.Steer,
                 ["reason"] = AttributionAmbiguousReason,
                 ["supersededCommits"] = Invariant(supersession.MarkedCommits),
+                ["budgetUsed"] = Invariant(automaticRoundsUsed + 1),
+                ["budgetLimit"] = Invariant(_maximumRecoveryRounds),
             });
         _logger.LogInformation(
             "integration-agent-round-started project={Project} job={JobId} epoch={Epoch} position={Position} supersededCommits={SupersededCommits}",
@@ -166,7 +184,11 @@ public sealed class IntegrationAgentRoundService
             epoch,
             position,
             supersession.MarkedCommits);
-        return Task.FromResult(new IntegrationAgentRoundStartResult(true, prompt));
+        return Task.FromResult(new IntegrationAgentRoundStartResult(true, prompt)
+        {
+            BudgetUsed = automaticRoundsUsed + 1,
+            BudgetLimit = _maximumRecoveryRounds,
+        });
     }
 
     private void RecordFailure(
@@ -196,15 +218,32 @@ public sealed class IntegrationAgentRoundService
         ReviewSubjectRecord subject,
         RemoteDeliveryIntegrationRequest request,
         MergeIntoIntegrationResult result)
-        =>
-            $"Automatic integration recovery for {job.Key ?? job.Id}. "
+    {
+        var conflictedFiles = result.ConflictReport?.ConflictedFiles.Count > 0
+            ? string.Join(", ", result.ConflictReport.ConflictedFiles)
+            : result.ConflictedFiles.Count > 0
+                ? string.Join(", ", result.ConflictedFiles)
+                : "none recorded";
+        return $"Automatic integration recovery for {job.Key ?? job.Id}. "
             + $"The platform first tried a direct merge of delivery '{subject.ResultRef}' at {subject.ResultSha} into '{request.IntegrationBranch}', then a mechanical three-way/rerere merge, and only then a mechanical rebase. "
-            + $"Those paths could not preserve unambiguous commit attribution: {result.Error ?? "the delivery commit mapping changed"}. "
-            + "Continue from the existing delivery, resolve the integration conflict, and preserve a one-to-one delivery commit history: do not squash, split, drop, or combine delivery commits. "
-            + "Run the relevant tests and finish with the normal task terminal sentinel. Do not merge or push the integration branch yourself; publish only the updated delivery branch for a new delivery gate and review round.";
+            + "Produce a delivery state that integrates cleanly. Prefer merging the latest integration branch into the existing delivery branch and resolving conflicts there over rewriting delivery history. "
+            + $"Conflicted files from the integration report: {conflictedFiles}. "
+            + "If rewriting is unavoidable, retain a one-to-one delivery commit mapping: do not squash, split, drop, or combine delivery commits. "
+            + "Do not redo the feature work. Run the relevant tests and finish with the normal task terminal sentinel. "
+            + "Do not move or push the integration branch ref; publish only the updated delivery branch for a new delivery gate and review round.";
+    }
 
-    private static IntegrationAgentRoundStartResult Failed(string reason)
-        => new(false, reason);
+    private static IntegrationAgentRoundStartResult Failed(
+        string reason,
+        int budgetUsed = 0,
+        int budgetLimit = 0,
+        bool budgetExhausted = false)
+        => new(false, reason)
+        {
+            BudgetUsed = budgetUsed,
+            BudgetLimit = budgetLimit,
+            BudgetExhausted = budgetExhausted,
+        };
 
     private static string Invariant(int value)
         => value.ToString(System.Globalization.CultureInfo.InvariantCulture);

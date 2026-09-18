@@ -880,6 +880,7 @@ public static class V1ReviewPlaneEndpoints
                 // Carried onto the Human Review lane row as the verdict's
                 // qualifier: the integration outcome behind the park.
                 string? integrationOutcome = null;
+                string? integrationParkReason = null;
                 if (string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
                 {
                     var projectSettings = settings.Get(task.ProjectName);
@@ -913,6 +914,7 @@ public static class V1ReviewPlaneEndpoints
                     {
                         var integrated = await remoteIntegration.EnqueueAsync(integrationRequest).ConfigureAwait(false);
                         integrationOutcome = integrated.Outcome.ToString();
+                        integrationParkReason = integrated.AutomaticRecoveryDetail;
                     }
                     else
                     {
@@ -925,6 +927,7 @@ public static class V1ReviewPlaneEndpoints
                         task.FolderPath,
                         RemoteDeliverySettlementStage.IntegrationSettled,
                         integrationOutcome,
+                        integrationParkReason,
                         logger);
                 }
 
@@ -936,6 +939,7 @@ public static class V1ReviewPlaneEndpoints
                         task.WatchPath,
                         ct,
                         cause: $"remote-review:{attemptId}",
+                        reason: integrationParkReason,
                         authorityWrite: new AttemptWriteReference(
                             attemptId,
                             request.Fence,
@@ -978,6 +982,7 @@ public static class V1ReviewPlaneEndpoints
                             moved.NewFolderPath ?? task.FolderPath,
                             RemoteDeliverySettlementStage.LaneSettled,
                             integrationOutcome,
+                            integrationParkReason,
                             logger);
                         // Board contract: the human-review park needs a journal
                         // verdict, or the boot-time verdict-less backfill later
@@ -1167,11 +1172,16 @@ public static class V1ReviewPlaneEndpoints
         string jobFolderPath,
         RemoteDeliverySettlementStage stage,
         string? integrationOutcome,
+        string? integrationDetail,
         ILogger logger)
     {
         try
         {
-            RemoteDeliverySettlementStore.Advance(jobFolderPath, stage, integrationOutcome);
+            RemoteDeliverySettlementStore.Advance(
+                jobFolderPath,
+                stage,
+                integrationOutcome,
+                integrationDetail);
         }
         catch (Exception ex)
         {

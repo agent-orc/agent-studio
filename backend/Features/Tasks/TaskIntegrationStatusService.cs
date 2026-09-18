@@ -771,6 +771,7 @@ public sealed class TaskIntegrationStatusService
                     RebaseRecoveryAvailable = failure.RebaseRecoveryAvailable,
                     FailureClass = failure.FailureClass,
                     FailureSignature = failure.FailureSignature,
+                    ConflictReport = failure.ConflictReport,
                 },
             };
         }
@@ -902,7 +903,8 @@ public sealed class TaskIntegrationStatusService
                 step.Reason,
                 step.VerdictSummary,
                 step.FailureCode);
-            if (mergeFailure is not null) return mergeFailure;
+            if (mergeFailure is not null)
+                return mergeFailure with { ConflictReport = step.ConflictReport };
         }
 
         // AGT-2688: the merge into the integration branch can succeed locally

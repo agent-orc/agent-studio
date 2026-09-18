@@ -55,7 +55,7 @@ public sealed class TaskIntegrationRecoveryService
         }
 
         var integrationBranch = status.IntegrationBranch;
-        var prompt = BuildPrompt(job, subject, integrationBranch);
+        var prompt = BuildPrompt(job, subject, integrationBranch, status.Failure?.ConflictReport);
         var savedReason = source == AcceptanceRailSource && retryNumber is not null
             ? $"{AcceptanceRailSource}:{failureCode}:retry-{retryNumber.Value}"
             : failureCode;
@@ -124,12 +124,15 @@ public sealed class TaskIntegrationRecoveryService
         };
         if (retryNumber is not null)
             details["retryNumber"] = Invariant(retryNumber.Value);
+        if (source == AcceptanceRailSource)
+            details["attemptEpoch"] = Invariant(
+                OperatorReviewRequeueService.ReadEpoch(queued.FolderPath));
 
         _timeline.Append(
             queued.FolderPath,
             TimelineEventKinds.IntegrationRecoveryQueued,
             TimelineActors.System,
-            $"Integration recovery queued: rebase {subject.ResultRef} onto {integrationBranch}.",
+            $"Integration recovery queued: reconcile {subject.ResultRef} with {integrationBranch}.",
             payloadRef: "prompt.md",
             details: details);
         _logger.LogInformation(
@@ -152,14 +155,22 @@ public sealed class TaskIntegrationRecoveryService
     internal static string BuildPrompt(
         TaskInfo job,
         ReviewSubjectRecord subject,
-        string integrationBranch)
-        =>
-            "## STEER\n\n"
+        string integrationBranch,
+        IntegrationConflictReport? conflictReport = null)
+    {
+        var conflictedFiles = conflictReport?.ConflictedFiles.Count > 0
+            ? string.Join(", ", conflictReport.ConflictedFiles)
+            : "none recorded";
+        return "## STEER\n\n"
             + $"Integration recovery for {job.Key ?? job.Id}. "
             + $"Resume the existing delivery branch '{subject.ResultRef}' at the fenced result {subject.ResultSha}. "
-            + $"Fetch the latest 'origin/{integrationBranch}', rebase the delivery onto it, and resolve every conflict conservatively without dropping the task's intended changes. "
+            + $"Fetch the latest 'origin/{integrationBranch}' and produce a delivery state that integrates cleanly. "
+            + $"Prefer merging 'origin/{integrationBranch}' into the existing delivery branch and resolving conflicts there over rewriting delivery history. "
+            + $"Conflicted files from the integration report: {conflictedFiles}. "
+            + "If rewriting is unavoidable, retain a one-to-one delivery commit mapping: do not squash, split, drop, or combine delivery commits. "
             + "Do not redo the feature work. Run the relevant tests and finish with the normal task terminal sentinel. "
-            + "Do not merge or push the integration branch yourself; publish only the updated delivery branch for a new delivery gate and review round.";
+            + "Do not move or push the integration branch ref; publish only the updated delivery branch for a new delivery gate and review round.";
+    }
 
     private static TaskIntegrationRecoveryResult Failed(
         string error,

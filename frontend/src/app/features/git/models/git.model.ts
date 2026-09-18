@@ -705,4 +705,21 @@ export interface TaskIntegrationFailure {
   failureClass?: RunFailureClass;
   /** Stable signature slug behind `failureClass` (e.g. `git-network-timeout`). */
   failureSignature?: string;
+  /** Structured evidence for a three-stage integration conflict. */
+  conflictReport?: {
+    integrationBranch: string;
+    integrationTipSha: string;
+    deliverySha: string;
+    stages: {
+      stage: string;
+      outcome: string;
+      conflictedFileCount: number;
+      stoppedCommitSha?: string | null;
+      stoppedCommitNumber?: number | null;
+      totalCommits?: number | null;
+    }[];
+    conflictedFileCount: number;
+    conflictedFiles: string[];
+    conflictedFilesTruncated: boolean;
+  } | null;
 }

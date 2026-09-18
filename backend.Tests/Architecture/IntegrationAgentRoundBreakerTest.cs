@@ -5,25 +5,30 @@ namespace AgentStudio.Tests;
 /// <summary>
 /// Architecture breaker for loop-inventory entry
 /// <c>integration.attribution-agent-round</c>. An ambiguous mechanical rebase
-/// may open one automatic steer round, but a repeat in the same operator-owned
-/// review epoch terminates in Human Review.
+/// may open two automatic steer rounds, but a repeat after that budget in the
+/// same operator-owned review epoch terminates in Human Review.
 /// </summary>
 public sealed class IntegrationAgentRoundBreakerTest
 {
     [Fact]
-    public void Budget_AllowsExactlyOneAutomaticRound()
+    public void Budget_AllowsExactlyTwoAutomaticRounds()
     {
-        Assert.Equal(1, RemoteIntegrationContinuationPolicy.MaxAutomaticAgentRounds);
+        Assert.Equal(2, RemoteIntegrationContinuationPolicy.MaxAutomaticAgentRounds);
         Assert.Equal(
             RemoteIntegrationContinuationAction.StartAgentRound,
             RemoteIntegrationContinuationPolicy.Decide(
                 MergeIntoIntegrationOutcome.AgentRoundRequired,
                 automaticAgentRoundsUsed: 0));
         Assert.Equal(
-            RemoteIntegrationContinuationAction.LeaveForHumanReview,
+            RemoteIntegrationContinuationAction.StartAgentRound,
             RemoteIntegrationContinuationPolicy.Decide(
                 MergeIntoIntegrationOutcome.AgentRoundRequired,
                 automaticAgentRoundsUsed: 1));
+        Assert.Equal(
+            RemoteIntegrationContinuationAction.LeaveForHumanReview,
+            RemoteIntegrationContinuationPolicy.Decide(
+                MergeIntoIntegrationOutcome.AgentRoundRequired,
+                automaticAgentRoundsUsed: 2));
     }
 
     [Fact]

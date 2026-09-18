@@ -423,7 +423,7 @@ public sealed class AcceptanceRailHostedService : BackgroundService
         int maximum,
         CancellationToken ct)
     {
-        var reason = $"Integration recovery stopped after {used}/{maximum} conflict requeues. The card requires an operator decision instead of another automatic loop.";
+        var reason = $"automatic recovery budget used: {used}/{maximum}";
         var outcome = await _humanReviewEscalation.EscalateAsync(
             job.Id,
             job.WatchPath,
@@ -440,12 +440,26 @@ public sealed class AcceptanceRailHostedService : BackgroundService
     }
 
     private int CountConflictRequeues(TaskInfo job)
-        => _timeline.ReadAll(job.FolderPath).Count(entry =>
-            entry.Kind == TimelineEventKinds.IntegrationRecoveryQueued
-            && string.Equals(
-                entry.Details?.GetValueOrDefault("source"),
+    {
+        var epoch = OperatorReviewRequeueService.ReadEpoch(job.FolderPath);
+        return _timeline.ReadAll(job.FolderPath).Count(entry =>
+        {
+            if (entry.Kind != TimelineEventKinds.IntegrationRecoveryQueued)
+                return false;
+
+            var details = entry.Details;
+            var isAutomatic = details?.GetValueOrDefault("automatic") == "true";
+            var isLegacyAcceptanceRail = string.Equals(
+                details?.GetValueOrDefault("source"),
                 TaskIntegrationRecoveryService.AcceptanceRailSource,
-                StringComparison.Ordinal));
+                StringComparison.Ordinal)
+                && details?.GetValueOrDefault("attemptEpoch") is null;
+            return (isAutomatic || isLegacyAcceptanceRail)
+                   && (details?.GetValueOrDefault("attemptEpoch") == epoch.ToString(
+                           System.Globalization.CultureInfo.InvariantCulture)
+                       || isLegacyAcceptanceRail);
+        });
+    }
 
     /// <summary>
     /// Infrastructure replays already spent on this card, plus the instant of the

@@ -235,12 +235,15 @@ cases in `backend.Tests/RemoteDeliveryIntegrationTests.cs`):
 | `Merged` | any | `None` |
 | `Conflict` | any | `None` |
 | `AgentRoundRequired` | 0 | `StartAgentRound` |
-| `AgentRoundRequired` | 1 or more | `LeaveForHumanReview` |
+| `AgentRoundRequired` | 1 | `StartAgentRound` |
+| `AgentRoundRequired` | 2 or more | `LeaveForHumanReview` |
 
-`MaxAutomaticAgentRounds` is 1 and is counted per operator review epoch. The
+`MaxAutomaticAgentRounds` is 2 and is counted per operator review epoch. The
 epoch is read from `OperatorReviewRequeueService.ReadEpoch` and incremented
 whenever a human deliberately moves a reviewed card back for another attempt,
-so an operator requeue re-opens the budget while a machine loop cannot.
+so an operator requeue re-opens the budget while a machine loop cannot. An
+exhausted park records `automatic recovery budget used: 2/2` rather than a
+review-verdict placeholder.
 
 ## Conflict handling and recovery
 
@@ -255,10 +258,11 @@ so an operator requeue re-opens the budget while a machine loop cannot.
   a fenced result ref exists in `review-subject.json`. Any missing precondition
   returns HTTP 409, not a partial mutation.
 - The steer prompt is fixed and narrow: resume the existing delivery branch at
-  the fenced result SHA, fetch the current integration branch, rebase onto it,
-  resolve without dropping intended changes, run the relevant tests, publish
-  only the delivery branch. It explicitly forbids the agent from merging or
-  pushing the integration branch.
+  the fenced result SHA, fetch the current integration branch, and produce a
+  cleanly integrating state. It lists the report's conflicted files and prefers
+  merging the integration branch into the delivery branch with conflict
+  resolution over rewriting history. It explicitly forbids moving or pushing
+  the integration branch ref and publishes only the delivery branch.
 - The automatic round adds one further constraint: preserve a one-to-one
   delivery commit history, do not squash, split, drop or combine delivery
   commits.
@@ -343,7 +347,7 @@ Delivered and verifiable in code:
 - Attribution rollback when a replacement map cannot be persisted.
 - Git-derived integration status with the five states `integrated`, `partial`,
   `pending`, `conflict-skipped`, `no-branch`, and typed failure classes.
-- One automatic bounded steer round for attribution ambiguity, counted per
+- Two automatic bounded steer rounds for integration conflict or attribution ambiguity, counted per
   operator review epoch.
 - Operator-triggered rebase recovery through
   `POST /api/tasks/{jobId}/integration/rebase`, wired to the badge action in

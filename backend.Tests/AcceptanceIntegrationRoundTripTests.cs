@@ -266,6 +266,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             IntegrationAgentRoundService.AttributionAmbiguousReason,
             queued.PendingIntent?.SavedReason);
         Assert.Contains("direct merge", queued.PendingIntent?.Prompt, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("merging the latest integration branch", queued.PendingIntent?.Prompt, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("shared.txt", queued.PendingIntent?.Prompt, StringComparison.Ordinal);
         Assert.Contains("one-to-one", queued.PendingIntent?.Prompt, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(
             deps.Timeline.ReadAll(queued.FolderPath),
@@ -300,7 +302,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var queued = deps.Scanner.FindJob(Slug, _watchPath)!;
         Assert.Equal(TaskStates.Ready, queued.State);
         Assert.Equal(ContinueModes.Steer, queued.PendingIntent?.Mode);
-        Assert.Contains("cardinality", queued.PendingIntent?.Prompt, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("merging the latest integration branch", queued.PendingIntent?.Prompt, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("one-to-one", queued.PendingIntent?.Prompt, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("do not squash, split, drop, or combine", queued.PendingIntent?.Prompt, StringComparison.OrdinalIgnoreCase);
         var queuedLedger = deps.Timeline.ReadAll(queued.FolderPath);
         Assert.Contains(
@@ -317,6 +320,50 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Equal(
             MergeIntoIntegrationOutcome.AgentRoundRequired.ToString(),
             laneChange.Details![LaneChangeCauses.DetailQualifierKey]);
+    }
+
+    [Fact]
+    public async Task IntegrationConflict_WithRecoveryBudgetSpent_StaysParkedWithExactReason()
+    {
+        var deliverySha = PublishDelivery("budget-spent.txt", "delivery version\n");
+        var deps = Build(deliverySha, initialState: TaskStates.AutoReview);
+        var job = deps.Scanner.FindJob(Slug, _watchPath)!;
+        var epoch = OperatorReviewRequeueService.ReadEpoch(job.FolderPath)
+            .ToString(System.Globalization.CultureInfo.InvariantCulture);
+        for (var attempt = 1; attempt <= 2; attempt++)
+        {
+            deps.Timeline.Append(
+                job.FolderPath,
+                TimelineEventKinds.IntegrationRecoveryQueued,
+                TimelineActors.System,
+                $"Automatic integration recovery {attempt}.",
+                details: new Dictionary<string, string>
+                {
+                    ["automatic"] = "true",
+                    ["attemptEpoch"] = epoch,
+                });
+        }
+        var request = new RemoteDeliveryIntegrationRequest(
+            Project,
+            job.Id,
+            job.FolderPath,
+            job.WatchPath,
+            "develop",
+            IntegrationStrategies.DirectMerge,
+            PipelineTypes.Task,
+            DateTimeOffset.UtcNow);
+        var result = MergeIntoIntegrationResult.RequiresAgentRound(
+            ["budget-spent.txt"],
+            "Merge into develop conflicted.");
+
+        var started = await AgentRounds(deps).TryStartAsync(request, result);
+
+        Assert.False(started.Started);
+        Assert.True(started.BudgetExhausted);
+        Assert.Equal(2, started.BudgetUsed);
+        Assert.Equal(2, started.BudgetLimit);
+        Assert.Equal("automatic recovery budget used: 2/2", started.Reason);
+        Assert.Equal(TaskStates.AutoReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
     }
 
     [Fact]
@@ -822,7 +869,15 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
 
         var integration = deps.Integration.BuildLookup([reviewed])[reviewed.TaskKey];
         Assert.Equal(IntegrationStatuses.ConflictSkipped, integration.Status);
-        Assert.Contains("Mechanical rebase conflicted", integration.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.NotNull(integration.Failure?.ConflictReport);
+        Assert.Equal(["shared.txt"], integration.Failure!.ConflictReport!.ConflictedFiles);
+        Assert.StartsWith(
+            "Merge into develop conflicted (direct merge, mechanical merge and rebase fallback all failed)",
+            integration.Detail,
+            StringComparison.Ordinal);
+        Assert.Equal(3, integration.Detail!.Split('\n').Length);
+        Assert.Contains("shared.txt", integration.Detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("hint:", integration.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(
             deps.Timeline.ReadAll(reviewed.FolderPath),
             entry => entry.Kind == TimelineEventKinds.IntegrationFailed);
@@ -1194,7 +1249,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Equal(ContinueModes.Steer, intent!.Mode);
         Assert.Equal(AcceptedIntegrationFailureCodes.MergeConflict, intent.SavedReason);
         Assert.Contains(DeliveryRef, intent.Prompt, StringComparison.Ordinal);
-        Assert.Contains("rebase", intent.Prompt, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("merging 'origin/develop'", intent.Prompt, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(
             TimelineEventKinds.IntegrationRecoveryQueued,
             File.ReadAllText(TaskPaths.TimelineLog(readyFolder)));
@@ -1255,7 +1310,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             File.ReadAllText(Path.Combine(readyFolder, "pending-intent.json")),
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
         Assert.Equal(AcceptedIntegrationFailureCodes.SourceNeedsRebase, intent?.SavedReason);
-        Assert.Contains("rebase", intent?.Prompt, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("merging 'origin/develop'", intent?.Prompt, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
