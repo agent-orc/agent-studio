@@ -406,8 +406,8 @@ public sealed class ProtocolTests
             stderr: "Selected model is at capacity. Please try a different model.",
             observedAt: observedAt);
 
-        Assert.Equal(ProviderAccessEvidenceKind.RateLimited, evidence.Kind);
-        Assert.Equal(observedAt.Add(ProviderAccessClassifier.UnknownLimitRetry), evidence.LimitedUntil);
+        Assert.Equal(ProviderAccessEvidenceKind.IndeterminateFailure, evidence.Kind);
+        Assert.Null(evidence.LimitedUntil);
         Assert.False(evidence.ResetTimeReported);
     }
 

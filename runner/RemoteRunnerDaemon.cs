@@ -708,6 +708,25 @@ public sealed class RemoteRunnerDaemon
                         CancellationToken.None,
                         shutdown);
                     AcknowledgeInventory(inventory, inventorySnapshot, claim);
+                    if (claim.ReprobeCapabilities is { Count: > 0 })
+                    {
+                        foreach (var capability in claim.ReprobeCapabilities.Distinct(StringComparer.Ordinal))
+                        {
+                            var match = RunnerCapabilityProbe.CodingCliBinaries(_options)
+                                .FirstOrDefault(item => string.Equals(
+                                    AgentStudio.TaskServer.Contracts.CapabilityProtocol.ProviderAuthentication(item.CliType),
+                                    capability,
+                                    StringComparison.Ordinal));
+                            if (string.IsNullOrWhiteSpace(match.Binary)) continue;
+                            var refreshed = await ProviderAuthProbe.Shared.RefreshAsync(match.Binary, shutdown);
+                            _log(
+                                $"provider-auth reprobe-request capability={capability} "
+                                + $"status={refreshed.Status} detail={refreshed.Detail}");
+                        }
+                        // Publish the forced verdict before the next claim poll,
+                        // so retry-dispatch cannot bounce against stale memory.
+                        nextCapabilityAdvertisement = DateTime.MinValue;
+                    }
                     if (claim.Status != RunnerClaimStatus.Claimed
                         || string.IsNullOrWhiteSpace(claim.TaskKey)
                         || claim.Lease is null)

@@ -192,7 +192,8 @@ public sealed record RunnerClaimResponse(
     // T0b: additive execution spec. An older runner ignores the whole object;
     // prompt enrichment travels inside its existing ModeFraming component.
     RunSpecDto? RunSpec = null,
-    string? LeaseInstanceId = null);
+    string? LeaseInstanceId = null,
+    IReadOnlyList<string>? ReprobeCapabilities = null);
 
 /// <summary>Fenced request for the server-rendered Epic decomposition prompt.</summary>
 public sealed record RemoteEpicPlanningPromptRequest(

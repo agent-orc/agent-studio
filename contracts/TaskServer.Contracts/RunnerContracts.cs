@@ -108,7 +108,8 @@ public sealed record ClaimResponse(
     IReadOnlyList<RunnerReconciliationAction>? ReconciliationActions = null,
     IReadOnlyList<string>? RequiredCapabilities = null,
     IReadOnlyList<string>? CanaryCapabilities = null,
-    RuntimeCapacitySettingsDto? RuntimeCapacity = null);
+    RuntimeCapacitySettingsDto? RuntimeCapacity = null,
+    IReadOnlyList<string>? ReprobeCapabilities = null);
 
 public sealed record LeaseDto(
     string LeaseId,

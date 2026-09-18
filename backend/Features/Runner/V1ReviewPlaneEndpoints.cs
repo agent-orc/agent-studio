@@ -2162,7 +2162,9 @@ public sealed class V1ReviewExecutorRegistry
                     capability.Signal,
                     capability.ExpiresAt,
                     capability.LimitedUntil,
-                    capability.CredentialModifiedAt);
+                    capability.CredentialModifiedAt,
+                    capability.EvidenceId,
+                    capability.EvidenceExcerpt);
             })
             .GroupBy(capability => capability.Key, StringComparer.Ordinal)
             .Select(group => group.Last())
@@ -2695,10 +2697,10 @@ public sealed class V1ReviewExecutorRegistry
                     return CodingCapabilityAdmission.Blocked(
                         required,
                         $"Required capability '{key}' is stale since {capability.FreshUntil:O}.");
-                if (!string.Equals(capability.AdvertisedStatus, "ready", StringComparison.Ordinal))
+                if (!Claimable(capability.AdvertisedStatus))
                     return CodingCapabilityAdmission.Blocked(
                         required,
-                        $"Required capability '{key}' is advertised as {capability.AdvertisedStatus}.");
+                        CapabilityMismatchMessage(key, capability));
             }
 
             if (_capabilityFailures.TryGetValue(runnerId, out var failures))
@@ -2767,8 +2769,27 @@ public sealed class V1ReviewExecutorRegistry
 
     private static bool IsPositiveProviderAuthRecovery(Contract.CapabilityHealthDto capability)
         => capability.Key.StartsWith("provider-auth:", StringComparison.Ordinal)
-           && string.Equals(capability.AdvertisedStatus, "ready", StringComparison.Ordinal)
+           && Claimable(capability.AdvertisedStatus)
            && capability.Signal is "ok" or "credentials-expiring";
+
+    private static bool Claimable(string status)
+        => string.Equals(status, "ready", StringComparison.Ordinal)
+           || string.Equals(status, "degraded", StringComparison.Ordinal);
+
+    private static string CapabilityMismatchMessage(
+        string key,
+        Contract.CapabilityHealthDto capability)
+    {
+        if (!string.Equals(capability.AdvertisedStatus, "limited", StringComparison.Ordinal))
+            return $"Required capability '{key}' is advertised as {capability.AdvertisedStatus}.";
+        var until = capability.LimitedUntil is { } reset
+            ? $" until {reset.ToUniversalTime():HH:mm} UTC"
+            : string.Empty;
+        var evidence = string.IsNullOrWhiteSpace(capability.EvidenceId)
+            ? string.Empty
+            : $" (evidence: run {capability.EvidenceId}, '{capability.EvidenceExcerpt ?? "no excerpt"}')";
+        return $"Required capability '{key}' is limited{until}{evidence}.";
+    }
 
     /// <summary>Caller must hold <see cref="_gate"/>.</summary>
     private void ClearCapabilityFailures(string runnerId)

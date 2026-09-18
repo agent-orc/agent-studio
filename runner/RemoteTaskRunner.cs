@@ -863,6 +863,9 @@ public sealed class RemoteTaskRunner
         int sameSessionResumeAttempts = 0)
     {
         var process = DurableAgentProcess.Attach(slot);
+        var activeInvocation = AgentCliProcess.Resolve(_options, slot.RunSpec);
+        ProviderAuthProbe.Shared.RecordRunStarted(activeInvocation.FileName);
+        var providerRunRecorded = true;
         var sequence = slot.LastOutputSequence;
         using var waitStop = CancellationTokenSource.CreateLinkedTokenSource(
             stopRun,
@@ -888,6 +891,8 @@ public sealed class RemoteTaskRunner
                 var observation = DurableAgentProcess.InspectForReattach(slot);
                 if (observation.Result is { } result)
                 {
+                    ProviderAuthProbe.Shared.RecordRunCompleted(activeInvocation.FileName);
+                    providerRunRecorded = false;
                     _state.Save(slot with { Phase = "finalizing", LastOutputSequence = sequence });
                     ReportWorkerEnvelope(slot, shipper);
                     var processResult = new ProcessResult(result.ExitCode, result.StdOut, result.StdErr);
@@ -898,7 +903,9 @@ public sealed class RemoteTaskRunner
                         processResult.StdErr);
                     var providerAuth = ProviderAuthProbe.Shared.RecordProcessResult(
                         invocation.FileName,
-                        processResult);
+                        processResult,
+                        evidenceId: slot.RunId ?? slot.AttemptId,
+                        operatorStopped: result.ExitCode is 143 or 137);
                     if (providerAccess.Kind == ProviderAccessEvidenceKind.AuthenticationFailure)
                     {
                         var provider = invocation.CliType;
@@ -1043,6 +1050,11 @@ public sealed class RemoteTaskRunner
                 _log,
                 CancellationToken.None);
             throw;
+        }
+        finally
+        {
+            if (providerRunRecorded)
+                ProviderAuthProbe.Shared.RecordRunCompleted(activeInvocation.FileName);
         }
     }
 

@@ -206,6 +206,7 @@ public static class LeaseEndpoints
                 loggerFactory.CreateLogger<RemoteClaimFailureBudget>());
             var remoteDeliveryFailures = new RemoteDeliveryFailureStore(
                 loggerFactory.CreateLogger<RemoteDeliveryFailureStore>());
+            var reprobeCapabilities = new HashSet<string>(StringComparer.Ordinal);
             void RecordRejection(TaskInfo task, string code, string? reason) =>
                 dispatchRejections.Record(
                     task,
@@ -676,6 +677,10 @@ public static class LeaseEndpoints
                         requiredCapabilities);
                     if (!capabilityAdmission.Eligible)
                     {
+                        foreach (var capability in ProviderAuthReprobeRequest(
+                                     capabilityAdmission.Eligible,
+                                     capabilityAdmission.Required) ?? [])
+                            reprobeCapabilities.Add(capability);
                         capabilityMismatch ??= capabilityAdmission.Message;
                         RecordRejection(task, "capability-mismatch", capabilityAdmission.Message);
                         logger.LogInformation(
@@ -778,7 +783,10 @@ public static class LeaseEndpoints
                         RunnerClaimStatus.Empty,
                         Message: nonRemoteCapableProject is not null
                             ? $"project '{nonRemoteCapableProject}' is not remote-capable: repository URL is not configured"
-                            : capabilityMismatch)));
+                            : capabilityMismatch,
+                        ReprobeCapabilities: reprobeCapabilities.Count == 0
+                            ? null
+                            : reprobeCapabilities.ToArray())));
 
                 if (string.IsNullOrWhiteSpace(clientId))
                     return Results.Ok(WithCapacity(new RunnerClaimResponse(
@@ -2078,6 +2086,18 @@ public static class LeaseEndpoints
                 ClaimGate.Release();
             }
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
+    }
+
+    internal static IReadOnlyList<string>? ProviderAuthReprobeRequest(
+        bool eligible,
+        IEnumerable<string> requiredCapabilities)
+    {
+        if (eligible) return null;
+        var requested = requiredCapabilities
+            .Where(key => key.StartsWith("provider-auth:", StringComparison.Ordinal))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        return requested.Length == 0 ? null : requested;
     }
 
     private static string? WriteGateItems(string folderPath, IReadOnlyList<string>? gateItems)
