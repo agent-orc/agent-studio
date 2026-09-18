@@ -1,6 +1,7 @@
 using AgentStudio.Areas;
 using AgentStudio.Tags;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -19,9 +20,15 @@ public sealed class TagMaintenanceTests : IDisposable
         Kind = "merge", Source = "old", Target = "new", Area = "execution-and-runner",
         Reason = "These handles are synonyms.", Evidence = ["card:one"],
     };
-    private TagMaintenanceService Service(FakeWorkspace workspace, FakeSynthesis? synthesis = null) => new(workspace,
-        synthesis ?? new(), new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
-        { ["TaskRepository"] = _root }).Build());
+    private TagMaintenanceService Service(FakeWorkspace workspace, FakeSynthesis? synthesis = null,
+        TimeProvider? clock = null, Dictionary<string, string?>? settings = null)
+    {
+        settings ??= [];
+        settings["TaskRepository"] = _root;
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
+        return new(workspace, synthesis ?? new(), new TagGoldenSetEvaluator(new FakeClassifier(), configuration),
+            configuration, clock);
+    }
     public void Dispose() { if (Directory.Exists(_root)) Directory.Delete(_root, true); }
 
     [Fact]
@@ -170,6 +177,85 @@ public sealed class TagMaintenanceTests : IDisposable
     }
 
     [Fact]
+    public async Task FailedRunRetriesAfterRetryDelayInsteadOfCadence()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 9, 18, 12, 0, 0, TimeSpan.Zero));
+        var synthesis = new FakeSynthesis { Fail = true };
+        var service = Service(new(), synthesis, clock, new() { ["TagMaintenance:RetryDelayMinutes"] = "30" });
+        Assert.Equal("failed", (await service.RunAsync("Project"))!.Status);
+        synthesis.Fail = false;
+        clock.Advance(TimeSpan.FromMinutes(29));
+        Assert.Null(await service.RunAsync("Project"));
+        clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.Equal("reported", (await service.RunAsync("Project"))!.Status);
+    }
+
+    [Fact]
+    public async Task CancelledRunLeavesNoRecordAndDoesNotChangeDueTime()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 9, 18, 12, 0, 0, TimeSpan.Zero));
+        var synthesis = new FakeSynthesis { Cancel = true };
+        var service = Service(new(), synthesis, clock);
+        await Assert.ThrowsAsync<OperationCanceledException>(() => service.RunAsync("Project"));
+        Assert.Empty(service.Read("Project").Runs);
+        synthesis.Cancel = false;
+        Assert.Equal("reported", (await service.RunAsync("Project"))!.Status);
+    }
+
+    [Fact]
+    public async Task SuccessfulRunUsesCadence()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 9, 18, 12, 0, 0, TimeSpan.Zero));
+        var service = Service(new(), clock: clock);
+        Assert.Equal("reported", (await service.RunAsync("Project"))!.Status);
+        clock.Advance(TimeSpan.FromDays(7) - TimeSpan.FromSeconds(1));
+        Assert.Null(await service.RunAsync("Project"));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        Assert.NotNull(await service.RunAsync("Project"));
+    }
+
+    [Fact]
+    public async Task GoldenSetReportsBothTiersAndFallsBackWhenTierOnePrecisionIsLow()
+    {
+        Directory.CreateDirectory(_root);
+        var path = Path.Combine(_root, "golden.json");
+        var items = Enumerable.Range(0, 80).Select(index => new TagGoldenSetItem
+        {
+            Kind = index < 60 ? "card" : "dossier", Id = index.ToString(),
+            Title = "Synthetic fixture", Text = "Synthetic fixture", Tags = ["new"],
+        }).ToList();
+        File.WriteAllText(path, TagMaintenancePolicy.Encode(new TagGoldenSet
+        {
+            ApprovedBy = "test-operator", ApprovedAt = DateTimeOffset.Parse("2026-09-18T00:00:00Z"), Items = items,
+        }));
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = _root, ["TagMaintenance:GoldenSetPath"] = path,
+        }).Build();
+        var classifier = new FakeClassifier { LowTags = ["old"], HighTags = ["new"] };
+        var report = await new TagGoldenSetEvaluator(classifier, configuration)
+            .EvaluateAsync("Project", Snapshot(), CancellationToken.None);
+        Assert.Equal("evaluated", report.Status);
+        Assert.Equal(2, report.SelectedTier);
+        Assert.Equal(2, report.Tiers.Count);
+        Assert.Equal(0, report.Tiers[0].Precision);
+        Assert.Equal(1, report.Tiers[1].Precision);
+        Assert.Equal(new[] { "low", "high" }, classifier.Calls);
+    }
+
+    [Fact]
+    public async Task MissingGoldenSetClaimsNoMetrics()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            { ["TaskRepository"] = _root }).Build();
+        var report = await new TagGoldenSetEvaluator(new FakeClassifier(), configuration)
+            .EvaluateAsync("Project", Snapshot(), CancellationToken.None);
+        Assert.Equal("not-available", report.Status);
+        Assert.Empty(report.Tiers);
+        Assert.Contains("no precision or recall is claimed", report.Message);
+    }
+
+    [Fact]
     public void EvidenceThresholdAndTerminologyProvenanceAreEnforced()
     {
         Assert.Throws<ArgumentException>(() => TagMaintenancePolicy.Plan("Project", Snapshot(),
@@ -217,10 +303,33 @@ public sealed class TagMaintenanceTests : IDisposable
     private sealed class FakeSynthesis : ITagMaintenanceSynthesis
     {
         public string Model => "test-sonnet";
-        public bool Fail { get; init; }
+        public bool Fail { get; set; }
+        public bool Cancel { get; set; }
         public TagMaintenanceProposal Proposal { get; init; } = Merge();
-        public Task<IReadOnlyList<TagMaintenanceProposal>> ProposeAsync(string project, string input, CancellationToken ct) =>
-            Fail ? throw new InvalidOperationException("Model unavailable") : Task.FromResult<IReadOnlyList<TagMaintenanceProposal>>([Proposal]);
+        public Task<IReadOnlyList<TagMaintenanceProposal>> ProposeAsync(string project, string input, CancellationToken ct)
+        {
+            if (Cancel) throw new OperationCanceledException(ct);
+            return Fail ? throw new InvalidOperationException("Model unavailable")
+                : Task.FromResult<IReadOnlyList<TagMaintenanceProposal>>([Proposal]);
+        }
+    }
+    private sealed class FakeClassifier : ITagGoldenSetClassifier
+    {
+        public string Model => "test-sonnet";
+        public string[] LowTags { get; init; } = ["new"];
+        public string[] HighTags { get; init; } = ["new"];
+        public List<string> Calls { get; } = [];
+        public Task<IReadOnlyList<TagClassificationPrediction>> ClassifyAsync(string project,
+            IReadOnlyList<TagGoldenSetItem> items, TagMaintenanceSnapshot context, string thinkingLevel,
+            CancellationToken ct)
+        {
+            Calls.Add(thinkingLevel);
+            var tags = thinkingLevel == "low" ? LowTags : HighTags;
+            return Task.FromResult<IReadOnlyList<TagClassificationPrediction>>(items.Select(item => new TagClassificationPrediction
+            {
+                Kind = item.Kind, Id = item.Id, Tags = tags, Confidence = 0.9,
+            }).ToArray());
+        }
     }
     private sealed class FakeWorkspace : ITagMaintenanceWorkspace
     {

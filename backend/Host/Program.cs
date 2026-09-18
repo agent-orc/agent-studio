@@ -640,6 +640,8 @@ builder.Services.AddSingleton<AgentStudio.Drift.DriftPostStepRunner>();
 builder.Services.AddSingleton<AgentStudio.Tags.TagRegistryService>();
 builder.Services.AddSingleton<AgentStudio.Tags.ITagMaintenanceWorkspace, AgentStudio.Tags.TagMaintenanceWorkspace>();
 builder.Services.AddSingleton<AgentStudio.Tags.ITagMaintenanceSynthesis, AgentStudio.Tags.TagMaintenanceSynthesis>();
+builder.Services.AddSingleton<AgentStudio.Tags.ITagGoldenSetClassifier, AgentStudio.Tags.TagGoldenSetClassifier>();
+builder.Services.AddSingleton<AgentStudio.Tags.TagGoldenSetEvaluator>();
 builder.Services.AddSingleton<AgentStudio.Tags.TagMaintenanceService>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService<AgentStudio.Tags.TagMaintenanceWorker>();
