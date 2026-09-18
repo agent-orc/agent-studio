@@ -1015,7 +1015,7 @@ public sealed class TaskServerClient : IDisposable
     /// </summary>
     private void AdoptRoleMaxParallelism(int? roleMaxParallelism)
     {
-        if (roleMaxParallelism is not (>= 1 and <= 256)) return;
+        if (roleMaxParallelism is not (>= 0 and <= 256)) return;
         _roleMaxParallelism = roleMaxParallelism;
     }
 
@@ -1026,7 +1026,7 @@ public sealed class TaskServerClient : IDisposable
     /// </summary>
     internal int RoleMaxParallelism => Math.Clamp(
         _roleMaxParallelism ?? _options?.HostMaxParallelism ?? 1,
-        1,
+        0,
         256);
 
     public async Task<Contract.HostCliUpdateDto?> GetCliUpdateAsync(CancellationToken ct)

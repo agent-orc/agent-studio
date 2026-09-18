@@ -38,11 +38,14 @@ resolved values into the main unit definition.
 | Role | Unit | `CPUQuota` | `CPUWeight` | `IOWeight` | `MemoryMax` |
 |---|---|---:|---:|---:|---|
 | Coding | `agent-runner.service` | all logical CPUs, `nproc * 100%` | `100` | `100` | omitted |
-| Review | `agent-runner-review.service` | one third of logical CPU capacity, minimum `100%` | `30` | `30` | omitted |
+| Review | `agent-runner-review.service` | logical CPUs x review slots / all role slots, minimum `100%`, never the whole host | `30` | `30` | omitted |
 
-For example, a 12-core host receives `CPUQuota=1200%` for coding and
-`CPUQuota=400%` for review. The lower Review weights ensure that Coding wins
-contention while unused host capacity remains available to other cgroups.
+For example, the reference 12-core host with two Coding and two Review slots
+receives `CPUQuota=1200%` for coding and `CPUQuota=600%` for review. The lower
+Review weights ensure that Coding wins contention while unused host capacity
+remains available to other cgroups. The Review quota is also the hard input to
+its slot ceiling: at the documented 2-core minimum it can supply at most three
+Review workers.
 
 `MemoryMax` is intentionally absent by default. A blind derived memory cap can
 turn a large build into an OOM failure without knowing the repository working

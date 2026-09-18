@@ -216,6 +216,22 @@ export interface TaskServerTelemetrySnapshot {
   taskServerConnectionEscalatedAt?: string | null;
   taskServerConnectionLastError?: string | null;
   taskServerConnectionLastRecoveredAt?: string | null;
+  reviewPlane?: ReviewPlaneBudget | null;
+}
+
+export interface ReviewPlaneBudget {
+  observedAt: string;
+  cpuMax: string;
+  planeCpuCores: number;
+  cpuQuotaPercent: number | null;
+  hostCores: number;
+  workerEnvelopeCores: number;
+  workerEnvelopeCpuQuotaPercent: number;
+  currentCeiling: number;
+  rollingReviewDurationSeconds: number | null;
+  throttledShare: number | null;
+  sustainedThrottling: boolean;
+  alarmSuggestion?: string | null;
 }
 
 /** Wire shape returned by GET /api/v1/management/remote-hosts. */
@@ -388,6 +404,8 @@ export interface RemoteHost {
   effectiveMaxParallelism?: number | null;
   /** Role-local ceiling advertised from RUNNER_MAX_PARALLELISM. */
   roleMaxParallelism?: number | null;
+  /** Review-role cgroup quota, ceiling, duration, and throttling telemetry. */
+  reviewPlane?: ReviewPlaneBudget | null;
   /** Review daemon restart outcome, retained by the Task Server for 24 hours. */
   restartedAt?: string | null;
   reviewsLost?: number;

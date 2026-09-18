@@ -164,7 +164,9 @@ internal static class RunnerCapabilityProbe
             .Distinct(StringComparer.Ordinal)
             .ToArray();
 
-    public static HostTelemetrySnapshotDto? Telemetry(HostTelemetrySample? sample)
+    public static HostTelemetrySnapshotDto? Telemetry(
+        HostTelemetrySample? sample,
+        ReviewPlaneBudgetDto? reviewPlane = null)
         => sample is null
             ? null
             : new HostTelemetrySnapshotDto(
@@ -190,7 +192,8 @@ internal static class RunnerCapabilityProbe
                 sample.TaskServerConnectionEscalatedAt,
                 sample.TaskServerConnectionLastError,
                 sample.TaskServerConnectionLastRecoveredAt,
-                CliProcessReaper.ReapedCount);
+                CliProcessReaper.ReapedCount,
+                reviewPlane);
 
     private static string ConnectivityDetail(TaskServerConnectivitySnapshot? connectivity)
     {

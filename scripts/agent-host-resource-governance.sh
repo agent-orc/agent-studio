@@ -7,6 +7,8 @@ cpu_count=""
 profile="/etc/agent-host/profile.conf"
 drop_in_dir=""
 migrate_drop_ins=0
+coding_slots=2
+review_slots=2
 
 usage() {
   printf '%s\n' \
@@ -14,6 +16,8 @@ usage() {
     "" \
     "Options:" \
     "  --cpu-count <n>       Host logical CPU count (default: nproc)" \
+    "  --coding-slots <n>    Declared coding slots (default: 2)" \
+    "  --review-slots <n>    Declared review slots (default: 2)" \
     "  --profile <path>      agent-host profile (default: /etc/agent-host/profile.conf)" \
     "  --drop-in-dir <path>  Existing service drop-in directory to inspect" \
     "  --migrate-drop-ins    Adopt resource values and remove them from drop-ins" \
@@ -29,6 +33,8 @@ while (($#)); do
   case "$1" in
     --role) role="${2:-}"; shift 2 ;;
     --cpu-count) cpu_count="${2:-}"; shift 2 ;;
+    --coding-slots) coding_slots="${2:-}"; shift 2 ;;
+    --review-slots) review_slots="${2:-}"; shift 2 ;;
     --profile) profile="${2:-}"; shift 2 ;;
     --drop-in-dir) drop_in_dir="${2:-}"; shift 2 ;;
     --migrate-drop-ins) migrate_drop_ins=1; shift ;;
@@ -43,6 +49,9 @@ if [[ -z "$cpu_count" ]]; then
   cpu_count="$(nproc)"
 fi
 [[ "$cpu_count" =~ ^[1-9][0-9]*$ ]] || die "--cpu-count must be a positive integer"
+[[ "$coding_slots" =~ ^[0-9]+$ ]] || die "--coding-slots must be a non-negative integer"
+[[ "$review_slots" =~ ^[0-9]+$ ]] || die "--review-slots must be a non-negative integer"
+((coding_slots + review_slots > 0)) || die "at least one coding or review slot is required"
 [[ "$profile" == /* ]] || die "--profile must be an absolute path"
 if [[ -n "$drop_in_dir" ]]; then
   [[ "$drop_in_dir" == /* ]] || die "--drop-in-dir must be an absolute path"
@@ -170,8 +179,14 @@ if [[ "$role" == "coding" ]]; then
   default_cpu_weight=100
   default_io_weight=100
 else
-  review_quota=$((cpu_count * 100 / 3))
+  # Review gets the host share implied by declared role slots. Coding keeps the
+  # higher CPUWeight and its all-core burst ceiling, while Review can never be
+  # granted the whole host by a derived default.
+  review_quota=$((cpu_count * 100 * review_slots / (coding_slots + review_slots)))
+  max_review_quota=$(((cpu_count - 1) * 100))
+  ((max_review_quota > 0)) || max_review_quota=50
   ((review_quota >= 100)) || review_quota=100
+  ((review_quota <= max_review_quota)) || review_quota=$max_review_quota
   default_quota="${review_quota}%"
   default_cpu_weight=30
   default_io_weight=30
