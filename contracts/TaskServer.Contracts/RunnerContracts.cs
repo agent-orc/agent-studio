@@ -111,7 +111,8 @@ public sealed record ClaimResponse(
     RuntimeCapacitySettingsDto? RuntimeCapacity = null,
     ProviderModelFallback? ModelFallback = null,
     string? ContinuationBaseRef = null,
-    string? ContinuationBaseSha = null);
+    string? ContinuationBaseSha = null,
+    IReadOnlyList<string>? ReprobeCapabilities = null);
 
 /// <summary>A run-scoped sibling route selected after a provider refusal.</summary>
 public sealed record ProviderModelFallback(
