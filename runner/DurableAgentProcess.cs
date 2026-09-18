@@ -139,24 +139,42 @@ internal sealed class DurableAgentProcess
             WorkingDirectory = spec.WorkingDirectory,
         };
         foreach (var argument in launch.Arguments) start.ArgumentList.Add(argument);
-        // The daemon needs all provider credentials for capability probes, but
-        // a detached worker receives only the credential for its selected CLI.
-        // In particular, Codex workers must not inherit Claude's setup token.
-        if (ProviderAuthEnvironment.TryGetForCli(spec.CliType, out var authName, out var authValue))
-            start.Environment[authName] = authValue;
-        else
-            start.Environment.Remove(ProviderAuthEnvironment.ClaudeCodeOAuthToken);
-        // AGT-2820: a coding run's builds must not leave a build farm behind.
-        // A reused MSBuild node survives the build that started it and is
-        // reparented to init the moment this detached worker is killed, so the
-        // orphans outlive every attempt-scoped reap.
-        start.Environment["MSBUILDDISABLENODEREUSE"] = "1";
+        ApplyWorkerEnvironment(start.Environment, spec.CliType);
         var process = Process.Start(start)
             ?? throw new InvalidOperationException("Failed to start the detached runner worker.");
         var started = process.StartTime.ToUniversalTime();
         var handle = new DurableAgentProcess(workerDirectory, process.Id, started);
         process.Dispose();
         return handle;
+    }
+
+    /// <summary>
+    /// The environment differences between the daemon and the coding worker it
+    /// starts. Everything else is inherited, which is what the run's caches and
+    /// the provider configuration rely on.
+    ///
+    /// <para>Credentials: the daemon needs all provider credentials for its
+    /// capability probes, but a detached worker receives only the credential for
+    /// its selected CLI. In particular, Codex workers must not inherit Claude's
+    /// setup token.</para>
+    ///
+    /// <para>Build servers (AGT-2820, AGT-2868): a reused MSBuild node survives
+    /// the build that started it, is reparented to init the moment this worker
+    /// exits, and then accumulates in the unit cgroup across daemon restarts
+    /// until cgroup delegation itself fails. Disabling node reuse and the
+    /// MSBuild server here reaches every build the agent starts, which is the
+    /// only place the runner can fence it: the agent writes its own
+    /// <c>dotnet</c> command lines.</para>
+    /// </summary>
+    internal static void ApplyWorkerEnvironment(
+        IDictionary<string, string?> environment,
+        string? cliType)
+    {
+        if (ProviderAuthEnvironment.TryGetForCli(cliType, out var authName, out var authValue))
+            environment[authName] = authValue;
+        else
+            environment.Remove(ProviderAuthEnvironment.ClaudeCodeOAuthToken);
+        WorkerBuildServerHygiene.ApplyTo(environment);
     }
 
     /// <summary>
@@ -411,7 +429,7 @@ internal sealed class DurableAgentProcess
         catch { /* lease loss/cancellation is already the authoritative outcome */ }
     }
 
-    public static async Task<int> RunWorkerAsync(string specPath)
+    public static async Task<int> RunWorkerAsync(string specPath, bool shutdownBuildServers = false)
     {
         var spec = JsonSerializer.Deserialize<DetachedJobSpec>(await File.ReadAllTextAsync(specPath), Json)
             ?? throw new InvalidDataException($"Detached job spec is empty: {specPath}");
@@ -530,6 +548,12 @@ internal sealed class DurableAgentProcess
                                || ex.Message.Contains("Failed to start process", StringComparison.OrdinalIgnoreCase);
             }
         }
+
+        // AGT-2868: before the result file appears, because the result file is
+        // what makes the daemon tear this worker's cgroup down. Doing it after
+        // would race the teardown and be counted as a leftover it killed.
+        if (shutdownBuildServers)
+            WorkerBuildServerHygiene.ShutdownBuildServers(message => Append("system", message));
 
         var result = new DetachedJobResult(
             processResult.ExitCode,

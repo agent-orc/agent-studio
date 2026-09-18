@@ -94,6 +94,49 @@ public sealed class RunnerServiceUnitTests
             content.IndexOf("RUNNER_HOST_CODING_SLOTS=2", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// AGT-2868: on 18.09.2026 four parallel <c>backend.Tests</c> suites
+    /// exhausted the kernel default of 128 inotify instances and failed 18
+    /// unrelated <c>TaskServer.Tests</c> in the concurrent promotion gate with
+    /// "The configured user limit (128) on the number of inotify instances has
+    /// been reached". An operator raised it by hand; a host limit a parallel
+    /// agent host cannot run without belongs in onboarding, not in an incident
+    /// note, and applying it without verifying it would hide a read-only
+    /// <c>/proc/sys</c> until the next gate.
+    /// </summary>
+    [Fact]
+    public void Onboarding_declares_and_verifies_the_kernel_limits_parallel_suites_need()
+    {
+        var content = File.ReadAllText(
+            Path.Combine(RepoRoot(), "scripts", "remote-runner-onboard.sh"));
+
+        Assert.Contains("/etc/sysctl.d/90-agent-runner.conf", content, StringComparison.Ordinal);
+        Assert.Contains("fs.inotify.max_user_instances = 1024", content, StringComparison.Ordinal);
+        Assert.Contains("fs.inotify.max_user_watches = 1048576", content, StringComparison.Ordinal);
+        Assert.Contains("sudo sysctl --quiet --load \"$sysctl_file\"", content, StringComparison.Ordinal);
+        Assert.Contains("((inotify_instances >= 1024))", content, StringComparison.Ordinal);
+        Assert.Contains("((inotify_watches >= 1048576))", content, StringComparison.Ordinal);
+        // The limits have to be in force before the daemon starts claiming.
+        Assert.True(
+            content.IndexOf("phase=kernel-limits", StringComparison.Ordinal)
+            < content.IndexOf("phase=systemd", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The runbook's host checklist has to name both values, because an operator
+    /// provisioning a host by hand never runs the onboarding controller.
+    /// </summary>
+    [Fact]
+    public void Runbook_host_checklist_names_both_inotify_limits()
+    {
+        var content = File.ReadAllText(
+            Path.Combine(RepoRoot(), "docs", "operations", "setup", "linux-runner-host.md"));
+
+        Assert.Contains("fs.inotify.max_user_instances", content, StringComparison.Ordinal);
+        Assert.Contains("1048576", content, StringComparison.Ordinal);
+        Assert.Contains("/etc/sysctl.d/90-agent-runner.conf", content, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Review_unit_refuses_direct_manual_stop_through_a_review_only_drop_in()
     {

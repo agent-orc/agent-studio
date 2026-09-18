@@ -12,11 +12,16 @@ if (args is ["--version"])
     return 0;
 }
 
+// AGT-2868 belt and braces: the worker environment already disables MSBuild node
+// reuse and the MSBuild server, so there should be nothing left to shut down.
+// Asking anyway costs one bounded command per attempt. Only the real detached
+// entry point asks for it, so an in-process test that drives the same worker
+// loop never shuts down the build servers of the machine running it.
 if (args is ["--detached-worker", var detachedSpec])
-    return await DurableAgentProcess.RunWorkerAsync(detachedSpec);
+    return await DurableAgentProcess.RunWorkerAsync(detachedSpec, shutdownBuildServers: true);
 
 if (args is ["--detached-review-worker", var detachedReviewSpec])
-    return await DurableReviewProcess.RunWorkerAsync(detachedReviewSpec);
+    return await DurableReviewProcess.RunWorkerAsync(detachedReviewSpec, shutdownBuildServers: true);
 
 var (options, taskKey, once, help) = RunnerOptions.Parse(args);
 

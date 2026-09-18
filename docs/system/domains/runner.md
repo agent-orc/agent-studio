@@ -327,6 +327,24 @@ state.
   refuses a new process, so systemd could not attach the replacement main
   process while a worker survived (`219/CGROUP`). Operator surface:
   [per-worker resource envelope](../../operations/setup/linux-runner-host.md#per-worker-resource-envelope).
+- `runner/WorkerBuildServerHygiene.cs`, `runner/UnitCgroupStraySweep.cs`, and
+  `WorkerCgroup.ReleaseFor`: the three places a process can escape its run
+  (AGT-2868). The envelope above is only applied while the unit cgroup is empty,
+  and on a host that has run before it is not: MSBuild node reuse, test-fixture
+  dev servers, and a stopped `git remote-https` outlived their workers and
+  `KillMode=process` carried them across every restart, so delegation failed with
+  `EBUSY` and every run logged `applied=no` and ran uncapped. (1) Every detached
+  coding and review worker is launched with `MSBUILDDISABLENODEREUSE=1` and
+  `DOTNET_CLI_USE_MSBUILD_SERVER=0`, which every build the agent starts inherits;
+  this is the only fence point, because the agent writes its own `dotnet`
+  command lines. `ReviewBuildServerIsolation` remains the stricter per-attempt
+  fence on top of it. (2) Worker teardown kills the worker cgroup
+  (`cgroup.kill`), so a fixture cannot survive the run, and the count lands on
+  the `worker-envelope` line. (3) Daemon start moves everything that is not
+  itself out of the unit cgroup into a `strays/` leaf before asking for
+  delegation, killing only what is attributable to a generation it is not
+  adopting and older than the run timeout. Membership in the unit cgroup is the
+  only signal, never a process name.
 - `deploy/agent-host/agent-runner-deploy`, its configuration policy, and
   `scripts/harden-agent-runner-host.sh`: the root-owned least-privilege release
   and role-configuration boundary. Release promotion retains its fixed

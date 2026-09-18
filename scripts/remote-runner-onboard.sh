@@ -303,6 +303,43 @@ if ! remote_login_status; then
   remote_login_status || die "Authentication did not verify. Provision Claude through provider-auth.env as documented; never copy credential files from another host."
 fi
 
+printf '[onboarding] phase=kernel-limits Declaring the kernel limits parallel test suites need.\n'
+"${ssh_base[@]}" -T "$host" bash -s <<'REMOTE_KERNEL_LIMITS'
+set -euo pipefail
+# AGT-2868: an agent host runs several .NET and Node test suites at once. On
+# 18.09.2026 four parallel backend.Tests suites exhausted the kernel default of
+# 128 inotify instances and failed 18 unrelated tests in the concurrent
+# promotion gate with "The configured user limit (128) on the number of inotify
+# instances has been reached". dotnet test, file watchers, and the dev-stack
+# fixtures each take instances per process, so the host declares the limit
+# instead of discovering it during a gate.
+sysctl_file=/etc/sysctl.d/90-agent-runner.conf
+sysctl_tmp="$(mktemp)"
+trap 'rm -f "$sysctl_tmp"' EXIT
+cat >"$sysctl_tmp" <<'SYSCTL_LIMITS'
+# Managed by remote-runner-onboard.sh (AGT-2868). Kernel limits for parallel
+# agent test suites; see docs/operations/setup/linux-runner-host.md.
+fs.inotify.max_user_instances = 1024
+fs.inotify.max_user_watches = 1048576
+SYSCTL_LIMITS
+sudo install -m 0644 -o root -g root "$sysctl_tmp" "$sysctl_file"
+sudo sysctl --quiet --load "$sysctl_file"
+inotify_instances="$(sysctl -n fs.inotify.max_user_instances)"
+inotify_watches="$(sysctl -n fs.inotify.max_user_watches)"
+((inotify_instances >= 1024)) || {
+  printf '[remote] fs.inotify.max_user_instances is %s after applying %s.\n' \
+    "$inotify_instances" "$sysctl_file" >&2
+  exit 38
+}
+((inotify_watches >= 1048576)) || {
+  printf '[remote] fs.inotify.max_user_watches is %s after applying %s.\n' \
+    "$inotify_watches" "$sysctl_file" >&2
+  exit 39
+}
+printf '[remote] kernel-limits file=%s max_user_instances=%s max_user_watches=%s\n' \
+  "$sysctl_file" "$inotify_instances" "$inotify_watches"
+REMOTE_KERNEL_LIMITS
+
 printf '[onboarding] phase=systemd Writing configuration and enabling the OS-owned service.\n'
 resource_governance_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/agent-host-resource-governance.sh"
 [[ -x "$resource_governance_script" ]] \

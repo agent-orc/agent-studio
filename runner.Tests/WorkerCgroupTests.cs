@@ -497,6 +497,106 @@ public sealed class WorkerCgroupTests : IDisposable
     }
 
     /// <summary>
+    /// The kernel-free half of the teardown: on a kernel without
+    /// <c>cgroup.kill</c> (before 5.14) the release still has to reach every
+    /// process the cgroup listed, one signal at a time, and still has to report
+    /// how many there were. The count is what surfaces a leaking fixture on the
+    /// <c>worker-envelope</c> line.
+    /// </summary>
+    [SkippableFact]
+    public void Teardown_without_cgroup_kill_signals_every_listed_leftover()
+    {
+        PlatformGate.RequiresPosixShell();
+        var delegated = FakeDelegatedRoot("legacy-kernel");
+        var workerDirectory = Path.Combine(_root, "worker");
+        var cgroup = WorkerCgroup.TryCreate(
+            delegated,
+            workerDirectory,
+            "legacy-kernel",
+            WorkerResourceEnvelope.Compute(12, 2, 2),
+            Ignore)!;
+        using var leftover = Process.Start(new ProcessStartInfo(PosixShell.RequirePath())
+        {
+            ArgumentList = { "-c", "sleep 60" },
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        })!;
+        File.WriteAllText(cgroup.ProcsPath, $"{leftover.Id}\n");
+
+        var killed = WorkerCgroup.ReleaseFor(workerDirectory);
+
+        Assert.Equal(1, killed);
+        Assert.True(leftover.WaitForExit(10_000));
+    }
+
+    /// <summary>
+    /// AGT-2868: a worker's process tree is its cgroup, so whatever is still in
+    /// <c>worker-&lt;attempt&gt;/</c> after the worker exited is a leftover by
+    /// definition. On 18.09.2026 six <c>qs-dev-stack</c> fixture servers, up to
+    /// 20 days old, were found in the coding unit cgroup because nothing killed
+    /// them when their run ended. Proven against the kernel rather than a fake,
+    /// because the load-bearing part is that <c>cgroup.kill</c> reaches a process
+    /// the worker already let go of.
+    /// </summary>
+    [SkippableFact]
+    [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
+    public void Teardown_kills_a_fixture_that_outlived_the_worker_that_started_it()
+    {
+        PlatformGate.LinuxOnly("cgroup membership is what the teardown acts on");
+        var delegated = WritableDelegatedSubtree();
+        Skip.If(
+            delegated is null,
+            "No writable cgroup v2 subtree: run on an agent-host unit with 'Delegate=cpu pids'.");
+
+        var workerDirectory = Path.Combine(_root, "worker");
+        var cgroup = WorkerCgroup.TryCreate(
+            delegated!,
+            workerDirectory,
+            "teardown-" + Guid.NewGuid().ToString("N")[..8],
+            WorkerResourceEnvelope.Compute(12, 2, 2),
+            Ignore);
+        Skip.If(cgroup is null, "The cpu and pids controllers are not delegated to this subtree.");
+
+        try
+        {
+            // The shape of a test fixture: the worker starts a detached server
+            // and then exits. Nothing reparents the server out of the cgroup.
+            var launch = WorkerCgroup.Wrap(
+                cgroup!.ProcsPath,
+                "/bin/sh",
+                ["-c", "sleep 600 & echo $!"]);
+            var start = new ProcessStartInfo
+            {
+                FileName = launch.FileName,
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = _root,
+            };
+            foreach (var argument in launch.Arguments) start.ArgumentList.Add(argument);
+            using var worker = Process.Start(start)!;
+            var fixturePid = int.Parse(worker.StandardOutput.ReadToEnd().Trim());
+            worker.WaitForExit(30_000);
+
+            var residents = File.ReadAllLines(cgroup.ProcsPath)
+                .Where(line => line.Trim().Length > 0)
+                .Select(int.Parse)
+                .ToArray();
+            Assert.Contains(fixturePid, residents);
+
+            var killed = WorkerCgroup.ReleaseFor(workerDirectory);
+
+            Assert.Equal(residents.Length, killed);
+            Assert.False(Directory.Exists(cgroup.CgroupDirectory));
+            Assert.False(Directory.Exists($"/proc/{fixturePid}"));
+        }
+        finally
+        {
+            WorkerCgroup.ReleaseFor(workerDirectory);
+        }
+    }
+
+    /// <summary>
     /// A directory shaped like a delegated cgroup v2 subtree. The kernel grows
     /// <c>cpu.max</c> and <c>pids.max</c> inside a child the moment it is
     /// created below a cgroup that distributes those controllers, and

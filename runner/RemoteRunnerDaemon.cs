@@ -113,7 +113,7 @@ public sealed class RemoteRunnerDaemon
             $"authenticated daemon '{_options.RunnerName}' with attribution '{clientId}'; " +
             $"slots={_client.HostMaxParallelism} " +
             $"admission={(_client.UsesHostOrchestrator ? "host-permits" : "claims")}");
-        AnnounceWorkerEnvelope(persistedAtStartup.Select(slot => slot.WorkerDirectory));
+        AnnounceWorkerEnvelope(persistedAtStartup);
         var handoffRecovery = new DurableHandoffRecovery(_options, _client, _log);
 
         var inventory = new RunnerProcessInventoryTracker();
@@ -957,8 +957,13 @@ public sealed class RemoteRunnerDaemon
     /// will apply, and clear away the worker cgroups of a previous generation
     /// whose processes are gone. A cgroup that still holds a surviving detached
     /// worker is not empty and is therefore never swept.
+    ///
+    /// <para>AGT-2868: the same startup pass empties the unit cgroup itself
+    /// first. Processes that no worker owns any more are the reason delegation
+    /// failed on a host that had run before, and without this the envelope would
+    /// report <c>applied=no</c> for the rest of that host's life.</para>
     /// </summary>
-    private void AnnounceWorkerEnvelope(IEnumerable<string> retainedWorkerDirectories)
+    private void AnnounceWorkerEnvelope(IReadOnlyList<PersistedRunnerSlot> retained)
     {
         if (!_options.WorkerEnvelopeEnabled)
         {
@@ -970,9 +975,37 @@ public sealed class RemoteRunnerDaemon
         _log($"worker resource envelope {envelope.Describe()} "
              + $"(coding={_options.HostCodingSlots} review={_options.HostReviewSlots} "
              + $"burst={_options.WorkerCpuBurst:0.0}x)");
-        var root = WorkerCgroup.EnsureDelegationRoot(message => _log(message));
+        var root = WorkerCgroup.EnsureDelegationRoot(
+            message => _log(message),
+            StraySweepContextFor(retained));
         if (root is not null)
-            WorkerCgroup.SweepAbandoned(root, retainedWorkerDirectories, message => _log(message));
+            WorkerCgroup.SweepAbandoned(
+                root,
+                retained.Select(slot => slot.WorkerDirectory),
+                message => _log(message));
+    }
+
+    /// <summary>
+    /// Which directories can name the generation a stray belonged to. The slots
+    /// this daemon adopts contribute their own attempt id, so their surviving
+    /// helper processes are parked rather than killed; the work and state roots
+    /// answer for everything else with the attempt directory it was started in.
+    /// </summary>
+    private StraySweepContext StraySweepContextFor(IReadOnlyList<PersistedRunnerSlot> retained)
+    {
+        var roots = new List<StrayGenerationRoot>
+        {
+            new(_options.WorkDir),
+            new(_options.StateDir),
+        };
+        foreach (var slot in retained)
+        {
+            roots.Add(new StrayGenerationRoot(slot.WorktreePath, slot.AttemptId));
+            roots.Add(new StrayGenerationRoot(slot.WorkerDirectory, slot.AttemptId));
+        }
+        return new StraySweepContext(
+            TimeSpan.FromSeconds(Math.Max(1, _options.RunTimeoutSeconds)),
+            roots);
     }
 
     private sealed record ActiveSlot(string? TaskKey, Task<int> Execution);
