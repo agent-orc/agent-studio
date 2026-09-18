@@ -9,7 +9,7 @@ public interface ITagMaintenanceWorkspace
     TagMaintenanceSnapshot Capture(string project);
     string CreateCard(string project, TagMaintenanceDecision decision);
     string Read(TagMaintenanceChange change);
-    void Write(TagMaintenanceChange change);
+    bool Write(TagMaintenanceChange change);
 }
 
 /// <summary>Uses the existing application writers; no maintenance-specific task or Dossier storage.</summary>
@@ -114,10 +114,10 @@ public sealed class TagMaintenanceWorkspace(TaskScannerService scanner, TaskMuta
         }
     }
 
-    public void Write(TagMaintenanceChange change)
+    public bool Write(TagMaintenanceChange change)
     {
         var current = Read(change);
-        if (current == change.After) return;
+        if (current == change.After) return false;
         if (current != change.Before) throw new InvalidOperationException($"Stale {change.Kind}/{change.Id}.");
         switch (change.Kind)
         {
@@ -167,6 +167,7 @@ public sealed class TagMaintenanceWorkspace(TaskScannerService scanner, TaskMuta
                 break;
         }
         if (Read(change) != change.After) throw new InvalidOperationException($"Write verification failed: {change.Kind}/{change.Id}.");
+        return true;
     }
 
     public static string RewriteFrontmatter(string content, string[] tags)

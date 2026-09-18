@@ -185,9 +185,11 @@ public sealed class TagMaintenanceService(ITagMaintenanceWorkspace workspace, IT
             {
                 foreach (var change in decision.Changes)
                 {
-                    workspace.Write(change);
-                    state.Audit.Add(new(time.GetUtcNow(), id, actor, "written", $"{change.Kind}/{change.Id}"));
-                    Save(project, state);
+                    if (workspace.Write(change))
+                    {
+                        state.Audit.Add(new(time.GetUtcNow(), id, actor, "written", $"{change.Kind}/{change.Id}"));
+                        Save(project, state);
+                    }
                 }
                 decision.Status = "applied";
                 state.Audit.Add(new(time.GetUtcNow(), id, actor, "applied", "All changes verified."));

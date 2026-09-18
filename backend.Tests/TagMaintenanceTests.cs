@@ -158,11 +158,16 @@ public sealed class TagMaintenanceTests : IDisposable
         Assert.Equal("partial", partial.Status);
         Assert.Single(workspace.Writes);
         Assert.DoesNotContain("registry/old", workspace.Writes);
+        Assert.Equal(["card/one"], service.Read("Project").Audit
+            .Where(entry => entry.Outcome == "written").Select(entry => entry.Detail));
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.DecideAsync("Project", id, "keep", "operator"));
         var result = await Service(workspace).DecideAsync("Project", id, "apply", "operator");
         Assert.Equal("applied", result.Status);
         Assert.Equal(4, workspace.Writes.Count);
-        Assert.Contains(service.Read("Project").Audit, a => a.Outcome == "partial");
+        var audit = service.Read("Project").Audit;
+        Assert.Contains(audit, a => a.Outcome == "partial");
+        Assert.Equal(new[] { "card/one", "dossier/two", "wiki/three.md", "registry/old" },
+            audit.Where(entry => entry.Outcome == "written").Select(entry => entry.Detail));
     }
 
     [Fact]
@@ -349,12 +354,13 @@ public sealed class TagMaintenanceTests : IDisposable
         public string CreateCard(string project, TagMaintenanceDecision decision)
         { Cards.Add(TagMaintenancePolicy.Card(project, decision)); return "card-" + decision.Id; }
         public string Read(TagMaintenanceChange change) => Values.GetValueOrDefault(change.Kind + "/" + change.Id, change.Before);
-        public void Write(TagMaintenanceChange change)
+        public bool Write(TagMaintenanceChange change)
         {
             var key = change.Kind + "/" + change.Id;
             if (key == FailOnce) { FailOnce = null; throw new IOException("Simulated write failure"); }
-            if (Read(change) == change.After) return;
+            if (Read(change) == change.After) return false;
             Values[key] = change.After; Writes.Add(key);
+            return true;
         }
     }
 }
