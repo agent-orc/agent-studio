@@ -292,6 +292,7 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         Assert.Contains(notLanded[..7], status.Detail);
         Assert.Contains("1/2", status.Detail!);
         Assert.DoesNotContain(landed[..7], status.Detail!);
+        Assert.Equal(CommitIntegrationRules.Missing, status.Repositories[0].Commits[1].IntegrationRule);
     }
 
     [Fact]
@@ -1048,6 +1049,7 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         Assert.Equal(IntegrationStatuses.Integrated, alone.Status);
         Assert.Equal("reviewed-result-ancestor", alone.Detail);
         Assert.Equal(delivered[..7], alone.Sha);
+        Assert.Empty(alone.Repositories);
         Assert.Equal(batched.Status, alone.Status);
         Assert.Equal(batched.Detail, alone.Detail);
         Assert.Equal(batched.Sha, alone.Sha);

@@ -597,7 +597,8 @@ public sealed class TaskIntegrationStatusService
         var deliveryRef = DeliveryRefFor(job);
 
         var reviewedResultSha = ReviewSubjectStore.Read(job.FolderPath)?.ResultSha;
-        if (!string.IsNullOrWhiteSpace(reviewedResultSha)
+        if (AttributedCommitRecords(job, includeSuperseded: true).Count == 0
+            && !string.IsNullOrWhiteSpace(reviewedResultSha)
             && AncestorSetContains(reach.DevelopAncestors, reviewedResultSha))
         {
             return IntegratedOrLocal(reach, [reviewedResultSha], branchName, deliveryRef,
