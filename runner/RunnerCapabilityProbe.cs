@@ -260,7 +260,9 @@ internal static class RunnerCapabilityProbe
                 auth.Signal,
                 auth.ExpiresAt,
                 auth.LimitedUntil,
-                auth.CredentialModifiedAt));
+                auth.CredentialModifiedAt,
+                auth.EvidenceId,
+                auth.EvidenceExcerpt));
         }
     }
 
@@ -295,7 +297,9 @@ internal static class RunnerCapabilityProbe
         string? signal = null,
         DateTimeOffset? expiresAt = null,
         DateTimeOffset? limitedUntil = null,
-        DateTimeOffset? credentialModifiedAt = null)
+        DateTimeOffset? credentialModifiedAt = null,
+        string? evidenceId = null,
+        string? evidenceExcerpt = null)
         => new(
             key,
             category,
@@ -306,7 +310,9 @@ internal static class RunnerCapabilityProbe
             signal,
             expiresAt?.UtcDateTime,
             limitedUntil?.UtcDateTime,
-            credentialModifiedAt?.UtcDateTime);
+            credentialModifiedAt?.UtcDateTime,
+            evidenceId,
+            evidenceExcerpt);
 
     private static string Platform()
         => $"{(OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsLinux() ? "linux" : "other")}:{RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant()}";
@@ -406,7 +412,9 @@ public sealed record ProviderAuthStatus(
     string Signal = ProviderAuthProbe.SignalOk,
     DateTimeOffset? ExpiresAt = null,
     DateTimeOffset? LimitedUntil = null,
-    DateTimeOffset? CredentialModifiedAt = null)
+    DateTimeOffset? CredentialModifiedAt = null,
+    string? EvidenceId = null,
+    string? EvidenceExcerpt = null)
 {
     public bool IsReady => Status == ProviderAuthProbe.Ready;
 }
@@ -456,6 +464,7 @@ public sealed class ProviderAuthProbe
     public const string Ready = "ready";
     public const string Unavailable = "unavailable";
     public const string Limited = "limited";
+    public const string Degraded = "degraded";
     public const string SignalOk = "ok";
     public const string SignalTransient = "transient-auth-error";
     public const string SignalLimited = "rate-limited";
@@ -477,6 +486,9 @@ public sealed class ProviderAuthProbe
     /// <summary>Node-based CLIs may need this long to start on a saturated review host.</summary>
     public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
 
+    /// <summary>A legacy limited verdict without a reset is never permanent.</summary>
+    public static readonly TimeSpan UnknownLimitTtl = TimeSpan.FromMinutes(10);
+
     /// <summary>Two explicit logout answers are required before claim admission closes.</summary>
     public const int DefaultNegativeConfirmations = 2;
 
@@ -496,6 +508,7 @@ public sealed class ProviderAuthProbe
         new(StringComparer.Ordinal);
     private readonly HashSet<string> _refreshInFlight =
         new(StringComparer.Ordinal);
+    private readonly Dictionary<string, int> _activeRuns = new(StringComparer.Ordinal);
 
     public ProviderAuthProbe(
         ProviderAuthLauncher? launcher = null,
@@ -547,7 +560,27 @@ public sealed class ProviderAuthProbe
         lock (_sync)
         {
             _observed.TryGetValue(cliBinary, out var known);
-            if (known is not null && _clock() - known.Status.ObservedAt < _ttl) return known.Status;
+            var forceRefresh = false;
+            if (known?.Status.Status == Limited
+                && (known.Status.LimitedUntil ?? known.Status.ObservedAt.Add(UnknownLimitTtl)) <= _clock())
+            {
+                // Serve a claimable degraded state while the forced probe runs.
+                // This prevents an unparseable legacy limit from becoming an
+                // in-memory latch that only a service restart can clear.
+                known = known with
+                {
+                    Status = known.Status with
+                    {
+                        Status = Degraded,
+                        Detail = "Provider limit evidence expired; authentication re-probe is in progress.",
+                        ProbeDegraded = true,
+                    },
+                };
+                _observed[cliBinary] = known;
+                forceRefresh = true;
+            }
+            if (!forceRefresh && known is not null && _clock() - known.Status.ObservedAt < _ttl)
+                return known.Status;
 
             if (_launcher is not null && _refreshInFlight.Add(cliBinary))
             {
@@ -735,12 +768,19 @@ public sealed class ProviderAuthProbe
     /// limited capability, and only explicit login failures advance the
     /// negative-confirmation counter.
     /// </summary>
-    public ProviderAuthStatus RecordProcessResult(string cliBinary, ProcessResult result)
+    public ProviderAuthStatus RecordProcessResult(
+        string cliBinary,
+        ProcessResult result,
+        string? evidenceId = null,
+        bool operatorStopped = false,
+        int? signal = null,
+        bool hostShutdown = false)
     {
         // A run that exited 0 reached the provider. Its output is agent content
         // (files and docs it read, rate_limit_event warnings), which can contain
         // "rate-limited" or "usage limit" without any limit being hit.
-        if (result.ExitCode == 0) return Current(cliBinary);
+        if (result.ExitCode == 0 || operatorStopped || signal is not null || hostShutdown)
+            return Current(cliBinary);
 
         var evidence = ProviderAccessClassifier.Classify(
             result.ExitCode,
@@ -757,7 +797,9 @@ public sealed class ProviderAuthProbe
                 ProviderAuthObservationKind.Limited,
                 $"'{RunnerCapabilityProbe.Provider(cliBinary)}' is rate-limited until {evidence.LimitedUntil:o}: {Excerpt(evidence.Detail)}",
                 SignalLimited,
-                LimitedUntil: evidence.LimitedUntil),
+                LimitedUntil: evidence.LimitedUntil,
+                EvidenceId: Excerpt(evidenceId, 120),
+                EvidenceExcerpt: Excerpt(evidence.Detail)),
             ProviderAccessEvidenceKind.TransientFailure => new ProviderAuthObservation(
                 ProviderAuthObservationKind.Transient,
                 $"Transient auth error, retrying: {Excerpt(evidence.Detail)}",
@@ -768,14 +810,52 @@ public sealed class ProviderAuthProbe
 
         ProviderAuthCacheEntry decision;
         ProviderAuthCacheEntry? previous;
+        var hasActiveCounterEvidence = false;
         lock (_sync)
         {
             _observed.TryGetValue(cliBinary, out previous);
+            if (observation.Kind == ProviderAuthObservationKind.Limited
+                && _activeRuns.GetValueOrDefault(cliBinary) > 0)
+            {
+                hasActiveCounterEvidence = true;
+                observation = observation with
+                {
+                    Kind = ProviderAuthObservationKind.Transient,
+                    Detail = $"counter-evidence: another {RunnerCapabilityProbe.Provider(cliBinary)} run is active; "
+                             + $"not applying limit from {evidenceId ?? "unknown run"}. {observation.Detail}",
+                    Signal = SignalTransient,
+                };
+            }
             decision = Decide(previous, observation, _negativeConfirmations, _clock());
+            if (hasActiveCounterEvidence)
+                decision = decision with
+                {
+                    Status = decision.Status with
+                    {
+                        Status = Degraded,
+                        ProbeDegraded = true,
+                        Signal = SignalTransient,
+                    },
+                };
             _observed[cliBinary] = decision;
         }
         LogTransition(cliBinary, previous, decision, observation);
         return decision.Status;
+    }
+
+    public void RecordRunStarted(string cliBinary)
+    {
+        lock (_sync) _activeRuns[cliBinary] = _activeRuns.GetValueOrDefault(cliBinary) + 1;
+    }
+
+    public void RecordRunCompleted(string cliBinary)
+    {
+        lock (_sync)
+        {
+            var remaining = _activeRuns.GetValueOrDefault(cliBinary) - 1;
+            if (remaining > 0) _activeRuns[cliBinary] = remaining;
+            else _activeRuns.Remove(cliBinary);
+        }
     }
 
     private static ProviderAuthObservation Indeterminate(string detail)
@@ -827,7 +907,9 @@ public sealed class ProviderAuthProbe
                     observation.Detail,
                     observedAt,
                     Signal: SignalLimited,
-                    LimitedUntil: observation.LimitedUntil),
+                    LimitedUntil: observation.LimitedUntil,
+                    EvidenceId: observation.EvidenceId,
+                    EvidenceExcerpt: observation.EvidenceExcerpt),
                 0);
 
         var retained = previous?.Status
@@ -879,7 +961,15 @@ public sealed class ProviderAuthProbe
         Action<string>? log;
         lock (_sync) log = _diagnosticLog;
         if (log is null) return;
-        if (decision.Status.ProbeDegraded)
+        if (previous?.Status.Status != decision.Status.Status)
+        {
+            log(
+                $"provider-auth status={decision.Status.Status} binary={cliBinary} "
+                + $"until={decision.Status.LimitedUntil?.UtcDateTime:o} "
+                + $"evidence={decision.Status.EvidenceId ?? "none"} "
+                + $"excerpt={Excerpt(decision.Status.EvidenceExcerpt ?? decision.Status.Detail)}");
+        }
+        else if (decision.Status.ProbeDegraded)
         {
             log(
                 $"runner-provider-auth-probe-degraded binary={cliBinary} "
@@ -887,12 +977,6 @@ public sealed class ProviderAuthProbe
                 + $"retainedStatus={decision.Status.Status} "
                 + $"logoutConfirmations={decision.ConsecutiveLogoutSignals}/{_negativeConfirmations} "
                 + $"detail={observation.Detail}");
-        }
-        else if (previous is not null
-                 && previous.Status.Status != Ready
-                 && decision.Status.Status == Ready)
-        {
-            log($"runner-provider-auth-probe-recovered binary={cliBinary} detail={decision.Status.Detail}");
         }
     }
 
@@ -997,7 +1081,9 @@ internal sealed record ProviderAuthObservation(
     string Signal = ProviderAuthProbe.SignalTransient,
     DateTimeOffset? ExpiresAt = null,
     DateTimeOffset? LimitedUntil = null,
-    DateTimeOffset? CredentialModifiedAt = null);
+    DateTimeOffset? CredentialModifiedAt = null,
+    string? EvidenceId = null,
+    string? EvidenceExcerpt = null);
 
 internal sealed record ProviderAuthCacheEntry(
     ProviderAuthStatus Status,

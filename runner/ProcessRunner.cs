@@ -4,7 +4,11 @@ using System.Runtime.InteropServices;
 namespace AgentRunner;
 
 /// <summary>Result of running a child process to completion.</summary>
-public sealed record ProcessResult(int ExitCode, string StdOut, string StdErr)
+public sealed record ProcessResult(
+    int ExitCode,
+    string StdOut,
+    string StdErr,
+    int? Signal = null)
 {
     public bool Success => ExitCode == 0;
 }
@@ -128,7 +132,11 @@ public static class ProcessRunner
         // WaitForExitAsync returns before the async readers have flushed the last
         // buffered lines; a bare WaitForExit() here drains them deterministically.
         process.WaitForExit();
-        return new ProcessResult(process.ExitCode, outBuf.ToString(), errBuf.ToString());
+        return new ProcessResult(
+            process.ExitCode,
+            outBuf.ToString(),
+            errBuf.ToString(),
+            ProcessTermination.SignalFromWaitExitCode(process.ExitCode));
     }
 
     private static void TryKill(Process process, bool isolatedProcessGroup)
@@ -159,6 +167,20 @@ public static class ProcessRunner
 
     [DllImport("libc", SetLastError = true)]
     private static extern int kill(int pid, int signal);
+}
+
+/// <summary>
+/// Converts the Unix wait result surfaced by <see cref="Process.ExitCode"/> at
+/// the process boundary. Callers that merely receive an arbitrary numeric exit
+/// code must not use this conversion: without this wait observation, 137 is an
+/// ordinary exit code rather than independently recorded SIGKILL evidence.
+/// </summary>
+internal static class ProcessTermination
+{
+    internal static int? SignalFromWaitExitCode(int exitCode)
+        => !OperatingSystem.IsWindows() && exitCode is >= 129 and <= 255
+            ? exitCode - 128
+            : null;
 }
 
 /// <summary>

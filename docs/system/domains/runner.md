@@ -64,6 +64,12 @@ state.
   identity. The connectivity capability's three-minute freshness deadline is
   the remote alarm because a broken route cannot deliver its own failure
   telemetry.
+- Provider-auth capability limits are accepted only from an explicit provider
+  refusal with a parseable reset. Signal-terminated runs and allowed quota
+  telemetry are excluded. Limited advertisements carry a scrubbed source run
+  and excerpt; expiry or a claim response's re-probe request refreshes the
+  provider status without restarting the daemon. A live same-provider run is
+  counter-evidence and makes the conflicting state claimable but degraded.
 - `backend/Features/Management/RunnerLinks/LinkSupervisor.cs`: Task Server-owned
   SSH reverse-link lifecycle, heartbeat subscription, functional route probe,
   remote listener cleanup, bounded retry ladder, silent child process and

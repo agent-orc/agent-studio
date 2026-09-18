@@ -51,7 +51,9 @@ public sealed record AdvertisedCapabilityDto(
     string? Signal = null,
     DateTime? ExpiresAt = null,
     DateTime? LimitedUntil = null,
-    DateTime? CredentialModifiedAt = null);
+    DateTime? CredentialModifiedAt = null,
+    string? EvidenceId = null,
+    string? EvidenceExcerpt = null);
 
 public sealed record CapabilityAdvertisementRequest(
     string RunnerId,
@@ -158,7 +160,9 @@ public sealed record CapabilityHealthDto(
     string? Signal = null,
     DateTime? ExpiresAt = null,
     DateTime? LimitedUntil = null,
-    DateTime? CredentialModifiedAt = null);
+    DateTime? CredentialModifiedAt = null,
+    string? EvidenceId = null,
+    string? EvidenceExcerpt = null);
 
 /// <summary>One CLI installation observed by a runner capability probe.</summary>
 public sealed record InstalledCliDto(
