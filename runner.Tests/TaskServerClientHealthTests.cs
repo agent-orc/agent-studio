@@ -451,6 +451,69 @@ public class TaskServerClientHealthTests
     }
 
     [Fact]
+    public async Task Both_server_topologies_return_the_same_provider_refusal_continuation_claim()
+    {
+        var now = DateTime.UtcNow;
+        const string salvageRef =
+            "refs/heads/agent-studio/salvage/runner/AGT-2874/run-1/fence-1/1111111";
+        const string salvageSha = "1111111111111111111111111111111111111111";
+        var legacyJson = $$"""
+            {
+              "status":"claimed",
+              "taskKey":"AGT-2874",
+              "jobId":"task-v1",
+              "projectName":"project-v1",
+              "runId":"run-v1",
+              "leaseInstanceId":"instance-v1",
+              "lease":{
+                "taskKey":"AGT-2874","runnerId":"runner-v1","runnerName":"Runner v1",
+                "hostname":"host-v1","pid":42,"backendName":"test","leaseId":"lease-v1",
+                "fencingToken":7,"acquiredAt":"{{now:o}}","expiresAt":"{{now.AddMinutes(2):o}}",
+                "attemptId":"run-v1"
+              },
+              "runSpec":{"cliType":"codex","model":"gpt-5.6-sol","thinkingLevel":"high","contextMode":"clean"},
+              "continuationBaseRef":"{{salvageRef}}",
+              "continuationBaseSha":"{{salvageSha}}"
+            }
+            """;
+        var durableJson = $$"""
+            {
+              "status":"claimed",
+              "run":{"runId":"run-v1","taskId":"task-v1","status":"running","runnerId":"runner-v1","fence":7,"createdAt":"{{now:o}}","startedAt":"{{now:o}}"},
+              "task":{"taskId":"task-v1","projectId":"project-v1","taskKey":"AGT-2874","title":"Continue refused run","state":"3-progress","version":2,"createdAt":"{{now:o}}","updatedAt":"{{now:o}}"},
+              "lease":{"leaseId":"lease-v1","runId":"run-v1","taskId":"task-v1","runnerId":"runner-v1","instanceId":"instance-v1","fence":7,"acquiredAt":"{{now:o}}","expiresAt":"{{now.AddMinutes(2):o}}","status":"active"},
+              "modelFallback":{"from":"gpt-6-astra","to":"gpt-5.6-sol","reason":"provider-refusal-sibling","cliType":"codex","thinkingLevel":"high"},
+              "continuationBaseRef":"{{salvageRef}}",
+              "continuationBaseSha":"{{salvageSha}}"
+            }
+            """;
+
+        using var legacyHttp = new HttpClient(new RecordingHandler(_ => new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new StringContent(legacyJson),
+        })) { BaseAddress = new Uri("http://task-server") };
+        using var durableHttp = new HttpClient(new RecordingHandler(_ => new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new StringContent(durableJson),
+        })) { BaseAddress = new Uri("http://task-server") };
+        var options = CapacityOptions(
+            Path.Combine(Path.GetTempPath(), "claim-parity-" + Guid.NewGuid().ToString("N")));
+        using var legacy = new TaskServerClient(legacyHttp, "runner-v1", usesDurableTaskServer: false, options: options);
+        using var durable = new TaskServerClient(durableHttp, "runner-v1", usesDurableTaskServer: true, options: options);
+        var request = new RunnerClaimRequest("runner-v1", "Runner v1", "host-v1", 42, "test");
+
+        var legacyClaim = await legacy.ClaimAsync(request, CancellationToken.None);
+        var durableClaim = await durable.ClaimAsync(request, CancellationToken.None);
+
+        Assert.Equal(legacyClaim.TaskKey, durableClaim.TaskKey);
+        Assert.Equal(legacyClaim.RunSpec, durableClaim.RunSpec);
+        Assert.Equal(legacyClaim.ContinuationBaseRef, durableClaim.ContinuationBaseRef);
+        Assert.Equal(legacyClaim.ContinuationBaseSha, durableClaim.ContinuationBaseSha);
+        Assert.Equal(salvageRef, durableClaim.ContinuationBaseRef);
+        Assert.Equal(salvageSha, durableClaim.ContinuationBaseSha);
+    }
+
+    [Fact]
     public void Restored_run_outbox_keeps_the_original_attempt_instance()
     {
         using var http = new HttpClient(new RecordingHandler(_ =>

@@ -130,7 +130,7 @@ describe('ExecutionAssignmentCardComponent', () => {
     }
   });
 
-  it('shows the assigned project delivery failure and reason', () => {
+  it('shows the assigned project delivery failure, reason, and provider refusal', () => {
     TestBed.configureTestingModule({
       imports: [ExecutionAssignmentCardComponent],
       providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()],
@@ -147,6 +147,10 @@ describe('ExecutionAssignmentCardComponent', () => {
     clients.forEach(request => request.flush([]));
     http.expectOne('/api/v1/management/remote-hosts').flush([]);
     http.expectOne('/api/v1/management/links').flush([]);
+    http.expectOne('/api/v1/management/provider-refusals?days=14').flush([{
+      day: '2026-09-18', model: 'gpt-6-astra', count: 1,
+      refusals: ['unsupported_parameter access_programs.cyber'],
+    }]);
     TestBed.inject(RemoteHostsService).hosts.set([{
       id: 'agent-runner-01', name: 'Runner 01', role: 'remote', address: null,
       clientId: 'agent-runner-01', status: 'online', os: 'Linux', lastHeartbeatAt: null,
@@ -164,6 +168,9 @@ describe('ExecutionAssignmentCardComponent', () => {
     expect(status?.textContent).toContain('blocked');
     expect(status?.textContent).toContain('Target develop');
     expect(status?.textContent).toContain('permission denied');
+    const refusal = fixture.nativeElement.querySelector('[data-testid="project-provider-refusal"]');
+    expect(refusal?.textContent).toContain('gpt-6-astra');
+    expect(refusal?.textContent).toContain('unsupported_parameter access_programs.cyber');
     http.verify();
   });
 });

@@ -162,12 +162,38 @@ loops instead.
 | Runs | `POST /api/v1/runs/{runId}/reconcile`, `POST .../post-steps/{stepExecutionId}/claim`, `.../complete`, `POST .../lease/renew`, `.../lease/release`, `POST .../result-finalization`, `POST .../completion`, `GET|PUT .../result-handoff`, `GET|POST .../events`, `GET|POST .../artifacts`, `GET .../artifacts/{artifactId}/content` |
 | Reviews | `POST /api/v1/reviews/subjects`, `GET /api/v1/reviews/subjects/{subjectId}`, `GET /api/v1/reviews/attempts/{attemptId}`, `POST .../lease/renew`, `.../report`, `.../cleanup` |
 | Orchestration | `GET|PUT /api/v1/orchestration/projects/{projectId}/flow-definition`, `GET|POST /api/v1/orchestration/runs`, `GET /api/v1/orchestration/runs/{runId}`, `POST /api/v1/orchestration/claims`, `POST .../lease/renew`, `.../lease/release`, `.../stages/complete` |
-| Management | `GET /api/v1/management/status`, `/outboxes`, `/hosts`, `/audit`, `/invariants`, `/remote-hosts`, `/migrations/legacy/reports`, `/migrations/legacy/reports/{migrationId}`, `PUT /mode`, `POST /prepare-shutdown`, `/backups`, `/restore`, `/attempts/{runId}/resolve-unknown`, `/remote-hosts/{hostId}/operator-drain`, `/remote-hosts/{hostId}/automatic-drain/clear`, `/migrations/legacy/inventory`, `/migrations/legacy/import` |
+| Management | `GET /api/v1/management/status`, `/outboxes`, `/hosts`, `/audit`, `/invariants`, `/remote-hosts`, `/provider-refusals`, `/migrations/legacy/reports`, `/migrations/legacy/reports/{migrationId}`, `PUT /mode`, `POST /prepare-shutdown`, `/backups`, `/restore`, `/attempts/{runId}/resolve-unknown`, `/remote-hosts/{hostId}/operator-drain`, `/remote-hosts/{hostId}/automatic-drain/clear`, `/migrations/legacy/inventory`, `/migrations/legacy/import` |
 | Retention management | `GET|PUT /api/v1/management/retention/policy`, `GET|PUT|DELETE .../policy/projects/{projectId}`, `POST .../plan`, `POST .../apply`, `GET .../runs[/{id}]`, `GET|POST .../archive/{taskId}`, `POST .../archive/{taskId}/restore` |
 | Full backup sets | `POST|GET /api/v1/management/backups/full`, `POST .../backups/full/{id}/verify`, `POST .../backups/full/{id}/restore` |
 
 Modes are `Normal`, `Draining`, `ReadOnly`, `Maintenance`
 (`contracts/TaskServer.Contracts/ManagementContracts.cs`).
+
+#### Provider-refusal fleet rollup
+
+`GET /api/v1/management/provider-refusals?days=14` returns provider request
+refusals grouped by UTC day and requested model. The optional `days` query
+parameter defaults to `14` and is bounded to the inclusive range `1` through
+`90`. The authenticated monolith compatibility mount and the standalone Task
+Server expose the same route and response contract. Entries are ordered by day
+descending, then count descending, then model.
+
+Each `ProviderRejectionDailyCountDto` has this JSON shape:
+
+```json
+{
+  "day": "2026-09-18",
+  "model": "gpt-6-astra",
+  "count": 3,
+  "refusals": [
+    "unsupported_parameter access_programs.cyber"
+  ]
+}
+```
+
+The response is an array of those objects. `refusals` contains distinct safe
+descriptors composed only from provider error code and parameter. Request
+bodies, credentials, and raw provider frames are never included.
 
 ### Monolith interim v1 mount, `backend/Features/Runner/V1ReviewPlaneEndpoints.cs`
 

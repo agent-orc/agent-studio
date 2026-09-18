@@ -169,6 +169,19 @@
 }
 .execution-card__delivery[data-status='failed'] strong { color: var(--studio-error); }
 
+.execution-card__provider-refusal {
+  margin: 0;
+  padding: var(--studio-spacing-2) var(--studio-spacing-3);
+  border: 1px solid color-mix(in srgb, var(--studio-warn) 34%, var(--studio-card-border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--studio-warn) 8%, var(--studio-card-bg));
+  color: var(--studio-fg-dim);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.execution-card__provider-refusal strong { color: var(--studio-warn); }
+
 .execution-card__probe {
   display: flex;
   flex-direction: column;

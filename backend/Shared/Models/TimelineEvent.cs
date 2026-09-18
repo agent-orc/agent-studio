@@ -340,6 +340,11 @@ public static class TimelineEventKinds
     /// </summary>
     public const string ContinuationRoundStarted = "continuation_round_started";
     /// <summary>
+    /// A provider refused the model request and the platform continued a
+    /// salvaged run on the explicitly declared sibling model.
+    /// </summary>
+    public const string ProviderRejectionContinuationStarted = "provider_rejection_continuation_started";
+    /// <summary>
     /// The platform-owned acceptance rail accepted, requeued, or boundedly
     /// escalated this card without a session-bound orchestrator tick.
     /// </summary>
