@@ -30,10 +30,4 @@ export class DossierCatalogueService {
     );
     return this.request;
   }
-
-  /** Drop the cache so a newly created or decided Dossier resolves. */
-  reload(): Observable<DossierIndex> {
-    this.request = null;
-    return this.ensureLoaded();
-  }
 }
