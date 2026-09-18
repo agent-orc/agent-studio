@@ -270,6 +270,10 @@ public class TaskMutationService
             {
                 chain[existingIdx] = commit with
                 {
+                    DeliveryGeneration = commit.DeliveryGeneration ?? chain[existingIdx].DeliveryGeneration,
+                    DeliveryAttemptId = commit.DeliveryAttemptId ?? chain[existingIdx].DeliveryAttemptId,
+                    DeliveryRef = commit.DeliveryRef ?? chain[existingIdx].DeliveryRef,
+                    IntegrationRule = commit.IntegrationRule ?? chain[existingIdx].IntegrationRule,
                     SupersededBySha = commit.SupersededBySha
                         ?? chain[existingIdx].SupersededBySha,
                     SupersededByAttempt = commit.SupersededByAttempt
@@ -318,6 +322,10 @@ public class TaskMutationService
                     RunAttemptId = commit.RunAttemptId ?? producer.RunAttemptId,
                     RunnerId = commit.RunnerId ?? producer.RunnerId,
                     ResultSha = commit.ResultSha ?? producer.ResultSha,
+                    DeliveryGeneration = commit.DeliveryGeneration ?? producer.DeliveryGeneration,
+                    DeliveryAttemptId = commit.DeliveryAttemptId ?? producer.DeliveryAttemptId,
+                    DeliveryRef = commit.DeliveryRef ?? producer.DeliveryRef,
+                    IntegrationRule = commit.IntegrationRule ?? producer.IntegrationRule,
                     SupersededBySha = commit.SupersededBySha ?? producer.SupersededBySha,
                     SupersededByAttempt = commit.SupersededByAttempt ?? producer.SupersededByAttempt,
                 };
@@ -353,6 +361,11 @@ public class TaskMutationService
             return false;
         }
 
+        var persisted = ReadPersistedCommitChain(folderPath);
+        if (persisted is null) return false;
+        var generationNumber = persisted.FirstOrDefault(commit =>
+            string.Equals(commit.DeliveryAttemptId, runAttemptId, StringComparison.OrdinalIgnoreCase))?.DeliveryGeneration
+            ?? (persisted.Select(commit => commit.DeliveryGeneration ?? 0).DefaultIfEmpty().Max() + 1);
         var generation = attributed
             .Where(commit => !string.IsNullOrWhiteSpace(commit.Sha))
             .Select(commit => commit with
@@ -360,11 +373,13 @@ public class TaskMutationService
                 RunAttemptId = runAttemptId,
                 RunnerId = runnerId,
                 ResultSha = resultSha,
+                DeliveryGeneration = generationNumber,
+                DeliveryAttemptId = runAttemptId,
+                DeliveryRef = commit.Branch,
+                IntegrationRule = null,
             })
             .ToList();
 
-        var persisted = ReadPersistedCommitChain(folderPath);
-        if (persisted is null) return false;
         persisted = persisted.Select(commit => string.Equals(
                 commit.SupersededByAttempt,
                 TaskCommitSupersession.PendingAttempt,
@@ -398,14 +413,20 @@ public class TaskMutationService
         }
         foreach (var commit in generation)
         {
-            // A later delivery range can contain work inherited from an
-            // earlier attempt. Preserve the first producer instead of
-            // re-attributing that SHA to the continuation runner.
-            if (union.Any(existing => string.Equals(
-                    existing.Sha,
-                    commit.Sha,
-                    StringComparison.OrdinalIgnoreCase)))
+            // Keep the first producer identity, but record that the current
+            // verified delivery includes inherited work too. It must still block
+            // if this generation has not reached the integration branch.
+            var inherited = union.FindIndex(existing => string.Equals(
+                existing.Sha, commit.Sha, StringComparison.OrdinalIgnoreCase));
+            if (inherited >= 0)
             {
+                union[inherited] = union[inherited] with
+                {
+                    DeliveryGeneration = generationNumber,
+                    DeliveryAttemptId = runAttemptId,
+                    DeliveryRef = commit.Branch,
+                    IntegrationRule = null,
+                };
                 continue;
             }
             union.Add(commit);
@@ -652,6 +673,40 @@ public class TaskMutationService
         if (changed == 0) return new CommitSupersessionWriteResult(true, 0);
         var written = WriteCommitState(folderPath, updated);
         return new CommitSupersessionWriteResult(written, written ? changed : 0);
+    }
+
+    /// <summary>Updates integration evidence without dropping or replacing attributed history.</summary>
+    public bool RecordCommitIntegrationOnFolder(
+        string folderPath,
+        IReadOnlyList<TaskRepositoryCommitMembership> decisions,
+        DateTime? enteredLaneAt = null)
+    {
+        var persisted = ReadPersistedCommitChain(folderPath);
+        if (persisted is null) return false;
+        var changed = false;
+        var updated = persisted.Select(commit =>
+        {
+            var repository = TaskCommitRepository.NormalizeLegacy(commit).Repository;
+            var decision = decisions.FirstOrDefault(candidate =>
+                string.Equals(candidate.Sha, commit.Sha, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(candidate.Repository, repository, StringComparison.OrdinalIgnoreCase));
+            if (decision is null || decision.IntegrationRule == commit.IntegrationRule) return commit;
+            changed = true;
+            // Do not turn inferred equivalence into authoritative supersession:
+            // a branch reset must be able to make this commit missing again.
+            return commit with { IntegrationRule = decision.IntegrationRule };
+        }).ToList();
+        if (!changed) return true;
+        // Legacy cards derive their lane-entry instant from filesystem activity.
+        // Pin that existing instant before evidence writes so reconciliation does
+        // not reorder the lane or reopen a refused rail action.
+        if (enteredLaneAt is { } entered
+            && TaskJsonFile.TryReadStringField(folderPath, "enteredLaneAt", _logger, out var storedEntered)
+            && storedEntered is null
+            && !TaskJsonFile.UpdateField(folderPath, "enteredLaneAt", entered, _logger)) return false;
+        return TaskJsonFile.UpdateField(folderPath, "commits", updated, _logger)
+            && TaskJsonFile.UpdateField(folderPath, "commit", updated.Count > 0 ? updated[^1] : null!, _logger)
+            && Updated();
     }
 
     /// <summary>

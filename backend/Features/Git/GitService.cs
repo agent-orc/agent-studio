@@ -747,6 +747,32 @@ public class GitService
     }
 
     /// <summary>
+    /// Proves legacy content equivalence without checking out or updating a ref.
+    /// A conflicted merge or unavailable object is never integration proof.
+    /// </summary>
+    internal bool? IsIntegratedByContent(string root, string targetSha, string commitSha)
+    {
+        if (!ReviewSubjectStore.IsValidResultSha(targetSha)
+            || commitSha.Length is < 7 or > 40 || !commitSha.All(Uri.IsHexDigit)) return false;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var (tree, _, treeCode) = RunGitArgs(root, timeout.Token, "rev-parse", "--verify", targetSha + "^{tree}");
+        if (treeCode != 0) return null;
+        var (merged, _, mergeCode) = RunGitArgs(root, timeout.Token,
+            "merge-tree", "--write-tree", targetSha, commitSha);
+        if (mergeCode > 1 || mergeCode < 0) return null;
+        return mergeCode == 0 && string.Equals(tree.Trim(), merged.Trim(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal IReadOnlyList<string> GetCommitPathsAtRoot(string root, string sha)
+    {
+        if (sha.Length is < 7 or > 40 || !sha.All(Uri.IsHexDigit)) return [];
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var (paths, _, code) = RunGitArgs(root, timeout.Token,
+            "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "-m", "-z", sha);
+        return code == 0 ? paths.Split('\0', StringSplitOptions.RemoveEmptyEntries).Distinct(StringComparer.Ordinal).ToList() : [];
+    }
+
+    /// <summary>
     /// Materializes docs/ from a configured ref without changing any checkout.
     /// The immutable SHA is the cache key, so a warm wiki request performs no
     /// archive work and a moved branch creates exactly one new snapshot.

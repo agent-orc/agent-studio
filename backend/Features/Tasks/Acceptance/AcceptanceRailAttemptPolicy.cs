@@ -29,7 +29,8 @@ public static class AcceptanceRailAttemptPolicy
     public static string Fingerprint(
         TaskInfo task,
         TaskIntegrationStatus? integration,
-        AcceptanceRailDecision decision)
+        AcceptanceRailDecision decision,
+        string? integrationAttemptReason = null)
         => string.Join(
             Separator,
             task.State,
@@ -41,7 +42,8 @@ public static class AcceptanceRailAttemptPolicy
             integration?.DeliveryRef ?? string.Empty,
             integration?.Detail ?? string.Empty,
             integration?.Failure?.Code ?? string.Empty,
-            integration?.Failure?.FailureSignature ?? string.Empty);
+            integration?.Failure?.FailureSignature ?? string.Empty,
+            integrationAttemptReason ?? string.Empty);
 
     /// <summary>
     /// Whether the rail may act on <paramref name="fingerprint"/>. False only
