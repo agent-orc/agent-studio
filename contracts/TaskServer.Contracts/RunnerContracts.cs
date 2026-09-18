@@ -11,7 +11,8 @@ public sealed record RegisterRunnerRequest(
     string? HostOrchestratorMaximum = null,
     int BootstrapMaxParallelism = 2,
     IReadOnlyList<RunnerActiveAttempt>? ActiveAttempts = null,
-    int AttemptLeaseTtlSeconds = 120);
+    int AttemptLeaseTtlSeconds = 120,
+    RunnerReleaseIdentityDto? Release = null);
 
 public static class RunnerAttemptKinds
 {

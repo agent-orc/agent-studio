@@ -52,7 +52,7 @@ public static class SystemEndpoints
         // Capture once at process start. Re-reading a mutable file on every
         // request would report the checkout/cache identity rather than the
         // code this process actually loaded.
-        var buildIdentity = BuildIdentity.Load(app.Configuration);
+        var buildIdentity = app.Services.GetRequiredService<BuildIdentity>();
         BuildIdentity ReadBuildIdentity() => buildIdentity;
         object About() {
             var identity = ReadBuildIdentity();

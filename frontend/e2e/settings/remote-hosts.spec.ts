@@ -72,6 +72,11 @@ async function stubBackgroundApis(page: Page) {
   ]));
   await page.route('**/api/v1/management/remote-hosts', json([]));
   await page.route('**/api/v1/management/links', json([]));
+  // AGT-2826: keep the release column deterministic; individual tests override
+  // this route when they assert on drift.
+  await page.route('**/api/v1/management/host-releases', json({
+    observedAt: now, stable: { version: '0.3.0', commit: null, builtAt: null }, behindCount: 0, hosts: [],
+  }));
   await page.route('**/api/clients/*/telemetry?window=*', json({ clientId: 'mock', window: '14d', points: [{
     timestamp: now, cpuPercent: 7, load1: 0.1, load5: 0.1, load15: 0.1,
     memoryUsedBytes: 4_000_000_000, memoryTotalBytes: 16_000_000_000,
@@ -380,6 +385,64 @@ test.describe('Execution Hosts settings section', () => {
     const local = page.getByTestId('remote-host-card').filter({ hasText: 'Local machine' });
     await expect(local.getByTestId('remote-host-load')).toHaveText('–');
     await expect(local.getByTestId('remote-host-release')).toHaveText('–');
+  });
+
+  /**
+   * AGT-2826: on 15.09.2026 a runner host silently served work on a three-week-old
+   * agent-host release while Stable ran v0.3.0, and nothing in Studio said so.
+   * The release column now names the Stable version and marks each lagging role
+   * with its age.
+   */
+  test('names the Stable release and marks a role whose release lags it', async ({ page }) => {
+    // All host and release responses are mocked; no backend lifecycle is needed.
+    await stubGroupedHostApis(page);
+    const oldRelease = {
+      releaseId: 'agt-host-20260823T060000Z-bbbbbbb',
+      version: '0.2.7',
+      commit: 'bbbbbbb2222',
+      builtAt: '2026-08-23T06:00:00Z',
+    };
+    await page.unroute('**/api/v1/management/host-releases');
+    await page.route('**/api/v1/management/host-releases', route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        observedAt: '2026-09-15T12:00:00Z',
+        stable: { version: '0.3.0', commit: 'aaaaaaa1111', builtAt: '2026-09-11T08:00:00Z' },
+        behindCount: 2,
+        hosts: ['agent-runner-01', 'agent-runner-01-review'].map(runnerId => ({
+          runnerId,
+          name: runnerId,
+          hostId: 'agent-runner-01',
+          role: runnerId.endsWith('review') ? 'review' : 'coding',
+          release: oldRelease,
+          state: 'behind',
+          behindByHours: 458,
+          behindForHours: 458,
+          alarmDue: true,
+          reason: 'The host build is 19d 2h older than the Stable build.',
+          lastSeenAt: '2026-09-15T11:59:00Z',
+          heartbeatStale: false,
+        })),
+      }),
+    }));
+    await page.goto('/#/workspace/settings/execution-hosts');
+
+    await expect(page.getByTestId('remote-hosts-stable-release')).toHaveText('Stable 0.3.0');
+    await expect(page.getByTestId('remote-hosts-release-behind')).toContainText('1 behind Stable');
+
+    const machine = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
+    await expect(machine.getByTestId('remote-host-release-drift')).toHaveText('19d behind');
+    const coding = machine.getByTestId('remote-host-role-row').filter({ hasText: 'Coding' });
+    await expect(coding.getByTestId('remote-host-role-release')).toContainText('0.2.7');
+    await expect(coding.getByTestId('remote-host-role-release-drift')).toHaveText('19d behind');
+    await expect(machine.getByTestId('remote-host-role-row').filter({ hasText: 'Review' })
+      .getByTestId('remote-host-role-release-drift')).toHaveText('19d behind');
+
+    await setTheme(page, 'light');
+    await page.screenshot({ path: join(SHOT_DIR, `execution-hosts-release-drift-${EVIDENCE_PHASE}-light--mocked.png`), fullPage: false });
+    await setTheme(page, 'dark');
+    await page.screenshot({ path: join(SHOT_DIR, `execution-hosts-release-drift-${EVIDENCE_PHASE}-dark--mocked.png`), fullPage: false });
   });
 
   test('narrow tables collapse complete actions into the row overflow menu', async ({ page, devBackend: _devBackend }) => {

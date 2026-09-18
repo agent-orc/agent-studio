@@ -252,6 +252,7 @@
         "src/app/features/project-detail/components/workbench-tab-host/workbench-tab-host.component.scss",
         "src/app/features/project-detail/components/workbench-viewer/workbench-viewer.component.scss",
         "src/app/features/remote-hosts/components/git-token-capability/git-token-capability.scss",
+        "src/app/features/remote-hosts/components/host-release-identity/host-release-identity.scss",
         "src/app/features/remote-hosts/components/host-workload-summary/host-workload-summary.scss",
         "src/app/features/remote-hosts/components/host-telemetry-history/host-telemetry-history.scss",
         "src/app/features/remote-hosts/components/runtime-capacity-editor/runtime-capacity-editor.scss",
