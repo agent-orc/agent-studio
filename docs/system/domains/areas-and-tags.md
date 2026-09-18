@@ -12,8 +12,9 @@ owns a glossary: the ubiquitous language an agent must use for that area. A
 - **facet tags** name a cross-cutting aspect (a quality domain such as
   `testing`, or a document kind such as `decision`).
 
-Auto-tagging is a separate card (AGT-2804). Nothing in this domain assigns a
-tag by itself; it defines the vocabulary, the storage, and the API.
+Auto-tagging is delivered separately by AGT-2804. Tag maintenance reviews the
+resulting vocabulary and usage, but changes it only after an operator approves
+the exact proposal.
 
 ## Ownership
 
@@ -26,6 +27,9 @@ tag by itself; it defines the vocabulary, the storage, and the API.
 | Glossary page read and write | `backend/Features/Areas/AreaGlossaryService.cs` |
 | Workspace tag registry (`tags.json`) | `backend/Features/Tags/TagRegistryService.cs` |
 | Dossier `tags[]` write boundary | `backend/Features/Docs/WorkbenchTagService.cs` |
+| Periodic usage review and durable per-project reports | `backend/Features/Tags/Maintenance/TagMaintenanceService.cs` |
+| Proposal validation and exact before/after plans | `backend/Features/Tags/Maintenance/TagMaintenancePolicy.cs` (pure) |
+| Card, Dossier, wiki, registry, and glossary reads and writes | `backend/Features/Tags/Maintenance/TagMaintenanceWorkspace.cs` |
 
 ## The ten product areas
 
@@ -101,6 +105,9 @@ the write path lives in one place and the wiki-path guard covers it.
 | `GET /api/tasks?area=&tag=` | Filter the task list |
 | `GET /api/projects/{project}/workbenches?area=&tag=` | Filter the Dossier list |
 | `GET /api/projects/{project}/wiki/tree?area=&tag=` | Prune the wiki tree |
+| `GET /api/projects/{project}/tag-maintenance` | Read the project's run, decision, and audit report |
+| `POST /api/projects/{project}/tag-maintenance/run` | Start an immediate review in addition to the periodic schedule |
+| `POST /api/projects/{project}/tag-maintenance/decisions/{id}` | Apply or keep one proposal with an explicit operator identity |
 
 Filter semantics: ids inside one parameter are alternatives, the two parameters
 are a conjunction. A folder survives the wiki-tree filter only while it still
@@ -120,9 +127,38 @@ has a matching descendant.
 - **Platform stamps** (for example the orchestrator provenance tag) keep using
   the merge-add writer, which is not a public boundary.
 
+## Periodic maintenance
+
+The hosted maintenance step checks every project every 15 minutes and starts a
+review when its configured interval is due (seven days by default). It uses a
+Sonnet-class synthesis route at high thinking over the closed registry,
+glossaries, global usage counts, and a rotating bounded sample of active cards,
+Dossiers, and wiki articles. Each run leaves a durable per-project report under
+the task repository. The step proposes at most 20 changes across four kinds:
+
+- retire a facet only when it has no references in any project or history,
+- merge near-duplicate facets only when every affected item belongs to the
+  approving project,
+- add a facet only with at least three distinct active source items, and
+- add glossary terms only when an active decision-bearing Dossier or ADR is
+  cited.
+
+Every proposal becomes a `decision` card containing Keep and Apply options,
+their consequences, evidence, and the exact before/after write plan. These are
+prose decision cards until the structured decision-card surface from AGT-W54 is
+available. Creating, moving, or running the card never applies the proposal.
+
+Application requires an explicit `apply` choice and `X-Client-Id`. Before the
+first write, the service verifies every preimage and checks for new references.
+Writes use the existing owning services, verify their result, retain a
+write-ahead approval and per-write audit, and can resume idempotently after a
+partial failure. The alternative `keep` choice records rejection without any
+registry, glossary, or subject write. Area ids and platform provenance tags are
+never eligible for retirement or merge.
+
 ## Tests
 
 `backend.Tests/AreaTaxonomyTests.cs`, `AreaGlossaryDocumentTests.cs`,
 `TagFilterTests.cs`, `AreaRegistryServiceTests.cs`,
 `AreaGlossaryServiceTests.cs`, `WorkbenchTagServiceTests.cs`,
-`WikiArticleTagsTests.cs`.
+`WikiArticleTagsTests.cs`, `TagMaintenanceTests.cs`.
