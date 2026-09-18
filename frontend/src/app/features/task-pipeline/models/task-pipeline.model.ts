@@ -80,6 +80,10 @@ export interface PipelineStepExecution {
    * Drives the tooltip on the CONCERNS pill in the Overview pipeline.
    */
   verdictSummary?: string | null;
+  /** A carried verdict is audit evidence, not a fresh pass. */
+  carriedOverFrom?: string | null;
+  fixedInRun?: number | null;
+  stillOpen?: boolean | null;
 }
 
 export interface IntegrationConflictStageReport {

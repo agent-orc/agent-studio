@@ -148,6 +148,30 @@ public class RunTimelineBuilderTests
     }
 
     [Fact]
+    public void Trigger_provenance_is_projected_without_deriving_it_from_session_kind()
+    {
+        var events = new List<SessionEvent>
+        {
+            new()
+            {
+                Ts = T0,
+                Kind = "start",
+                Trigger = RunTriggers.ReviewConcern,
+                TriggeredBy = "pipeline",
+                TriggerReason = "Code quality concern requires a fix.",
+                TriggerSource = "review=review_01;aspects=code-quality",
+            },
+        };
+
+        var run = Assert.Single(RunTimelineBuilder.Build(events, [], T0.AddSeconds(1)).Runs);
+        Assert.Equal("start", run.Intent);
+        Assert.Equal(RunTriggers.ReviewConcern, run.Trigger);
+        Assert.Equal("pipeline", run.TriggeredBy);
+        Assert.Equal("Code quality concern requires a fix.", run.TriggerReason);
+        Assert.Equal("review=review_01;aspects=code-quality", run.TriggerSource);
+    }
+
+    [Fact]
     public void LegacyRemoteRun_DerivesTerminalResultAndDurationFromAttemptAuthority()
     {
         var events = new List<SessionEvent>

@@ -1029,10 +1029,54 @@ public static class LeaseEndpoints
                         "build-profile-revalidation-grace-consumed project={Project} task={TaskKey} remainingRuns={RemainingRuns}",
                         candidate.ProjectName, taskKey, graceRunsRemaining);
                 }
+                var priorSessionEvents = sessions.ReadSessionEvents(candidate.Id, candidate.WatchPath);
+                var concernRound = ReviewConcernRoundStore.Read(claimedFolderPath);
+                var pendingReason = candidate.PendingIntent?.SavedReason ?? string.Empty;
+                var remoteTrigger = concernRound is { StillOpen: true }
+                    ? concernRound.RoundKind
+                    : pendingReason.Contains("integration", StringComparison.OrdinalIgnoreCase)
+                        ? RunTriggers.IntegrationRecovery
+                    : pendingReason.Contains("timeout", StringComparison.OrdinalIgnoreCase)
+                      || pendingReason.Contains("salvage", StringComparison.OrdinalIgnoreCase)
+                        ? RunTriggers.TimeoutContinuation
+                    : pendingReason.Contains("loop-continuation", StringComparison.OrdinalIgnoreCase)
+                        ? RunTriggers.Replan
+                    : candidate.PendingIntent is not null
+                        ? RunTriggers.OperatorContinue
+                    : priorSessionEvents.Count == 0
+                        ? RunTriggers.Initial
+                        : RunTriggers.DependencyRelease;
+                var pipelineTriggered = remoteTrigger is RunTriggers.ReviewConcern
+                    or RunTriggers.ReviewFinding
+                    or RunTriggers.IntegrationRecovery
+                    or RunTriggers.TimeoutContinuation
+                    or RunTriggers.Replan;
                 sessions.AppendSessionEvent(candidate.Id, new SessionEvent
                 {
                     Ts = acquire.Lease.AcquiredAt,
                     Kind = "start",
+                    Trigger = remoteTrigger,
+                    TriggeredBy = pipelineTriggered
+                        ? remoteTrigger == RunTriggers.TimeoutContinuation ? "watchdog" : "pipeline"
+                        : remoteTrigger == RunTriggers.OperatorContinue
+                            ? $"operator {candidate.OwnerClientId ?? "local-default"}"
+                        : $"runner {acquire.Lease.RunnerId}",
+                    TriggerReason = remoteTrigger switch
+                    {
+                        RunTriggers.ReviewConcern => $"Review concern round {concernRound!.Used} of {concernRound.Maximum}.",
+                        RunTriggers.ReviewFinding => $"Blocking findings from review {concernRound!.ReviewAttemptId} require another coding run.",
+                        RunTriggers.IntegrationRecovery => $"Integration recovery was queued after {pendingReason}.",
+                        RunTriggers.TimeoutContinuation => "The watchdog queued a bounded continuation after a timed-out run.",
+                        RunTriggers.Replan => "The pipeline queued the orchestrator's answer to an agent planning question.",
+                        RunTriggers.OperatorContinue => "An operator continuation was queued before the remote claim.",
+                        RunTriggers.Initial => "Remote runner claimed the initial task run.",
+                        _ => "A dependency release made the task eligible for a remote run.",
+                    },
+                    TriggerSource = remoteTrigger is RunTriggers.ReviewConcern or RunTriggers.ReviewFinding
+                        ? $"review={concernRound!.ReviewAttemptId};aspects={string.Join(',', concernRound.AspectIds)}"
+                        : candidate.PendingIntent is not null
+                            ? $"reason={pendingReason};prompt={RunTriggerMetadata.PromptPreview(candidate.PendingIntent.Prompt)}"
+                            : $"attempt={acquire.Lease.AttemptId}",
                     Cli = "remote-runner",
                     RunAttemptId = acquire.Lease.AttemptId,
                     Model = runSpec.Model,
@@ -1607,7 +1651,8 @@ public static class LeaseEndpoints
                         task,
                         repositoryPath,
                         taskProjectSettings,
-                        integrationRef));
+                        integrationRef,
+                        run.ResultSha));
             }
 
             if (!isEpicPlanning

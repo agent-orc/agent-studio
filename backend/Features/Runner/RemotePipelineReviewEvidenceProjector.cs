@@ -54,8 +54,43 @@ public sealed class RemotePipelineReviewEvidenceProjector
             if (Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind))
                 await ProjectAspectAsync(task, review, command, report, receivedAt, execution.Attempt, ct);
         }
+        foreach (var verdict in report.Verdicts.Where(verdict =>
+                     !string.IsNullOrWhiteSpace(verdict.CarriedOverFrom)))
+        {
+            ProjectCarriedAspect(task, review, verdict, receivedAt, execution.Attempt);
+        }
         ProjectToolGate(task, review, report, execution.Attempt);
         ProjectTimeline(task, review, report, evidenceFile, receivedAt);
+    }
+
+    private void ProjectCarriedAspect(
+        TaskInfo task,
+        ReviewAttemptDto review,
+        Contract.ReviewVerdictDto verdict,
+        DateTime receivedAt,
+        int pipelineAttempt)
+    {
+        var stepId = verdict.Aspect.StartsWith("aspect-", StringComparison.OrdinalIgnoreCase)
+            ? verdict.Aspect
+            : $"aspect-{verdict.Aspect}";
+        var passed = string.Equals(verdict.Status, "pass", StringComparison.OrdinalIgnoreCase);
+        _pipeline.RecordStep(task.FolderPath, new PipelineStepExecution
+        {
+            StepId = stepId,
+            Kind = StepKind.Aspect,
+            Attempt = pipelineAttempt,
+            Status = passed ? PipelineStepStatus.Passed : PipelineStepStatus.Failed,
+            StartedAt = receivedAt,
+            CompletedAt = receivedAt,
+            DurationMs = 0,
+            Reason = verdict.Summary,
+            Verdict = verdict.Status,
+            VerdictSummary = verdict.Summary,
+            CarriedOverFrom = verdict.CarriedOverFrom,
+            StillOpen = !passed,
+            ExecutionLocation = "carried-over",
+            ExecutionAttemptId = review.AttemptId,
+        });
     }
 
     private async Task ProjectAspectAsync(
@@ -83,6 +118,10 @@ public sealed class RemotePipelineReviewEvidenceProjector
         var response = ArtifactText(report.Artifacts, command.StdoutSha256);
         var summary = remoteVerdict?.Summary
                       ?? $"Remote aspect '{aspectId}' returned no structured summary.";
+        var concernRound = ReviewConcernRoundStore.Read(task.FolderPath);
+        var causedConcernRound = concernRound?.AspectIds.Contains(
+            aspectId,
+            StringComparer.OrdinalIgnoreCase) == true;
         var verdict = new AspectVerdict(
             aspectId,
             status,
@@ -140,6 +179,10 @@ public sealed class RemotePipelineReviewEvidenceProjector
             CacheReadTokens = command.CacheReadTokens,
             CacheCreationTokens = command.CacheCreationTokens,
             Reason = summary,
+            FixedInRun = causedConcernRound && status == AspectStatus.Pass
+                ? concernRound?.FixRunIndex
+                : null,
+            StillOpen = causedConcernRound && status != AspectStatus.Pass,
             ExecutionLocation = "remote",
             ExecutionHostId = review.Lease?.HostId ?? report.Environment.HostId,
             ExecutionExecutorId = review.Lease?.ExecutorId ?? report.ExecutorId,

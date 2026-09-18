@@ -13,6 +13,8 @@ public record StartJobRequest
 public record ContinueJobRequest
 {
     public string Prompt { get; init; } = "";
+    /// <summary>Optional operator sentence explaining why this continuation was requested.</summary>
+    public string? Reason { get; init; }
     public string? Model { get; init; }
     public string? CliType { get; init; }
     public string? ThinkingLevel { get; init; }

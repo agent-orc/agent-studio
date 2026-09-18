@@ -371,6 +371,13 @@ export class OverviewPaneComponent {
         thinkingLevelOverride,
         verdict: onDemand ? `attempt ${onDemand.attempt}` : verdict,
         concernTooltip: buildConcernTooltip(label, verdict, statusDetail),
+        reviewRoundStatus: e?.carriedOverFrom
+          ? `Carried over from review ${e.carriedOverFrom}`
+          : e?.fixedInRun != null
+            ? `Fixed in run #${e.fixedInRun}`
+            : e?.stillOpen === true
+              ? 'Still open'
+              : null,
         explanation: buildStepExplanation(step.id, label, step.kind),
         durationMs: onDemand?.durationMs ?? e?.durationMs ?? 0,
         startedAt: onDemand?.startedAt ?? e?.startedAt ?? null,
@@ -995,7 +1002,7 @@ export class OverviewPaneComponent {
 
   private toPipelineRunOptionVm(rec: PipelineExecutionRecord, current: boolean): PipelineRunOptionVm {
     const steps = rec.steps ?? [];
-    const passed = steps.filter(s => s.status === 'passed').length;
+    const passed = steps.filter(s => s.status === 'passed' && !s.carriedOverFrom).length;
     const failed = steps.filter(s => s.status === 'failed').length;
     const durationMs = this.recordDurationMs(rec);
     const attempt = rec.attempt ?? 1;

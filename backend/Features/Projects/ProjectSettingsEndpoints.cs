@@ -57,6 +57,13 @@ public record SetIntegrationGateReviewReuseRequest
     public bool? Enabled { get; init; }
 }
 
+public record SetReviewFollowUpRequest
+{
+    public int MaxConcernRounds { get; init; } = 1;
+    public bool ScopedReviewAfterFinding { get; init; } = true;
+    public int ScopedReviewMaximumDeltaFiles { get; init; } = 20;
+}
+
 /// <summary>
 /// Per-project preferences under <c>/api/projects</c> — read-all
 /// for the header bar plus the per-project auto-commit toggle.
@@ -210,6 +217,9 @@ public static class ProjectSettingsEndpoints
                     // value the merge gate actually applies.
                     integrationGateReviewReuse = kv.Value.IntegrationGateReviewReuse,
                     integrationGateReviewReuseEffective = IntegrationGateReusePolicy.IsEnabled(kv.Value),
+                    maxReviewConcernRounds = kv.Value.MaxReviewConcernRounds,
+                    scopedReviewAfterFinding = kv.Value.ScopedReviewAfterFinding,
+                    scopedReviewMaximumDeltaFiles = kv.Value.ScopedReviewMaximumDeltaFiles,
                     // Slice P (ASS-1663): per-project build profile + onboarding
                     // status. Null when the project never declared one (legacy
                     // "no gate" behaviour). pickupAllowed mirrors the runner's
@@ -601,6 +611,22 @@ public static class ProjectSettingsEndpoints
 
             var normalized = AutoPushStrategies.Normalize(req.Strategy);
             settings.SetAutoPushStrategy(projectName, normalized);
+            return Results.Ok(settings.Get(projectName));
+        });
+
+        app.MapPut("/api/projects/{projectName}/review-follow-up", (
+            string projectName,
+            SetReviewFollowUpRequest req,
+            ProjectSettingsService settings,
+            TaskScannerService scanner) =>
+        {
+            var known = scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            settings.SetReviewFollowUp(
+                projectName,
+                req.MaxConcernRounds,
+                req.ScopedReviewAfterFinding,
+                req.ScopedReviewMaximumDeltaFiles);
             return Results.Ok(settings.Get(projectName));
         });
 

@@ -107,8 +107,11 @@ internal static class RemoteReviewReportEvidence
             text.AppendLine("| --- | --- | --- | --- | --- | --- |");
             foreach (var verdict in request.Verdicts)
             {
+                var displayedStatus = string.IsNullOrWhiteSpace(verdict.CarriedOverFrom)
+                    ? verdict.Status
+                    : $"{verdict.Status} (carried over from review {verdict.CarriedOverFrom})";
                 text.AppendLine(
-                    $"| {Cell(verdict.Aspect)} | {Cell(verdict.Status)} | {Cell(verdict.Classification)} | " +
+                    $"| {Cell(verdict.Aspect)} | {Cell(displayedStatus)} | {Cell(verdict.Classification)} | " +
                     $"{Cell(verdict.EvidenceChecked ?? "not reported")} | {Cell(verdict.Missing ?? "not reported")} | " +
                     $"{Cell(verdict.Summary)} |");
             }

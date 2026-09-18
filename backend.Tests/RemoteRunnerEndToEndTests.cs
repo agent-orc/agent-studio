@@ -1791,6 +1791,10 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                 .OfType<SessionEvent>());
         Assert.Equal("gpt-5.6-sol", sessionEvent.Model);
         Assert.Equal("xhigh", sessionEvent.ThinkingLevel);
+        Assert.Equal(RunTriggers.Initial, sessionEvent.Trigger);
+        Assert.Equal($"runner {RunnerId}", sessionEvent.TriggeredBy);
+        Assert.Equal("Remote runner claimed the initial task run.", sessionEvent.TriggerReason);
+        Assert.Contains(claim.Lease.AttemptId, sessionEvent.TriggerSource, StringComparison.Ordinal);
 
         await AdvertiseCodingCapabilitiesAsync(
             http,

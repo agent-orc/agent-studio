@@ -45,6 +45,9 @@ public sealed record RunPlan(
     string? PersistSessionName,
     bool ClearStaleSessionName)
 {
+    /// <summary>Business trigger, independent from resume/recovery session mechanics.</summary>
+    public RunTriggerMetadata TriggerMetadata { get; init; } = new(
+        RunTriggers.Initial, "pipeline", "Initial task run.");
     /// <summary>
     /// Non-null only when this invocation was assigned to the bounded reissue
     /// prompt experiment. This metadata does not participate in model routing,
@@ -116,9 +119,11 @@ public static class RunPlanner
         string jobFolder,
         string? followupPrompt,
         IReadOnlyList<string>? sessionChain = null,
-        string? continueMode = null)
+        string? continueMode = null,
+        RunTriggerMetadata? triggerMetadata = null)
     {
         var mode = ContinueModes.Normalize(continueMode);
+        var trigger = triggerMetadata ?? DefaultTrigger(intent, initialState, followupPrompt);
         if (intent == RunIntent.UserContinue)
         {
             // sessionName may be empty when MarkSessionChainRecovery cleared it
@@ -158,7 +163,7 @@ public static class RunPlanner
                     // Persist the chain-recovered id so SessionName advances
                     // in lockstep and the next planner pass sees it directly.
                     PersistSessionName: string.IsNullOrWhiteSpace(sessionName) ? resumeCandidate : null,
-                    ClearStaleSessionName: false);
+                    ClearStaleSessionName: false) { TriggerMetadata = trigger };
             }
 
             return new RunPlan(
@@ -178,7 +183,7 @@ public static class RunPlanner
                 WriteCutMarker: true,
                 CutMarkerReason: reason ?? "session lost",
                 PersistSessionName: null,
-                ClearStaleSessionName: false);
+                ClearStaleSessionName: false) { TriggerMetadata = trigger };
         }
 
         // ManualStart / AutoPickup share the same plan shape - only the trigger
@@ -253,7 +258,32 @@ public static class RunPlanner
             WriteCutMarker: false,
             CutMarkerReason: null,
             PersistSessionName: persistSessionName,
-            ClearStaleSessionName: clearStale);
+            ClearStaleSessionName: clearStale) { TriggerMetadata = trigger };
+    }
+
+    private static RunTriggerMetadata DefaultTrigger(
+        RunIntent intent,
+        string initialState,
+        string? followupPrompt)
+    {
+        if (intent == RunIntent.UserContinue)
+            return new RunTriggerMetadata(
+                RunTriggers.OperatorContinue,
+                "operator local-default",
+                string.IsNullOrWhiteSpace(followupPrompt)
+                    ? "Operator requested a continuation."
+                    : $"Operator requested: {RunTriggerMetadata.PromptPreview(followupPrompt)}",
+                RunTriggerMetadata.PromptPreview(followupPrompt));
+        if (intent == RunIntent.ManualStart
+            && initialState is TaskStates.AutoReview or TaskStates.HumanReview or TaskStates.Escalated or TaskStates.Completed)
+            return new RunTriggerMetadata(
+                RunTriggers.Restart,
+                "operator local-default",
+                "Operator restarted a previously completed or reviewed task.");
+        return new RunTriggerMetadata(
+            RunTriggers.Initial,
+            intent == RunIntent.AutoPickup ? "pipeline" : "operator local-default",
+            intent == RunIntent.AutoPickup ? "Pipeline picked up the task." : "Operator started the task.");
     }
 
     /// <summary>

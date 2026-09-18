@@ -1,6 +1,6 @@
 # Runner Domain Map
 
-Version: 2026-09-18
+Version: 2026-09-19
 Status: System-of-record map for runner-side changes.
 
 Use this when a change touches task pickup, active execution, post-run outcome
@@ -157,6 +157,16 @@ state.
   and thinking level on the session event; remote claims also persist their
   fenced Attempt id. Every new `RunRecord` carries those values independently
   of optional CLI init frames or token summaries.
+  Every new row also carries `trigger`, `triggeredBy`, `triggerReason`, and
+  `triggerSource`. The trigger is the business cause and never changes because
+  a CLI session was resumed, reconstructed, or cleared. Its closed vocabulary
+  is `initial`, `operator-continue`, `review-finding`, `review-concern`,
+  `integration-recovery`, `gate-failure`, `timeout-continuation`,
+  `recovery-after-crash`, `restart`, `replan`, and `dependency-release`.
+  `/continue` accepts an optional reason and records the authenticated user or
+  client id. Remote claims record `runner <id>` unless a durable pipeline cause
+  such as a review concern owns the pickup. Legacy rows have null provenance;
+  readers show `not recorded` and never guess from `kind`.
 - `backend/Services/Runner/OrchestratorChatLog.cs`: typed orchestrator messages
   written into `logs/cli-output.log`.
 - `backend/Features/Tasks/CliOutputLogFile.cs` and

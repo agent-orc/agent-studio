@@ -593,6 +593,8 @@ public static class V1ReviewPlaneEndpoints
             AgentStudio.Projects.ProjectSettingsService settings,
             RemoteReviewPlanBuilder remoteReviewPlans,
             TaskTransitionService transitions,
+            TaskMutationService mutations,
+            TaskSessionLog sessions,
             HumanReviewEscalation escalation,
             RemoteDeliveryIntegrationCoordinator remoteIntegration,
             TimelineLog timeline,
@@ -671,6 +673,16 @@ public static class V1ReviewPlaneEndpoints
                 };
             }
 
+            var reviewFollowUp = Contract.ReviewFollowUpPolicy.Decide(
+                request.Verdicts.Select(verdict => new Contract.ReviewFollowUpFinding(
+                    verdict.Aspect,
+                    verdict.Status,
+                    verdict.Summary,
+                    verdict.EvidenceChecked,
+                    verdict.Missing,
+                    verdict.Classification)),
+                concernRoundsUsed: 0,
+                maxConcernRounds: 1);
             if (!TryOutcome(request.Outcome, out var outcome))
                 return Results.BadRequest(new Contract.ApiError(
                     "invalid-review-outcome",
@@ -862,6 +874,332 @@ public static class V1ReviewPlaneEndpoints
             }
             else if (!infrastructureFailure)
             {
+                var projectSettingsForFollowUp = settings.Get(task.ProjectName);
+                var concernLedger = ReviewConcernRoundStore.Read(task.FolderPath);
+                reviewFollowUp = Contract.ReviewFollowUpPolicy.Decide(
+                    request.Verdicts.Select(verdict => new Contract.ReviewFollowUpFinding(
+                        verdict.Aspect,
+                        verdict.Status,
+                        verdict.Summary,
+                        verdict.EvidenceChecked,
+                        verdict.Missing,
+                        verdict.Classification)),
+                    concernLedger?.Used ?? 0,
+                    projectSettingsForFollowUp.MaxReviewConcernRounds);
+                if (concernLedger is { StillOpen: true }
+                    && !string.Equals(
+                        concernLedger.ReviewAttemptId,
+                        settled.ReviewAttempt.AttemptId,
+                        StringComparison.Ordinal))
+                {
+                    var stillOpen = request.Verdicts.Any(verdict =>
+                        concernLedger.AspectIds.Contains(verdict.Aspect, StringComparer.OrdinalIgnoreCase)
+                        && !string.Equals(verdict.Status, "pass", StringComparison.OrdinalIgnoreCase));
+                    ReviewConcernRoundStore.MarkReviewed(
+                        task.FolderPath,
+                        sessions.ReadSessionEvents(task.Id, task.WatchPath).Count,
+                        stillOpen);
+                }
+                if (reviewFollowUp.Action == Contract.ReviewFollowUpAction.ReviewFindingRound
+                    && string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
+                {
+                    var followUp = BuildRemoteFindingFollowUp(
+                        reviewFollowUp.Findings,
+                        settled.ReviewAttempt.AttemptId);
+                    var moved = await transitions.MoveAsync(
+                        task.Id,
+                        TaskStates.Ready,
+                        task.WatchPath,
+                        ct,
+                        cause: $"remote-review-finding:{attemptId}",
+                        reason: $"Blocking review finding from {settled.ReviewAttempt.AttemptId}.",
+                        authorityWrite: new AttemptWriteReference(
+                            attemptId,
+                            request.Fence,
+                            request.AuthorityEpoch,
+                            $"finding-round:{request.IdempotencyKey}"),
+                        suppressProductExecution: true,
+                        expectedSourceState: TaskStates.AutoReview,
+                        transitionCause: LaneChangeCauses.QualityLoop,
+                        transitionDetail: "multi-aspect-block");
+                    if (moved.Status == MoveJobStatus.Success)
+                    {
+                        var movedPath = moved.NewFolderPath ?? task.FolderPath;
+                        TaskJsonFile.UpdateOrder(movedPath, 0, logger);
+                        ReviewConcernRoundStore.RecordFinding(
+                            movedPath,
+                            projectSettingsForFollowUp.MaxReviewConcernRounds,
+                            settled.ReviewAttempt.AttemptId,
+                            reviewFollowUp.Findings.Select(item => item.Aspect),
+                            request.Workspace.ExpectedResultSha,
+                            request.Workspace.IntegrationTipSha,
+                            request.Verdicts);
+                        mutations.AppendContinuationNote(task.Id, followUp, task.WatchPath);
+                        await ReviewDecisionOrchestrator.WriteFollowUpFilesAsync(
+                            movedPath,
+                            followUp,
+                            new ReviewDecisionOrchestrator.SteeringContext(
+                                "multi-aspect-block",
+                                "block",
+                                0,
+                                Reason: $"Remote Review {settled.ReviewAttempt.AttemptId}"),
+                            task.Id,
+                            logger,
+                            ct);
+                        ConcernTagWriter.MergeConcernTags(
+                            movedPath,
+                            [ReviewDecisionOrchestrator.ReissueTagId],
+                            logger);
+                        timeline.Append(
+                            movedPath,
+                            TimelineEventKinds.QualityLoopReopened,
+                            TimelineActors.QualityLoop,
+                            $"Blocking findings from review {settled.ReviewAttempt.AttemptId} reopened the card.",
+                            runId: settled.ReviewAttempt.AttemptId,
+                            details: new Dictionary<string, string>
+                            {
+                                ["cause"] = "multi-aspect-block",
+                                ["reviewAttemptId"] = settled.ReviewAttempt.AttemptId,
+                                ["aspects"] = string.Join(",", reviewFollowUp.Findings.Select(item => item.Aspect)),
+                                ["followUpPrompt"] = RunTriggerMetadata.PromptPreview(followUp),
+                            });
+                        EnqueueEvidenceProjection();
+                        return Results.Ok(new Contract.ReviewReportDto(
+                            "rrpt_" + HashId($"{attemptId}:{request.IdempotencyKey}"),
+                            attemptId,
+                            settled.ReviewAttempt.Subject.SubjectId,
+                            request.Outcome,
+                            request.FailureClassification,
+                            request.Summary,
+                            reportHash,
+                            receivedAt,
+                            RetryScheduled: false,
+                            TaskStates.Ready,
+                            EvidenceProjection: Contract.ReviewEvidenceProjectionStatus.Queued));
+                    }
+                    EnqueueEvidenceProjection();
+                    return Results.Json(
+                        new Contract.ApiError(
+                            "review-finding-round-write-failed",
+                            $"The review report was recorded, but its finding round could not move to Ready: {moved.Status} {moved.Message}"),
+                        statusCode: StatusCodes.Status503ServiceUnavailable);
+                }
+
+                if (reviewFollowUp.Action == Contract.ReviewFollowUpAction.ReviewConcernRound
+                    && ReviewConcernRoundStore.TryConsume(
+                        task.FolderPath,
+                        projectSettingsForFollowUp.MaxReviewConcernRounds,
+                        settled.ReviewAttempt.AttemptId,
+                        reviewFollowUp.Findings.Select(item => item.Aspect),
+                        request.Workspace.ExpectedResultSha,
+                        request.Workspace.IntegrationTipSha,
+                        request.Verdicts,
+                        out var consumedConcernRound))
+                {
+                    var followUp = BuildRemoteConcernFollowUp(reviewFollowUp.Findings, settled.ReviewAttempt.AttemptId);
+                    if (!string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
+                    {
+                        var followUpId = mutations.CreateJob(new CreateTaskRequest
+                        {
+                            Title = $"Follow-up: review concerns in {task.Key ?? task.Id}",
+                            Agent = task.Agent,
+                            CliType = task.CliType,
+                            Model = task.Model,
+                            ThinkingLevel = task.ThinkingLevel,
+                            WatchPath = task.WatchPath,
+                            PromptMarkdown = $"{followUp}\n\nSource card: {task.Key ?? task.Id}. The source was already accepted or integrated, so do not reopen or rewrite its accepted delivery.",
+                            TargetState = TaskStates.Ready,
+                            TaskType = TaskTypes.Bug,
+                            OwnerClientId = task.OwnerClientId,
+                            CreationSource = "review-concern-follow-up",
+                            CreatedBy = "pipeline",
+                        });
+                        var created = followUpId is null ? null : scanner.FindJob(followUpId, task.WatchPath);
+                        if (created is not null)
+                        {
+                            var sourceKey = task.Key ?? task.Id;
+                            var createdKey = created.Key ?? created.Id;
+                            mutations.SetTaskReferences(created.Id, (created.References ?? new TaskReferences()) with
+                            {
+                                FollowUpOf = [sourceKey],
+                            }, created.WatchPath);
+                            mutations.SetTaskReferences(task.Id, (task.References ?? new TaskReferences()) with
+                            {
+                                RaisedFollowUps = (task.References?.RaisedFollowUps ?? [])
+                                    .Append(createdKey)
+                                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                                    .ToList(),
+                            }, task.WatchPath);
+                            mutations.AppendContinuationNote(
+                                task.Id,
+                                $"Review {settled.ReviewAttempt.AttemptId} found actionable concerns after this card had left Auto Review. Fix work was created as linked follow-up {createdKey}; this accepted delivery was not reopened.",
+                                task.WatchPath);
+                            mutations.AppendContinuationNote(
+                                created.Id,
+                                $"Linked source: {sourceKey}. Review concern round {consumedConcernRound.Used} of {consumedConcernRound.Maximum} was charged to the source card.",
+                                created.WatchPath);
+                            timeline.Append(
+                                task.FolderPath,
+                                TimelineEventKinds.QualityLoopReopened,
+                                TimelineActors.QualityLoop,
+                                $"Review concerns were moved to linked follow-up {createdKey} because the source card was already accepted or integrated.",
+                                runId: settled.ReviewAttempt.AttemptId,
+                                details: new Dictionary<string, string>
+                                {
+                                    ["cause"] = "post-acceptance-review-concern",
+                                    ["followUpTaskId"] = created.Id,
+                                    ["followUpTaskKey"] = createdKey,
+                                    ["reviewAttemptId"] = settled.ReviewAttempt.AttemptId,
+                                });
+                            EnqueueEvidenceProjection();
+                            return Results.Ok(new Contract.ReviewReportDto(
+                                "rrpt_" + HashId($"{attemptId}:{request.IdempotencyKey}"),
+                                attemptId,
+                                settled.ReviewAttempt.Subject.SubjectId,
+                                request.Outcome,
+                                request.FailureClassification,
+                                $"{request.Summary} Fix work created as linked follow-up {createdKey}.",
+                                reportHash,
+                                receivedAt,
+                                RetryScheduled: false,
+                                task.State,
+                                EvidenceProjection: Contract.ReviewEvidenceProjectionStatus.Queued));
+                        }
+
+                        logger.LogError(
+                            "review-concern-follow-up-create-failed attempt={AttemptId} task={TaskKey} state={State}",
+                            settled.ReviewAttempt.AttemptId,
+                            settled.ReviewAttempt.TaskKey,
+                            task.State);
+                        ReviewConcernRoundStore.RollBackUnstartedRound(
+                            task.FolderPath,
+                            settled.ReviewAttempt.AttemptId);
+                        EnqueueEvidenceProjection();
+                        return Results.Json(
+                            new Contract.ApiError(
+                                "review-concern-follow-up-create-failed",
+                                "The review report was recorded, but its post-acceptance follow-up card could not be created."),
+                            statusCode: StatusCodes.Status500InternalServerError);
+                    }
+
+                    mutations.AppendContinuationNote(task.Id, followUp, task.WatchPath);
+                    await ReviewDecisionOrchestrator.WriteFollowUpFilesAsync(
+                        task.FolderPath,
+                        followUp,
+                        new ReviewDecisionOrchestrator.SteeringContext(
+                            "multi-aspect-concern",
+                            "concerns",
+                            consumedConcernRound.Used,
+                            Reason: $"Remote Review {settled.ReviewAttempt.AttemptId}"),
+                        task.Id,
+                        logger,
+                        ct);
+                    var moved = await transitions.MoveAsync(
+                        task.Id,
+                        TaskStates.Ready,
+                        task.WatchPath,
+                        ct,
+                        cause: $"remote-review-concern:{attemptId}",
+                        reason: $"Concern round {consumedConcernRound.Used} of {consumedConcernRound.Maximum} used.",
+                        authorityWrite: new AttemptWriteReference(
+                            attemptId,
+                            request.Fence,
+                            request.AuthorityEpoch,
+                            $"concern-round:{request.IdempotencyKey}"),
+                        suppressProductExecution: true,
+                        expectedSourceState: TaskStates.AutoReview,
+                        transitionCause: LaneChangeCauses.QualityLoop,
+                        transitionDetail: "multi-aspect-concern");
+                    if (moved.Status == MoveJobStatus.Success)
+                    {
+                        var movedPath = moved.NewFolderPath ?? task.FolderPath;
+                        TaskJsonFile.UpdateOrder(movedPath, 0, logger);
+                        ConcernTagWriter.MergeConcernTags(
+                            movedPath,
+                            [
+                                ReviewDecisionOrchestrator.ReissueTagId,
+                                ReviewDecisionOrchestrator.ConcernRoundUsedTag(
+                                    consumedConcernRound.Used,
+                                    consumedConcernRound.Maximum),
+                            ],
+                            logger);
+                        timeline.Append(
+                            movedPath,
+                            TimelineEventKinds.QualityLoopReopened,
+                            TimelineActors.QualityLoop,
+                            $"Review concern round {consumedConcernRound.Used} of {consumedConcernRound.Maximum} used.",
+                            runId: settled.ReviewAttempt.AttemptId,
+                            details: new Dictionary<string, string>
+                            {
+                                ["cause"] = "multi-aspect-concern",
+                                ["reviewAttemptId"] = settled.ReviewAttempt.AttemptId,
+                                ["aspects"] = string.Join(",", consumedConcernRound.AspectIds),
+                                ["followUpPrompt"] = RunTriggerMetadata.PromptPreview(followUp),
+                            });
+                        EnqueueEvidenceProjection();
+                        return Results.Ok(new Contract.ReviewReportDto(
+                            "rrpt_" + HashId($"{attemptId}:{request.IdempotencyKey}"),
+                            attemptId,
+                            settled.ReviewAttempt.Subject.SubjectId,
+                            request.Outcome,
+                            request.FailureClassification,
+                            request.Summary,
+                            reportHash,
+                            receivedAt,
+                            RetryScheduled: false,
+                            TaskStates.Ready,
+                            EvidenceProjection: Contract.ReviewEvidenceProjectionStatus.Queued));
+                    }
+                    if (moved.Status == MoveJobStatus.SourceStateMismatch)
+                    {
+                        var racedTask = FindTask(scanner, settled.ReviewAttempt.TaskKey);
+                        if (racedTask is not null
+                            && !string.Equals(racedTask.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
+                        {
+                            var createdKey = CreateRemoteConcernFollowUpCard(
+                                racedTask,
+                                followUp,
+                                consumedConcernRound,
+                                settled.ReviewAttempt.AttemptId,
+                                mutations,
+                                scanner,
+                                timeline);
+                            if (createdKey is not null)
+                            {
+                                EnqueueEvidenceProjection();
+                                return Results.Ok(new Contract.ReviewReportDto(
+                                    "rrpt_" + HashId($"{attemptId}:{request.IdempotencyKey}"),
+                                    attemptId,
+                                    settled.ReviewAttempt.Subject.SubjectId,
+                                    request.Outcome,
+                                    request.FailureClassification,
+                                    $"{request.Summary} Fix work created as linked follow-up {createdKey}.",
+                                    reportHash,
+                                    receivedAt,
+                                    RetryScheduled: false,
+                                    racedTask.State,
+                                    EvidenceProjection: Contract.ReviewEvidenceProjectionStatus.Queued));
+                            }
+                        }
+                    }
+                    ReviewConcernRoundStore.RollBackUnstartedRound(
+                        task.FolderPath,
+                        settled.ReviewAttempt.AttemptId);
+                    EnqueueEvidenceProjection();
+                    return Results.Ok(new Contract.ReviewReportDto(
+                        "rrpt_" + HashId($"{attemptId}:{request.IdempotencyKey}"),
+                        attemptId,
+                        settled.ReviewAttempt.Subject.SubjectId,
+                        request.Outcome,
+                        request.FailureClassification,
+                        $"{request.Summary} Concern round could not be queued; the card remains in Auto Review for reconciliation.",
+                        reportHash,
+                        receivedAt,
+                        RetryScheduled: false,
+                        task.State,
+                        EvidenceProjection: Contract.ReviewEvidenceProjectionStatus.Queued));
+                }
+
                 var sourceRun = authority.GetRun(settled.ReviewAttempt.SourceRunAttemptId);
                 var settledReviewPlan = settled.ReviewAttempt.Subject.Plan
                                         ?? ToSubject(
@@ -1337,7 +1675,8 @@ public static class V1ReviewPlaneEndpoints
                        task,
                        project?.RepositoryPath,
                        taskSettings,
-                       integrationRef);
+                       integrationRef,
+                       review.Subject.ExpectedResultSha);
         // The plan is frozen with the subject, so a retry inherits whatever ref
         // the first attempt was handed. AGT-2220 replayed a stale
         // refs/heads/main through four attempts that way. Re-stamping the ref at
@@ -1847,6 +2186,120 @@ public static class V1ReviewPlaneEndpoints
             .GetTaskProjection(taskKey, includeArchived: true)
             .ReviewAttempts
             .Select(ReviewAttemptChainEntry.From));
+
+    private static string BuildRemoteConcernFollowUp(
+        IReadOnlyList<Contract.ReviewFollowUpFinding> findings,
+        string reviewAttemptId)
+    {
+        var lines = new List<string>
+        {
+            $"# Remote Review concern fix round ({reviewAttemptId})",
+            "",
+            "Fix exactly the actionable concerns below and nothing else. Preserve unrelated behavior. Run the relevant deterministic verification, then end with [[TASK_DONE]].",
+            "",
+        };
+        foreach (var finding in findings)
+        {
+            lines.Add($"## {finding.Aspect}");
+            lines.Add("");
+            lines.Add($"- Summary: {finding.Summary}");
+            if (!string.IsNullOrWhiteSpace(finding.EvidenceChecked))
+                lines.Add($"- Evidence checked: {finding.EvidenceChecked}");
+            if (!string.IsNullOrWhiteSpace(finding.Finding))
+                lines.Add($"- Finding: {finding.Finding}");
+            lines.Add("");
+        }
+        return string.Join('\n', lines).TrimEnd();
+    }
+
+    private static string? CreateRemoteConcernFollowUpCard(
+        TaskInfo source,
+        string followUp,
+        ReviewConcernRoundLedger concernRound,
+        string reviewAttemptId,
+        TaskMutationService mutations,
+        TaskScannerService scanner,
+        TimelineLog timeline)
+    {
+        var followUpId = mutations.CreateJob(new CreateTaskRequest
+        {
+            Title = $"Follow-up: review concerns in {source.Key ?? source.Id}",
+            Agent = source.Agent,
+            CliType = source.CliType,
+            Model = source.Model,
+            ThinkingLevel = source.ThinkingLevel,
+            WatchPath = source.WatchPath,
+            PromptMarkdown = $"{followUp}\n\nSource card: {source.Key ?? source.Id}. The source was already accepted or integrated, so do not reopen or rewrite its accepted delivery.",
+            TargetState = TaskStates.Ready,
+            TaskType = TaskTypes.Bug,
+            OwnerClientId = source.OwnerClientId,
+            CreationSource = "review-concern-follow-up",
+            CreatedBy = "pipeline",
+        });
+        var created = followUpId is null ? null : scanner.FindJob(followUpId, source.WatchPath);
+        if (created is null) return null;
+
+        var sourceKey = source.Key ?? source.Id;
+        var createdKey = created.Key ?? created.Id;
+        mutations.SetTaskReferences(created.Id, (created.References ?? new TaskReferences()) with
+        {
+            FollowUpOf = [sourceKey],
+        }, created.WatchPath);
+        mutations.SetTaskReferences(source.Id, (source.References ?? new TaskReferences()) with
+        {
+            RaisedFollowUps = (source.References?.RaisedFollowUps ?? [])
+                .Append(createdKey)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+        }, source.WatchPath);
+        mutations.AppendContinuationNote(
+            source.Id,
+            $"Review {reviewAttemptId} found actionable concerns after this card had left Auto Review. Fix work was created as linked follow-up {createdKey}; this accepted delivery was not reopened.",
+            source.WatchPath);
+        mutations.AppendContinuationNote(
+            created.Id,
+            $"Linked source: {sourceKey}. Review concern round {concernRound.Used} of {concernRound.Maximum} was charged to the source card.",
+            created.WatchPath);
+        timeline.Append(
+            source.FolderPath,
+            TimelineEventKinds.QualityLoopReopened,
+            TimelineActors.QualityLoop,
+            $"Review concerns were moved to linked follow-up {createdKey} because the source card was already accepted or integrated.",
+            runId: reviewAttemptId,
+            details: new Dictionary<string, string>
+            {
+                ["cause"] = "post-acceptance-review-concern",
+                ["followUpTaskId"] = created.Id,
+                ["followUpTaskKey"] = createdKey,
+                ["reviewAttemptId"] = reviewAttemptId,
+            });
+        return createdKey;
+    }
+
+    private static string BuildRemoteFindingFollowUp(
+        IReadOnlyList<Contract.ReviewFollowUpFinding> findings,
+        string reviewAttemptId)
+    {
+        var lines = new List<string>
+        {
+            $"# Remote Review finding fix round ({reviewAttemptId})",
+            "",
+            "Fix exactly the blocking findings below and nothing else. Preserve unrelated behavior. Run the relevant deterministic verification, then end with [[TASK_DONE]].",
+            "",
+        };
+        foreach (var finding in findings)
+        {
+            lines.Add($"## {finding.Aspect}");
+            lines.Add("");
+            lines.Add($"- Summary: {finding.Summary}");
+            if (!string.IsNullOrWhiteSpace(finding.EvidenceChecked))
+                lines.Add($"- Evidence checked: {finding.EvidenceChecked}");
+            if (!string.IsNullOrWhiteSpace(finding.Finding))
+                lines.Add($"- Finding: {finding.Finding}");
+            lines.Add("");
+        }
+        return string.Join('\n', lines).TrimEnd();
+    }
 
     private static bool TryOutcome(string value, out ReviewTerminalOutcome outcome)
     {

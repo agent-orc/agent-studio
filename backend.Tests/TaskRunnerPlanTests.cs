@@ -381,6 +381,33 @@ public class TaskRunnerPlanTests
         Assert.Equal(manual.EventKind, auto.EventKind);
         Assert.Equal(manual.EventReason, auto.EventReason);
         Assert.Equal(manual.MoveJobToProgress, auto.MoveJobToProgress);
+        Assert.Equal(RunTriggers.Initial, auto.TriggerMetadata.Trigger);
+        Assert.Equal(RunTriggers.Initial, manual.TriggerMetadata.Trigger);
+    }
+
+    [Fact]
+    public void Trigger_metadata_is_independent_of_session_resume_choice()
+    {
+        var trigger = new RunTriggerMetadata(
+            RunTriggers.IntegrationRecovery,
+            "pipeline",
+            "Integration recovery was queued after a merge conflict.",
+            "failure=merge-conflict;file=README.md");
+        var plan = RunPlanner.PlanRun(
+            RunIntent.UserContinue,
+            TaskStates.Progress,
+            ValidUuid,
+            CliTypes.Claude,
+            ClaudeCompat,
+            "AGT-1",
+            @"C:\jobs\fix-bug\prompt.md",
+            @"C:\jobs\fix-bug",
+            "Resolve the conflict.",
+            triggerMetadata: trigger);
+
+        Assert.Equal("continue", plan.EventKind);
+        Assert.True(plan.ResumeFlag);
+        Assert.Equal(trigger, plan.TriggerMetadata);
     }
 
     /// <summary>

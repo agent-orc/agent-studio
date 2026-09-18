@@ -686,7 +686,7 @@ public class TaskRunnerService : BackgroundService
     /// continuation they asked for instead of a 400 - at the cost of conversation
     /// memory that wasn't already on disk.
     /// </summary>
-    public async Task<ContinueJobResponse> ContinueJobAsync(string jobId, string followupPrompt, string? watchPath = null, string? modelOverride = null, string? cliTypeOverride = null, string? thinkingLevelOverride = null, string? mode = null, string? modeOverride = null, CancellationToken ct = default)
+    public async Task<ContinueJobResponse> ContinueJobAsync(string jobId, string followupPrompt, string? watchPath = null, string? modelOverride = null, string? cliTypeOverride = null, string? thinkingLevelOverride = null, string? mode = null, string? modeOverride = null, string? reason = null, string? triggeredBy = null, CancellationToken ct = default)
     {
         _executionAdmission?.Demand(ExecutionAdmissionPath.Continue);
         var info = _scanner.FindJob(jobId, watchPath);
@@ -742,7 +742,19 @@ public class TaskRunnerService : BackgroundService
         if (!cli.IsAvailable()) throw new TaskOperationException($"{cli.CliType} CLI is not installed or not on PATH", 400);
 
         var startedFrom = info.State;
-        var outcome = await runner.ContinueJobAsync(jobId, followupPrompt, normalizedMode, ct);
+        var triggerReason = string.IsNullOrWhiteSpace(reason)
+            ? $"Operator requested: {RunTriggerMetadata.PromptPreview(followupPrompt)}"
+            : reason.Trim();
+        var outcome = await runner.ContinueJobAsync(
+            jobId,
+            followupPrompt,
+            normalizedMode,
+            ct,
+            new RunTriggerMetadata(
+                RunTriggers.OperatorContinue,
+                $"operator {triggeredBy ?? "local-default"}",
+                triggerReason,
+                RunTriggerMetadata.PromptPreview(followupPrompt)));
         var response = ShapeOutcome(outcome, info, jobId, watchPath, normalizedMode, followupPrompt);
         return await ConfirmStartedRunAsync(response, info, jobId, watchPath, startedFrom, ct);
     }
