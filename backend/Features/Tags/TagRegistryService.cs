@@ -134,7 +134,7 @@ public sealed class TagRegistryService
     /// throws <see cref="ArgumentException"/> on an invalid id or empty
     /// label.
     /// </summary>
-    public TagRegistryEntry Create(string? id, string label, string? color, string? description, string? kind = null)
+    public TagRegistryEntry Create(string? id, string label, string? color, string? description, string? kind = null, bool requireDurable = false)
     {
         if (string.IsNullOrWhiteSpace(label))
             throw new ArgumentException("Label is required");
@@ -165,9 +165,16 @@ public sealed class TagRegistryService
                 Description = description?.Trim() ?? string.Empty,
                 Kind = TagKinds.Facet
             };
+            var wasDeleted = _deletedSeedIds!.Contains(resolvedId);
             _cache!.Add(entry);
-            _deletedSeedIds!.Remove(resolvedId);
-            Persist();
+            _deletedSeedIds.Remove(resolvedId);
+            try { Persist(requireDurable); }
+            catch
+            {
+                _cache.Remove(entry);
+                if (wasDeleted) _deletedSeedIds.Add(resolvedId);
+                throw;
+            }
             return Clone(entry);
         }
     }
@@ -178,7 +185,7 @@ public sealed class TagRegistryService
     /// the user re-tags. Product-default area ids are stable and cannot be
     /// deleted here - they are owned by the areas registry.
     /// </summary>
-    public bool Delete(string id)
+    public bool Delete(string id, bool requireDurable = false)
     {
         if (string.IsNullOrWhiteSpace(id)) return false;
         if (AreaTaxonomy.IsProductArea(id))
@@ -188,10 +195,17 @@ public sealed class TagRegistryService
         {
             var idx = _cache!.FindIndex(t => string.Equals(t.Id, id, StringComparison.OrdinalIgnoreCase));
             if (idx < 0) return false;
-            if (IsSeedId(_cache[idx].Id))
-                _deletedSeedIds!.Add(_cache[idx].Id);
+            var removed = _cache[idx];
+            var wasDeleted = _deletedSeedIds!.Contains(removed.Id);
+            if (IsSeedId(removed.Id)) _deletedSeedIds.Add(removed.Id);
             _cache.RemoveAt(idx);
-            Persist();
+            try { Persist(requireDurable); }
+            catch
+            {
+                _cache.Insert(idx, removed);
+                if (!wasDeleted) _deletedSeedIds.Remove(removed.Id);
+                throw;
+            }
             return true;
         }
     }
@@ -279,7 +293,7 @@ public sealed class TagRegistryService
         return added;
     }
 
-    private void Persist()
+    private void Persist(bool requireDurable = false)
     {
         var path = ResolveStorePath();
         if (path == null || _cache == null) return;
@@ -294,6 +308,7 @@ public sealed class TagRegistryService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to persist tag registry to {Path}", path);
+            if (requireDurable) throw;
         }
     }
 
