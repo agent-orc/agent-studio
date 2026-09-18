@@ -459,14 +459,14 @@ export class TriageController {
       // Re-anchor lane to the new job's state (same lane unless poll drift).
       this.jobSelection.triageLaneState = candidate.state;
       const token = this.jobSelection.bumpOpenDetailToken();
-      this.jobSelection.syncTaskUrl(candidate, 'replace');
+      this.jobSelection.syncTaskUrl(candidate, external ? 'replace' : 'push');
       // Optimistic-paint: serve a prefetched TaskDetail when available
       // so the panel re-renders without waiting for the GET roundtrip.
       // The follow-up fetch reconciles any drift on the eventual reply.
       const cached = this.prefetch.take(candidate.id, candidate.watchPath);
-      if (cached) this.jobSelection.setSelectedFromAdvance(cached, token);
+      if (cached) this.jobSelection.setSelectedFromAdvance(cached, token, true);
       this.jobService.getDetail(candidate.id, candidate.watchPath).subscribe({
-        next: (detail) => this.jobSelection.setSelectedFromAdvance(detail, token),
+        next: (detail) => this.jobSelection.setSelectedFromAdvance(detail, token, true),
         error: () => { /* leave panel on the previous job; the parent effect will reconcile */ },
       });
       if (external) this.jobSelection.showTriageToast('Job was moved externally; advancing.');

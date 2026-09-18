@@ -86,6 +86,19 @@ describe('TriageController · advanceToNextInLane', () => {
     expect(closedDetail).toBe(false);
     expect(selection.triageLaneState).toBe('5-human-review');
   });
+
+  it('replaces browser history for an external advance and reuses the active task tab', () => {
+    const taskA = makeJob('task-a', '4-auto-review');
+    const taskB = makeJob('task-b', '4-auto-review');
+    const sync = vi.spyOn(selection, 'syncTaskUrl').mockReturnValue(true);
+    vi.spyOn(selection, 'triageLanePeers').mockReturnValue([taskB]);
+    vi.spyOn(TestBed.inject(TaskService), 'getDetail').mockReturnValue(of({ info: taskB } as TaskDetail));
+
+    expect(ctrl.advanceToNextInLane('4-auto-review', taskA.taskKey, [taskA, taskB], true)).toBe(true);
+
+    expect(sync).toHaveBeenCalledWith(taskB, 'replace');
+    expect(selection.consumeTaskTabReplacement(taskB.taskKey)).toBe(true);
+  });
 });
 
 /**

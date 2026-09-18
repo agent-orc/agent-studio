@@ -111,6 +111,16 @@ export class StudioTabStateService {
       this.replaceActiveDocument(active, normalized);
       return;
     }
+    if (reuse === 'replace-current' && active?.kind === 'task' && normalized.kind === 'task') {
+      const targetKey = studioTabKey(normalized);
+      if (targetKey !== studioTabKey(active)
+        && this._tabs().some(candidate => studioTabKey(candidate) === targetKey)) {
+        this.select(targetKey);
+        return;
+      }
+      this.retarget(studioTabKey(active), normalized);
+      return;
+    }
     const emptyProjectEntry = this._tabs().length === 0
       && ((normalized.kind === 'board' && normalized.projectName !== ALL_PROJECTS)
         || normalized.kind === 'hub');

@@ -872,7 +872,8 @@ export class App implements OnInit, OnDestroy {
       const selected = this.selectedJob();
       // Consume the pager/cursor retarget hint up-front (and unconditionally,
       // so a no-op step never leaks the flag into a later genuine open).
-      const retargetNav = this.laneNavRetarget;
+      const retargetNav = this.laneNavRetarget
+        || (!!selected && this.jobSelection.consumeTaskTabReplacement(selected.info.taskKey));
       this.laneNavRetarget = false;
       if (!this.featureFlags.vsCodeLayout()) return;
       if (!selected) return;
@@ -1050,6 +1051,7 @@ export class App implements OnInit, OnDestroy {
       if (!sel || !lane) return;
       if (sel.info.state === lane) return;
       if (this.jobDetailRef?.triageActingId() != null) return;
+      if (this.jobSelection.isBrowserHistorySelection(sel.info.taskKey)) return;
       untracked(() =>
         this.triage.handleExternalLaneChange(lane, sel.info.taskKey),
       );
@@ -1850,23 +1852,10 @@ export class App implements OnInit, OnDestroy {
       }
       return;
     }
-    const key = `task:${selected.info.taskKey}`;
-    const present = this.studioTabState.tabs().some(
-      (t) => t.kind === 'task' && t.taskKey === selected.info.taskKey,
+    this.studioTabState.open(
+      { kind: 'task', taskKey: selected.info.taskKey },
+      retargetNav ? 'replace-current' : 'new',
     );
-    if (present) {
-      // Already open elsewhere → just focus it (never duplicate).
-      this.studioTabState.select(key);
-      return;
-    }
-    const active = this.studioTabState.activeTab();
-    if (retargetNav && active?.kind === 'task') {
-      // Pager / cursor step from one task to the next: reuse the tab we
-      // navigated away from instead of opening a new one.
-      this.studioTabState.retarget(studioTabKey(active), { kind: 'task', taskKey: selected.info.taskKey });
-    } else {
-      this.studioTabState.open({ kind: 'task', taskKey: selected.info.taskKey });
-    }
   }
 
   private openEpicDetailFromTaskAnchor(detail: TaskDetail): void {
@@ -2117,14 +2106,14 @@ export class App implements OnInit, OnDestroy {
         this.routeDetailTab.set(route.tab);
         this.routeInspectorTab.set(route.inspector);
         this.pendingStudioTaskReference = route.reference;
-        this.jobSelection.restoreFromUrl();
+        this.jobSelection.restoreFromUrl(fromHistory);
         return true;
       case 'epics':
         this.studioTabState.open({ kind: 'epics', projectName });
         break;
       case 'epic':
         this.pendingStudioTaskReference = route.reference;
-        this.jobSelection.restoreFromUrl();
+        this.jobSelection.restoreFromUrl(fromHistory);
         return true;
       case 'workspace-settings':
         if (!this.workspaceOverlays.settingsOpen()) {
@@ -2553,4 +2542,3 @@ export class App implements OnInit, OnDestroy {
     this.uiPrefs.startResize(event);
   }
 }
-

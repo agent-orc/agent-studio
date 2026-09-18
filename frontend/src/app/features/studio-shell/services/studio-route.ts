@@ -192,7 +192,7 @@ export function replaceStudioRouteQuery(
   const target = withRouteSegment(window.location.hash, next);
   if (target === window.location.hash) return;
   window.history.replaceState(
-    null,
+    window.history.state,
     '',
     window.location.pathname + window.location.search + target,
   );
