@@ -12,24 +12,52 @@ release yet.
 
 ## [Unreleased]
 
-### Fixed
+## [0.8.0] - 2026-09-18
 
-- Remote review: deleting a settled review slot record is final. A heartbeat
-  renewal whose persistence was scheduled after the terminal delete used to
-  write the record back, leaving an orphan slot that the next daemon generation
-  adopted and reported a second time (AGT-2864).
+Operations release. Every detached coding and review worker on a Linux runner
+host now runs in its own cgroup with a CPU and task ceiling derived from the
+host's declared slot counts, so one runaway run can no longer saturate the
+host for its siblings. The Update Service evaluates the preconditions of its
+post-restart verification matrix in the preflight instead of discovering them
+after the stack is down, and the `db-touch` sentinel follows the installed
+update contract instead of a DevTools flag. Review gate coverage now includes
+the runner and Task Server test projects.
 
 ### Added
 
+- Per-worker resource envelope on Linux runner hosts: each detached coding and
+  review worker runs in its own cgroup under the role unit (`Delegate=cpu pids`,
+  `DelegateSubgroup=daemon`) with `cpu.max`, `cpu.weight` and `pids.max` derived
+  from `RUNNER_HOST_CODING_SLOTS` and `RUNNER_HOST_REVIEW_SLOTS`; every run
+  reports a `worker-envelope` line with CPU seconds and peak tasks, review
+  admission clamps to the same budget, and onboarding writes the unit lines
+  and peer slot counts (AGT-2866).
+- Update Service preflight evaluates the preconditions of every post-restart
+  verification step against the running instance and refuses with a named,
+  actionable error when one cannot pass (AGT-2865).
 - Review gate coverage: `runner.Tests` and `task-server.Tests` run as
   deterministic verify commands, so runner and Task Server races are caught in
   review instead of in the promotion gate (AGT-2864).
 
 ### Changed
 
+- The `db-touch` sentinel (`POST /api/_internal/probe`) has its own gate,
+  `UpdateService:ProbeEnabled`; unset, it is open exactly while
+  `.metadata/stable-approved-tag` exists. `DevTools:UpdateStableEnabled` still
+  opens it for compatibility but is no longer part of the contract (AGT-2865).
 - `CliProcessReaperTests` runs in a non-parallel collection: it asserts the
   process-global reap total, which another collection reaping a live workspace
   could advance mid-test (AGT-2864).
+
+### Fixed
+
+- Remote review: deleting a settled review slot record is final. A heartbeat
+  renewal whose persistence was scheduled after the terminal delete used to
+  write the record back, leaving an orphan slot that the next daemon generation
+  adopted and reported a second time (AGT-2864).
+- `setup.Tests`: the join-token file expectation is normalised with
+  `Path.GetFullPath` on every platform, so the Windows pre-develop gate no
+  longer fails on a path separator (ef81146ae).
 
 ## [0.7.0] - 2026-09-17
 
