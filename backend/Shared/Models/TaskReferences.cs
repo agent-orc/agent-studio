@@ -169,6 +169,18 @@ public record SetTaskReferencesRequest
     });
 }
 
+/// <summary>
+/// Audited incremental edit for <c>PUT /api/tasks/{id}/waits-on</c>. Add and
+/// remove may be combined to re-point an edge atomically. A human-readable
+/// reason is mandatory because changing execution order is an operator decision.
+/// </summary>
+public sealed record EditTaskWaitsOnRequest
+{
+    public List<TaskDependencyReference> Add { get; init; } = [];
+    public List<string> Remove { get; init; } = [];
+    public string Reason { get; init; } = "";
+}
+
 /// <summary>Failure category for a single rejected reference edge.</summary>
 public enum TaskReferenceErrorCode
 {

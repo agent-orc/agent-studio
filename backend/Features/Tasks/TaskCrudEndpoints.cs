@@ -71,7 +71,7 @@ public static class TaskCrudEndpoints
             return Results.Ok(new TaskReferenceStatusResponse(items!));
         });
 
-        group.MapGet("/", (string? project, bool? includeFixtures, HttpContext ctx, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, ITokenAggregator tokens, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, AgentStudio.Registry.ProjectRegistry projects, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, BoardReadSignatureSource boardSignature, ILoggerFactory loggerFactory) =>
+        group.MapGet("/", (string? project, bool? includeFixtures, HttpContext ctx, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, ITokenAggregator tokens, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, AgentStudio.Registry.ProjectRegistry projects, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, BoardReadSignatureSource boardSignature, ILoggerFactory loggerFactory) =>
         {
             using var gitTelemetry = GitProcessTelemetry.BeginRequest(
                 "tasks/list",
@@ -106,7 +106,7 @@ public static class TaskCrudEndpoints
 
             var tokenLookup = BuildTokenLookup(raw, tokens);
             var verdictLookup = BuildOrchestratorVerdictLookup(raw, configuration);
-            var dependencyLookups = BuildDependencyGraphLookups(raw, scanner);
+            var dependencyLookups = BuildDependencyGraphLookups(raw, scanner, attemptAuthority: attemptAuthority);
             var gitLookup = gitProjection.ReadCacheOnly(raw);
             var liveLookup = liveStatus.BuildLookup(raw);
             var jobs = raw.Select(job => betterCandidates.Attach(
@@ -135,7 +135,7 @@ public static class TaskCrudEndpoints
             return BoardReadValidator.Ok(ctx, etag, jobs);
         });
 
-        group.MapGet("/grouped", (bool? includeFixtures, bool? includeLegacyReviewLane, HttpContext context, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, ITokenAggregator tokens, IConfiguration configuration, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, AgentStudio.Registry.ProjectRegistry projects, BoardReadSignatureSource boardSignature, ILoggerFactory loggerFactory) =>
+        group.MapGet("/grouped", (bool? includeFixtures, bool? includeLegacyReviewLane, HttpContext context, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, ITokenAggregator tokens, IConfiguration configuration, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, AgentStudio.Registry.ProjectRegistry projects, BoardReadSignatureSource boardSignature, ILoggerFactory loggerFactory) =>
         {
             using var gitTelemetry = GitProcessTelemetry.BeginRequest(
                 "tasks/grouped",
@@ -164,7 +164,7 @@ public static class TaskCrudEndpoints
 
             var tokenLookup = BuildTokenLookup(raw, tokens);
             var verdictLookup = BuildOrchestratorVerdictLookup(raw, configuration);
-            var dependencyLookups = BuildDependencyGraphLookups(raw, scanner);
+            var dependencyLookups = BuildDependencyGraphLookups(raw, scanner, attemptAuthority: attemptAuthority);
             var gitLookup = gitProjection.ReadCacheOnly(raw);
             var liveLookup = liveStatus.BuildLookup(raw);
             var jobs = raw.Select(job => betterCandidates.Attach(
@@ -342,7 +342,7 @@ public static class TaskCrudEndpoints
             });
         });
 
-        group.MapGet("/{jobId}", (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, ITokenAggregator tokens, IConfiguration configuration, GitService git, TaskSessionLog sessions, BoardMergeStatusService mergeStatus, TaskIntegrationStatusService integrationStatus, TaskPublishableService publishStatus, TestRunService testRuns, AgentStudio.Review.ReviewProjectionService reviewProjection, TaskLiveStatusProjection liveStatus, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates) =>
+        group.MapGet("/{jobId}", (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, ITokenAggregator tokens, IConfiguration configuration, GitService git, TaskSessionLog sessions, BoardMergeStatusService mergeStatus, TaskIntegrationStatusService integrationStatus, TaskPublishableService publishStatus, TestRunService testRuns, AgentStudio.Review.ReviewProjectionService reviewProjection, TaskLiveStatusProjection liveStatus, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var detail = scanner.GetJobDetail(jobId, watchPath);
@@ -359,7 +359,7 @@ public static class TaskCrudEndpoints
             var eligibleWaiters = ProjectAccessAuthorization
                 .FilterTasks(context, scanner.ScanAllJobs(), projects)
                 .Where(job => !job.Fixture);
-            var dependencyLookups = BuildDependencyGraphLookups(new[] { detail.Info }, scanner, eligibleWaiters);
+            var dependencyLookups = BuildDependencyGraphLookups(new[] { detail.Info }, scanner, eligibleWaiters, attemptAuthority);
             var withRuntime = WithRuntime(detail, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters);
             withRuntime = withRuntime with
             {
@@ -1092,6 +1092,61 @@ public static class TaskCrudEndpoints
                     target = w.Target,
                     message = w.Message
                 })
+            });
+        });
+
+        // Incremental and audited dependency edit. Add + remove in one request
+        // is the atomic re-point used by an unsatisfiable-hold decision.
+        group.MapPut("/{jobId}/waits-on", (string jobId, string? project, string? watchPath,
+            EditTaskWaitsOnRequest req, HttpContext ctx,
+            TaskScannerService scanner, TaskMutationService mutations,
+            AgentStudio.Registry.ProjectRegistry projects) =>
+        {
+            if (req is null || string.IsNullOrWhiteSpace(req.Reason))
+                return Results.BadRequest(new { error = "A reason is required for a waits-on edit." });
+            if ((req.Add?.Count ?? 0) == 0 && (req.Remove?.Count ?? 0) == 0)
+                return Results.BadRequest(new { error = "Add or remove at least one dependency." });
+
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            var info = scanner.FindJob(jobId, watchPath);
+            if (info == null) return Results.NotFound();
+            var removed = (req.Remove ?? []).Where(key => !string.IsNullOrWhiteSpace(key))
+                .Select(key => key.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var proposed = TaskReferenceValidator.Normalize((info.References ?? new TaskReferences()) with
+            {
+                DependsOn = (info.References?.DependsOn ?? [])
+                    .Where(edge => !removed.Contains(edge.Key))
+                    .Concat(req.Add ?? [])
+                    .ToList(),
+            });
+            var index = scanner.GetReferenceIndex();
+            var validation = TaskReferenceValidator.Validate(
+                info.Key ?? "", proposed, index.KnownKeys, index.DependsOnGraph);
+            if (!validation.IsValid)
+                return Results.BadRequest(new
+                {
+                    error = "Invalid waits-on edit",
+                    errors = validation.Errors.Select(error => new
+                    {
+                        code = error.Code.ToString(),
+                        kind = error.Kind,
+                        target = error.Target,
+                        message = error.Message,
+                    }),
+                });
+
+            var changed = mutations.EditTaskWaitsOn(
+                jobId, req.Add ?? [], removed, req.Reason, OperatorActor(ctx), watchPath);
+            if (!changed) return Results.NotFound();
+            return Results.Ok(new
+            {
+                waitsOn = proposed.DependsOn,
+                warnings = validation.Warnings.Select(warning => new
+                {
+                    code = warning.Code.ToString(),
+                    target = warning.Target,
+                    message = warning.Message,
+                }),
             });
         });
 

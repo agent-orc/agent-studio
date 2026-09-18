@@ -96,7 +96,9 @@ export function buildProjectSidebarRows(
       // work sits in lanes that do not feed the active-work count (backlog,
       // completed, ...).
       const project = ensureProject(job.projectName ?? '');
-      if (laneKey === 'ready') project.laneCounts.ready++;
+      if (laneKey === 'ready'
+          && job.pickupHold?.classification !== 'stalled'
+          && job.pickupHold?.classification !== 'unsatisfiable') project.laneCounts.ready++;
       else if (laneKey === 'progress') project.laneCounts.progress++;
       // Escalations wait on the human just like a plain human-review card
       // (arguably more urgently), so they fold into the Human Review chip

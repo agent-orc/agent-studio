@@ -33,6 +33,9 @@ public static class PickupHoldMechanisms
 /// </summary>
 public static class PickupHoldResolutionKinds
 {
+    public const string DropDependency = "drop-dependency";
+    public const string RepointDependency = "repoint-dependency";
+    public const string ArchiveWaitingCard = "archive-waiting-card";
     /// <summary>Grant the target's explicit release flag (<c>PUT /api/tasks/{id}/release</c>).</summary>
     public const string ReleaseTarget = "release-target";
 
@@ -102,6 +105,8 @@ public sealed record PickupHoldResolution(
 /// </summary>
 public sealed record PickupHoldStatus
 {
+    /// <summary>Dependency liveness class: satisfiable-soon, stalled, or unsatisfiable.</summary>
+    public string Classification { get; init; } = PickupHoldClassifications.SatisfiableSoon;
     /// <summary>One of <see cref="PickupHoldMechanisms"/>.</summary>
     public string Mechanism { get; init; } = "";
 
@@ -126,6 +131,22 @@ public sealed record PickupHoldStatus
 
     /// <summary>The ways out, in the order they should be offered. Never applied automatically.</summary>
     public List<PickupHoldResolution> Resolutions { get; init; } = [];
+
+    /// <summary>The prerequisite key represented by one deduplicated attention item.</summary>
+    public string? AttentionTargetKey { get; init; }
+
+    /// <summary>The prerequisite's own blocker summary, rather than a waiting card's copy.</summary>
+    public string? AttentionReason { get; init; }
+
+    /// <summary>When the prerequisite itself entered the stalled condition.</summary>
+    public DateTime? AttentionSinceUtc { get; init; }
+}
+
+public static class PickupHoldClassifications
+{
+    public const string SatisfiableSoon = "satisfiable-soon";
+    public const string Stalled = "stalled";
+    public const string Unsatisfiable = "unsatisfiable";
 }
 
 /// <summary>
@@ -158,6 +179,7 @@ public readonly record struct PickupHoldFacts(
 /// </summary>
 public static class PickupHoldPolicy
 {
+    public static readonly TimeSpan DefaultStalledThreshold = TimeSpan.FromMinutes(30);
     /// <summary>
     /// The lanes a card can claim to be queued in. <c>3-progress</c> is
     /// deliberately absent: a card there has been picked up, so "queued but
@@ -270,10 +292,7 @@ public static class PickupHoldPolicy
                 PickupHoldMechanisms.DependencyGate,
                 "This card's dependsOn chain forms a cycle, so no order of completions can ever fulfil it.",
                 laneEntry, facts.NowUtc, unsatisfiable: true,
-                new PickupHoldResolution(
-                    PickupHoldResolutionKinds.BreakCycle,
-                    "Break the cycle",
-                    "Remove one edge from the chain through the card's references."));
+                DependencyDecisions(waitsOn.Items.FirstOrDefault()?.Key).ToArray());
 
         var unsatisfiable = waitsOn.Items.FirstOrDefault(item => item.Unsatisfiable);
         if (unsatisfiable != null)
@@ -283,16 +302,7 @@ public static class PickupHoldPolicy
                     ? unsatisfiable.UnsatisfiableReason
                     : WaitsOnEvaluator.ArchivedGateReason(unsatisfiable.Key),
                 laneEntry, facts.NowUtc, unsatisfiable: true,
-                new PickupHoldResolution(
-                    PickupHoldResolutionKinds.ReleaseTarget,
-                    $"Release {unsatisfiable.Key}",
-                    "Releasing states that the validation this gate stands for no longer has to happen. Only an operator may decide that.",
-                    unsatisfiable.Key),
-                new PickupHoldResolution(
-                    PickupHoldResolutionKinds.DropReleaseGate,
-                    $"Drop the release gate on {unsatisfiable.Key}",
-                    "Remove the releaseGate edge through this card's references and re-plan the card.",
-                    unsatisfiable.Key));
+                DependencyDecisions(unsatisfiable.Key).ToArray());
 
         var open = waitsOn.Items.FirstOrDefault(item => !item.Fulfilled);
         if (open == null) return null;
@@ -313,25 +323,74 @@ public static class PickupHoldPolicy
                     "Remove the releaseGate edge through this card's references and re-plan the card.",
                     open.Key));
 
-        return open.Resolved
-            ? Hold(
+        if (!open.Resolved)
+            return Hold(
+                PickupHoldMechanisms.DependencyGate,
+                $"{open.Key} does not exist in the workspace, so nothing can fulfil this edge.",
+                laneEntry, facts.NowUtc, unsatisfiable: true,
+                DependencyDecisions(open.Key).ToArray());
+
+        var stalled = IsStalled(open, facts.NowUtc);
+        var hold = HoldClassified(
                 PickupHoldMechanisms.DependencyGate,
                 $"{open.Key} has not reached a terminal lane yet (currently {Describe(open.TargetState)}).",
                 laneEntry, facts.NowUtc, unsatisfiable: false,
+                stalled ? PickupHoldClassifications.Stalled : PickupHoldClassifications.SatisfiableSoon,
                 new PickupHoldResolution(
                     PickupHoldResolutionKinds.AwaitTarget,
-                    $"Finish {open.Key}",
-                    "The gate opens on its own once the target reaches 6-completed or 7-archive.",
-                    open.Key))
-            : Hold(
-                PickupHoldMechanisms.DependencyGate,
-                $"{open.Key} does not exist in the workspace, so nothing can fulfil this edge.",
-                laneEntry, facts.NowUtc, unsatisfiable: false,
-                new PickupHoldResolution(
-                    PickupHoldResolutionKinds.CreateOrDropTarget,
-                    $"Create {open.Key} or drop the edge",
-                    "The key was either a typo or a card that was never created.",
+                    stalled ? $"Resolve {open.Key}'s blocker" : $"Finish {open.Key}",
+                    stalled
+                        ? $"Open {open.Key} and resolve its parked or timed-out prerequisite state."
+                        : "The gate opens on its own once the target reaches 6-completed or 7-archive.",
                     open.Key));
+        return stalled
+            ? hold with
+            {
+                AttentionTargetKey = open.Key,
+                AttentionReason = StalledAttentionReason(open),
+                AttentionSinceUtc = open.TargetBlockerSinceUtc ?? open.TargetEnteredLaneAt,
+            }
+            : hold;
+    }
+
+    private static bool IsStalled(WaitsOnItem target, DateTime now)
+    {
+        if (target.TargetParked || string.Equals(target.TargetState, TaskStates.Escalated, StringComparison.Ordinal))
+            return true;
+        if (!string.Equals(target.TargetState, TaskStates.AutoReview, StringComparison.Ordinal))
+            return false;
+        if (target.TargetHasActiveReviewAttempt) return false;
+        var entered = target.TargetEnteredLaneAt;
+        return entered is null || now - entered.Value.ToUniversalTime() >= DefaultStalledThreshold;
+    }
+
+    private static string StalledAttentionReason(WaitsOnItem target)
+    {
+        if (!string.IsNullOrWhiteSpace(target.TargetBlockerReason))
+            return $"Waiting on {target.Key}: {target.TargetBlockerReason.Trim()}";
+        var since = target.TargetEnteredLaneAt is { } entered ? $" since {entered.ToUniversalTime():u}" : "";
+        if (string.Equals(target.TargetState, TaskStates.Escalated, StringComparison.Ordinal))
+            return $"Waiting on {target.Key}: escalated{since}, operator decision.";
+        return $"Waiting on {target.Key}: no active review attempt{since}.";
+    }
+
+    private static IEnumerable<PickupHoldResolution> DependencyDecisions(string? targetKey)
+    {
+        yield return new PickupHoldResolution(
+            PickupHoldResolutionKinds.DropDependency,
+            "Drop the dependency",
+            "Remove this waits-on edge. The platform never takes this decision automatically.",
+            targetKey);
+        yield return new PickupHoldResolution(
+            PickupHoldResolutionKinds.RepointDependency,
+            "Point to a successor card",
+            "Replace the edge with the stable key of the card that now owns the prerequisite.",
+            targetKey);
+        yield return new PickupHoldResolution(
+            PickupHoldResolutionKinds.ArchiveWaitingCard,
+            "Archive this waiting card",
+            "Close the waiting card without changing the prerequisite.",
+            targetKey);
     }
 
     private static PickupHoldStatus Hold(
@@ -341,6 +400,23 @@ public static class PickupHoldPolicy
         DateTime now,
         bool unsatisfiable,
         params PickupHoldResolution[] resolutions) =>
+        HoldClassified(
+            mechanism,
+            reason,
+            since,
+            now,
+            unsatisfiable,
+            unsatisfiable ? PickupHoldClassifications.Unsatisfiable : PickupHoldClassifications.SatisfiableSoon,
+            resolutions);
+
+    private static PickupHoldStatus HoldClassified(
+        string mechanism,
+        string reason,
+        DateTime since,
+        DateTime now,
+        bool unsatisfiable,
+        string classification,
+        params PickupHoldResolution[] resolutions) =>
         new()
         {
             Mechanism = mechanism,
@@ -348,6 +424,7 @@ public static class PickupHoldPolicy
             SinceUtc = since,
             HeldForSeconds = Age(since, now),
             Unsatisfiable = unsatisfiable,
+            Classification = classification,
             Resolutions = [.. resolutions],
         };
 

@@ -341,6 +341,8 @@ export interface PickupHoldResolution {
  * on every card that is genuinely pickup-eligible.
  */
 export interface PickupHoldStatus {
+  /** Dependency liveness: `satisfiable-soon`, `stalled`, or `unsatisfiable`. */
+  classification?: 'satisfiable-soon' | 'stalled' | 'unsatisfiable' | string;
   /**
    * `dependency-gate` | `dispatch-rejection` | `epic-container` |
    * `crash-backoff` | `pickup-policy`.

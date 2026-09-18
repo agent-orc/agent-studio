@@ -22,6 +22,11 @@
   background: color-mix(in srgb, var(--studio-warn) 12%, var(--studio-bg-elevated));
 }
 
+.pickup-hold[data-tone='stalled'] {
+  border-color: color-mix(in srgb, var(--studio-warn) 34%, var(--studio-border));
+  background: color-mix(in srgb, var(--studio-warn) 7%, var(--studio-bg-elevated));
+}
+
 .pickup-hold--detail {
   padding: var(--studio-spacing-3);
 }
@@ -128,6 +133,29 @@
   color: var(--studio-fg);
   font-size: 12px;
   font-weight: 600;
+}
+
+.pickup-hold__decision {
+  justify-self: start;
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-button-radius);
+  background: var(--studio-bg-elevated);
+  color: var(--studio-fg);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pickup-hold__decision:disabled {
+  cursor: progress;
+  opacity: 0.65;
+}
+
+.pickup-hold__error {
+  margin: 0;
+  color: var(--studio-danger);
+  font-size: 11px;
 }
 
 .pickup-hold__item-detail {

@@ -123,6 +123,21 @@ public record WaitsOnItem
     /// <summary>Target task's lane state; null when unresolved.</summary>
     public string? TargetState { get; init; }
 
+    /// <summary>When the target entered its current lane; used to distinguish a live review from a stalled one.</summary>
+    public DateTime? TargetEnteredLaneAt { get; init; }
+
+    /// <summary>True when the canonical review authority has a pending or live-leased attempt for the target.</summary>
+    public bool TargetHasActiveReviewAttempt { get; init; }
+
+    /// <summary>True when the target has an explicit durable park/blocker record.</summary>
+    public bool TargetParked { get; init; }
+
+    /// <summary>The prerequisite's own blocker sentence, when it has one.</summary>
+    public string? TargetBlockerReason { get; init; }
+
+    /// <summary>When the prerequisite's blocker began, when recorded.</summary>
+    public DateTime? TargetBlockerSinceUtc { get; init; }
+
     /// <summary>Target task's watch path (for navigation); null when unresolved.</summary>
     public string? TargetWatchPath { get; init; }
 }
@@ -186,6 +201,7 @@ public static class WaitsOnEvaluator
         {
             var key = (dependency?.Key ?? "").Trim();
             if (key.Length == 0) continue;
+            var releaseGate = dependency?.ReleaseGate == true;
             // A self-edge can never gate the task and is rejected on write; skip
             // defensively so a stale self-edge on disk cannot self-block.
             if (self.Length > 0 && KeyComparer.Equals(key, self)) continue;
@@ -194,8 +210,8 @@ public static class WaitsOnEvaluator
             byKey.TryGetValue(key, out var target);
             var resolved = target != null;
             var terminal = resolved && IsFulfilledState(target!.State);
-            var waitingForRelease = terminal && dependency!.ReleaseGate && !target!.Released;
-            var fulfilled = terminal && (!dependency.ReleaseGate || target!.Released);
+            var waitingForRelease = terminal && releaseGate && !target!.Released;
+            var fulfilled = terminal && (!releaseGate || target!.Released);
             if (!fulfilled) blocked = true;
             var unsatisfiable = waitingForRelease && IsArchivedState(target?.State);
             if (unsatisfiable) unsatisfiableGate = true;
@@ -205,7 +221,7 @@ public static class WaitsOnEvaluator
                 Key = key,
                 Resolved = resolved,
                 Fulfilled = fulfilled,
-                ReleaseGate = dependency!.ReleaseGate,
+                ReleaseGate = releaseGate,
                 TargetReleased = target?.Released == true,
                 WaitingForRelease = waitingForRelease,
                 Unsatisfiable = unsatisfiable,
@@ -213,6 +229,10 @@ public static class WaitsOnEvaluator
                 TargetJobId = target?.Id,
                 TargetTitle = target?.Title,
                 TargetState = target?.State,
+                TargetEnteredLaneAt = target?.EnteredLaneAt,
+                TargetParked = target?.ParkedBlocker is not null,
+                TargetBlockerReason = target?.ParkedBlocker?.Reason,
+                TargetBlockerSinceUtc = target?.ParkedBlocker?.ParkedAt,
                 TargetWatchPath = target?.WatchPath,
             });
         }

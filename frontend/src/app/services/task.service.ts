@@ -1113,6 +1113,19 @@ export class TaskService {
     );
   }
 
+  /** Audited incremental dependency edit; add + remove atomically re-points an edge. */
+  editTaskWaitsOn(
+    jobId: string,
+    edit: { add?: (string | { key: string; releaseGate?: boolean })[]; remove?: string[]; reason: string },
+    watchPath?: string,
+  ) {
+    return this.http.put<{ waitsOn: (string | { key: string; releaseGate?: boolean })[] }>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/waits-on`,
+      { add: edit.add ?? [], remove: edit.remove ?? [], reason: edit.reason },
+      this.withWatchPath(watchPath),
+    );
+  }
+
   /** Explicit content approval for release-gated dependents; never inferred from lane state. */
   setTaskReleased(jobId: string, released: boolean, watchPath?: string) {
     return this.http.put<{ released: boolean }>(

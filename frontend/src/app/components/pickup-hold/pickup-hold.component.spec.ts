@@ -31,6 +31,7 @@ function task(pickupHold: PickupHoldStatus | null): TaskInfo {
 
 /** The reported AGT-2373 shape: an archived release gate, held for a month. */
 const ARCHIVED_GATE: PickupHoldStatus = {
+  classification: 'unsatisfiable',
   mechanism: 'dependency-gate',
   reason: 'AGT-2372 is archived and was never released, so no run is left that could open this gate.',
   sinceUtc: '2026-08-11T09:00:00Z',
@@ -38,15 +39,21 @@ const ARCHIVED_GATE: PickupHoldStatus = {
   unsatisfiable: true,
   resolutions: [
     {
-      kind: 'release-target',
-      label: 'Release AGT-2372',
-      detail: 'Releasing states that the validation this gate stands for no longer has to happen.',
+      kind: 'drop-dependency',
+      label: 'Drop the dependency',
+      detail: 'Remove this waits-on edge.',
       targetKey: 'AGT-2372',
     },
     {
-      kind: 'drop-release-gate',
-      label: 'Drop the release gate on AGT-2372',
-      detail: 'Remove the releaseGate edge through this card\'s references and re-plan the card.',
+      kind: 'repoint-dependency',
+      label: 'Point to a successor card',
+      detail: 'Replace the edge with its successor.',
+      targetKey: 'AGT-2372',
+    },
+    {
+      kind: 'archive-waiting-card',
+      label: 'Archive this waiting card',
+      detail: 'Close the waiting card.',
       targetKey: 'AGT-2372',
     },
   ],
@@ -107,16 +114,16 @@ describe('PickupHoldComponent', () => {
       .toContain('held for 34d');
   });
 
-  it('offers both ways out of an archived gate on the detail variant, and takes neither', () => {
+  it('offers all three operator decisions for an unsatisfiable gate', () => {
     const root = render(ARCHIVED_GATE, 'detail');
 
     const items = Array.from(root.querySelectorAll('[data-resolution-kind]'));
     expect(items.map(item => item.getAttribute('data-resolution-kind')))
-      .toEqual(['release-target', 'drop-release-gate']);
-    expect(items[0].textContent).toContain('Release AGT-2372');
-    expect(items[1].textContent).toContain('Drop the release gate on AGT-2372');
-    // Offered, never taken: the block carries no control that writes.
-    expect(root.querySelectorAll('button')).toHaveLength(0);
+      .toEqual(['drop-dependency', 'repoint-dependency', 'archive-waiting-card']);
+    expect(items[0].textContent).toContain('Drop the dependency');
+    expect(items[1].textContent).toContain('Point to a successor card');
+    expect(items[2].textContent).toContain('Archive this waiting card');
+    expect(root.querySelectorAll('button')).toHaveLength(3);
   });
 
   it('keeps the ways out off the board card, where the reason is the payload', () => {

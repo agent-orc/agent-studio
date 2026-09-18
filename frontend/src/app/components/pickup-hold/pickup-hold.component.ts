@@ -1,6 +1,8 @@
-import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
 import type { PickupHoldStatus, TaskInfo } from '../../models/task.model';
 import { AppTooltipDirective } from '../tooltip/app-tooltip.directive';
+import { TaskService } from '../../services/task.service';
+import type { Observable } from 'rxjs';
 
 export type PickupHoldVariant = 'card' | 'detail';
 
@@ -37,13 +39,21 @@ const MECHANISM_LABELS: Record<string, string> = {
   styleUrl: './pickup-hold.component.scss',
 })
 export class PickupHoldComponent {
+  private readonly tasks = inject(TaskService, { optional: true });
   readonly task = input.required<TaskInfo>();
   readonly variant = input<PickupHoldVariant>('card');
 
   readonly hold = computed<PickupHoldStatus | null>(() => this.task().pickupHold ?? null);
 
   /** `open` for an honest wait, `blocked` for a gate that can never open. */
-  readonly tone = computed(() => (this.hold()?.unsatisfiable ? 'blocked' : 'open'));
+  readonly tone = computed(() => ((this.hold()?.classification === 'unsatisfiable' || this.hold()?.unsatisfiable) ? 'blocked'
+    : this.hold()?.classification === 'stalled' ? 'stalled' : 'open'));
+
+  readonly classificationLabel = computed(() => {
+    const classification = this.hold()?.classification
+      ?? (this.hold()?.unsatisfiable ? 'unsatisfiable' : 'satisfiable-soon');
+    return titleCase(classification);
+  });
 
   readonly mechanismLabel = computed(() => {
     const mechanism = this.hold()?.mechanism ?? '';
@@ -57,8 +67,10 @@ export class PickupHoldComponent {
   readonly headline = computed(() => {
     const hold = this.hold();
     if (!hold) return '';
-    return hold.unsatisfiable
+    return hold.classification === 'unsatisfiable' || hold.unsatisfiable
       ? 'Held: this cannot clear by itself'
+      : hold.classification === 'stalled'
+        ? 'Held: prerequisite needs attention'
       : 'Held: not pickable right now';
   });
 
@@ -91,8 +103,53 @@ export class PickupHoldComponent {
   });
 
   readonly resolutions = computed(() => this.hold()?.resolutions ?? []);
+  readonly mutationPending = signal(false);
+  readonly mutationError = signal<string | null>(null);
 
   readonly resolutionKind = (_: number, resolution: { kind: string }): string => resolution.kind;
+
+  applyResolution(kind: string, targetKey?: string | null): void {
+    if (this.mutationPending()) return;
+    if (!this.tasks) {
+      this.mutationError.set('The dependency decision service is unavailable.');
+      return;
+    }
+    const task = this.task();
+    const target = targetKey?.trim();
+    if (kind === 'drop-dependency' && target) {
+      this.runMutation(this.tasks.editTaskWaitsOn(task.id, {
+        remove: [target],
+        reason: `Operator dropped unsatisfiable dependency ${target}.`,
+      }, task.watchPath));
+      return;
+    }
+    if (kind === 'repoint-dependency' && target) {
+      const successor = window.prompt(`Successor task key for ${target}`)?.trim();
+      if (!successor) return;
+      this.runMutation(this.tasks.editTaskWaitsOn(task.id, {
+        remove: [target], add: [successor],
+        reason: `Operator re-pointed unsatisfiable dependency ${target} to ${successor}.`,
+      }, task.watchPath));
+      return;
+    }
+    if (kind === 'archive-waiting-card') {
+      this.runMutation(this.tasks.moveJob(
+        task.id, '7-archive', task.watchPath, undefined,
+        'Operator archived a card with an unsatisfiable dependency.'));
+    }
+  }
+
+  private runMutation(request: Observable<unknown>): void {
+    this.mutationPending.set(true);
+    this.mutationError.set(null);
+    request.subscribe({
+      next: () => this.mutationPending.set(false),
+      error: () => {
+        this.mutationPending.set(false);
+        this.mutationError.set('The dependency decision could not be applied.');
+      },
+    });
+  }
 }
 
 function titleCase(value: string): string {

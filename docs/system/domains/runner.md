@@ -56,6 +56,13 @@ state.
   `RunnerLinks` entry.
 - `backend/Services/Runner/ProjectRunner.cs`: per-project pickup tick, active
   job latch, progress-first resume, dead-letter handling, and CLI spawn path.
+- `backend/Shared/Models/PickupHold.cs`: pure dependency-hold classification.
+  `satisfiable-soon` means the prerequisite is executing or has an active
+  review attempt; `stalled` means it is parked, escalated, or has exceeded the
+  Auto Review timeout without an attempt; `unsatisfiable` covers an archived
+  unreleased gate, a missing/deleted target, or a cycle. Stalled and
+  unsatisfiable Ready cards remain visible but are excluded from pullable queue
+  counts and runner queue positions.
 - `backend/Shared/Runner/FollowUpAdmissionPolicy.cs`: the pure lane / phase /
   execution-location decision that gates whether a user follow-up may spawn a
   local process or has to be queued as a saved intent. See

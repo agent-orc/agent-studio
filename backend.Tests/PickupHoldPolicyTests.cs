@@ -54,8 +54,9 @@ public class PickupHoldPolicyTests
         Assert.Equal(34 * 86400, hold.HeldForSeconds);
 
         // Exactly the two ways out the card names, offered and not taken.
+        Assert.Equal(PickupHoldClassifications.Unsatisfiable, hold.Classification);
         Assert.Equal(
-            new[] { PickupHoldResolutionKinds.ReleaseTarget, PickupHoldResolutionKinds.DropReleaseGate },
+            new[] { PickupHoldResolutionKinds.DropDependency, PickupHoldResolutionKinds.RepointDependency, PickupHoldResolutionKinds.ArchiveWaitingCard },
             hold.Resolutions.Select(resolution => resolution.Kind).ToArray());
         Assert.All(hold.Resolutions, resolution => Assert.Equal("AGT-2372", resolution.TargetKey));
     }
@@ -83,6 +84,7 @@ public class PickupHoldPolicyTests
 
         Assert.NotNull(hold);
         Assert.False(hold!.Unsatisfiable);
+        Assert.Equal(PickupHoldClassifications.SatisfiableSoon, hold.Classification);
         Assert.Contains(TaskStates.Progress, hold.Reason, StringComparison.Ordinal);
         Assert.Equal(
             PickupHoldResolutionKinds.AwaitTarget,
@@ -96,9 +98,38 @@ public class PickupHoldPolicyTests
 
         Assert.NotNull(hold);
         Assert.Contains("does not exist", hold!.Reason, StringComparison.Ordinal);
-        Assert.Equal(
-            PickupHoldResolutionKinds.CreateOrDropTarget,
-            Assert.Single(hold.Resolutions).Kind);
+        Assert.Equal(PickupHoldClassifications.Unsatisfiable, hold.Classification);
+        Assert.Equal(3, hold.Resolutions.Count);
+    }
+
+    [Fact]
+    public void EscalatedPrerequisite_IsStalled()
+    {
+        var hold = Evaluate(Card(), waitsOn: WaitsOn(Item(
+            key: "AGT-2736", fulfilled: false, targetState: TaskStates.Escalated)));
+
+        Assert.Equal(PickupHoldClassifications.Stalled, hold!.Classification);
+        Assert.Contains("AGT-2736", hold.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AutoReviewWithoutActiveAttemptPastTimeout_IsStalled()
+    {
+        var hold = Evaluate(Card(), waitsOn: WaitsOn(Item(
+            key: "AGT-2803", fulfilled: false, targetState: TaskStates.AutoReview,
+            targetEnteredLaneAt: Now.AddHours(-2), targetHasActiveReviewAttempt: false)));
+
+        Assert.Equal(PickupHoldClassifications.Stalled, hold!.Classification);
+    }
+
+    [Fact]
+    public void AutoReviewWithActiveAttempt_IsSatisfiableSoon()
+    {
+        var hold = Evaluate(Card(), waitsOn: WaitsOn(Item(
+            key: "AGT-2803", fulfilled: false, targetState: TaskStates.AutoReview,
+            targetEnteredLaneAt: Now.AddHours(-2), targetHasActiveReviewAttempt: true)));
+
+        Assert.Equal(PickupHoldClassifications.SatisfiableSoon, hold!.Classification);
     }
 
     [Fact]
@@ -112,7 +143,9 @@ public class PickupHoldPolicyTests
         Assert.Equal(PickupHoldMechanisms.DependencyGate, hold!.Mechanism);
         Assert.True(hold.Unsatisfiable);
         Assert.Contains("cycle", hold.Reason, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(PickupHoldResolutionKinds.BreakCycle, Assert.Single(hold.Resolutions).Kind);
+        Assert.Equal(
+            new[] { PickupHoldResolutionKinds.DropDependency, PickupHoldResolutionKinds.RepointDependency, PickupHoldResolutionKinds.ArchiveWaitingCard },
+            hold.Resolutions.Select(resolution => resolution.Kind).ToArray());
     }
 
     [Fact]
@@ -299,7 +332,9 @@ public class PickupHoldPolicyTests
         bool waitingForRelease = false,
         bool unsatisfiable = false,
         string unsatisfiableReason = "",
-        string? targetState = null) => new()
+        string? targetState = null,
+        DateTime? targetEnteredLaneAt = null,
+        bool targetHasActiveReviewAttempt = false) => new()
     {
         Key = key,
         Resolved = resolved,
@@ -309,5 +344,7 @@ public class PickupHoldPolicyTests
         Unsatisfiable = unsatisfiable,
         UnsatisfiableReason = unsatisfiableReason,
         TargetState = targetState,
+        TargetEnteredLaneAt = targetEnteredLaneAt,
+        TargetHasActiveReviewAttempt = targetHasActiveReviewAttempt,
     };
 }

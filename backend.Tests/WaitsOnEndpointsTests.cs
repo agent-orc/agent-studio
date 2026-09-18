@@ -301,6 +301,69 @@ public sealed class WaitsOnEndpointsTests : IDisposable
     }
 
     [Fact]
+    public async Task PutWaitsOn_RepointsDependencyAtomically_AndAuditsReason()
+    {
+        WriteJob(_libWatch, TaskStates.Archive, "old-dep", "LIB-1");
+        WriteJob(_libWatch, TaskStates.Ready, "successor", "LIB-2");
+        WriteJob(_appWatch, TaskStates.Ready, "consumer", "APP-1", dependsOn: new[] { "LIB-1" });
+
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var watchPath = Uri.EscapeDataString(_appWatch);
+
+        using var response = await client.PutAsJsonAsync(
+            $"/api/tasks/APP-1/waits-on?watchPath={watchPath}",
+            new
+            {
+                add = new[] { "LIB-2" },
+                remove = new[] { "LIB-1" },
+                reason = "The successor owns the prerequisite.",
+            });
+
+        response.EnsureSuccessStatusCode();
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("LIB-2", Assert.Single(document.RootElement.GetProperty("waitsOn").EnumerateArray()).GetString());
+
+        var timelinePath = Path.Combine(_appWatch, TaskStates.Ready, "consumer", "logs", "timeline.jsonl");
+        var audit = await File.ReadAllTextAsync(timelinePath);
+        Assert.Contains("dependency_changed", audit, StringComparison.Ordinal);
+        Assert.Contains("The successor owns the prerequisite.", audit, StringComparison.Ordinal);
+        Assert.Contains("human:local-default", audit, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PutWaitsOn_DropsUnsatisfiableDependency_AndReleasesReadyCard()
+    {
+        WriteJob(_libWatch, TaskStates.Archive, "old-dep", "LIB-1");
+        WriteJob(_appWatch, TaskStates.Ready, "consumer", "APP-1",
+            dependsOn: new[] { "LIB-1" }, releaseGate: true);
+
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var watchPath = Uri.EscapeDataString(_appWatch);
+
+        using var response = await client.PutAsJsonAsync(
+            $"/api/tasks/consumer/waits-on?watchPath={watchPath}",
+            new
+            {
+                remove = new[] { "LIB-1" },
+                reason = "The archived prerequisite will not be delivered.",
+            });
+
+        response.EnsureSuccessStatusCode();
+        using var written = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Empty(written.RootElement.GetProperty("waitsOn").EnumerateArray());
+
+        using var detail = JsonDocument.Parse(await client.GetStringAsync(
+            $"/api/tasks/consumer?watchPath={watchPath}"));
+        var info = detail.RootElement.GetProperty("info");
+        Assert.Equal(JsonValueKind.Null, info.GetProperty("waitsOn").ValueKind);
+        Assert.Equal(JsonValueKind.Null, info.GetProperty("pickupHold").ValueKind);
+    }
+
+    [Fact]
     public async Task PutReferences_SelfReference_Returns400_WithErrorShape()
     {
         WriteJob(_appWatch, TaskStates.Ready, "consumer", "APP-1");

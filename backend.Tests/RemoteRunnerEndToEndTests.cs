@@ -3499,13 +3499,15 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     private void SeedTask(
         string state, string key, string title, string promptBody,
         string kind = TaskKinds.Task, string? cliType = null, string? model = null,
-        string? thinkingLevel = null, string? watchPath = null, int order = 1)
+        string? thinkingLevel = null, string? watchPath = null, int order = 1,
+        DateTime? enteredLaneAt = null)
     {
         var dir = Path.Combine(watchPath ?? _watchPath, state, key);
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "task.json"), JsonSerializer.Serialize(new
         {
             id = key, title, state, order, agent = cliType ?? "claude", kind, cliType, model, thinkingLevel,
+            enteredLaneAt = enteredLaneAt ?? DateTime.UtcNow,
         }));
         File.WriteAllText(Path.Combine(dir, "prompt.md"), promptBody);
         File.WriteAllText(Path.Combine(dir, "status.md"), "Result: pending.");
@@ -5117,6 +5119,48 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         var details = corrected.GetProperty("details");
         Assert.Equal("main", details.GetProperty("previousBranch").GetString());
         Assert.Equal("refs/heads/develop", details.GetProperty("integrationRef").GetString());
+    }
+
+    [Fact]
+    public void Review_scheduler_creates_a_missing_attempt_once_after_timeout()
+    {
+        const string resultSha = "589c462f589c462f589c462f589c462f589c462f";
+        const string repositoryUrl = "https://example.invalid/agent-studio.git";
+        var repositoryId = Contract.RepositoryIdentityContract.FromUrl(repositoryUrl)!;
+        SeedTask(
+            TaskStates.AutoReview,
+            TaskKey,
+            "Missing review attempt",
+            "Build and verify.",
+            enteredLaneAt: DateTime.UtcNow.AddHours(-2));
+
+        using var factory = BuildFactory();
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var run = authority.AcquireRun(
+            TaskKey, repositoryId, null, RunnerId, "coding-host", 120, "missing-review-run").RunAttempt!;
+        var envelope = new Contract.ImmutableResultEnvelope(
+            repositoryId,
+            run.AttemptId,
+            "4136f00d4136f00d4136f00d4136f00d4136f00d",
+            resultSha,
+            "refs/heads/agent-studio/results/missing-review",
+            null,
+            new string('a', 64),
+            RepositoryUrl: repositoryUrl);
+        Assert.True(authority.SettleRun(new SettleRunAttemptRequest
+        {
+            Write = new AttemptWriteReference(run.AttemptId, run.LastFence, run.AuthorityEpoch, "missing-review-complete"),
+            Outcome = "done",
+            ResultSha = resultSha,
+            ResultEnvelope = envelope,
+        }).Accepted);
+        var scheduler = factory.Services.GetRequiredService<ReviewInfrastructureRetryScheduler>();
+
+        Assert.Equal(1, scheduler.RunOnce());
+        Assert.Equal(AttemptLifecycleState.Pending,
+            authority.GetTaskProjection(TaskKey).CurrentReviewAttempt!.State);
+        Assert.Equal(0, scheduler.RunOnce());
+        Assert.Single(authority.GetTaskProjection(TaskKey).ReviewAttempts);
     }
 
     [Fact]
