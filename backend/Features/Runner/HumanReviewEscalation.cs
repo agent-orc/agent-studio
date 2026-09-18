@@ -39,6 +39,10 @@ public static class HumanReviewEscalationCategories
     /// <summary>A remote run ended without a recognized terminal outcome.</summary>
     public const string RemoteOutcomeUnknown = "remote-outcome-unknown";
 
+    /// <summary>A provider refused the model request and no safe declared
+    /// sibling continuation was available.</summary>
+    public const string ProviderRejectedRequest = "provider-rejected-request";
+
     /// <summary>The task server could not resolve a cloneable repository for a
     /// remotely assigned task.</summary>
     public const string RemoteRepositoryUnavailable = "remote-repository-unavailable";

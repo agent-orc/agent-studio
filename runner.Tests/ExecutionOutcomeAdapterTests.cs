@@ -5,6 +5,11 @@ namespace AgentRunner.Tests;
 
 public sealed class ExecutionOutcomeAdapterTests
 {
+    private const string CodexUnsupportedParameter = """
+        {"type":"error","message":"{ \"type\": \"error\", \"error\": { \"type\": \"invalid_request_error\", \"code\": \"unsupported_parameter\", \"message\": \"The access_programs parameter is not enabled for this organization.\", \"param\": \"access_programs.cyber\" }, \"status\": 400 }"}
+        {"type":"turn.failed","error":{"type":"error","error":{"type":"invalid_request_error","code":"unsupported_parameter","message":"The access_programs parameter is not enabled for this organization.","param":"access_programs.cyber"},"status":400}}
+        """;
+
     public static TheoryData<string, ExecutionRawFacts, ExecutionOutcomeKind, ExecutionRecoveryAction> ReplayCases => new()
     {
         {
@@ -512,6 +517,87 @@ public sealed class ExecutionOutcomeAdapterTests
     }
 
     [Fact]
+    public void Codex_unsupported_parameter_4xx_is_a_safe_provider_request_rejection()
+    {
+        var provider = ProviderOutputEvidenceExtractor.Extract(CodexUnsupportedParameter);
+        var result = ExecutionOutcomeAdapter.Classify(Coding(
+            ProviderTerminalEvent: provider.TerminalEvent,
+            StdOut: CodexUnsupportedParameter,
+            ExitCode: 1,
+            DurableOutputState: DurableOutputState.LocalOnly,
+            DurableOutputReference: null,
+            EffectiveCliType: "codex",
+            EffectiveModel: "gpt-6-astra",
+            EffectiveThinkingLevel: "high"));
+
+        Assert.Equal(ExecutionOutcomeKind.ProviderRejectedRequest, result.Outcome);
+        Assert.Equal("unsupported_parameter", result.ProviderRejection!.Code);
+        Assert.Equal("access_programs.cyber", result.ProviderRejection.Parameter);
+        Assert.Equal("The access_programs parameter is not enabled for this organization.", result.ProviderRejection.Message);
+        Assert.Equal(400, result.ProviderRejection.HttpStatus);
+        Assert.Equal("gpt-6-astra", result.RawFacts.EffectiveModel);
+        Assert.Null(result.RawFacts.ProviderTerminalEvent);
+        Assert.Null(result.RawFacts.StdOut);
+        Assert.Null(result.RawFacts.StdErr);
+        Assert.Equal(ExecutionRecoveryAction.AskForHumanInput, result.RecoveryAction);
+    }
+
+    [Fact]
+    public void Claude_style_feature_not_enabled_403_is_a_provider_request_rejection()
+    {
+        const string frame = """
+            {"type":"result","subtype":"error_during_execution","is_error":true,"status":403,"error":{"type":"permission_error","code":"feature_not_enabled","param":"computer_use","message":"The computer use feature is not enabled for this organization."}}
+            """;
+
+        var result = ExecutionOutcomeAdapter.Classify(Coding(
+            StdErr: frame,
+            ExitCode: 1,
+            EffectiveCliType: "claude",
+            EffectiveModel: "claude-opus-5"));
+
+        Assert.Equal(ExecutionOutcomeKind.ProviderRejectedRequest, result.Outcome);
+        Assert.Equal("feature_not_enabled", result.ProviderRejection!.Code);
+        Assert.Equal("computer_use", result.ProviderRejection.Parameter);
+        Assert.Equal(403, result.ProviderRejection.HttpStatus);
+    }
+
+    [Fact]
+    public void Provider_failure_without_a_structured_4xx_refusal_stays_a_cli_crash()
+    {
+        const string frame = """{"type":"turn.failed","error":{"message":"worker terminated unexpectedly"}}""";
+
+        var result = ExecutionOutcomeAdapter.Classify(Coding(
+            ProviderTerminalEvent: frame,
+            ExitCode: 1,
+            EffectiveModel: "gpt-6-astra"));
+
+        Assert.Equal(ExecutionOutcomeKind.CliCrash, result.Outcome);
+        Assert.Null(result.ProviderRejection);
+    }
+
+    [Fact]
+    public void Durable_salvage_changes_provider_rejection_recovery_without_restoring_raw_provider_output()
+    {
+        var provider = ProviderOutputEvidenceExtractor.Extract(CodexUnsupportedParameter);
+        var classified = ExecutionOutcomeAdapter.Classify(Coding(
+            ProviderTerminalEvent: provider.TerminalEvent,
+            ExitCode: 1,
+            DurableOutputState: DurableOutputState.LocalOnly,
+            DurableOutputReference: "/local/worktree"));
+
+        var durable = ExecutionOutcomeAdapter.WithUpdatedFacts(classified, classified.RawFacts with
+        {
+            DurableOutputState = DurableOutputState.Published,
+            DurableOutputReference = "refs/heads/agent-studio/salvage/AGT-2806",
+        });
+
+        Assert.Equal(ExecutionOutcomeKind.ProviderRejectedRequest, durable.Outcome);
+        Assert.Equal(ExecutionRecoveryAction.StartFreshAttemptFromSalvage, durable.RecoveryAction);
+        Assert.Null(durable.RawFacts.ProviderTerminalEvent);
+        Assert.Equal("unsupported_parameter", durable.ProviderRejection!.Code);
+    }
+
+    [Fact]
     public void Prompt_echo_sentinel_does_not_override_a_distinct_final_assistant_output()
     {
         var result = ExecutionOutcomeAdapter.Classify(Coding(
@@ -542,7 +628,10 @@ public sealed class ExecutionOutcomeAdapterTests
         DurableOutputState DurableOutputState = DurableOutputState.Published,
         string? DurableOutputReference = "refs/heads/runner/test/AGT-2185",
         int SameSessionResumeAttempts = 0,
-        int FreshSalvageAttempts = 0)
+        int FreshSalvageAttempts = 0,
+        string? EffectiveCliType = null,
+        string? EffectiveModel = null,
+        string? EffectiveThinkingLevel = null)
         => new(
             "run-1",
             ExecutionAttemptKind.Coding,
@@ -564,5 +653,9 @@ public sealed class ExecutionOutcomeAdapterTests
             DurableOutputState,
             DurableOutputReference,
             SameSessionResumeAttempts,
-            FreshSalvageAttempts);
+            FreshSalvageAttempts,
+            ReviewSubject: null,
+            EffectiveCliType,
+            EffectiveModel,
+            EffectiveThinkingLevel);
 }

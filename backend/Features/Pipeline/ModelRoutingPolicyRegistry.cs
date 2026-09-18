@@ -35,6 +35,14 @@ public sealed record ModelRoutingEconomyMode
     public string Label { get; init; } = "Economy mode";
 }
 
+public sealed record ProviderRejectionModelFallback
+{
+    public string CliType { get; init; } = "";
+    public string FromModel { get; init; } = "";
+    public string ToModel { get; init; } = "";
+    public string Reason { get; init; } = "";
+}
+
 public sealed record ModelRoutingPolicyDocument
 {
     public string Version { get; init; } = "";
@@ -42,6 +50,7 @@ public sealed record ModelRoutingPolicyDocument
     public List<ModelRoutingTier> Tiers { get; init; } = [];
     public Dictionary<string, ModelRoutingTaskTypeDefault> TaskTypeDefaults { get; init; } =
         new(StringComparer.OrdinalIgnoreCase);
+    public List<ProviderRejectionModelFallback> ProviderRejectionFallbacks { get; init; } = [];
     public ModelRoutingEconomyMode EconomyMode { get; init; } = new();
 }
 
@@ -179,6 +188,86 @@ public sealed class ModelRoutingPolicyRegistry
         };
     }
 
+    /// <summary>The explicitly declared same-provider sibling for a request refusal.</summary>
+    public ProviderRejectionModelFallback? ProviderRejectionFallback(
+        string? cliType,
+        string? model)
+        => Policy.ProviderRejectionFallbacks.FirstOrDefault(candidate =>
+            string.Equals(candidate.CliType, CliTypes.Normalize(cliType), StringComparison.OrdinalIgnoreCase)
+            && string.Equals(candidate.FromModel, model?.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Computes only the hard correctness floor. It deliberately ignores live
+    /// model availability and economy state, so a recovery decision cannot
+    /// weaken because a catalogue probe failed after the original run.
+    /// </summary>
+    public ModelRoutingTier? CorrectnessFloor(
+        string? taskType,
+        string? title,
+        string? prompt)
+    {
+        var normalizedType = TaskTypes.Normalize(taskType);
+        var typeDefault = Policy.TaskTypeDefaults[normalizedType];
+        var floor = string.IsNullOrWhiteSpace(typeDefault.HardFloorTier)
+            ? null
+            : Tier(typeDefault.HardFloorTier);
+        var text = $"{title}\n{prompt}";
+        if (CriticalFloorSignal.IsMatch(text)) return Tier("sol-xhigh");
+
+        var subsystemCount = RuntimeSubsystemSignal.Matches(text)
+            .Select(match => match.Value)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
+        return SolFloorSignal.IsMatch(text) || subsystemCount >= 3
+            ? Stronger(floor, Tier("sol-medium"))
+            : floor;
+    }
+
+    /// <summary>
+    /// Whether a concrete sibling route clears the named policy floor. Older
+    /// generations of the same Claude family inherit the current generation's
+    /// tier; this is a provider sibling substitution, not an economy downgrade.
+    /// </summary>
+    public bool RouteMeetsFloor(string model, string? thinkingLevel, ModelRoutingTier? floor)
+    {
+        if (floor is null) return true;
+        var normalizedModel = ModelMetadataRegistry.NormalizeId(model);
+        var normalizedThinking = thinkingLevel?.Trim().ToLowerInvariant();
+        var rank = Policy.Tiers
+            .Where(tier => RouteMatchesTier(tier, normalizedModel, normalizedThinking))
+            .Select(tier => (int?)tier.Rank)
+            .Max();
+        return rank is not null && rank.Value >= floor.Rank;
+    }
+
+    private static bool RouteMatchesTier(
+        ModelRoutingTier tier,
+        string? model,
+        string? thinkingLevel)
+    {
+        static string FamilyEquivalent(string? value) => value switch
+        {
+            ModelIds.ClaudeOpus48 or ModelIds.ClaudeOpus47 or ModelIds.ClaudeOpus46 or ModelIds.ClaudeOpus45
+                => ModelIds.ClaudeOpus5,
+            ModelIds.ClaudeSonnet46 or ModelIds.ClaudeSonnet45 => ModelIds.ClaudeSonnet5,
+            _ => value ?? string.Empty,
+        };
+
+        var route = tier.VendorOverrides.Values
+            .Append(new ModelRoutingVendorOverride { Model = tier.Model, ThinkingLevel = tier.ThinkingLevel });
+        return route.Any(candidate =>
+            string.Equals(FamilyEquivalent(ModelMetadataRegistry.NormalizeId(candidate.Model)), FamilyEquivalent(model), StringComparison.OrdinalIgnoreCase)
+            && ThinkingAtLeast(thinkingLevel, candidate.ThinkingLevel));
+    }
+
+    private static bool ThinkingAtLeast(string? actual, string required)
+    {
+        string[] order = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
+        var actualRank = Array.FindIndex(order, value => string.Equals(value, actual, StringComparison.OrdinalIgnoreCase));
+        var requiredRank = Array.FindIndex(order, value => string.Equals(value, required, StringComparison.OrdinalIgnoreCase));
+        return actualRank >= 0 && requiredRank >= 0 && actualRank >= requiredRank;
+    }
+
     private static ModelRoutingTier Stronger(ModelRoutingTier? left, ModelRoutingTier right)
         => left == null || right.Rank > left.Rank ? right : left;
 
@@ -271,6 +360,14 @@ public sealed class ModelRoutingPolicyRegistry
                 if (string.IsNullOrWhiteSpace(route.Model))
                     throw new InvalidOperationException($"Routing policy tier '{tier.Id}' has an empty vendor override model for '{vendor}'.");
             }
+        }
+        foreach (var fallback in policy.ProviderRejectionFallbacks)
+        {
+            if (!CliTypes.IsValid(fallback.CliType)
+                || string.IsNullOrWhiteSpace(fallback.FromModel)
+                || string.IsNullOrWhiteSpace(fallback.ToModel)
+                || string.Equals(fallback.FromModel, fallback.ToModel, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Provider-rejection fallbacks require a valid CLI and distinct source and sibling models.");
         }
     }
 }

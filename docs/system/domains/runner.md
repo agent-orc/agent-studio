@@ -691,6 +691,13 @@ state.
   use the limited state. Two consecutive explicit failures are required before
   sign-in is blocked, and a later positive probe clears that provider circuit
   without a runner restart.
+- Provider HTTP 400, 403, or 404 request refusals such as
+  `unsupported_parameter` are typed `ProviderRejectedRequest`. They do not
+  update provider-auth capability state. A salvaged coding run continues on
+  the routing policy's declared sibling at the same thinking level when that
+  route clears the correctness floor. The first fallback is run-scoped; the
+  second refusal pins the card. Without a safe sibling the card escalates with
+  the bounded provider code, parameter, and message.
 - Account-level provider session, usage, and rate limits are CLI capability
   state, not task outcomes. The local runner records `claude: limited until
   <time>` in runner status, persists the current card in provider-scoped

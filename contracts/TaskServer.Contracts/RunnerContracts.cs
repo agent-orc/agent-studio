@@ -108,7 +108,24 @@ public sealed record ClaimResponse(
     IReadOnlyList<RunnerReconciliationAction>? ReconciliationActions = null,
     IReadOnlyList<string>? RequiredCapabilities = null,
     IReadOnlyList<string>? CanaryCapabilities = null,
-    RuntimeCapacitySettingsDto? RuntimeCapacity = null);
+    RuntimeCapacitySettingsDto? RuntimeCapacity = null,
+    ProviderModelFallback? ModelFallback = null);
+
+/// <summary>A run-scoped sibling route selected after a provider refusal.</summary>
+public sealed record ProviderModelFallback(
+    string From,
+    string To,
+    string Reason,
+    string CliType,
+    string? ThinkingLevel,
+    bool CardPinned = false);
+
+/// <summary>Safe daily fleet rollup of provider request refusals.</summary>
+public sealed record ProviderRejectionDailyCountDto(
+    string Day,
+    string Model,
+    int Count,
+    IReadOnlyList<string> Refusals);
 
 public sealed record LeaseDto(
     string LeaseId,

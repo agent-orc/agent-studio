@@ -8,6 +8,7 @@ public enum ProviderAccessEvidenceKind
     Authenticated,
     AuthenticationFailure,
     RateLimited,
+    RequestRejected,
     TransientFailure,
     IndeterminateFailure,
 }
@@ -101,6 +102,13 @@ public static partial class ProviderAccessClassifier
     {
         var text = string.Join('\n', new[] { stdout, stderr }
             .Where(value => !string.IsNullOrWhiteSpace(value)));
+
+        if (ProviderRequestRejectionClassifier.TryClassify(text, out var rejection))
+        {
+            return new ProviderAccessEvidence(
+                ProviderAccessEvidenceKind.RequestRejected,
+                rejection.Message);
+        }
 
         if (Contains(text, RateLimitSignals) || Http429Regex().IsMatch(text))
         {

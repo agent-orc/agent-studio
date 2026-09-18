@@ -72,6 +72,12 @@ async function stubBackgroundApis(page: Page) {
   ]));
   await page.route('**/api/v1/management/remote-hosts', json([]));
   await page.route('**/api/v1/management/links', json([]));
+  await page.route('**/api/v1/management/provider-refusals?days=14', json([{
+    day: '2026-09-18',
+    model: 'gpt-6-astra',
+    count: 2,
+    refusals: ['unsupported_parameter access_programs.cyber'],
+  }]));
   await page.route('**/api/clients/*/telemetry?window=*', json({ clientId: 'mock', window: '14d', points: [{
     timestamp: now, cpuPercent: 7, load1: 0.1, load5: 0.1, load15: 0.1,
     memoryUsedBytes: 4_000_000_000, memoryTotalBytes: 16_000_000_000,
@@ -1421,6 +1427,20 @@ test.describe('Execution Hosts settings section', () => {
     await remote.getByTestId('remote-host-action-setup').click();
     await expect(page.getByTestId('runner-setup-dialog')).toBeVisible();
     await page.screenshot({ path: join(SHOT_DIR, 'remote-host-runner-setup-light--mocked.png'), fullPage: false });
+  });
+
+  test('shows daily provider refusals in both themes', async ({ page }) => {
+    await page.goto('/#/workspace/settings/remote-hosts');
+    const summary = page.getByTestId('provider-refusal-summary');
+    await expect(summary).toContainText('gpt-6-astra');
+    await expect(summary).toContainText('unsupported_parameter access_programs.cyber');
+    mkdirSync(SHOT_DIR, { recursive: true });
+    for (const theme of ['dark', 'light'] as const) {
+      await setTheme(page, theme);
+      await summary.screenshot({
+        path: join(SHOT_DIR, `provider-request-refusals-${theme}--mocked.png`),
+      });
+    }
   });
 
   test('never renders stale CPU as live and captures dark-theme evidence', async ({ page }) => {

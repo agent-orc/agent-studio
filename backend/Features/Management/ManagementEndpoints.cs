@@ -27,6 +27,16 @@ public static class ManagementEndpoints
             if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
             return Results.Ok(registry.ListCapabilitySnapshots());
         });
+        group.MapGet("/provider-refusals", (
+            HttpContext context,
+            int? days,
+            ProviderRejectionFleetService refusals,
+            IConfiguration configuration) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
+            return Results.Ok(refusals.Snapshot(days ?? 14));
+        });
         group.MapGet("/links", (
             HttpContext context,
             LinkSupervisor links,

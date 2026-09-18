@@ -1127,6 +1127,8 @@ public static class LeaseEndpoints
             OrchestratorLog orchestratorLog,
             HumanReviewEscalation humanReviewEscalation,
             RunTimeoutContinuationService timeoutContinuations,
+            ProviderRejectionContinuationService providerRejectionContinuations,
+            ModelRoutingPolicyRegistry modelRouting,
             ILoggerFactory loggerFactory,
             CancellationToken ct) =>
         {
@@ -1149,6 +1151,10 @@ public static class LeaseEndpoints
 
             var outcome = reportedOutcome.Trim().ToLowerInvariant();
             var isEpicPlanning = TaskKinds.IsEpic(task.Kind);
+            var providerRejection = req.OutcomeDecision?.Outcome
+                                    == AgentStudio.TaskServer.Contracts.ExecutionOutcomeKind.ProviderRejectedRequest
+                ? req.OutcomeDecision.ProviderRejection
+                : null;
             var targetState = outcome switch
             {
                 "done" or "noop" => TaskStates.AutoReview,
@@ -1156,6 +1162,8 @@ public static class LeaseEndpoints
                 "environmentfailure" => TaskStates.Ready,
                 _ => string.Empty,
             };
+            if (providerRejection is not null)
+                targetState = TaskStates.Escalated;
             if (targetState.Length == 0)
                 return Results.BadRequest(new RemoteRunCompletionResponse(
                     req.TaskKey, reportedOutcome, TaskStates.Progress,
@@ -1555,6 +1563,47 @@ public static class LeaseEndpoints
             var salvageBranchUrl = CredentialRedactor.Redact(req.SalvageBranchUrl);
             var salvageRecoveryBranchUrl = CredentialRedactor.Redact(req.SalvageRecoveryBranchUrl);
             var reportedReason = CredentialRedactor.Redact(req.Reason);
+            var activeModelFallback = task.PendingIntent?.ModelFallback;
+            ProviderRejectionContinuationPlan? providerRejectionPlan = null;
+            RunSalvageReference? providerRejectionSalvage = null;
+            var providerRejectionModel = req.OutcomeDecision?.RawFacts.EffectiveModel?.Trim();
+            var providerRejectionThinking = req.OutcomeDecision?.RawFacts.EffectiveThinkingLevel?.Trim();
+            if (providerRejection is not null)
+            {
+                var effectiveCli = req.OutcomeDecision?.RawFacts.EffectiveCliType;
+                providerRejectionModel = string.IsNullOrWhiteSpace(providerRejectionModel)
+                    ? activeModelFallback?.To ?? task.Model
+                    : providerRejectionModel;
+                providerRejectionThinking = string.IsNullOrWhiteSpace(providerRejectionThinking)
+                    ? activeModelFallback?.ThinkingLevel ?? task.ThinkingLevel
+                    : providerRejectionThinking;
+                providerRejectionSalvage = unverifiedDelivery is null
+                    ? RunSalvageReference.From(
+                        salvageBranch,
+                        salvageCommitSha,
+                        req.SalvageRecoveryBranch,
+                        req.SalvageRecoveryCommitSha)
+                    : null;
+                var declaredFallback = modelRouting.ProviderRejectionFallback(effectiveCli, providerRejectionModel);
+                var promptPath = Path.Combine(task.FolderPath, "prompt.md");
+                var promptText = File.Exists(promptPath) ? File.ReadAllText(promptPath) : string.Empty;
+                var floor = modelRouting.CorrectnessFloor(task.TaskType, task.Title, promptText);
+                var meetsFloor = declaredFallback is not null
+                                 && modelRouting.RouteMeetsFloor(
+                                     declaredFallback.ToModel,
+                                     providerRejectionThinking,
+                                     floor);
+                var refusalCount = string.IsNullOrWhiteSpace(providerRejectionModel)
+                    ? 1
+                    : providerRejectionContinuations.CountRefusals(task, providerRejectionModel) + 1;
+                providerRejectionPlan = ProviderRejectionContinuationPolicy.Decide(
+                    isProviderRejection: true,
+                    hasSalvage: providerRejectionSalvage is not null,
+                    fallback: declaredFallback,
+                    fallbackMeetsFloor: meetsFloor,
+                    refusalCount: refusalCount,
+                    rejectedRunWasFallback: activeModelFallback is not null);
+            }
             var details = new Dictionary<string, string>
             {
                 ["cli"] = "remote-runner",
@@ -1605,6 +1654,24 @@ public static class LeaseEndpoints
                 details["commitAttributionWarning"] = attributionWarning;
             if (!string.IsNullOrWhiteSpace(reportedReason))
                 details["reason"] = reportedReason;
+            if (providerRejection is not null)
+            {
+                details["typedOutcome"] = AgentStudio.TaskServer.Contracts.ExecutionOutcomeKind.ProviderRejectedRequest.ToString();
+                details["providerRejectionCode"] = providerRejection.Code ?? string.Empty;
+                details["providerRejectionParam"] = providerRejection.Parameter ?? string.Empty;
+                details["providerRejectionMessage"] = providerRejection.Message;
+                details["providerRejectionModel"] = providerRejectionModel ?? string.Empty;
+                details["refusalDay"] = DateTime.UtcNow.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+                if (providerRejectionPlan?.Fallback is { } fallback)
+                {
+                    details["modelFallback"] = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        from = fallback.FromModel,
+                        to = fallback.ToModel,
+                        reason = fallback.Reason,
+                    });
+                }
+            }
             if (deliveryFailure is not null)
             {
                 details["deliveryStatus"] = RemoteDeliveryFailurePolicy.DeliveryFailed;
@@ -1696,11 +1763,16 @@ public static class LeaseEndpoints
                 evt.Details is not null
                 && evt.Details.TryGetValue("idempotencyKey", out var recordedKey)
                 && string.Equals(recordedKey, completionKey, StringComparison.Ordinal));
+            var runSummary = providerRejection is not null
+                             && providerRejectionPlan?.Action == ProviderRejectionContinuationAction.StartContinuation
+                             && providerRejectionPlan.Fallback is { } summaryFallback
+                ? $"Provider refused the request ({ProviderRejectionContinuationPolicy.Describe(providerRejection)}); continued on {summaryFallback.ToModel}."
+                : $"remote run {outcome} on {source}";
             if (!timelineAlreadyRecorded && !timeline.Append(
                     task.FolderPath,
                     TimelineEventKinds.AgentRunFinished,
                     TimelineActors.Agent,
-                    summary: $"remote run {outcome} on {source}",
+                    summary: runSummary,
                     runId: attemptId,
                     details: details))
             {
@@ -1715,6 +1787,12 @@ public static class LeaseEndpoints
                 req.FencingToken,
                 epoch,
                 $"lane-completion:{completionKey}");
+
+            // A remote claim reads the run-scoped fallback from the pending
+            // intent. Once that run settles, remove both pending and consumed
+            // forms so a later round returns to the card's own route.
+            if (activeModelFallback is not null)
+                mutations.DiscardPendingIntent(task.FolderPath);
 
             if (claimFailure is not null)
             {
@@ -1878,6 +1956,86 @@ public static class LeaseEndpoints
 
             if (targetState == TaskStates.Escalated)
             {
+                if (providerRejection is not null && providerRejectionPlan is not null)
+                {
+                    if (providerRejectionPlan.Action == ProviderRejectionContinuationAction.StartContinuation
+                        && providerRejectionPlan.Fallback is { } fallback
+                        && providerRejectionSalvage is not null)
+                    {
+                        var continuation = await providerRejectionContinuations.StartAsync(
+                            task,
+                            providerRejectionSalvage,
+                            fallback,
+                            providerRejection,
+                            providerRejectionThinking ?? task.ThinkingLevel ?? "medium",
+                            providerRejectionPlan.PinCard,
+                            attemptId,
+                            laneWrite,
+                            ct);
+                        if (continuation.Started)
+                        {
+                            orchestratorLog.Append(task.WatchPath, new OrchestratorLogEntry
+                            {
+                                Kind = OrchestratorLogKinds.Decision,
+                                Topic = ProviderRejectionContinuationPolicy.ContinuationReason,
+                                JobId = task.Id,
+                                Summary = continuation.Reason,
+                                Reasoning = fallback.Reason,
+                            });
+                            return Results.Ok(new RemoteRunCompletionResponse(
+                                req.TaskKey,
+                                responseOutcome,
+                                TaskStates.Ready,
+                                continuation.Reason,
+                                RunAttemptId: attemptId));
+                        }
+                        providerRejectionPlan = providerRejectionPlan with
+                        {
+                            Action = ProviderRejectionContinuationAction.Escalate,
+                            Reason = continuation.Reason,
+                        };
+                        task = scanner.FindJob(task.Id, task.WatchPath) ?? task;
+                    }
+
+                    var rejectionReason = ProviderRejectionContinuationPolicy.ComposeEscalationReason(
+                        providerRejection,
+                        providerRejectionPlan.Reason);
+                    var rejected = await humanReviewEscalation.EscalateAsync(
+                        task.Id,
+                        task.WatchPath,
+                        task.ProjectName,
+                        HumanReviewEscalationCategories.ProviderRejectedRequest,
+                        rejectionReason,
+                        ct,
+                        laneWrite);
+                    if (rejected.Status != MoveJobStatus.Success)
+                        return Results.Conflict(new RemoteRunCompletionResponse(
+                            req.TaskKey,
+                            responseOutcome,
+                            task.State,
+                            $"Provider-refusal escalation lane move refused: {rejected.Status} {rejected.Message}",
+                            RunAttemptId: attemptId));
+                    timeline.Append(
+                        rejected.NewFolderPath ?? task.FolderPath,
+                        TimelineEventKinds.OrchestratorEscalated,
+                        TimelineActors.System,
+                        rejectionReason,
+                        runId: attemptId,
+                        details: new Dictionary<string, string>
+                        {
+                            ["category"] = HumanReviewEscalationCategories.ProviderRejectedRequest,
+                            ["providerCode"] = providerRejection.Code ?? string.Empty,
+                            ["providerParam"] = providerRejection.Parameter ?? string.Empty,
+                            ["providerModel"] = providerRejectionModel ?? string.Empty,
+                        });
+                    return Results.Ok(new RemoteRunCompletionResponse(
+                        req.TaskKey,
+                        responseOutcome,
+                        TaskStates.Escalated,
+                        rejectionReason,
+                        RunAttemptId: attemptId));
+                }
+
                 // AGT-2861: a run that ended without a recognized terminal
                 // outcome but transferred a salvage commit already produced a
                 // delivery; it only lacks its finishing round. One bounded
@@ -2241,12 +2399,16 @@ public static class LeaseEndpoints
         var projectSettings = settings.Get(task.ProjectName);
         var isEpicPlanning = TaskKinds.IsEpic(task.Kind);
 
+        var pendingFallback = task.PendingIntent?.ModelFallback;
         var model = isEpicPlanning && !string.IsNullOrWhiteSpace(projectSettings.EpicPlanningModel)
             ? projectSettings.EpicPlanningModel
-            : admissionPlan?.Model ?? task.Model;
+            : pendingFallback?.To ?? admissionPlan?.Model ?? task.Model;
         var thinkingLevel = isEpicPlanning && projectSettings.EpicPlanningThinkingLevel is not null
             ? projectSettings.EpicPlanningThinkingLevel
-            : admissionPlan?.ThinkingLevel ?? task.ThinkingLevel;
+            : pendingFallback?.ThinkingLevel ?? admissionPlan?.ThinkingLevel ?? task.ThinkingLevel;
+
+        if (!string.IsNullOrWhiteSpace(pendingFallback?.CliType))
+            cliType = CliTypes.Normalize(pendingFallback.CliType);
 
         model = string.IsNullOrWhiteSpace(model) ? null : model.Trim();
         // Resolve the requested rung against what this CLI + model can actually
