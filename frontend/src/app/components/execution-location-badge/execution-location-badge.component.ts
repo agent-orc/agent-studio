@@ -14,7 +14,10 @@ export class ExecutionLocationBadgeComponent {
   readonly execution = input<TaskExecutionLocation | null | undefined>(null);
   readonly compact = input(true);
   readonly visible = computed(() => this.execution()?.state !== 'no-active-execution');
-  readonly acute = computed(() => this.execution()?.state === 'remote-disconnected' && !this.execution()?.historical);
+  readonly acute = computed(() => {
+    const state = this.execution()?.state;
+    return (state === 'remote-disconnected' || state === 'remote-stale') && !this.execution()?.historical;
+  });
   readonly label = computed(() => {
     const value = this.execution();
     if (!value) return '';
@@ -27,6 +30,7 @@ export class ExecutionLocationBadgeComponent {
     'local-running': 'Local running',
     'remote-running': 'Host running',
     'remote-disconnected': 'Host disconnected or stale',
+    'remote-stale': 'Host stale - nothing is driving this run',
     'queued-remote': 'Queued for host',
     'recovering': 'Recovering ownership',
     'no-active-execution': 'No active execution',
@@ -52,6 +56,7 @@ export class ExecutionLocationBadgeComponent {
       value.lastRejection
         ? `Latest rejection: Runner ${value.lastRejection.runnerName || value.lastRejection.runnerId} rejected: ${value.lastRejection.reason}`
         : null,
+      value.lastRunnerEvent ? `Last runner event: ${value.lastRunnerEvent}` : null,
       `Connection: ${value.connectionState}; lease: ${value.leaseState}`,
       `Trusted because: ${value.trustReason}`,
     ];

@@ -1178,11 +1178,24 @@ public class TaskRunnerService : BackgroundService
             var remote = localIdentity is null
                 || !string.Equals(lease.RunnerId, localIdentity.RunnerId, StringComparison.OrdinalIgnoreCase);
             var heartbeat = lease.LastHeartbeatAt;
-            var stale = inspection.State != "active" || now - heartbeat > TimeSpan.FromSeconds(75);
+            // AGT-2869: a heartbeat that stopped before its own lease ran out is
+            // a phantom, not a blip. The pure policy makes that the only place
+            // the distinction is decided.
+            var liveness = AgentStudio.Shared.RemoteRunStalenessPolicy.ForLeasedRun(
+                inspection.State, heartbeat, now);
+            var remoteState = liveness switch
+            {
+                AgentStudio.Shared.RemoteRunLiveness.Running
+                    => AgentStudio.Shared.TaskExecutionStates.RemoteRunning,
+                AgentStudio.Shared.RemoteRunLiveness.Disconnected
+                    => AgentStudio.Shared.TaskExecutionStates.RemoteDisconnected,
+                _ => AgentStudio.Shared.TaskExecutionStates.RemoteStale,
+            };
+            var stale = liveness != AgentStudio.Shared.RemoteRunLiveness.Running;
             return baseProjection with
             {
                 State = remote
-                    ? stale ? AgentStudio.Shared.TaskExecutionStates.RemoteDisconnected : AgentStudio.Shared.TaskExecutionStates.RemoteRunning
+                    ? remoteState
                     : AgentStudio.Shared.TaskExecutionStates.LocalRunning,
                 ExecutionKind = remote ? "remote" : "local",
                 RunnerId = lease.RunnerId,
@@ -1194,9 +1207,18 @@ public class TaskRunnerService : BackgroundService
                 ProcessId = lease.Pid > 0 ? lease.Pid : null,
                 ConnectionState = stale ? "disconnected" : "connected",
                 LeaseState = inspection.State,
-                TrustReason = stale
-                    ? "The last fenced run lease owner is retained, but its heartbeat is stale or the lease expired."
-                    : "The task server currently holds a fenced run lease for this runner and has a recent heartbeat.",
+                LastRunnerEvent = remote
+                    ? AgentStudio.Shared.RemoteRunStalenessPolicy.DescribeLastRunnerEvent(
+                        liveness, heartbeat, Max(clientLastSeenAt, job.LastActivity))
+                    : null,
+                TrustReason = liveness switch
+                {
+                    AgentStudio.Shared.RemoteRunLiveness.Stale
+                        => "The heartbeat of this run stopped before its fenced lease ran out; no authority is driving it.",
+                    AgentStudio.Shared.RemoteRunLiveness.Disconnected
+                        => "The last fenced run lease owner is retained, but its heartbeat is stale or the lease expired.",
+                    _ => "The task server currently holds a fenced run lease for this runner and has a recent heartbeat.",
+                },
             };
         }
 
@@ -1266,12 +1288,22 @@ public class TaskRunnerService : BackgroundService
             {
                 // A remote run recovers by replaying the job folder / runner
                 // pushes - that is the normal path, never a fault. Present the
-                // configured remote runner as the owner (neutral), connected
-                // while activity is fresh and quietly reconnecting once it goes
-                // idle; never a "recovering / session-lost" warning.
+                // configured remote runner as the owner (neutral) while that
+                // replay is demonstrably arriving; never a "recovering /
+                // session-lost" warning.
+                //
+                // AGT-2869: once the replay stops, "Host running" is a lie. A
+                // runner that is sitting on an undeliverable result looks
+                // exactly like this, and an operator (or the acceptance rail)
+                // has to be able to tell it from a live run, so silence is
+                // projected as remote-stale with the last runner event named.
+                var ownerless = AgentStudio.Shared.RemoteRunStalenessPolicy.ForOwnerlessRun(
+                    freshest, now);
                 return baseProjection with
                 {
-                    State = AgentStudio.Shared.TaskExecutionStates.RemoteRunning,
+                    State = ownerless == AgentStudio.Shared.RemoteRunLiveness.Running
+                        ? AgentStudio.Shared.TaskExecutionStates.RemoteRunning
+                        : AgentStudio.Shared.TaskExecutionStates.RemoteStale,
                     ExecutionKind = "remote",
                     RunnerId = configuredRunnerId,
                     ClientId = configuredRunnerId,
@@ -1279,9 +1311,11 @@ public class TaskRunnerService : BackgroundService
                     LastActivityAt = freshest ?? baseProjection.LastActivityAt,
                     ConnectionState = recentActivity ? "connected" : "reconnecting",
                     LeaseState = "none",
+                    LastRunnerEvent = AgentStudio.Shared.RemoteRunStalenessPolicy.DescribeLastRunnerEvent(
+                        ownerless, lastHeartbeatUtc: null, freshest),
                     TrustReason = recentActivity
                         ? "No run lease is held (e.g. after a task-server restart), but the configured remote runner is still replaying fresh activity from the job folder."
-                        : "No run lease is held; waiting for the configured remote runner to resume replaying the job folder.",
+                        : "No run lease is held and the configured remote runner has stopped replaying the job folder; nothing is driving this run.",
                 };
             }
 

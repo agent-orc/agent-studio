@@ -636,6 +636,47 @@ public sealed class TaskServerClient : IDisposable
         }
     }
 
+    /// <summary>
+    /// AGT-2869: "is the Task Server answering again?" for a finalization that
+    /// is waiting to be re-driven. It probes <c>/api/system/about</c>, the route
+    /// an operator uses to identify the running build, and falls back to the
+    /// open <c>/healthz</c> route on a server that does not mount it.
+    ///
+    /// <para>
+    /// Any HTTP answer - including 401 from a server that has forgotten this
+    /// runner's registration while restarting - proves the server is back, so
+    /// only transport failures and timeouts count as unreachable. Returns
+    /// <c>null</c> when the server answered; otherwise a short reason.
+    /// </para>
+    /// </summary>
+    public async Task<string?> ProbeServerAvailableAsync(CancellationToken ct)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(HealthProbeTimeoutSeconds));
+        try
+        {
+            using var resp = await _http.GetAsync("/api/system/about", timeout.Token);
+            if (resp.StatusCode != System.Net.HttpStatusCode.NotFound) return null;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw; // a real shutdown, not an availability verdict
+        }
+        catch (OperationCanceledException)
+        {
+            return $"no response within {HealthProbeTimeoutSeconds}s";
+        }
+        catch (Exception ex)
+        {
+            return OneLine(ex.Message);
+        }
+
+        return await ProbeHealthAsync(ct);
+    }
+
+    private static string OneLine(string value)
+        => value.Replace('\r', ' ').Replace('\n', ' ').Trim();
+
     private void SetClientId(string clientId)
     {
         ClientId = clientId;

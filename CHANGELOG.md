@@ -12,6 +12,24 @@ release yet.
 
 ## [Unreleased]
 
+### Fixed
+
+- A result transfer that fails because the Task Server is restarting is now
+  retried from the persisted runner slot instead of waiting for the next daemon
+  restart. The Coding slot stays in phase `finalizing` with its retry
+  bookkeeping and the delivery it already secured, the worktree and durable
+  worker result are retained, the lease is not released, and the running
+  daemon's poll loop re-drives the same idempotent startup-reconciliation step
+  once `/api/system/about` answers again (15 s, 30 s, then every 60 s). Retries
+  do not stop at the run timeout; outliving it only adds a journal line. The
+  journal carries one line per retry with its reason and the final completion
+  names the retry count.
+- A remote run whose heartbeat is older than the lease it was renewing, or a
+  remote-routed Progress card whose job-folder replay has stopped, is projected
+  as `remote-stale` with the last runner event named, instead of continuing to
+  read as `remote-running`. An operator and the acceptance rail can now tell a
+  phantom run from a live one.
+
 ## [0.8.0] - 2026-09-18
 
 Operations release. Every detached coding and review worker on a Linux runner
