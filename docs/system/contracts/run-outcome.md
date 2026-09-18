@@ -102,7 +102,7 @@ Hard sentinel matches win over process exit code. This is load-bearing on Window
 ## Consumer Rules
 
 - Lane routing must call `RunCompletionPolicy.ShouldMoveToReview(TerminalRunOutcome)`.
-- Summary generation must enforce `ProtocolResult` after the Haiku summary is produced.
+- Summary generation must enforce `ProtocolResult` after the routed task summary is produced.
 - UI failure surfacing must use the `runOutcome` field when present and fall back to legacy `execution.status === 'failed'` only when it is absent.
 - Raw process status and exit code remain visible for diagnostics, but they do not override a terminal sentinel.
 - **UI outcome precedence.** Task detail derives one current-run presentation in `protocol-verdict.ts` with strict precedence `failed > needs-decision > unclear > succeeded`. A live run excludes stale terminal records and remains `Running`. Runner issues, terminal execution, `status.md`, Activity, pipeline, review, and lane are raw inputs, never independent head states.

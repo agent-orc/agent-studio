@@ -92,7 +92,7 @@ public class PipelineCatalogueTests
         // "Merge into Develop" step and its integration-branch push twin, the
         // automatic code-review quality-grade step, the opt-in task-spawner step,
         // final orchestrator decision, and opt-in drift dimensions.
-        Assert.Equal(34, p.Post.Count);
+        Assert.Equal(35, p.Post.Count);
         var intervention = Assert.Single(p.Post.Where(step =>
             step.Id == PipelineCatalogue.FailureInterventionStepId));
         Assert.False(intervention.DefaultEnabled);
@@ -822,7 +822,7 @@ public class PipelineCatalogueTests
         Assert.Equal(PipelineCatalogue.PreOrchestratorPrepStepId, ro.Pre[3].Id);
         Assert.Equal(PipelineCatalogue.PreReissueOpenItemsStepId, ro.Pre[4].Id);
         Assert.Equal(
-            [PipelineCatalogue.OrchestratorReviewStepId, PipelineCatalogue.OrchestratorDecisionStepId],
+            [PipelineCatalogue.SummaryStepId, PipelineCatalogue.OrchestratorReviewStepId, PipelineCatalogue.OrchestratorDecisionStepId],
             ro.Post.Select(step => step.Id));
 
         Assert.DoesNotContain(ro.AllSteps, step =>
@@ -875,6 +875,7 @@ public class PipelineCatalogueTests
         Assert.Equal(
             [
                 PipelineCatalogue.CoreAgentRunStepId,
+                PipelineCatalogue.SummaryStepId,
                 PipelineCatalogue.ConceptWorkbenchPlacementStepId,
                 PipelineCatalogue.ConceptReviewStepId,
                 PipelineCatalogue.ConceptSightReviewGateStepId,

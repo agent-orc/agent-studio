@@ -1976,8 +1976,8 @@ export class TaskService {
   }
 
   /**
-   * One-shot interim summary while a run is in flight. Calls Haiku
-   * against the live cli-output.log and returns the markdown directly;
+   * One-shot interim summary while a run is in flight. Uses the configured
+   * summary pipeline route and returns the markdown directly;
    * status.md on disk is left untouched so the post-run summary still
    * owns it. Used by the `📊 Interim status` button in the protocol pane.
    */

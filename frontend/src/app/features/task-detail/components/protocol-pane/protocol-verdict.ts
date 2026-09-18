@@ -372,7 +372,7 @@ function parseResultLine(markdown: string | null | undefined): ResultKind | null
   }
 }
 
-// Phrases that flip a Haiku "Success" verdict into a Blocked verdict when they
+// Phrases that flip a generated "Success" verdict into a Blocked verdict when they
 // appear in the Notes / Open Items / What Was Done body of status.md. Keep one
 // phrase per line so the list reads as a lint surface. EN + DE because the agent
 // log can be either.

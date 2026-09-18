@@ -98,9 +98,10 @@ describe('ProjectTokenUsagePanelComponent (pipeline cost)', () => {
         },
       ],
       steps: [
-        { stepId: 'core-agent-run', kind: 'core', totalTokens: 300_000, totalCostUsd: 0.75, anyModelUnknown: false },
-        { stepId: 'aspect-code-quality', kind: 'aspect', totalTokens: 80_000, totalCostUsd: 0.08, anyModelUnknown: false },
-        { stepId: 'post-drift-adr-code', kind: 'drift', totalTokens: 20_000, totalCostUsd: 0.04, anyModelUnknown: false },
+        { stepId: 'core-agent-run', kind: 'core', calls: 4, totalTokens: 300_000, totalCostUsd: 0.75, anyModelUnknown: false },
+        { stepId: 'aspect-code-quality', kind: 'aspect', calls: 4, totalTokens: 80_000, totalCostUsd: 0.08, anyModelUnknown: false },
+        { stepId: 'post-drift-adr-code', kind: 'drift', calls: 1, totalTokens: 20_000, totalCostUsd: 0.04, anyModelUnknown: false },
+        { stepId: 'summary', kind: 'orchestrator', calls: 3, totalTokens: 12_000, totalCostUsd: 0.15, anyModelUnknown: false },
       ],
       totalTokens: 400_000,
       totalCostUsd: 0.87,
@@ -142,6 +143,8 @@ describe('ProjectTokenUsagePanelComponent (pipeline cost)', () => {
     expect(host.querySelector('[data-testid="pipeline-cost-empty"]')).toBeNull();
     expect(host.querySelector('[data-testid="pipeline-cost-source-warning"]')?.textContent)
       .toContain('may be incomplete');
+    expect(host.querySelector('[data-testid="pipeline-cost-result-summaries"]')?.textContent)
+      .toContain('Result summaries: 3 calls, $0.15');
 
     const legend = host.querySelector('[data-testid="pipeline-cost-legend"]');
     expect(legend).toBeTruthy();

@@ -1,11 +1,11 @@
 namespace AgentStudio.Shared;
 
 /// <summary>
-/// One ad-hoc Haiku CLI call recorded outside the main task-runner path.
+/// One ad-hoc CLI call recorded outside the main task-runner path.
 /// These are the small "summarize the protocol", "extract the title",
 /// "enhance the prompt", "generate a commit message" subprocess calls
 /// that the orchestrator fires on demand. We log them to a workspace-wide
-/// JSONL so the user can see how much ambient Haiku spend the orchestrator
+/// JSONL so the user can see how much ambient model spend the orchestrator
 /// is incurring on top of the main pipeline.
 ///
 /// Schema is intentionally flat. New <see cref="Source"/> tags can be
@@ -23,8 +23,10 @@ public sealed record AdHocUsageRecord
     /// </summary>
     public string Source { get; init; } = AdHocUsageSources.Unknown;
 
-    /// <summary>Model id reported by the CLI (e.g. "claude-haiku-4-5").</summary>
+    /// <summary>Model id reported by the CLI.</summary>
     public string Model { get; init; } = "";
+    public string? CliType { get; init; }
+    public string? ThinkingLevel { get; init; }
 
     public int InputTokens { get; init; }
     public int OutputTokens { get; init; }
@@ -42,11 +44,14 @@ public sealed record AdHocUsageRecord
 
     /// <summary>Optional job id (when the call was tied to a specific job folder).</summary>
     public string? JobId { get; init; }
+    public string? TaskKey { get; init; }
+    public int? RunNumber { get; init; }
+    public decimal? EstimatedCostUsd { get; init; }
 }
 
 /// <summary>
 /// Stable string ids for the orchestrator code paths that fire ad-hoc
-/// Haiku calls. Adding a new caller? Add a constant here so the
+/// model calls. Adding a new caller? Add a constant here so the
 /// frontend's per-source breakdown stays consistent.
 /// </summary>
 public static class AdHocUsageSources

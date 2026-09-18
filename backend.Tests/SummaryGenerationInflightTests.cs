@@ -6,9 +6,9 @@ namespace AgentStudio.Tests;
 
 /// <summary>
 /// Locks the inflight-guard rule so two concurrent summary calls for the
-/// same job cannot fire two Haiku subprocesses against the same status.md.
+/// same job cannot fire two one-shot processes against the same status.md.
 /// The bug this guards against was visible as the protocol-pane "Generating
-/// protocol..." spinner stalling for the full HaikuTimeoutSeconds window
+/// protocol..." spinner stalling for the full summary timeout window
 /// while a stale call held the slot.
 /// </summary>
 public class SummaryGenerationInflightTests

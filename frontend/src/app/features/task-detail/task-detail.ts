@@ -619,7 +619,7 @@ export class TaskDetailComponent implements OnDestroy {
   }
 
   /**
-   * Re-run the Haiku summary for the current job. The backend writes status.md
+   * Re-run the task-level Result summary for the current job. The backend writes status.md
    * and flips summaryState through generating → ready/failed; we poll detail
    * every 2 s (via fileSaved → parent re-fetch) so the UI follows the
    * transition. The detailEffect stops the timer once the status leaves
@@ -646,7 +646,7 @@ export class TaskDetailComponent implements OnDestroy {
   private startRegenPolling(): void {
     this.stopRegenPolling(false);
     this.regenPollTimer = setInterval(() => {
-      // Hard cap: Haiku itself times out at 90 s; give a bit of slack for
+      // Hard cap: the summary call times out at 90 s; give a bit of slack for
       // process spawn + status file flush.
       if (Date.now() - this.regenStartedAt > 120_000) {
         this.stopRegenPolling();
