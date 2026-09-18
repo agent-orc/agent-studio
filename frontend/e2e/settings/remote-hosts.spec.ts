@@ -244,6 +244,20 @@ async function stubGroupedHostApis(page: Page) {
           memoryUsedBytes: 8_000_000_000,
           memoryTotalBytes: 16_000_000_000,
           cpuCores: 8,
+          reviewPlane: {
+            observedAt: observed,
+            cpuMax: '400000 100000',
+            planeCpuCores: 4,
+            cpuQuotaPercent: 400,
+            hostCores: 12,
+            workerEnvelopeCores: 2.4,
+            workerEnvelopeCpuQuotaPercent: 480,
+            currentCeiling: 2,
+            rollingReviewDurationSeconds: 2453,
+            throttledShare: 0.34,
+            sustainedThrottling: true,
+            alarmSuggestion: 'Raise the review role quota or lower the review ceiling.',
+          },
         },
         roleMaxParallelism: 6,
         effectiveMaxParallelism: null,
@@ -402,6 +416,24 @@ test.describe('Execution Hosts settings section', () => {
     await page.screenshot({ path: join(SHOT_DIR, 'execution-hosts-after-narrow-light--mocked.png'), fullPage: false });
     await setTheme(page, 'dark');
     await page.screenshot({ path: join(SHOT_DIR, 'execution-hosts-after-narrow-dark--mocked.png'), fullPage: false });
+  });
+
+  test('shows the review plane quota, adopted ceiling, throttling, and remediation alarm', async ({ page, devBackend: _devBackend }) => {
+    void _devBackend;
+    await stubGroupedHostApis(page);
+    await page.goto('/#/workspace/settings/execution-hosts');
+
+    const review = page.getByTestId('remote-host-role-row').filter({ hasText: 'Review' });
+    await expect(review.getByTestId('remote-host-review-plane'))
+      .toContainText('quota 400% · ceiling 2 · throttled 34%');
+    await expect(review.getByTestId('remote-host-review-throttled-share')).toHaveText('34%');
+    await expect(review.getByTestId('remote-host-review-plane-alarm'))
+      .toContainText('Raise the review role quota or lower the review ceiling.');
+
+    await setTheme(page, 'light');
+    await page.screenshot({ path: join(SHOT_DIR, 'execution-hosts-review-plane-light--mocked.png'), fullPage: false });
+    await setTheme(page, 'dark');
+    await page.screenshot({ path: join(SHOT_DIR, 'execution-hosts-review-plane-dark--mocked.png'), fullPage: false });
   });
 
   test('expanded machine starts with compact section summaries and reveals one section at a time', async ({ page, devBackend: _devBackend }) => {

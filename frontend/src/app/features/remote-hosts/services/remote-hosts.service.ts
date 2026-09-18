@@ -193,6 +193,7 @@ export class RemoteHostsService {
               && now - lastSeenMs <= RemoteHostsService.DEGRADED_CLIENT_MS;
             const capabilityDegraded = snapshot.capabilities.some(capability =>
               !capability.isFresh || capability.healthState !== 'healthy' || capability.advertisedStatus !== 'ready');
+            const reviewPlaneAlarm = snapshot.telemetry?.reviewPlane?.sustainedThrottling === true;
             const hostDraining = snapshot.hostAdmission.admissionState !== 'open';
             const telemetryAt = snapshot.telemetry ? Date.parse(snapshot.telemetry.observedAt) : Number.NaN;
             const telemetryFresh = snapshot.telemetry && Number.isFinite(telemetryAt)
@@ -204,7 +205,9 @@ export class RemoteHostsService {
               ? 'draining'
               : !heartbeatFresh
                 ? current.status
-                : capabilityDegraded ? 'degraded' : current.status === 'offline' ? 'online' : current.status;
+                : capabilityDegraded || reviewPlaneAlarm
+                  ? 'degraded'
+                  : current.status === 'offline' ? 'online' : current.status;
             const stats = telemetryFresh && snapshot.telemetry
               ? telemetryStats(snapshot.telemetry)
               : status === 'offline' ? null : current.stats;
@@ -246,6 +249,9 @@ export class RemoteHostsService {
                 snapshot.roleMaxParallelism !== undefined
                   ? snapshot.roleMaxParallelism
                   : current.roleMaxParallelism ?? null,
+              reviewPlane: snapshot.telemetry
+                ? snapshot.telemetry.reviewPlane ?? null
+                : current.reviewPlane ?? null,
               restartedAt: snapshot.restartedAt ?? null,
               reviewsLost: snapshot.reviewsLost ?? 0,
               installedClis: snapshot.installedClis ?? current.installedClis ?? [],

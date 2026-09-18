@@ -19,20 +19,29 @@ public static class ReviewSlotAdmissionPolicy
         int activeSlots,
         int slotCeiling,
         double maxLoadPerCore,
-        WorkerResourceEnvelope? envelope = null)
+        WorkerResourceEnvelope? envelope = null,
+        double? roleQuotaCores = null)
     {
         // AGT-2866: admission and enforcement read one budget. A centrally
         // recommended ceiling that no longer leaves a full envelope per slot is
         // clamped here rather than admitted and then throttled by the kernel,
         // and a host whose declared slot count is already oversubscribed says so
         // instead of blaming the current load.
-        var effectiveCeiling = envelope is null
+        var envelopeCeiling = envelope is null
             ? slotCeiling
-            : Math.Min(slotCeiling, WorkerResourceEnvelope.SlotCeilingForCores(envelope.HostCores));
+            : WorkerResourceEnvelope.SlotCeilingForCores(envelope.HostCores);
+        var roleQuotaCeiling = roleQuotaCores is > 0
+            ? ReviewPlaneCapacity.SupportedWorkers(roleQuotaCores.Value)
+            : slotCeiling;
+        var effectiveCeiling = Math.Min(slotCeiling, Math.Min(envelopeCeiling, roleQuotaCeiling));
         if (activeSlots >= effectiveCeiling)
             return new(
                 false,
-                effectiveCeiling == slotCeiling
+                roleQuotaCeiling < slotCeiling && roleQuotaCeiling <= envelopeCeiling
+                    ? $"slot ceiling reached ({activeSlots}/{effectiveCeiling}); role quota "
+                      + $"{roleQuotaCores:0.##} cores supports {roleQuotaCeiling} review workers "
+                      + $"at {ReviewPlaneCapacity.MinimumCoresPerReview:0.##} cores each"
+                    : effectiveCeiling == slotCeiling
                     ? $"slot ceiling reached ({activeSlots}/{slotCeiling})"
                     : $"slot ceiling reached ({activeSlots}/{effectiveCeiling}); "
                       + $"envelope budget clamped the configured ceiling {slotCeiling} "
@@ -67,4 +76,13 @@ public static class ReviewSlotAdmissionPolicy
 
     private static string Percent(double? value)
         => value is null ? "unknown" : $"{value:0.0}%";
+}
+
+public static class ReviewPlaneCapacity
+{
+    /// <summary>Minimum CPU supply required for one review worker.</summary>
+    public const double MinimumCoresPerReview = 2.0;
+
+    public static int SupportedWorkers(double planeCpuCores)
+        => (int)Math.Floor(Math.Max(0, planeCpuCores) / MinimumCoresPerReview);
 }

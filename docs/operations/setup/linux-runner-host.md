@@ -789,10 +789,21 @@ Two follow-on effects of feeding the advisor the right number:
   [Review-plane parallelism](../../system/domains/review.md#review-plane-parallelism))
   but never raise it past what the host itself claims to support.
 
-The raise/lower hysteresis itself (distinct raise/lower cooldowns, sustained-
-empty-before-lower, one step at a time, `AdaptiveReviewParallelismPolicy.SanctionedMax`
-of 6) is unchanged — only the backlog number it is evaluated against, and the
-one runtime baseline-adoption exception above, are new.
+The raise/lower hysteresis also reads the review plane budget advertised by the
+review daemon. A review worker requires at least **2 CPU cores** of role quota,
+so the recommendation cannot exceed
+`floor(effective role CPUQuota cores / 2)`. The daemon reads the role unit's
+`cpu.max`, not the per-worker child cgroup, and reports the raw value, effective
+plane cores, host cores, per-worker envelope, current ceiling, rolling duration
+of the last 20 completed reviews, and `throttled_usec` delta divided by wall
+time. If duration grows by more than 25% after a raise while throttled share is
+at least 10%, the advisor withdraws the raise. The runner repeats the role-quota
+clamp before every claim, so a stale or mis-set central ceiling cannot overbook
+the unit.
+
+Execution Hosts shows the review role's quota, adopted ceiling, and throttled
+share. Two consecutive samples at or above 10% raise the existing degraded-host
+alarm with the remediation: raise the review role quota or lower the ceiling.
 
 Recommended per-CLI headless defaults (verify against your installed version):
 
@@ -849,6 +860,16 @@ of replacing it.
 | `cpu.max` | cores per slot x `RUNNER_WORKER_CPU_BURST`, at least 1 core, never more than the host | `600000 100000` (600%) |
 | `cpu.weight` | 100 for every worker; the `daemon/` leaf gets 1000 | 100 |
 | `pids.max` | cores per slot x 512, clamped to 1024..4096 (counts threads; a fork bomb fuse, not a throttle) | 1536 |
+
+The role aggregate and worker envelope solve different problems. On the
+12-core reference host with 2 coding and 2 review slots, onboarding derives the
+review role quota as `12 * 2 / (2 + 2) = 6` cores, or `CPUQuota=600%`. The
+worker fair share remains 3 cores and its unchanged 2.0 burst envelope remains
+`CPUQuota=600%` per worker. The review slot ceiling is therefore at most
+`floor(6 / 2) = 3`. Coding retains `CPUWeight=100` versus Review's 30 and the
+review derived default is capped below the whole host. An operator profile can
+override the quota after measurement, but cannot change the 2-core admission
+floor or the per-worker envelope sizing.
 
 `RUNNER_HOST_CODING_SLOTS` and `RUNNER_HOST_REVIEW_SLOTS` are host facts, not
 role facts: both roles read both numbers, so a coding worker and a review worker

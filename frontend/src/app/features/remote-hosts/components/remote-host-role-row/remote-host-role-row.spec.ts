@@ -93,4 +93,30 @@ describe('RemoteHostRoleRowComponent', () => {
     expect(restart?.textContent).toContain('Restarted at');
     expect(restart?.textContent).toContain('6 reviews lost');
   });
+
+  it('shows review plane quota, ceiling, throttled share, and sustained alarm advice', () => {
+    TestBed.configureTestingModule({
+      imports: [RemoteHostRoleRowComponent],
+      providers: [provideZonelessChangeDetection()],
+    });
+    const fixture = TestBed.createComponent(RemoteHostRoleRowComponent);
+    fixture.componentRef.setInput('host', {
+      ...ROLE,
+      roleMaxParallelism: 2,
+      reviewPlane: {
+        observedAt: '2026-09-18T14:00:00Z', cpuMax: '400000 100000',
+        planeCpuCores: 4, cpuQuotaPercent: 400, hostCores: 12,
+        workerEnvelopeCores: 2.4, workerEnvelopeCpuQuotaPercent: 480,
+        currentCeiling: 2, rollingReviewDurationSeconds: 2453,
+        throttledShare: 0.34, sustainedThrottling: true,
+        alarmSuggestion: 'Raise the review role quota or lower the review ceiling.',
+      },
+    });
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('[data-testid="remote-host-review-plane"]')?.textContent)
+      .toContain('quota 400% · ceiling 2 · throttled 34%');
+    expect(fixture.nativeElement.querySelector('[data-testid="remote-host-review-plane-alarm"]')?.textContent)
+      .toContain('Raise the review role quota or lower the review ceiling.');
+  });
 });
