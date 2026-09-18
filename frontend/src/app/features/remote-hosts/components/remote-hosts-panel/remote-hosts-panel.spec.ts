@@ -85,6 +85,96 @@ describe('RemoteHostsPanelComponent', () => {
     fixture.destroy();
   });
 
+  /**
+   * AGT-2826: the release column has to answer "is this host running what
+   * Stable runs?" without the operator reading a host symlink. The Stable
+   * version sits in the header and every role row carries its own release plus
+   * the age it lags.
+   */
+  it('shows the Stable release and marks each role that lags it', async () => {
+    await TestBed.configureTestingModule({
+      imports: [RemoteHostsPanelComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    }).compileComponents();
+    const service = TestBed.inject(RemoteHostsService);
+    service.stableRelease.set({ version: '0.3.0', commit: 'aaaaaaa1111', builtAt: '2026-09-11T08:00:00Z' });
+    service.hosts.set([
+      {
+        id: 'agent-runner-01', name: 'agent-runner-01', role: 'remote', serviceRole: 'coding',
+        address: null, clientId: 'agent-runner-01', capacityHostId: 'agent-runner-01',
+        status: 'online', os: 'Linux', lastHeartbeatAt: '2026-09-15T11:59:00Z', uptimeLabel: null,
+        capabilities: [], cliQuotas: [], stats: null, liveDataState: 'ready',
+        releaseId: 'agt-host-20260823T060000Z-bbbbbbb',
+        release: {
+          releaseId: 'agt-host-20260823T060000Z-bbbbbbb', version: '0.2.7',
+          commit: 'bbbbbbb2222', builtAt: '2026-08-23T06:00:00Z',
+        },
+        releaseDrift: {
+          runnerId: 'agent-runner-01', name: 'agent-runner-01', hostId: 'agent-runner-01',
+          role: 'coding', state: 'behind', behindByHours: 458, behindForHours: 458,
+          alarmDue: true, heartbeatStale: false, lastSeenAt: '2026-09-15T11:59:00Z',
+          reason: 'The host build is 19d 2h older than the Stable build.',
+          release: {
+            releaseId: 'agt-host-20260823T060000Z-bbbbbbb', version: '0.2.7',
+            commit: 'bbbbbbb2222', builtAt: '2026-08-23T06:00:00Z',
+          },
+        },
+      },
+      {
+        id: 'agent-runner-01-review', name: 'agent-runner-01-review', role: 'remote', serviceRole: 'review',
+        address: null, clientId: 'agent-runner-01-review', capacityHostId: 'agent-runner-01',
+        status: 'online', os: 'Linux', lastHeartbeatAt: '2026-09-15T12:00:00Z', uptimeLabel: null,
+        capabilities: [], cliQuotas: [], stats: null, liveDataState: 'ready',
+        releaseId: 'agt-host-20260911T080000Z-ccccccc',
+        release: {
+          releaseId: 'agt-host-20260911T080000Z-ccccccc', version: '0.3.0',
+          commit: 'ccccccc3333', builtAt: '2026-09-11T08:00:00Z',
+        },
+        releaseDrift: {
+          runnerId: 'agent-runner-01-review', name: 'agent-runner-01-review', hostId: 'agent-runner-01',
+          role: 'review', state: 'current', behindByHours: null, behindForHours: null,
+          alarmDue: false, heartbeatStale: false, lastSeenAt: '2026-09-15T12:00:00Z',
+          reason: 'The host runs the Stable release.',
+          release: {
+            releaseId: 'agt-host-20260911T080000Z-ccccccc', version: '0.3.0',
+            commit: 'ccccccc3333', builtAt: '2026-09-11T08:00:00Z',
+          },
+        },
+      },
+    ]);
+
+    const fixture = TestBed.createComponent(RemoteHostsPanelComponent);
+    fixture.detectChanges();
+    const el: HTMLElement = fixture.nativeElement;
+
+    expect(el.querySelector('[data-testid="remote-hosts-stable-release"]')?.textContent)
+      .toContain('Stable 0.3.0');
+    expect(el.querySelector('[data-testid="remote-hosts-release-behind"]')?.textContent)
+      .toContain('1');
+
+    const roleRelease = el.querySelector('[data-testid="remote-host-role-release"]');
+    expect(roleRelease?.textContent).toContain('0.2.7');
+    const marker = roleRelease?.querySelector('[data-testid="remote-host-role-release-drift"]');
+    expect(marker?.textContent?.trim()).toBe('19d behind');
+    expect(marker?.getAttribute('data-tone')).toBe('warn');
+    expect(roleRelease?.getAttribute('title')).toContain('Stable runs 0.3.0');
+
+    // The newer review role is current, but the aggregate must take the complete
+    // release identity and warning from the stale coding role (R3).
+    const machineRelease = el.querySelector('[data-testid="remote-host-release"]');
+    expect(machineRelease?.textContent).toContain('0.2.7');
+    expect(machineRelease?.textContent).not.toContain('0.3.0');
+    expect(machineRelease?.querySelector('[data-testid="remote-host-release-drift"]')?.textContent?.trim())
+      .toBe('19d behind');
+
+    fixture.destroy();
+  });
+
   it('renders the corrupt identity recovery diagnostic', async () => {
     await TestBed.configureTestingModule({
       imports: [RemoteHostsPanelComponent],

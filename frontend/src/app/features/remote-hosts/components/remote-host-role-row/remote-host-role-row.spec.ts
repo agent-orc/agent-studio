@@ -31,6 +31,25 @@ const RETIRED_ROLE: RemoteHost = {
 };
 
 describe('RemoteHostRoleRowComponent', () => {
+  it('shows the role release id and a short, copyable commit beside the version', () => {
+    TestBed.configureTestingModule({
+      imports: [RemoteHostRoleRowComponent],
+      providers: [provideZonelessChangeDetection()],
+    });
+    const fixture = TestBed.createComponent(RemoteHostRoleRowComponent);
+    fixture.componentRef.setInput('host', {
+      ...ROLE,
+      release: { releaseId: 'agt-review-20260911', version: '0.3.0', commit: 'abcdef1234567890' },
+    });
+    fixture.detectChanges();
+    const row = fixture.nativeElement.querySelector('[data-testid="remote-host-role-release"]');
+    expect(row.textContent).toContain('0.3.0');
+    expect(row.textContent).toContain('agt-review-20260911');
+    const commit = row.querySelector('[data-testid="remote-host-role-release-commit"]');
+    expect(commit?.textContent).toContain('abcdef1');
+    expect(commit?.getAttribute('aria-label')).toBe('Copy release commit abcdef1234567890');
+  });
+
   it('offers Delete next to Revive for a retired role, and emits delete', () => {
     TestBed.configureTestingModule({
       imports: [RemoteHostRoleRowComponent],

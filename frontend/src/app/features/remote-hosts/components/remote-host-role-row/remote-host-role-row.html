@@ -1,14 +1,16 @@
 @let h = host();
 
 <td class="role__name-cell">
-  <span class="role__branch" aria-hidden="true">↳</span>
-  <strong data-testid="remote-host-role-label">{{ roleLabel() }}</strong>
-  <span class="role__identity" data-testid="remote-host-role-name">{{ h.name }}</span>
-  @if (h.restartedAt) {
-    <span class="role__restart" data-testid="remote-host-role-restart">
-      Restarted at {{ h.restartedAt | date:'short' }}, {{ h.reviewsLost ?? 0 }} reviews lost
-    </span>
-  }
+  <span class="role__name-layout">
+    <span class="role__branch" aria-hidden="true">↳</span>
+    <strong data-testid="remote-host-role-label">{{ roleLabel() }}</strong>
+    <span class="role__identity" data-testid="remote-host-role-name">{{ h.name }}</span>
+    @if (h.restartedAt) {
+      <span class="role__restart" data-testid="remote-host-role-restart">
+        Restarted at {{ h.restartedAt | date:'short' }}, {{ h.reviewsLost ?? 0 }} reviews lost
+      </span>
+    }
+  </span>
 </td>
 <td>
   <span class="role__status" data-testid="remote-host-role-status">
@@ -28,7 +30,10 @@
 </td>
 <td class="role__load"><span class="role__placeholder" title="Reported once per machine">–</span></td>
 <td class="role__activity"><span class="role__placeholder" title="Reported once per machine">–</span></td>
-<td class="role__release"><span class="role__placeholder" title="Reported once per machine">–</span></td>
+<td class="role__release" data-testid="remote-host-role-release" [attr.title]="releaseTooltip()">
+  <app-host-release-identity [host]="h" [stableRelease]="stableRelease()"
+    testIdPrefix="remote-host-role-release" [showIdentity]="true" />
+</td>
 <td class="role__actions">
   <div class="role__actions-wide">
     @if (retired()) {

@@ -7,13 +7,15 @@ import {
   type HostActionKind,
   type RemoteHost,
 } from '../../models/remote-host.model';
+import { releaseDriftTooltip, type StableReleaseIdentity } from '../../models/host-release-drift';
+import { HostReleaseIdentityComponent } from '../host-release-identity/host-release-identity';
 
 /** One runner process role nested below its advertised physical machine. */
 @Component({
   // eslint-disable-next-line @angular-eslint/component-selector -- Native table semantics require a tr host.
   selector: 'tr[appRemoteHostRoleRow]',
   standalone: true,
-  imports: [DatePipe],
+  imports: [DatePipe, HostReleaseIdentityComponent],
   templateUrl: './remote-host-role-row.html',
   styleUrl: './remote-host-role-row.scss',
   host: {
@@ -28,6 +30,8 @@ export class RemoteHostRoleRowComponent {
   readonly host = input.required<RemoteHost>();
   readonly activeSlots = input(0);
   readonly now = input(Date.now());
+  /** The release this role is measured against; null until it is loaded. */
+  readonly stableRelease = input<StableReleaseIdentity | null>(null);
   readonly action = output<{ kind: HostActionKind; id: string }>();
 
   readonly retired = computed(() => this.host().status === 'retired');
@@ -40,6 +44,10 @@ export class RemoteHostRoleRowComponent {
   readonly slotTotal = computed(() => roleSlotTotal(this.host()));
   readonly linkLabel = computed(() => runnerLinkLabel(this.host(), this.now()));
   readonly linkTooltip = computed(() => runnerLinkTooltip(this.host()));
+  readonly releaseTooltip = computed(() =>
+    releaseDriftTooltip(this.host().releaseDrift, this.stableRelease())
+    ?? this.host().releaseId
+    ?? null);
 
   emit(kind: HostActionKind): void {
     if (this.host().busyAction) return;
