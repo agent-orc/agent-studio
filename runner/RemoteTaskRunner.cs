@@ -1519,7 +1519,10 @@ public sealed class RemoteTaskRunner
             .Select(upload => upload.Path.Replace('\\', '/'))
             .OrderBy(path => path, StringComparer.Ordinal)
             .ToList();
-        var acknowledged = response.Files
+        // A server that omits the list entirely acknowledged nothing, which is a
+        // mismatch for any non-empty upload rather than a NullReferenceException
+        // inside the validation that exists to report exactly that.
+        var acknowledged = (response.Files ?? [])
             .Select(path => path.Replace('\\', '/'))
             .OrderBy(path => path, StringComparer.Ordinal)
             .ToList();

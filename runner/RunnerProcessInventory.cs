@@ -169,11 +169,13 @@ public sealed class RunnerProcessInventoryTracker
         return info.LinkTarget;
     }
 
+    /// <summary>
+    /// AGT-2870: the pid comes from a registration that may have been recorded
+    /// before the process existed, so the shared guard refuses the broadcast pids
+    /// rather than handing them to the runtime, which admits them.
+    /// </summary>
     private static void KillProcessTree(int pid)
-    {
-        using var process = Process.GetProcessById(pid);
-        if (!process.HasExited) process.Kill(entireProcessTree: true);
-    }
+        => ProcessSignalGuard.TryKillTree(pid, $"run-inventory pid={pid}");
 
     private void Remove(string runId) => _processes.TryRemove(runId, out _);
 

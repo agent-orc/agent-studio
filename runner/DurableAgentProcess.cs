@@ -419,15 +419,24 @@ internal sealed class DurableAgentProcess
         catch (JsonException) { return null; } // atomic rename normally makes this unreachable
     }
 
-    public void Kill()
-    {
-        try
-        {
-            using var process = Process.GetProcessById(ProcessId);
-            if (!process.HasExited) process.Kill(entireProcessTree: true);
-        }
-        catch { /* lease loss/cancellation is already the authoritative outcome */ }
-    }
+    /// <summary>
+    /// End this worker's process tree.
+    ///
+    /// <para>AGT-2870: <see cref="Attach"/> substitutes <c>-1</c> for a slot that
+    /// never recorded a worker identity, and on Linux .NET that sentinel passes
+    /// every gate in the runtime down to <c>kill(-1, SIGKILL)</c>, which is every
+    /// process of this uid. The pid therefore goes through
+    /// <see cref="ProcessSignalGuard"/>, which refuses it below the pid floor and
+    /// proves <see cref="ProcessStartedAtUtc"/> against the live process before
+    /// signalling, so a recycled pid number is not killed in the worker's
+    /// place.</para>
+    /// </summary>
+    public void Kill(Action<string>? log = null)
+        => ProcessSignalGuard.TryKillTree(
+            ProcessId,
+            $"worker-kill worker={Path.GetFileName(_directory)}",
+            ProcessStartedAtUtc,
+            log);
 
     public static async Task<int> RunWorkerAsync(string specPath, bool shutdownBuildServers = false)
     {

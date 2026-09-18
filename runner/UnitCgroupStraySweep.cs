@@ -156,7 +156,7 @@ internal static class UnitCgroupStraySweep
         int? selfPid = null)
     {
         inspect ??= ReadProcessFacts;
-        terminate ??= Kill;
+        terminate ??= pid => Kill(pid, log);
         var now = nowUtc ?? DateTime.UtcNow;
         var self = selfPid ?? Environment.ProcessId;
 
@@ -254,26 +254,15 @@ internal static class UnitCgroupStraySweep
         }
     }
 
-    private static bool Kill(int pid)
-    {
-        try
-        {
-            using var process = Process.GetProcessById(pid);
-            // SIGKILL, because a stray found in state T (stopped) ignores every
-            // signal a stopped process may ignore. The 18.09.2026 host needed
-            // exactly that for its leftover git remote-https.
-            process.Kill(entireProcessTree: false);
-            return true;
-        }
-        catch (Exception exception) when (
-            exception is ArgumentException
-                or InvalidOperationException
-                or System.ComponentModel.Win32Exception
-                or NotSupportedException)
-        {
-            return false;
-        }
-    }
+    // SIGKILL, because a stray found in state T (stopped) ignores every signal a
+    // stopped process may ignore. The 18.09.2026 host needed exactly that for its
+    // leftover git remote-https. AGT-2870: the pid is read out of the unit's
+    // cgroup.procs, so it goes through the shared guard, which refuses the
+    // broadcast pids and this daemon's own pid and parent - the sweep runs inside
+    // the very cgroup it is emptying.
+    private static bool Kill(int pid, Action<string>? log)
+        => ProcessSignalGuard.TryKillSingle(pid, "unit-cgroup-stray", log: log);
+
 
     /// <summary>
     /// Age, command line, and working directory of a pid, from <c>/proc</c>. A

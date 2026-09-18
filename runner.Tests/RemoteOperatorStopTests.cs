@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using AgentRunner;
 using AgentStudio.TestSupport;
 using Xunit;
@@ -19,7 +20,19 @@ namespace AgentRunner.Tests;
 /// </summary>
 public sealed class RemoteOperatorStopTests : IDisposable
 {
-    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    /// <summary>
+    /// Wire options of the runner's own client: it writes enum members as
+    /// camelCase strings, so a fixture on plain web defaults cannot read the
+    /// completion back and the stop looks like a timeout instead of a mismatch.
+    /// </summary>
+    private static readonly JsonSerializerOptions Json = CreateWireJson();
+
+    private static JsonSerializerOptions CreateWireJson()
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        options.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
+        return options;
+    }
 
     private readonly string _root = Path.Combine(
         Path.GetTempPath(),
@@ -77,7 +90,21 @@ public sealed class RemoteOperatorStopTests : IDisposable
             // the runner learns about it on its next renewal, not before.
             server.RequestStop(RemoteStopReasonFollowup);
 
-            var completion = await server.Completed.Task.WaitAsync(TimeSpan.FromSeconds(90));
+            RemoteRunCompletionRequest completion;
+            try
+            {
+                completion = await server.Completed.Task.WaitAsync(TimeSpan.FromSeconds(90));
+            }
+            catch (TimeoutException)
+            {
+                // A machine-bound stop test that only says "timed out" costs a
+                // second run to learn anything, so the runner's journal goes
+                // into the failure itself.
+                throw new Xunit.Sdk.XunitException(
+                    "no completion was delivered after the operator stop. Runner journal:"
+                    + Environment.NewLine
+                    + string.Join(Environment.NewLine, logs));
+            }
 
             Assert.Equal(nameof(RunOutcomeKind.Stopped), completion.Outcome);
             Assert.Contains("stopped by an operator", completion.Reason, StringComparison.OrdinalIgnoreCase);
@@ -264,7 +291,7 @@ public sealed class RemoteOperatorStopTests : IDisposable
                     response = new LogIngestResponse(lease.TaskKey, 0);
                     break;
                 case "/api/runner/artifacts":
-                    response = new ArtifactIngestResponse(lease.TaskKey, 0, null);
+                    response = new ArtifactIngestResponse(lease.TaskKey, 0, []);
                     break;
                 case "/api/runner/completion":
                     response = await ObserveCompletionAsync(request, cancellationToken);

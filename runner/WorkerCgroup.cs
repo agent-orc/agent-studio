@@ -421,11 +421,18 @@ internal sealed class WorkerCgroup
     /// visible in the journal instead of only in a cgroup listing days
     /// later.</para>
     /// </summary>
-    internal static int ReleaseFor(string workerDirectory)
+    internal static int ReleaseFor(string workerDirectory, Action<string>? log = null)
     {
         var directory = ReadMarker(workerDirectory);
         if (directory is null) return 0;
-        var killed = KillResidents(directory);
+        // AGT-2870: the path comes from a file on disk, so it is input, not a
+        // constant. Writing cgroup.kill one level up would take the daemon and
+        // every sibling worker with it, so a marker that does not name a
+        // worker-* directory below this daemon's delegated root is refused.
+        if (!ProcessSignalGuard.MayEmptyCgroup(
+                directory, _delegationRoot, $"worker-cgroup-release worker={NameFor(workerDirectory)}", log))
+            return 0;
+        var killed = KillResidents(directory, log);
         TryRemove(directory);
         return killed;
     }
@@ -436,7 +443,7 @@ internal sealed class WorkerCgroup
     /// subtree atomically, which is the only variant a forking leftover cannot
     /// escape; older kernels fall back to a signal per pid.
     /// </summary>
-    internal static int KillResidents(string cgroupDirectory)
+    internal static int KillResidents(string cgroupDirectory, Action<string>? log = null)
     {
         var procs = Path.Combine(cgroupDirectory, "cgroup.procs");
         var residents = ReadResidentPids(procs);
@@ -444,7 +451,7 @@ internal sealed class WorkerCgroup
 
         var killSwitch = Path.Combine(cgroupDirectory, "cgroup.kill");
         if (!TryWriteValue(killSwitch, "1"))
-            foreach (var pid in residents) TryKill(pid);
+            foreach (var pid in residents) TryKill(pid, cgroupDirectory, log);
 
         // The kernel reaps asynchronously, and rmdir below refuses while the
         // cgroup is still populated. A short bounded wait keeps the directory
@@ -631,23 +638,16 @@ internal sealed class WorkerCgroup
         }
     }
 
-    private static void TryKill(int pid)
-    {
-        try
-        {
-            using var process = System.Diagnostics.Process.GetProcessById(pid);
-            process.Kill(entireProcessTree: false);
-        }
-        catch (Exception exception) when (
-            exception is ArgumentException
-                or InvalidOperationException
-                or System.ComponentModel.Win32Exception
-                or NotSupportedException)
-        {
-            // Already gone, or not ours to kill. The next generation's startup
-            // sweep sees whatever survives.
-        }
-    }
+    /// <summary>
+    /// The fallback for kernels without <c>cgroup.kill</c>: one signal per listed
+    /// member. Already gone, or not ours to kill, is not an error - the next
+    /// generation's startup sweep sees whatever survives. AGT-2870 routes it
+    /// through the shared guard so a truncated or malformed <c>cgroup.procs</c>
+    /// line cannot become a broadcast pid.
+    /// </summary>
+    private static void TryKill(int pid, string cgroupDirectory, Action<string>? log)
+        => ProcessSignalGuard.TryKillSingle(
+            pid, $"worker-cgroup-resident cgroup={Path.GetFileName(cgroupDirectory)}", log: log);
 
     private static void TryWrite(string path, string value)
     {
