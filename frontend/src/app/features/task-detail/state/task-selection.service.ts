@@ -273,9 +273,21 @@ export class TaskSelectionService {
     return true;
   }
 
-  /** Whether this selection intentionally restored an older browser-history entry. */
-  isBrowserHistorySelection(taskKey: string): boolean {
-    return this.browserHistoryTaskKey === taskKey;
+  /**
+   * Consume the one reconciliation pass granted to a browser-history restore.
+   * The restored detail may now live outside the pager's anchored lane, but
+   * that initial mismatch is navigation, not a fresh external lane change.
+   * Later changes to the same task must flow through normal reconciliation.
+   */
+  consumeBrowserHistorySelection(taskKey: string, restoredState: string): boolean {
+    if (this.browserHistoryTaskKey !== taskKey) return false;
+    this.browserHistoryTaskKey = null;
+    // The pager snapshot deliberately remains anchored to the review lane,
+    // while external-change detection now compares against the task's lane at
+    // the restored point in time. This prevents incidental effect reruns from
+    // shrinking the restored pager, yet a later state change still diverges.
+    this.triageLaneState = restoredState;
+    return true;
   }
 
   /** Select a detail already fetched by another shell surface. */
@@ -618,6 +630,7 @@ export class TaskSelectionService {
         this.detailPreview.set(null);
         this.selected.set(null);
         this.triageLaneState = null;
+        this.browserHistoryTaskKey = null;
         this.browserRouteCleared.update(value => value + 1);
       }
       this.pager.clear();
@@ -662,6 +675,7 @@ export class TaskSelectionService {
         this.detailLoading.set(false);
         this.selected.set(null);
         this.triageLaneState = null;
+        this.browserHistoryTaskKey = null;
         this.failDetailLoad(err, taskReference || legacyJobId || 'task', () => this.restoreFromUrl(fromPopState));
       },
     });

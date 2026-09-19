@@ -142,8 +142,29 @@ describe('TaskSelectionService · stable task URLs', () => {
     expect(selection.triageLaneState).toBe('5-human-review');
     expect(pager.position()).toBe(1);
     expect(pager.total()).toBe(2);
-    expect(selection.isBrowserHistorySelection(info.taskKey)).toBe(true);
+    // The restored lane mismatch is suppressed once. A later external move
+    // of the same task is no longer mistaken for the history reconciliation.
+    expect(selection.consumeBrowserHistorySelection(info.taskKey, archivedInfo.state)).toBe(true);
+    expect(selection.triageLaneState).toBe('7-archive');
+    expect(selection.consumeBrowserHistorySelection(info.taskKey, archivedInfo.state)).toBe(false);
     expect(selection.consumeTaskTabReplacement(info.taskKey)).toBe(true);
+  });
+
+  it('clears the browser-history reconciliation marker when another task is selected', () => {
+    history.replaceState(null, '', '/#/tasks/AGT-2124');
+    selection.restoreFromUrl(true);
+    http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2124')).flush(detail);
+
+    const nextInfo = {
+      ...info,
+      id: 'next-task',
+      key: 'AGT-2125',
+      displayKey: 'AGT-2125',
+      taskKey: 'C:\\private\\project::next-task',
+    } as TaskInfo;
+    selection.selectResolvedDetail({ info: nextInfo } as TaskDetail, 'replace');
+
+    expect(selection.consumeBrowserHistorySelection(info.taskKey, info.state)).toBe(false);
   });
 
   it('publishes the board snapshot before the detail request resolves', () => {

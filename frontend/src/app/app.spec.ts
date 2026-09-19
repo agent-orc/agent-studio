@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
@@ -8,6 +8,7 @@ import { App } from './app';
 import { TaskService } from './services/task.service';
 import type { TaskDetail, TaskInfo } from './models/task.model';
 import { studioTabKey } from './features/studio-shell';
+import { TaskSelectionService, TriageController } from './features/task-detail/runtime';
 import { ensureBrowserStorage } from '../testing/browser-storage';
 
 ensureBrowserStorage();
@@ -424,6 +425,69 @@ describe('App studio-tab mirror (pager reuse)', () => {
       'task:C:/watch::task-b',
     ]);
     expect(app.studioTabState.activeKey()).toBe('task:C:/watch::task-a');
+  });
+});
+
+describe('App browser-history lane reconciliation', () => {
+  afterEach(() => {
+    history.replaceState(null, '', '/');
+    TestBed.resetTestingModule();
+  });
+
+  it('suppresses the restored mismatch once, then handles a later external lane change', () => {
+    TestBed.configureTestingModule({
+      providers: [
+        App,
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    });
+    TestBed.inject(App);
+    const selection = TestBed.inject(TaskSelectionService);
+    const triage = TestBed.inject(TriageController);
+    const http = TestBed.inject(HttpTestingController);
+    const externalChange = vi.spyOn(triage, 'handleExternalLaneChange');
+    const restored = {
+      id: 'task-a',
+      key: 'AGT-2124',
+      displayKey: 'AGT-2124',
+      taskKey: 'C:/watch::task-a',
+      title: 'Task A',
+      state: '7-archive',
+      order: 1,
+      watchPath: 'C:/watch',
+      projectName: 'Project A',
+    } as TaskInfo;
+
+    selection.triageLaneState = '5-human-review';
+    history.replaceState({
+      studioTaskPager: {
+        lane: '5-human-review',
+        jobs: [{
+          taskKey: restored.taskKey,
+          routeKey: restored.key,
+          id: restored.id,
+          watchPath: restored.watchPath,
+          title: restored.title,
+        }],
+        index: 0,
+        capturedAt: Date.now(),
+      },
+    }, '', '/#/tasks/AGT-2124');
+    selection.restoreFromUrl(true);
+    http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2124'))
+      .flush({ info: restored } as TaskDetail);
+    TestBed.tick();
+
+    expect(externalChange).not.toHaveBeenCalled();
+
+    selection.selected.set({ info: { ...restored, state: '6-completed' } } as TaskDetail);
+    TestBed.tick();
+
+    expect(externalChange).toHaveBeenCalledWith('7-archive', restored.taskKey);
+    http.verify();
   });
 });
 

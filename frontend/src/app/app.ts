@@ -1049,9 +1049,9 @@ export class App implements OnInit, OnDestroy {
       const sel = this.selectedJob();
       const lane = this.jobSelection.triageLaneState;
       if (!sel || !lane) return;
+      if (this.jobSelection.consumeBrowserHistorySelection(sel.info.taskKey, sel.info.state)) return;
       if (sel.info.state === lane) return;
       if (this.jobDetailRef?.triageActingId() != null) return;
-      if (this.jobSelection.isBrowserHistorySelection(sel.info.taskKey)) return;
       untracked(() =>
         this.triage.handleExternalLaneChange(lane, sel.info.taskKey),
       );
