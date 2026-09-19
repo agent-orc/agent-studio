@@ -42,7 +42,8 @@ public static class RemoteRunPrompt
     public static string Build(
         string taskPrompt,
         string? modeFraming,
-        string? resultsDirectory = null)
+        string? resultsDirectory = null,
+        ArtifactTransferLimitsResponse? artifactLimits = null)
     {
         ArgumentNullException.ThrowIfNull(taskPrompt);
         var framingBlock = string.IsNullOrWhiteSpace(modeFraming)
@@ -55,6 +56,12 @@ public static class RemoteRunPrompt
               + "`JOB_RESULTS_DIR` environment variable). Only files in that directory are collected and shipped "
               + "to the reviewer; a relative `results/` path inside the repository checkout is NOT collected and "
               + "is discarded with the temporary worktree."
+              + (artifactLimits is null
+                  ? string.Empty
+                  : $" Keep each result file at or below {ArtifactTransferPolicy.FormatMb(artifactLimits.MaxFileBytes)} MB "
+                    + $"and all result files at or below {ArtifactTransferPolicy.FormatMb(artifactLimits.MaxTotalBytes)} MB total. "
+                    + "Playwright traces and videos are not kept unless the task explicitly asks for them; "
+                    + "do not copy node_modules or bin/obj output into results.")
               + Environment.NewLine + Environment.NewLine;
         return taskPrompt.TrimEnd() + Environment.NewLine + Environment.NewLine
             + "---" + Environment.NewLine + Environment.NewLine

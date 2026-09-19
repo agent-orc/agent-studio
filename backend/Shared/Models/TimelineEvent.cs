@@ -137,6 +137,12 @@ public static class TimelineEventKinds
     /// time the queued retry comes due.
     /// </summary>
     public const string ResultSummaryPending = "result_summary_pending";
+    /// <summary>
+    /// Code delivery completed, but one or more bounded result artifacts were
+    /// skipped or refused. Details carry the typed outcome, path, size, and
+    /// advertised limit; this event never reopens the coding run.
+    /// </summary>
+    public const string ResultArtifactsPartial = "result_artifacts_partial";
     /// <summary>A Progress requeue was replaced by forward recovery of a completed immutable result.</summary>
     public const string SettledRunRecovered = "settled_run_recovered";
     /// <summary>A pipeline pre-step started (ADR-0045).</summary>
