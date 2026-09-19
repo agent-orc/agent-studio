@@ -7,38 +7,36 @@
       </p>
     </div>
     <div class="rh__actions">
-      <button class="rh__add"
-              type="button"
-              data-testid="remote-hosts-add"
-              (click)="openWizard()">
-        <span aria-hidden="true">+</span>
-        <span>Add execution host</span>
+      <button class="rh__add" type="button" data-testid="remote-hosts-add" (click)="openWizard()">
+        <span aria-hidden="true">+</span><span>Add execution host</span>
       </button>
       @if (retiredCount()) {
-        <button class="rh__refresh"
-                type="button"
-                data-testid="remote-hosts-purge-retired"
+        <button class="rh__refresh" type="button" data-testid="remote-hosts-purge-retired"
                 (click)="openPurgeRetired()">
           <span>Delete retired…</span>
         </button>
       }
-      <button class="rh__refresh"
-            type="button"
-            data-testid="remote-hosts-refresh"
-            [disabled]="loading()"
-            (click)="reload()">
-      {{ loading() ? '⏳' : '↻' }}
-      <span>Reload</span>
+      <button class="rh__refresh" type="button" data-testid="remote-hosts-refresh"
+              [disabled]="loading()" (click)="reload()">
+        {{ loading() ? '⏳' : '↻' }} <span>Reload</span>
       </button>
     </div>
   </header>
-
   <div class="rh__summary" data-testid="remote-hosts-summary">
     <span class="rh__count"><strong>{{ total() }}</strong> {{ total() === 1 ? 'machine' : 'machines' }}</span>
     <span class="rh__sep" aria-hidden="true">·</span>
     <span class="rh__count"><strong>{{ onlineCount() }}</strong> online</span>
     <span class="rh__sep" aria-hidden="true">·</span>
     <span class="rh__count"><strong>{{ roleCount() }}</strong> {{ roleCount() === 1 ? 'role' : 'roles' }}</span>
+    @if (stableReleaseLabel(); as stable) {
+      <span class="rh__sep" aria-hidden="true">·</span>
+      <span class="rh__count" data-testid="remote-hosts-stable-release">{{ stable }}</span>
+    }
+    @if (behindReleaseCount(); as behind) {
+      <span class="rh__behind" data-testid="remote-hosts-release-behind">
+        <strong>{{ behind }}</strong> behind Stable
+      </span>
+    }
     @if (retiredCount()) {
       <button class="rh__retired-filter"
               type="button"
@@ -50,7 +48,6 @@
       </button>
     }
   </div>
-
   @if (readyCandidateTasks().length > 0) {
     <section class="rh__candidates" data-testid="execution-host-candidates">
       <h3 class="rh__candidates-title">Ready routes with benchmark candidates</h3>
@@ -132,9 +129,7 @@
   }
 
   @if (identityDiagnostics().length) {
-    <section class="rh__identity-errors"
-             role="alert"
-             data-testid="remote-hosts-identity-errors">
+    <section class="rh__identity-errors" role="alert" data-testid="remote-hosts-identity-errors">
       <strong>Client identity registry needs repair</strong>
       <p>Affected runners cannot start until each identity file is restored.</p>
       <ul>
@@ -202,14 +197,10 @@
           </tr>
         </thead>
         @for (group of sortedHostGroups(); track group.id) {
-          <tbody appRemoteHostCard
-            [host]="group.machine"
-            [roles]="group.roles"
-            [roleActiveSlots]="roleSlots(group)"
-            [now]="now()"
-            [boardActiveSlots]="groupSlots(group)"
-            [projectSlots]="projectSlots(group.machine)"
-            [expanded]="isExpanded(group.id)"
+          <tbody appRemoteHostCard [host]="group.machine" [roles]="group.roles"
+            [roleActiveSlots]="roleSlots(group)" [now]="now()"
+            [boardActiveSlots]="groupSlots(group)" [projectSlots]="projectSlots(group.machine)"
+            [stableRelease]="stableRelease()" [expanded]="isExpanded(group.id)"
             (expandedChange)="setExpanded(group.id, $event)"
             (action)="onAction($event)"
             (capacityChange)="onCapacityChange($event)"

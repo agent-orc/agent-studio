@@ -2023,6 +2023,12 @@ public sealed class V1ReviewExecutorRegistry
     private readonly Dictionary<string, ReviewRestartStatus> _reviewRestarts =
         new(StringComparer.Ordinal);
     private readonly object _gate = new();
+    private readonly TimeProvider _time;
+
+    public V1ReviewExecutorRegistry(TimeProvider? time = null)
+    {
+        _time = time ?? TimeProvider.System;
+    }
 
     public Contract.RunnerDto Register(string runnerId, Contract.RegisterRunnerRequest request)
         => RegisterWithRestartObservation(runnerId, request).Runner;
@@ -2065,7 +2071,7 @@ public sealed class V1ReviewExecutorRegistry
             throw new ArgumentException("Active attempt ids must be unique within a registration.");
         }
 
-        var now = DateTime.UtcNow;
+        var now = _time.GetUtcNow().UtcDateTime;
         Registration registration;
         DateTime? reviewRestartedAt = null;
         string? previousInstanceId = null;
@@ -2082,7 +2088,8 @@ public sealed class V1ReviewExecutorRegistry
                     capabilities.ToHashSet(StringComparer.Ordinal),
                     request.BootstrapMaxParallelism,
                     now,
-                    now),
+                    now,
+                    request.Release),
                 (_, existing) =>
                 {
                     var existingReview =
@@ -2113,6 +2120,9 @@ public sealed class V1ReviewExecutorRegistry
                         Capabilities = capabilities.ToHashSet(StringComparer.Ordinal),
                         RoleMaxParallelism = request.BootstrapMaxParallelism,
                         LastSeenAt = now,
+                        // An older daemon omits the field; keep the last known
+                        // identity rather than reporting the host as unknown.
+                        Release = request.Release ?? existing.Release,
                     };
                 });
             if (_capabilityStates.TryGetValue(runnerId, out var capabilityState)
@@ -2200,7 +2210,7 @@ public sealed class V1ReviewExecutorRegistry
                 "Capability generation and at least one capability are required.");
 
         var advertisedAt = request.AdvertisedAt.ToUniversalTime();
-        var now = DateTime.UtcNow;
+        var now = _time.GetUtcNow().UtcDateTime;
         if (advertisedAt > now.AddMinutes(2))
             throw new ArgumentException("Capability advertisement time is too far in the future.");
         var freshUntil = advertisedAt.AddSeconds(request.FreshForSeconds);
@@ -2300,7 +2310,11 @@ public sealed class V1ReviewExecutorRegistry
                     .ToArray();
             }
 
-            registration = registration with { LastSeenAt = now };
+            registration = registration with
+            {
+                LastSeenAt = now,
+                Release = request.Release ?? registration.Release,
+            };
             _registrations[runnerId] = registration;
             _capabilityStates[runnerId] = new CapabilityState(
                 request.InstanceId,
@@ -2337,7 +2351,8 @@ public sealed class V1ReviewExecutorRegistry
                 request.Telemetry,
                 RoleMaxParallelism: registration.RoleMaxParallelism,
                 RestartedAt: restart?.RestartedAt,
-                ReviewsLost: restart?.ReviewsLost ?? 0);
+                ReviewsLost: restart?.ReviewsLost ?? 0,
+                Release: registration.Release);
         }
         CapabilitySnapshotAdvertised?.Invoke(runnerId, advertisedAt);
         return result;
@@ -2354,7 +2369,7 @@ public sealed class V1ReviewExecutorRegistry
                     "Attempt slot telemetry requires the current registered runner instance.");
             }
             _capabilityStates.TryGetValue(runnerId, out var existing);
-            var now = DateTime.UtcNow;
+            var now = _time.GetUtcNow().UtcDateTime;
             _capabilityStates[runnerId] = new CapabilityState(
                 instanceId,
                 existing?.Generation ?? 0,
@@ -2397,7 +2412,7 @@ public sealed class V1ReviewExecutorRegistry
                 "Capability key, classification, reason, and idempotency key are required.");
         }
 
-        var now = DateTime.UtcNow;
+        var now = _time.GetUtcNow().UtcDateTime;
         var occurredAt = request.OccurredAt.ToUniversalTime();
         if (occurredAt > now.AddMinutes(2))
             throw new ArgumentException("Capability failure time is too far in the future.");
@@ -2482,7 +2497,7 @@ public sealed class V1ReviewExecutorRegistry
     /// </summary>
     public bool TryGetCapabilityPause(string runnerId, out CapabilityPause pause)
     {
-        var now = DateTime.UtcNow;
+        var now = _time.GetUtcNow().UtcDateTime;
         lock (_gate)
         {
             if (_capabilityFailures.TryGetValue(runnerId, out var failures))
@@ -2550,7 +2565,7 @@ public sealed class V1ReviewExecutorRegistry
                     $"Outbox status sequence {request.LastSequence} is older than "
                     + $"{existing.Status.LastSequence}.");
             }
-            _outboxStatuses[key] = new OutboxStatusEntry(status, DateTime.UtcNow);
+            _outboxStatuses[key] = new OutboxStatusEntry(status, _time.GetUtcNow().UtcDateTime);
             TrimOldest(_outboxStatuses, entry => entry.ReceivedAt);
         }
         return status;
@@ -2574,7 +2589,7 @@ public sealed class V1ReviewExecutorRegistry
     /// </summary>
     public IReadOnlyList<Contract.RunnerCapabilitySnapshotDto> ListCapabilitySnapshots()
     {
-        var now = DateTime.UtcNow;
+        var now = _time.GetUtcNow().UtcDateTime;
         lock (_gate)
         {
             return _registrations
@@ -2631,7 +2646,8 @@ public sealed class V1ReviewExecutorRegistry
                         RoleMaxParallelism: registration.RoleMaxParallelism,
                         RestartedAt: restart?.RestartedAt,
                         ReviewsLost: restart?.ReviewsLost ?? 0,
-                        InstalledClis: Contract.InstalledCliProjection.FromCapabilities(capabilities));
+                        InstalledClis: Contract.InstalledCliProjection.FromCapabilities(capabilities),
+                        Release: registration.Release);
                 })
                 .ToArray();
         }
@@ -2695,7 +2711,7 @@ public sealed class V1ReviewExecutorRegistry
     /// </summary>
     public ReviewExecutorAvailability EvaluateReviewExecutorAvailability(DateTime? nowUtc = null)
     {
-        var now = (nowUtc ?? DateTime.UtcNow).ToUniversalTime();
+        var now = (nowUtc ?? _time.GetUtcNow().UtcDateTime).ToUniversalTime();
         lock (_gate)
         {
             var reviewRunners = _registrations
@@ -2749,7 +2765,7 @@ public sealed class V1ReviewExecutorRegistry
             .Distinct(StringComparer.Ordinal)
             .Order(StringComparer.Ordinal)
             .ToArray();
-        var now = DateTime.UtcNow;
+        var now = _time.GetUtcNow().UtcDateTime;
         lock (_gate)
         {
             if (!_registrations.TryGetValue(runnerId, out var registration)
@@ -2912,7 +2928,8 @@ public sealed class V1ReviewExecutorRegistry
         IReadOnlySet<string> Capabilities,
         int RoleMaxParallelism,
         DateTime RegisteredAt,
-        DateTime LastSeenAt);
+        DateTime LastSeenAt,
+        Contract.RunnerReleaseIdentityDto? Release = null);
 
     private sealed record CapabilityState(
         string InstanceId,

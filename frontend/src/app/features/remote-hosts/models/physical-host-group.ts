@@ -1,3 +1,4 @@
+import { worstDrift } from './host-release-drift';
 import type { HostHeartbeatStatus, RemoteHost, RunnerServiceRole } from './remote-host.model';
 
 export interface PhysicalHostGroup {
@@ -31,13 +32,24 @@ export function groupPhysicalHosts(
     const latestRole = [...roles].sort(
       (left, right) => heartbeatTime(right) - heartbeatTime(left),
     )[0];
+    const releaseDrift = worstDrift(roles.map(role => role.releaseDrift));
+    // `roles` is already in deterministic role order, so worstDrift's stable
+    // tie handling prefers coding before review. Keep the complete aggregate
+    // release identity attached to the role that supplied its drift verdict.
+    const releaseRole = releaseDrift
+      ? roles.find(role => role.releaseDrift === releaseDrift) ?? detailRole
+      : latestRole;
     const name = detailRole.capacityHostId?.trim() || detailRole.name;
     const machine: RemoteHost = {
       ...detailRole,
       name,
       status: aggregateStatus(roles),
       lastHeartbeatAt: latestRole.lastHeartbeatAt,
-      releaseId: latestRole.releaseId ?? detailRole.releaseId ?? null,
+      releaseId: releaseRole.releaseId ?? null,
+      release: releaseRole.release ?? null,
+      // One late role makes the machine late: the aggregate must not read
+      // calmer than the rows it summarises (R3).
+      releaseDrift,
       stats: telemetryRole.stats,
       telemetry: telemetryRole.telemetry,
       telemetryLoading: roles.some(role => role.telemetryLoading),
