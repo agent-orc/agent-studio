@@ -527,7 +527,7 @@
   cursor: col-resize;
 }
 .git-view--split .git-view__splitter:hover,
-.git-view--split .git-view__splitter--dragging {
+.git-view--split .git-view__splitter.is-resizing {
   background: var(--studio-accent);
 }
 .git-view--split .git-view__splitter:focus-visible {

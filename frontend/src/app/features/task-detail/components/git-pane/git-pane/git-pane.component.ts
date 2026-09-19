@@ -18,7 +18,7 @@ import { AppTooltipDirective } from '../../../../../components/tooltip/app-toolt
 import { isLargeDiff, describeDiffSize } from '../../../../../utils/large-diff-gate';
 import { coalesceDiffByFile } from '../../../../../utils/coalesce-diff';
 import { currentDiff2Html, hasDiff2HtmlLoaded, loadDiff2Html } from '../../../../../utils/diff2html-lazy';
-import { clampTreeWidth, MIN_TREE_PX } from './git-pane-splitter.util';
+import { ResizableSplitterDirective } from '../../../../../components/resizable-splitter/resizable-splitter.directive';
 import { TaskCommitRoundsComponent } from '../task-commit-rounds/task-commit-rounds.component';
 // Cycle 7f: diff2html (~120 KB minified, includes its own theme CSS) is
 // loaded lazily the first time a non-empty diff arrives. The pre-Cycle-7f
@@ -46,7 +46,7 @@ import { TaskCommitRoundsComponent } from '../task-commit-rounds/task-commit-rou
   selector: 'app-git-pane',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [DatePipe, NgTemplateOutlet, GitFileTreeComponent, TaskCommitRoundsComponent, TooltipDirective, AppTooltipDirective, MarkdownViewComponent],
+  imports: [DatePipe, NgTemplateOutlet, GitFileTreeComponent, TaskCommitRoundsComponent, TooltipDirective, AppTooltipDirective, MarkdownViewComponent, ResizableSplitterDirective],
   templateUrl: './git-pane.component.html',
   styleUrls: ['./git-pane.component.scss']
 })
@@ -138,48 +138,6 @@ export class GitPaneComponent {
   // property so the SCSS keeps the min/behaviour in one place. Clamp math
   // lives in `clampTreeWidth` so the drag can never squeeze either side
   // below its readable floor.
-  readonly treeColWidth = signal<number>(readTreeWidth());
-  readonly treeResizing = signal(false);
-  private treeResize: { pointerId: number; container: HTMLElement } | null = null;
-
-  startTreeResize(event: PointerEvent): void {
-    const splitter = event.currentTarget as HTMLElement;
-    const container = splitter.parentElement;
-    if (!container) return;
-    event.preventDefault();
-    splitter.setPointerCapture(event.pointerId);
-    this.treeResize = { pointerId: event.pointerId, container };
-    this.treeResizing.set(true);
-    document.body.style.cursor = 'col-resize';
-  }
-
-  onTreeResizeMove(event: PointerEvent): void {
-    const drag = this.treeResize;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-    const rect = drag.container.getBoundingClientRect();
-    this.treeColWidth.set(clampTreeWidth(event.clientX - rect.left, rect.width));
-  }
-
-  endTreeResize(event: PointerEvent): void {
-    const drag = this.treeResize;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-    (event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId);
-    this.treeResize = null;
-    this.treeResizing.set(false);
-    document.body.style.cursor = '';
-    writeTreeWidth(this.treeColWidth());
-  }
-
-  onTreeResizeKey(event: KeyboardEvent): void {
-    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-    event.preventDefault();
-    const container = (event.currentTarget as HTMLElement).parentElement;
-    const width = container?.getBoundingClientRect().width ?? 0;
-    const step = event.key === 'ArrowLeft' ? -TREE_RESIZE_STEP : TREE_RESIZE_STEP;
-    this.treeColWidth.set(clampTreeWidth(this.treeColWidth() + step, width));
-    writeTreeWidth(this.treeColWidth());
-  }
-
   /**
    * Title rendered in the pane header. Surfaces the multi-commit case
    * ("3 task commits") so the user sees at a glance that the chain has
@@ -456,12 +414,6 @@ function currentCommitCount(
 const COMMIT_HEADER_COLLAPSED_KEY = 'taskboard.gitPane.commitHeaderCollapsed';
 const HEAD_COLLAPSED_KEY = 'taskboard.gitPane.headCollapsed';
 const DIFF_VIEW_MODE_KEY = 'taskboard.gitPane.diffViewMode';
-const TREE_WIDTH_KEY = 'taskboard.gitPane.treeWidth';
-
-// Splitter clamping shares the SCSS fixed/proportional floors; keyboard
-// arrows nudge the preferred width by TREE_RESIZE_STEP.
-const TREE_WIDTH_DEFAULT = 300;
-const TREE_RESIZE_STEP = 16;
 
 function readCommitHeaderCollapsed(): boolean {
   try { return localStorage.getItem(COMMIT_HEADER_COLLAPSED_KEY) === '1'; }
@@ -492,19 +444,5 @@ function readDiffViewMode(): DiffViewMode {
 
 function writeDiffViewMode(value: DiffViewMode): void {
   try { localStorage.setItem(DIFF_VIEW_MODE_KEY, value); }
-  catch { /* ignore quota / privacy-mode errors */ }
-}
-
-function readTreeWidth(): number {
-  try {
-    const raw = Number(localStorage.getItem(TREE_WIDTH_KEY));
-    if (Number.isFinite(raw) && raw >= MIN_TREE_PX) return Math.round(raw);
-  }
-  catch { /* ignore */ }
-  return TREE_WIDTH_DEFAULT;
-}
-
-function writeTreeWidth(value: number): void {
-  try { localStorage.setItem(TREE_WIDTH_KEY, String(Math.round(value))); }
   catch { /* ignore quota / privacy-mode errors */ }
 }
