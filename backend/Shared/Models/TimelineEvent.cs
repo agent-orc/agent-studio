@@ -374,6 +374,12 @@ public static class TimelineEventKinds
     /// </summary>
     public const string IntegrationGateFlakyRerun = "integration_gate_flaky_rerun";
     /// <summary>
+    /// The integration gate's preparation found a cache-class failure,
+    /// quarantined the affected immutable entry, and spent its one clean retry.
+    /// This environment recovery is visible without becoming a review verdict.
+    /// </summary>
+    public const string IntegrationGatePreparationCacheRetried = "integration_gate_preparation_cache_retried";
+    /// <summary>
     /// AGT-2849: a pre-develop build gate that owned a merge on the integration
     /// branch never reached a verdict because its process disappeared. Startup
     /// recovery says what it did about it - rolled the branch back to the exact

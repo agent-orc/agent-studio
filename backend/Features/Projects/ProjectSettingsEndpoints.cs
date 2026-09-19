@@ -83,6 +83,7 @@ public static class ProjectSettingsEndpoints
                     definitionSha256 = (string?)null,
                     valid = false,
                     issues = new[] { new ProjectDefinitionIssue(ProjectPreparationPaths.Definition, "repository-unavailable", "Project repository path is unavailable.") },
+                    preparationWarnings = Array.Empty<object>(),
                     lastManifest = (ProjectPreparationManifest?)null,
                     @override = settings.Get(projectName).ExecutionDefinitionOverride,
                     source = "subject-commit",
@@ -105,12 +106,32 @@ public static class ProjectSettingsEndpoints
             {
                 SilentCatch.Note(ex, "ProjectSettingsEndpoints: last preparation manifest");
             }
+            var preparationWarnings = (manifest?.Caches ?? [])
+                .Where(cache => cache.UnusedRunCount >= AgentStudio.TaskServer.Contracts.ProjectPreparationExecutor.UnusedCacheWarningThreshold)
+                .Select(cache =>
+                {
+                    var variable = CacheVariable(cache.Block);
+                    var redirected = PrepareScriptRedirects(repositoryPath, variable);
+                    return new
+                    {
+                        code = "cache-block-unused",
+                        block = cache.Block,
+                        consecutiveRuns = cache.UnusedRunCount,
+                        message = $"The {cache.Block} block of {projectName} is bound but unused for "
+                                  + $"{cache.UnusedRunCount} consecutive preparations; the prepare script "
+                                  + (redirected
+                                      ? $"redirects or unsets {variable}."
+                                      : $"does not populate {variable}. Check whether it redirects the cache folder."),
+                    };
+                })
+                .ToArray();
             return Results.Ok(new
             {
                 repositoryDefinition = File.Exists(definitionPath) ? File.ReadAllText(definitionPath) : null,
                 definitionSha256 = read.DefinitionSha256,
                 valid = read.IsValid,
                 issues = read.Issues,
+                preparationWarnings,
                 lastManifest = manifest,
                 @override = settings.Get(projectName).ExecutionDefinitionOverride,
                 source = "subject-commit",
@@ -1228,6 +1249,41 @@ public static class ProjectSettingsEndpoints
         return pipelines.SelectMany(p => p.AllSteps)
                 .Any(s => string.Equals(s.Id, stepId, StringComparison.OrdinalIgnoreCase))
             || string.Equals(PipelineCatalogue.AbortReviewStep.Id, stepId, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string CacheVariable(string block) => block switch
+    {
+        "nuget" => "NUGET_PACKAGES",
+        "playwright" => "PLAYWRIGHT_BROWSERS_PATH",
+        _ => "NPM_CONFIG_CACHE",
+    };
+
+    /// <summary>
+    /// Adds actionable evidence to the unused-block warning without knowing a
+    /// project by name. It recognizes the portable and PowerShell ways a prepare
+    /// script commonly discards the product-owned binding.
+    /// </summary>
+    private static bool PrepareScriptRedirects(string repositoryPath, string variable)
+    {
+        foreach (var relative in new[] { ProjectPreparationPaths.Script, ProjectPreparationPaths.Script + ".ps1" })
+        {
+            var path = Path.Combine(repositoryPath, relative.Replace('/', Path.DirectorySeparatorChar));
+            if (!File.Exists(path)) continue;
+            try
+            {
+                var script = File.ReadAllText(path);
+                if (script.Contains($"unset {variable}", StringComparison.OrdinalIgnoreCase)
+                    || script.Contains($"Remove-Item Env:{variable}", StringComparison.OrdinalIgnoreCase)
+                    || script.Contains($"$env:{variable} = $null", StringComparison.OrdinalIgnoreCase)
+                    || script.Contains($"$env:{variable}=$null", StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                SilentCatch.Note(ex, "ProjectSettingsEndpoints: prepare redirect check");
+            }
+        }
+        return false;
     }
 }
 
