@@ -90,6 +90,24 @@ internal sealed class DurableAgentProcess
     public string ResultPath => Path.Combine(_directory, "result.json");
     public string IdentityPath => Path.Combine(_directory, "worker.json");
 
+    internal static bool StartedWithClaimedFollowUp(
+        string workerDirectory,
+        AgentStudio.TaskServer.Contracts.FollowUpDeliveryDto followUp)
+    {
+        try
+        {
+            var specPath = Path.Combine(workerDirectory, "spec.json");
+            if (!File.Exists(specPath)) return false;
+            var spec = JsonSerializer.Deserialize<DetachedJobSpec>(File.ReadAllText(specPath), Json);
+            return spec is not null
+                && RemoteRunPrompt.ContainsClaimedFollowUp(spec.Prompt, followUp);
+        }
+        catch (Exception ex) when (ex is IOException or JsonException)
+        {
+            return false;
+        }
+    }
+
     public static DurableAgentProcess Start(
         RunnerOptions options,
         string workerDirectory,

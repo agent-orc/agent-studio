@@ -10,6 +10,35 @@ namespace AgentRunner.Tests;
 public sealed class DurableLeaseAuthorityTests
 {
     [Fact]
+    public async Task Confirmed_worker_start_is_carried_by_the_next_heartbeat()
+    {
+        using var temp = new TempDirectory();
+        var now = DateTime.UtcNow;
+        var options = Options(temp.Path);
+        var lease = Lease(now, now.AddMinutes(15));
+        var handler = new CapturingRenewHandler(lease);
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
+        using var client = new TaskServerClient(http, options.RunnerId);
+        using var stop = new CancellationTokenSource();
+        var heartbeat = new LeaseHeartbeat(
+            client,
+            options,
+            lease,
+            _ => { },
+            (_, _) =>
+            {
+                stop.Cancel();
+                return Task.CompletedTask;
+            });
+        var promptHash = new string('a', 64);
+        heartbeat.ConfirmWorkerStartedWithPrompt(promptHash);
+
+        await heartbeat.RunAsync(stop, CancellationToken.None);
+
+        Assert.Equal(promptHash, handler.Request!.StartedPromptSha256);
+    }
+
+    [Fact]
     public async Task Controlled_time_keeps_the_generation_alive_for_ten_minutes_and_stops_before_expiry()
     {
         using var temp = new TempDirectory();
@@ -278,6 +307,27 @@ public sealed class DurableLeaseAuthorityTests
             HttpRequestMessage request,
             CancellationToken cancellationToken)
             => throw new HttpRequestException("Task Server partitioned");
+    }
+
+    private sealed class CapturingRenewHandler(RunLeaseInfoDto lease) : HttpMessageHandler
+    {
+        public RunLeaseHeartbeatRequest? Request { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Request = JsonSerializer.Deserialize<RunLeaseHeartbeatRequest>(
+                await request.Content!.ReadAsStringAsync(cancellationToken),
+                new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    JsonSerializer.Serialize(new RunLeaseResponse("Renewed", true, lease)),
+                    Encoding.UTF8,
+                    "application/json"),
+            };
+        }
     }
 
     private sealed class FailThenRenewHandler(

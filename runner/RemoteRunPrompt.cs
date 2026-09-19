@@ -13,6 +13,67 @@ namespace AgentRunner;
 /// </summary>
 public static class RemoteRunPrompt
 {
+    private const string FollowUpMarkerPrefix = "agent-studio-follow-up-claim-sha256:";
+
+    /// <summary>
+    /// Adds a claimed follow-up as an identity-marked prompt block. Authored
+    /// task text is deliberately not used for deduplication: a short follow-up
+    /// such as "continue" may already occur in the task without having been
+    /// delivered by this claim.
+    /// </summary>
+    public static ClaimedFollowUpApplication ApplyClaimedFollowUp(
+        string taskPrompt,
+        AgentStudio.TaskServer.Contracts.FollowUpDeliveryDto? followUp)
+    {
+        ArgumentNullException.ThrowIfNull(taskPrompt);
+        if (followUp is null)
+            return new ClaimedFollowUpApplication(taskPrompt, null);
+
+        var block = ClaimedFollowUpBlock(followUp);
+        if (taskPrompt.Contains(block, StringComparison.Ordinal))
+            return new ClaimedFollowUpApplication(taskPrompt, followUp);
+
+        var marker = ClaimedFollowUpMarker(followUp);
+        if (taskPrompt.Contains(marker, StringComparison.Ordinal))
+        {
+            throw new InvalidDataException(
+                $"Claimed follow-up '{followUp.ClaimId ?? followUp.PromptSha256}' has an incomplete prompt block.");
+        }
+
+        var composed = taskPrompt.TrimEnd()
+            + Environment.NewLine + Environment.NewLine
+            + "---" + Environment.NewLine + Environment.NewLine
+            + block;
+        return new ClaimedFollowUpApplication(
+            composed,
+            composed.Contains(block, StringComparison.Ordinal) ? followUp : null);
+    }
+
+    internal static bool ContainsClaimedFollowUp(
+        string prompt,
+        AgentStudio.TaskServer.Contracts.FollowUpDeliveryDto followUp)
+        => prompt.Contains(ClaimedFollowUpBlock(followUp), StringComparison.Ordinal);
+
+    private static string ClaimedFollowUpBlock(
+        AgentStudio.TaskServer.Contracts.FollowUpDeliveryDto followUp)
+    {
+        var marker = ClaimedFollowUpMarker(followUp);
+        return $"<!-- {marker} -->" + Environment.NewLine
+            + $"## Follow-up for this run ({followUp.Mode})" + Environment.NewLine + Environment.NewLine
+            + followUp.Prompt + Environment.NewLine
+            + $"<!-- /{marker} -->" + Environment.NewLine;
+    }
+
+    private static string ClaimedFollowUpMarker(
+        AgentStudio.TaskServer.Contracts.FollowUpDeliveryDto followUp)
+    {
+        var identity = string.IsNullOrWhiteSpace(followUp.ClaimId)
+            ? $"legacy:{followUp.PromptSha256}"
+            : followUp.ClaimId.Trim();
+        return FollowUpMarkerPrefix
+            + AgentStudio.TaskServer.Contracts.FollowUpPromptDigest.Compute(identity);
+    }
+
     public const string ModelRoutingPolicyInstruction =
         "Consult `docs/system/domains/model-routing-policy.md` as the authoritative source whenever " +
         "you select, recommend, override, or explain a model and thinking level. Never let quota or " +
@@ -64,4 +125,11 @@ public static class RemoteRunPrompt
             + ContributionGuideInstruction + Environment.NewLine + Environment.NewLine
             + CompletionProtocol + Environment.NewLine;
     }
+}
+
+public sealed record ClaimedFollowUpApplication(
+    string Prompt,
+    AgentStudio.TaskServer.Contracts.FollowUpDeliveryDto? AcknowledgedFollowUp)
+{
+    public bool ShouldAcknowledge => AcknowledgedFollowUp is not null;
 }

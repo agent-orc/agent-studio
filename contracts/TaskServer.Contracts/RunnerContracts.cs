@@ -1,4 +1,30 @@
+using System.Security.Cryptography;
+using System.Text;
+
 namespace AgentStudio.TaskServer.Contracts;
+
+/// <summary>
+/// A queued follow-up reserved by a coding claim. The server keeps the intent
+/// stashed until a runner acknowledges <see cref="PromptSha256"/> after the CLI
+/// child has started; a pre-start lease loss restores the queued instruction.
+/// <see cref="ClaimId"/> is the identity used to compose the instruction into
+/// the worker prompt exactly once without comparing operator-authored text.
+/// </summary>
+public sealed record FollowUpDeliveryDto(
+    string Prompt,
+    string Mode,
+    string PromptSha256,
+    DateTime SavedAt,
+    string SavedReason,
+    string? Author = null,
+    string? ClaimId = null);
+
+public static class FollowUpPromptDigest
+{
+    public static string Compute(string prompt) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(prompt ?? string.Empty)))
+            .ToLowerInvariant();
+}
 
 public sealed record RegisterRunnerRequest(
     string Name,
@@ -111,7 +137,8 @@ public sealed record ClaimResponse(
     RuntimeCapacitySettingsDto? RuntimeCapacity = null,
     ProviderModelFallback? ModelFallback = null,
     string? ContinuationBaseRef = null,
-    string? ContinuationBaseSha = null);
+    string? ContinuationBaseSha = null,
+    FollowUpDeliveryDto? FollowUp = null);
 
 /// <summary>A run-scoped sibling route selected after a provider refusal.</summary>
 public sealed record ProviderModelFallback(
@@ -146,7 +173,8 @@ public sealed record LeaseRenewRequest(
     string LeaseId,
     long Fence,
     int RequestedTtlSeconds = 120,
-    RunnerProcessInventory? Inventory = null);
+    RunnerProcessInventory? Inventory = null,
+    string? StartedPromptSha256 = null);
 
 /// <summary>
 /// The salvage a runner published before it released a lease it could not

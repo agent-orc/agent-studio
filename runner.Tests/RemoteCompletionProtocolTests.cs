@@ -5,6 +5,63 @@ namespace AgentRunner.Tests;
 
 public sealed class RemoteCompletionProtocolTests
 {
+    [Fact]
+    public void Claimed_follow_up_is_delivered_when_its_text_is_already_a_prompt_substring()
+    {
+        const string taskPrompt = "# Original task\n\nPlease continue with the focused regression.";
+        var followUp = FollowUp("continue", "follow-up-claim-1");
+
+        var applied = RemoteRunPrompt.ApplyClaimedFollowUp(taskPrompt, followUp);
+
+        Assert.StartsWith(taskPrompt, applied.Prompt, StringComparison.Ordinal);
+        Assert.Equal(2, CountOccurrences(applied.Prompt, followUp.Prompt));
+        Assert.True(applied.ShouldAcknowledge);
+    }
+
+    [Fact]
+    public void Applying_the_same_follow_up_claim_twice_delivers_it_once()
+    {
+        const string taskPrompt = "# Original task\n\nKeep the regression focused.";
+        var followUp = FollowUp("Also preserve the operator stop path.", "follow-up-claim-2");
+
+        var first = RemoteRunPrompt.ApplyClaimedFollowUp(taskPrompt, followUp);
+        var second = RemoteRunPrompt.ApplyClaimedFollowUp(first.Prompt, followUp);
+
+        Assert.Equal(first.Prompt, second.Prompt);
+        Assert.Equal(1, CountOccurrences(second.Prompt, followUp.Prompt));
+        Assert.True(second.ShouldAcknowledge);
+    }
+
+    [Fact]
+    public void Follow_up_acknowledgement_requires_the_complete_claimed_prompt_block()
+    {
+        const string taskPrompt = "# Original task\n\nKeep the regression focused.";
+        var followUp = FollowUp("Run the focused test.", "follow-up-claim-3");
+
+        var absent = RemoteRunPrompt.ApplyClaimedFollowUp(taskPrompt, followUp: null);
+        var present = RemoteRunPrompt.ApplyClaimedFollowUp(taskPrompt, followUp);
+
+        Assert.False(absent.ShouldAcknowledge);
+        Assert.Null(absent.AcknowledgedFollowUp);
+        Assert.True(present.ShouldAcknowledge);
+        Assert.Same(followUp, present.AcknowledgedFollowUp);
+        Assert.True(RemoteRunPrompt.ContainsClaimedFollowUp(present.Prompt, followUp));
+    }
+
+    private static AgentStudio.TaskServer.Contracts.FollowUpDeliveryDto FollowUp(
+        string prompt,
+        string claimId) => new(
+            prompt,
+            "steer",
+            AgentStudio.TaskServer.Contracts.FollowUpPromptDigest.Compute(prompt),
+            DateTime.UtcNow,
+            "remote-execution",
+            "human:owner",
+            claimId);
+
+    private static int CountOccurrences(string value, string part)
+        => (value.Length - value.Replace(part, string.Empty, StringComparison.Ordinal).Length) / part.Length;
+
     private const string ValidBaseSha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     private const string ValidResultSha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     private const string ValidManifestDigest =
