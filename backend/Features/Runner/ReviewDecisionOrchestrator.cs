@@ -123,6 +123,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     private readonly GitService? _git;
     private readonly AttemptAuthorityService? _attemptAuthority;
     private readonly DossierMaintenanceService? _dossierMaintenance;
+    private readonly TaskIntegrationStatusService? _integrationStatus;
 
     /// <summary>
     /// Default aspect runner ids when <c>ReviewDecisionOrchestrator:AspectRunners</c>
@@ -268,7 +269,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         AttemptAuthorityService? attemptAuthority = null,
         DossierMaintenanceService? dossierMaintenance = null,
         AgentStudio.Pipeline.IQualityAnalysisStepRunner? qualityAnalysisRunner = null,
-        FailureInterventionService? failureInterventions = null)
+        FailureInterventionService? failureInterventions = null,
+        TaskIntegrationStatusService? integrationStatus = null)
     {
         _scanner = scanner;
         _taskAccess = taskAccess;
@@ -301,6 +303,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _dossierMaintenance = dossierMaintenance;
         _qualityAnalysisRunner = qualityAnalysisRunner;
         _failureInterventions = failureInterventions;
+        _integrationStatus = integrationStatus;
 
         _statusSnapshot.ConfigureEscalationRateAlert(
             _configuration.GetValue(
@@ -6956,24 +6959,23 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     private string ClassifyCanonicalReviewWait(TaskInfo info, string authorityKey)
     {
         var review = _attemptAuthority!.GetTaskProjection(authorityKey).CurrentReviewAttempt;
-        if (review is null
-            || review.State is AttemptLifecycleState.Pending or AttemptLifecycleState.Leased
-            || !AutoReviewResumePolicy.IsAdmissibleOutcome(review.Outcome))
-        {
-            return PostProcessingCardResult.AwaitingCanonicalReviewVerdict;
-        }
-
-        // Only a record from THIS delivery generation can say that the
-        // integration already returned. Absent or superseded, the honest reading
-        // is that it never started.
         var settlement = RemoteDeliverySettlementStore.Read(info.FolderPath);
-        if (!RemoteDeliverySettlementStore.MatchesAttempt(settlement, review.AttemptId))
-            return PostProcessingCardResult.AwaitingDeliveryIntegration;
+        if (!RemoteDeliverySettlementStore.MatchesAttempt(settlement, review?.AttemptId))
+            settlement = null;
 
-        return settlement!.Stage == RemoteDeliverySettlementStage.IntegrationPending
-               && settlement.ShouldIntegrate
-            ? PostProcessingCardResult.AwaitingDeliveryIntegration
-            : PostProcessingCardResult.AwaitingIntegrationCompletion;
+        var integration = _integrationStatus?
+            .BuildLookup([info])
+            .GetValueOrDefault(info.TaskKey);
+        var decision = AutoReviewResumePolicy.Decide(
+            info.State,
+            info.Fixture,
+            review?.State,
+            review?.Outcome,
+            IntegrationStatuses.IsMerged(integration?.Status),
+            settlement?.Stage,
+            settlement?.ShouldIntegrate ?? false);
+
+        return AutoReviewResumePolicy.ClassifyPostProcessingWait(decision);
     }
 
     /// <param name="onSkipped">

@@ -14,6 +14,10 @@ release yet.
 
 ### Fixed
 
+- Auto Review wait classification now uses the restart-resume policy's
+  integration ancestry decision, so a delivery merged by a later gate is
+  reported as awaiting its completion transition instead of awaiting delivery
+  integration (AGT-2860).
 - Lost-worker recovery now retains the latest diagnostic stderr and system
   lines across long worker logs, so earlier crash evidence is not silently
   dropped after each 2,000 scanned lines (AGT-2870).
