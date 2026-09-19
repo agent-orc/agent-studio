@@ -12,6 +12,32 @@ namespace TaskServer.Tests;
 public sealed class ProtocolTests
 {
     [Fact]
+    public async Task Artifact_limits_are_advertised_from_server_configuration()
+    {
+        using var temp = new TempDirectory();
+        await using var factory = new TaskServerFactory(
+            temp.Path,
+            new Dictionary<string, string?>
+            {
+                ["TaskServer:MaxRequestBodyBytes"] = (10L * 1024 * 1024).ToString(),
+                ["TaskServer:ResultArtifactMaxFileBytes"] = (20L * 1024 * 1024).ToString(),
+                ["TaskServer:ResultArtifactMaxTotalBytes"] = (30L * 1024 * 1024).ToString(),
+            });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add(
+            TaskServerProtocol.HeaderName,
+            TaskServerProtocol.Current.ToString());
+
+        var limits = await client.GetFromJsonAsync<ArtifactTransferLimitsResponse>(
+            "/api/v1/artifact-limits");
+
+        Assert.NotNull(limits);
+        Assert.Equal(10L * 1024 * 1024, limits!.MaxRequestBodyBytes);
+        Assert.True(limits.MaxFileBytes < limits.MaxRequestBodyBytes);
+        Assert.Equal(30L * 1024 * 1024, limits.MaxTotalBytes);
+    }
+
+    [Fact]
     public async Task Unsupported_runner_is_rejected_before_registration_or_claim()
     {
         using var temp = new TempDirectory();

@@ -1949,7 +1949,8 @@ public sealed partial class TaskServerStore
                 request.RunnerId,
                 request.InstanceId,
                 request.LeaseId,
-                ct);
+                ct,
+                allowCompleted: true);
             await RecordOutboxSequenceAsync(
                 connection,
                 transaction,
@@ -2021,7 +2022,8 @@ public sealed partial class TaskServerStore
                 request.RunnerId,
                 request.InstanceId,
                 request.LeaseId,
-                ct);
+                ct,
+                allowCompleted: true);
             await RecordOutboxSequenceAsync(
                 connection,
                 transaction,
@@ -3861,9 +3863,11 @@ public sealed partial class TaskServerStore
         string? runnerId,
         string? instanceId,
         string? leaseId,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool allowCompleted = false)
     {
-        if (lease.Status is not ("active" or "process-unknown"))
+        if (lease.Status is not ("active" or "process-unknown")
+            && !(allowCompleted && string.Equals(lease.Status, "completed", StringComparison.Ordinal)))
             throw new TaskServerConflictException("lease-not-active", $"Lease status is '{lease.Status}'.");
         if (string.Equals(lease.Status, "active", StringComparison.Ordinal)
             && runnerId is null && instanceId is null && leaseId is null)
@@ -3871,12 +3875,12 @@ public sealed partial class TaskServerStore
             await EnsureLeaseCurrentAsync(connection, transaction, lease, ct);
             return;
         }
-        if (string.Equals(lease.Status, "process-unknown", StringComparison.Ordinal)
+        if (lease.Status is "process-unknown" or "completed"
             && (runnerId is null || instanceId is null || leaseId is null))
         {
             throw new TaskServerConflictException(
                 "lease-not-active",
-                "Lease status is 'process-unknown'; exact outbox authority is required for replay.");
+                $"Lease status is '{lease.Status}'; exact outbox authority is required for replay.");
         }
         if (!string.Equals(lease.RunnerId, runnerId, StringComparison.Ordinal)
             || !string.Equals(lease.InstanceId, instanceId, StringComparison.Ordinal)

@@ -36,6 +36,8 @@ using RLogIngest = Runner::AgentRunner.LogIngestRequest;
 using RCliLine = Runner::AgentRunner.CliOutputLine;
 using RArtifactIngest = Runner::AgentRunner.ArtifactIngestRequest;
 using RArtifact = Runner::AgentRunner.RunnerArtifactUpload;
+using RArtifactIssue = Runner::AgentRunner.ArtifactTransferIssue;
+using RArtifactReport = Runner::AgentRunner.ArtifactTransferReportRequest;
 using RRemoteComplete = Runner::AgentRunner.RemoteRunCompletionRequest;
 using ROptions = Runner::AgentRunner.RunnerOptions;
 using RTaskRunner = Runner::AgentRunner.RemoteTaskRunner;
@@ -97,6 +99,40 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_workspace, recursive: true); } catch { /* best-effort */ }
+    }
+
+    [Fact]
+    public async Task Server_advertises_artifact_limit_and_records_partial_board_fact()
+    {
+        SeedTask(TaskStates.Progress, TaskKey, "Artifact policy", "Deliver bounded evidence.");
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        var ct = CancellationToken.None;
+        _ = await client.RegisterAsync("artifact policy runner", "service", ct);
+        var lease = await client.AcquireLeaseAsync(
+            new RAcquire(TaskKey, RunnerId, ProjectName, "artifact-host", 4242, "codex"), ct);
+        Assert.True(lease.Granted);
+
+        var limits = await client.GetArtifactTransferLimitsAsync(TaskKey, ct);
+        Assert.Equal(25L * 1024 * 1024, limits.MaxRequestBodyBytes);
+        Assert.True(limits.MaxFileBytes < 20L * 1024 * 1024);
+
+        await client.ReportArtifactTransferAsync(new RArtifactReport(
+            TaskKey,
+            "partial",
+            [new RArtifactIssue(
+                "results/playwright/archive/trace.zip",
+                18L * 1024 * 1024,
+                "exceeded the 25 MB upload limit")],
+            lease.Lease!.RunnerId,
+            lease.Lease.LeaseId,
+            lease.Lease.FencingToken,
+            lease.Lease.AttemptId), ct);
+
+        // The endpoint acceptance proves the fenced report reached the backend;
+        // ArtifactIngestionEndpointsTests pins the exact board-fact wording and
+        // typed outcome written by this route.
     }
 
     [Fact]
