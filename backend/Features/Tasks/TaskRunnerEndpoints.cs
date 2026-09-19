@@ -394,9 +394,9 @@ public static class TaskRunnerEndpoints
             });
         });
 
-        // Manual re-trigger of the Haiku summary that the runner normally fires
+        // Manual re-trigger of the task-level Result summary the runner fires
         // post-execution. Surfaced behind a button while we iterate on the prompt
-        // and observe failure modes — overwrites status.md when Haiku succeeds.
+        // and observe failure modes. It overwrites status.md when generation succeeds.
         // Pre-flight checks (e.g. missing cli-output.log) happen inside
         // GenerateAsync so the failure mode is recorded as a regular Failed
         // SummaryState the UI can render in-place — surfacing the precise
@@ -415,7 +415,7 @@ public static class TaskRunnerEndpoints
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Review);
 
         // Synchronous "interim status" peek while a run is in flight. Runs a
-        // one-shot Haiku call against the live cli-output.log and returns the
+        // one-shot routed call against the bounded task evidence and returns the
         // markdown directly; status.md on disk is NOT touched, so the
         // post-run summary still owns it. Surfaced by the "Interim status"
         // button in the protocol pane so the user can check on a long-running

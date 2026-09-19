@@ -499,6 +499,9 @@ builder.Services.AddSingleton<CliRouter>(sp => new CliRouter(
 builder.Services.AddSingleton<SessionToTaskIndex>();
 builder.Services.AddSingleton<SessionRegistry>();
 builder.Services.AddSingleton<ContextUsageParser>();
+// Deferred to avoid the SummaryGenerationService -> GitService -> TaskScannerService
+// construction cycle while still using the canonical Git boundary at call time.
+builder.Services.AddSingleton<Func<GitService>>(sp => () => sp.GetRequiredService<GitService>());
 builder.Services.AddSingleton<SummaryGenerationService>();
 // AGT-2850: a delivered remote result is acknowledged as soon as its artefacts
 // are durable. The Result summary is a retryable step behind that
@@ -1663,10 +1666,32 @@ transitionsForRunner.OnJobMoved += (projectName, jobId, fromState, toState) =>
 // website auto rung subscribes to acceptance and waits for the asynchronous
 // integration merge before dispatching the existing deploy workflow.
 var publishActionsForTransitions = app.Services.GetRequiredService<PublishActionService>();
-transitionsForRunner.OnJobMoved += (projectName, jobId, _, toState) =>
+var summariesForTransitions = app.Services.GetRequiredService<SummaryGenerationService>();
+var scannerForSummaries = app.Services.GetRequiredService<TaskScannerService>();
+transitionsForRunner.OnJobMoved += (projectName, jobId, ignoredFromState, toState) =>
 {
     if (toState == TaskStates.Completed)
+    {
         publishActionsForTransitions.HandleTaskAccepted(projectName, jobId);
+        // Terminal acceptance can add final integration and gate evidence after
+        // the last core-run summary. Rebuild the Result from the full ledger so
+        // the completed card reflects the task, including that final evidence.
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var task = scannerForSummaries.ScanAllAutomationJobsWithArchive()
+                    .FirstOrDefault(candidate => candidate.Id == jobId
+                        && string.Equals(candidate.ProjectName, projectName, StringComparison.OrdinalIgnoreCase));
+                if (task is not null) await summariesForTransitions.GenerateAsync(task);
+            }
+            catch (Exception ex)
+            {
+                app.Logger.LogWarning(ex,
+                    "Terminal Result regeneration failed for {Project}/{JobId}", projectName, jobId);
+            }
+        });
+    }
 };
 
 // Defensive: when a non-API task change touches the watch tree, reconcile only

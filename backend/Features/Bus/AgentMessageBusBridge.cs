@@ -104,11 +104,11 @@ public sealed class AgentMessageBusBridge
             new AgentParticipant { Id = "agent:claude", Kind = "CodingAgent", DisplayName = "Claude", Cli = "claude" },
             new AgentParticipant { Id = "agent:codex", Kind = "CodingAgent", DisplayName = "Codex", Cli = "codex" },
             new AgentParticipant { Id = "agent:gemini", Kind = "CodingAgent", DisplayName = "Gemini", Cli = "gemini" },
-            // support:adhoc covers one-shot Haiku calls (TitleGen, SummaryGen,
+            // support:adhoc covers routed one-shot calls (TitleGen, SummaryGen,
             // PromptEnhance, CommitMessage, ReviewDecision, SoftReasoning).
             // AdHocUsageRecorder mirrors every JSONL record onto the bus so
             // token aggregation has a single source of truth.
-            new AgentParticipant { Id = "support:adhoc", Kind = "SupportingAgent", DisplayName = "Ad-hoc Haiku call", Cli = "claude" },
+            new AgentParticipant { Id = "support:adhoc", Kind = "SupportingAgent", DisplayName = "Ad-hoc CLI call" },
         };
         foreach (var p in participants)
         {

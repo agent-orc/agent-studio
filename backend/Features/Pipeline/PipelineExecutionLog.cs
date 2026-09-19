@@ -279,7 +279,10 @@ public sealed class PipelineExecutionLog
     /// in-memory record under a per-folder lock, rewrites the file. Safe
     /// to call from concurrent parallel step tasks.
     /// </summary>
-    public void RecordStep(string jobFolderPath, PipelineStepExecution stepResult)
+    public void RecordStep(
+        string jobFolderPath,
+        PipelineStepExecution stepResult,
+        bool accumulateUsage = false)
     {
         var lockObj = _locks.GetOrAdd(NormalizeKey(jobFolderPath), _ => new object());
         lock (lockObj)
@@ -303,7 +306,9 @@ public sealed class PipelineExecutionLog
             {
                 if (!replaced && string.Equals(existing.StepId, stepResult.StepId, StringComparison.OrdinalIgnoreCase))
                 {
-                    updatedSteps.Add(stepResult);
+                    updatedSteps.Add(accumulateUsage
+                        ? AccumulateInvocation(existing, stepResult)
+                        : stepResult);
                     replaced = true;
                 }
                 else
@@ -315,6 +320,29 @@ public sealed class PipelineExecutionLog
 
             WriteAtomic(jobFolderPath, current with { Steps = updatedSteps });
         }
+    }
+
+    private static PipelineStepExecution AccumulateInvocation(
+        PipelineStepExecution existing,
+        PipelineStepExecution latest)
+    {
+        var existingWasPlaceholder = existing.Status is PipelineStepStatus.Pending or PipelineStepStatus.Planned
+            && existing.InputTokens + existing.OutputTokens
+                + existing.CacheReadTokens + existing.CacheCreationTokens == 0
+            && existing.DurationMs == 0;
+        var priorInvocations = existingWasPlaceholder ? 0 : Math.Max(1, existing.InvocationCount);
+        return latest with
+        {
+            InvocationCount = priorInvocations + Math.Max(1, latest.InvocationCount),
+            StartedAt = existing.StartedAt is not null && existing.StartedAt < latest.StartedAt
+                ? existing.StartedAt
+                : latest.StartedAt,
+            DurationMs = existing.DurationMs + latest.DurationMs,
+            InputTokens = existing.InputTokens + latest.InputTokens,
+            OutputTokens = existing.OutputTokens + latest.OutputTokens,
+            CacheReadTokens = existing.CacheReadTokens + latest.CacheReadTokens,
+            CacheCreationTokens = existing.CacheCreationTokens + latest.CacheCreationTokens,
+        };
     }
 
     /// <summary>

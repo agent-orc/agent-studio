@@ -68,6 +68,10 @@ export class ProjectPipelineCostTrendComponent {
     })),
   );
 
+  readonly resultSummaries = computed(() =>
+    this.timeline()?.steps.find(step => step.stepId === 'summary') ?? null,
+  );
+
   readonly stackColumns = computed<PipelineStackColumn[]>(() => {
     const timeline = this.timeline();
     if (!timeline?.days.length) return [];

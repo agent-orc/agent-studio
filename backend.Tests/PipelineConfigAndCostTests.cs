@@ -799,6 +799,7 @@ public class PipelineConfigAndCostTests
                 new PipelineStepExecution
                 {
                     StepId = "aspect-code-quality", Kind = StepKind.Aspect,
+                    InvocationCount = 2,
                     Model = "claude-haiku-4-5", InputTokens = 1_000_000, OutputTokens = 200_000, // $2.00
                 }),
         };
@@ -817,6 +818,7 @@ public class PipelineConfigAndCostTests
         var aspect = timeline.Kinds.Single(k => k.Kind == "aspect");
         Assert.Equal(4.00m, aspect.TotalCostUsd); // two $2.00 runs
         Assert.Equal(2_400_000, aspect.TotalTokens);
+        Assert.Equal(3, timeline.Steps.Single(step => step.StepId == "aspect-code-quality").Calls);
         // Cells align to Days: idle 05-31, $2 on 06-01, $2 on 06-02.
         Assert.Equal(0m, aspect.Cells[0].CostUsd);
         Assert.Equal(2.00m, aspect.Cells[1].CostUsd);
@@ -992,15 +994,20 @@ public class PipelineConfigAndCostTests
             ReceiptEntry("AGT-2542", "agent:codex", now.AddHours(-3), 1_000, 100),
             ReceiptEntry("AGT-2542", "support:code-review", now.AddHours(-2), 500, 50),
             ReceiptEntry("AGT-2542", "orchestrator:agent-taskboard", now.AddHours(-1), 200, 20),
+            ReceiptEntry("AGT-2542", "support:adhoc", now, 90, 10,
+                AdHocUsageSources.SummaryGeneration),
         };
 
         var records = ProjectPipelineCostService.BuildReceiptRecords("P", entries);
         var timeline = ProjectPipelineCostService.BuildFromRecords("P", records, days: 7, nowUtc: now);
 
-        Assert.Equal(1_870, timeline.TotalTokens);
+        Assert.Equal(1_970, timeline.TotalTokens);
         Assert.Equal(new[] { "core", "aspect", "orchestrator" }, timeline.Kinds.Select(kind => kind.Kind));
-        Assert.Equal(now.AddHours(-1).ToString("o"), timeline.Freshness.AsOf);
+        Assert.Equal(now.ToString("o"), timeline.Freshness.AsOf);
         Assert.Equal(1, timeline.TaskCount);
+        var summary = Assert.Single(timeline.Steps, step => step.StepId == PipelineCatalogue.SummaryStepId);
+        Assert.Equal(1, summary.Calls);
+        Assert.Equal(100, summary.TotalTokens);
     }
 
     private static OrchestratorLogEntry ReceiptEntry(
@@ -1008,11 +1015,13 @@ public class PipelineConfigAndCostTests
         string participant,
         DateTime at,
         int input,
-        int output) => new()
+        int output,
+        string? topic = null) => new()
         {
             Ts = at,
             JobId = jobId,
             ParticipantId = participant,
+            Topic = topic ?? "task-token-receipt",
             TokenUsage = new OrchestratorTokenUsage
             {
                 Model = "gpt-5.3-codex",

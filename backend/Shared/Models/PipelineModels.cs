@@ -221,6 +221,11 @@ public sealed record PipelineStepExecution
     public string StepId { get; init; } = string.Empty;
     public StepKind Kind { get; init; }
     /// <summary>
+    /// Number of invocations represented by this row. Most steps run once;
+    /// repeatable steps such as Result regeneration accumulate their usage.
+    /// </summary>
+    public int InvocationCount { get; init; }
+    /// <summary>
     /// Pipeline attempt epoch that owns this step state. Writers stamp the
     /// current attempt when the update is accepted. A late update from an
     /// older attempt is fenced out before it can replace the fresh row.
