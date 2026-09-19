@@ -114,6 +114,11 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
             IntegrationStatuses.Integrated,
             Status(restarted, card.Id).Status);
 
+        var classified = await restarted.Orchestrator.ProcessCardAsync(
+            _root, Project, card.Id, _watchPath, CancellationToken.None);
+        Assert.Equal(PostProcessingCardStatus.Deferred, classified.Status);
+        Assert.Equal(PostProcessingCardResult.AwaitingIntegrationCompletion, classified.Reason);
+
         var report = await restarted.Resume.RunOnceAsync("restart-drill");
 
         Assert.Equal(1, report.Completed);
@@ -532,7 +537,8 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
             new AutoReviewStatusSnapshot(),
             configuration,
             NullLogger<ReviewDecisionOrchestrator>.Instance,
-            attemptAuthority: authority);
+            attemptAuthority: authority,
+            integrationStatus: integration);
         orchestrator.CliRunner = (_, _, _, _, _) => Task.FromResult("");
         var worker = new AutoReviewPostProcessingWorker(
             new AutoReviewPostProcessingQueue(),
