@@ -123,7 +123,7 @@ public sealed class CliQuotaFallbackServiceTests : IDisposable
 
         Assert.True(decision.IsFallback);
         Assert.Equal(CliTypes.Claude, decision.CliType);
-        Assert.Equal(ModelIds.ClaudeOpus5, decision.Model);
+        Assert.Equal(ModelIds.ClaudeSonnet5, decision.Model);
         Assert.Equal("high", decision.ThinkingLevel);
     }
 
@@ -157,7 +157,7 @@ public sealed class CliQuotaFallbackServiceTests : IDisposable
 
         Assert.True(effective.IsFallbackDerived);
         Assert.Equal(CliTypes.Claude, effective.FallbackCliType);
-        Assert.Equal(ModelIds.ClaudeOpus5, effective.FallbackModel);
+        Assert.Equal(ModelIds.ClaudeSonnet5, effective.FallbackModel);
     }
 
     [Fact]

@@ -1437,6 +1437,7 @@ public static class V1ReviewPlaneEndpoints
             Model = lastSwitch.Model,
             ThinkingLevel = lastSwitch.ThinkingLevel,
             Reason = lastSwitch.Reason,
+            ModelFallback = lastSwitch.ModelFallback,
         });
         recorder.EmitFallbackActivated(
             task,
@@ -1449,7 +1450,8 @@ public static class V1ReviewPlaneEndpoints
                 true,
                 lastSwitch.Reason,
                 CapEvaluation.NotBlocked),
-            source: "review-claim");
+            source: "review-claim",
+            modelFallback: lastSwitch.ModelFallback);
         return subject with { Plan = subject.Plan with { Commands = resolvedCommands } };
     }
 

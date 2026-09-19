@@ -294,6 +294,37 @@ public sealed class QuotaAdmissionPlannerTests : IDisposable
         Assert.Contains("next reset", text);
     }
 
+    [Fact]
+    public void OperatorPreference_RoutesBeforeCap_AndRecordsReceipt()
+    {
+        _caps.SetCap(CliTypes.Claude, "Weekly", 98);
+        var fallback = Routing(new CliModelRouteProfile
+        {
+            CliType = CliTypes.Claude,
+            PrimaryModel = ModelIds.ClaudeOpus5,
+            PrimaryThinkingLevel = "high",
+            FallbackCliType = CliTypes.Codex,
+            FallbackModel = ModelIds.Gpt56Sol,
+            FallbackThinkingLevel = "high",
+        });
+        Snapshot(CliTypes.Claude, ("Weekly", 96, Now.AddDays(3)));
+        Snapshot(CliTypes.Codex, ("Weekly", 49, Now.AddDays(3)));
+
+        var plan = QuotaAdmissionPlanner.Plan(
+            CliTypes.Claude, ModelIds.ClaudeOpus5, "high",
+            fallback, _caps,
+            cli => cli != null && _snapshots.TryGetValue(cli, out var snapshot) ? snapshot : null,
+            Now, occupiedSlots: 0, waitPolicy: null,
+            new CliFallbackPreference(CliTypes.Claude, true, Now, Now.AddDays(3)));
+
+        Assert.Equal(QuotaAdmissionOutcome.LaunchFallback, plan.Outcome);
+        Assert.Equal("operator-preference", plan.ModelFallback?.Reason);
+        Assert.Equal("Weekly", plan.ModelFallback?.Window);
+        Assert.Equal(96, plan.ModelFallback?.UsedPct);
+        Assert.Equal("claude-opus-5 high", plan.ModelFallback?.From);
+        Assert.Equal("gpt-5.6-sol high", plan.ModelFallback?.To);
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────
     private QuotaAdmissionPlan Plan(
         string cli,

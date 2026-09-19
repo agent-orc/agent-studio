@@ -226,7 +226,7 @@ public class CodexModelDiscoveryTests : IDisposable
     }
 
     [Fact]
-    public void Registry_OnboardsTerraLunaAndMini_WithoutMakingAnyOfThemTheDefault()
+    public void Registry_OnboardsTerraAndLuna_AndRetainsMiniAsRetiredHistory()
     {
         foreach (var (id, label) in new[]
                  {
@@ -241,7 +241,7 @@ public class CodexModelDiscoveryTests : IDisposable
             Assert.Equal("openai", metadata.Vendor);
             Assert.Equal(272_000, metadata.ContextWindow);
             Assert.False(metadata.IsDefault);
-            Assert.False(metadata.Deprecated);
+            Assert.Equal(id == ModelIds.Gpt54Mini, metadata.Deprecated);
         }
 
         // gpt-5.6-sol still deliberately has no registry entry (AGT-2025): the
@@ -250,10 +250,10 @@ public class CodexModelDiscoveryTests : IDisposable
 
         // The whole gpt-5.6 family stays detection-only: terra/luna's registry
         // baseline is Available:false so a total CLI-probe failure never assumes
-        // one is offered. Mini has no such restriction.
+        // one is offered. Retired Mini is also unavailable.
         Assert.False(ModelMetadataRegistry.Find(ModelIds.Gpt56Terra)!.Available);
         Assert.False(ModelMetadataRegistry.Find(ModelIds.Gpt56Luna)!.Available);
-        Assert.True(ModelMetadataRegistry.Find(ModelIds.Gpt54Mini)!.Available);
+        Assert.False(ModelMetadataRegistry.Find(ModelIds.Gpt54Mini)!.Available);
 
         // The product default and ladder/default resolution are unchanged by
         // onboarding any of these three (regression coverage for the ladder side

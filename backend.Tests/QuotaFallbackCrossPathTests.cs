@@ -88,7 +88,7 @@ public sealed class QuotaFallbackCrossPathTests : IDisposable
 
     // ── Test A: remote-claim (/api/runner/claim) picks the equivalence fallback ──
     [Theory]
-    [InlineData(CliTypes.Codex, ModelIds.Gpt56Sol, "high", CliTypes.Claude, ModelIds.ClaudeOpus5, "high")]
+    [InlineData(CliTypes.Codex, ModelIds.Gpt56Sol, "high", CliTypes.Claude, ModelIds.ClaudeSonnet5, "high")]
     [InlineData(CliTypes.Claude, ModelIds.ClaudeOpus5, "high", CliTypes.Codex, ModelIds.Gpt56Sol, "high")]
     public async Task Remote_claim_routes_a_quota_exhausted_card_to_the_equivalent_family(
         string configuredCli,
@@ -168,12 +168,15 @@ public sealed class QuotaFallbackCrossPathTests : IDisposable
         Assert.Equal(expectedCli, marker!.CliType);
         Assert.Equal(expectedModel, marker.Model);
         Assert.Equal(expectedThinking, marker.ThinkingLevel);
+        Assert.Equal("quota-cap", marker.ModelFallback?.Reason);
+        Assert.Equal("5-hour", marker.ModelFallback?.Window);
+        Assert.Contains("TokenEconomy", marker.ModelFallback?.CatalogueVersion);
     }
 
     // ── Test B: review-claim (/api/v1/runners/{id}/review-claims) re-resolves ──
     [Theory]
-    [InlineData(CliTypes.Codex, ModelIds.Gpt54Mini, "high", CliTypes.Claude, ModelIds.ClaudeSonnet5, "medium")]
-    [InlineData(CliTypes.Claude, ModelIds.ClaudeSonnet5, "medium", CliTypes.Codex, ModelIds.Gpt54Mini, "high")]
+    [InlineData(CliTypes.Codex, ModelIds.Gpt56Sol, "medium", CliTypes.Claude, ModelIds.ClaudeSonnet5, "medium")]
+    [InlineData(CliTypes.Claude, ModelIds.ClaudeSonnet5, "medium", CliTypes.Codex, ModelIds.Gpt56Sol, "medium")]
     public async Task Review_claim_re_resolves_a_pinned_aspect_without_mutating_the_frozen_plan(
         string configuredCli,
         string configuredModel,
@@ -292,6 +295,9 @@ public sealed class QuotaFallbackCrossPathTests : IDisposable
         Assert.Equal(expectedCli, marker!.CliType);
         Assert.Equal(expectedModel, marker.Model);
         Assert.Equal(expectedThinking, marker.ThinkingLevel);
+        Assert.Equal("quota-cap", marker.ModelFallback?.Reason);
+        Assert.Equal("5-hour", marker.ModelFallback?.Window);
+        Assert.Contains("TokenEconomy", marker.ModelFallback?.CatalogueVersion);
     }
 
     // ── helpers, mirroring RemoteRunnerEndToEndTests' conventions ───────────────

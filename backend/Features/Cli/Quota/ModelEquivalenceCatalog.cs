@@ -1,77 +1,192 @@
+using System.Reflection;
+using TokenEconomy;
+
 namespace AgentStudio.Cli;
 
-/// <summary>
-/// Cross-CLI-family capability-equivalence lookup. Lets
-/// <see cref="CliQuotaFallbackService"/> derive an implicit quota fallback for a
-/// CLI the operator has not configured a <c>fallbackCliType</c> for, instead of
-/// requiring a hand-maintained pair per CLI (AGT-2751).
-/// </summary>
-/// <remarks>
-/// The exhaustive, maintained version of this table is Token Economy's model
-/// migration catalogue (<c>model-migration-catalog-safe-auto-rules</c>), which
-/// is out of scope for this change. This interface is the seam that lets
-/// <see cref="CliQuotaFallbackService"/> consume that catalogue once it lands
-/// (swap the registered <see cref="IModelEquivalenceCatalog"/>); the shipped
-/// <see cref="ModelEquivalenceCatalog"/> is an interim table covering only the
-/// tiers already named in
-/// docs/system/domains/model-routing-policy.md ("equivalent-capability
-/// provider fallback").
-/// </remarks>
+/// <summary>One route projected from Token Economy's routing and price catalogues.</summary>
+public sealed record ModelEquivalenceRoute(
+    string FromCliType,
+    string FromModel,
+    string? FromThinkingLevel,
+    string ToCliType,
+    string ToModel,
+    string? ToThinkingLevel,
+    string CatalogueVersion,
+    decimal? FromInputPerMTok,
+    decimal? FromOutputPerMTok,
+    decimal? ToInputPerMTok,
+    decimal? ToOutputPerMTok,
+    string CapabilityClass);
+
 public interface IModelEquivalenceCatalog
 {
-    /// <summary>
-    /// The equal-strength (model, thinking level) pair in
-    /// <paramref name="toCliType"/> for a request currently pinned to
-    /// <paramref name="fromCliType"/>/<paramref name="fromModel"/> at
-    /// <paramref name="fromThinkingLevel"/>, or null when no tier is known for
-    /// that combination.
-    /// </summary>
+    string Version { get; }
     (string Model, string? ThinkingLevel)? TryGetEquivalent(
         string fromCliType, string? fromModel, string? fromThinkingLevel, string toCliType);
+    ModelEquivalenceRoute? TryGetRoute(
+        string fromCliType, string? fromModel, string? fromThinkingLevel, string toCliType);
+    IReadOnlyList<ModelEquivalenceRoute> Routes { get; }
 }
 
-/// <summary>Interim equivalence table; see the remarks on <see cref="IModelEquivalenceCatalog"/>.</summary>
+/// <summary>
+/// Adapter over the embedded, versioned Token Economy artefacts. Admission
+/// performs no network call.
+/// </summary>
 public sealed class ModelEquivalenceCatalog : IModelEquivalenceCatalog
 {
-    private sealed record Tier(string CliType, string Model, string? ThinkingLevel);
+    private static readonly ModelRoutingKnowledgeBase Knowledge = ModelRoutingKnowledgeBase.Default;
+    private static readonly ModelPriceCatalog Prices = ModelPriceCatalog.Default;
+    public string Version { get; } = BuildVersion();
+    public IReadOnlyList<ModelEquivalenceRoute> Routes { get; }
 
-    // One row per documented pair. model-routing-policy.md names Claude
-    // Opus 5/high as "a reasonable equivalent-provider signal" for the
-    // Codex flagship (Sol/high) and Claude Sonnet 5/medium for the bounded
-    // Mini/high support tier. Both sides of a row must be real
-    // ModelMetadataRegistry entries; do not add a row for a tier name that
-    // has no corresponding ModelIds constant.
-    private static readonly Tier[][] Groups =
-    [
-        [
-            new Tier(CliTypes.Codex, ModelIds.Gpt56Sol, "high"),
-            new Tier(CliTypes.Claude, ModelIds.ClaudeOpus5, "high"),
-        ],
-        [
-            new Tier(CliTypes.Codex, ModelIds.Gpt54Mini, "high"),
-            new Tier(CliTypes.Claude, ModelIds.ClaudeSonnet5, "medium"),
-        ],
-    ];
+    public ModelEquivalenceCatalog() => Routes = BuildRoutes();
 
     public (string Model, string? ThinkingLevel)? TryGetEquivalent(
         string fromCliType, string? fromModel, string? fromThinkingLevel, string toCliType)
     {
-        foreach (var group in Groups)
-        {
-            // A caller with no explicit primary model pinned (the common case
-            // for an operator who configured nothing) matches this family's
-            // catalogue row by CLI alone, so GetEffectiveProfile still has a
-            // display default; an explicit model must match exactly.
-            var from = Array.Find(group, t =>
-                string.Equals(t.CliType, fromCliType, StringComparison.OrdinalIgnoreCase)
-                && (string.IsNullOrWhiteSpace(fromModel) || string.Equals(t.Model, fromModel, StringComparison.OrdinalIgnoreCase))
-                && (string.IsNullOrWhiteSpace(fromThinkingLevel)
-                    || string.Equals(t.ThinkingLevel, fromThinkingLevel, StringComparison.OrdinalIgnoreCase)));
-            if (from is null) continue;
-            var to = Array.Find(group, t => string.Equals(t.CliType, toCliType, StringComparison.OrdinalIgnoreCase));
-            if (to is null || ReferenceEquals(to, from)) continue;
-            return (to.Model, to.ThinkingLevel);
-        }
-        return null;
+        var route = TryGetRoute(fromCliType, fromModel, fromThinkingLevel, toCliType);
+        return route is null ? null : (route.ToModel, route.ToThinkingLevel);
     }
+
+    public ModelEquivalenceRoute? TryGetRoute(
+        string fromCliType, string? fromModel, string? fromThinkingLevel, string toCliType)
+    {
+        var fromCli = NormalizeCli(fromCliType);
+        var toCli = NormalizeCli(toCliType);
+        var model = string.IsNullOrWhiteSpace(fromModel)
+            ? DefaultModelFor(fromCli)
+            : Knowledge.FindModel(fromModel.Trim())?.CanonicalId ?? fromModel.Trim();
+
+        var route = Routes
+            .Where(route => string.Equals(route.FromCliType, fromCli, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(route.FromModel, model, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(route.ToCliType, toCli, StringComparison.OrdinalIgnoreCase))
+            .FirstOrDefault();
+        if (route is null) return null;
+        var requestedThinking = Clean(fromThinkingLevel);
+        var target = Knowledge.FindModel(route.ToModel);
+        if (requestedThinking is not null
+            && target?.SupportedThinkingLevels.Contains(requestedThinking, StringComparer.OrdinalIgnoreCase) != true)
+            return null;
+        return route with
+        {
+            FromThinkingLevel = requestedThinking ?? route.FromThinkingLevel,
+            ToThinkingLevel = ResolveTargetThinking(route.ToModel, requestedThinking, route.ToThinkingLevel),
+        };
+    }
+
+    private IReadOnlyList<ModelEquivalenceRoute> BuildRoutes()
+    {
+        var rows = new List<ModelEquivalenceRoute>();
+
+        foreach (var source in Knowledge.Models.Where(model =>
+                     NormalizeCli(model.CliId) == CliTypes.Claude && IsUsableSource(model)))
+        {
+            var target = CheapestSelectable(source.CapabilityTier, CliTypes.Codex);
+            if (target is not null)
+                rows.Add(Create(source, null, target, DefaultThinkingFor(target.CanonicalId)));
+        }
+
+        // The reverse direction is limited to Token Economy's explicitly
+        // evidence-scoped providerFallbacks. An absent rule means wait.
+        foreach (var route in Knowledge.Routes)
+        {
+            var source = Knowledge.FindModel(route.ModelId);
+            if (source is null || !IsUsableSource(source)) continue;
+            foreach (var fallback in Knowledge.FallbacksFor(route.Id))
+            {
+                var target = Knowledge.FindModel(fallback.ModelId);
+                if (target is not null && IsUsableSource(target))
+                    rows.Add(Create(source, route.ThinkingLevel, target, fallback.ThinkingLevel));
+            }
+        }
+
+        return rows
+            .GroupBy(row => $"{row.FromCliType}|{row.FromModel}|{row.ToCliType}", StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .OrderBy(row => row.FromCliType, StringComparer.Ordinal)
+            .ThenBy(row => row.FromModel, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private ModelRoutingModel? CheapestSelectable(CapabilityTier capability, string cliType)
+        => Knowledge.Models
+            .Where(model => NormalizeCli(model.CliId) == NormalizeCli(cliType)
+                && model.CapabilityTier.Equals(capability) && IsSelectable(model))
+            .OrderBy(model => PriceScore(model.PriceCatalogId))
+            .ThenBy(model => model.CanonicalId, StringComparer.Ordinal)
+            .FirstOrDefault();
+
+    private ModelEquivalenceRoute Create(
+        ModelRoutingModel source, string? sourceThinking,
+        ModelRoutingModel target, string? targetThinking)
+    {
+        var fromPrice = CurrentPrice(source.PriceCatalogId);
+        var toPrice = CurrentPrice(target.PriceCatalogId);
+        return new ModelEquivalenceRoute(
+            NormalizeCli(source.CliId), source.CanonicalId, sourceThinking,
+            NormalizeCli(target.CliId), target.CanonicalId, targetThinking,
+            Version,
+            fromPrice?.InputPerMTok, fromPrice?.OutputPerMTok,
+            toPrice?.InputPerMTok, toPrice?.OutputPerMTok,
+            source.CapabilityTier.ToString());
+    }
+
+    private static bool IsUsableSource(ModelRoutingModel model)
+        => ModelMetadataRegistry.Find(model.CanonicalId)?.Deprecated != true
+           && !string.Equals(model.RoutingStatus.ToString(), "Deprecated", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsSelectable(ModelRoutingModel model)
+        => IsUsableSource(model)
+           && string.Equals(model.RoutingStatus.ToString(), "Selectable", StringComparison.OrdinalIgnoreCase);
+
+    private static decimal PriceScore(string modelId)
+    {
+        var price = CurrentPrice(modelId);
+        return price is null ? decimal.MaxValue : price.InputPerMTok + price.OutputPerMTok;
+    }
+
+    private static ModelPrice? CurrentPrice(string modelId)
+        => Prices.ResolvePrice(modelId, DateTime.UtcNow).Price;
+
+    private static string? DefaultThinkingFor(string modelId)
+        => Knowledge.Routes
+               .Where(candidate => string.Equals(candidate.ModelId, modelId, StringComparison.OrdinalIgnoreCase))
+               .OrderBy(candidate => candidate.Rank)
+               .FirstOrDefault()?.ThinkingLevel
+           ?? ModelMetadataRegistry.Find(modelId)?.DefaultThinkingLevel
+           ?? "medium";
+
+    private static string? ResolveTargetThinking(string targetModel, string? requested, string? fallback)
+    {
+        var cleaned = Clean(requested);
+        var target = Knowledge.FindModel(targetModel);
+        return cleaned is not null
+               && target?.SupportedThinkingLevels.Contains(cleaned, StringComparer.OrdinalIgnoreCase) == true
+            ? cleaned
+            : fallback;
+    }
+
+    private static string DefaultModelFor(string cliType)
+        => cliType == CliTypes.Claude ? ModelIds.ClaudeOpus5 : ModelIds.Gpt56Sol;
+
+    private static string NormalizeCli(string? cliType)
+        => cliType?.Trim().ToLowerInvariant() switch
+        {
+            "claude-code" or "claude" => CliTypes.Claude,
+            "codex" => CliTypes.Codex,
+            var value => value ?? string.Empty,
+        };
+
+    private static string BuildVersion()
+    {
+        var package = typeof(ModelRoutingKnowledgeBase).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? typeof(ModelRoutingKnowledgeBase).Assembly.GetName().Version?.ToString()
+            ?? "unknown";
+        return $"TokenEconomy {package}; routing {Knowledge.PolicyVersion:yyyy-MM-dd}";
+    }
+
+    private static string? Clean(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToLowerInvariant();
 }

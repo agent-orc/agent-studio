@@ -87,9 +87,9 @@ public sealed class ModelFamilyResolverTests : IDisposable
     }
 
     [Fact]
-    public void GptMini_ResolvesToItsSoleMember()
+    public void GptMiniCompatibilityFamily_ResolvesToLunaReplacement()
     {
-        Assert.Equal(ModelIds.Gpt54Mini, ModelFamilyResolver.Resolve(ModelFamilies.GptMini));
+        Assert.Equal(ModelIds.Gpt56Luna, ModelFamilyResolver.Resolve(ModelFamilies.GptMini));
     }
 
     [Fact]
@@ -122,12 +122,12 @@ public sealed class ModelFamilyResolverTests : IDisposable
     public void RuntimeDefaultsThatUsedToHardcodeHaiku_NowResolveViaTheFamily()
     {
         // Regression guard for the AGT-2716 literal sweep: every former
-        // ModelIds.ClaudeHaiku45 / ModelIds.Gpt54Mini runtime default now
-        // reads through the family resolver and lands on the same id today.
+        // Claude defaults follow their current family while retired GPT-5.4
+        // Mini defaults resolve through the compatibility family to Luna.
         Assert.Equal(ModelIds.ClaudeHaiku45, OrchestratorRunner.DefaultModel);
         Assert.Equal(ModelIds.ClaudeSonnet5, AgentStudio.Docs.WikiMaintenanceModelService.DefaultModel);
         Assert.Equal(ModelIds.ClaudeOpus5, AgentStudio.Cli.GenericCliExecutionService.DefaultOpusModel);
-        Assert.Equal(ModelIds.Gpt54Mini, AgentStudio.Pipeline.PipelineStepModelDefaults.SupportModel);
-        Assert.Equal(ModelIds.Gpt54Mini, AgentStudio.Drift.DriftPostStepRunner.DefaultModel);
+        Assert.Equal(ModelIds.Gpt56Luna, AgentStudio.Pipeline.PipelineStepModelDefaults.SupportModel);
+        Assert.Equal(ModelIds.Gpt56Luna, AgentStudio.Drift.DriftPostStepRunner.DefaultModel);
     }
 }
