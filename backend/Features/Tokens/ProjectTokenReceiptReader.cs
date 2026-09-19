@@ -193,6 +193,8 @@ public sealed class ProjectTokenReceiptReader
                     CacheReadTokens = SafeInt(call.CacheReadTokens),
                     CacheCreationTokens = SafeInt(call.CacheCreationTokens),
                     ThinkingLevel = call.ThinkingLevel,
+                    InputIncludesCached = call.InputIncludesCached,
+                    UsageNormalization = call.UsageNormalization,
                 },
             };
         }

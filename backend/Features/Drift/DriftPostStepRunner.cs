@@ -448,6 +448,7 @@ public sealed class DriftPostStepRunner
             OutputTokens = usage?.OutputTokens ?? 0,
             CacheReadTokens = usage?.CacheReadTokens ?? 0,
             CacheCreationTokens = usage?.CacheCreationTokens ?? 0,
+            InputIncludesCached = usage?.InputIncludesCached,
             Reason = reason,
         });
     }

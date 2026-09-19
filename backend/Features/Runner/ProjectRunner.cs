@@ -89,7 +89,8 @@ public class ProjectRunner
         long OutputTokens,
         long CacheReadTokens,
         long CacheCreationTokens,
-        string Source);
+        string Source,
+        bool? InputIncludesCached);
 
     private readonly ILogger _logger;
     private readonly TaskScannerService _scanner;
@@ -5364,7 +5365,8 @@ public class ProjectRunner
                 agg.OutputTokens,
                 agg.CacheReadTokens,
                 agg.CacheCreationTokens,
-                AgentSessionTranscriptUsageSource);
+                AgentSessionTranscriptUsageSource,
+                false);
         }
         catch (Exception ex)
         {
@@ -5464,6 +5466,8 @@ public class ProjectRunner
                 OutputTokens = outputTokens,
                 CacheReadTokens = cacheReadTokens,
                 CacheCreationTokens = cacheCreationTokens,
+                InputIncludesCached = usage?.InputIncludesCached ?? priorCore?.InputIncludesCached,
+                UsageNormalization = priorCore?.UsageNormalization,
                 TokenUsageSource = CombineTokenUsageSource(priorCore?.TokenUsageSource, usage?.Source),
                 Verdict = verdict,
                 Reason = reason,
@@ -5530,7 +5534,8 @@ public class ProjectRunner
                 u.Output,
                 u.CacheRead,
                 u.CacheWrite,
-                AgentCliFooterUsageSource);
+                AgentCliFooterUsageSource,
+                u.InputIncludesCached);
         }
 
         return TryParseFooterUsage(footerUsage?.Tokens, model: null, AgentCliFooterUsageSource);
@@ -5559,7 +5564,7 @@ public class ProjectRunner
         }
 
         if (input + output + cacheRead + cacheCreation == 0) return null;
-        return new CoreAgentUsage(model, input, output, cacheRead, cacheCreation, source);
+        return new CoreAgentUsage(model, input, output, cacheRead, cacheCreation, source, null);
     }
 
     private static long? TryReadLabeledCompact(string text, string label)

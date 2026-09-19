@@ -242,6 +242,7 @@ public sealed class CodexOneShot : ICliOneShot
             OutputTokens = ToInt(richUsage.Output),
             CacheReadTokens = ToInt(richUsage.CacheRead),
             CacheCreationTokens = ToInt(richUsage.CacheWrite),
+            InputIncludesCached = richUsage.InputIncludesCached,
         };
         var ok = exitCode == 0 && turnError is null;
         var duration = completedAt - requestedAt;

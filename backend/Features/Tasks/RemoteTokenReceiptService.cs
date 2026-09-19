@@ -84,6 +84,7 @@ public sealed class RemoteTokenReceiptService
                         OutputTokens = SafeInt(usage.Output),
                         CacheReadTokens = SafeInt(usage.CacheRead),
                         CacheCreationTokens = SafeInt(usage.CacheWrite),
+                        InputIncludesCached = usage.InputIncludesCached,
                     },
                 });
             }

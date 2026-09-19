@@ -41,6 +41,24 @@ public sealed class RemoteProjectChatRunnerTests : IDisposable
         Assert.Equal(3, parsed.TokenUsage?.OutputTokens);
         Assert.Equal(2, parsed.TokenUsage?.CacheReadTokens);
         Assert.Equal(1, parsed.TokenUsage?.CacheCreationTokens);
+        Assert.False(parsed.TokenUsage?.InputIncludesCached);
+    }
+
+    [Fact]
+    public void Codex_turn_completed_normalizes_cached_subset()
+    {
+        var process = new ProcessResult(
+            0,
+            "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"ok\"}}\n" +
+            "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":14983295,\"output_tokens\":24305,\"cached_input_tokens\":14786304}}\n",
+            "");
+
+        var parsed = RemoteProjectChatRunner.ParseCodex(process, "gpt-5.6-sol");
+
+        Assert.True(parsed.Success);
+        Assert.Equal(196991, parsed.TokenUsage?.InputTokens);
+        Assert.Equal(14786304, parsed.TokenUsage?.CacheReadTokens);
+        Assert.True(parsed.TokenUsage?.InputIncludesCached);
     }
 
     [Fact]

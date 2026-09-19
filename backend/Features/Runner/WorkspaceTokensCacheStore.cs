@@ -84,6 +84,23 @@ public sealed class WorkspaceTokensCacheStore
     private string ExpensiveJobsPath()
         => Path.Combine(_baseDir, "tokens-expensive-jobs.json");
 
+    public void Invalidate()
+    {
+        try
+        {
+            lock (_writeLock)
+            {
+                if (!Directory.Exists(_baseDir)) return;
+                foreach (var path in Directory.EnumerateFiles(_baseDir, "tokens-*.json"))
+                    File.Delete(path);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to invalidate workspace token caches under {Path}", _baseDir);
+        }
+    }
+
     // ---- Shared I/O ----
 
     private T? ReadJson<T>(string path) where T : class

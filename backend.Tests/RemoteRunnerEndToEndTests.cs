@@ -611,7 +611,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         using var taskJson = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(moved, "task.json")));
         var tokenSummary = taskJson.RootElement.GetProperty("tokenSummary");
         Assert.Equal(1, tokenSummary.GetProperty("Calls").GetInt32());
-        Assert.Equal(1200, tokenSummary.GetProperty("InputTokens").GetInt64());
+        Assert.Equal(400, tokenSummary.GetProperty("InputTokens").GetInt64());
         Assert.Equal(300, tokenSummary.GetProperty("OutputTokens").GetInt64());
         Assert.Equal(800, tokenSummary.GetProperty("CacheReadTokens").GetInt64());
 
@@ -662,7 +662,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         var repaired = scanner.FindJob(teKey, teWatchPath);
         Assert.Equal(resultSha, Assert.Single(repaired!.Commits).Sha);
         using var repairedJson = JsonDocument.Parse(await File.ReadAllTextAsync(jsonPath));
-        Assert.Equal(2300, repairedJson.RootElement
+        Assert.Equal(1500, repairedJson.RootElement
             .GetProperty("tokenSummary")
             .GetProperty("TotalTokens")
             .GetInt64());
@@ -3752,7 +3752,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Equal("review-host", aspect.ExecutionHostId);
         Assert.Equal(reviewRunnerId, aspect.ExecutionExecutorId);
         Assert.Equal(created.ReviewAttempt!.AttemptId, aspect.ExecutionAttemptId);
-        Assert.Equal(34, aspect.InputTokens);
+        Assert.Equal(27, aspect.InputTokens);
         Assert.True(File.Exists(Path.Combine(humanFolder, "aspect-code-quality.md")));
         Assert.True(File.Exists(Path.Combine(humanFolder, "aspect-code-quality.json")));
 

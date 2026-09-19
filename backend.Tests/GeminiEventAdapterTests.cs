@@ -71,12 +71,13 @@ public class GeminiEventAdapterTests
     [Fact]
     public void ResultSuccess_EmitsTurnCompleted_WithUsageStats()
     {
-        const string frame = """{"type":"result","status":"success","stats":{"input_tokens":14151,"output_tokens":36,"cached":0,"tool_calls":0}}""";
+        const string frame = """{"type":"result","status":"success","stats":{"total_tokens":14187,"input_tokens":14151,"output_tokens":36,"cached":500,"input":13651,"tool_calls":0,"models":{"gemini-2.5-pro":{"total_tokens":14187,"input_tokens":14151,"output_tokens":36,"cached":500,"input":13651}}}}""";
         var tc = Assert.IsType<CliRunEvent.TurnCompleted>(
             Assert.Single(GeminiEventAdapter.Map(frame, Jk).ToList()));
         Assert.NotNull(tc.UsageSummary);
         Assert.Contains("input=14151", tc.UsageSummary);
         Assert.Contains("output=36", tc.UsageSummary);
+        Assert.Contains("cached=500", tc.UsageSummary);
         Assert.Contains("tool_calls=0", tc.UsageSummary);
     }
 

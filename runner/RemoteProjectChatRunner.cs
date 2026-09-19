@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts;
 using CodingAgentRunner;
 using CodingAgentRunner.Abstractions;
 using CodingAgentRunner.Delegation;
@@ -287,12 +288,16 @@ public sealed class RemoteProjectChatRunner
                 else if (type == "turn.completed"
                          && root.TryGetProperty("usage", out var usageNode))
                 {
+                    var normalized = ProviderUsageNormalization.OpenAi(
+                        ReadLong(usageNode, "input_tokens"),
+                        ReadLong(usageNode, "cached_input_tokens"));
                     usage = new OrchestratorTokenUsage
                     {
                         Model = model,
-                        InputTokens = ReadInt(usageNode, "input_tokens"),
+                        InputTokens = SafeInt(normalized.InputTokens),
                         OutputTokens = ReadInt(usageNode, "output_tokens"),
-                        CacheReadTokens = ReadInt(usageNode, "cached_input_tokens"),
+                        CacheReadTokens = SafeInt(normalized.CacheReadTokens),
+                        InputIncludesCached = normalized.InputIncludesCached,
                     };
                 }
             }
@@ -345,6 +350,7 @@ public sealed class RemoteProjectChatRunner
                             OutputTokens = ReadInt(usageNode, "output_tokens"),
                             CacheReadTokens = ReadInt(usageNode, "cache_read_input_tokens"),
                             CacheCreationTokens = ReadInt(usageNode, "cache_creation_input_tokens"),
+                            InputIncludesCached = false,
                         };
                     }
                 }
@@ -366,9 +372,14 @@ public sealed class RemoteProjectChatRunner
     }
 
     private static int ReadInt(JsonElement node, string property)
+        => SafeInt(ReadLong(node, property));
+
+    private static long ReadLong(JsonElement node, string property)
         => node.TryGetProperty(property, out var value) && value.TryGetInt64(out var parsed)
-            ? (int)Math.Clamp(parsed, 0, int.MaxValue)
+            ? Math.Max(0, parsed)
             : 0;
+
+    private static int SafeInt(long value) => (int)Math.Clamp(value, 0, int.MaxValue);
 }
 
 internal sealed class ProjectChatWorkspace
