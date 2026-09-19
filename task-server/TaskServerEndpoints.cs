@@ -33,6 +33,18 @@ public static class TaskServerEndpoints
                 reason);
             return supported ? Results.Ok(response) : Results.Json(response, statusCode: StatusCodes.Status426UpgradeRequired);
         });
+        api.MapGet("/artifact-limits", (IOptions<TaskServerOptions> configured) =>
+        {
+            var options = configured.Value;
+            var requestBytes = Math.Max(1, options.MaxRequestBodyBytes);
+            var reserve = Math.Min(64L * 1024, requestBytes / 4);
+            var requestSafeRawBytes = Math.Max(1, (requestBytes - reserve) / 4 * 3);
+            var maxTotalBytes = Math.Max(1, options.ResultArtifactMaxTotalBytes);
+            return Results.Ok(new ArtifactTransferLimitsResponse(
+                requestBytes,
+                Math.Min(Math.Min(Math.Max(1, options.ResultArtifactMaxFileBytes), requestSafeRawBytes), maxTotalBytes),
+                maxTotalBytes));
+        });
 
         api.MapGet("/workspaces", async (TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.ListWorkspacesAsync(ct)));

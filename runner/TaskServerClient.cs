@@ -1418,6 +1418,53 @@ public sealed class TaskServerClient : IDisposable
                 : $"degraded:{finalization.Error ?? "summary retry budget exhausted"}");
     }
 
+    public async Task<ArtifactTransferLimitsResponse> GetArtifactTransferLimitsAsync(
+        string taskKey,
+        CancellationToken ct)
+    {
+        var url = _useV1
+            ? "/api/v1/artifact-limits"
+            : $"/api/runner/artifacts/limits?taskKey={Uri.EscapeDataString(taskKey)}";
+        using var response = await _http.GetAsync(url, ct);
+        if (response.IsSuccessStatusCode)
+        {
+            return await response.Content.ReadFromJsonAsync<ArtifactTransferLimitsResponse>(Json, ct)
+                   ?? throw new InvalidDataException("Task Server returned empty artifact limits.");
+        }
+        var detail = await response.Content.ReadAsStringAsync(ct);
+        throw new TaskServerException(
+            (int)response.StatusCode,
+            $"GET {url} -> {(int)response.StatusCode}: {Trim(detail)}");
+    }
+
+    public async Task ReportArtifactTransferAsync(
+        ArtifactTransferReportRequest request,
+        CancellationToken ct)
+    {
+        if (!_useV1)
+        {
+            await PostJsonWithoutResponseAsync("/api/runner/artifacts/outcome", request, ct);
+            return;
+        }
+        var authority = V1Authority(request.TaskKey);
+        var payload = JsonSerializer.Serialize(request, Json);
+        var key = $"artifact-outcome:{authority.RunId}:{WireDigest.Hash(payload)}";
+        await SendJsonAsync<Contract.EventIngestRequest, Contract.EventDto>(
+            HttpMethod.Post,
+            $"/api/v1/runs/{Uri.EscapeDataString(authority.RunId)}/events",
+            new Contract.EventIngestRequest(
+                $"evt_{HashId(key)}",
+                "runner.artifact-partial",
+                payload,
+                key,
+                authority.Lease.FencingToken,
+                DateTime.UtcNow,
+                authority.Lease.RunnerId,
+                authority.InstanceId,
+                authority.Lease.LeaseId),
+            ct);
+    }
+
     private async Task<Contract.ResultFinalizationDto> FinalizeResultWithRetryAsync(
         string taskKey,
         CancellationToken ct)
@@ -1475,9 +1522,6 @@ public sealed class TaskServerClient : IDisposable
                 // names an incident must name it on both planes.
                 GateItems: req.GateItems),
             ct);
-        _v1Leases.TryRemove(req.TaskKey, out _);
-        _v1TaskBodies.TryRemove(req.TaskKey, out _);
-        _hostAcceptedWork.TryRemove(req.TaskKey, out _);
         return new RemoteRunCompletionResponse(req.TaskKey, typedOutcome, "4-auto-review");
     }
 
@@ -1567,9 +1611,6 @@ public sealed class TaskServerClient : IDisposable
                         payload.SalvageCommitSha,
                         payload.GateItems),
                     ct);
-                _v1Leases.TryRemove(authority.TaskKey, out _);
-                _v1TaskBodies.TryRemove(authority.TaskKey, out _);
-                _hostAcceptedWork.TryRemove(authority.TaskKey, out _);
                 return;
             }
             default:

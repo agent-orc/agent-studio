@@ -40,7 +40,7 @@ public sealed class CodingFinalizationRetryTests : IDisposable
         await CreateOriginAsync(origin, Path.Combine(_root, "seed"));
         var options = Options(origin);
         var lease = Lease(options);
-        var server = new RestartingTaskServer(lease, refuseArtifactUploads: 1);
+        var server = new RestartingTaskServer(lease, refuseCompletions: 1);
         var logs = new ConcurrentQueue<string>();
 
         using var client = Client(server, options);
@@ -63,10 +63,12 @@ public sealed class CodingFinalizationRetryTests : IDisposable
         Assert.Equal(1, deferred.Finalization!.Attempts);
         Assert.False(string.IsNullOrWhiteSpace(deferred.Finalization.LastReason));
         Assert.Equal(0, server.CompletionCount);
-        // The delivery is retained on disk exactly where the retry will find it.
+        // The delivery was already secured before completion failed. The retry
+        // uses the persisted teardown facts and does not need the worktree.
         Assert.True(File.Exists(Path.Combine(
             options.WorkDir, "tasks", lease.TaskKey, "results", "deliverables.md")));
-        Assert.True(Directory.Exists(deferred.WorktreePath));
+        Assert.NotNull(deferred.Finalization.Teardown);
+        Assert.False(string.IsNullOrWhiteSpace(deferred.Finalization.Teardown!.ResultSha));
 
         // Fast-forward the durable backoff instead of sleeping through it. The
         // schedule is read back from disk, so this is the same decision the
@@ -90,10 +92,9 @@ public sealed class CodingFinalizationRetryTests : IDisposable
 
         // Idempotence: both transfer attempts present the same fenced
         // idempotency key, and exactly one completion is recorded.
-        Assert.Equal(2, server.ArtifactIdempotencyKeys.Count);
-        Assert.Single(server.ArtifactIdempotencyKeys.Distinct(StringComparer.Ordinal));
-        Assert.Equal(1, server.CompletionCount);
+        Assert.Equal(2, server.CompletionIdempotencyKeys.Count);
         Assert.Single(server.CompletionIdempotencyKeys.Distinct(StringComparer.Ordinal));
+        Assert.Equal(1, server.CompletionCount);
         Assert.DoesNotContain("none", server.ResultShas);
         Assert.Contains(logs, line => line.Contains("finalizationRetries=1", StringComparison.Ordinal));
         Assert.Contains(logs, line => line.Contains("coding-finalization-redrive", StringComparison.Ordinal)
@@ -113,7 +114,7 @@ public sealed class CodingFinalizationRetryTests : IDisposable
         var lease = Lease(options);
         var server = new RestartingTaskServer(
             lease,
-            refuseArtifactUploads: 0,
+            refuseCompletions: 0,
             refusePromptReads: 1);
         var logs = new ConcurrentQueue<string>();
 
@@ -151,7 +152,7 @@ public sealed class CodingFinalizationRetryTests : IDisposable
         await CreateOriginAsync(origin, Path.Combine(_root, "seed"));
         var options = Options(origin);
         var lease = Lease(options);
-        var server = new RestartingTaskServer(lease, refuseArtifactUploads: 1);
+        var server = new RestartingTaskServer(lease, refuseCompletions: 1);
         var logs = new ConcurrentQueue<string>();
 
         using (var firstClient = Client(server, options))
@@ -205,6 +206,53 @@ public sealed class CodingFinalizationRetryTests : IDisposable
         Assert.Contains(logs, line => line.Contains("coding-finalization-redrive", StringComparison.Ordinal)
             && line.Contains("retry=1", StringComparison.Ordinal));
         Assert.Empty(new RunnerStateStore(options.StateDir).LoadAll());
+    }
+
+    [SkippableFact]
+    [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
+    public async Task Artifact_413_after_completion_is_partial_and_does_not_fail_the_slot()
+    {
+        PlatformGate.LinuxOnly("the detached worker and Git delivery use Linux process boundaries");
+
+        var origin = Path.Combine(_root, "origin-413.git");
+        await CreateOriginAsync(origin, Path.Combine(_root, "seed-413"));
+        var options = Options(origin);
+        var lease = Lease(options) with
+        {
+            TaskKey = "AGT-ARTIFACT-413",
+            LeaseId = "lease-artifact-413",
+            AttemptId = "attempt-artifact-413",
+        };
+        var server = new RestartingTaskServer(
+            lease,
+            refuseCompletions: 0,
+            artifactResponseStatus: HttpStatusCode.RequestEntityTooLarge);
+        var logs = new ConcurrentQueue<string>();
+
+        using var client = Client(server, options);
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        var daemon = new RemoteRunnerDaemon(options, client, logs.Enqueue);
+        var run = daemon.RunAsync(stop.Token);
+
+        await AwaitCompletionAsync(server, logs, TimeSpan.FromSeconds(45));
+        await WaitForLogAsync(
+            logs,
+            line => line.Contains("artifact-transfer", StringComparison.Ordinal)
+                    && line.Contains("artifacts=partial", StringComparison.Ordinal),
+            stop.Token);
+
+        await stop.CancelAsync();
+        try { await run.WaitAsync(TimeSpan.FromSeconds(20)); }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
+
+        Assert.Equal(1, server.CompletionCount);
+        Assert.DoesNotContain("none", server.ResultShas);
+        var requests = server.RequestOrder.ToList();
+        Assert.True(
+            requests.IndexOf("/api/runner/completion") < requests.IndexOf("/api/runner/artifacts"),
+            string.Join(Environment.NewLine, requests));
+        Assert.Contains(logs, line => line.Contains("outcome=ArtifactTooLarge", StringComparison.Ordinal));
+        Assert.DoesNotContain(logs, line => line.Contains("slot failed", StringComparison.Ordinal));
     }
 
     private RunnerOptions Options(string origin) => new()
@@ -325,15 +373,16 @@ public sealed class CodingFinalizationRetryTests : IDisposable
 
     /// <summary>
     /// Answers every route the coding daemon needs, but drops the first
-    /// <c>refuseArtifactUploads</c> result transfers the way a Task Server that
+    /// <c>refuseCompletions</c> completion responses the way a Task Server that
     /// is being stopped mid-response does. <c>/api/system/about</c> keeps
     /// answering, which is exactly the "the server is back" signal the retry
     /// waits for.
     /// </summary>
     private sealed class RestartingTaskServer(
         RunLeaseInfoDto initialLease,
-        int refuseArtifactUploads,
-        int refusePromptReads = 0) : HttpMessageHandler
+        int refuseCompletions,
+        int refusePromptReads = 0,
+        HttpStatusCode? artifactResponseStatus = null) : HttpMessageHandler
     {
         private readonly object _gate = new();
         private int _claimCount;
@@ -347,6 +396,7 @@ public sealed class CodingFinalizationRetryTests : IDisposable
         public List<string> ArtifactIdempotencyKeys { get; } = [];
         public List<string> CompletionIdempotencyKeys { get; } = [];
         public List<string> ResultShas { get; } = [];
+        public ConcurrentQueue<string> RequestOrder { get; } = new();
         public int CompletionCount { get; private set; }
         public int ReleaseCount => Volatile.Read(ref _releaseCount);
 
@@ -355,6 +405,7 @@ public sealed class CodingFinalizationRetryTests : IDisposable
             CancellationToken cancellationToken)
         {
             var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            RequestOrder.Enqueue(path);
             var body = request.Content is null
                 ? string.Empty
                 : await request.Content.ReadAsStringAsync(cancellationToken);
@@ -374,6 +425,15 @@ public sealed class CodingFinalizationRetryTests : IDisposable
                 };
             }
 
+            if (path == "/api/runner/artifacts" && artifactResponseStatus is { } rejectedStatus)
+            {
+                _ = Artifacts(body);
+                return new HttpResponseMessage(rejectedStatus)
+                {
+                    Content = new StringContent("artifact payload refused"),
+                };
+            }
+
             object? response = path switch
             {
                 "/api/system/about" => new { application = "task-server", version = "0.8.0" },
@@ -387,7 +447,12 @@ public sealed class CodingFinalizationRetryTests : IDisposable
                 "/api/runner/claim" => Claim(),
                 "/api/runner/lease/renew" => Renew(body),
                 "/api/runner/logs" => new LogIngestResponse(initialLease.TaskKey, 2),
+                "/api/runner/artifacts/limits" => new ArtifactTransferLimitsResponse(
+                    25L * 1024 * 1024,
+                    18L * 1024 * 1024,
+                    100L * 1024 * 1024),
                 "/api/runner/artifacts" => Artifacts(body),
+                "/api/runner/artifacts/outcome" => new { status = "partial" },
                 "/api/runner/completion" => Complete(body),
                 "/api/runner/lease/release" => Release(),
                 _ => throw new InvalidOperationException(
@@ -440,13 +505,7 @@ public sealed class CodingFinalizationRetryTests : IDisposable
                     .ToList()
                 : [];
             lock (_gate) ArtifactIdempotencyKeys.Add(Text(root, "idempotencyKey"));
-            if (Interlocked.Increment(ref _artifactCount) <= refuseArtifactUploads)
-            {
-                throw new HttpRequestException(
-                    "The response ended prematurely. (ResponseEnded)",
-                    null,
-                    HttpStatusCode.ServiceUnavailable);
-            }
+            Interlocked.Increment(ref _artifactCount);
 
             return new ArtifactIngestResponse(
                 initialLease.TaskKey,
@@ -464,8 +523,13 @@ public sealed class CodingFinalizationRetryTests : IDisposable
             {
                 CompletionIdempotencyKeys.Add(Text(root, "idempotencyKey"));
                 ResultShas.Add(Text(root, "resultSha"));
-                CompletionCount++;
             }
+            if (CompletionIdempotencyKeys.Count <= refuseCompletions)
+                throw new HttpRequestException(
+                    "The response ended prematurely. (ResponseEnded)",
+                    null,
+                    HttpStatusCode.ServiceUnavailable);
+            CompletionCount++;
             Completion.TrySetResult();
             return new RemoteRunCompletionResponse(
                 TaskKey: initialLease.TaskKey,

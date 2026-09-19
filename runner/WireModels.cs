@@ -475,3 +475,22 @@ public sealed record ArtifactIngestResponse(
     string? CommitStatus = null,
     bool ResultDocumentGenerated = false,
     string? ResultDocumentStatus = null);
+public sealed record ArtifactTransferLimitsResponse(
+    long MaxRequestBodyBytes,
+    long MaxFileBytes,
+    long MaxTotalBytes);
+
+public sealed record ArtifactTransferIssue(
+    string Path,
+    long SizeBytes,
+    string Reason,
+    string Outcome = ArtifactTransferOutcomes.ArtifactTooLarge);
+
+public sealed record ArtifactTransferReportRequest(
+    string TaskKey,
+    string Status,
+    IReadOnlyList<ArtifactTransferIssue> Issues,
+    string? RunnerId = null,
+    string? LeaseId = null,
+    long FencingToken = 0,
+    string? AttemptId = null);
