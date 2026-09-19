@@ -132,6 +132,39 @@ internal sealed class WorkerCgroup
     // ------------------------------------------------------------ coordination
 
     /// <summary>
+    /// State the per-worker resource envelope this daemon generation will
+    /// apply, then clear worker cgroups from a previous generation whose
+    /// processes are gone. A cgroup that still holds a surviving detached
+    /// worker is not empty and is therefore never swept.
+    ///
+    /// <para>AGT-2868: the same startup pass empties the unit cgroup itself
+    /// first. Processes that no worker owns any more otherwise prevent
+    /// delegation for the rest of the host's life.</para>
+    /// </summary>
+    internal static void AnnounceEnvelope(
+        RunnerOptions options,
+        IEnumerable<string> retainedWorkerDirectories,
+        StraySweepContext strays,
+        string uncappedWorkerDescription,
+        Action<string> log)
+    {
+        if (!options.WorkerEnvelopeEnabled)
+        {
+            log("worker resource envelope disabled by RUNNER_WORKER_ENVELOPE=0; "
+                + $"{uncappedWorkerDescription} run uncapped");
+            return;
+        }
+
+        var envelope = WorkerResourceEnvelope.FromOptions(options);
+        log($"worker resource envelope {envelope.Describe()} "
+            + $"(coding={options.HostCodingSlots} review={options.HostReviewSlots} "
+            + $"burst={options.WorkerCpuBurst:0.0}x)");
+        var root = EnsureDelegationRoot(log, strays);
+        if (root is not null)
+            SweepAbandoned(root, retainedWorkerDirectories, log);
+    }
+
+    /// <summary>
     /// Prepare the whole envelope for one worker: resolve the delegated subtree
     /// once per process, create the worker cgroup, write the limits, and record
     /// the path in the worker directory. Returns null when the host cannot carry
@@ -492,8 +525,6 @@ internal sealed class WorkerCgroup
             // A sweep is hygiene only; the next one gets another chance.
         }
     }
-
-    internal WorkerResourceUsage? ReadUsage() => ReadUsage(CgroupDirectory);
 
     // -------------------------------------------------------------------- local
 

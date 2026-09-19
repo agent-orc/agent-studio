@@ -346,7 +346,12 @@ public sealed class RemoteReviewDaemon
             nextSlotReconciliation = DateTime.UtcNow.AddMinutes(1);
             idleWatchdog.RecordActiveSlots(active.Count);
             LogSlotHygiene(force: true);
-            AnnounceWorkerEnvelope(persistedAtStartup);
+            WorkerCgroup.AnnounceEnvelope(
+                _options,
+                persistedAtStartup.Select(slot => slot.WorkerDirectory),
+                StraySweepContextFor(persistedAtStartup),
+                "detached review workers",
+                _log);
 
             var capabilityGeneration = DateTime.UtcNow.Ticks;
             await AdvertiseCapabilitiesWithControlAsync(capabilityGeneration, shutdown);
@@ -744,34 +749,6 @@ public sealed class RemoteReviewDaemon
                 }
             }
         }
-    }
-
-    /// <summary>
-    /// AGT-2866: state the per-worker resource envelope this daemon generation
-    /// will apply, and clear away the worker cgroups of a previous generation
-    /// whose processes are gone. A cgroup that still holds a surviving detached
-    /// worker is not empty and is therefore never swept.
-    /// </summary>
-    private void AnnounceWorkerEnvelope(IReadOnlyList<PersistedReviewSlot> retained)
-    {
-        if (!_options.WorkerEnvelopeEnabled)
-        {
-            _log("worker resource envelope disabled by RUNNER_WORKER_ENVELOPE=0; "
-                 + "detached review workers run uncapped");
-            return;
-        }
-        var envelope = WorkerResourceEnvelope.FromOptions(_options);
-        _log($"worker resource envelope {envelope.Describe()} "
-             + $"(coding={_options.HostCodingSlots} review={_options.HostReviewSlots} "
-             + $"burst={_options.WorkerCpuBurst:0.0}x)");
-        var root = WorkerCgroup.EnsureDelegationRoot(
-            message => _log(message),
-            StraySweepContextFor(retained));
-        if (root is not null)
-            WorkerCgroup.SweepAbandoned(
-                root,
-                retained.Select(slot => slot.WorkerDirectory),
-                message => _log(message));
     }
 
     /// <summary>
