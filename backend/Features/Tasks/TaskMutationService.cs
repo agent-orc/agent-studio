@@ -789,6 +789,23 @@ public class TaskMutationService
     }
 
     /// <summary>
+    /// Restores the task-level context override after a prepared continuation
+    /// could not be queued. A null value removes the override that preparation
+    /// added; a non-null value restores the task's previous explicit choice.
+    /// </summary>
+    public bool RestoreContextModeOnFolder(string folderPath, string? contextMode)
+    {
+        if (!Directory.Exists(folderPath)) return false;
+        if (contextMode is null)
+        {
+            TaskJsonFile.RemoveField(folderPath, "contextMode", _logger);
+            return Updated();
+        }
+
+        return SetContextModeOnFolder(folderPath, contextMode);
+    }
+
+    /// <summary>
     /// Appends one stable integration bookkeeping record without changing any
     /// existing row. The record id is the idempotency key: a repeated sweep is
     /// a successful no-op, even if its wall clock or evidence text differs.
@@ -2093,6 +2110,35 @@ public class TaskMutationService
 
         AppendWithLeadingNewline(Path.Combine(info.FolderPath, "prompt.md"), block);
         return true;
+    }
+
+    /// <summary>
+    /// Restores the prompt after a continuation was prepared but its lane move
+    /// was refused. Null means the task had no prompt before preparation.
+    /// </summary>
+    public bool RestorePromptOnFolder(string folderPath, string? contents)
+    {
+        if (!Directory.Exists(folderPath)) return false;
+
+        try
+        {
+            var path = Path.Combine(folderPath, "prompt.md");
+            if (contents is null)
+            {
+                if (File.Exists(path)) File.Delete(path);
+            }
+            else
+            {
+                WriteAllTextWithRetry(path, contents);
+            }
+
+            return Updated();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to restore prompt at {Folder}", folderPath);
+            return false;
+        }
     }
 
     private static void AppendWithLeadingNewline(string filePath, string block)
