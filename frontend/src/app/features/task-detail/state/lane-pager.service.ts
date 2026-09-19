@@ -201,6 +201,14 @@ export class LanePagerService {
     this.persist(updated);
   }
 
+  /** Restore the iteration captured in a browser-history entry. */
+  restore(snapshot: LanePagerSnapshot): void {
+    const restored = this.validSnapshot(snapshot);
+    if (!restored) return;
+    this.snapshot.set(restored);
+    this.persist(restored);
+  }
+
   clear(): void {
     this.snapshot.set(null);
     if (typeof sessionStorage !== 'undefined') {
@@ -222,16 +230,30 @@ export class LanePagerService {
     try {
       const raw = sessionStorage.getItem(STORAGE_KEY);
       if (!raw) return null;
-      const parsed = JSON.parse(raw) as LanePagerSnapshot;
-      if (
-        !parsed ||
-        typeof parsed.lane !== 'string' ||
-        !Array.isArray(parsed.jobs) ||
-        typeof parsed.index !== 'number'
-      ) return null;
-      return parsed;
+      return this.validSnapshot(JSON.parse(raw));
     } catch {
       return null;
     }
+  }
+
+  private validSnapshot(value: unknown): LanePagerSnapshot | null {
+    if (!value || typeof value !== 'object') return null;
+    const snapshot = value as LanePagerSnapshot;
+    if (
+      typeof snapshot.lane !== 'string' ||
+      !Array.isArray(snapshot.jobs) ||
+      snapshot.jobs.length === 0 ||
+      typeof snapshot.index !== 'number' ||
+      !Number.isInteger(snapshot.index) ||
+      snapshot.index < 0 ||
+      snapshot.index >= snapshot.jobs.length ||
+      typeof snapshot.capturedAt !== 'number' ||
+      snapshot.jobs.some(job => !job || typeof job.taskKey !== 'string'
+        || typeof job.id !== 'string' || typeof job.watchPath !== 'string')
+    ) return null;
+    return {
+      ...snapshot,
+      jobs: snapshot.jobs.map(job => ({ ...job })),
+    };
   }
 }
