@@ -108,15 +108,28 @@ describe('PipelineTokenUsageComponent', () => {
   it('names the head and the breakdown differently, so one label never covers two quantities', () => {
     const fixture = setup(SUMMARY);
     const head = one(root(fixture), 'pipeline-token-usage-total-toggle');
-    // The pipeline step list above this panel owns "Task total SUM"; this head
-    // must not repeat that label over a different set of summands.
-    expect(head?.textContent).toContain('Tokens across all runs');
-    expect(head?.textContent?.toLowerCase()).not.toContain('task total sum');
+    expect(head?.textContent).toContain('All runs · task total');
+    expect(head?.textContent?.toLowerCase()).not.toContain('sum');
 
     fixture.componentInstance.toggleSummary();
     fixture.detectChanges();
     expect(one(root(fixture), 'pipeline-token-usage-total-caption')?.textContent)
       .toContain('Per model and reasoning level');
+  });
+
+  it('suppresses the duplicate task-total row when the pipeline footer covers the only run', () => {
+    const fixture = setup({
+      runs: [run(1, true, [model('claude-haiku-4-5', 812_000, 1)])],
+      totalByModel: [model('claude-haiku-4-5', 812_000, 1)],
+      totalTokens: 812_000,
+      totalCostUsd: 1,
+      anyModelUnknown: false,
+    });
+    fixture.componentRef.setInput('showTaskTotal', false);
+    fixture.detectChanges();
+
+    expect(one(root(fixture), 'pipeline-token-usage-total')).toBeNull();
+    expect(all(root(fixture), 'pipeline-token-usage-run').length).toBe(1);
   });
 
   it('names model and reasoning level together on every identity row', () => {
@@ -325,7 +338,7 @@ describe('PipelineTokenUsageComponent', () => {
 
     const fixture = setup(summary);
     expect(one(root(fixture), 'pipeline-token-usage-grand-total-tokens')?.textContent)
-      .toContain('600.0k');
+      .toContain('600k');
     expect(one(root(fixture), 'pipeline-token-usage-grand-total-cost')?.textContent)
       .toContain('$5.50');
     expect(one(root(fixture), 'pipeline-token-usage-missing-runs')?.textContent)

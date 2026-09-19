@@ -371,6 +371,21 @@ describe('OverviewPaneComponent (smoke)', () => {
     expect(fixture.componentInstance.hasAgentWork()).toBe(false);
   });
 
+  it('agent-work block folds into run history when it only repeats CLI sessions', async () => {
+    const fixture = await build(baseJob({ state: '6-completed' }), {
+      calls: 4,
+      recovered: false,
+      toolCalls: 0,
+      toolCounts: [],
+      startedAt: new Date(Date.now() - 60_000).toISOString(),
+      lastTouchAt: new Date().toISOString(),
+      currentSessionId: 'sess-1',
+    });
+
+    expect(fixture.componentInstance.hasAgentWork()).toBe(false);
+    expect(fixture.nativeElement.querySelector('[data-testid="overview-agent-work"]')).toBeNull();
+  });
+
   it('pipeline block: joins catalogue + execution + cost into per-step rows and a task total', async () => {
     const fixture = await build(baseJob({ state: '4-auto-review' }));
     const pipe: TaskPipelineResponse = {
@@ -440,7 +455,7 @@ describe('OverviewPaneComponent (smoke)', () => {
     expect(host.querySelector('[data-testid="overview-pipeline-toggle-disabled"]')).not.toBeNull();
     const stepUsage = host.querySelector('[data-step-id="aspect-code-quality"] [data-testid="overview-pipeline-step-tokens"]');
     const stepCostCell = host.querySelector('[data-step-id="aspect-code-quality"] [data-testid="overview-pipeline-step-cost"]');
-    expect(stepUsage?.textContent?.trim()).toBe('1.2k');
+    expect(stepUsage?.textContent?.trim()).toBe('1k');
     expect(stepCostCell?.textContent?.trim()).toBe('$0.0020');
     expect(host.querySelector('[data-testid="overview-pipeline-tokens-by-model"]')).toBeNull();
 
@@ -500,8 +515,54 @@ describe('OverviewPaneComponent (smoke)', () => {
     const currentTotal = host.querySelector('[data-testid="overview-pipeline-total-cost"]');
     const lifetimeTotal = host.querySelector('[data-testid="pipeline-token-usage-grand-total-cost"]');
     expect(currentTotal?.textContent?.trim()).toBe('- no price data');
-    expect(lifetimeTotal?.textContent?.trim()).toBe('- no price data');
+    expect(host.querySelector('[data-testid="overview-pipeline-total-label"]')?.textContent)
+      .toContain('This run · pipeline total');
+    expect(host.querySelector('[data-testid="overview-pipeline-total-label"]')?.textContent)
+      .toContain('Run #1 incl. pre/post/review steps');
+    expect(lifetimeTotal).toBeNull();
     expect(host.textContent).not.toContain('$0.00');
+  });
+
+  it('shows the only available all-runs total when a single-run card has no pipeline total', async () => {
+    const fixture = await build(baseJob({ state: '4-auto-review' }));
+    const pipe = agentPipeline('claude-haiku-4-5');
+    pipe.execution = null;
+    pipe.tokensByModel = {
+      runs: [{
+        attempt: 1, current: true, startedAt: '2026-09-18T10:00:00Z',
+        completedAt: '2026-09-18T10:05:00Z', models: [], totalTokens: 812_000,
+        totalCostUsd: 1, anyModelUnknown: false, tokenUsageAvailable: true,
+      }],
+      totalByModel: [], totalTokens: 812_000, totalCostUsd: 1, anyModelUnknown: false,
+    };
+    TestBed.inject(TaskPipelinePollService).pipeline.set(pipe);
+    fixture.detectChanges();
+
+    const host = fixture.nativeElement as HTMLElement;
+    expect(host.querySelector('[data-testid="overview-pipeline-total"]')).toBeNull();
+    expect(host.querySelector('[data-testid="pipeline-token-usage-total"]')?.textContent)
+      .toContain('All runs · task total');
+  });
+
+  it('shows both scoped totals for a multi-run card', async () => {
+    const fixture = await build(baseJob({ state: '4-auto-review' }));
+    const pipe = agentPipeline('claude-haiku-4-5');
+    pipe.tokensByModel = {
+      runs: [
+        { attempt: 1, current: false, startedAt: pipe.execution!.startedAt, completedAt: pipe.execution!.completedAt, models: [], totalTokens: 300, totalCostUsd: 0.3, anyModelUnknown: false, tokenUsageAvailable: true },
+        { attempt: 2, current: true, startedAt: pipe.execution!.startedAt, completedAt: pipe.execution!.completedAt, models: [], totalTokens: pipe.cost!.totalTokens, totalCostUsd: pipe.cost!.totalCostUsd, anyModelUnknown: false, tokenUsageAvailable: true },
+      ],
+      totalByModel: [], totalTokens: pipe.cost!.totalTokens + 300,
+      totalCostUsd: pipe.cost!.totalCostUsd + 0.3, anyModelUnknown: false,
+    };
+    TestBed.inject(TaskPipelinePollService).pipeline.set(pipe);
+    fixture.detectChanges();
+
+    const host = fixture.nativeElement as HTMLElement;
+    expect(host.querySelector('[data-testid="overview-pipeline-total-label"]')?.textContent)
+      .toContain('This run · pipeline total');
+    expect(host.querySelector('[data-testid="pipeline-token-usage-total"]')?.textContent)
+      .toContain('All runs · task total');
   });
 
   it('pipeline block: step rows surface a per-step prompt trigger fed from the step-prompts read-model', async () => {
@@ -919,7 +980,7 @@ describe('OverviewPaneComponent (smoke)', () => {
     ).toBe('2');
   });
 
-  it('pipeline block: CORE CLI-footer tokens render with source, API-price tooltip, run count, and SUM footer', async () => {
+  it('pipeline block: CORE CLI-footer tokens render with source, API-price tooltip, run count, and scoped footer', async () => {
     const fixture = await build(baseJob({ state: '4-auto-review' }));
     const pipe = agentPipeline('claude-opus-4-8');
     pipe.execution!.steps[0] = {
@@ -975,24 +1036,24 @@ describe('OverviewPaneComponent (smoke)', () => {
     expect(core.totalTokens).toBe(19_698_100);
     expect(core.tokenUsageSource).toBe('AGENT (CLI FOOTER) / reported');
     expect(core.tokenTooltip?.body).toContain('Source: AGENT (CLI FOOTER) / reported');
-    expect(core.tokenTooltip?.body).toContain('Input: 2.5k');
-    expect(core.tokenTooltip?.body).toContain('Output: 195.6k');
-    expect(core.tokenTooltip?.body).toContain('Cache read: 18.5m');
-    expect(core.tokenTooltip?.body).toContain('Cache creation: 1m');
+    expect(core.tokenTooltip?.body).toContain('Input: 3k');
+    expect(core.tokenTooltip?.body).toContain('Output: 196k');
+    expect(core.tokenTooltip?.body).toContain('Cache read: 18.5M');
+    expect(core.tokenTooltip?.body).toContain('Cache creation: 1.0M');
     expect(core.tokenTooltip?.body).toContain('Estimated cost: $20.40');
     expect(core.tokenTooltip?.body).toContain('historical list prices');
     expect(core.tokenTooltip?.body).toContain('discounts and provider-side caching adjustments are not considered');
     expect(c.agentRunCountLabel()).toBe('8 runs');
-    expect(c.pipelineTotal()?.tokenTooltip?.title).toBe('Task total tokens (SUM)');
-    expect(c.pipelineTotal()?.tokenTooltip?.body).toContain('Source: SUM of pipeline steps');
+    expect(c.pipelineTotal()?.tokenTooltip?.title).toBe('Pipeline total tokens');
+    expect(c.pipelineTotal()?.tokenTooltip?.body).toContain('Source: pipeline steps in this run');
 
     c.expandAllPipelineGroups();
     try { fixture.detectChanges(); } catch { /* ignore */ }
 
     const el = fixture.nativeElement as HTMLElement;
-    expect(el.querySelector('[data-testid="overview-pipeline-step-tokens"]')?.textContent?.trim()).toBe('19.7m');
+    expect(el.querySelector('[data-testid="overview-pipeline-step-tokens"]')?.textContent?.trim()).toBe('19.7M');
     expect(el.querySelector('[data-testid="overview-pipeline-agent-runs"]')?.textContent?.trim()).toBe('8 runs');
-    expect(el.querySelector('.ov-pl-total__label')?.textContent).toContain('SUM');
+    expect(el.querySelector('.ov-pl-total__label')?.textContent).not.toContain('SUM');
   });
 
   it('pipeline block: missing and mixed prices never render as a silent zero', async () => {
@@ -1134,15 +1195,15 @@ describe('OverviewPaneComponent (smoke)', () => {
     expect(text).toContain('2 agent runs');
     expect(text).toContain('$20.40');
     expect(text).toContain('Input');
-    expect(text).toContain('2.5k');
+    expect(text).toContain('3k');
     expect(text).toContain('Output');
-    expect(text).toContain('195.6k');
+    expect(text).toContain('196k');
     expect(text).toContain('Cache read');
-    expect(text).toContain('18.5m');
+    expect(text).toContain('18.5M');
     expect(text).toContain('Cache write');
-    expect(text).toContain('1m');
+    expect(text).toContain('1.0M');
     expect(text).toContain('Total');
-    expect(text).toContain('19.7m');
+    expect(text).toContain('19.7M');
     expect(text).toContain('CORE totals come from the agent CLI footer');
     expect(modal!.querySelector('[data-testid="overview-step-token-modal-total-note"]')).toBeNull();
 
@@ -1926,12 +1987,12 @@ describe('OverviewPaneComponent (smoke)', () => {
     ]);
 
     // Nothing has run (execution === null) -> the Empty scenario collapses every
-    // section, so no step rows render and every marker shows the "+" affordance.
+    // section, so no step rows render and every shared marker stays closed.
     expect(groups.map(g => g.getAttribute('aria-expanded'))).toEqual(
       ['false', 'false', 'false', 'false', 'false', 'false'],
     );
-    expect(groups.map(g => g.querySelector('.ov-pl-phase__marker')?.textContent?.trim())).toEqual(
-      ['+', '+', '+', '+', '+', '+'],
+    expect(groups.map(g => g.querySelector('.ov-pl-phase__marker')?.getAttribute('data-open'))).toEqual(
+      ['false', 'false', 'false', 'false', 'false', 'false'],
     );
     expect(fixture.nativeElement.querySelectorAll('[data-testid="overview-pipeline-step"]').length).toBe(0);
 
