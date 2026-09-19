@@ -1570,14 +1570,6 @@ public static class V1ReviewPlaneEndpoints
             BuildProfileFingerprint: BuildProfileValidationFingerprint.Create(profile));
     }
 
-    internal static Contract.ReviewPlanDto? ReviewPlanForInfrastructureRetry(
-        string? failureClassification,
-        Contract.ReviewPlanDto? inheritedPlan,
-        Func<Contract.ReviewPlanDto> rebuild)
-        => ReviewInfrastructureRetryPlanPolicy.RequiresRebuild(failureClassification)
-            ? rebuild()
-            : inheritedPlan;
-
     /// <summary>
     /// Writes the resolved integration line back onto a card whose recorded
     /// <c>integrationBranch</c> no longer matches project truth, so every later

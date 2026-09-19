@@ -230,33 +230,6 @@ public sealed class VerifyCommandPlannerTests : IDisposable
         Assert.Contains(preparation, command => command.WorkingSubdir == "tracked-app");
     }
 
-    [Fact]
-    public void Preparation_failure_retry_rebuilds_plan_after_tracked_source_changes()
-    {
-        Write("removed-app/package.json", """{ "scripts": { "build": "tsc" } }""");
-        Write("removed-app/package-lock.json", """{ "lockfileVersion": 3 }""");
-        RunGit("init", "-q", "-b", "main");
-        RunGit("config", "user.email", "test@example.invalid");
-        RunGit("config", "user.name", "Verify Planner Test");
-        RunGit("add", "removed-app/package.json", "removed-app/package-lock.json");
-        RunGit("commit", "-q", "-m", "package before repair");
-        var firstPlan = V1ReviewPlaneEndpoints.FallbackPlan(
-            _root, profile: null, integrationRef: "refs/heads/main");
-        Assert.Contains(firstPlan.Preparation!, command => command.WorkingSubdir == "removed-app");
-
-        RunGit("rm", "-q", "removed-app/package.json", "removed-app/package-lock.json");
-        RunGit("commit", "-q", "-m", "remove stale package");
-
-        var retryPlan = V1ReviewPlaneEndpoints.ReviewPlanForInfrastructureRetry(
-            "PreparationFailed",
-            firstPlan,
-            () => V1ReviewPlaneEndpoints.FallbackPlan(
-                _root, profile: null, integrationRef: "refs/heads/main"));
-
-        Assert.NotEqual(firstPlan, retryPlan);
-        Assert.Empty(retryPlan!.Preparation ?? []);
-    }
-
     // ---- Fixture: mixed (.NET + npm) --------------------------------------
 
     [Fact]
