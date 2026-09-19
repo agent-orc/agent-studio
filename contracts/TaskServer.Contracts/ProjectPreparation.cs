@@ -1036,10 +1036,7 @@ public static class PreparationCacheEnvironment
     public static void Apply(
         ProcessStartInfo start,
         ProjectPreparationResult? preparation)
-    {
-        if (preparation is null) return;
-        foreach (var entry in preparation.Environment) start.Environment[entry.Key] = entry.Value;
-    }
+        => Apply((IDictionary<string, string>)start.Environment, preparation?.Environment);
 
     /// <summary>
     /// Applies the resolved cache locations to the environment overlay a CLI
