@@ -23,9 +23,9 @@ namespace AgentStudio.AdHoc;
 public sealed class AdHocUsageService
 {
     public const string DefaultDisclaimer =
-        "Theoretical API cost based on Anthropic's published per-million-token rates. " +
-        "Your actual usage is billed through the Claude CLI subscription you signed in with " +
-        "(Pro / Max / Team / Enterprise), so the dollar number is a comparison, not a bill.";
+        "Theoretical API cost based on the shared historical model price catalogue. " +
+        "Your actual usage is billed through the CLI subscription you signed in with, " +
+        "so the dollar number is a comparison, not a bill.";
 
     private readonly AdHocUsageRecorder _recorder;
     private readonly BusBackedAdHocUsageReader? _busReader;
@@ -77,7 +77,10 @@ public sealed class AdHocUsageService
             totalCacheR += r.CacheReadTokens;
             totalCacheW += r.CacheCreationTokens;
 
-            var cost = TokenPricing.Estimate(r.Model, r.InputTokens, r.OutputTokens, r.CacheReadTokens, r.CacheCreationTokens, r.Ts);
+            var catalogCost = TokenPricing.Estimate(r.Model, r.InputTokens, r.OutputTokens, r.CacheReadTokens, r.CacheCreationTokens, r.Ts);
+            var cost = r.EstimatedCostUsd.HasValue
+                ? catalogCost with { Total = r.EstimatedCostUsd.Value }
+                : catalogCost;
             totalCost += cost.Total;
             if (!cost.ModelKnown) allPriced = false;
 

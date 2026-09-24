@@ -115,4 +115,19 @@ public class PromptCoverageGuardTests
 
         Assert.Empty(PromptCoverageScanner.ScanText("X.cs", body));
     }
+
+    [Fact]
+    public void SummaryProtocol_CoversEveryTaskLevelEvidencePlaceholder()
+    {
+        var path = Path.Combine(RepoRoot(), "prompts", "runtime", "summary-protocol.md");
+        var template = File.ReadAllText(path);
+
+        foreach (var slot in new[]
+                 {
+                     "taskTitle", "taskPrompt", "rounds", "agentStatus", "delivery", "log",
+                 })
+        {
+            Assert.Contains("{{" + slot + "}}", template, StringComparison.Ordinal);
+        }
+    }
 }

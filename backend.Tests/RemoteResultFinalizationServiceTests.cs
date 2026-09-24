@@ -5,7 +5,7 @@ namespace AgentStudio.Tests;
 
 /// <summary>
 /// AGT-2850 regression. 16.09.2026: a finished remote run uploaded its result,
-/// the Haiku summary one-shot sat in the host load throttle until the upload
+/// the summary one-shot sat in the host load throttle until the upload
 /// request was aborted, and the resulting <c>TaskCanceledException</c> turned a
 /// delivered run into a requeued one. The delivered result must survive a
 /// cancelled summary: the runner is acknowledged, the card carries a pending
@@ -211,7 +211,7 @@ public sealed class RemoteResultFinalizationServiceTests : IDisposable
     }
 
     /// <summary>
-    /// Stands in for the Haiku summary one-shot. The load throttle surfaces as a
+    /// Stands in for the project-routed summary one-shot. The load throttle surfaces as a
     /// <see cref="TaskCanceledException"/> out of the queued call, which is
     /// exactly the shape that lost the two runs on 16.09.2026.
     /// </summary>
@@ -219,7 +219,10 @@ public sealed class RemoteResultFinalizationServiceTests : IDisposable
     {
         private readonly Queue<SummaryAttempt> _attempts = new(attempts);
 
-        public string CliType => CliTypes.Claude;
+        // The summary pipeline now defaults to the bounded-output Codex route.
+        // Register the fake on that route so this fixture continues to exercise
+        // finalization behavior rather than the missing-route failure path.
+        public string CliType => CliTypes.Codex;
 
         public int SummaryCalls { get; private set; }
 

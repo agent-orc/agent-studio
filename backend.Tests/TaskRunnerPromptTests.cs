@@ -446,9 +446,11 @@ public class TaskRunnerPromptTests
             ["log"] = string.Join('\n',
                 "Captured result screenshot at results/run-proof.png",
                 "Used supplied reference image attachments/input-wireframe.png"),
-            ["taskType"] = "chore",
-            ["mode"] = "coding",
-            ["outcome"] = "Success",
+            ["taskTitle"] = "Image task",
+            ["taskPrompt"] = "Capture proof.",
+            ["rounds"] = "Run 1, initial.",
+            ["agentStatus"] = "Not provided.",
+            ["delivery"] = "No structured delivery facts were recorded.",
         });
 
         Assert.Contains("## Images", rendered);
@@ -477,9 +479,11 @@ public class TaskRunnerPromptTests
         var rendered = Prompts().Render(RuntimePromptService.SummaryProtocol, new Dictionary<string, string?>
         {
             ["log"] = "did some work",
-            ["taskType"] = "chore",
-            ["mode"] = "coding",
-            ["outcome"] = "Success",
+            ["taskTitle"] = "Example task",
+            ["taskPrompt"] = "Deliver the requested change.",
+            ["rounds"] = "Run 1, initial.",
+            ["agentStatus"] = "Not provided.",
+            ["delivery"] = "No structured delivery facts were recorded.",
         });
 
         Assert.Contains("## Overview", rendered);
@@ -503,11 +507,8 @@ public class TaskRunnerPromptTests
     }
 
     /// <summary>
-    /// The summarizer no longer sees only the log: task metadata and the run
-    /// outcome are injected so it can classify the case and frame a blocked run
-    /// honestly. This pins that <see cref="SummaryGenerationService.BuildSummarySlots"/>
-    /// carries those values through to the rendered prompt (the wiring the
-    /// billable Haiku path can't be unit-tested against).
+    /// The summarizer sees task intent before round and log evidence. This pins
+    /// the task-level placeholder wiring without a billable one-shot call.
     /// </summary>
     [Fact]
     public void SummarySlots_CarryTaskMetadataAndOutcomeIntoRenderedPrompt()
@@ -525,17 +526,26 @@ public class TaskRunnerPromptTests
             Mode = TaskModes.Research,
         };
 
-        var slots = SummaryGenerationService.BuildSummarySlots(info, "LOG-BODY-MARKER", "Blocked");
+        var inputs = new SummaryInputs(
+            "Slots test",
+            "TASK-PROMPT-MARKER with acceptance criteria",
+            "ROUND-LEDGER-MARKER",
+            "AGENT-STATUS-MARKER",
+            "DELIVERY-MARKER",
+            "LOG-BODY-MARKER");
+        var slots = SummaryGenerationService.BuildSummarySlots(info, inputs, "Blocked");
         var rendered = Prompts().Render(RuntimePromptService.SummaryProtocol, slots);
 
-        Assert.Contains("Task type: bug", rendered);
-        Assert.Contains("Mode: research", rendered);
-        Assert.Contains("Run outcome: Blocked", rendered);
+        Assert.Contains("Slots test", rendered);
+        Assert.Contains("TASK-PROMPT-MARKER", rendered);
+        Assert.Contains("ROUND-LEDGER-MARKER", rendered);
+        Assert.Contains("AGENT-STATUS-MARKER", rendered);
+        Assert.Contains("DELIVERY-MARKER", rendered);
         Assert.Contains("LOG-BODY-MARKER", rendered);
-        Assert.DoesNotContain("{{taskType}}", rendered);
-        Assert.DoesNotContain("{{mode}}", rendered);
-        Assert.DoesNotContain("{{outcome}}", rendered);
-        Assert.DoesNotContain("{{log}}", rendered);
+        Assert.True(rendered.IndexOf("TASK-PROMPT-MARKER", StringComparison.Ordinal)
+            < rendered.IndexOf("LOG-BODY-MARKER", StringComparison.Ordinal));
+        foreach (var placeholder in new[] { "taskTitle", "taskPrompt", "rounds", "agentStatus", "delivery", "log" })
+            Assert.DoesNotContain("{{" + placeholder + "}}", rendered);
     }
 
     [Fact]

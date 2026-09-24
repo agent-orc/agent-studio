@@ -117,6 +117,7 @@ public static class PipelineStepConfigResolver
         => step.Kind is not (StepKind.Core or StepKind.Analysis)
            && !string.Equals(step.Id, PipelineCatalogue.LoopGuardStepId, StringComparison.Ordinal)
            && !string.Equals(step.Id, PipelineCatalogue.DossierMaintenanceStepId, StringComparison.Ordinal)
+           && !string.Equals(step.Id, PipelineCatalogue.SummaryStepId, StringComparison.Ordinal)
            && !string.Equals(step.Id, PipelineCatalogue.UiIterationArtifactStepId, StringComparison.Ordinal)
            && !string.Equals(step.Id, PipelineCatalogue.UiVisualCaptureStepId, StringComparison.Ordinal)
            && !string.Equals(step.Id, PipelineCatalogue.UiVisualVerdictStepId, StringComparison.Ordinal)
