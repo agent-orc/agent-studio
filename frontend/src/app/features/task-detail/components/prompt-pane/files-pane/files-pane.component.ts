@@ -43,6 +43,7 @@ import { ArchivedFilesManifestComponent } from '../../../../retention/components
  */
 @Component({
   selector: 'app-files-pane',
+  host: { '(click)': 'onDocumentBodyClick($event)' },
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [FileSourceHistoryComponent, MarkdownRichEditorComponent, MarkdownViewComponent, TooltipDirective, AspectJsonCardComponent, DocumentDetailsMenuComponent, ArchivedFilesManifestComponent],
@@ -53,7 +54,6 @@ export class FilesPaneComponent {
   private readonly jobs = inject(TaskService);
   private readonly sanitizer = inject(DomSanitizer);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
-
   readonly artifacts = input<TaskArtifact[]>([]);
   /** Prefilled body for `prompt.md` so we don't re-fetch what `TaskDetail` already loaded. */
   readonly promptContent = input<string>('');
@@ -61,10 +61,9 @@ export class FilesPaneComponent {
   readonly archived = input(false);
   readonly watchPath = input<string | null>(null);
   readonly isRunning = input(false);
-  readonly focusRequest = input<{ kind: TaskArtifactKind; requestId: number } | null>(null);
-
+  readonly focusRequest = input<{ kind?: TaskArtifactKind; fileName?: string; requestId: number } | null>(null);
   readonly save = output<string>();
-
+  readonly documentRequested = output<string>();
   /** File names whose card is currently expanded. */
   private readonly expanded = signal<Set<string>>(new Set());
   /** Cached file bodies. `null` marks a load error so the view can render a tidy fallback. */
@@ -86,8 +85,19 @@ export class FilesPaneComponent {
   private readonly htmlDocCache = new Map<string, { raw: string; doc: SafeHtml }>();
   private readonly presentationCache = new Map<string, { raw: string; value: DocumentPresentation }>();
 
-  readonly orderedArtifacts = computed(() => [...this.artifacts()].sort(compareDocuments));
-
+  readonly orderedArtifacts = computed(() => {
+    const files = [...this.artifacts()];
+    const requested = this.focusRequest()?.fileName;
+    if (requested && !files.some(file => file.name.toLowerCase() === requested.toLowerCase())) {
+      files.push({
+        name: requested,
+        sizeBytes: 0,
+        mtime: '',
+        kind: requested.startsWith('remote-review-grade-') ? 'codeReview' : 'other',
+      });
+    }
+    return files.sort(compareDocuments);
+  });
   readonly onlyPrompt = computed(() => {
     const list = this.artifacts();
     return list.length === 1 && list[0].kind === 'prompt';
@@ -130,7 +140,7 @@ export class FilesPaneComponent {
     // Prefetch content for every non-prompt artifact so previews / expansions
     // are instant. Prompt body is supplied by the parent — no fetch needed.
     effect(() => {
-      const list = this.artifacts();
+      const list = this.orderedArtifacts();
       const jobId = this.jobId();
       const watchPath = this.watchPath() ?? undefined;
       if (!jobId) return;
@@ -155,7 +165,10 @@ export class FilesPaneComponent {
     effect(() => {
       const request = this.focusRequest();
       if (!request) return;
-      const target = this.orderedArtifacts().find((file) => file.kind === request.kind);
+      const target = this.orderedArtifacts().find((file) =>
+        request.fileName
+          ? file.name.toLowerCase() === request.fileName.toLowerCase()
+          : file.kind === request.kind);
       if (target) this.focusDocument(target);
     }, { allowSignalWrites: true });
   }
@@ -182,6 +195,14 @@ export class FilesPaneComponent {
     this.toggleExpanded(file.name);
   }
 
+  onDocumentBodyClick(event: MouseEvent): void {
+    const anchor = (event.target as HTMLElement | null)?.closest<HTMLAnchorElement>('a[href]');
+    const href = anchor?.getAttribute('href')?.split(/[?#]/, 1)[0] ?? '';
+    const fileName = href.split('/').pop() ?? '';
+    if (!/^(?:aspect-[^/]+\.md|remote-review-(?:grade-)?[^/]+)$/i.test(fileName)) return;
+    event.preventDefault();
+    this.documentRequested.emit(fileName);
+  }
   /** Resolves the body for a file. Prompt comes from the input; others come from the cache. */
   bodyFor(file: TaskArtifact): string | null | undefined {
     if (file.kind === 'prompt') return this.promptContent();

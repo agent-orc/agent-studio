@@ -45,6 +45,29 @@ public sealed class TaskPipelineEndpointTests : IDisposable
         File.WriteAllText(Path.Combine(job, "status.md"), "# Result");
         File.WriteAllText(Path.Combine(job, "aspect-code-quality.md"), "# Code quality");
         File.WriteAllText(Path.Combine(job, "aspect-not-in-pipeline.md"), "# Unrelated");
+        File.WriteAllText(
+            Path.Combine(job, "remote-review-review_01-candidate_aspect-code-quality_stdout_log"),
+            "raw aspect output");
+        File.WriteAllText(Path.Combine(job, "remote-review-grade-review_01.md"), "# Grade");
+        File.WriteAllText(Path.Combine(job, "pipeline-execution.json"), JsonSerializer.Serialize(
+            new PipelineExecutionRecord
+            {
+                PipelineId = PipelineCatalogue.Standard.Id,
+                PipelineVersion = PipelineCatalogue.Standard.Version,
+                JobId = "pipeline-capabilities",
+                StartedAt = DateTime.UtcNow,
+                Steps =
+                [
+                    new PipelineStepExecution
+                    {
+                        StepId = "aspect-code-quality",
+                        Kind = StepKind.Aspect,
+                        Status = PipelineStepStatus.Passed,
+                        ExecutionLocation = "remote",
+                        ExecutionAttemptId = "review_01",
+                    },
+                ],
+            }));
 
         File.WriteAllText(Path.Combine(_watchPath, "project-settings.json"), JsonSerializer.Serialize(
             new Dictionary<string, ProjectSettings>
@@ -134,6 +157,15 @@ public sealed class TaskPipelineEndpointTests : IDisposable
             resultFiles.GetProperty("aspect-code-quality").GetString());
         Assert.False(resultFiles.TryGetProperty("aspect-requirement-fit", out _));
         Assert.False(resultFiles.TryGetProperty("aspect-not-in-pipeline", out _));
+        var qualityEvidence = body.RootElement.GetProperty("aspectEvidence")
+            .GetProperty("aspect-code-quality")[0];
+        Assert.Equal("aspect-code-quality.md", qualityEvidence.GetProperty("reportFile").GetString());
+        Assert.Equal(
+            "remote-review-review_01-candidate_aspect-code-quality_stdout_log",
+            qualityEvidence.GetProperty("rawLogFile").GetString());
+        Assert.Equal(
+            "remote-review-grade-review_01.md",
+            qualityEvidence.GetProperty("reviewGradeFile").GetString());
     }
 
     [Fact]

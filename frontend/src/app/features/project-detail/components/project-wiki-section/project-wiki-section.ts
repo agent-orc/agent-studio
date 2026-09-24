@@ -652,7 +652,7 @@ export class ProjectWikiSectionComponent implements OnDestroy {
    */
   openFolderOverview(relPath: string, inPlace = false, reuse: 'replace-current' | 'new' = 'replace-current'): void {
     const target: WikiDeepLinkTarget = relPath
-      ? { kind: 'folder', relPath }
+      ? { kind: 'folder', relPath, title: this.findNode(this.roots(), relPath)?.title }
       : { kind: 'overview' };
     if (!inPlace && this.requestStudioTab(target, reuse)) return;
     this.resetSearchState();
@@ -818,7 +818,7 @@ export class ProjectWikiSectionComponent implements OnDestroy {
 
   openFile(rel: string, type: WikiNodeType = 'md', tab: WikiViewerTab = 'doc', reportAnchor: string | null = null,
     reuse: 'replace-current' | 'new' = 'replace-current'): void {
-    if (this.requestStudioTab({ kind: 'page', relPath: rel }, reuse)) return;
+    if (this.requestStudioTab({ kind: 'page', relPath: rel, title: this.findNode(this.roots(), rel)?.title }, reuse)) return;
     this.resetSearchState();
     this.deepLinkMissing.set(null);
     this.selectedFolderRel.set(null);
@@ -1268,8 +1268,8 @@ export class ProjectWikiSectionComponent implements OnDestroy {
       case 'open-new-tab':
         if (t.relPath) {
           const target: WikiDeepLinkTarget = t.type === 'folder'
-            ? { kind: 'folder', relPath: t.relPath }
-            : { kind: 'page', relPath: t.relPath };
+            ? { kind: 'folder', relPath: t.relPath, title: t.title }
+            : { kind: 'page', relPath: t.relPath, title: t.title };
           this.requestStudioTab(target, 'new');
         }
         break;

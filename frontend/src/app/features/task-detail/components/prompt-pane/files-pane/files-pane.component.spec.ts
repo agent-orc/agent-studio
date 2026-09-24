@@ -281,6 +281,32 @@ describe('FilesPaneComponent (smoke)', () => {
     http.verify();
   });
 
+  it('routes aspect report links in a review grade through the document view', async () => {
+    await TestBed.configureTestingModule({
+      imports: [FilesPaneComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(FilesPaneComponent);
+    fixture.componentRef.setInput('jobId', 'demo-job');
+    fixture.componentRef.setInput('artifacts', []);
+    fixture.detectChanges();
+
+    let requested = '';
+    fixture.componentInstance.documentRequested.subscribe((fileName) => requested = fileName);
+    const link = document.createElement('a');
+    link.href = 'aspect-code-quality.md';
+    fixture.nativeElement.querySelector('.files-pane')?.append(link);
+    link.click();
+
+    expect(requested).toBe('aspect-code-quality.md');
+    TestBed.inject(HttpTestingController).verify();
+  });
+
   it('renders HTML in a script-enabled opaque-origin sandbox', async () => {
     await TestBed.configureTestingModule({
       imports: [FilesPaneComponent],
