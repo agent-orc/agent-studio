@@ -568,7 +568,7 @@ export interface TaskInfo {
    */
   autoLoop?: AutoLoopSnapshot | null;
   /**
-   * Live state of the post-completion summary (Haiku) call. Populated only
+   * Live state of the post-completion result-summary call. Populated only
    * while the summarizer is generating or just finished. The card shows an
    * "auto-reviewing" pill so the user knows the orchestrator is still
    * working on a card that just landed in 4-review.

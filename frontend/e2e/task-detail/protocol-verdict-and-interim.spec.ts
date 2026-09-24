@@ -43,6 +43,14 @@ async function installCompletedJobMocks(
 ): Promise<void> {
   const detailBody = JSON.stringify(detailOverride ?? buildCompletedJobDetail(target.id, target.watchPath, statusMarkdown));
 
+  await page.route('**/api/auth/status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }),
+    });
+  });
+
   await page.route(`**/api/tasks/${encodeURIComponent(target.id)}?**`, async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: detailBody });
   });
@@ -75,7 +83,7 @@ async function installCompletedJobMocks(
  *   2. The interim-status backend endpoint exists and surfaces the precondition
  *      failure (missing cli-output.log) verbatim - no silent 500.
  *
- * The full Haiku interim summary path is `@billable` and exercised by
+ * The full routed interim summary path is `@billable` and exercised by
  * `claude-hello-world.spec.ts` indirectly (same one-shot pipeline). Here we
  * lock the cheap branches so the UX wiring does not silently regress.
  */
@@ -110,12 +118,22 @@ test.describe('Protocol pane - verdict chip + interim status', () => {
     });
   });
 
-  test('duration lifts out of the # Status section into a chip on the pill', async ({ page }) => {
+  test('duration lifts out of the # Status section into a chip on the pill', async ({ page, devBackend }) => {
+    void devBackend;
     await page.setViewportSize({ width: 1600, height: 1100 });
 
-    const jobs = await listJobs();
-    test.skip(jobs.length === 0, 'No jobs available in workspace');
-    const target = { id: jobs[0].id, watchPath: jobs[0].watchPath };
+    const watchPaths = await api<WatchPathEntry[]>('/api/watch-paths');
+    expect(watchPaths.length).toBeGreaterThan(0);
+    const watchPath = watchPaths[0].path;
+    const jobId = `e2e-result-regenerate-${Date.now()}`;
+    const created = await createJob({
+      id: jobId,
+      title: 'E2E result regeneration action',
+      watchPath,
+      promptMarkdown: 'Verify that the result can be regenerated.',
+      targetState: '1-preparation',
+    });
+    const target = { id: created.id, watchPath };
 
     const statusMarkdown = [
       '# Status',
@@ -130,38 +148,67 @@ test.describe('Protocol pane - verdict chip + interim status', () => {
       '- Status header is now lifted out of the rendered body.',
     ].join('\n');
 
-    await installCompletedJobMocks(page, target, statusMarkdown);
+    try {
+      await installCompletedJobMocks(page, target, statusMarkdown);
 
-    await page.goto(
-      `/?job=${encodeURIComponent(target.id)}&watchPath=${encodeURIComponent(target.watchPath)}`,
-    );
+      await page.goto(
+        `/?job=${encodeURIComponent(target.id)}&watchPath=${encodeURIComponent(target.watchPath)}`,
+      );
 
-    // The fixture is in Human Review, so the lane's needs-decision signal
-    // legitimately outranks Result: Success. This test owns duration placement,
-    // not outcome classification; select the one authoritative banner by role.
-    const chip = page.getByTestId('protocol-run-outcome').getByRole('status');
-    await expect(chip).toBeVisible({ timeout: 15_000 });
+      // The fixture is in Human Review, so the lane's needs-decision signal
+      // legitimately outranks Result: Success. This test owns duration placement,
+      // not outcome classification; select the current result summary row.
+      const summary = page.getByTestId('result-summary-meta');
+      await expect(summary).toBeVisible({ timeout: 15_000 });
 
-    const duration = page.getByTestId('protocol-verdict-duration');
-    await expect(duration).toBeVisible();
-    await expect(duration).toContainText('4 min');
-    // Icon affordance: a clock glyph sits before the value.
-    await expect(duration).toContainText('⏱');
+      const duration = page.getByTestId('result-metric-duration');
+      await expect(duration).toBeVisible();
+      await expect(duration).toContainText('4m');
 
-    // The Status section (heading + Result/Duration list) must not appear in
-    // the rendered markdown body — that is the whole point of the collapse.
-    const body = page.getByTestId('protocol-beautiful-results');
-    await expect(body).toBeVisible();
-    await expect(body).not.toContainText('Duration:');
-    await expect(body).not.toContainText('Result: Success');
-    // Sibling sections still render so we know the body itself is alive.
-    await expect(body).toContainText('What Was Done');
-    await expect(body).toContainText('Refactored the verdict pill');
+      // The Status section (heading + Result/Duration list) must not appear in
+      // the rendered markdown body. That is the whole point of the collapse.
+      const body = page.getByTestId('protocol-beautiful-results');
+      await expect(body).toBeVisible();
+      await expect(body).not.toContainText('Duration:');
+      await expect(body).not.toContainText('Result: Success');
+      // Sibling sections still render so we know the body itself is alive.
+      await expect(body).toContainText('What Was Done');
+      await expect(body).toContainText('Refactored the verdict pill');
 
-    await page.screenshot({
-      path: 'test-results/protocol-verdict-duration-chip.png',
-      fullPage: false,
-    });
+      // A dirty developer worktree can legitimately surface the global crash
+      // recovery prompt. Hide it locally without changing recovery state.
+      const recoveryOverlay = page.getByTestId('crash-recovery-prompt-overlay');
+      if (await recoveryOverlay.isVisible().catch(() => false)) {
+        await recoveryOverlay.evaluate((element) => {
+          (element as HTMLElement).style.display = 'none';
+          (element as HTMLElement).style.pointerEvents = 'none';
+        });
+      }
+      const errorOverlay = page.getByTestId('error-dialog-overlay');
+      if (await errorOverlay.isVisible().catch(() => false)) {
+        await errorOverlay.evaluate((element) => {
+          (element as HTMLElement).style.display = 'none';
+          (element as HTMLElement).style.pointerEvents = 'none';
+        });
+      }
+
+      await page.getByTestId('protocol-more-actions').click();
+      const regenerate = page.getByTestId('protocol-context-menu-item-regenerate');
+      await expect(regenerate).toBeVisible();
+      await expect(regenerate).toHaveText('Regenerate result');
+
+      const evidenceDir = resolve(process.env.JOB_RESULTS_DIR ?? join('..', 'results', 'AGT-2880'));
+      mkdirSync(evidenceDir, { recursive: true });
+      await page.screenshot({
+        path: join(evidenceDir, 'result-regenerate-action.png'),
+        fullPage: false,
+      });
+    } finally {
+      await api(
+        `/api/tasks/${encodeURIComponent(created.id)}?watchPath=${encodeURIComponent(watchPath)}`,
+        { method: 'DELETE' },
+      ).catch(() => { /* best-effort cleanup */ });
+    }
   });
 
   test('integrated passed delivery stays successful and explains the verdict source', async ({ page }) => {

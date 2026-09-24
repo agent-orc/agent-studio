@@ -70,6 +70,26 @@ public static class PipelineCatalogue
     };
 
     public const string CoreAgentRunStepId = "core-agent-run";
+    public const string SummaryStepId = "summary";
+
+    /// <summary>
+    /// Task-level Result summary. It consumes bounded task, round, delivery,
+    /// and last-run evidence and is regenerated after later rounds and terminal
+    /// acceptance. Its usage belongs to the task pipeline, not ambient tooling.
+    /// </summary>
+    public static PipelineStep SummaryStep { get; } = new()
+    {
+        Id = SummaryStepId,
+        DisplayName = "Result summary",
+        Kind = StepKind.Orchestrator,
+        RunMode = StepRunMode.Sequential,
+        DependsOn = [CoreAgentRunStepId],
+        Model = ModelIds.Gpt56Luna,
+        CliType = CliTypes.Codex,
+        PromptTemplate = "summary-protocol.md",
+        Idempotent = true,
+        DefaultEnabled = true,
+    };
 
     /// <summary>
     /// Pre-step that surfaces the auto-mode Ralph-loop guard
@@ -648,6 +668,7 @@ public static class PipelineCatalogue
                     RunMode = StepRunMode.Sequential,
                     Idempotent = true,
                 },
+                SummaryStep,
                 new PipelineStep
                 {
                     Id = DossierMaintenanceStepId,
@@ -953,7 +974,7 @@ public static class PipelineCatalogue
             DisplayName = "Lightweight report pipeline",
             Pre = [.. StandardPipeline.Pre],
             Core = [.. StandardPipeline.Core],
-            Post = [review, decision],
+            Post = [SummaryStep with { DependsOn = [CoreAgentRunStepId] }, review, decision],
         };
     }
 
@@ -978,6 +999,7 @@ public static class PipelineCatalogue
             ],
             Post =
             [
+                SummaryStep with { DependsOn = [CoreAgentRunStepId] },
                 new PipelineStep
                 {
                     Id = ConceptWorkbenchPlacementStepId,
@@ -1042,6 +1064,7 @@ public static class PipelineCatalogue
             Core = StandardPipeline.Core.Select(step => step with { }).ToList(),
             Post =
             [
+                SummaryStep with { DependsOn = [CoreAgentRunStepId] },
                 StandardPipeline.Post.Single(step =>
                     step.Id == DossierMaintenanceStepId) with
                 {
