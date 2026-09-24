@@ -7,7 +7,13 @@
     <span class="tup__label">Cache read</span><span class="tup__num" data-testid="token-row-cache-read">{{ formatTokens(tb.cacheRead) }}</span>
     <span class="tup__label">Cache write</span><span class="tup__num" data-testid="token-row-cache-write">{{ formatTokens(tb.cacheWrite) }}</span>
     <span class="tup__label tup__label--strong">Total</span><span class="tup__num tup__num--strong" data-testid="token-row-total">{{ formatTokens(tb.total) }}</span>
-    <span class="tup__label">Model</span><span class="tup__value" data-testid="token-row-model">{{ tb.model || '-' }}</span>
+    <span class="tup__label">Model</span>
+    <span class="tup__value" data-testid="token-row-model">
+      {{ tb.model || '-' }}
+      @if (tb.hasModelMismatch) {
+        <strong class="tup__mismatch" data-testid="token-model-mismatch">Mismatch</strong>
+      }
+    </span>
     <span class="tup__label">Last update</span><span class="tup__value" data-testid="token-row-last-update">{{ tb.lastUpdate || '-' }}</span>
   </div>
 
@@ -36,7 +42,12 @@
         @for (row of tb.entries; track row.ts) {
           <tr>
             <td>{{ row.tsLabel }}</td>
-            <td>{{ row.model || '-' }}</td>
+            <td>
+              {{ row.model || '-' }}
+              @if (row.modelMismatch) {
+                <strong class="tup__mismatch tup__mismatch--run" data-testid="token-run-model-mismatch">Mismatch (pinned {{ row.pinnedModel || 'unknown' }})</strong>
+              }
+            </td>
             <td class="tup__num">{{ formatTokens(row.total) }}</td>
             <td class="tup__num">{{ row.costLabel }}</td>
           </tr>

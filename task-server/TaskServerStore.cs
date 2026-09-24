@@ -3171,6 +3171,7 @@ public sealed partial class TaskServerStore
                 credential_expires_at TEXT,
                 limited_until TEXT,
                 credential_modified_at TEXT,
+                supported_models_json TEXT,
                 advertised_at TEXT NOT NULL,
                 fresh_until TEXT NOT NULL,
                 generation INTEGER NOT NULL,
@@ -3602,6 +3603,7 @@ public sealed partial class TaskServerStore
         await EnsureColumnAsync(connection, "runner_capabilities", "credential_expires_at", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "limited_until", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "credential_modified_at", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "supported_models_json", "TEXT", ct);
         await EnsureColumnAsync(connection, "orchestration_runs", "task_version", "INTEGER NOT NULL DEFAULT 0", ct);
         await ExecuteAsync(connection, """
             INSERT INTO runtime_capacity_settings(

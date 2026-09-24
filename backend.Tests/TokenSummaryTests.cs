@@ -33,7 +33,9 @@ public class TokenSummaryTests
         long output,
         DateTime ts,
         string jobId = "job-a",
-        string? participantId = null)
+        string? participantId = null,
+        string? pinnedModel = null,
+        bool modelMismatch = false)
         => new()
         {
             Ts = ts,
@@ -45,6 +47,8 @@ public class TokenSummaryTests
             TokenUsage = new OrchestratorTokenUsage
             {
                 Model = model,
+                PinnedModel = pinnedModel,
+                ModelMismatch = modelMismatch,
                 InputTokens = (int)input,
                 OutputTokens = (int)output,
             }
@@ -223,6 +227,30 @@ public class TokenSummaryTests
         Assert.True(summary.EstimatedApiCostUsd > 0m);
         Assert.False(summary.Entries[0].ModelPriced);
         Assert.True(summary.Entries[1].ModelPriced);
+    }
+
+    [Fact]
+    public void SummarizePerJob_PricesObservedModelAndCarriesMismatchFlag()
+    {
+        var entry = JobEntry(
+            "claude-haiku-4-5-20251001",
+            1_000_000,
+            0,
+            new DateTime(2026, 9, 24, 8, 0, 0, DateTimeKind.Utc),
+            participantId: "agent:remote-runner:run-1",
+            pinnedModel: "claude-opus-5-5",
+            modelMismatch: true);
+
+        var summary = TokenSummaryService.SummarizePerJob([entry])["job-a"];
+
+        var receipt = Assert.Single(summary.Entries);
+        Assert.Equal("claude-haiku-4-5", receipt.Model);
+        Assert.Equal("Claude Haiku 4.5", receipt.DisplayModel);
+        Assert.Equal("claude-opus-5", receipt.PinnedModel);
+        Assert.True(receipt.ModelMismatch);
+        Assert.True(receipt.ModelPriced);
+        Assert.True(summary.HasModelMismatch);
+        Assert.Equal("Claude Haiku 4.5", summary.LastModel);
     }
 
     [Fact]

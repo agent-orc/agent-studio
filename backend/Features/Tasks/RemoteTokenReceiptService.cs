@@ -35,7 +35,8 @@ public sealed class RemoteTokenReceiptService
     public RemoteTokenReceiptResult PersistFromLog(
         TaskInfo task,
         string runAttemptId,
-        string runnerId)
+        string runnerId,
+        string? effectiveModel = null)
     {
         var parser = _parsers.Get(task.CliType ?? task.Agent);
         if (parser is null)
@@ -67,26 +68,37 @@ public sealed class RemoteTokenReceiptService
             try
             {
                 using var document = JsonDocument.Parse(line.Text);
-                if (!parser.TryParse(document.RootElement, task.Model, _models, out var usage)) continue;
-                if (usage.Input + usage.Output + usage.CacheRead + usage.CacheWrite <= 0) continue;
-                entries.Add(new OrchestratorLogEntry
+                foreach (var usage in parser.ParseAll(
+                             document.RootElement,
+                             effectiveModel ?? task.Model,
+                             _models))
                 {
-                    Ts = line.Timestamp == default ? DateTime.UtcNow : line.Timestamp,
-                    Kind = OrchestratorLogKinds.Observation,
-                    Topic = "remote-task-token-receipt",
-                    Summary = "Remote coding-agent token usage.",
-                    JobId = task.Id,
-                    ParticipantId = $"agent:remote-runner:{runAttemptId}",
-                    TokenUsage = new OrchestratorTokenUsage
+                    if (usage.Input + usage.Output + usage.CacheRead + usage.CacheWrite <= 0) continue;
+                    entries.Add(new OrchestratorLogEntry
                     {
-                        Model = usage.Model ?? task.Model,
-                        InputTokens = SafeInt(usage.Input),
-                        OutputTokens = SafeInt(usage.Output),
-                        CacheReadTokens = SafeInt(usage.CacheRead),
-                        CacheCreationTokens = SafeInt(usage.CacheWrite),
-                        InputIncludesCached = usage.InputIncludesCached,
-                    },
-                });
+                        Ts = line.Timestamp == default ? DateTime.UtcNow : line.Timestamp,
+                        Kind = OrchestratorLogKinds.Observation,
+                        Topic = "remote-task-token-receipt",
+                        Summary = usage.ModelMismatch
+                            ? "Remote coding-agent token usage (model mismatch)."
+                            : "Remote coding-agent token usage.",
+                        JobId = task.Id,
+                        ParticipantId = $"agent:remote-runner:{runAttemptId}",
+                        TokenUsage = new OrchestratorTokenUsage
+                        {
+                            // Observed usage is authoritative. Never replace it
+                            // with the card pin, because pricing follows this id.
+                            Model = usage.Model,
+                            PinnedModel = usage.PinnedModel,
+                            ModelMismatch = usage.ModelMismatch,
+                            InputTokens = SafeInt(usage.Input),
+                            OutputTokens = SafeInt(usage.Output),
+                            CacheReadTokens = SafeInt(usage.CacheRead),
+                            CacheCreationTokens = SafeInt(usage.CacheWrite),
+                            InputIncludesCached = usage.InputIncludesCached,
+                        },
+                    });
+                }
             }
             catch (JsonException ex)
             {

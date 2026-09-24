@@ -170,6 +170,10 @@ public class TokenSummaryService
                 CacheCreationTokens = u.CacheCreationTokens,
                 InputIncludesCached = u.InputIncludesCached,
                 UsageNormalization = u.UsageNormalization,
+                PinnedModel = string.IsNullOrWhiteSpace(u.PinnedModel)
+                    ? null
+                    : ModelMetadataRegistry.NormalizeId(u.PinnedModel),
+                ModelMismatch = u.ModelMismatch,
                 EstimatedApiCostUsd = cost.Total,
                 ModelPriced = cost.ModelKnown,
             });
@@ -191,7 +195,8 @@ public class TokenSummaryService
                 AllModelsPriced = !b.AnyUnpriced,
                 LastModel = b.LastAgentModel ?? b.LastAnyModel,
                 LastUpdate = b.LastUpdate,
-                Entries = b.Entries.OrderBy(e => e.Ts).ToList()
+                Entries = b.Entries.OrderBy(e => e.Ts).ToList(),
+                HasModelMismatch = b.Entries.Any(entry => entry.ModelMismatch),
             };
         }
         return result;

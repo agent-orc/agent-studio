@@ -119,6 +119,16 @@ on the separate pipeline-support/classification path
 (`ModelFamilyResolver`/`PipelineStepModelDefaults`), which never calls this
 registry.
 
+An explicit pin is also an execution constraint, not a preference. Before a
+local process starts, Studio checks a Claude pin against the model registry's
+minimum CLI version and a Codex pin against the installed CLI's live model
+catalogue. Remote claim admission applies the same policy to the Runner's
+advertised CLI version and Codex catalogue. An unsupported pin stays Ready and
+gets the durable `model-unsupported` dispatch reason. For example,
+`claude-opus-5-5` requires Claude Code 2.1.281; a host on 2.1.270 reports
+`model unsupported by installed CLI 2.1.270 (minimum 2.1.281)` and does not
+spawn the CLI.
+
 The create-task UI shows the recommendation, policy version, task type, tier,
 and whether economy mode caused a safe one-step downgrade. Choosing a model or
 thinking level marks the card explicit in one action. Explicit pins remain

@@ -21,6 +21,10 @@ export interface TaskTokenCall {
   cacheCreationTokens: number;
   estimatedApiCostUsd?: number;
   modelPriced?: boolean;
+  /** Model requested by the card for this run. */
+  pinnedModel?: string | null;
+  /** Provider usage reported a different model than the pin. */
+  modelMismatch?: boolean;
 }
 
 export interface TaskTokenSummary {
@@ -35,6 +39,7 @@ export interface TaskTokenSummary {
   lastModel: string | null;
   lastUpdate: string | null;
   entries: TaskTokenCall[];
+  hasModelMismatch?: boolean;
 }
 
 export interface TokenSummaryByModel {

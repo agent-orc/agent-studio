@@ -26,4 +26,8 @@ public record OrchestratorTokenUsage
     /// it (AGT-2811). Null keeps legacy rows readable as "level unknown".
     /// </summary>
     public string? ThinkingLevel { get; init; }
+    /// <summary>The model pinned for the run when it differs from observed usage.</summary>
+    public string? PinnedModel { get; init; }
+    /// <summary>True when provider usage identified a model other than the pin.</summary>
+    public bool ModelMismatch { get; init; }
 }
