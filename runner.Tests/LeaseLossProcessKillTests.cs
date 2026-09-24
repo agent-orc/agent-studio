@@ -32,7 +32,6 @@ public sealed class LeaseLossProcessKillTests : IDisposable
                 $"echo $$ > {parentPidPath}; sleep 300 & echo $! > {childPidPath}; wait"
             ],
             workingDirectory: _root,
-            isolateProcessGroup: true,
             ct: run.Token);
         await WaitForFileAsync(childPidPath);
         var parentPid = int.Parse(await File.ReadAllTextAsync(parentPidPath));
@@ -86,8 +85,7 @@ public sealed class LeaseLossProcessKillTests : IDisposable
         BackendName = "test",
         WorkDir = _root,
         BaseBranch = "main",
-        CliBin = "/bin/sh",
-        CliArgs = "",
+        ClaudeCliBin = "/bin/sh",
         TtlSeconds = 120,
         HeartbeatSeconds = 30,
     };

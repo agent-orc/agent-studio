@@ -409,7 +409,8 @@ chmod 600 "$env_tmp"
   printf 'RUNNER_ID=%s\n' "$runner_id"
   printf 'RUNNER_NAME=%s\n' "$runner_name"
   printf 'RUNNER_ROLE=%s\n' "$role"
-  printf 'RUNNER_CLI_BIN=/usr/local/bin/claude\n'
+  printf 'RUNNER_CLI_TYPE=claude\n'
+  printf 'RUNNER_CLAUDE_CLI_BIN=/usr/local/bin/claude\n'
   printf 'RUNNER_CODEX_CLI_BIN=/usr/local/bin/codex\n'
   printf 'RUNNER_CLAUDE_CLI_BIN=/usr/local/bin/claude\n'
   [[ "$service_auth" == 1 ]] && printf 'RUNNER_AUTH_TOKEN_FILE=%s\n' "$auth_token_file"

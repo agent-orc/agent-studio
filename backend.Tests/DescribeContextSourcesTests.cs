@@ -114,7 +114,6 @@ public sealed class DescribeContextSourcesTests : IDisposable
         {
             CliType = type,
             GetCliPath = _ => type,
-            BuildStartInfo = (_, _, _, _, _, _, _, _) => throw new NotSupportedException(),
         };
 
         /// <summary>Seed the in-memory live-process map so the run is "tracked" for DescribeContextSources.</summary>

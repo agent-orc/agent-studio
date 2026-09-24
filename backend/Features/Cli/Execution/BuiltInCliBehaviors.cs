@@ -36,7 +36,7 @@ public readonly record struct CodexLastCommandSnapshot(
 /// that customize the single concrete <see cref="GenericCliExecutionService"/>
 /// engine for Claude Code, Codex, and Antigravity/Gemini. This is the host
 /// analogue of the library's per-CLI descriptor catalog — each factory returns
-/// a fully-wired behavior; all CLI-specific parsing/rendering/spawn helpers
+/// a fully-wired behavior; all CLI-specific parsing and rendering helpers
 /// live here as private (or test-visible <c>internal</c>) statics rather than on
 /// the engine. The previous thin per-CLI shim classes (<c>ClaudeCliService</c> /
 /// <c>CodexCliService</c> / <c>AntigravityCliService</c>) were deleted in favour
@@ -63,15 +63,6 @@ internal static class BuiltInCliBehaviors
         IsCompatibleSessionName = (ctx, sessionName)
             => !string.IsNullOrWhiteSpace(sessionName) && ClaudeUuidRegex.IsMatch(sessionName),
         NormalizeModelForInvocation = (_, model) => NormalizeModelId(model),
-        BuildStartInfo = (ctx, prompt, workingDirectory, sessionName, resumeSession, model, thinkingLevel, permissionMode)
-            => ClaudeBuildStartInfo(ctx, prompt, workingDirectory, sessionName, resumeSession, model, thinkingLevel, permissionMode),
-        // ADR-0014: Claude does NOT pipe through stdin; the prompt is passed
-        // as the last positional argv. Returning null tells the engine not to
-        // redirect stdin at all — the documented Anthropic workaround for
-        // claude-code#771 (Claude reads stdin during init and blocks on a
-        // connected pipe).
-        GetPromptStdinPayload = (ctx, prompt, sessionName, resumeSession, model) => null,
-        EnsureCliHealthy = (ctx, ct) => ClaudeEnsureCliHealthyAsync(ctx, ct),
         CaptureRawLine = (ctx, jobKey, line) => ClaudeCaptureRawLine(ctx, usageParsers, modelRegistry, jobKey, line),
         MapLineToRunEvents = (ctx, jobKey, line) => ClaudeMapLineToRunEvents(ctx, usageParsers, modelRegistry, jobKey, line),
         StartSessionLiveness = (ctx, info, resumeSession, sessionName) =>
@@ -90,148 +81,6 @@ internal static class BuiltInCliBehaviors
         OnOutputLine = (ctx, info, line) => ClaudeOnOutputLine(ctx, info, line),
         GetModelCatalog = (ctx, force, ct) => ClaudeGetModelCatalog(ctx, modelDiscovery, force, ct),
     };
-
-    private static ProcessStartInfo ClaudeBuildStartInfo(
-        GenericCliExecutionService ctx,
-        string prompt,
-        string workingDirectory,
-        string? sessionName,
-        bool resumeSession,
-        string? model,
-        string? thinkingLevel,
-        string? permissionMode)
-    {
-        // claude -p <prompt-as-argv> [-r <s>] [--model <m>]
-        //   --output-format stream-json --verbose --dangerously-skip-permissions
-        //
-        // ADR-0014: prompt is the LAST positional argv, not piped via stdin.
-        // The previous stdin-pipe path raced claude-code#771 (Claude reads
-        // stdin during init and blocks on a connected pipe whose writer is
-        // inherited by the child due to Win32's bInheritHandles=TRUE);
-        // dropping stdin redirection AND putting the prompt in argv removes
-        // the entire pipe-inheritance surface. Calling claude.exe directly
-        // (not the .CMD shim, see ResolveCmdShimToExe) means CreateProcess
-        // parses argv via CommandLineToArgvW rather than cmd.exe rules, so
-        // the multi-line / quote-rich rendered prompt is preserved verbatim.
-        // Windows' command-line length limit is 32767 chars; our rendered
-        // prompts are well under that.
-        //
-        // stream-json emits one NDJSON frame per assistant chunk / tool call /
-        // tool result, flushed immediately. With the default text format the
-        // CLI buffers its entire reply until the model finishes - that's why
-        // the Activity Log used to stay empty for the whole run. --verbose
-        // is required by the CLI when stream-json is combined with -p.
-        // TransformReadLine() normalises the frames into the
-        // marker-line convention the frontend parser already understands.
-
-        // Resolve the binary that will actually be executed. Default is to
-        // trust whatever the user's shell PATH points at (matches their
-        // tested `claude` invocation in PowerShell). The legacy npm-shim
-        // override is opt-in via `ClaudeCli:UseNpmShimProbe=true` for the
-        // narrow case where the original ADR-0014 stdin-pipe bug regresses;
-        // ADR-0014 follow-up moved the prompt to a positional argv (no
-        // more stdin pipe at all), so the .CMD shim is safe to invoke
-        // directly on the modern code path.
-        var fileName = ResolveClaudeBinary(ctx, ctx.GetCliPath());
-
-        var psi = new ProcessStartInfo
-        {
-            FileName = fileName,
-            WorkingDirectory = workingDirectory
-        };
-
-        // ArgumentList vs Arguments: ArgumentList lets .NET escape each arg
-        // per the Win32 CommandLineToArgvW rules. Mixing is not allowed
-        // (the CLR throws when both are populated). For multi-line / quoted
-        // content like the rendered prompt this is the only correct path.
-        psi.ArgumentList.Add("-p");
-
-        // Claude Code CLI does not expose a --name flag; sessions are
-        // identified by the UUID the CLI itself generates and emits in the
-        // first `system` stream-json frame. We only ever pass -r <uuid> to
-        // resume an already-captured session - never a pre-generated slug.
-        if (resumeSession && !string.IsNullOrWhiteSpace(sessionName) && ctx.IsCompatibleSessionName(sessionName))
-        {
-            psi.ArgumentList.Add("-r");
-            psi.ArgumentList.Add(sessionName);
-        }
-
-        var normalizedModel = NormalizeModelId(model);
-        if (!string.IsNullOrWhiteSpace(normalizedModel))
-        {
-            psi.ArgumentList.Add("--model");
-            psi.ArgumentList.Add(normalizedModel);
-        }
-
-        foreach (var flag in CodingAgentRunner.Model.CliReasoningFlags.For(CliTypes.Claude, normalizedModel, thinkingLevel))
-            psi.ArgumentList.Add(flag);
-
-        psi.ArgumentList.Add("--output-format");
-        psi.ArgumentList.Add("stream-json");
-        psi.ArgumentList.Add("--verbose");
-
-        // Permission posture is resolved per-project (default YOLO ==
-        // --dangerously-skip-permissions). See CliPermissionFlags / the
-        // sandbox-and-yolo doc. A null mode normalizes to YOLO, preserving the
-        // historic always-skip behaviour for callers that don't thread a mode.
-        foreach (var flag in CliPermissionFlags.For(CliTypes.Claude, permissionMode))
-            psi.ArgumentList.Add(flag);
-
-        // Inject centrally-managed agent rules as a system-prompt overlay.
-        // Using --append-system-prompt-file (vs. --append-system-prompt) keeps
-        // the multi-line markdown out of the command-line argument string, and
-        // lets the Anthropic CLI cache the system-prompt portion across runs.
-        var rulesPath = ResolveAgentRulesPath(ctx);
-        if (rulesPath != null)
-        {
-            psi.ArgumentList.Add("--append-system-prompt-file");
-            psi.ArgumentList.Add(rulesPath);
-        }
-
-        // The prompt is the LAST positional argument. Empty/null prompt
-        // would still spawn claude (it would just have no input), so we
-        // gate on non-empty to keep the behaviour predictable.
-        if (!string.IsNullOrEmpty(prompt))
-        {
-            psi.ArgumentList.Add(prompt);
-        }
-
-        return psi;
-    }
-
-    /// <summary>
-    /// Legacy-engine pre-spawn repair. The CAR engine owns Claude's npm-shim
-    /// repair through its built-in descriptor; this temporary exception exists
-    /// only so the explicit rollback path remains operational until T4 removes
-    /// that path. CAR-backed runs do not call the Studio healer.
-    /// </summary>
-    private static async Task<(bool Ok, string? Error)> ClaudeEnsureCliHealthyAsync(GenericCliExecutionService ctx, CancellationToken ct)
-    {
-        var probe = ctx.TestCliPath();
-        if (probe.Available) return (true, null);
-
-        ctx.Logger.LogWarning(
-            "claude --version failed pre-spawn at '{Path}'; running rollback NpmShimHealer", probe.Path);
-
-        var outcome = await NpmShimHealer.TryHealClaudeAsync(ctx.Logger, ct);
-        if (outcome.Actions.Count > 0)
-        {
-            ctx.Logger.LogInformation(
-                "Rollback NpmShimHealer actions for claude: {Actions}", string.Join("; ", outcome.Actions));
-        }
-        if (!outcome.Available)
-        {
-            return (false,
-                outcome.Error ?? "Rollback NpmShimHealer reported claude as unavailable after repair pass");
-        }
-
-        // Re-probe through the exact resolver the legacy spawn uses so a stale
-        // PATH or executable mismatch fails before Process.Start.
-        var verify = ctx.TestCliPath();
-        return verify.Available
-            ? (true, null)
-            : (false, $"claude --version still failing after rollback heal at '{verify.Path}'");
-    }
 
     /// <summary>
     /// Bridge to <see cref="ClaudeEventAdapter"/>. Each raw stdout line is
@@ -709,13 +558,7 @@ internal static class BuiltInCliBehaviors
                 jobKey,
                 ctx.Logger,
                 CleanContextRetentionHostedService.ResolveRootOverride(ctx.Configuration)),
-        BuildStartInfo = (ctx, prompt, workingDirectory, sessionName, resumeSession, model, thinkingLevel, permissionMode)
-            => CodexBuildStartInfo(ctx, prompt, workingDirectory, sessionName, resumeSession, model, thinkingLevel, permissionMode),
         NormalizeModelForInvocation = (ctx, model) => ResolveInvocationModel(model, ctx.Configuration),
-        GetPromptStdinPayload = (ctx, prompt, sessionName, resumeSession, model)
-            => string.IsNullOrEmpty(prompt)
-                ? null
-                : BuildSystemPromptPrefix(OperatingSystem.IsWindows()) + prompt,
         CaptureRawLine = (ctx, jobKey, line) => CodexCaptureRawLine(ctx, usageParsers, modelRegistry, jobKey, line),
         MapLineToRunEvents = (ctx, jobKey, line) => CodexMapLineToRunEvents(ctx, usageParsers, modelRegistry, jobKey, line),
         TransformReadLine = (ctx, raw) => _codexRenderer.Render(raw),
@@ -728,91 +571,6 @@ internal static class BuiltInCliBehaviors
     private static readonly Regex CodexUuidRegex =
         new(@"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
             RegexOptions.Compiled);
-
-    private static ProcessStartInfo CodexBuildStartInfo(
-        GenericCliExecutionService ctx,
-        string prompt,
-        string workingDirectory,
-        string? sessionName,
-        bool resumeSession,
-        string? model,
-        string? thinkingLevel,
-        string? permissionMode)
-    {
-        // For Codex, sessionName is the session UUID (or null for a fresh session).
-        // codex exec [resume <uuid>] [--experimental-json] [-m <model>] -
-        //
-        // 2026-05-12: Codex 0.130 changed positional-PROMPT semantics so a
-        // rules-heavy prompt got interpreted as "initial instructions" and
-        // the model answered `[[TASK_NOOP]]` ("no actionable task provided")
-        // — the entire prompt was consumed as a system-side header. Switching
-        // to `-` (read instructions from stdin) restores the user-message
-        // path: Codex blocks on stdin, we write the full prompt + system
-        // prefix, then close stdin. The model then sees the prompt as the
-        // actual user turn and acts on it.
-        //
-        // Reproduced on Sternstunde batch + 3 Agent TP Codex jobs; manual
-        // verification under `< NUL` confirms positional NOOPs even on
-        // simple tasks once the prompt has a few "Rules for this run" lines.
-        var psi = new ProcessStartInfo
-        {
-            FileName = GenericCliExecutionService.ResolveExecutable(ctx.GetCliPath()),
-            WorkingDirectory = workingDirectory
-        };
-        psi.ArgumentList.Add("exec");
-
-        // IMPORTANT - argument ORDER vs the `resume` subcommand.
-        // In the codex CLI, exec options must precede the `resume`
-        // subcommand. Only `--model`/`-m`, the bypass flag, and `--json`
-        // are marked clap-`global` and therefore tolerate either position;
-        // crucially `--sandbox` is an EXEC-level option that is NOT global,
-        // so `codex exec resume <id> --sandbox danger-full-access` fails with
-        // `error: unexpected argument '--sandbox' found` (exitCode 2), which
-        // broke EVERY codex resume / crash-recovery into a relaunch loop
-        // (observed 2026-06-09 on a re-/start of an interrupted task). We
-        // therefore emit ALL option flags here, BEFORE adding `resume`, so
-        // they bind to `exec` where they are valid.
-
-        // --experimental-json is the SDK-backed exec protocol: stdout stays
-        // machine-readable, while completion is the process exit after the
-        // stream closes, not a model-authored sentinel.
-        psi.ArgumentList.Add("--experimental-json");
-
-        // Sandbox posture is resolved per-project (default YOLO ==
-        // --sandbox danger-full-access). This replaces the global
-        // ~/.codex/config.toml sandbox_mode stop-gap: a null mode normalizes to
-        // YOLO so the danger-full-access default holds even without the file.
-        foreach (var flag in CliPermissionFlags.For(CliTypes.Codex, permissionMode))
-            psi.ArgumentList.Add(flag);
-
-        if (!string.IsNullOrWhiteSpace(model))
-        {
-            psi.ArgumentList.Add("-m");
-            psi.ArgumentList.Add(model);
-        }
-
-        foreach (var flag in CodingAgentRunner.Model.CliReasoningFlags.For(CliTypes.Codex, model, thinkingLevel))
-            psi.ArgumentList.Add(flag);
-
-        // The `resume <session-id>` subcommand comes AFTER the exec options
-        // above (see the ORDER note). On a resume the prompt positional
-        // belongs to the resume subcommand; on a fresh run it belongs to exec.
-        if (resumeSession && !string.IsNullOrWhiteSpace(sessionName))
-        {
-            psi.ArgumentList.Add("resume");
-            psi.ArgumentList.Add(sessionName);
-        }
-
-        // Use `-` to tell Codex to read the prompt from stdin instead of
-        // taking it as a positional argv. The actual bytes are written by
-        // the engine via GetPromptStdinPayload.
-        if (!string.IsNullOrEmpty(prompt))
-        {
-            psi.ArgumentList.Add("-");
-        }
-
-        return psi;
-    }
 
     internal static string ResolveInvocationModel(string? model, IConfiguration configuration)
     {
@@ -1227,9 +985,6 @@ internal static class BuiltInCliBehaviors
                             ?? "agentapi",
         IsCompatibleSessionName = (ctx, sessionName)
             => !string.IsNullOrWhiteSpace(sessionName) && GeminiUuidRegex.IsMatch(sessionName),
-        BuildStartInfo = (ctx, prompt, workingDirectory, sessionName, resumeSession, model, thinkingLevel, permissionMode)
-            => GeminiBuildStartInfo(ctx, prompt, workingDirectory, sessionName, resumeSession, model),
-        GetPromptStdinPayload = (ctx, prompt, sessionName, resumeSession, model) => null,
         MapLineToRunEvents = (ctx, jobKey, line) =>
         {
             if (line.Stream != "stdout") return Array.Empty<CliRunEvent>();
@@ -1244,49 +999,6 @@ internal static class BuiltInCliBehaviors
     private static readonly Regex GeminiUuidRegex =
         new(@"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
             RegexOptions.Compiled);
-
-    private static ProcessStartInfo GeminiBuildStartInfo(
-        GenericCliExecutionService ctx,
-        string prompt,
-        string workingDirectory,
-        string? sessionName,
-        bool resumeSession,
-        string? model)
-    {
-        var psi = new ProcessStartInfo
-        {
-            FileName = GenericCliExecutionService.ResolveExecutable(ctx.GetCliPath()),
-            WorkingDirectory = workingDirectory
-        };
-
-        if (resumeSession && !string.IsNullOrWhiteSpace(sessionName))
-        {
-            psi.ArgumentList.Add("send-message");
-            psi.ArgumentList.Add(sessionName);
-        }
-        else
-        {
-            psi.ArgumentList.Add("new-conversation");
-            var mappedModel = GeminiMapModel(model);
-            if (!string.IsNullOrEmpty(mappedModel))
-            {
-                psi.ArgumentList.Add($"--model={mappedModel}");
-            }
-        }
-
-        psi.ArgumentList.Add(string.IsNullOrEmpty(prompt) ? " " : prompt);
-        return psi;
-    }
-
-    private static string? GeminiMapModel(string? model)
-    {
-        if (string.IsNullOrWhiteSpace(model)) return null;
-        var lower = model.ToLowerInvariant();
-        if (lower.Contains("lite") || lower.Contains("flash-lite") || lower.Contains("flash_lite")) return "flash_lite";
-        if (lower.Contains("pro")) return "pro";
-        if (lower.Contains("flash")) return "flash";
-        return "flash";
-    }
 
     private static readonly Regex GeminiSessionInitRegex = new(
         @"●\s*Session init\s+(?<uuid>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})",

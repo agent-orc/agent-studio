@@ -4,18 +4,9 @@ using System.Text.Json;
 namespace AgentRunner;
 
 /// <summary>
-/// What the detached worker executes. The worker only ever needs
-/// <see cref="FileName"/> / <see cref="Arguments"/>; the trailing T0b fields
-/// record <b>why</b> those arguments look the way they do, so a reattaching
-/// daemon and a post-mortem can both read the card's execution spec out of the
-/// same file the run started from.
-///
-/// <para>
-/// The T0b fields are optional on purpose: a <c>spec.json</c> written before T0b
-/// deserialises with nulls and runs exactly as it did, which is what keeps a
-/// runner upgrade safe mid-wave (<c>KillMode=process</c> leaves live workers
-/// behind).
-/// </para>
+/// Typed CodingAgentRunner request persisted for a detached worker. The empty
+/// <see cref="Arguments"/> field remains only for reading pre-AGT-2373 JSON;
+/// CAR owns argv construction for every new worker.
 /// </summary>
 internal sealed record DetachedJobSpec(
     string FileName,
@@ -29,12 +20,6 @@ internal sealed record DetachedJobSpec(
     string? ThinkingLevel = null,
     string? PermissionMode = null,
     string? ContextMode = null,
-    // T1 (AGT-2370) — CAR execution-engine fields, additive like the T0b block
-    // above: a pre-T1 spec.json deserialises with nulls and Engine=null selects
-    // the legacy raw-spawn branch, which is what keeps a mid-wave runner deploy
-    // legal (KillMode=process leaves live workers on their old binary anyway;
-    // this covers the file contract for any tooling that re-reads a spec).
-    string? Engine = null,
     string? RunId = null,
     string? ResumeSessionId = null,
     string? CleanContextKey = null,
@@ -96,7 +81,6 @@ internal sealed class DurableAgentProcess
         string repoPath,
         string prompt,
         string resultsDirectory,
-        IReadOnlyList<string>? argsOverride = null,
         RunSpecDto? runSpec = null,
         string? runId = null,
         string? resumeSessionId = null,
@@ -111,7 +95,6 @@ internal sealed class DurableAgentProcess
             repoPath,
             prompt,
             resultsDirectory,
-            argsOverride,
             runSpec,
             runId,
             resumeSessionId,
@@ -188,22 +171,16 @@ internal sealed class DurableAgentProcess
         string repoPath,
         string prompt,
         string resultsDirectory,
-        IReadOnlyList<string>? argsOverride = null,
         RunSpecDto? runSpec = null,
         string? runId = null,
         string? resumeSessionId = null,
         string? cleanContextKey = null,
         IReadOnlyDictionary<string, string>? environment = null)
     {
-        // One resolution truth for both engines: which CLI runs (card wish vs.
-        // host binaries, foreign-CLI fallback drops the model pins) comes from
-        // AgentCliProcess.Resolve. The legacy engine additionally uses its argv;
-        // the CAR engine ignores the argv and lets the descriptor build it from
-        // the typed fields below.
-        var invocation = AgentCliProcess.Resolve(options, runSpec, argsOverride);
+        var invocation = CliSelection.Resolve(options, runSpec);
         return new DetachedJobSpec(
             invocation.FileName,
-            invocation.Arguments,
+            [],
             Path.GetFullPath(repoPath),
             prompt,
             Path.GetFullPath(resultsDirectory),
@@ -213,7 +190,6 @@ internal sealed class DurableAgentProcess
             invocation.ThinkingLevel,
             runSpec?.PermissionMode,
             runSpec?.ContextMode,
-            Engine: options.ExecEngine,
             RunId: runId,
             ResumeSessionId: resumeSessionId,
             CleanContextKey: cleanContextKey,
@@ -470,92 +446,18 @@ internal sealed class DurableAgentProcess
         }
 
         ProcessResult processResult;
-        var timedOut = false;
-        var launchFailed = false;
-        if (string.Equals(spec.Engine, RunnerOptions.ExecEngineCar, StringComparison.OrdinalIgnoreCase))
+        bool timedOut;
+        bool launchFailed;
+        try
         {
-            try
-            {
-                (processResult, timedOut, launchFailed) = await CarWorkerExecution.RunAsync(spec, directory, Append);
-            }
-            catch (Exception ex)
-            {
-                Append("system", $"[runner] detached worker failed: {ex.Message}");
-                processResult = new ProcessResult(125, string.Empty, ex.ToString());
-                launchFailed = true;
-            }
+            (processResult, timedOut, launchFailed) = await CarWorkerExecution.RunAsync(spec, directory, Append);
         }
-        else
+        catch (Exception ex)
         {
-            // Legacy raw spawn — behind RUNNER_EXEC_ENGINE=legacy since AGT-2370,
-            // deleted in AGT-2373. The CAR adapters run in shadow mode on the raw
-            // lines so the typed events.jsonl trace exists on both engines and
-            // event parity is provable before the process start switches.
-            var runId = string.IsNullOrWhiteSpace(spec.RunId)
-                ? Path.GetFileName(Path.TrimEndingDirectorySeparator(directory))
-                : spec.RunId!;
-            using var trace = CarEventTrace.Open(directory);
-            var protocolNovelty = new CliProtocolNoveltyTracker(
-                AgentCliProcess.NormalizeCliType(spec.CliType) ?? AgentCliProcess.ClaudeCli);
-            void ObserveUnclassifiedFrame(string rawDetail)
-            {
-                if (protocolNovelty.TryObserveFrame(rawDetail, out var novelty))
-                    Append("system", novelty.ToMarker());
-            }
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(spec.TimeoutSeconds));
-            try
-            {
-                var environment = new Dictionary<string, string?>
-                {
-                    ["JOB_RESULTS_DIR"] = spec.ResultsDirectory,
-                };
-                if (ProviderAuthEnvironment.TryGetForCli(spec.CliType, out var authName, out var authValue))
-                    environment[authName] = authValue;
-                // The agent's own build/test/lint must resolve against the caches
-                // repository preparation restored into for this run (TE-52).
-                foreach (var entry in spec.Environment ?? new Dictionary<string, string>())
-                    environment[entry.Key] = entry.Value;
-                processResult = await ProcessRunner.RunAsync(
-                    spec.FileName,
-                    spec.Arguments,
-                    spec.WorkingDirectory,
-                    spec.Prompt,
-                    line =>
-                    {
-                        Append("stdout", line);
-                        ObserveUnclassifiedFrame(line);
-                        trace.WriteFromRawLine(
-                            spec.CliType,
-                            runId,
-                            "stdout",
-                            line);
-                    },
-                    line =>
-                    {
-                        Append("stderr", line);
-                        trace.WriteFromRawLine(
-                            spec.CliType,
-                            runId,
-                            "stderr",
-                            line);
-                    },
-                    environment,
-                    clearEnvironment: false,
-                    ct: timeout.Token);
-            }
-            catch (OperationCanceledException) when (timeout.IsCancellationRequested)
-            {
-                timedOut = true;
-                Append("system", $"[runner] run exceeded {spec.TimeoutSeconds}s timeout");
-                processResult = new ProcessResult(124, string.Empty, "Runner timeout");
-            }
-            catch (Exception ex)
-            {
-                Append("system", $"[runner] detached worker failed: {ex.Message}");
-                processResult = new ProcessResult(125, string.Empty, ex.ToString());
-                launchFailed = ex is System.ComponentModel.Win32Exception
-                               || ex.Message.Contains("Failed to start process", StringComparison.OrdinalIgnoreCase);
-            }
+            Append("system", $"[runner] detached worker failed: {ex.Message}");
+            processResult = new ProcessResult(125, string.Empty, ex.ToString());
+            timedOut = false;
+            launchFailed = true;
         }
 
         // AGT-2868: before the result file appears, because the result file is

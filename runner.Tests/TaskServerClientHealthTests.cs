@@ -49,8 +49,7 @@ public class TaskServerClientHealthTests
             BackendName = "test",
             WorkDir = Path.GetTempPath(),
             BaseBranch = "main",
-            CliBin = "claude",
-            CliArgs = "",
+            ClaudeCliBin = "claude",
         };
         using var client = new TaskServerClient(
             http,
@@ -415,8 +414,7 @@ public class TaskServerClientHealthTests
             GitRemote = "/tmp/fallback-origin.git",
             WorkDir = "/tmp/runner-v1",
             BaseBranch = "main",
-            CliBin = "/bin/sh",
-            CliArgs = "fixture.sh",
+            ClaudeCliBin = "/bin/sh",
             TtlSeconds = 120,
             HeartbeatSeconds = 30,
             RunTimeoutSeconds = 120,
@@ -561,8 +559,7 @@ public class TaskServerClientHealthTests
             WorkDir = Path.Combine(stateDirectory, "work"),
             StateDir = stateDirectory,
             BaseBranch = "main",
-            CliBin = "claude",
-            CliArgs = "-p",
+            ClaudeCliBin = "claude",
             HostMaxParallelism = 2,
         };
 

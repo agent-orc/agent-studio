@@ -1100,12 +1100,9 @@ public sealed class RemoteTaskRunner
                 : "[runner] server-composed mode framing + results-dir context + remote-completion-protocol appended to task prompt");
         }
 
-        // T0b proof line: which CLI, model and reasoning level this run actually
-        // starts with, and whether that came from the card's spec or from the
-        // host's RUNNER_CLI_* fallback. This is the line the migration's operating
-        // evidence is filtered on, so it is written to the journal as well as to
-        // the task's shipped log.
-        var invocation = AgentCliProcess.Resolve(_options, runSpec);
+        // Record the effective typed provider selection in both the durable
+        // journal and the task's shipped log.
+        var invocation = CliSelection.Resolve(_options, runSpec);
         var specLine =
             $"[runner] spec cli={invocation.CliType} model={invocation.Model ?? "<cli-default>"} " +
             $"thinking={invocation.ThinkingLevel ?? "<cli-default>"} " +
@@ -1115,15 +1112,12 @@ public sealed class RemoteTaskRunner
             (invocation.Note is null ? "" : $" note={invocation.Note}");
         _log(specLine);
         shipper.Add("system", specLine);
-        // Plan §4 (Beobachtbarkeit): the engine line is the proof of which
-        // execution path a run took and the filter for the T3 operating
-        // evidence. The legacy engine keeps its historical spawning line.
-        var engineLine = _options.ExecEngine == RunnerOptions.ExecEngineCar
-            ? $"[runner] engine=car cli={invocation.CliType} model={invocation.Model ?? "<cli-default>"} " +
-              $"thinking={invocation.ThinkingLevel ?? "<cli-default>"} " +
-              $"permission={CodingAgentRunner.Model.CliPermissionModes.Normalize(runSpec?.PermissionMode)} " +
-              $"context={CodingAgentRunner.Model.CliContextModes.Normalize(runSpec?.ContextMode)}"
-            : $"[runner] spawning {invocation.FileName} {string.Join(' ', invocation.Arguments)}";
+        // Keep an explicit CAR marker so operators can verify the execution
+        // boundary without inferring it from provider frames.
+        var engineLine = $"[runner] engine=car cli={invocation.CliType} model={invocation.Model ?? "<cli-default>"} " +
+                         $"thinking={invocation.ThinkingLevel ?? "<cli-default>"} " +
+                         $"permission={CodingAgentRunner.Model.CliPermissionModes.Normalize(runSpec?.PermissionMode)} " +
+                         $"context={CodingAgentRunner.Model.CliContextModes.Normalize(runSpec?.ContextMode)}";
         _log(engineLine);
         shipper.Add("system", engineLine);
         slot = _state.Save(slot with
@@ -1225,7 +1219,7 @@ public sealed class RemoteTaskRunner
                     });
                     ReportWorkerEnvelope(slot, shipper);
                     var processResult = new ProcessResult(result.ExitCode, result.StdOut, result.StdErr);
-                    var invocation = AgentCliProcess.Resolve(_options, slot.RunSpec);
+                    var invocation = CliSelection.Resolve(_options, slot.RunSpec);
                     var providerAccess = ProviderAccessClassifier.Classify(
                         processResult.ExitCode,
                         processResult.StdOut,
@@ -1296,15 +1290,8 @@ public sealed class RemoteTaskRunner
                         && sameSessionResumeAttempts < ExecutionOutcomeAdapter.MaxSameSessionResumeAttempts)
                     {
                         var sessionId = classified.Decision.RawFacts.SessionId!;
-                        // The car engine resumes through CliRunRequest.ResumeSessionId
-                        // (the descriptor knows the handshake); the legacy engine keeps
-                        // substituting RUNNER_CLI_RESUME_ARGS. The gate stays the same
-                        // on both engines: no configured resume template, no resume.
-                        var carEngine = _options.ExecEngine == RunnerOptions.ExecEngineCar;
-                        var resumeArgs = carEngine
-                            ? null
-                            : _options.CliResumeArgs!
-                                .Replace("{sessionId}", sessionId, StringComparison.Ordinal);
+                        // CAR resumes through the typed ResumeSessionId field; its
+                        // descriptor owns the provider-specific handshake.
                         shipper.Add(
                             "system",
                             $"[runner] bounded same-session resume 1/{ExecutionOutcomeAdapter.MaxSameSessionResumeAttempts}; session={sessionId}");
@@ -1322,13 +1309,9 @@ public sealed class RemoteTaskRunner
                             workspace.RepoPath,
                             "Continue the interrupted attempt from the durable workspace state. Complete the requested work, verify it, and end with exactly one required [[TASK_*]] terminal sentinel.",
                             ResultsDir(slot.TaskKey),
-                            resumeArgs is null ? null : AgentCliProcess.SplitArgs(resumeArgs),
-                            // RUNNER_CLI_RESUME_ARGS carries only the resume
-                            // handshake; the card's model / reasoning selection
-                            // must survive the second attempt too.
-                            resumeSlot.RunSpec,
+                            runSpec: resumeSlot.RunSpec,
                             runId: resumeSlot.AttemptId,
-                            resumeSessionId: carEngine ? sessionId : null,
+                            resumeSessionId: sessionId,
                             cleanContextKey: resumeSlot.TaskKey,
                             // The resumed attempt is the same run and keeps the
                             // same preparation cache binding, which a reattaching
@@ -1505,21 +1488,12 @@ public sealed class RemoteTaskRunner
         ProcessResult result,
         bool launchFailed,
         int sameSessionResumeAttempts,
-        AgentCliProcess.CliInvocation? invocation = null)
+        CliSelection.Selection? invocation = null)
     {
         var provider = ProviderOutputEvidenceExtractor.Extract(result.StdOut);
-        // Resume stays gated on a configured RUNNER_CLI_RESUME_ARGS on BOTH
-        // engines, even though the CAR descriptor could resume from the session
-        // id alone. Production leaves that variable unset, so lifting the gate
-        // here would make runs resume that never resumed before - a third
-        // behaviour jump on top of the two T1 ships. It belongs to T2/T3, with a
-        // parity scenario (P12) behind it.
         var sessionState = !string.IsNullOrWhiteSpace(provider.SessionId)
-                           && !string.IsNullOrWhiteSpace(_options.CliResumeArgs)
             ? ExecutionSessionState.Resumable
-            : string.IsNullOrWhiteSpace(provider.SessionId)
-                ? ExecutionSessionState.Unsupported
-                : ExecutionSessionState.Active;
+            : ExecutionSessionState.Unsupported;
         var factsAfterExit = Facts(
             lease,
             workspace,

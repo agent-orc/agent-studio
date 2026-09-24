@@ -104,7 +104,8 @@ Workflows: `.github/workflows/deploy-website.yml`
 | Source | Target | Resolution | Kind | Evidence |
 | --- | --- | --- | --- | --- |
 | AGT / OrchestratorApi | AGT / SilentCatchAnalyzer | resolved | project-reference | `backend/OrchestratorApi.csproj: ../tools/SilentCatchAnalyzer/SilentCatchAnalyzer.csproj` |
-| AGT / OrchestratorApi | CAR / CodingAgentRunner | resolved | package | `backend/OrchestratorApi.csproj: CodingAgentRunner` |
+| AGT / OrchestratorApi | CAR / CodingAgentRunner | resolved | package | `backend/OrchestratorApi.csproj: CodingAgentRunner [0.7.0]` |
+| AGT / agent-runner | CAR / CodingAgentRunner | resolved | package | `runner/AgentRunner.csproj: CodingAgentRunner [0.7.0]` |
 | AGT / OrchestratorApi | TE / TokenEconomy | resolved | project-reference | `backend/OrchestratorApi.csproj: ../../../token-economy/src/TokenEconomy/TokenEconomy.csproj` |
 | AGT / OrchestratorApi.Tests | AGT / OrchestratorApi | resolved | project-reference | `backend.Tests/OrchestratorApi.Tests.csproj: ../backend/OrchestratorApi.csproj` |
 | AGT / OrchestratorApi.Tests | AGT / agent-runner | resolved | project-reference | `backend.Tests/OrchestratorApi.Tests.csproj: ../runner/AgentRunner.csproj` |

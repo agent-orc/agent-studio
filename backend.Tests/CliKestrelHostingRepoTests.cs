@@ -85,8 +85,7 @@ public class CliKestrelHostingRepoTests : IClassFixture<WebApplicationFactory<Pr
             prompt: "Reply with exactly four words and nothing else: hosted test ready ack",
             workingDirectory: Path.GetTempPath(),
             sessionName: null, resumeSession: false,
-            model: "claude-haiku-4-5",
-            executionEngine: CliExecutionEngines.Car);
+            model: "claude-haiku-4-5");
 
         Assert.Null(err);
         Assert.NotNull(exec);
@@ -151,8 +150,7 @@ public class CliKestrelHostingRepoTests : IClassFixture<WebApplicationFactory<Pr
             prompt: "Reply with exactly four words and nothing else: scrub test ready ack",
             workingDirectory: Path.GetTempPath(),
             sessionName: null, resumeSession: false,
-            model: "claude-haiku-4-5",
-            executionEngine: CliExecutionEngines.Car);
+            model: "claude-haiku-4-5");
         Assert.Null(err);
         Assert.NotNull(exec);
 

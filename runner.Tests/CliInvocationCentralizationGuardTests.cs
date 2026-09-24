@@ -19,7 +19,7 @@ namespace AgentRunner.Tests;
 ///   indirect <c>GetCliPath</c> / executable-resolver call, within
 ///   <see cref="ProximityLines"/> lines of the spawn;</item>
 ///   <item>anywhere in the same file, one of the runner types that exist solely
-///   to describe a coding-agent invocation (<c>AgentCliProcess</c>,
+///   to describe a coding-agent invocation (<c>CliSelection</c>,
 ///   <c>DetachedJobSpec</c>) — that is how the worker spawn stays caught after
 ///   the binary name moved into a spec record (T0b).</item>
 /// </list>
@@ -27,13 +27,10 @@ namespace AgentRunner.Tests;
 /// violation on its own. Git plumbing and verification commands are unaffected:
 /// they carry no CLI identity.</para>
 ///
-/// <para>Today the pre-CAR execution layer <em>is</em> the allowlist. That is the
-/// point of landing the guard before the migration: it is alt-path agnostic, it
-/// cannot undo what already exists, but from this moment on it stops the
-/// invocation surface from spreading into new files. AGT-2370 and AGT-2371
-/// remove entries, T4 (AGT-2373) drives the list to empty. The list grows
-/// never — and <see cref="Allowlist_has_no_stale_entries"/> makes shrinking it
-/// mandatory rather than optional.</para>
+/// <para>The allowlist contains bounded non-card process utilities only. Card
+/// runs have no exception: they execute through CAR. The list grows never, and
+/// <see cref="Allowlist_has_no_stale_entries"/> removes an exception as soon as
+/// its process boundary disappears.</para>
 ///
 /// <para>Bauform follows the WikiPathCentralization / FeatureFolderBoundary
 /// precedent: a deterministic source scanner, a build-breaking fact, and
@@ -56,8 +53,8 @@ public class CliInvocationCentralizationGuardTests
     private const string MirrorEndMarker = "cli-invocation-guard: mirrored region end";
 
     /// <summary>Justification prefix every allowlist entry has to carry.</summary>
-    private const string LegacyLayer =
-        "legacy execution layer - shrinks with AGT-2370/2371, grows never. ";
+    private const string DocumentedException =
+        "documented non-card exception - grows never. ";
 
     private static readonly string[] ScannedRoots =
     [
@@ -100,12 +97,12 @@ public class CliInvocationCentralizationGuardTests
     /// up by accident, so no file gets flagged for merely running git.
     /// </summary>
     private static readonly Regex FileScopedCliIdentity = new(
-        @"\b(?:AgentCliProcess|DetachedJobSpec)\b",
+        @"(?!)",
         RegexOptions.Compiled);
 
     /// <summary>The pre-CAR configuration surface; AGT-2373 deletes it outright.</summary>
     private static readonly Regex LegacyCliEnvironment = new(
-        @"\bRUNNER_CLI_[A-Z_]*",
+        @"\b(?:RUNNER_CLI_BIN|RUNNER_CLI_ARGS|RUNNER_CLI_RESUME_ARGS)\b",
         RegexOptions.Compiled);
 
     /// <summary>
@@ -134,64 +131,53 @@ public class CliInvocationCentralizationGuardTests
     /// </summary>
     private static readonly AllowedFile[] Allowlist =
     [
-        // AGT-2370 (T1) removed two entries: runner/AgentCliProcess.cs no longer
+        // AGT-2370 (T1) removed two entries: runner/CliSelection.cs no longer
         // spawns (pure invocation resolution since the dead instance path was
         // deleted), and runner/RemoteProjectChatRunner.cs runs through CAR with
         // PermissionMode=read-only (T1c) with no legacy fallback.
 
-        new("runner/DurableAgentProcess.cs",
-            LegacyLayer
-            + "Detached-worker launch (re-execs the runner binary) plus the worker's legacy raw "
-            + "ProcessRunner.RunAsync branch behind RUNNER_EXEC_ENGINE=legacy - the default engine is "
-            + "CAR (ICliDriver) since AGT-2370. The detached-worker half is host responsibility and "
-            + "stays; AGT-2373 deletes the legacy branch."),
-
         new("runner/RunnerOptions.cs",
-            LegacyLayer
-            + "Parses RUNNER_CLI_BIN / RUNNER_CLI_ARGS / RUNNER_CLI_RESUME_ARGS - since AGT-2370 the "
-            + "binary-path and fallback surface for both engines (RUNNER_EXEC_ENGINE selects "
-            + "car|legacy; a new RUNNER_CLI_TYPE knob was deliberately not added so this ratchet can "
-            + "reach empty). AGT-2373 removes the trio."),
+            DocumentedException
+            + "Rejects removed RUNNER_CLI_BIN / RUNNER_CLI_ARGS / RUNNER_CLI_RESUME_ARGS values with "
+            + "an actionable migration error; they cannot select an execution path. A later AGT-23xx "
+            + "compatibility cleanup may remove the diagnostics after the deployment window."),
 
         new("runner/RemoteRunnerDaemon.cs",
-            LegacyLayer
+            DocumentedException
             + "AGT-2778 invokes the host-owned agent-runner-deploy update-clis boundary through sudo; "
             + "the allowlisted script installs only Task Server-pinned packages and never starts an "
             + "agent run. AGT-2373 decides the permanent non-run process boundary."),
 
         new("runner/RunnerCapabilityProbe.cs",
-            LegacyLayer
+            DocumentedException
             + "AGT-2778 directly runs --version while building the host capability snapshot; this is "
             + "a bounded read-only installation probe, not an agent run. AGT-2373 decides the permanent "
             + "non-run probe boundary."),
 
         new("runner/Program.cs",
-            LegacyLayer
-            + "Operator help text naming the RUNNER_CLI_* knobs. Goes away together with the knobs in AGT-2373."),
+            DocumentedException
+            + "AGT-2373 keeps the bounded provider-auth probe as a documented non-card exception. It "
+            + "runs a status command through ProcessRunner and cannot execute a task prompt."),
 
         new("backend/Features/Cli/Execution/BuiltInCliBehaviors.cs",
-            LegacyLayer
-            + "Local argv construction for claude / codex / agentapi. AGT-2371 replaces it with the CAR "
-            + "descriptors (BuiltInDescriptors); --append-system-prompt-file stays studio-specific."),
+            DocumentedException
+            + "AGT-2373 keeps only Antigravity's bounded --version availability probe here; card runs "
+            + "use CAR and this file no longer constructs their argv."),
 
         new("backend/Features/Cli/Execution/NpmShimHealer.cs",
-            LegacyLayer
+            DocumentedException
             + "Temporary repair helper for the explicit local rollback and non-agent ClaudeOneShot; "
             + "CAR owns repair on CAR-backed runs and AGT-2373 deletes this exception."),
 
         new("backend/Features/Cli/Routing/OneShot/ClaudeOneShot.cs",
-            LegacyLayer
+            DocumentedException
             + "Short-lived non-agent claude call (summaries, classification, verdict extraction). "
             + "AGT-2371 decides whether it moves onto CAR or stays as a documented exception."),
 
         new("backend/Features/Cli/Routing/OneShot/CodexOneShot.cs",
-            LegacyLayer
-            + "Same as ClaudeOneShot, for codex."),
+            DocumentedException
+            + "Same bounded one-shot boundary as ClaudeOneShot, for Codex; retained by AGT-2373."),
 
-        new("backend/Features/Runner/OrchestratorRunner.cs",
-            LegacyLayer
-            + "Legacy-test-only inline Claude fallback resolves GetCliPath and starts the CLI directly; "
-            + "production uses ClaudeOneShot. AGT-2373 deletes the inline fallback."),
     ];
 
     [Fact]
@@ -232,18 +218,18 @@ public class CliInvocationCentralizationGuardTests
     }
 
     [Fact]
-    public void Every_allowlist_entry_says_why_it_exists_and_what_removes_it()
+    public void Every_allowlist_entry_documents_its_non_card_boundary()
     {
         var unjustified = Allowlist
-            .Where(entry => !entry.Justification.StartsWith(LegacyLayer, StringComparison.Ordinal)
+            .Where(entry => !entry.Justification.StartsWith(DocumentedException, StringComparison.Ordinal)
                             || !entry.Justification.Contains("AGT-23", StringComparison.Ordinal))
             .Select(entry => entry.Path)
             .ToList();
 
         Assert.True(
             unjustified.Count == 0,
-            "Every allowlist entry must open with \"" + LegacyLayer.Trim()
-            + "\" and name the AGT-23xx card that removes it:\n  "
+            "Every allowlist entry must open with \"" + DocumentedException.Trim()
+            + "\" and name the AGT-23xx decision that bounded it:\n  "
             + string.Join("\n  ", unjustified));
     }
 
@@ -304,6 +290,23 @@ public class CliInvocationCentralizationGuardTests
             + "test suite. They have drifted apart. Copy the mirrored region from one instance to the "
             + "other so a relaxation cannot hide in the suite that was not run:\n  "
             + BackendInstancePath + "\n  " + RunnerInstancePath);
+    }
+
+    [Fact]
+    public void Backend_and_runner_use_one_exact_CodingAgentRunner_package_pin()
+    {
+        var root = RepoRoot();
+        var backend = File.ReadAllText(Path.Combine(root, "backend", "OrchestratorApi.csproj"));
+        var runner = File.ReadAllText(Path.Combine(root, "runner", "AgentRunner.csproj"));
+        var pattern = new Regex(
+            "<PackageReference\\s+Include=\\\"CodingAgentRunner\\\"\\s+Version=\\\"(?<version>\\[[^\\\"]+\\])\\\"\\s*/>",
+            RegexOptions.Compiled);
+
+        var backendMatch = pattern.Match(backend);
+        var runnerMatch = pattern.Match(runner);
+        Assert.True(backendMatch.Success, "Backend must use an exact bracketed CodingAgentRunner package pin.");
+        Assert.True(runnerMatch.Success, "Runner must use an exact bracketed CodingAgentRunner package pin.");
+        Assert.Equal(backendMatch.Groups["version"].Value, runnerMatch.Groups["version"].Value);
     }
 
     private static string MirroredRegion(string file)

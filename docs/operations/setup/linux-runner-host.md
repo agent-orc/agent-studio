@@ -106,9 +106,10 @@ checkout fallback.
   UpdateService Windows machinery or live-checkout drift scans. Headless
   Chromium, UI tests, and screenshots are remote-capable and use the host-owned
   Mode-A stack.
-- **The CLI invocation is configurable, not hard-coded.** Headless auth and
-  print-mode flags differ per CLI and per version; `RUNNER_CLI_BIN` /
-  `RUNNER_CLI_ARGS` select them. See the per-CLI defaults below.
+- **The provider and executable are configurable, not the invocation argv.**
+  `RUNNER_CLI_TYPE` selects Claude or Codex; the provider-specific binary
+  settings locate the executable. CodingAgentRunner owns headless and protocol
+  flags.
 
 ## Test host
 
@@ -564,13 +565,10 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 | `RUNNER_REVIEW_CREDENTIAL_ENV` | `--review-credential-env` | (none) | Comma-separated read-only credential variable names admitted into the cleared review environment. |
 | `RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS` | `--review-no-cpu-progress-seconds` | `900` | Floor for the hang watchdog on review commands. A command's whole process tree must burn at least one percent of one core within the *effective* window; otherwise the tree is killed and the attempt is reported as `ReviewInfra/NoCpuProgress`. The effective window is `max(this value, 50%` of that command's own budget`)` (AGT-2851), so a legitimately quiet suite with a large budget is not killed for sitting near 0% CPU during a real test wait. `0` disables the watchdog outright, ignoring the budget-derived floor. Linux only: the tree's CPU time is read from `/proc`. See [Review parallelism and build-server isolation](#review-parallelism-and-build-server-isolation). |
 | `RUNNER_STATE_DIR` | `--state-dir` | `$RUNNER_WORKDIR/.runner-state` | Durable slot, attempt, PID, worker result, and file-backed output state used for planned restart reattachment. Keep it on persistent local storage. |
-| `RUNNER_EXEC_ENGINE` | `--exec-engine` | `car` | CLI execution engine inside the detached worker. `car` (default since AGT-2370) drives the CLI through the CodingAgentRunner library: descriptor-built argv, `stream-json` output, permission-mode injection from the card's spec (absent = bypass/yolo), and a task-stable isolated config home whose credential file is linked so OAuth refreshes write through. `legacy` is the pre-AGT-2370 raw spawn and is removed in AGT-2373. |
 | `AGENT_STUDIO_CLEAN_CONTEXT_ROOT` | none | `$XDG_STATE_HOME/agent-studio/clean-context` or `~/.local/state/agent-studio/clean-context` | Persistent non-temporary root for task-isolated Claude and Codex homes. Keep it on host-local storage. The same task reuses its marker-validated home across attempts and daemon restarts; inactive homes expire after seven days. |
-| `RUNNER_CLI_BIN` | `--cli` | `claude` | Agent CLI binary (or a wrapper script). Under the `car` engine only the binary path and the CLI family derived from it are used. |
+| `RUNNER_CLI_TYPE` | `--cli-type` | `claude` | Default coding provider. Accepted values are `claude` and `codex`; a card-level typed run spec may select either available provider. |
 | `RUNNER_CLAUDE_CLI_BIN` | `--claude-cli` | `claude` | Claude binary used for Claude-pinned cards when the primary CLI is Codex. The native setup flow writes the discovered path. |
 | `RUNNER_CODEX_CLI_BIN` | `--codex-cli` | `codex` | Codex binary used for Codex-pinned cards and the GPT-only project chat path when the primary CLI is Claude. The native setup flow writes the discovered path. |
-| `RUNNER_CLI_ARGS` | `--cli-args` | `-p` | Headless CLI args; the prompt is streamed on stdin. **Legacy engine only** — the `car` engine ignores this value (the descriptor owns the argv) and says so at spawn time via the `engine=car` journal line. |
-| `RUNNER_CLI_RESUME_ARGS` | `--cli-resume-args` | (none) | Optional provider-specific same-session arguments containing the literal `{sessionId}` placeholder. A supported infrastructure failure resumes at most once; an invalid session falls back to durable salvage once and then escalates. |
 | `RUNNER_AUTH_TOKEN_FILE` | `--auth-token-file` | (none on loopback) | Protected file containing the owner-enrolled Runner service credential. Required for every non-loopback Task Server. |
 | `RUNNER_AUTH_TOKEN` | none | (none) | Compatibility environment input. Prefer the credential file so the secret is absent from process diagnostics. |
 | `RUNNER_TTL_SECONDS` | `--ttl` | `900` | Requested lease TTL; the server clamps it. The default grants a bounded 15-minute authority window so an already-claimed run can survive ten minutes of transport loss. |
@@ -805,21 +803,18 @@ Execution Hosts shows the review role's quota, adopted ceiling, and throttled
 share. Two consecutive samples at or above 10% raise the existing degraded-host
 alarm with the remediation: raise the review role quota or lower the ceiling.
 
-Recommended per-CLI headless defaults (verify against your installed version):
+Provider selection and executable configuration:
 
 When both CLIs are installed, keep both provider-specific binary variables even
 though only one CLI is primary. Capability advertisement and card routing use
 the provider-specific paths symmetrically. A missing or unauthenticated provider
 is advertised as unavailable and only blocks cards pinned to that provider.
 
-- Claude: `RUNNER_CLI_BIN=claude`, `RUNNER_CLI_ARGS="-p"` (prompt on stdin, final
-  response on stdout; the runner accepts a `[[TASK_*]]` sentinel only as its
-  terminal standalone line).
-- Codex: `RUNNER_CLI_BIN=codex`, plus the non-interactive exec flags your version
-  exposes. The runner reads the last completed `agent_message`, not raw JSONL
-  tool, diff, or diagnostic payloads. When quoting gets awkward, point
-  `RUNNER_CLI_BIN` at a small wrapper script instead of fighting the space-split
-  arg parser.
+- Select the default with `RUNNER_CLI_TYPE=claude` or
+  `RUNNER_CLI_TYPE=codex`.
+- Set `RUNNER_CLAUDE_CLI_BIN` and `RUNNER_CODEX_CLI_BIN` when an executable is
+  not on `PATH`. Do not add headless, JSON, permission, model, or resume flags;
+  CodingAgentRunner renders them from the typed request.
 
 ### Per-worker resource envelope
 
@@ -1883,8 +1878,9 @@ proof.
 - **No output shipped** - the server rejects logs for an unknown task key; the
   console still shows the CLI output locally. Check `RUNNER_SERVER_URL` and the
   task key.
-- **CLI exits immediately / wrong flags** - the headless flags do not match the
-  installed CLI version. Adjust `RUNNER_CLI_ARGS` or wrap the CLI in a script.
+- **CLI exits immediately / protocol mismatch** - verify the installed CLI
+  version and the matching provider-specific binary path. Invocation flags are
+  owned by the pinned CodingAgentRunner version, not host configuration.
 - **`outcome Unknown` after a substantive final reply** - first confirm the run
   log contains `remote-completion-protocol appended to task prompt`. Its absence
   means the host is running a pre-AGT-2148 runner build. If the line is present,
