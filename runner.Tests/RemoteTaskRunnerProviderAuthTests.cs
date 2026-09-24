@@ -53,7 +53,7 @@ public sealed class RemoteTaskRunnerProviderAuthTests
     [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
     [Trait("Category", "MachineBound")]
     [Trait("Category", "ReviewFlaky")]
-    public async Task Production_process_wait_records_sigterm_and_suppresses_only_the_killed_run()
+    public async Task Production_process_wait_distinguishes_signals_from_matching_exit_codes()
     {
         PlatformGate.LinuxOnly("the production signal record uses Unix wait semantics");
         const string refusal = "usage limit reached; resets at 2099-09-19T12:40:00Z";
@@ -63,19 +63,36 @@ public sealed class RemoteTaskRunnerProviderAuthTests
         {
             var killedResult = await RunDurableAsync(
                 Path.Combine(root, "killed"),
-                $"printf '%s\\n' '{refusal}' >&2; kill -TERM $$");
+                $"printf '%s\\n' '{refusal}' >&2; exec /bin/kill -TERM $$");
+            var sigkillResult = await RunDurableAsync(
+                Path.Combine(root, "sigkill"),
+                $"printf '%s\\n' '{refusal}' >&2; exec /bin/kill -KILL $$");
+            var exit137Result = await RunDurableAsync(
+                Path.Combine(root, "exit-137"),
+                $"printf '%s\\n' '{refusal}' >&2; exit 137");
             var normalResult = await RunDurableAsync(
                 Path.Combine(root, "normal"),
                 $"printf '%s\\n' '{refusal}' >&2; exit 1");
             var killed = RemoteTaskRunner.ProcessResultFrom(killedResult);
+            var sigkill = RemoteTaskRunner.ProcessResultFrom(sigkillResult);
+            var exit137 = RemoteTaskRunner.ProcessResultFrom(exit137Result);
             var normal = RemoteTaskRunner.ProcessResultFrom(normalResult);
             var (lease, workspace) = ProductionContext(root);
 
             var killedFacts = RemoteTaskRunner.BuildProcessFacts(lease, workspace, killed);
+            var sigkillFacts = RemoteTaskRunner.BuildProcessFacts(lease, workspace, sigkill);
+            var exit137Facts = RemoteTaskRunner.BuildProcessFacts(lease, workspace, exit137);
             var normalFacts = RemoteTaskRunner.BuildProcessFacts(lease, workspace, normal);
             Assert.Equal(15, killedResult.Signal);
             Assert.Equal(15, killed.Signal);
             Assert.Equal(15, killedFacts.Signal);
+            Assert.Equal(9, sigkillResult.Signal);
+            Assert.Equal(9, sigkill.Signal);
+            Assert.Equal(9, sigkillFacts.Signal);
+            Assert.Equal(137, exit137Result.ExitCode);
+            Assert.Null(exit137Result.Signal);
+            Assert.Null(exit137.Signal);
+            Assert.Null(exit137Facts.Signal);
             Assert.Null(normalResult.Signal);
             Assert.Null(normal.Signal);
             Assert.Null(normalFacts.Signal);
@@ -90,6 +107,24 @@ public sealed class RemoteTaskRunnerProviderAuthTests
                 evidenceId: "run-killed");
             Assert.Equal(ProviderAuthProbe.Ready, afterKilled.Status);
 
+            var afterSigkill = RemoteTaskRunner.RecordProviderProcessResult(
+                probe,
+                "claude",
+                sigkill,
+                sigkillFacts,
+                evidenceId: "run-sigkill");
+            Assert.Equal(ProviderAuthProbe.Ready, afterSigkill.Status);
+
+            var afterExit137 = RemoteTaskRunner.RecordProviderProcessResult(
+                probe,
+                "claude",
+                exit137,
+                exit137Facts,
+                evidenceId: "run-exit-137");
+            Assert.Equal(ProviderAuthProbe.Limited, afterExit137.Status);
+            Assert.Equal("run-exit-137", afterExit137.EvidenceId);
+
+            await probe.RefreshAsync("claude", CancellationToken.None);
             var afterNormal = RemoteTaskRunner.RecordProviderProcessResult(
                 probe,
                 "claude",

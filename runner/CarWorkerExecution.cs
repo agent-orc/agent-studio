@@ -72,8 +72,12 @@ internal static class CarWorkerExecution
         using var trace = CarEventTrace.Open(workerDirectory);
         using var logger = new CarWorkerLogger(Path.Combine(workerDirectory, "car.log"), append);
         var protocolNovelty = new CliProtocolNoveltyTracker(cliType);
-        var options = BuildCliOptions(spec, cliType);
+        using var signalRecorder = OperatingSystem.IsLinux()
+            ? new SignalRecordingCliSpawner()
+            : null;
+        var options = BuildCliOptions(spec, cliType) with { Spawner = signalRecorder };
         if (optionsCustomizer is not null) options = optionsCustomizer(options);
+        var recordsSignals = ReferenceEquals(options.Spawner, signalRecorder);
         var runner = new CliRunner(options, logger, new WorkerRunLogPathProvider(workerDirectory));
         var driver = runner.Get(cliType);
 
@@ -218,7 +222,7 @@ internal static class CarWorkerExecution
                     exitCode,
                     stdout.ToString(),
                     stderr.ToString(),
-                    ProcessTermination.SignalFromWaitExitCode(exitCode)),
+                    recordsSignals ? signalRecorder?.ReadRecordedSignal(exitCode) : null),
                 false,
                 LaunchFailed: Volatile.Read(ref processStarted) == 0 || info.ProcessId <= 0);
         }

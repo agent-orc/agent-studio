@@ -542,6 +542,7 @@ internal sealed class DurableAgentProcess
                     },
                     environment,
                     clearEnvironment: false,
+                    captureTerminationSignal: true,
                     ct: timeout.Token);
             }
             catch (OperationCanceledException) when (timeout.IsCancellationRequested)

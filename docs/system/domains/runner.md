@@ -729,7 +729,12 @@ state.
   Tool failures and indeterminate non-zero exits retain last-good; rate limits
   use the limited state. Two consecutive explicit failures are required before
   sign-in is blocked, and a later positive probe clears that provider circuit
-  without a runner restart.
+  without a runner restart. Provider-limit evidence is suppressed only by an
+  independently recorded termination fact. The legacy process boundary records
+  Bash's child wait status before it returns a conventional high exit code;
+  CAR does not infer a signal from an exit number. A voluntary exit 137 remains
+  eligible evidence, while recorded SIGTERM, SIGKILL, operator stop, and host
+  shutdown facts are excluded.
 - Provider HTTP 400, 403, or 404 request refusals such as
   `unsupported_parameter` are typed `ProviderRejectedRequest`. They do not
   update provider-auth capability state. A salvaged coding run continues on
