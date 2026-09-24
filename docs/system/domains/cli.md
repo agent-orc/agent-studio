@@ -1,6 +1,6 @@
 # CLI Domain Map
 
-Version: 2026-09-08
+Version: 2026-09-19
 Status: System-of-record map for CLI adapter and quota changes.
 
 Use this when a change touches Claude, Codex, Copilot, Gemini, prompt handoff,
@@ -88,10 +88,8 @@ CLI execution tests.
   never assumes a gpt-5.6 model is offered; `gpt-5.6-sol` keeps no registry
   entry at all (AGT-2025: the flagship stays purely detection-driven). Live
   discovery overrides the baseline to available whenever the installed CLI
-  actually lists one. `gpt-5.4-mini` is likewise a registry entry so it renders
-  disabled on a CLI that rejects it instead of staying invisible while
-  `PipelineStepModelDefaults` and the review orchestrator keep requesting it by
-  id.
+  actually lists one. Retired `gpt-5.4-mini` remains registry metadata only for
+  historical records and is never selected by a runtime default or quota route.
 - Quota probes are observability surfaces. Preserve stable event names and
   useful error context when editing nearby code.
 - Quota reads are cache-only request paths. `GET /api/cli/quota` must never
@@ -127,7 +125,7 @@ CLI execution tests.
   percentages separate from the standard 5-hour and weekly windows; never fold
   a Spark-only snapshot into the main-window admission signal.
 - Review-decision and supporting aspect calls default to Codex with the
-  gpt-mini family's current member (`gpt-5.4-mini` today, resolved through
+  gpt-mini compatibility family's current member (`gpt-5.6-luna`, resolved through
   `ModelFamilyResolver.Resolve(ModelFamilies.GptMini)` rather than a pinned
   literal - see [model-routing-policy.md](model-routing-policy.md#model-families-and-migrations)).
   The configured `ReviewDecisionOrchestrator:Cli` must be passed through to
@@ -140,16 +138,14 @@ CLI execution tests.
   against the latest quota snapshot for every new run; it must not rewrite the
   task's configured CLI or model. When the operator has configured no explicit
   fallback for a CLI, `CliQuotaFallbackService` derives one from
-  `IModelEquivalenceCatalog` (AGT-2751) - an equal-strength model in the other
-  CLI family, e.g. the documented Codex Sol/high <-> Claude Opus 5/high and
-  Codex Mini/high <-> Claude Sonnet 5/medium pairs. The exhaustive, maintained
-  version of that table is Token Economy's model migration catalogue
-  (`model-migration-catalog-safe-auto-rules`); the shipped
-  `ModelEquivalenceCatalog` is an interim table pending that catalogue, and an
-  operator override in `cli-model-routing.json` always wins over the derived
-  pair. `GET /api/cli/quota/model-routes` returns the effective row (configured
-  or derived) for every CLI with an `isFallbackDerived` marker so the picker
-  can label which is which. The same page also shows the model-migration
+  `IModelEquivalenceCatalog` (AGT-2751), which consumes Token Economy's pinned,
+  embedded routing knowledge base and price catalogue without a decision-time
+  network call. It preserves the capability and thinking floor, excludes
+  retired models, and selects the cheapest comparable provider route with
+  remaining quota. An operator override in `cli-model-routing.json` wins over
+  the catalogue. `GET /api/cli/quota/model-routes` keeps the effective
+  `profiles` and adds the per-model route table, prices, catalogue version,
+  current state, and non-reroutable callers. The same page also shows the model-migration
   catalog version (`GET /api/cli/model-migrations`) and the workspace's
   auto-apply-model-migrations switch (AGT-2716); see
   [model-routing-policy.md](model-routing-policy.md#model-families-and-migrations)
@@ -238,16 +234,17 @@ replanned or interrupted.
 | Pipeline post-steps | [DriftPostStepRunner](../../../backend/Features/Drift/DriftPostStepRunner.cs), [PostAbortReviewStepService](../../../backend/Features/Runner/PostAbortReviewStepService.cs), and the review/aspect services above provide the pipeline step id to [CliOneShotRegistry](../../../backend/Features/Cli/Routing/OneShot/ICliOneShot.cs). This includes requirement-fit, code-quality, review-grade, visual-verdict, drift, and post-abort model calls. | [QuotaAwareOneShotRegistryTests](../../../backend.Tests/QuotaAwareOneShotRegistryTests.cs) proves capped-Claude to available-Codex dispatch for representative pre-step, aspect, post-step, and generic one-shot sources. |
 | Orchestrator decisions and preparation | [OrchestratorRunner](../../../backend/Features/Runner/OrchestratorRunner.cs) uses `CliOneShotRegistry` for new decisions and for the one-shot recovery path after a session rejection. Quota deferral returns a typed non-launch result instead of trying the capped provider. | [QuotaAwareOneShotRegistryTests](../../../backend.Tests/QuotaAwareOneShotRegistryTests.cs) proves the public orchestrator entry point resolves before dispatch and that an unsupported pinned floor waits without a fallback cycle. |
 | Project chat | Local chat reaches the quota-aware `OrchestratorRunner`. [OrchestratorChat](../../../backend/Features/Runner/OrchestratorChat.cs) resolves a remotely placed turn before enqueue; [RemoteChatWorkBroker](../../../backend/Features/Runner/RemoteChatWorkBroker.cs) carries both effective and configured routes, and [RemoteProjectChatRunner](../../../runner/RemoteProjectChatRunner.cs) selects the matching provider driver. | [QuotaAwareRemoteChatTests](../../../backend.Tests/QuotaAwareRemoteChatTests.cs) proves resolved-family claim and configured-route provenance; [RemoteProjectChatRunnerTests](../../../runner.Tests/RemoteProjectChatRunnerTests.cs) pins cross-family response parsing. |
-| Other shared one-shot consumers | Prompt enhancement, title generation, soft reasoning, and future callers registered through `CliOneShotRegistry` inherit the same admission boundary. Callers supply a stable `Source`, plus project and task identity when available, so decisions remain attributable. | [QuotaAwareOneShotRegistryTests](../../../backend.Tests/QuotaAwareOneShotRegistryTests.cs) proves the registry dispatches the selected raw provider exactly once and never recursively replans. |
+| Other shared one-shot consumers | Summary generation, prompt enhancement, title generation, wiki search/grading, proposal drafting, watcher analysis, failure intervention, test selection, visual QA, soft reasoning, code-pattern drift, task spawning, and future callers registered through `CliOneShotRegistry` inherit the same admission boundary. Callers supply a stable `Source`, plus project and task identity when available, so decisions remain attributable. | [QuotaAwareOneShotRegistryTests](../../../backend.Tests/QuotaAwareOneShotRegistryTests.cs) proves the registry dispatches the selected raw provider exactly once and never recursively replans. |
+| Provider quota probe | The probe runs the selected provider's native usage/status command. It does not invoke a model and therefore cannot switch provider. The admin route response lists it under `callersCannotReroute` instead of implying it is admitted. | [CliModelRoutesEndpointTests](../../../backend.Tests/CliModelRoutesEndpointTests.cs) pins the endpoint disclosure. |
 
 ### Strength, waiting, and return
 
-- Automatic cross-family fallback is limited to exact pairs in
+- Automatic cross-family fallback comes from Token Economy's pinned routing
+  knowledge and price catalogues through
   [ModelEquivalenceCatalog](../../../backend/Features/Cli/Quota/ModelEquivalenceCatalog.cs).
-  The current pairs are Codex Sol/high with Claude Opus 5/high and Codex
-  Mini/high with Claude Sonnet 5/medium. When fallback is needed, an explicit
-  requested model or thinking pin must match a known pair; otherwise admission
-  waits instead of weakening the route. The
+  Selection stays in the source capability class, keeps a supported explicit
+  thinking floor, excludes retired/unqualified targets, and takes the cheapest
+  comparable target. When no such route exists, admission waits. The
   [Model Routing Policy](./model-routing-policy.md#hard-floors) remains
   authoritative for correctness floors. An explicit operator fallback override
   remains possible and wins over the derived catalogue route.
@@ -261,6 +258,10 @@ replanned or interrupted.
 - The fallback is effective for one launch only. Task and pipeline-step
   settings are not rewritten. Once a fresh quota snapshot places the configured
   provider below its cap, the next launch uses that configured route again.
+- The runtime `prefer fallback now` switch applies the same decision before a
+  cap and expires at the next known reset. Cap crossings never interrupt an
+  active process; only new runs, continuations, claims, and one-shots are
+  admitted again.
 
 ### Observability
 
@@ -272,6 +273,12 @@ work; waits write `quota-wait.json` and keep the card in the `quota-waiting`
 substate until reset. Project-only chat has no task folder, so its decision is
 recorded in the project load-distribution feed and returned with configured and
 effective route provenance.
+
+Every reroute records the shared `modelFallback` shape: `from`, `to`, `reason`
+(`quota-cap`, `operator-preference`, or `provider-rejection`), `window`,
+`usedPct`, and `catalogueVersion`. Provider rejection continuation uses the
+same record type, while quota markers add the active timestamp needed by card
+projection.
 
 The UI reads those same projections: the
 [CLI models panel](../../../frontend/src/app/features/cli/components/cli-models-panel/cli-models-panel.ts)

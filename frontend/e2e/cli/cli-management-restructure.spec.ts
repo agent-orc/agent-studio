@@ -75,6 +75,10 @@ function contracts() {
 }
 
 async function stub(page: Page) {
+  const weeklyReset = new Date(Date.now() + 4 * 24 * 60 * 60 * 1000).toISOString();
+  await page.route('**/api/auth/status', json({
+    profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
+  }));
   await page.route('**/api/tasks', json([]));
   await page.route('**/api/tasks/grouped*', json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
   await page.route('**/api/watch-paths', json([]));
@@ -93,7 +97,7 @@ async function stub(page: Page) {
     snapshots: [
       { cliType: 'claude', fetchedAt: new Date().toISOString(), plan: 'Max 20x', source: 'probe', error: null, windows: [
         { label: '5h session', usedPct: 42, used: 42, limit: 100, unit: '%', resetAt: null, resetLabel: '3h 12m' },
-        { label: 'Weekly', usedPct: 71, used: 71, limit: 100, unit: '%', resetAt: null, resetLabel: '4d 6h' },
+        { label: 'Weekly', usedPct: 71, used: 71, limit: 100, unit: '%', resetAt: weeklyReset, resetLabel: '4d 6h' },
       ] },
       { cliType: 'codex', fetchedAt: new Date().toISOString(), plan: 'Plus', source: 'probe', error: null, windows: [
         { label: '5h session', usedPct: 12, used: 12, limit: 100, unit: '%', resetAt: null, resetLabel: '1h 40m' },
@@ -104,11 +108,36 @@ async function stub(page: Page) {
     profiles: {
       claude: { cliType: 'claude', primaryModel: 'claude-pro', primaryThinkingLevel: null, fallbackCliType: 'codex', fallbackModel: 'codex-pro', fallbackThinkingLevel: null },
     },
+    catalogueVersion: 'token-economy-0.3.4+2026-07-24',
+    routes: [
+      {
+        fromCliType: 'claude', fromModel: 'claude-opus-5', fromThinkingLevel: 'high',
+        toCliType: 'codex', toModel: 'gpt-5.6-sol', toThinkingLevel: 'high',
+        source: 'catalogue', catalogueVersion: 'token-economy-0.3.4+2026-07-24',
+        fromInputPerMTok: 15, fromOutputPerMTok: 75,
+        toInputPerMTok: 2, toOutputPerMTok: 10,
+        capabilityClass: 'tier-2', reroutable: true,
+      },
+    ],
+    states: {
+      claude: {
+        cliType: 'claude', state: 'normal', activeSince: null, preferenceExpiresAt: null,
+        windows: [{ label: 'Weekly', usedPct: 71, capPct: 95, resetAt: null }],
+      },
+    },
+    callersCannotReroute: [
+      { caller: 'quota-probe', reason: 'Provider-native quota introspection does not invoke a model.' },
+    ],
   };
   await page.route('**/api/cli/**', async (route) => {
     const p = new URL(route.request().url()).pathname;
     let body: unknown = {};
     if (p.endsWith('/quota/model-routes')) body = modelRoutes;
+    else if (p.endsWith('/quota/fallback-preference')) body = {
+      cliType: 'claude', active: true,
+      enabledAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 4 * 24 * 60 * 60 * 1000).toISOString(),
+    };
     else if (p.endsWith('/quota/caps')) body = { defaultCapPct: 95, caps: {} };
     else if (p.endsWith('/quota')) body = quotaReport;
     else if (p.endsWith('/usage')) body = usageReport();
@@ -170,11 +199,19 @@ test.describe('CLI Management restructure (AGT-2101)', () => {
     await expect(claudeRow).toContainText('3 models');
     await expect(claudeRow.getByTestId('cli-models-primary-summary-claude')).toContainText('Claude Pro');
     await expect(claudeRow).toContainText('→ Codex · Codex Pro');
+    const fallbackRoutes = overlay.getByTestId('quota-fallback-routes');
+    await expect(fallbackRoutes).toContainText('token-economy-0.3.4+2026-07-24');
+    await expect(fallbackRoutes).toContainText('claude-opus-5 high');
+    await expect(fallbackRoutes).toContainText('gpt-5.6-sol high');
+    await expect(fallbackRoutes).toContainText('$15.00 in / $75.00 out');
+    await expect(overlay.getByTestId('quota-non-reroutable-callers')).toContainText('quota-probe');
+    await expect(claudeRow.getByTestId('prefer-fallback-claude')).toBeVisible();
     // No unexpected app error dialog (would mean an unstubbed endpoint).
     await expect(page.getByTestId('error-dialog-overlay')).toHaveCount(0);
 
     // Caps + contracts remain their own sections on the hub.
     await expect(overlay.getByText('Usage caps', { exact: true })).toBeVisible();
+    await expect(overlay.getByText(/resets /).first()).toBeVisible();
     await expect(overlay.getByTestId('cli-admin-contracts-explainer')).toBeVisible();
     await expect(overlay.getByTestId('cli-admin-contracts-explainer')).toContainText('typed adapter');
 
@@ -189,6 +226,9 @@ test.describe('CLI Management restructure (AGT-2101)', () => {
       await setTheme(page, theme);
       await overlay.screenshot({ path: join(SHOT_DIR, `cli-management-hub--mocked-${theme}.png`) });
     }
+
+    await claudeRow.getByTestId('prefer-fallback-claude').check();
+    await expect(claudeRow).toContainText('fallback preferred by operator until');
   });
 
   test('CLI sessions and CLI paths are their own encapsulated rail pages', async ({ page }) => {
@@ -205,7 +245,7 @@ test.describe('CLI Management restructure (AGT-2101)', () => {
     await expect(sessions).toBeVisible();
     await expect(sessions.getByText('Loading native CLI session stores...')).toHaveCount(0, { timeout: 10_000 });
     // The stubbed inventory renders (confirms the usage report loaded).
-    await expect(sessions.getByText('Claude Code', { exact: true }).first()).toBeVisible();
+    await expect(sessions.getByText('a1', { exact: true })).toBeVisible();
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
       await page.getByTestId('cli-sessions-overlay').screenshot({ path: join(SHOT_DIR, `cli-sessions-page--mocked-${theme}.png`) });

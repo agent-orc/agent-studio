@@ -451,7 +451,10 @@ function buildModelTooltip(
     }
   }
   lines.push(`<b>Agent:</b> ${escapeHtml(job.agent || 'none')} <i>(pickup permission)</i>`);
-  if (source === 'fallback') lines.push(`<b>Reason:</b> quota (${escapeHtml(job.quotaFallback?.reason ?? 'cap reached')})`);
+  if (source === 'fallback') {
+    const fallbackReason = job.quotaFallback?.reason ?? 'quota cap reached';
+    lines.push(`<b>Reason:</b> ${escapeHtml(fallbackReason)}`);
+  }
 
   const ownerLabel = owner.displayName || owner.id;
   const defaultParts: string[] = [];

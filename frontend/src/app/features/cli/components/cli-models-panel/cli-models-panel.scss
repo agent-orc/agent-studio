@@ -49,6 +49,61 @@
   font-size: 9px;
 }
 
+.cli-models__fallback-catalogue {
+  margin-bottom: var(--studio-spacing-4);
+  overflow: hidden;
+}
+.cli-models__fallback-head {
+  padding: var(--studio-spacing-3);
+  border-bottom: 1px solid var(--studio-border);
+}
+.cli-models__fallback-head > div { display: grid; gap: var(--studio-spacing-1); }
+.cli-models__table-wrap { overflow-x: auto; }
+.cli-models__fallback-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+}
+.cli-models__fallback-table th,
+.cli-models__fallback-table td {
+  padding: var(--studio-spacing-2) var(--studio-spacing-3);
+  border-bottom: 1px solid var(--studio-border);
+  text-align: left;
+  vertical-align: top;
+}
+.cli-models__fallback-table th {
+  color: var(--studio-fg-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.cli-models__fallback-table td strong,
+.cli-models__fallback-table td small { display: block; }
+.cli-models__fallback-table td strong { color: var(--studio-fg-strong); }
+.cli-models__fallback-table td small { color: var(--studio-fg-muted); margin-top: var(--studio-spacing-1); }
+.cli-models__source {
+  display: inline-flex;
+  border-radius: 999px;
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  background: var(--studio-bg-selected);
+  color: var(--studio-fg);
+  white-space: nowrap;
+}
+.cli-models__price {
+  font-family: var(--font-mono, monospace);
+  font-variant-numeric: tabular-nums;
+}
+.cli-models__price span { display: block; white-space: nowrap; }
+.cli-models__price span + span { margin-top: var(--studio-spacing-1); }
+.cli-models__fixed-callers {
+  display: grid;
+  gap: var(--studio-spacing-1);
+  padding: var(--studio-spacing-3);
+  color: var(--studio-fg-muted);
+  font-size: 10px;
+}
+.cli-models__fixed-callers strong { color: var(--studio-fg); }
+
 /* One stacked, compact row per CLI. Collapsed rows answer "what's present";
    expanding reveals the route editor + full model list. No left accent bar
    (style-guide R1): status/hierarchy reads from weight and a caret, not a stripe. */
@@ -66,6 +121,19 @@
   align-items: center;
   gap: var(--studio-spacing-2);
 }
+
+.cli-models__prefer {
+  display: grid;
+  grid-template-columns: auto minmax(76px, auto);
+  align-items: center;
+  gap: var(--studio-spacing-1);
+  color: var(--studio-fg-muted);
+  font-size: 9px;
+  white-space: nowrap;
+}
+.cli-models__prefer[data-state='fallback-preferred'],
+.cli-models__prefer[data-state='fallback-active'] { color: var(--studio-accent-warn-strong); }
+.cli-models__prefer input { accent-color: var(--studio-accent-warn-strong); }
 
 .cli-models__toggle {
   flex: 1 1 auto;
@@ -88,12 +156,6 @@
   outline-offset: -2px;
 }
 
-.cli-models__caret {
-  flex: 0 0 auto;
-  font-size: 10px;
-  color: var(--studio-fg-dim);
-  width: 12px;
-}
 .cli-models__icon { flex: 0 0 auto; font-size: 15px; }
 .cli-models__name {
   flex: 0 0 auto;
@@ -236,4 +298,10 @@
     align-items: flex-start;
     flex-direction: column;
   }
+  .cli-models__head { flex-wrap: wrap; }
+  .cli-models__prefer { margin-left: var(--studio-spacing-3); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cli-models__row * { transition-duration: 0s !important; }
 }
