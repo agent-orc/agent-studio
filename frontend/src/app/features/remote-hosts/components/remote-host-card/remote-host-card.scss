@@ -135,16 +135,6 @@
 .host__activity { color: var(--studio-fg-dim) !important; white-space: nowrap; }
 .host__link { color: var(--studio-fg-dim); font-variant-numeric: tabular-nums; text-transform: capitalize; }
 .host__placeholder { color: var(--studio-fg-muted); }
-.host__release code {
-  display: block;
-  overflow: hidden;
-  color: var(--studio-fg-dim);
-  font-family: var(--font-mono, monospace);
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .host__actions { justify-content: flex-end; gap: var(--studio-spacing-1); white-space: nowrap; }
 .host__btn {
   min-height: 28px;

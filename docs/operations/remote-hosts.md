@@ -37,6 +37,43 @@ login status, and models in staging, switches atomically, and restores the old
 prefix if activation fails. Success and failure are host events. Drift produces
 one feed alarm after 24 hours.
 
+## Host release versus the Stable release
+
+Each runner daemon reports its deployment identity - release id, product
+version, source commit, and build instant - in registration and in every
+capability heartbeat. Each role row shows its version, release id, and a short
+commit button that copies the full SHA. Execution Hosts shows the Stable version
+this server runs next to the machine and role counts, and each role row carries its own release
+with the age it lags, for example `19d behind`.
+An omitted identity is tolerated only while the same daemon instance remains
+registered. A new instance that omits it clears the previous process's identity
+and appears as not reported, so rolling back to a legacy daemon cannot inherit a
+newer release and suppress drift detection.
+
+The comparison is server-owned and exposed at
+`GET /api/v1/management/host-releases`, so the page and the alarm can never
+disagree. It uses the strongest evidence available: an identical commit means
+identical code; two build instants give both an order and an age; otherwise the
+product versions decide the order without an age. When nothing is comparable the
+row stays unmarked rather than accusing a host.
+
+A host that is more than 24 hours older than Stable produces one operator-feed
+`host_release_drift` alarm, and one only - the alarm re-arms after the host
+upgrades. Shorter lags are marked but stay calm, because a rolling update
+legitimately leaves a host briefly behind. A host whose heartbeat has gone stale
+is an offline problem and does not alarm for drift. Alarm deduplication is recorded
+only after a successful operator-feed append. Failed emissions stay pending and
+retry on a later watchdog pass, with exponential backoff from 30 seconds capped
+at five minutes. Each failed pass logs one aggregate warning. Recovery or removal
+of the release clears its pending retry. Deduplication remains process-local. Set
+`HostReleaseDrift:GraceHours` to change the window and
+`HostReleaseDrift:IntervalSeconds` to change the sweep period.
+
+Why this exists: on 15.09.2026 Stable and the Task Server ran v0.3.0 while
+agent-runner-01 still ran an agent-host release from 23.08. Remote review
+aspects received no diff, every larger delivery drew a code-quality "no unified
+diff" concern, and the drift was found only by reading the host release symlink.
+
 Root SSH with
 `/usr/local/sbin/agent-runner-deploy update-clis 0.154.0 2.1.269` is an emergency
 fallback only. Drain first, verify both role rows have zero active slots, and
@@ -249,7 +286,9 @@ history. A stale advertisement is explicitly stale. AGT-2142 telemetry appears
 as live meters only while both its sample and the host heartbeat are fresh.
 Coding and Review processes that advertise the same host id appear below one
 physical-machine row. Their role-local slot ceilings stay separate, while CPU,
-memory, activity, and release identity appear once for the machine. Missing
+memory, and activity appear once for the machine. The release is shown per role,
+because the Coding and Review daemons are promoted independently and one of them
+can lag on its own; the machine row summarises the worst of its roles. Missing
 values use a quiet dash rather than an empty meter.
 
 Automatic whole-host drain is reserved for shared foundations: disk full,
