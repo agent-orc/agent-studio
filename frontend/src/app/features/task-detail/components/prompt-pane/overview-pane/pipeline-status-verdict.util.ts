@@ -16,3 +16,10 @@ export function distinctStepVerdict(status: string, verdict: string | null): str
   const normalized = verdict.trim().toLowerCase();
   return REDUNDANT_VERDICTS[status]?.includes(normalized) ? null : verdict;
 }
+
+export function reviewRoundStatus(step: PipelineStepExecution | null | undefined): string | null {
+  if (step?.carriedOverFrom) return `Carried over from review ${step.carriedOverFrom}`;
+  if (step?.fixedInRun != null) return `Fixed in run #${step.fixedInRun}`;
+  return step?.stillOpen === true ? 'Still open' : null;
+}
+import type { PipelineStepExecution } from '../../../../task-pipeline';

@@ -1,7 +1,38 @@
 # Review Domain Map
 
-Version: 2026-09-17
+Version: 2026-09-19
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
+
+## Concern fix and scoped re-review contract
+
+`ReviewFollowUpPolicy` is the plane-neutral decision used by local aspect review
+and Remote Review. A blocking verdict keeps the review-finding route. A real,
+actionable `concerns` verdict gets one automatic coding round by default; the
+project setting `maxReviewConcernRounds` sets the bound and `0` disables it.
+`review-concern-round.json` is the single per-card review-driven round ledger.
+It records both concern and blocking-finding context, while only concern rounds
+consume the configured concern budget. The UI reports `concern round 1 of 1
+used`. A second concerns result is parked in Human Review with the remaining
+findings. `review:unparseable` and infrastructure failures
+are not product concerns: their aspect is retried once and a repeated failure is
+surfaced under its exact classification (`review:unparseable` or environmental
+`InfraCrash`) by both the local and Remote Review decision paths.
+
+The fix prompt contains the review attempt, aspect, summary, cited evidence,
+and finding, and instructs the coding agent to change exactly those items.
+Run-history consumers, including Result-summary round ledgers, use the contract
+field names `trigger`, `triggeredBy`, `triggerReason`, and `triggerSource` from
+`run-record.schema.json`; they do not derive a trigger from legacy `intent`.
+
+After a review-driven coding round, deterministic build, test, and lint steps
+always execute. `ScopedReviewPolicy` reruns the aspect that raised the finding.
+Another aspect may carry over only when scoped review is enabled (project
+setting `scopedReviewAfterFinding`, default true), the reviewed tree identity
+still matches, the delta is within `scopedReviewMaximumDeltaFiles` (default 20), no changed file is in
+that aspect's `evidence_checked`, no public contract/schema changed for
+documentation-impact, and no test file was removed for tests-and-evidence.
+Otherwise review falls back to every aspect. A carried verdict records
+`carriedOverFrom`; it is displayed as carried over and is not a fresh pass.
 
 Use this when a change touches ReviewSubject preparation, aspect prompts,
 review-report verdicts, reissue or escalation decisions, the isolation of

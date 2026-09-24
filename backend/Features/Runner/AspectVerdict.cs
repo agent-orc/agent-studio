@@ -63,6 +63,13 @@ public sealed record AspectVerdict(
     string? ConcernTagId)
 {
     /// <summary>
+    /// Repository paths or other concrete evidence named by the reviewer.
+    /// Scoped re-review uses these citations to invalidate carry-over when the
+    /// concern fix changes evidence that a prior aspect inspected.
+    /// </summary>
+    public string? EvidenceChecked { get; init; }
+
+    /// <summary>
     /// True when this verdict is a POST-STEP INFRA failure - the aspect's
     /// reviewing CLI call died / returned nothing, so there is no real model
     /// opinion here - even after the single environmental retry (AGT-2021). Such
@@ -111,7 +118,8 @@ public sealed record AspectDocument(
     DateTime CreatedAt,
     string? Model,
     string? Tag,
-    IReadOnlyDictionary<string, string>? Metrics);
+    IReadOnlyDictionary<string, string>? Metrics,
+    string? EvidenceChecked = null);
 
 /// <summary>
 /// Pure helpers for the aspect-runner pipeline: parsing the fast-model
@@ -188,6 +196,18 @@ public static class AspectVerdictParsing
         }
 
         return null;
+    }
+
+    /// <summary>Reads one optional field from the last structured aspect sentinel.</summary>
+    public static string? ParseVerdictField(string output, string field)
+    {
+        if (string.IsNullOrWhiteSpace(output) || string.IsNullOrWhiteSpace(field)) return null;
+        var matches = VerdictRegex.Matches(StripWrappers(output));
+        if (matches.Count == 0) return null;
+        var fields = ParseFields(matches[^1].Groups["body"].Value);
+        return fields?.GetValueOrDefault(field) is { } value && !string.IsNullOrWhiteSpace(value)
+            ? value.Trim()
+            : null;
     }
 
     private static AspectStatus? TokenToStatus(string? token) => token switch
@@ -304,7 +324,8 @@ public static class AspectVerdictParsing
             CreatedAt: now,
             Model: string.IsNullOrWhiteSpace(model) ? null : model,
             Tag: verdict.ConcernTagId,
-            Metrics: metrics is { Count: > 0 } ? metrics : null);
+            Metrics: metrics is { Count: > 0 } ? metrics : null,
+            EvidenceChecked: verdict.EvidenceChecked);
         return JsonSerializer.Serialize(doc, AspectJsonOpts) + "\n";
     }
 

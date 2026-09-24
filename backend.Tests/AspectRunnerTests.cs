@@ -89,6 +89,30 @@ public class AspectRunnerTests : IDisposable
     }
 
     [Fact]
+    public async Task Local_aspect_preserves_evidence_checked_for_scoped_rereview()
+    {
+        var runner = BuildRunner(_ =>
+            "[[ASPECT_VERDICT: status=concerns; summary=Dead assertion remains; evidence_checked=backend.Tests/FooTests.cs; missing=Remove the dead assertion.]]\n[[TASK_DONE]]");
+
+        var report = await runner.RunAsync(
+            BuildInputs(),
+            ["code-quality"],
+            "claude",
+            "claude-haiku-4-5",
+            TimeSpan.FromSeconds(5),
+            CancellationToken.None);
+
+        var verdict = Assert.Single(report.Verdicts);
+        Assert.Equal("backend.Tests/FooTests.cs", verdict.EvidenceChecked);
+        var document = Assert.IsType<AspectDocument>(AspectVerdictParsing.TryParseJson(
+            File.ReadAllText(Path.Combine(_jobFolder, "aspect-code-quality.json"))));
+        Assert.Equal("backend.Tests/FooTests.cs", document.EvidenceChecked);
+        Assert.Equal(
+            "Remove the dead assertion.",
+            AspectVerdictParsing.ParseVerdictField(verdict.Body, "missing"));
+    }
+
+    [Fact]
     public async Task PassAspect_JsonTwin_HasNullTag()
     {
         var runner = BuildRunner(_ => "[[ASPECT_VERDICT: status=pass; summary=Looks fine.]]\n[[TASK_DONE]]");
@@ -754,11 +778,11 @@ public class AspectRunnerTests : IDisposable
     }
 
     [Fact]
-    public async Task NonEmptyUnparseableReply_StaysConcern_NoRetry()
+    public async Task NonEmptyUnparseableReply_RetriesOnce_ThenSurfacesInfrastructureClassification()
     {
-        // A reviewer that DID reply (even garbage) is not an infra fault: it keeps
-        // the existing review:unparseable concern and is NOT retried. Guards the
-        // AGT-2021 change against widening the environmental class too far.
+        // A malformed reviewer reply is not a product concern. Retry the aspect
+        // once, then preserve review:unparseable so the shared follow-up policy
+        // can surface the exhausted review-infrastructure result.
         var calls = new System.Collections.Concurrent.ConcurrentDictionary<string, int>();
         var runner = BuildRunner(aspect =>
         {
@@ -774,7 +798,7 @@ public class AspectRunnerTests : IDisposable
         Assert.False(report.HasInfraFailure);
         Assert.Equal(AspectStatus.Concerns, report.Overall);
         Assert.Equal("review:unparseable", report.ConcernTagIds[0]);
-        Assert.Equal(1, calls["code-quality"]); // no retry for a real (if garbage) reply
+        Assert.Equal(2, calls["code-quality"]);
     }
 
     private AspectRunInputs BuildInputs() => new(

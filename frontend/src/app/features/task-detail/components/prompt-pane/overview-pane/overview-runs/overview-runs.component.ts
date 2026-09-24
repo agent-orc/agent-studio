@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import type { RunRecord } from '../../../../../run-timeline';
-import type { CliType } from '../../../../../../models/task.model';
+import type { CliType, TaskInfo } from '../../../../../../models/task.model';
 import {
   cliTypeLabel,
   formatCompactDateTime,
@@ -19,6 +19,7 @@ interface OverviewRunVm {
   engine: string | null;
   tokens: string | null;
   reason: string | null;
+  reportHref: string | null;
 }
 
 @Component({
@@ -31,6 +32,7 @@ interface OverviewRunVm {
 export class OverviewRunsComponent {
   /** Run records from the currently open task only. */
   readonly runs = input<readonly RunRecord[]>([]);
+  readonly job = input<TaskInfo | null>(null);
 
   /**
    * Persisted CORE duration used only when an interrupted run has no timeline
@@ -51,6 +53,7 @@ export class OverviewRunsComponent {
         engine: this.engineLabel(run),
         tokens: this.tokenLabel(run),
         reason: this.reasonLabel(run),
+        reportHref: this.triggerReportHref(run),
       })),
   );
 
@@ -79,20 +82,52 @@ export class OverviewRunsComponent {
   totalDurationLabel(): string { return `${formatDuration(this.totalDurationSeconds())} total`; }
 
   private triggerLabel(run: RunRecord): string {
-    switch (run.intent.trim().toLowerCase()) {
-      case 'start':
-        return 'Initial start';
-      case 'continue':
-        return run.userFollowup?.trim() ? 'User follow-up' : 'Continue';
-      case 'recovery':
-        return 'Recovery';
-      case 'restart':
-        return 'Restart';
-      case 'reissue':
-        return 'Review reissue';
-      default:
-        return run.intent.trim() || 'Run';
+    const reason = run.triggerReason?.trim();
+    const actor = run.triggeredBy?.trim();
+    const suffix = reason ? `: ${reason}` : '';
+    switch (run.trigger) {
+      case 'initial': return run.index === 1 ? 'Initial start' : 'Initial trigger recorded on a later run';
+      case 'operator-continue': return `Operator continue${actor ? ` by ${actor.replace(/^operator\s+/i, '')}` : ''}${suffix}`;
+      case 'review-finding': return `Review finding${this.reviewTriggerContext(run) ?? suffix}`;
+      case 'review-concern': return `Review concern${this.reviewTriggerContext(run) ?? suffix}`;
+      case 'integration-recovery': return `Integration recovery${suffix}`;
+      case 'gate-failure': return `Gate failure${suffix}`;
+      case 'timeout-continuation': return `Timeout continuation${suffix}`;
+      case 'recovery-after-crash': return `Recovery after crash${suffix}`;
+      case 'restart': return `Restart${suffix}`;
+      case 'replan': return `Replan${suffix}`;
+      case 'dependency-release': return `Dependency release${suffix}`;
+      default: return 'Not recorded';
     }
+  }
+
+  private reviewTriggerContext(run: RunRecord): string | null {
+    const review = this.triggerSourceField(run, 'review');
+    const aspects = this.triggerSourceField(run, 'aspects')
+      ?.split(',')
+      .map((aspect) => aspect.replaceAll('-', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()))
+      .join(', ');
+    if (!review && !aspects) return null;
+    return `: ${aspects || 'Review'}${review ? ` (${review})` : ''}`;
+  }
+
+  private triggerReportHref(run: RunRecord): string | null {
+    const job = this.job();
+    const review = this.triggerSourceField(run, 'review');
+    const failure = this.triggerSourceField(run, 'failure');
+    if (!job || (!review && !failure)) return null;
+    const firstAspect = this.triggerSourceField(run, 'aspects')?.split(',')[0]?.trim();
+    const file = failure
+      ? 'pipeline-execution.json'
+      : review!.startsWith('local-review-') && firstAspect
+        ? `aspect-${firstAspect}.json`
+        : `remote-review-grade-${review!.replace(/[^A-Za-z0-9_.-]/g, '_')}.md`;
+    return `/api/tasks/${encodeURIComponent(job.id)}/files/${encodeURIComponent(file)}?watchPath=${encodeURIComponent(job.watchPath)}`;
+  }
+
+  private triggerSourceField(run: RunRecord, key: string): string | null {
+    const entry = run.triggerSource?.split(';').find((part) => part.startsWith(`${key}=`));
+    return entry?.slice(key.length + 1).trim() || null;
   }
 
   private resultLabel(run: RunRecord): string {

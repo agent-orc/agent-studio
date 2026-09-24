@@ -31,6 +31,9 @@ interface ProjectSettingsRow {
   integrationGateReviewReuse: boolean | null;
   /** AGT-2839: the value the integration gate actually applies. */
   integrationGateReviewReuseEffective: boolean;
+  maxReviewConcernRounds: number;
+  scopedReviewAfterFinding: boolean;
+  scopedReviewMaximumDeltaFiles: number;
 }
 
 /** Bound value of the integration-gate reuse select. */
@@ -114,6 +117,9 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
   crashRecoveryDraft = true;
   autoPushStrategyDraft: AutoPushStrategy = 'always-immediate';
   integrationGateReuseDraft: IntegrationGateReuseChoice = 'inherit';
+  maxReviewConcernRoundsDraft = 1;
+  scopedReviewAfterFindingDraft = true;
+  scopedReviewMaximumDeltaFilesDraft = 20;
   orchModelDraft = '';
 
   // Per-CLI permission/sandbox mode (YOLO default). One row per CLI shows the
@@ -337,6 +343,9 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
           integrationGateReviewReuse: snap.settings.integrationGateReviewReuse ?? null,
           integrationGateReviewReuseEffective:
             snap.settings.integrationGateReviewReuseEffective ?? false,
+          maxReviewConcernRounds: snap.settings.maxReviewConcernRounds ?? 1,
+          scopedReviewAfterFinding: snap.settings.scopedReviewAfterFinding ?? true,
+          scopedReviewMaximumDeltaFiles: snap.settings.scopedReviewMaximumDeltaFiles ?? 20,
         };
         this.settings.set(row);
         if (this.autoCommitDraft !== row.autoCommit) this.autoCommitDraft = row.autoCommit;
@@ -349,6 +358,9 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
               ? 'enabled'
               : 'disabled';
         if (this.integrationGateReuseDraft !== wantedReuse) this.integrationGateReuseDraft = wantedReuse;
+        this.maxReviewConcernRoundsDraft = row.maxReviewConcernRounds;
+        this.scopedReviewAfterFindingDraft = row.scopedReviewAfterFinding;
+        this.scopedReviewMaximumDeltaFilesDraft = row.scopedReviewMaximumDeltaFiles;
         const wantedModel = row.orchestratorModel ?? '';
         if (this.orchModelDraft !== wantedModel) this.orchModelDraft = wantedModel;
 
@@ -440,6 +452,23 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
         ? null
         : this.integrationGateReuseDraft === 'enabled';
     this.jobService.setProjectIntegrationGateReviewReuse(this.projectName(), enabled).subscribe({
+      next: () => this.refreshAll(true),
+      error: () => this.refreshAll(true),
+    });
+  }
+
+  onReviewFollowUpChange(): void {
+    this.maxReviewConcernRoundsDraft = Math.max(0, Math.min(10, Math.trunc(this.maxReviewConcernRoundsDraft || 0)));
+    this.scopedReviewMaximumDeltaFilesDraft = Math.max(
+      0,
+      Math.min(1000, Math.trunc(this.scopedReviewMaximumDeltaFilesDraft || 0)),
+    );
+    this.jobService.setProjectReviewFollowUp(
+      this.projectName(),
+      this.maxReviewConcernRoundsDraft,
+      this.scopedReviewAfterFindingDraft,
+      this.scopedReviewMaximumDeltaFilesDraft,
+    ).subscribe({
       next: () => this.refreshAll(true),
       error: () => this.refreshAll(true),
     });
