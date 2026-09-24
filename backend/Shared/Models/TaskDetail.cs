@@ -235,6 +235,7 @@ public record FileGenerationMeta
     public string Kind { get; init; } = "";
     public string? Model { get; init; }
     public string? Cli { get; init; }
+    public string? ThinkingLevel { get; init; }
     public long TokensIn { get; init; }
     public long TokensOut { get; init; }
     public long CacheReadTokens { get; init; }
@@ -245,6 +246,7 @@ public record FileGenerationMeta
     public long DurationMs { get; init; }
     public int? RunIndex { get; init; }
     public string? StepId { get; init; }
+    public decimal? EstimatedCostUsd { get; init; }
     public string? HeadShaAfter { get; init; }
 }
 

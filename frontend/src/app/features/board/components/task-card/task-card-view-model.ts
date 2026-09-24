@@ -1297,7 +1297,7 @@ export function buildReviewBadge(summaryState: TaskInfo['summaryState']): Review
   switch (summaryState.status) {
     case 'generating':
       return { label: 'summarizing', tone: 'generating',
-               tooltip: 'Orchestrator is summarizing the run output (Haiku). The card will become quiet once status.md has been written.' };
+               tooltip: 'The task Result is being generated from task, round, and delivery evidence. The card will become quiet once status.md has been written.' };
     case 'ready':
       return null;
     case 'failed':

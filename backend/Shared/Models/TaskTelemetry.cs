@@ -57,6 +57,8 @@ public record TaskTokenCall
     public string? ThinkingLevel { get; init; }
     /// <summary>Bus participant that produced this token usage row, e.g. <c>agent:codex</c> or <c>orchestrator:Project</c>.</summary>
     public string? ParticipantId { get; init; }
+    /// <summary>Original bus topic for support calls, used to retain pipeline-step attribution.</summary>
+    public string? Topic { get; init; }
     public long InputTokens { get; init; }
     public long OutputTokens { get; init; }
     public long CacheReadTokens { get; init; }

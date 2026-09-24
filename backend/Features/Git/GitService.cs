@@ -24,6 +24,12 @@ public record GitStatusResult(
 public record GitCommitResult(bool Success, string? Sha, string? Error, CommitGateResult? Gate = null);
 public record GitPushResult(bool Success, string Sha, string Status, string? Error);
 public record GitDiffLookupResult(bool Success, string Diff, string? Error);
+public record GitDiffStatResult(
+    bool Success,
+    string? IntegrationRef,
+    string? MergeBaseSha,
+    string Stat,
+    string? Error);
 public record GitWorkerCommitCleanupResult(bool Success, string Status, string? Error);
 
 public enum IntegrationBranchSyncOutcome
@@ -3861,6 +3867,66 @@ public class GitService
             .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
+    }
+
+    /// <summary>
+    /// Computes the net delivery stat from the merge base shared by the
+    /// integration line and the delivered revision. A valid recorded base wins
+    /// after integration has made the delivery an ancestor of the live branch.
+    /// Arguments are passed via
+    /// <see cref="ProcessStartInfo.ArgumentList"/> by <see cref="RunGitArgs"/>,
+    /// and both Git's stat row count and the returned text are bounded.
+    /// </summary>
+    public GitDiffStatResult GetDiffStatAgainstMergeBase(
+        string repoRoot,
+        string? configuredIntegrationBranch,
+        string deliveryRef,
+        string? recordedMergeBase = null,
+        int maxChars = 8_000)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot))
+            return new(false, null, null, string.Empty, "Repository is unavailable.");
+        if (!IsLikelyBranchName(deliveryRef))
+            return new(false, null, null, string.Empty, "Delivery revision is invalid.");
+
+        var integrationRef = ResolveIntegrationReadRef(repoRoot, configuredIntegrationBranch);
+        if (string.IsNullOrWhiteSpace(integrationRef) || !IsLikelyBranchName(integrationRef))
+            return new(false, integrationRef, null, string.Empty, "Integration branch is unavailable.");
+
+        var mergeBase = IsLikelyBranchName(recordedMergeBase ?? string.Empty)
+            && IsAncestor(repoRoot, recordedMergeBase!, deliveryRef)
+                ? recordedMergeBase
+                : GetMergeBase(repoRoot, integrationRef, deliveryRef);
+        if (string.IsNullOrWhiteSpace(mergeBase))
+            return new(false, integrationRef, null, string.Empty, "Merge base could not be resolved.");
+
+        var (output, error, code) = RunGitArgs(
+            repoRoot,
+            "diff",
+            "--stat=100,72,100",
+            mergeBase,
+            deliveryRef,
+            RevisionsOnly);
+        if (code != 0)
+        {
+            return new(
+                false,
+                integrationRef,
+                mergeBase,
+                string.Empty,
+                string.IsNullOrWhiteSpace(error) ? "git diff --stat failed." : error.Trim());
+        }
+
+        var stat = string.IsNullOrWhiteSpace(output) ? "No file changes." : output.Trim();
+        var limit = Math.Clamp(maxChars, 256, 16_000);
+        if (stat.Length > limit)
+        {
+            const string marker = "\n[diff stat middle truncated]\n";
+            var available = limit - marker.Length;
+            var head = available * 3 / 4;
+            stat = stat[..head] + marker + stat[^(available - head)..];
+        }
+        return new(true, integrationRef, mergeBase, stat, null);
     }
 
     /// <summary>
