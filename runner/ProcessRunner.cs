@@ -41,6 +41,7 @@ public static class ProcessRunner
         bool clearEnvironment = false,
         bool isolateProcessGroup = false,
         Action<int>? onStarted = null,
+        bool captureTerminationSignal = false,
         CancellationToken ct = default)
     {
         var actualFileName = fileName;
@@ -53,6 +54,15 @@ public static class ProcessRunner
                     "Agent CLI process-group isolation requires the Linux 'setsid' utility.");
             actualFileName = setsid;
             actualArguments = [fileName, .. arguments];
+        }
+
+        string? signalStatusPath = null;
+        if (captureTerminationSignal && OperatingSystem.IsLinux())
+        {
+            var wrapped = ProcessTermination.Wrap(actualFileName, actualArguments);
+            actualFileName = wrapped.FileName;
+            actualArguments = wrapped.Arguments;
+            signalStatusPath = wrapped.StatusPath;
         }
 
         var psi = new ProcessStartInfo
@@ -121,22 +131,29 @@ public static class ProcessRunner
 
         try
         {
-            await process.WaitForExitAsync(ct);
-        }
-        catch (OperationCanceledException)
-        {
-            TryKill(process, isolateProcessGroup);
-            throw;
-        }
+            try
+            {
+                await process.WaitForExitAsync(ct);
+            }
+            catch (OperationCanceledException)
+            {
+                TryKill(process, isolateProcessGroup);
+                throw;
+            }
 
-        // WaitForExitAsync returns before the async readers have flushed the last
-        // buffered lines; a bare WaitForExit() here drains them deterministically.
-        process.WaitForExit();
-        return new ProcessResult(
-            process.ExitCode,
-            outBuf.ToString(),
-            errBuf.ToString(),
-            ProcessTermination.SignalFromWaitExitCode(process.ExitCode));
+            // WaitForExitAsync returns before the async readers have flushed the
+            // last buffered lines. The synchronous wait drains both readers.
+            process.WaitForExit();
+            return new ProcessResult(
+                process.ExitCode,
+                outBuf.ToString(),
+                errBuf.ToString(),
+                ProcessTermination.ReadRecordedSignal(signalStatusPath, process.ExitCode));
+        }
+        finally
+        {
+            ProcessTermination.DeleteStatusFile(signalStatusPath);
+        }
     }
 
     private static void TryKill(Process process, bool isolatedProcessGroup)
@@ -170,17 +187,109 @@ public static class ProcessRunner
 }
 
 /// <summary>
-/// Converts the Unix wait result surfaced by <see cref="Process.ExitCode"/> at
-/// the process boundary. Callers that merely receive an arbitrary numeric exit
-/// code must not use this conversion: without this wait observation, 137 is an
-/// ordinary exit code rather than independently recorded SIGKILL evidence.
+/// Records the Bash job status at the process boundary before returning the
+/// conventional 128+signal exit code to .NET. <see cref="Process.ExitCode"/>
+/// alone cannot distinguish voluntary exit 137 from SIGKILL, while Bash's job
+/// table retains that distinction from its own child wait.
 /// </summary>
 internal static class ProcessTermination
 {
-    internal static int? SignalFromWaitExitCode(int exitCode)
-        => !OperatingSystem.IsWindows() && exitCode is >= 129 and <= 255
-            ? exitCode - 128
-            : null;
+    internal const string BashWaitScript = """
+        marker=$1
+        shift
+        trap 'LC_ALL=C jobs -l > "$marker"' CHLD
+        "$@" <&0 &
+        child=$!
+        wait "$child"
+        code=$?
+        trap - CHLD
+        job_status=$(< "$marker")
+        : > "$marker"
+        if (( code >= 129 && code <= 255 )) && [[ "$job_status" != *"Exit $code"* ]]; then
+          printf '%s\n' "$((code - 128))" > "$marker"
+        fi
+        exit "$code"
+        """;
+
+    internal static SignalCapturingInvocation Wrap(
+        string fileName,
+        IReadOnlyList<string> arguments)
+    {
+        var statusPath = Path.Combine(
+            Path.GetTempPath(),
+            $"agent-runner-signal-{Environment.ProcessId}-{Guid.NewGuid():N}.status");
+        var bash = File.Exists("/bin/bash") ? "/bin/bash"
+            : File.Exists("/usr/bin/bash") ? "/usr/bin/bash"
+            : throw new InvalidOperationException(
+                "Agent CLI signal capture requires Bash on Linux.");
+        return new SignalCapturingInvocation(
+            bash,
+            [
+                "--noprofile",
+                "--norc",
+                "-c",
+                BashWaitScript,
+                "agent-runner-signal-wrapper",
+                statusPath,
+                fileName,
+                .. arguments,
+            ],
+            statusPath);
+    }
+
+    internal static int? ReadRecordedSignal(string? statusPath, int exitCode)
+    {
+        if (statusPath is null || exitCode is < 129 or > 255) return null;
+        try
+        {
+            return int.TryParse(File.ReadAllText(statusPath).Trim(), out var signal)
+                   && signal is > 0 and < 128
+                ? signal
+                : null;
+        }
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
+    }
+
+    internal static void DeleteStatusFile(string? statusPath)
+    {
+        if (statusPath is null) return;
+        try { File.Delete(statusPath); }
+        catch (IOException) { /* bounded best effort for an ephemeral status file */ }
+        catch (UnauthorizedAccessException) { /* bounded best effort */ }
+    }
+}
+
+internal sealed record SignalCapturingInvocation(
+    string FileName,
+    IReadOnlyList<string> Arguments,
+    string StatusPath);
+
+internal sealed class SignalRecordingCliSpawner : CodingAgentRunner.Abstractions.ICliProcessSpawner, IDisposable
+{
+    private string? _statusPath;
+
+    public CodingAgentRunner.Abstractions.CliSpawn Spawn(ProcessStartInfo startInfo)
+    {
+        var wrapped = ProcessTermination.Wrap(startInfo.FileName, startInfo.ArgumentList.ToArray());
+        _statusPath = wrapped.StatusPath;
+        startInfo.FileName = wrapped.FileName;
+        startInfo.ArgumentList.Clear();
+        foreach (var argument in wrapped.Arguments) startInfo.ArgumentList.Add(argument);
+
+        var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+        process.Start();
+        return new CodingAgentRunner.Abstractions.CliSpawn(
+            process,
+            startInfo.RedirectStandardInput ? process.StandardInput.BaseStream : Stream.Null,
+            process.StandardOutput,
+            process.StandardError);
+    }
+
+    public int? ReadRecordedSignal(int exitCode)
+        => ProcessTermination.ReadRecordedSignal(_statusPath, exitCode);
+
+    public void Dispose() => ProcessTermination.DeleteStatusFile(_statusPath);
 }
 
 /// <summary>
