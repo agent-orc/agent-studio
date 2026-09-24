@@ -228,6 +228,23 @@ public sealed class ProjectPreparationCacheRetentionTests : IDisposable
     }
 
     [Fact]
+    public void The_existing_sweep_removes_quarantined_incomplete_entries()
+    {
+        var root = _workspace.Directory("product-cache");
+        var quarantined = Path.Combine(
+            root,
+            ProjectPreparationCacheSweep.QuarantineDirectoryName,
+            "nuget",
+            "broken.incomplete-123");
+        Directory.CreateDirectory(Path.Combine(quarantined, "content"));
+        File.WriteAllText(Path.Combine(quarantined, "manifest.json"), "{}");
+
+        ProjectPreparationCacheSweep.Run(root, PreparationCacheRetentionPolicy.Default, Now);
+
+        Assert.False(Directory.Exists(quarantined));
+    }
+
+    [Fact]
     public void Sweep_of_a_cache_root_that_was_never_written_is_a_no_op()
     {
         var result = ProjectPreparationCacheSweep.Run(

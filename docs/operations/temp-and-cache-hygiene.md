@@ -204,6 +204,14 @@ non-positive override is ignored rather than removing the bound. The journal
 lines are `project-prepare cache evicted ...` and `project-prepare cache swept
 ...`.
 
+Empty blocks are not published. A pre-fix entry with `sizeBytes: 0` and an
+empty `content/` directory is treated as a compatibility miss and replaced
+when the block produces files. A genuinely incomplete entry is atomically
+renamed into `.quarantine/` under a per-entry lock, logged as
+`state=evicted-incomplete`, and treated as a miss; it never fails a preparation.
+The existing sweep removes quarantined entries. The lock ensures one run cannot
+rename an entry while another run is copying it into its private run root.
+
 **Where the bytes actually are.** The published entries are the smaller half.
 Each preparation also gets a private working copy of every block it uses, under
 `.runs/<runId>/`, and the gate or coding run releases it when its last command

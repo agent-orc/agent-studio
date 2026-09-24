@@ -193,6 +193,14 @@ public sealed record BuildTestGateResult(
     public bool RetryPerformed { get; init; }
 
     /// <summary>
+    /// The integration gate's first preparation ended in a cache-class failure,
+    /// its source entries were quarantined when present, and the gate spent its
+    /// one immediate clean retry. This is separate from <see cref="RetryPerformed"/>, which is
+    /// reserved for a targeted flaky-test re-run.
+    /// </summary>
+    public bool PreparationCacheRetryPerformed { get; init; }
+
+    /// <summary>
     /// AGT-2853: the exact test names that failed in the full run and passed on
     /// the targeted re-run. The gate is green with these recorded rather than
     /// silently absorbing them. Same field name as the remote review executor's
@@ -357,6 +365,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         string? workspace = null;
         string? testedSha = null;
         var selfHealed = false;
+        var preparationCacheRetryPerformed = false;
         long fallbackQueueWaitMs = 0;
         var fallbackCollision = false;
         DateTime? acquiredAtUtc = null;
@@ -454,6 +463,25 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                     message => _logger.LogInformation("{ProjectPreparationMessage}", message),
                     timeout,
                     ct).ConfigureAwait(false);
+                if (projectPreparation.Configured
+                    && !projectPreparation.Succeeded
+                    && projectPreparation.FailureKind == PreparationFailureKind.Cache)
+                {
+                    preparationCacheRetryPerformed = true;
+                    _logger.LogWarning(
+                        "project preparation cache failure; affected entries were quarantined when present and the gate is retrying once gate_run_id={GateRunId} signature={FailureSignature}",
+                        gateRunId,
+                        projectPreparation.FailureSignature ?? "cache:unknown");
+                    ProjectPreparationExecutor.ReleaseRunRoot(projectPreparation);
+                    projectPreparation = await ProjectPreparationExecutor.RunAsync(
+                        workspace!,
+                        _preparationCacheRoot,
+                        preparationManifestPath,
+                        testedSha,
+                        message => _logger.LogInformation("{ProjectPreparationMessage}", message),
+                        timeout,
+                        ct).ConfigureAwait(false);
+                }
                 if (projectPreparation.Configured && !projectPreparation.Succeeded)
                 {
                     var gateFailure = projectPreparation.FailureKind is PreparationFailureKind.Command
@@ -572,6 +600,12 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 Executor = request.Executor,
                 Workspace = workspace,
                 PreparationManifest = completed.PreparationManifest ?? projectPreparation?.Manifest,
+                PreparationCacheRetryPerformed = completed.PreparationCacheRetryPerformed
+                                                 || preparationCacheRetryPerformed,
+                Reason = preparationCacheRetryPerformed
+                    ? "Preparation cache recovery ran after a cache failure, quarantining affected entries when present, and the integration gate retried once. "
+                      + completed.Reason
+                    : completed.Reason,
                 ProjectDefinitionIssues = completed.ProjectDefinitionIssues.Count > 0
                     ? completed.ProjectDefinitionIssues
                     : projectPreparation?.DefinitionIssues ?? [],

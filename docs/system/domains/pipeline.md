@@ -624,6 +624,15 @@ steer the pipeline in this policy version.
   restore never wrote to (NETSDK1064, TE-52). The folder is released when the
   gate finishes or the run's slot is freed; an unreleased folder is reclaimed by
   age after 24 hours.
+- Empty preparation blocks remain misses and are never published. Lookup and
+  publication share one validity rule for non-empty entries: manifest and
+  content exist, identity matches, and recorded size equals content size.
+  Lookup atomically quarantines any incomplete entry under a per-entry lock,
+  logs `evicted-incomplete`, and continues as a miss. A cache-class preparation
+  failure stays `Environment` and receives one clean integration-gate retry;
+  the receipt and card timeline say that eviction and retry happened. Three
+  consecutive successful runs with an unused binding add a definition warning
+  to the project's Execution status.
 - Immutable Remote Review plans carry that same preparation command, lockfile
   scopes, and preserve globs to the Review Executor. Preparation runs before
   verification in both the candidate and any materialized baseline workspace.
