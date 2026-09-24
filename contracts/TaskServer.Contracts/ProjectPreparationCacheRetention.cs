@@ -149,6 +149,13 @@ public static class ProjectPreparationCacheSweep
     public const string RunsDirectoryName = ".runs";
 
     /// <summary>
+    /// Atomic rename target for incomplete and legacy-empty entries. Renaming
+    /// first takes a broken entry out of lookup circulation; the normal sweep
+    /// removes the quarantined tree after the detecting run has moved on.
+    /// </summary>
+    public const string QuarantineDirectoryName = ".quarantine";
+
+    /// <summary>
     /// Sweeps <paramref name="productCacheRoot"/> and returns what was removed.
     /// </summary>
     public static PreparationCacheSweepResult Run(
@@ -160,6 +167,7 @@ public static class ProjectPreparationCacheSweep
         TimeSpan? runRootRetention = null)
     {
         RemoveEvictionLeftovers(productCacheRoot);
+        RemoveQuarantine(productCacheRoot);
         // Run roots dominate a real cache: each one is a full working copy of
         // every block this repository uses, and a killed gate or coding run never
         // gets to release its own. On this repository's runner cache 1.3 GB of
@@ -361,6 +369,40 @@ public static class ProjectPreparationCacheSweep
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             // Another sweep is working the same root; one of them wins.
+        }
+    }
+
+    /// <summary>
+    /// Removes cache entries that lookup atomically renamed out of circulation.
+    /// A current reader cannot be using one: entry lookup/copy and quarantine
+    /// share the same per-entry lock, and readers execute from their run-root
+    /// copy after releasing that lock.
+    /// </summary>
+    private static void RemoveQuarantine(string productCacheRoot)
+    {
+        var root = Path.Combine(productCacheRoot, QuarantineDirectoryName);
+        if (!Directory.Exists(root)) return;
+        try
+        {
+            foreach (var blockDirectory in Directory.EnumerateDirectories(root))
+            {
+                foreach (var candidate in Directory.EnumerateDirectories(blockDirectory))
+                {
+                    try { Directory.Delete(candidate, recursive: true); }
+                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+                }
+                try
+                {
+                    if (!Directory.EnumerateFileSystemEntries(blockDirectory).Any())
+                        Directory.Delete(blockDirectory);
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+            }
+            if (!Directory.EnumerateFileSystemEntries(root).Any()) Directory.Delete(root);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // A concurrent lookup may be adding another quarantined entry.
         }
     }
 
