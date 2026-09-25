@@ -125,6 +125,17 @@ thinking level marks the card explicit in one action. Explicit pins remain
 untouched by qualification, while the policy recommendation stays visible for
 comparison.
 
+The `auto-tag` creation step is a separate bounded classification route. Its
+operator floor is Sonnet-class at low thinking, despite the earlier D5 economy
+recommendation, because the 2026-09-13 follow-up judged Haiku-class too small.
+It uses the closed tag registry and glossaries, never the card's coding model.
+The one-shot call records usage under `auto-tag` in the token ledger. A proposed
+80-item golden set measures tier 1; precision below 0.9 selects Sonnet-class
+high thinking for item classification until the service restarts. Individual
+low-confidence results are retried on Sonnet-class high thinking; only a final
+result below the 0.8 confidence threshold remains a proposal. See
+[the tagging reference set](../../quality/tagging-golden-set/index.html).
+
 ### Create-card contract
 
 `TaskCrudEndpoints`' create handler never persists a card with a model but no

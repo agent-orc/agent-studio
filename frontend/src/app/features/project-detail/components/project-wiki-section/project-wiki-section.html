@@ -238,9 +238,16 @@
                         </button>
                       }
                     </span>
-                    @if (classificationBadges(row.node.classification).length) {
+                    @if (classificationBadges(row.node.classification).length || row.node.taggingStatus) {
                       <span class="pwiki__class-strip"
                             [attr.data-testid]="'project-wiki-class-' + row.node.relPath">
+                        @if (row.node.taggingStatus; as taggingStatus) {
+                          <span class="pwiki__class-chip"
+                                [attr.data-testid]="'project-wiki-tagging-' + row.node.relPath"
+                                [cacTooltip]="taggingStatus === 'tags-proposed' ? 'Low-confidence tag suggestions await review' : 'Auto-tagged article'">
+                            {{ taggingStatus === 'tags-proposed' ? 'Tags proposed' : 'Tagged' }}
+                          </span>
+                        }
                         @for (badge of classificationBadges(row.node.classification); track badge.key) {
                           <span class="pwiki__class-chip"
                                 [attr.data-kind]="badge.key"
