@@ -691,8 +691,6 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.IQualityStudioAnalysisCore,
     AgentStudio.Pipeline.QualityStudioAnalysisCoreAdapter>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IQualityAnalysisStepRunner,
     AgentStudio.Pipeline.QualityAnalysisStepRunner>();
-builder.Services.AddSingleton<AgentStudio.Pipeline.ITestSelectionAdvisor,
-    AgentStudio.Pipeline.LlmTestSelectionAdvisor>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IBuildTestGateRunner,
     AgentStudio.Pipeline.BuildTestGateRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PreMainTestGate>();

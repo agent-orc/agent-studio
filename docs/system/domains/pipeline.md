@@ -436,15 +436,28 @@ steer the pipeline in this policy version.
   types. Planning deliberately starts from its lightweight defaults.
 - `backend/Features/Pipeline/TestSelectionPlanner.cs`: staged test planning from
   the lane policy, changed files, project/component ownership, explicit impact
-  rules, and Test Hub history. It produces the immutable selection audit used
-  by the gate log.
-- `backend/Features/Pipeline/LlmTestSelectionAdvisor.cs`: optional constrained
-  adviser. It can add only stable candidate ids from the deterministic safe
-  inventory and cannot emit an executable command.
+  rules, and Test Hub history for legacy direct callers.
+- `backend/Features/Pipeline/DeterministicTestScope.cs`: the build/test gate's
+  folder-to-test-project selector. Configure `testExecution.folderToTestProjects`
+  in project settings beside `pipelineSteps`; each row names a repository
+  `folder`, a shared `module` id for related source and test folders, and one
+  or more `testProjects` (`.csproj` paths or package folders). When `module` is
+  omitted, the folder itself is the module id.
+  Set `mappedSourceRoots` to the source roots whose immediate child directories
+  must be covered. The project pipeline owner updates the map in the same
+  change that adds or moves a source folder or test project and runs
+  `AssertMapCurrent` in the repository's validation. It throws with every
+  uncovered source directory. The gate also runs the full suite and returns a
+  red code verdict for a stale configured map. A missing map, an unmapped changed path, an
+  unavailable mapped test project, or a change spanning mapped modules runs
+  the declared full suite. A newly added test file (`A` in the Git diff) runs
+  with its whole mapped project. The gate audit records the diff, statuses,
+  selected commands, fallback reasons, and SHA-256 `digest`; the verdict also
+  carries `testSelectionAuditDigest` for the future gate subject.
+  Model-based test selection is rejected by the Gates Dossier section 5.
 - `backend/Features/Pipeline/PreMainTestGate.cs`: fail-closed release boundary
   that forces the full test level before a configured merge can advance
-  `main`, irrespective of lane settings, diff input, history, or adviser
-  output.
+  `main`, irrespective of lane settings, diff input, or history.
 - `backend/Features/Pipeline/PreDevelopBuildGate.cs` and
   `FrontendWorkPackagePlanner.cs`: exact-merge develop boundary. Non-frontend
   deliveries retain the build-only level. A merge result that touches
@@ -452,8 +465,7 @@ steer the pipeline in this policy version.
   touched source folder plus the fixed app, studio-shell, and task-detail
   barrel collision probes. Broad frontend suite commands stay outside the
   candidate inventory and configured continuous set, so impact rules, history,
-  or the optional adviser cannot silently turn this boundary into the promotion
-  full suite.
+  cannot silently turn this boundary into the promotion full suite.
 - `backend/Services/Pipeline/PipelineStepConditionEvaluator.cs`: per-step
   condition evaluation.
 - `backend/Services/Pipeline/ProjectPipelineOrder.cs`: project-level step order
@@ -543,12 +555,12 @@ steer the pipeline in this policy version.
   never reached. Remote token totals, historical list-price estimates, and call
   counts come from the same token ledger as the Task tab.
 - Test execution has three stable levels: `continuous` runs the configured
-  fixed baseline, `work-package` adds tests selected from the current diff and
-  Test Hub history, and `full` runs every declared test command. Project
+  fixed baseline, `work-package` runs the projects selected by the maintained
+  folder map, and `full` runs every declared test command. Project
   settings map task lanes to levels. Auto Review defaults to `work-package`
-  when no mapping exists; an unavailable diff falls back to `full`. A configured
-  continuous baseline also runs for documentation-only diffs, and an explicitly
-  required `full` level can never be bypassed by the no-code-diff optimization.
+  when no lane mapping exists; an unavailable diff or missing folder map falls
+  back to `full`. A configured continuous baseline keeps its separate lane
+  contract. Documentation changes with no folder mapping also trigger full.
 - The pre-develop gate derives changed files from the exact merge commit and
   its first parent. A missing diff fails closed and rolls back a merge created
   by that attempt. Any code path forces a blocking `work-package` level even
@@ -558,39 +570,31 @@ steer the pipeline in this policy version.
   `task-detail.spec.ts`). Generated .NET work-package commands preserve an
   explicit test filter or default to `Category!=MachineBound`, keeping
   machine- and Windows-bound process/timing families out of develop admission.
-  Only the pre-main promotion boundary may force `full`.
+  The configured folder map can also force `full` when coverage is uncertain.
 - The pre-develop level matrix (`PreDevelopBuildGate.ResolveTestLevel`), by what
   the exact merge diff touches:
 
   | Merge diff | Level | Test commands the merge result runs |
   |---|---|---|
-  | Managed sources only (`.cs`, `.csproj`, `.props`, `.targets`, `.sln`, `.slnx`, `.razor`, `.cshtml`, `.resx`) | `work-package` | The impacted .NET test projects, narrowed to the touched test classes where the diff allows it. No frontend suite. |
-  | `frontend/` only | `work-package` | The Angular include slice (touched folders plus the collision set) and the declared lints. No .NET test project. |
-  | Both | `work-package` | Both of the above. |
+  | Managed sources only (`.cs`, `.csproj`, `.props`, `.targets`, `.sln`, `.slnx`, `.razor`, `.cshtml`, `.resx`) | `work-package` | Whole mapped .NET test projects, or the full suite if coverage is uncertain. |
+  | `frontend/` only | `work-package` | Whole mapped frontend test project, or the full suite if coverage is uncertain, plus declared lints. |
+  | Both | `work-package` | Full suite when the diff spans mapped modules. |
   | Neither (docs, scripts, workflow files) | `build-only` | None; the declared test inventory is listed under `OmittedTestCommands`. |
 
   Before AGT-2854 only `frontend/` reached `work-package`, so a backend-only
   delivery merged on compile evidence alone while the auto-review gate that was
   supposed to cover it runs on Linux. AGT-2853 landed a Windows-only red test
   that way, and the next two Windows gates paid for it.
-- The .NET work package narrows an impacted test project to test classes only
-  when the diff allows it, and says so in the audit. A diff confined to a test
-  project whose changed files declare test classes exclusively yields
-  `dotnet test <project> --filter "(<base>)&(FullyQualifiedName~ClassA|...)"`;
-  the selected names are listed in `TestSelection.SelectedTestClasses` and the
-  reason that produced them sits on the candidate. The slice widens to the
-  changed files' directories when such a directory holds at most 20 files, and
-  records the skip when it holds more (a flat test-project root carries no
-  folder signal). Anything else keeps the whole test project: a changed
-  production file, because no convention maps a production type to its covering
-  test classes, and a changed test file that also declares a non-test top-level
-  type, because that type can carry tests in other files.
+- The configured .NET work package runs whole mapped test projects, retaining
+  the declared filter or the `Category!=MachineBound` default. A newly added
+  test file runs with that whole project. Legacy direct planner callers may
+  still derive class slices, but the build/test gate does not use them.
 - The build/test step reason always states the effective level, selected count,
   whether the full suite ran, and how many full-suite commands were omitted.
   The task Overview exposes that reason from the passed status icon as well, so
   a green work-package subset cannot be mistaken for a full-suite pass.
-  Its `post-steps/build-test-gate-*.log` contains the exact diff input, history
-  rows, candidate inventory, chosen ids/commands, selector/model, and reasons.
+  Its `post-steps/build-test-gate-*.log` contains the exact diff input, chosen
+  commands, selector, fallback reasons, and selection audit digest.
   `FullSuiteRan` is execution evidence, not a planning claim: it becomes true
   only after every selected full-suite test command was attempted.
 - A red test step earns exactly one targeted re-run before it blocks a merge
@@ -753,9 +757,6 @@ steer the pipeline in this policy version.
   attempt ends visibly as `ReviewInfra / ExecutorRestarted` with the failed
   proof, completed-command count and duration, and retry reason. Replaying the
   fixed report key with another terminal payload is rejected.
-- Model advice is additive and allowlisted. Deterministic diff/history choices
-  cannot be removed, unknown candidate ids are ignored, and raw model output is
-  never interpreted as a shell command.
 - Any operation that can advance `main` must call `PreMainTestGate` first and
   proceed only on an `Ok` result with `FullSuiteRequired` and `FullSuiteRan` set.
   `PreMainTestGate` converts a nominally green runner result without that

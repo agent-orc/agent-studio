@@ -331,10 +331,10 @@ public class ReviewDecisionOrchestratorCompletionGateTests : IDisposable
                 SelectedCandidateIds = ["test-feature"],
                 SelectedCommands = ["test-feature", "test-baseline"],
                 OmittedTestCommands = ["test-all"],
-                Selector = "deterministic+llm",
-                SelectorModel = "model-x",
-                AdvisorReason = "shared namespace risk",
+                Selector = "deterministic-folder-map",
+                Digest = "selection-digest-123",
             },
+            TestSelectionAuditDigest = "selection-digest-123",
             Findings = [new BuildTestGateFinding(
                 "out-of-work-package-test-failure",
                 TestExecutionLevels.Continuous,
@@ -359,6 +359,7 @@ public class ReviewDecisionOrchestratorCompletionGateTests : IDisposable
         var gateLog = File.ReadAllText(Path.Combine(folder, "post-steps", "build-test-gate-1.log"));
         Assert.Contains("\"Level\": \"work-package\"", gateLog);
         Assert.Contains("\"src/feature.cs\"", gateLog);
+        Assert.Contains("testSelectionAuditDigest=selection-digest-123", gateLog);
         var selectionStart = gateLog.IndexOf("--- test-selection.json ---\n", StringComparison.Ordinal)
             + "--- test-selection.json ---\n".Length;
         var selectionEnd = gateLog.IndexOf(
@@ -367,9 +368,7 @@ public class ReviewDecisionOrchestratorCompletionGateTests : IDisposable
             gateLog[selectionStart..selectionEnd]);
         Assert.NotNull(loggedSelection);
         Assert.Equal(["test-feature"], loggedSelection!.SelectedCandidateIds);
-        Assert.Equal("deterministic+llm", loggedSelection.Selector);
-        Assert.Equal("model-x", loggedSelection.SelectorModel);
-        Assert.Equal("shared namespace risk", loggedSelection.AdvisorReason);
+        Assert.Equal("deterministic-folder-map", loggedSelection.Selector);
         Assert.True(aspect.Invocations > 0);
     }
 

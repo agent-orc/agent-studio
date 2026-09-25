@@ -1083,19 +1083,27 @@ public static class TestExecutionLevels
 /// Per-project staged testing configuration. Commands in
 /// <see cref="ContinuousCommands"/> form the small fixed baseline and are
 /// reporting-only during a work-package run. The impacted suite is selected
-/// from the diff, explicit impact rules, Test Hub history, and optionally an
-/// LLM adviser. <see cref="LaneLevels"/> makes the policy lane-specific.
+/// from a maintained folder map. <see cref="LaneLevels"/> makes the policy
+/// lane-specific.
 /// </summary>
 public sealed record TestExecutionPolicy
 {
     public Dictionary<string, string>? LaneLevels { get; init; }
     public IReadOnlyList<string>? ContinuousCommands { get; init; }
     public IReadOnlyList<TestImpactRule>? ImpactRules { get; init; }
+    /// <summary>Maintained repository folder to test-project map for the build/test gate.</summary>
+    public IReadOnlyList<TestFolderMapping>? FolderToTestProjects { get; init; }
+    /// <summary>Roots whose immediate source folders must all have a mapping entry.</summary>
+    public IReadOnlyList<string>? MappedSourceRoots { get; init; }
     public string? TestHubHistoryPath { get; init; }
-    public bool LlmSelectionEnabled { get; init; }
-    public string? LlmCliType { get; init; }
-    public string? LlmModel { get; init; }
-    public string? LlmThinkingLevel { get; init; }
+}
+
+public sealed record TestFolderMapping
+{
+    public string Folder { get; init; } = "";
+    /// <summary>Shared module id for source and test folders belonging to one module.</summary>
+    public string? Module { get; init; }
+    public IReadOnlyList<string> TestProjects { get; init; } = [];
 }
 
 /// <summary>

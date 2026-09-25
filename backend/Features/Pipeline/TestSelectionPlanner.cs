@@ -28,20 +28,21 @@ public sealed record TestSelectionCandidate(
     public IReadOnlyList<string> TestClasses { get; init; } = [];
 }
 
-public sealed record TestSelectionAdvice(
-    IReadOnlyList<string> CandidateIds,
-    string Reason,
-    string? Model = null);
-
 public sealed record TestSelectionAudit
 {
+    /// <summary>SHA-256 of the canonical selection inputs and planned commands.</summary>
+    public string? Digest { get; init; }
     public string Level { get; init; } = TestExecutionLevels.WorkPackage;
     public string Lane { get; init; } = "";
     public IReadOnlyList<string> DiffInput { get; init; } = [];
+    /// <summary>Git name-status entries, including additions that must be covered.</summary>
+    public IReadOnlyList<string> DiffStatuses { get; init; } = [];
     public IReadOnlyList<TestHubHistoryEntry> HistoryInput { get; init; } = [];
     public IReadOnlyList<TestSelectionCandidate> Candidates { get; init; } = [];
     public IReadOnlyList<string> SelectedCandidateIds { get; init; } = [];
     public IReadOnlyList<string> SelectedCommands { get; init; } = [];
+    public IReadOnlyList<string> AttemptedTestCommands { get; init; } = [];
+    public IReadOnlyList<string> UnmappedSourceDirectories { get; init; } = [];
 
     /// <summary>
     /// The test classes the selected commands were filtered down to, so the
@@ -51,8 +52,6 @@ public sealed record TestSelectionAudit
     public IReadOnlyList<string> OmittedTestCommands { get; init; } = [];
     public IReadOnlyList<string> Reasons { get; init; } = [];
     public string Selector { get; init; } = "deterministic";
-    public string? SelectorModel { get; init; }
-    public string? AdvisorReason { get; init; }
     public bool FullSuiteRequired { get; init; }
     public bool FullSuiteRan { get; init; }
 }
@@ -62,9 +61,7 @@ public sealed record StagedVerifyPlan(
     TestSelectionAudit Audit);
 
 /// <summary>
-/// Pure staged-test planner. It never invents an LLM command: model advice may
-/// select only stable candidate ids produced from repository inventory,
-/// explicit impact rules, or Test Hub history.
+/// Pure staged-test planner for repository inventory and deterministic impact rules.
 /// </summary>
 public static class TestSelectionPlanner
 {
@@ -94,8 +91,7 @@ public static class TestSelectionPlanner
         IReadOnlyList<string>? changedFiles,
         TestExecutionPolicy? policy,
         string? lane,
-        string? requiredLevel,
-        TestSelectionAdvice? advice = null)
+        string? requiredLevel)
     {
         var level = ResolveLevel(policy, lane, requiredLevel);
         var fullSuiteRequired = TestExecutionLevels.Normalize(requiredLevel, "") == TestExecutionLevels.Full;
@@ -211,17 +207,9 @@ public static class TestSelectionPlanner
                 selectedIds.Add(candidate.Id);
         }
 
-        if (advice is not null)
-        {
-            var allowed = candidates.Select(candidate => candidate.Id).ToHashSet(StringComparer.Ordinal);
-            foreach (var id in advice.CandidateIds.Where(allowed.Contains)) selectedIds.Add(id);
-            reasons.Add("LLM adviser may add allowlisted candidates but cannot remove deterministic selections");
-        }
-
         var selectedCandidates = level == TestExecutionLevels.Continuous
             ? []
             : candidates.Where(candidate => selectedIds.Contains(candidate.Id)).ToList();
-        var advisedIds = advice?.CandidateIds.ToHashSet(StringComparer.Ordinal) ?? [];
         var continuous = ContinuousCommands(
             policy,
             blocksWorkPackage: false,
@@ -233,10 +221,7 @@ public static class TestSelectionPlanner
             {
                 TestScope = TestExecutionLevels.WorkPackage,
                 BlocksWorkPackage = true,
-                SelectionReason = string.Join("; ", candidate.Reasons.Concat(
-                    advisedIds.Contains(candidate.Id)
-                        ? [$"LLM adviser: {advice!.Reason}"]
-                        : [])),
+                SelectionReason = string.Join("; ", candidate.Reasons),
             }).ToList();
         var mergedTests = MergeTestCommands(continuous.Concat(selectedTests));
         var commandsForRun = nonTests.Concat(mergedTests).ToList();
@@ -271,9 +256,7 @@ public static class TestSelectionPlanner
                 .Except(mergedTests.Select(Describe), StringComparer.OrdinalIgnoreCase)
                 .ToList(),
             Reasons = reasons,
-            Selector = advice is null ? "deterministic" : "deterministic+llm",
-            SelectorModel = advice?.Model,
-            AdvisorReason = advice?.Reason,
+            Selector = "deterministic",
             FullSuiteRequired = false,
             FullSuiteRan = false,
         });
@@ -292,9 +275,7 @@ public static class TestSelectionPlanner
         var omitBroadFrontendTests = FrontendWorkPackagePlanner.TouchesFrontend(changedFiles);
 
         // Build a safe inventory first. Deterministic matching and the optional
-        // adviser may select from this inventory, but neither may invent a shell
-        // command. Candidates without reasons remain unselected unless the LLM
-        // explicitly adds their stable id.
+        // Deterministic matching selects only commands from this inventory.
         foreach (var command in verifyPlan.Commands.Where(command =>
                      command.Kind == VerifyCommandKind.Test
                      && (!omitBroadFrontendTests
@@ -416,7 +397,7 @@ public static class TestSelectionPlanner
         }
     }
 
-    private static string DotNetFilterSuffix(VerifyPlan verifyPlan, IReadOnlyList<string>? classes)
+    internal static string DotNetFilterSuffix(VerifyPlan verifyPlan, IReadOnlyList<string>? classes)
     {
         var (raw, expression) = DotNetFilterExpression(verifyPlan);
         if (classes is null || classes.Count == 0)

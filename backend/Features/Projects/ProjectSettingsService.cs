@@ -1522,17 +1522,24 @@ public class ProjectSettingsService
             })
             .Where(rule => rule.PathPrefixes.Count > 0 && rule.TestCommands.Count > 0)
             .ToList();
+        var folderMap = (policy.FolderToTestProjects ?? [])
+            .Where(row => !string.IsNullOrWhiteSpace(row.Folder))
+            .Select(row => row with
+            {
+                Folder = row.Folder.Trim().Replace('\\', '/').TrimEnd('/'),
+                Module = string.IsNullOrWhiteSpace(row.Module) ? null : row.Module.Trim(),
+                TestProjects = Clean(row.TestProjects) ?? [],
+            })
+            .ToList();
         return policy with
         {
             LaneLevels = laneLevels.Count == 0 ? null : laneLevels,
             ContinuousCommands = Clean(policy.ContinuousCommands),
             ImpactRules = rules.Count == 0 ? null : rules,
+            FolderToTestProjects = folderMap.Count == 0 ? null : folderMap,
+            MappedSourceRoots = Clean(policy.MappedSourceRoots),
             TestHubHistoryPath = string.IsNullOrWhiteSpace(policy.TestHubHistoryPath)
                 ? null : policy.TestHubHistoryPath.Trim(),
-            LlmCliType = string.IsNullOrWhiteSpace(policy.LlmCliType) ? null : policy.LlmCliType.Trim(),
-            LlmModel = string.IsNullOrWhiteSpace(policy.LlmModel) ? null : policy.LlmModel.Trim(),
-            LlmThinkingLevel = string.IsNullOrWhiteSpace(policy.LlmThinkingLevel)
-                ? null : policy.LlmThinkingLevel.Trim(),
         };
     }
 
