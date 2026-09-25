@@ -204,8 +204,8 @@ public sealed class ProviderAuthProbeTests
         var probe = Probe(Answers(1, "", "Not logged in"));
         var options = CodingOptions();
 
-        await probe.RefreshAsync(options.CliBin, CancellationToken.None);
-        await probe.RefreshAsync(options.CliBin, CancellationToken.None);
+        await probe.RefreshAsync(options.ClaudeCliBin, CancellationToken.None);
+        await probe.RefreshAsync(options.ClaudeCliBin, CancellationToken.None);
         var advertised = RunnerCapabilityProbe.Advertise(options, gitPushReady: true, providerAuth: probe);
 
         var auth = Assert.Single(
@@ -607,8 +607,7 @@ public sealed class ProviderAuthProbeTests
         GitRemote = "https://github.com/example/repo.git",
         WorkDir = Path.GetTempPath(),
         BaseBranch = "main",
-        CliBin = "claude",
-        CliArgs = "",
+        ClaudeCliBin = "claude",
     };
 
     private static async Task WaitUntil(Func<bool> condition)

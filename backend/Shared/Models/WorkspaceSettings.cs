@@ -13,8 +13,8 @@ namespace AgentStudio.Shared;
 /// implemented once in <see cref="AgentStudio.Registry.OrchestratorSettingsResolver"/>.</para>
 ///
 /// <para>Scope note: only genuinely workspace-shaped knobs live here: the model
-/// and thinking level the orchestrator decides with, the ADR-0026 autonomy
-/// level, and the temporary local CLI execution-engine rollout. Process-wide
+/// and thinking level the orchestrator decides with and the ADR-0026 autonomy
+/// level. Process-wide
 /// supervisor lifecycle flags stay a single platform-global value edited
 /// through <see cref="AgentStudio.Configuration.OrchestratorConfigService"/>;
 /// they gate whole hosted loops before any project or workspace scope exists.
@@ -40,13 +40,6 @@ public record WorkspaceSettings
     /// own default capability level.
     /// </summary>
     public string? OrchestratorThinkingLevel { get; init; }
-
-    /// <summary>
-    /// Workspace-default local CLI execution engine. Null means projects
-    /// without an override fall through to <see cref="CliExecutionEngines.Default"/>.
-    /// The process-wide rollback selector takes precedence when present.
-    /// </summary>
-    public string? CliExecutionEngine { get; init; }
 
     /// <summary>
     /// Workspace-default ADR-0026 orchestrator-prep autonomy level (<c>0..4</c>).

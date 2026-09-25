@@ -362,123 +362,6 @@ public sealed class ProjectBasicsEndpointsTests
         }
     }
 
-    [Fact]
-    public async Task CliExecutionEngineEndpoints_ResolveWorkspaceAndProjectOverrides()
-    {
-        var taskRepository = TempPath("cli-execution-engine-api");
-        Directory.CreateDirectory(taskRepository);
-        try
-        {
-            await using var factory = BuildFactory(taskRepository);
-            using var client = factory.CreateClient();
-            client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
-
-            var created = await CreateProject(client, "Engine Project", "ENG");
-            var projectName = Uri.EscapeDataString(created.DisplayName);
-            var projectEndpoint = $"/api/projects/{projectName}/cli-execution-engine";
-            var workspaceEndpoint = $"/api/workspaces/{DefaultWorkspace.Id}/cli-execution-engine";
-
-            var initial = await client.GetFromJsonAsync<CliExecutionEngineApiResponse>(projectEndpoint);
-            Assert.NotNull(initial);
-            Assert.Equal(CliExecutionEngines.Car, initial.ExecutionEngine);
-            Assert.Equal(OrchestratorSettingsResolver.SourceDefault, initial.Source);
-
-            var setWorkspace = await client.PutAsJsonAsync(workspaceEndpoint, new
-            {
-                executionEngine = " LEGACY ",
-            });
-            Assert.Equal(HttpStatusCode.OK, setWorkspace.StatusCode);
-
-            var inherited = await client.GetFromJsonAsync<CliExecutionEngineApiResponse>(projectEndpoint);
-            Assert.NotNull(inherited);
-            Assert.Equal(CliExecutionEngines.Legacy, inherited.ExecutionEngine);
-            Assert.Equal(OrchestratorSettingsResolver.SourceWorkspace, inherited.Source);
-
-            var setProject = await client.PutAsJsonAsync(projectEndpoint, new
-            {
-                executionEngine = "CAR",
-            });
-            Assert.Equal(HttpStatusCode.OK, setProject.StatusCode);
-            var overridden = await setProject.Content.ReadFromJsonAsync<CliExecutionEngineApiResponse>();
-            Assert.NotNull(overridden);
-            Assert.Equal(CliExecutionEngines.Car, overridden.ExecutionEngine);
-            Assert.Equal(OrchestratorSettingsResolver.SourceProject, overridden.Source);
-            Assert.Equal(CliExecutionEngines.Legacy, overridden.WorkspaceDefault);
-
-            var invalid = await client.PutAsJsonAsync(projectEndpoint, new
-            {
-                executionEngine = "automatic",
-            });
-            Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
-
-            var projectSettings = await client.GetFromJsonAsync<Dictionary<string, JsonElement>>(
-                "/api/projects/settings");
-            Assert.NotNull(projectSettings);
-            var projectedProject = projectSettings[created.DisplayName];
-            Assert.Equal(CliExecutionEngines.Car,
-                projectedProject.GetProperty("cliExecutionEngine").GetString());
-            Assert.Equal(OrchestratorSettingsResolver.SourceProject,
-                projectedProject.GetProperty("cliExecutionEngineSource").GetString());
-
-            var workspaceSettings = await client.GetFromJsonAsync<JsonElement>(
-                $"/api/workspaces/{DefaultWorkspace.Id}/settings");
-            Assert.Equal(CliExecutionEngines.Legacy,
-                workspaceSettings.GetProperty("effectiveCliExecutionEngine").GetString());
-            Assert.Equal(OrchestratorSettingsResolver.SourceWorkspace,
-                workspaceSettings.GetProperty("cliExecutionEngineSource").GetString());
-
-            var clearProject = await client.PutAsJsonAsync(projectEndpoint, new
-            {
-                executionEngine = (string?)null,
-            });
-            Assert.Equal(HttpStatusCode.OK, clearProject.StatusCode);
-            var cleared = await clearProject.Content.ReadFromJsonAsync<CliExecutionEngineApiResponse>();
-            Assert.NotNull(cleared);
-            Assert.Equal(CliExecutionEngines.Legacy, cleared.ExecutionEngine);
-            Assert.Equal(OrchestratorSettingsResolver.SourceWorkspace, cleared.Source);
-        }
-        finally
-        {
-            DeleteBestEffort(taskRepository);
-        }
-    }
-
-    [Fact]
-    public async Task CliExecutionEngineEndpoints_ProcessRollbackOverridesPersistedTiers()
-    {
-        var taskRepository = TempPath("cli-execution-engine-env");
-        var previous = Environment.GetEnvironmentVariable(CliExecutionEngines.EnvironmentVariable);
-        Directory.CreateDirectory(taskRepository);
-        try
-        {
-            Environment.SetEnvironmentVariable(
-                CliExecutionEngines.EnvironmentVariable,
-                CliExecutionEngines.Legacy);
-
-            await using var factory = BuildFactory(taskRepository);
-            using var client = factory.CreateClient();
-            client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
-
-            var created = await CreateProject(client, "Engine Rollback Project", "ERP");
-            var projectName = Uri.EscapeDataString(created.DisplayName);
-            var projectEndpoint = $"/api/projects/{projectName}/cli-execution-engine";
-
-            var settings = factory.Services.GetRequiredService<ProjectSettingsService>();
-            settings.SetCliExecutionEngine(created.DisplayName, CliExecutionEngines.Car);
-
-            var effective = await client.GetFromJsonAsync<CliExecutionEngineApiResponse>(projectEndpoint);
-
-            Assert.NotNull(effective);
-            Assert.Equal(CliExecutionEngines.Legacy, effective.ExecutionEngine);
-            Assert.Equal(OrchestratorSettingsResolver.SourceEnvironment, effective.Source);
-            Assert.Equal(CliExecutionEngines.Car, effective.ProjectOverride);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(CliExecutionEngines.EnvironmentVariable, previous);
-            DeleteBestEffort(taskRepository);
-        }
-    }
 
     private static async Task<ProjectSummary> CreateProject(HttpClient client, string displayName, string shortCode)
     {
@@ -490,15 +373,6 @@ public sealed class ProjectBasicsEndpointsTests
         });
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         return (await response.Content.ReadFromJsonAsync<ProjectSummary>())!;
-    }
-
-    private sealed record CliExecutionEngineApiResponse
-    {
-        public string ExecutionEngine { get; init; } = "";
-        public string Source { get; init; } = "";
-        public string? ProjectOverride { get; init; }
-        public string? WorkspaceDefault { get; init; }
-        public string PlatformDefault { get; init; } = "";
     }
 
     private static WebApplicationFactory<Program> BuildFactory(

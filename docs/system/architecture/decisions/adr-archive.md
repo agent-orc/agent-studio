@@ -261,9 +261,13 @@ The investigation also surfaced a parallel question from the user: "is this a WS
 
 **Reasoning style.** Test what can be tested deterministically, run the live probes opt-in, write down what is unproven so the next reader does not over-trust the fix. The five live probes triangulate observable shapes (`.exe` direct, `.CMD` shim, production code path with realistic prompt, sequential kill+restart). The two deterministic probes pin the runner's stream/stop chain shape using a fake CLI we fully control. Together they catch ~80% of plausible regressions; the missing 20% (live ASP.NET hosting interaction, concurrent-process contention) is what the open caveat is for.
 
-**Implementation pointers.** [`backend/Services/Cli/ClaudeCliService.cs::ResolveCmdShimToExe`](../../../backend/Services/Cli/ClaudeCliService.cs) (the npm-shim → `.exe` resolver, called from `BuildStartInfo`); [`backend/Services/Cli/ChildHandle.cs`](../../../backend/Services/Cli/ChildHandle.cs) + [`CliExecutionServiceBase.SpawnChildAsync`](../../../backend/Services/Cli/CliExecutionServiceBase.cs) (virtual hook for future PTY needs); [`backend.Tests/CliSpawnIntegrationTests.cs`](../../../../backend.Tests/CliSpawnIntegrationTests.cs) (live matrix, `RUN_CLI_INTEGRATION=1` gate); [`backend.Tests/CliWatchdogIntegrationTests.cs`](../../../../backend.Tests/CliWatchdogIntegrationTests.cs) (deterministic fake-CLI tests); [`docs/system/cli/skills/cli-claude.md`](../../cli/skills/cli-claude.md) (operator-level "what to check when claude hangs" playbook).
+**Implementation pointers.** The original Studio-owned spawn helpers and their
+live/fake CLI tests were removed by ADR-0075 after CAR parity was established.
+The retained operator guidance is
+[`docs/system/cli/skills/cli-claude.md`](../../cli/skills/cli-claude.md).
 
-**Status.** Accepted as **mitigation + diagnostics**, not as proven root-cause fix. Open follow-ups: (1) re-run the live matrix on a clean dev backend after a `~/.claude/projects/...` cleanup to test the concurrent-process-contention hypothesis; (2) Codex / Gemini / Copilot smoke probes for parity coverage; (3) extend `CliWatchdogIntegrationTests` to drive `ProjectRunner.TickWatchdog` directly so the state-machine ticks are pinned end-to-end.
+**Status.** Superseded for card-run process ownership by ADR-0075. The historical
+diagnosis remains useful, but CAR now owns the affected spawn mechanics.
 
 ---
 
@@ -1786,5 +1790,69 @@ The standalone Linux Runner owns one clean checkout per project and executor. It
 **Reasoning style.** Separate what is observed from what is decided from what is changed. The service validates the boundary (project, repository, ref), collects plain facts (fetch result, candidate SHA, published SHA, whether the published snapshot is still readable), hands them to a pure policy that returns one of `Disabled`, `NoOp`, `Promote`, or `Fail` with a typed failure, and only then performs bounded side effects. Atomicity is then a property of the data structure rather than of a filesystem operation: because a published revision is an immutable record and promotion is a single reference assignment made after materialization has fully succeeded, a concurrent reader observes either the whole previous tree or the whole new one by construction, and no failure path can reach the swap. Apply the same lens to any future deployment surface: if a promotion cannot be reduced to one assignment over already-complete state, it is not yet atomic.
 
 **Implementation pointers.** Pure decision layer and accepted-ref rules: [`WikiPublicationPolicy.cs`](../../../../backend/Features/Docs/Publication/WikiPublicationPolicy.cs). Coordination, promotion, rollback, retention, and diagnostics: [`WikiPublicationService.cs`](../../../../backend/Features/Docs/Publication/WikiPublicationService.cs). Records, typed failures, and clamped options: [`WikiPublishedRevision.cs`](../../../../backend/Features/Docs/Publication/WikiPublishedRevision.cs). Scheduled trigger: [`WikiPublicationSyncService.cs`](../../../../backend/Features/Docs/Publication/WikiPublicationSyncService.cs). Operator endpoints: [`WikiPublicationEndpoints.cs`](../../../../backend/Features/Docs/Publication/WikiPublicationEndpoints.cs). Staged materialization and SHA-pinned snapshots: `MaterializeWikiSnapshot` and `GetWikiSnapshotForShaCached` in [`GitService.cs`](../../../../backend/Features/Git/GitService.cs). Read-side pinning: [`ProjectWikiSourceResolver.cs`](../../../../backend/Features/Docs/ProjectWikiSourceResolver.cs). Operational contract: [`hosted-wiki-publication.md`](../../../operations/setup/hosted-wiki-publication.md). Read model: [`wiki-tree.md`](../../contracts/wiki-tree.md).
+
+**Status.** Accepted.
+
+---
+
+## ADR-0075 - Studio uses CodingAgentRunner as its only card-run CLI execution layer (2026-09-24)
+
+**Decision.** Every coding-agent card run in Agent Studio and the standalone
+Agent Runner is expressed as a typed `CliRunRequest` and executed by a
+CodingAgentRunner `ICliDriver`. CAR owns provider descriptors, argv, prompt
+transport, process launch and stop, protocol decoding, and typed events. Studio
+host adapters own task authorization, durability, fencing, output projection,
+usage accounting, and terminal classification. The detached Runner worker
+preserves restart durability above CAR: a daemon reattaches to the worker
+process and its journal, while the worker drives the CLI through CAR.
+
+Backend and Runner consume the same exact NuGet version,
+`CodingAgentRunner [0.7.0]`. To update it, change both project references in one
+change, restore both lock graphs, run the mirrored CLI-centralization guards,
+build both deployables, and run the local and detached-worker CAR acceptance
+tests. The architecture guard rejects missing, floating, or unequal pins.
+
+**Context.** The target architecture assigns CodingAgentRunner integration to
+the Agent Runner in [section 4](../../../concepts/distributed-agent-studio-target-architecture.md#4-component-boundaries),
+forbids a second unstructured invocation path in
+[section 10](../../../concepts/distributed-agent-studio-target-architecture.md#10-code-and-release-organization),
+and requires structured events and typed outcomes in
+[section 13](../../../concepts/distributed-agent-studio-target-architecture.md#13-delivery-sequence).
+Before the coordinated CAR adoption, Studio also built and spawned local CLI
+commands and the detached Runner had its own raw process path. Parity was proven
+before AGT-2373 removed those rollback paths.
+
+**Alternatives considered.** Keeping raw local and Runner spawners behind a
+permanent feature flag was rejected because every protocol, hardening, and
+future container change would need multiple implementations. Moving durability
+into CAR was rejected because worker reattachment, task fencing, and durable
+journals are host responsibilities. Replacing the package with source or
+project references was rejected because Studio and CAR have independent
+release boundaries; one exact package pin keeps that boundary explicit.
+
+**Consequences.** There is no project, workspace, process-environment, or CLI
+argument switch that selects a legacy card-run engine. Old Runner environment
+variables are rejected with a migration error instead of silently changing
+execution. The copied Windows handle-scrub spawner, raw Runner CLI branch, and
+Studio-owned card-run argv builders are gone. Provider-specific executable
+paths remain host configuration, while CAR derives all invocation flags from
+typed input.
+
+Bounded non-card utilities remain host-owned and are not alternate card-run
+layers: installation and authentication probes, Git and SSH commands, deploy
+helpers, and short one-shot inference used for summaries or classification.
+Their files remain named exceptions in the centralization guard. The Studio
+`NpmShimHealer` remains only for the non-card Claude one-shot path; CAR owns
+healing for card runs.
+
+**Implementation pointers.** Local host bridge:
+[`BackendCarExecution.cs`](../../../../backend/Features/Cli/Execution/BackendCarExecution.cs).
+Detached worker bridge:
+[`CarWorkerExecution.cs`](../../../../runner/CarWorkerExecution.cs) and
+[`DurableAgentProcess.cs`](../../../../runner/DurableAgentProcess.cs).
+Provider selection without argv construction:
+[`CliSelection.cs`](../../../../runner/CliSelection.cs). Mirrored ratchet:
+[`backend guard`](../../../../backend.Tests/Architecture/CliInvocationCentralizationGuardTests.cs)
+and [`Runner guard`](../../../../runner.Tests/CliInvocationCentralizationGuardTests.cs).
 
 **Status.** Accepted.

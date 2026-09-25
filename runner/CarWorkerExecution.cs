@@ -16,15 +16,13 @@ using CarOutputLine = CodingAgentRunner.Model.CliOutputLine;
 namespace AgentRunner;
 
 /// <summary>
-/// T1 (AGT-2370): the CAR execution engine inside the detached worker. The worker
-/// process stays the durability boundary — <see cref="DurableAgentProcess"/> owns
-/// spawn, reattach, <c>output.jsonl</c> and <c>result.json</c> — and this class
-/// only replaces how the worker drives the coding CLI: through
+/// The CAR execution engine inside the detached worker. The worker process
+/// stays the durability boundary: <see cref="DurableAgentProcess"/> owns spawn,
+/// reattach, <c>output.jsonl</c> and <c>result.json</c>. This class drives the CLI through
 /// <see cref="ICliDriver"/> (descriptor-built argv, structured events, typed
-/// outcome) instead of a raw <see cref="ProcessRunner"/> spawn.
+/// outcome). No raw coding-CLI spawn exists in the Runner.
 ///
-/// <para>Deliberate behaviour vs. the legacy engine, per the migration plan
-/// (docs/operations/car-migration-plan.md §3 T1):</para>
+/// <para>Host integration choices retained from the migration:</para>
 /// <list type="bullet">
 ///   <item><b>stream-json</b> replaces plaintext output (P5 divergence is pinned
 ///   in the parity fixtures, not discovered in production).</item>
@@ -67,7 +65,7 @@ internal static class CarWorkerExecution
         var runId = string.IsNullOrWhiteSpace(spec.RunId)
             ? Path.GetFileName(Path.TrimEndingDirectorySeparator(workerDirectory))
             : spec.RunId!;
-        var cliType = AgentCliProcess.NormalizeCliType(spec.CliType) ?? AgentCliProcess.ClaudeCli;
+        var cliType = CliSelection.NormalizeCliType(spec.CliType) ?? CliSelection.ClaudeCli;
 
         using var trace = CarEventTrace.Open(workerDirectory);
         using var logger = new CarWorkerLogger(Path.Combine(workerDirectory, "car.log"), append);
@@ -120,7 +118,7 @@ internal static class CarWorkerExecution
         void OnRunEvent(string id, CliRunEvent evt)
         {
             if (!string.Equals(id, runId, StringComparison.Ordinal)) return;
-            if (cliType == AgentCliProcess.CodexCli)
+            if (cliType == CliSelection.CodexCli)
                 evt = RunnerCodexEventAdapter.MapKnownError(evt);
             if (evt is CliRunEvent.RunStarted)
                 Volatile.Write(ref processStarted, 1);
@@ -238,8 +236,8 @@ internal static class CarWorkerExecution
     /// <summary>The production CAR options for one worker spec.</summary>
     private static CliOptions BuildCliOptions(DetachedJobSpec spec, string cliType) => new()
     {
-        ClaudePath = cliType == AgentCliProcess.ClaudeCli ? spec.FileName : null,
-        CodexPath = cliType == AgentCliProcess.CodexCli ? spec.FileName : null,
+        ClaudePath = cliType == CliSelection.ClaudeCli ? spec.FileName : null,
+        CodexPath = cliType == CliSelection.CodexCli ? spec.FileName : null,
         // CAR-A: keep the remote prompt transport exactly what it always was —
         // stdin — instead of inheriting the library's argv default.
         ClaudePromptTransport = ClaudePromptTransport.Stdin,
@@ -302,11 +300,8 @@ internal static class CarWorkerExecution
 }
 
 /// <summary>
-/// The typed event trace (<c>events.jsonl</c> in the worker directory) — plan §3
-/// T1 step 3. On the CAR engine it records the live <see cref="CliRunEvent"/>s;
-/// on the legacy engine the same trace is produced in shadow mode by applying the
-/// CAR adapters to the raw lines, which is what proves event parity before the
-/// process start switches (plan §4, Schattenbetrieb).
+/// The typed event trace (<c>events.jsonl</c> in the worker directory). It
+/// records the live <see cref="CliRunEvent"/> stream emitted by CAR.
 /// </summary>
 internal sealed class CarEventTrace : IDisposable
 {
@@ -340,43 +335,6 @@ internal sealed class CarEventTrace : IDisposable
         catch
         {
             // The trace is observability, never a run failure.
-        }
-    }
-
-    /// <summary>Legacy-engine shadow mode: map one raw output line through the CAR adapters.</summary>
-    public void WriteFromRawLine(
-        string? cliType,
-        string runId,
-        string stream,
-        string text,
-        Action<string>? onUnclassifiedFrame = null)
-    {
-        IEnumerable<CliRunEvent> events;
-        try
-        {
-            var kind = stream == "stderr" ? CliStreamKind.Stderr : CliStreamKind.Stdout;
-            events = AgentCliProcess.NormalizeCliType(cliType) == AgentCliProcess.CodexCli
-                ? CodexEventAdapter.Map(text, runId, kind)
-                : kind == CliStreamKind.Stdout
-                    ? ClaudeEventAdapter.Map(text, runId)
-                    : Array.Empty<CliRunEvent>();
-        }
-        catch
-        {
-            // Adapter failures remain non-fatal in legacy shadow mode, but a
-            // structured frame that triggered one must still become visible.
-            onUnclassifiedFrame?.Invoke(text);
-            return;
-        }
-
-        foreach (var evt in events)
-        {
-            var normalized = AgentCliProcess.NormalizeCliType(cliType) == AgentCliProcess.CodexCli
-                ? RunnerCodexEventAdapter.MapKnownError(evt)
-                : evt;
-            Write(normalized);
-            if (normalized is CliRunEvent.Unknown unknown)
-                onUnclassifiedFrame?.Invoke(unknown.RawDetail ?? unknown.Sample ?? string.Empty);
         }
     }
 

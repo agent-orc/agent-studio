@@ -728,26 +728,6 @@ public class ProjectSettingsService
     }
 
     /// <summary>
-    /// Sets or clears the per-project local CLI execution-engine override.
-    /// Blank clears the override; unknown non-blank values are rejected.
-    /// </summary>
-    public void SetCliExecutionEngine(string projectName, string? executionEngine)
-    {
-        var normalized = CliExecutionEngines.NormalizeOverride(executionEngine);
-        EnsureLoaded();
-        lock (_lock)
-        {
-            var key = ResolveAliasLocked(projectName);
-            var current = _cache.TryGetValue(key, out var s) ? s : new ProjectSettings();
-            _cache[key] = current with { CliExecutionEngine = normalized };
-            Persist();
-        }
-        _logger.LogInformation(
-            "CLI execution-engine override set to {ExecutionEngine} for project {Project}",
-            normalized ?? "(workspace/default)", projectName);
-    }
-
-    /// <summary>
     /// Tunes the epic decomposition (planning) run for a project. A null
     /// argument leaves that knob untouched, so the caller can set the model
     /// and the backlog/ready target independently. An empty model string

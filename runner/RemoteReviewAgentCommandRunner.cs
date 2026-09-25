@@ -78,7 +78,7 @@ internal sealed class RemoteReviewAgentCommandRunner
             Directory.CreateDirectory(workerDirectory);
             var spec = new DetachedJobSpec(
                 invocation.FileName,
-                invocation.Arguments,
+                [],
                 _repositoryPath,
                 command.Prompt,
                 _artifactPath,
@@ -88,7 +88,6 @@ internal sealed class RemoteReviewAgentCommandRunner
                 invocation.ThinkingLevel,
                 CodingAgentRunner.Model.CliPermissionModes.ReadOnly,
                 CodingAgentRunner.Model.CliContextModes.Clean,
-                RunnerOptions.ExecEngineCar,
                 runId,
                 CleanContextKey: runId);
             var (raw, timedOut, _) = await CarWorkerExecution.RunAsync(
@@ -122,8 +121,8 @@ internal sealed class RemoteReviewAgentCommandRunner
         }
     }
 
-    private AgentCliProcess.CliInvocation Invocation(ReviewCommandDto command)
-        => AgentCliProcess.Resolve(
+    private CliSelection.Selection Invocation(ReviewCommandDto command)
+        => CliSelection.Resolve(
             _options,
             new RunSpecDto(
                 command.CliType,
@@ -145,7 +144,7 @@ internal sealed class RemoteReviewAgentCommandRunner
                     continue;
                 var cached = Math.Max(JsonLong(usage, "cached_input_tokens"),
                     JsonLong(usage, "cache_read_input_tokens"));
-                if (string.Equals(cliType, AgentCliProcess.CodexCli, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(cliType, CliSelection.CodexCli, StringComparison.OrdinalIgnoreCase))
                 {
                     var normalized = ProviderUsageNormalization.OpenAi(
                         JsonLong(usage, "input_tokens"), cached);

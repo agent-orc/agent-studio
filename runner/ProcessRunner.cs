@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Runtime.InteropServices;
 
 namespace AgentRunner;
 
@@ -10,9 +9,8 @@ public sealed record ProcessResult(int ExitCode, string StdOut, string StdErr)
 }
 
 /// <summary>
-/// Minimal cross-platform process spawner. Used for git plumbing and for the
-/// agent CLI. Streaming callbacks let the caller tee output to the console and
-/// ship it to the server as it arrives, rather than buffering the whole run.
+/// Minimal cross-platform process spawner for Git, verification, SSH, and
+/// operational probes. Coding-agent CLIs run only through CodingAgentRunner.
 /// </summary>
 public static class ProcessRunner
 {
@@ -35,25 +33,12 @@ public static class ProcessRunner
         Action<string>? onStdErr = null,
         IReadOnlyDictionary<string, string?>? environment = null,
         bool clearEnvironment = false,
-        bool isolateProcessGroup = false,
         Action<int>? onStarted = null,
         CancellationToken ct = default)
     {
-        var actualFileName = fileName;
-        IReadOnlyList<string> actualArguments = arguments;
-        if (isolateProcessGroup && OperatingSystem.IsLinux())
-        {
-            var setsid = File.Exists("/usr/bin/setsid") ? "/usr/bin/setsid"
-                : File.Exists("/bin/setsid") ? "/bin/setsid"
-                : throw new InvalidOperationException(
-                    "Agent CLI process-group isolation requires the Linux 'setsid' utility.");
-            actualFileName = setsid;
-            actualArguments = [fileName, .. arguments];
-        }
-
         var psi = new ProcessStartInfo
         {
-            FileName = actualFileName,
+            FileName = fileName,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             RedirectStandardInput = stdin != null,
@@ -62,7 +47,7 @@ public static class ProcessRunner
             WorkingDirectory = workingDirectory ?? Environment.CurrentDirectory,
         };
         if (clearEnvironment) psi.Environment.Clear();
-        foreach (var arg in actualArguments) psi.ArgumentList.Add(arg);
+        foreach (var arg in arguments) psi.ArgumentList.Add(arg);
         if (environment != null)
             foreach (var (key, value) in environment)
                 psi.Environment[key] = value;
@@ -121,7 +106,7 @@ public static class ProcessRunner
         }
         catch (OperationCanceledException)
         {
-            TryKill(process, isolateProcessGroup);
+            TryKill(process);
             throw;
         }
 
@@ -131,34 +116,11 @@ public static class ProcessRunner
         return new ProcessResult(process.ExitCode, outBuf.ToString(), errBuf.ToString());
     }
 
-    private static void TryKill(Process process, bool isolatedProcessGroup)
+    private static void TryKill(Process process)
     {
-        if (isolatedProcessGroup && OperatingSystem.IsLinux())
-        {
-            try
-            {
-                // AGT-2870: the process group is this child's own, because the
-                // caller asked for an isolated one, but kill(-pgid) is a
-                // broadcast for any pgid below 2 and Process.Id is 0 for a
-                // start that failed. The guard refuses both; the runtime's
-                // descendant-tree kill below still runs.
-                if (!process.HasExited)
-                    ProcessSignalGuard.TrySignalProcessGroup(
-                        process.Id, SigKill, "process-runner-group");
-            }
-            catch (InvalidOperationException)
-            {
-                // Fall through to the runtime's descendant-tree kill.
-            }
-        }
         try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
         catch { /* best effort: the run is already being torn down */ }
     }
-
-    private const int SigKill = 9;
-
-    [DllImport("libc", SetLastError = true)]
-    private static extern int kill(int pid, int signal);
 }
 
 /// <summary>

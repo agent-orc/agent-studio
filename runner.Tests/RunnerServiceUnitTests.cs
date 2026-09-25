@@ -299,6 +299,16 @@ public sealed class RunnerServiceUnitTests
     }
 
     [Fact]
+    public void Onboarding_emits_each_provider_cli_setting_once()
+    {
+        var content = File.ReadAllText(Path.Combine(RepoRoot(), "scripts", "remote-runner-onboard.sh"));
+
+        Assert.Equal(1, content.Split("printf 'RUNNER_CLAUDE_CLI_BIN=", StringSplitOptions.None).Length - 1);
+        Assert.Equal(1, content.Split("printf 'RUNNER_CODEX_CLI_BIN=", StringSplitOptions.None).Length - 1);
+        Assert.DoesNotContain("printf 'RUNNER_CLI_BIN=", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Manual_runner_publish_uses_the_validated_root_promotion_boundary()
     {
         var content = File.ReadAllText(

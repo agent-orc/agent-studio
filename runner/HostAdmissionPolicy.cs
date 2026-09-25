@@ -20,8 +20,9 @@ public static class HostAdmissionPolicy
             return new(false, $"git-push-unavailable: {gitCapability.Detail}");
         if (string.IsNullOrWhiteSpace(options.GitRemote))
             return new(false, "repository-clone-unavailable: RUNNER_GIT_REMOTE is not configured.");
-        if (!ExecutableExists(options.CliBin))
-            return new(false, $"toolchain-unavailable: '{options.CliBin}' was not found on this host.");
+        var selected = CliSelection.Resolve(options, runSpec: null);
+        if (!ExecutableExists(selected.FileName))
+            return new(false, $"toolchain-unavailable: '{selected.FileName}' was not found on this host.");
         if (string.IsNullOrWhiteSpace(permit.Task.Body))
             return new(false, "task-input-unavailable: the permit has no executable task body.");
         return new(true, "host capability, repository, and toolchain checks passed.");
