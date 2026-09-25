@@ -964,6 +964,11 @@ as `acceptance-rail-run`.
   `reviewHistory` entry. The catalogue derives `reviewDue` at the configured
   age threshold (90 days by default), or when all related cards reached
   `6-completed` after the review.
+- An operator may record inline Dossier choices before promotion with a
+  `decision` receipt whose outcome is `record-only`. It carries the selected
+  option IDs, rationale, operator and decision time, but projects no settled
+  promotion decision. The descriptor keeps its current status, and the normal
+  prepare and confirm path remains available for a later promotion decision.
 - A delivering card resolved through `references.workbenches` or a descriptor
   `sourceTaskKeys` back edge receives the Dossier maintenance prompt contract.
   It appends only its own dated implementation entry between the canonical log
