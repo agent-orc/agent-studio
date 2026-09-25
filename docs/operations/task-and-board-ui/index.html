@@ -319,7 +319,7 @@
   <header class="page">
     <p class="kicker">Concept Dossier &middot; Agent Studio &middot; AGT-W60</p>
     <h1>Task and board UI decisions</h1>
-    <p class="lede">Eight Dossiers argued about the same two surfaces: the task detail view and the board chrome around it. Three of those arguments are settled and in force. Five still wait for one operator choice each. This Dossier keeps the settled rules, the open choices and the evidence that still holds, and replaces the eight sources on the current list.</p>
+    <p class="lede">Eight Dossiers argued about the same two surfaces: the task detail view and the board chrome around it. Three arguments carry recorded decisions, one recommended default is implemented on develop, and four still wait for an operator choice. This Dossier keeps the settled rules, the open choices and the evidence that still holds, and replaces the eight sources on the current list.</p>
     <div class="meta">
       <span><b>Status</b> decision-pending</span>
       <span><b>Phase</b> decision-ready</span>
@@ -343,7 +343,12 @@
   <section id="sources">
     <h2><span class="number">01</span> Scope and sources</h2>
     <p>AGT-W53 read every Dossier and AGT-W55 turned the result into a target set of sixteen. One of the four new theme Dossiers is this one. It covers what the operator sees and operates in Agent Studio: the task detail view with its Overview, Timeline, Activity and Result surfaces, the escalation header, the task header and chat chips, and the project scope control in the shell. It does not cover the board status model, which belongs to the delivery chain Dossier, nor the admin surface guideline AGT-W1, which stays as it is and governs every proposal here.</p>
-    <p>Three topics carry a recorded operator decision and keep their history. Five topics carry an open choice. Nothing below is newly argued: every claim comes from one of the eight sources with its original date.</p>
+    <p>Three topics carry a recorded operator decision and keep their history. Four topics carry an open choice. The tab-pressure choice was overtaken by implementation on develop. Nothing else below is newly argued: every claim comes from one of the eight sources with its original date.</p>
+
+    <div class="box good">
+      <h4>Status 2026-09-24</h4>
+      <p>D4 no longer needs an implementation choice: <code>PaneTabsComponent</code> measures the available strip width with <code>ResizeObserver</code>, moves tabs that do not fit into a trailing overflow menu, and keeps the active tab inline. Commits <code>413302be84</code>, <code>adfd8e9e72</code>, and <code>f6bfe54d3b</code> delivered and hardened that recommended default. D1, D2, D3, and D5 remain open against develop.</p>
+    </div>
 
     <table>
       <caption class="dim">The eight sources, their state at consolidation, and what survives into this Dossier.</caption>
@@ -354,7 +359,7 @@
         <tr><td>AGT-W27 Narrative task view</td><td>24 Jul 2026</td><td>open</td><td>Reading contract, generation contract, fixed template, measured card economics, three-card cut</td></tr>
         <tr><td>AGT-W35 Task Timeline redesign</td><td>11 Aug 2026</td><td>open</td><td>Four presentation decisions, six categories, three row registers, incident semantics, real light and dark capture</td></tr>
         <tr><td>AGT-W45 Escalation view information architecture</td><td>12 Aug 2026</td><td>open</td><td>One owner per failure fact, four slices, real light and dark capture, the AGT-2717 data-source update</td></tr>
-        <tr><td>AGT-W21 Task header and chat chips</td><td>8 Aug 2026</td><td>open</td><td>Three mapped layout defects with file evidence, tab overflow alternatives, the structural base fix</td></tr>
+        <tr><td>AGT-W21 Task header and chat chips</td><td>8 Aug 2026</td><td>implemented on develop</td><td>Three mapped layout defects with file evidence, the implemented overflow default, and the structural base fix</td></tr>
         <tr><td>AGT-W52 Project scope switch</td><td>12 Sep 2026</td><td>open</td><td>Six requirements, three alternatives, three decisions, two card cuts</td></tr>
         <tr><td>AGT-W48 Task-detail usage block</td><td>11 Sep 2026</td><td>decided</td><td>Decision for alternative A with its date and card, and the five requirements it has to meet</td></tr>
         <tr><td>AGT-W17 Protocol condensation</td><td>9 Aug 2026</td><td>decided, in force</td><td>The three rules the operator approved, including the no-inline-diff rule later Dossiers rely on</td></tr>
@@ -365,7 +370,7 @@
     <figure>
       <svg viewBox="0 0 900 300" role="img" aria-labelledby="map-title map-desc" xmlns="http://www.w3.org/2000/svg">
         <title id="map-title">Consolidation map of the eight sources</title>
-        <desc id="map-desc">Eight source Dossiers on the left feed into one consolidated Dossier on the right. Three of them, W48, W17 and W20, arrive as recorded decisions. Five of them, W27, W35, W45, W21 and W52, arrive as open choices.</desc>
+        <desc id="map-desc">Eight source Dossiers on the left feed into one consolidated Dossier on the right. W48, W17 and W20 arrive as recorded decisions; W21 is implemented on develop; W27, W35, W45 and W52 remain open choices.</desc>
         <g fill="none" stroke="currentColor" stroke-width="1" opacity="0.45">
           <path d="M250 46 C 360 46, 400 110, 520 110"/>
           <path d="M250 84 C 360 84, 400 110, 520 110"/>
@@ -387,9 +392,9 @@
           <text x="14" y="266">W17 Protocol condensation</text>
           <text x="14" y="292">W20 status.md finalisation</text>
           <text x="536" y="24" font-size="11" opacity="0.6">AGT-W60 TASK AND BOARD UI DECISIONS</text>
-          <text x="536" y="106">Five open choices,</text>
-          <text x="536" y="126">one operator decision each</text>
-          <text x="536" y="186">Three decisions in force,</text>
+          <text x="536" y="106">Four open choices,</text>
+          <text x="536" y="126">plus one implemented default</text>
+          <text x="536" y="186">Three recorded decisions,</text>
           <text x="536" y="206">kept with date and card</text>
         </g>
         <g fill="none" stroke="currentColor" stroke-width="1" opacity="0.75">
@@ -455,14 +460,14 @@
     <p>Three layout defects from an operator review, each mapped to its file. The pane tab strip overlaps when space runs short, because the tab label has no ellipsis while its host can shrink and no breakpoint touches the strip; the squeeze comes from the user-dragged pane splitter, not from the window width. The escalation banner renders two merge segments, so a project whose integration branch is its release branch shows the same branch twice, and a bare dash as the not-merged state is unreadable. The execution chip in the orchestrator side sheet sits in a chain of shrinkable elements where the revision line alone cannot shrink, so it collides with the label above it when the sheet is narrowed.</p>
     <p>Two of the three answers are structural rather than a choice. The branch chips collapse to one segment when the integration branch equals the release branch, and the state becomes a word with the SHA in the tooltip instead of a dash. The chat chip gets the same ellipsis and minimum-width treatment as its siblings, a shortened SHA with the full value in the tooltip, and a compact state below its minimum width. For the tab strip, the ellipsis and per-tab minimum width are the base fix in every case, because they make overlap structurally impossible; the responsive behaviour above that base is the open choice. The measurement logic is the same for both variants, so a later switch is cheap.</p>
     <div class="box accent" role="group" aria-labelledby="d4-q">
-      <p class="kicker">Decision D4 &middot; open</p>
+      <p class="kicker">Decision D4 &middot; implemented on develop</p>
       <h4 id="d4-q">What does the tab strip do when space runs short?</h4>
       <ul>
         <li><b>A &middot; Overflow menu (recommended default).</b> Tabs that do not fit move into a menu at the end of the strip; the active tab is never moved out, and hidden badges aggregate on the menu affordance. Labels stay readable and there is no icon learning curve.</li>
         <li><b>B &middot; Icon-only mode.</b> Inactive tabs reduce to icons, the active tab keeps its label, badges stay on the icon. More compact, but icon meanings have to be learned, and eight tabs across two strips is at the edge.</li>
         <li><b>C &middot; Hybrid.</b> Icon-only first, then overflow when even icons do not fit.</li>
       </ul>
-      <p class="dim">Independent of this choice: the ellipsis and minimum-width base fix, the single branch segment with a worded state, and the chat chip ellipsis symmetry are proposed as approved together with it. The responsive trigger is a container query on the strip width, not a global breakpoint.</p>
+      <p class="dim">Develop implements A with measured intrinsic tab widths, a trailing overflow menu, and the active tab retained inline. The source choices remain here as provenance; there is no remaining D4 implementation choice.</p>
     </div>
 
     <h3 id="t5-project-scope">2.5 Project scope switch (from AGT-W52, 12 September 2026)</h3>
@@ -512,11 +517,11 @@
   <section id="recommendation" data-concept-section="recommendation" data-document-section="recommendation">
     <h2><span class="number">03</span> Recommendation</h2>
     <div class="callout" data-tone="accent">
-      <h3>Take the five open decisions in one sitting, in the order the surfaces break</h3>
-      <p>Each recommended default is the one its source Dossier already argued for. Nothing here is a new proposal. The recommended set is D1 A, D2 A, D3 A, D4 A, D5 A with D5b A and D5c A.</p>
+      <h3>Take the four open decisions in one sitting, in the order the surfaces break</h3>
+      <p>Each recommended default is the one its source Dossier already argued for. Nothing here is a new proposal. The open recommended set is D1 A, D2 A, D3 A, and D5 A with D5b A and D5c A; D4 A is already implemented on develop.</p>
     </div>
-    <p>Two of the five are corrections of something that is currently wrong on screen and should go first. D3 removes duplicate blocker statements and surfaces the one useful reason on escalated cards. D2 stops a healed incident from showing as acute; its slice T4 is the semantic fix and the rest of the Timeline contract can follow. These two change what an operator believes about a card, so they outrank the rest.</p>
-    <p>D4 is next and is the cheapest: the ellipsis and minimum-width base fix makes tab overlap structurally impossible regardless of the responsive variant, and the branch-chip and chat-chip repairs are unconditional. D5 removes a daily two-click detour and a scope that silently resets; its second step, the scope-holds change, is the part with behavioural risk and is deliberately sequenced after the visible one.</p>
+    <p>Two of the four are corrections of something that is currently wrong on screen and should go first. D3 removes duplicate blocker statements and surfaces the one useful reason on escalated cards. D2 stops a healed incident from showing as acute; its slice T4 is the semantic fix and the rest of the Timeline contract can follow. These two change what an operator believes about a card, so they outrank the rest.</p>
+    <p>D4 no longer needs sequencing because the recommended measured overflow behavior is on develop. D5 removes a daily two-click detour and a scope that silently resets; its second step, the scope-holds change, is the part with behavioural risk and is deliberately sequenced after the visible one.</p>
     <p>D1 is the only one that adds a new capability rather than repairing one, and it is the only one that spends tokens per card. It is recommended as specified, but last, and with its model tier taken from the routing policy rather than from the July price table in the source.</p>
     <p>The three decided topics need no new decision. They are kept here so that the rules stay readable at their point of use: the usage block requirements are the acceptance surface for AGT-2769, the protocol condensation rules constrain the Timeline work in 2.2, and the status.md contract is why a concept card publishes its Dossier path instead of writing its own summary.</p>
   </section>
@@ -582,7 +587,7 @@
 
   <section id="open-decisions" data-concept-section="open-decisions" data-document-section="open-decisions">
     <h2><span class="number">05</span> Open decisions</h2>
-    <p>Five choices need a human. Each one is stated in full as an inline decision block in its topic section; this is the index with the recommended default. No implementation card is created by this Dossier.</p>
+    <p>Four choices need a human. Each one is stated in full as an inline decision block in its topic section; this is the index with the recommended default. D4 is listed as an implemented status correction. No implementation card is created by this Dossier.</p>
     <table>
       <thead>
         <tr><th>Decision</th><th>Topic</th><th>Options</th><th>Recommended default</th></tr>
@@ -591,7 +596,7 @@
         <tr><td>D1 Narrative reading view</td><td><a href="#t1-narrative-view">2.1</a>, from AGT-W27</td><td>A proactive generation as specified &middot; B lazy on open &middot; C do not build</td><td>A, with the model tier taken from the routing policy</td></tr>
         <tr><td>D2 Timeline presentation contract</td><td><a href="#t2-timeline">2.2</a>, from AGT-W35</td><td>A all four decisions &middot; B semantic correction first &middot; C reject and name the decision that changes</td><td>A</td></tr>
         <tr><td>D3 Escalation information architecture</td><td><a href="#t3-escalation">2.3</a>, from AGT-W45</td><td>A all three statements &middot; B header only &middot; C keep surfaces, improve copy</td><td>A</td></tr>
-        <tr><td>D4 Tab strip under pressure</td><td><a href="#t4-header-chips">2.4</a>, from AGT-W21</td><td>A overflow menu &middot; B icon-only &middot; C hybrid</td><td>A, on top of the unconditional base fix</td></tr>
+        <tr><td>D4 Tab strip under pressure</td><td><a href="#t4-header-chips">2.4</a>, from AGT-W21</td><td>Implemented on develop: A, measured overflow menu with the active tab retained inline</td><td>Closed by implementation; retained as provenance</td></tr>
         <tr><td>D5 Project scope control</td><td><a href="#t5-project-scope">2.5</a>, from AGT-W52</td><td>D5a A segment, B explorer, C minimal &middot; D5b A scope holds, B scope follows tab, C ask once &middot; D5c A status chip, B in the pill, C explorer row</td><td>A, A, A, delivered in two steps</td></tr>
       </tbody>
     </table>

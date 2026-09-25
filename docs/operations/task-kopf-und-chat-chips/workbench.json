@@ -4,7 +4,8 @@
   "title": "Task-Kopf & Chat-Chips — Layout-Härtung",
   "summary": "Drei visuelle Defekte aus dem Operator-Review 08.08., kartiert mit file:line-Belegen: (1) Pane-Tabs überlappen bei Platzmangel (fehlendes Ellipsis im pane-tab__label bei shrinkbarem Host, kein Breakpoint berührt die Tab-Leiste) — zwei Responsive-Varianten nach Operator-Vorgabe (Icon-only vs. Overflow-Menü) mit Mockups und Empfehlung; (2) Escalation-Banner zeigt 'main — / main —' als Branch-Chips — bei Projekten mit Integration==Release-Branch sind beide Segmente identisch und der nackte Gedankenstrich ist als 'nicht gemergt' unlesbar; (3) Chat-Header-Session-Chip überlappt ('main@sha' ohne Overflow-Guard in dreifacher min-width:0-Kette). Zur Umsetzungs-Entscheidung vorgelegt; Implementierungs-Karte liegt im Backlog. [Curation 2026-08-18 (AGT-2671): DONE CHECK - three open GO/NO-GO options, stays decision-pending, no completion claims found. Reviewed for DOC TRANSFER - pure UI/component-fix content, no durable architecture invariant; nothing transferred.]",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "archived",
+  "statusReason": "Archived after consolidation into AGT-W60; the tab-pressure choice is preserved there and is now implemented on develop.",
   "phase": "decision-ready",
   "updatedAt": "2026-08-18T12:00:00Z",
   "sourceTaskKeys": [],
@@ -18,9 +19,9 @@
     "supersededBy": [
       "AGT-W60"
     ],
-    "reviewedAt": "2026-09-14T00:00:00Z",
-    "reviewedBy": "Operator",
-    "note": "Consolidated into AGT-W60 Task and board UI decisions (AGT-2802, AGT-W55 D1): decisions, open choices and the evidence that still holds were carried over; this Dossier stays readable as History."
+    "reviewedAt": "2026-09-25T05:31:21Z",
+    "reviewedBy": "AGT-2897",
+    "note": "AGT-W60 absorbed this Dossier, and develop now implements the recommended measured overflow menu in PaneTabsComponent."
   },
   "reviewHistory": [
     {
@@ -38,6 +39,15 @@
       "reviewedAt": "2026-09-14T00:00:00Z",
       "reviewedBy": "Operator",
       "note": "Consolidated into AGT-W60 Task and board UI decisions (AGT-2802, AGT-W55 D1): decisions, open choices and the evidence that still holds were carried over; this Dossier stays readable as History."
+    },
+    {
+      "verdict": "superseded",
+      "supersededBy": [
+        "AGT-W60"
+      ],
+      "reviewedAt": "2026-09-25T05:31:21Z",
+      "reviewedBy": "AGT-2897",
+      "note": "AGT-W60 absorbed this Dossier, and develop now implements the recommended measured overflow menu in PaneTabsComponent."
     }
   ]
 }

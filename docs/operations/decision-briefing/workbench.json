@@ -4,7 +4,8 @@
   "title": "Operator decision briefing",
   "summary": "Map across the eight decision-pending dossiers: one section per decision, ordered by leverage using cost of delay (95 days requeue rework in 30 days, up to 21.8 weekly quota points per wave recurrence, 1.2-day median post-processing wait). Each section carries recommendation, evidence, cost of delay, approval consequences, open questions, and a confidence tag; a closing table gives the one-line ask and recommended answer per key.",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "archived",
+  "statusReason": "Archived as a dated briefing; AGT-W54 owns the current decision-card and inbox direction.",
   "phase": "decision-ready",
   "updatedAt": "2026-08-25T00:00:00Z",
   "sourceTaskKeys": [],
@@ -23,9 +24,9 @@
   "review": {
     "verdict": "historical",
     "supersededBy": [],
-    "reviewedAt": "2026-09-13T10:20:00Z",
-    "reviewedBy": "Operator",
-    "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    "reviewedAt": "2026-09-25T05:31:21Z",
+    "reviewedBy": "AGT-2897",
+    "note": "This eight-item briefing is a dated snapshot; AGT-W54 now owns the pending-decision card and inbox direction."
   },
   "reviewHistory": [
     {
@@ -34,6 +35,13 @@
       "reviewedAt": "2026-09-13T10:20:00Z",
       "reviewedBy": "Operator",
       "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    },
+    {
+      "verdict": "historical",
+      "supersededBy": [],
+      "reviewedAt": "2026-09-25T05:31:21Z",
+      "reviewedBy": "AGT-2897",
+      "note": "This eight-item briefing is a dated snapshot; AGT-W54 now owns the pending-decision card and inbox direction."
     }
   ]
 }

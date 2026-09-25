@@ -4,7 +4,8 @@
   "title": "Projekt-Scope: ein Schalter, ein Klick zu allen Projekten",
   "summary": "Operator-Befund 12.09.2026: die Sicht „Alle Projekte“ wird oft benutzt, braucht aber zwei Klicks; Kopfzeile (Projekt-Pill mit eingebettetem Auto-Pickup-Schalter und Parallelität) und Explorer-Kopf (Rasterknopf „All projects“) sind zwei Bedienelemente mit verschiedener Optik, und ein Effekt setzt den Scope beim Tab-Wechsel still neu. Sechs Anforderungen, drei Alternativen mit Mockups (A Segment „Alle | Projekt“ in der Kopfzeile mit getrenntem Status-Chip, B Explorer als einziger Besitzer, C nur Tastenkürzel), Empfehlung A in zwei Schritten, Entscheidungen D1 Bedienelement, D2 Scope beim Tab-Wechsel, D3 Platz des Auto-Pickup-Schalters, Karten K1/K2.",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "archived",
+  "statusReason": "Archived after consolidation into AGT-W60, which owns the open project-scope decisions.",
   "phase": "decision-ready",
   "pattern": "ui",
   "updatedAt": "2026-09-12T14:30:00Z",
@@ -24,9 +25,9 @@
     "supersededBy": [
       "AGT-W60"
     ],
-    "reviewedAt": "2026-09-14T00:00:00Z",
-    "reviewedBy": "Operator",
-    "note": "Consolidated into AGT-W60 Task and board UI decisions (AGT-2802, AGT-W55 D1): decisions, open choices and the evidence that still holds were carried over; this Dossier stays readable as History."
+    "reviewedAt": "2026-09-25T05:31:21Z",
+    "reviewedBy": "AGT-2897",
+    "note": "AGT-W60 owns D5a-D5c; develop retains the project picker and the tab-driven activeProjects effect, so the scope decision remains open."
   },
   "reviewHistory": [
     {
@@ -44,6 +45,15 @@
       "reviewedAt": "2026-09-14T00:00:00Z",
       "reviewedBy": "Operator",
       "note": "Consolidated into AGT-W60 Task and board UI decisions (AGT-2802, AGT-W55 D1): decisions, open choices and the evidence that still holds were carried over; this Dossier stays readable as History."
+    },
+    {
+      "verdict": "superseded",
+      "supersededBy": [
+        "AGT-W60"
+      ],
+      "reviewedAt": "2026-09-25T05:31:21Z",
+      "reviewedBy": "AGT-2897",
+      "note": "AGT-W60 owns D5a-D5c; develop retains the project picker and the tab-driven activeProjects effect, so the scope decision remains open."
     }
   ]
 }
