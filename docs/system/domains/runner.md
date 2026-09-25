@@ -68,7 +68,10 @@ state.
   SSH reverse-link lifecycle, heartbeat subscription, functional route probe,
   remote listener cleanup, bounded retry ladder, silent child process and
   Windows kill-on-close job ownership. `GET /api/v1/management/links` is the
-  canonical resource for Execution Hosts and Ready-card wait reasons. The old
+  canonical resource for Execution Hosts and Ready-card wait reasons. A held
+  listener exposes `blockedBy: remote-listener-held` with PID and age, emits one
+  alarm, and uses the longest retry interval. Runner onboarding installs sshd
+  client liveness so abandoned sessions release their listener. The old
   assets under `deploy/windows/agent-runner-tunnel/` are an emergency path only.
 - `deploy/windows/agent-runner-tunnel/`: documented emergency rollback assets.
   They are never called by the product and must not run alongside an enabled
