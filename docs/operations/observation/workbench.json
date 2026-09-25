@@ -6,7 +6,7 @@
   "entrypoint": "index.html",
   "status": "decision-pending",
   "phase": "decision-ready",
-  "updatedAt": "2026-09-14T00:00:00Z",
+  "updatedAt": "2026-09-25T05:28:26Z",
   "sourceTaskKeys": [
     "AGT-2800"
   ],
@@ -25,5 +25,21 @@
     "AGT-W38"
   ],
   "implementationTasks": [],
-  "key": "AGT-W58"
+  "key": "AGT-W58",
+  "review": {
+    "verdict": "current",
+    "supersededBy": [],
+    "reviewedAt": "2026-09-25T05:28:26Z",
+    "reviewedBy": "AGT-2896",
+    "note": "AGT-W58 remains the current Observation decision record: Watcher W1/W2 are delivered, while safe rescue, cross-app telemetry, feed policy, privacy, authority, and rollout choices remain open."
+  },
+  "reviewHistory": [
+    {
+      "verdict": "current",
+      "supersededBy": [],
+      "reviewedAt": "2026-09-25T05:28:26Z",
+      "reviewedBy": "AGT-2896",
+      "note": "AGT-W58 remains the current Observation decision record: Watcher W1/W2 are delivered, while safe rescue, cross-app telemetry, feed policy, privacy, authority, and rollout choices remain open."
+    }
+  ]
 }

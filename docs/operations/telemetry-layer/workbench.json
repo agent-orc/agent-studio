@@ -4,7 +4,8 @@
   "title": "Organization-wide telemetry layer",
   "summary": "Decision-ready dossier for a local-first telemetry layer across organization applications. It inventories current Agent Studio signals, defines a privacy-bounded event envelope and log-level mapping, compares file, push, and hybrid bus options, recommends durable per-app JSONL plus best-effort local push, maps clustered signals to bounded orchestrator actions, establishes Agent Studio as the CI/CD, telemetry, alarm, and orchestration hub, and proposes a Coding Agent Chat error-cluster pilot before broader rollout. [Curation 2026-08-17: stays decision-pending; no operator decision is recorded yet. The durable event contract is now also written up as architecture documentation in docs/concepts/platform-architecture/telemetry-layer.md, clearly marked as proposed.]",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "archived",
+  "statusReason": "Archived after consolidation into AGT-W58 Observation; the proposed cross-application event contract and pilot remain open in the absorbing Dossier.",
   "phase": "decision-ready",
   "updatedAt": "2026-08-17T00:00:00Z",
   "sourceTaskKeys": [
@@ -21,9 +22,9 @@
     "supersededBy": [
       "AGT-W58"
     ],
-    "reviewedAt": "2026-09-14T00:00:00Z",
-    "reviewedBy": "Operator",
-    "note": "Merged into the theme Dossier AGT-W58 (docs/operations/observation) by AGT-2800 under the operator's decision D1 on AGT-W55, 2026-09-13 07:53 UTC. Every open decision of this Dossier is carried forward there as an inline decision block."
+    "reviewedAt": "2026-09-25T05:28:26Z",
+    "reviewedBy": "AGT-2896",
+    "note": "AGT-W58 owns this proposal; develop still has no OrgTelemetryEvent contract or cross-app collector, and the absorbing Dossier now preserves transport, truth, authority, pilot, privacy, hub, and rollout choices."
   },
   "reviewHistory": [
     {
@@ -41,6 +42,15 @@
       "reviewedAt": "2026-09-14T00:00:00Z",
       "reviewedBy": "Operator",
       "note": "Merged into the theme Dossier AGT-W58 (docs/operations/observation) by AGT-2800 under the operator's decision D1 on AGT-W55, 2026-09-13 07:53 UTC. Every open decision of this Dossier is carried forward there as an inline decision block."
+    },
+    {
+      "verdict": "superseded",
+      "supersededBy": [
+        "AGT-W58"
+      ],
+      "reviewedAt": "2026-09-25T05:28:26Z",
+      "reviewedBy": "AGT-2896",
+      "note": "AGT-W58 owns this proposal; develop still has no OrgTelemetryEvent contract or cross-app collector, and the absorbing Dossier now preserves transport, truth, authority, pilot, privacy, hub, and rollout choices."
     }
   ]
 }

@@ -125,6 +125,10 @@
 </table>
 </div>
 <p>The merge rule is layering, not summary. Each source owned a different truth: the telemetry layer owns the raw fact, the Watcher owns the correlated case, the feed owns the operator-facing narrative. Everything below is organised along that boundary, and nothing that one layer proved is re-decided by another.</p>
+<div class="box">
+<h3>Status 2026-09-25</h3>
+<p>The Watcher's observe-and-propose slices are on <code>develop</code>: <code>WatcherHostedService</code>, restart-safe cases, five detector probes, proposal cards and the explicit proposal-decision endpoint were delivered by AGT-2721. The project and workspace orchestrator feed also exists as a raw bus-backed projection with token summaries. Safe rescue is not implemented, and the repository still has no <code>OrgTelemetryEvent/v1</code> contract, cross-application collector, feed curation policy, external-decision import or cached daily and weekly stakeholder rollups.</p>
+</div>
 <p class="muted">Out of scope here: the mechanical delivery invariants themselves (integration proof, delivery envelopes, fences, stale detection). They are producers of signal for this area and are owned by the delivery-chain Dossier.</p>
 </section>
 
@@ -314,7 +318,7 @@
 
 <section id="s5" data-concept-section="open-decisions">
 <h2><span class="no">§5</span>Open decisions</h2>
-<p>Ten choices arrived here unanswered: three from the Watcher, three from the telemetry layer, four from the feed. None of them is settled by the consolidation, and each is recorded below exactly as it stood in its source.</p>
+<p>Thirteen choices remain unanswered: three from the Watcher, six from the telemetry layer, and four from the feed. The round-two review restored the telemetry authority, privacy and rollout approvals that AGT-W38 requested but the first consolidation text had stated only as recommended policy.</p>
 
 <div class="decision" data-decision-id="safe-rescue" data-decision-kind="single" data-decision-label="Safe rescue authority (W3)">
   <h3>D1 · How much may the Watcher repair on its own?</h3>
@@ -391,6 +395,27 @@
   <label data-option-id="no-costs" data-option-label="A · Decisions and landed work, no internal cost figures and nothing sensitive (recommendation)"><input type="radio" name="sharing-boundary" value="no-costs"><span><b>A · Decisions and landed work, without internal costs</b><span class="d">Shareable as a link or artefact. Token figures stay on the internal surfaces where they steer behavior.</span></span></label>
   <label data-option-id="with-costs" data-option-label="B · Include cost figures in the shared summary"><input type="radio" name="sharing-boundary" value="with-costs"><span><b>B · Include cost figures</b><span class="d">Full transparency towards stakeholders about what the work cost.</span></span></label>
   <label data-option-id="internal-only" data-option-label="C · No external sharing at all"><input type="radio" name="sharing-boundary" value="internal-only"><span><b>C · No external sharing</b><span class="d">The summary stays behind board access; stakeholders are told in person.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="telemetry-authority" data-decision-kind="single" data-decision-label="Telemetry action authority">
+  <h3>D11 · Does the telemetry bus remain inert?</h3>
+  <label data-option-id="inert" data-option-label="A · Keep the bus inert; only the orchestrator may act through existing APIs and approved recipes (recommendation)"><input type="radio" name="telemetry-authority" value="inert"><span><b>A · Keep the bus inert</b><span class="d">A telemetry event or cluster never moves a card or mutates Git. Only the orchestrator may request an action through an existing application authority, with policy admission, an idempotent receipt and verification.</span></span></label>
+  <label data-option-id="revise-authority" data-option-label="B · Revise the authority boundary before implementation"><input type="radio" name="telemetry-authority" value="revise-authority"><span><b>B · Revise the authority boundary</b><span class="d">Return the action path for a new proposal before any cross-application collector or automated healing card is implemented.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="telemetry-privacy" data-decision-kind="single" data-decision-label="Telemetry privacy posture">
+  <h3>D12 · Is the local-only privacy posture approved?</h3>
+  <label data-option-id="local-private" data-option-label="A · Approve local-only defaults and the never-collect content list (recommendation)"><input type="radio" name="telemetry-privacy" value="local-private"><span><b>A · Approve the local-only defaults</b><span class="d">Secrets and content are rejected or redacted before append, identity is reduced, full paths and stacks remain local evidence, and publication stays a separate reviewed action.</span></span></label>
+  <label data-option-id="revise-privacy" data-option-label="B · Revise the privacy classes or exclusions before the contract fixture"><input type="radio" name="telemetry-privacy" value="revise-privacy"><span><b>B · Revise the privacy contract</b><span class="d">Name the required change before T0 publishes fixtures, because later collectors and app adapters must all enforce the same boundary.</span></span></label>
+  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+</div>
+
+<div class="decision" data-decision-id="telemetry-rollout" data-decision-kind="single" data-decision-label="Telemetry rollout order">
+  <h3>D13 · Is the proposed cross-application rollout order approved?</h3>
+  <label data-option-id="source-order" data-option-label="A · Chat, Quality Studio, Agent Studio and Runner, Token Economy and websites, voice-lint, then remaining apps (recommendation)"><input type="radio" name="telemetry-rollout" value="source-order"><span><b>A · Approve the source order</b><span class="d">Start with Coding Agent Chat, then Quality Studio, Agent Studio and Runner, Token Economy and the websites, voice-lint, and finally remaining registered applications.</span></span></label>
+  <label data-option-id="revise-order" data-option-label="B · Choose a different sequence after the pilot"><input type="radio" name="telemetry-rollout" value="revise-order"><span><b>B · Revise the sequence</b><span class="d">Keep the Chat pilot decision separate and name the next application only after its identity, event root, privacy review and owner are established.</span></span></label>
   <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
 </div>
 </section>
