@@ -72,6 +72,11 @@ async function stubBackgroundApis(page: Page) {
   ]));
   await page.route('**/api/v1/management/remote-hosts', json([]));
   await page.route('**/api/v1/management/links', json([]));
+  // AGT-2826: keep the release column deterministic; individual tests override
+  // this route when they assert on drift.
+  await page.route('**/api/v1/management/host-releases', json({
+    observedAt: now, stable: { version: '0.3.0', commit: null, builtAt: null }, behindCount: 0, hosts: [],
+  }));
   await page.route('**/api/v1/management/provider-refusals?days=14', json([{
     day: '2026-09-18',
     model: 'gpt-6-astra',
@@ -400,6 +405,96 @@ test.describe('Execution Hosts settings section', () => {
     const local = page.getByTestId('remote-host-card').filter({ hasText: 'Local machine' });
     await expect(local.getByTestId('remote-host-load')).toHaveText('–');
     await expect(local.getByTestId('remote-host-release')).toHaveText('–');
+  });
+
+  /**
+   * AGT-2826: on 15.09.2026 a runner host silently served work on a three-week-old
+   * agent-host release while Stable ran v0.3.0, and nothing in Studio said so.
+   * The release column now names the Stable version and marks each lagging role
+   * with its age.
+   */
+  test('names the Stable release and marks a role whose release lags it', async ({ page }) => {
+    // All host and release responses are mocked; no backend lifecycle is needed.
+    await stubGroupedHostApis(page);
+    const oldRelease = {
+      releaseId: 'agt-host-20260823T060000Z-bbbbbbb',
+      version: '0.2.7',
+      commit: 'bbbbbbb2222',
+      builtAt: '2026-08-23T06:00:00Z',
+    };
+    await page.unroute('**/api/v1/management/host-releases');
+    await page.route('**/api/v1/management/host-releases', route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        observedAt: '2026-09-15T12:00:00Z',
+        stable: { version: '0.3.0', commit: 'aaaaaaa1111', builtAt: '2026-09-11T08:00:00Z' },
+        behindCount: 2,
+        hosts: ['agent-runner-01', 'agent-runner-01-review'].map(runnerId => ({
+          runnerId,
+          name: runnerId,
+          hostId: 'agent-runner-01',
+          role: runnerId.endsWith('review') ? 'review' : 'coding',
+          release: oldRelease,
+          state: 'behind',
+          behindByHours: 458,
+          behindForHours: 458,
+          alarmDue: true,
+          reason: 'The host build is 19d 2h older than the Stable build.',
+          lastSeenAt: '2026-09-15T11:59:00Z',
+          heartbeatStale: false,
+        })),
+      }),
+    }));
+    await page.goto('/#/workspace/settings/execution-hosts');
+
+    await expect(page.getByTestId('remote-hosts-stable-release')).toHaveText('Stable 0.3.0');
+    await expect(page.getByTestId('remote-hosts-release-behind')).toContainText('1 behind Stable');
+
+    const machine = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
+    await expect(machine.getByTestId('remote-host-release-drift')).toHaveText('19d behind');
+    const coding = machine.getByTestId('remote-host-role-row').filter({ hasText: 'Coding' });
+    await expect(coding.getByTestId('remote-host-role-release')).toContainText('0.2.7');
+    await expect(coding.getByTestId('remote-host-role-release-drift')).toHaveText('19d behind');
+    await expect(machine.getByTestId('remote-host-role-row').filter({ hasText: 'Review' })
+      .getByTestId('remote-host-role-release-drift')).toHaveText('19d behind');
+
+    await expect(coding.getByTestId('remote-host-role-release-id')).toHaveText(oldRelease.releaseId);
+    const commit = coding.getByTestId('remote-host-role-release-commit');
+    await expect(commit).toHaveText('bbbbbbb');
+    await page.evaluate(() => {
+      Object.defineProperty(navigator.clipboard, 'writeText', {
+        configurable: true,
+        value: async (value: string) => { (window as unknown as { copiedCommit: string }).copiedCommit = value; },
+      });
+    });
+    await commit.click();
+    expect(await page.evaluate(() => (window as unknown as { copiedCommit: string }).copiedCommit))
+      .toBe(oldRelease.commit);
+    await expect(commit).toHaveText('bbbbbbb');
+
+    await page.mouse.move(0, 0);
+    for (const width of [1600, 900]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        if (width === 1600) {
+          await expect(commit).toBeVisible();
+          await expect(coding.getByTestId('remote-host-role-release-id')).toBeVisible();
+          const cells = await coding.locator('td').evaluateAll(elements => elements.map(cell => cell.getBoundingClientRect().height));
+          expect(Math.max(...cells) - Math.min(...cells)).toBeLessThan(1);
+        } else {
+          // Preserve the existing narrow-table contract: release hides and actions collapse.
+          await expect(commit).toBeHidden();
+          await expect(coding.getByTestId('remote-host-action-overflow')).toBeVisible();
+        }
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+        await page.screenshot({
+          path: join(SHOT_DIR, `execution-hosts-release-drift-${width}-${theme}--mocked.png`),
+          fullPage: false,
+        });
+      }
+    }
   });
 
   test('narrow tables collapse complete actions into the row overflow menu', async ({ page, devBackend: _devBackend }) => {

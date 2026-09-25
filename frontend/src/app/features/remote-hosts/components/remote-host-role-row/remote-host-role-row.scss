@@ -15,10 +15,9 @@
 :host([data-retired='true']) td { color: var(--studio-fg-muted); }
 :host:hover td { background: var(--studio-bg-hover); }
 
-.role__name-cell,
 .role__status,
 .role__actions-wide { display: flex; align-items: center; }
-.role__name-cell {
+.role__name-layout {
   display: grid;
   min-width: 0;
   grid-template-columns: auto auto minmax(0, 1fr);

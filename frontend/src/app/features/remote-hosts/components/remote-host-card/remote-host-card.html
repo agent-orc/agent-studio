@@ -35,18 +35,15 @@
       [attr.title]="h.lastHeartbeatAt ? (h.lastHeartbeatAt | date:'medium') : 'No heartbeat reported'">
     {{ heartbeatLabel() }}
   </td>
-  <td class="host__release" data-testid="remote-host-release"
-      [appTooltip]="releaseLabel()" appTooltipTestId="remote-host-release-tooltip">
-    @if (releaseLabel(); as release) {
-      <code>{{ release }}</code>
-    } @else {
-      <span class="host__placeholder" title="Not reported">–</span>
-    }
+  <td class="host__release" data-testid="remote-host-release">
+    <app-host-release-identity [host]="h" [stableRelease]="stableRelease()"
+      testIdPrefix="remote-host-release" />
   </td>
   <td class="host__actions"><span class="host__placeholder" title="Actions are per runner role">–</span></td>
 </tr>
 @for (role of roles(); track role.id) {
   <tr appRemoteHostRoleRow [host]="role" [activeSlots]="activeSlotsFor(role)" [now]="now()"
+      [stableRelease]="stableRelease()"
       (action)="action.emit($event)"></tr>
 }
 
