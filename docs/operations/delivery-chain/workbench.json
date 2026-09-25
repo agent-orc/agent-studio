@@ -14,7 +14,8 @@
   ],
   "relatedTaskKeys": [
     "AGT-2797",
-    "AGT-2796"
+    "AGT-2796",
+    "AGT-2881"
   ],
   "implementationTasks": [
     {
@@ -112,6 +113,22 @@
           "Each source is verified as represented in the theme Dossier before its verdict is recorded; no separate archive artefact is written."
         ]
       }
+    }
+  ],
+  "review": {
+    "verdict": "current",
+    "supersededBy": [],
+    "reviewedAt": "2026-09-25T05:22:58Z",
+    "reviewedBy": "AGT-2894",
+    "note": "The consolidated Dossier still owns delivery-chain policy and open choices, now including AGT-2881's unimplemented remote-integration authority and Studio-observer direction."
+  },
+  "reviewHistory": [
+    {
+      "verdict": "current",
+      "supersededBy": [],
+      "reviewedAt": "2026-09-25T05:22:58Z",
+      "reviewedBy": "AGT-2894",
+      "note": "The consolidated Dossier still owns delivery-chain policy and open choices, now including AGT-2881's unimplemented remote-integration authority and Studio-observer direction."
     }
   ]
 }

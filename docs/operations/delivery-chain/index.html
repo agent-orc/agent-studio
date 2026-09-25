@@ -422,6 +422,26 @@
   <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
 </div>
 
+<h3 id="remote-integration-authority">Remote integration authority carried from AGT-W18 and AGT-2881</h3>
+<div class="box">
+<p><b>Operator direction, 18 September 2026:</b> the remote host integrates, including gate, merge and push; the local Studio observes and submits authenticated requests. This direction is retained even though the AGT-2881 extension exists only on its salvage ref and is not part of <code>develop</code>. AGT-W59 continues to own the remote-gate mechanics and its open D1 to D6. The delivery-chain questions below remain unapproved.</p>
+</div>
+<div class="tablewrap">
+<table>
+<thead><tr><th>AGT-2881 item</th><th>Open choice carried here</th><th>Current evidence</th></tr></thead>
+<tbody>
+<tr><td>D7 · Authority</td><td>Use one Task Server-authorised, durable project ref-mutation lease for final remote publication, rather than independent Studio, direct-integration, batch and promotion writers.</td><td><code>IntegrationLeaseService</code> is process-local; no durable project-wide publication fence exists.</td></tr>
+<tr><td>D8 · Attempt shape</td><td>Add a durable <code>IntegrationAttempt</code> for candidate construction, verification references and publication, or widen <code>GateAttempt</code> to include privileged publication.</td><td>No <code>IntegrationAttempt</code> contract exists on <code>develop</code>.</td></tr>
+<tr><td>D9 · Review materialisation</td><td>Build one immutable merge candidate on the remote plane, verify it, and publish that same object; otherwise require conservative remote re-verification.</td><td>Review verifies <code>ExpectedResultSha</code>; it does not universally construct the final merge candidate.</td></tr>
+<tr><td>D10 · Windows coverage</td><td>Decide whether a dedicated <code>os:windows</code> executor must run a blocking Windows-sensitive step on the same candidate.</td><td>The target has no approved Windows execution policy.</td></tr>
+<tr><td>D11 · Conflict recovery</td><td>Keep mechanical merge and guarded rebase in the remote integration executor, with one bounded recovery run for semantic conflict or attribution ambiguity.</td><td>Recovery and canonical integration still run through the current backend path.</td></tr>
+<tr><td>D12 · Studio observer</td><td>Make Studio a read model and request client with no integration checkout or canonical-ref credentials.</td><td><code>MergeIntoDevelopRunner</code> still owns merge, gate and deferred push in the Studio backend.</td></tr>
+<tr><td>D13 · Migration</td><td>Shadow one project for a proposed twenty comparable cards, inject the failure matrix, then transfer authority with Studio off and an explicit drained fallback.</td><td>AGT-2737 remains escalated on missing production-infrastructure access.</td></tr>
+<tr><td>D14 · Transitional work</td><td>Keep portable safety fixes, but stop expanding workstation-specific optimisation after remote cutover acceptance.</td><td>AGT-2839, AGT-2872, AGT-2824 and AGT-2854 remain transitional inputs, not proof of the target.</td></tr>
+</tbody>
+</table>
+</div>
+
 <div class="box warn">
 <p><b>Route and floor constraint on all of the above.</b> A mechanical Git instruction can still touch a security boundary or a subtle persistent-state conflict, so a blanket downgrade is unsafe. Any automation computes the policy floor from the model routing policy first and only then applies a cheaper thinking level, never below a hard floor and never over an explicit operator pin. Every action receipt records the previous route, the selected route, the reason, the policy version and whether a pin was present.</p>
 </div>
@@ -483,7 +503,8 @@
 <ul>
 <li>Merged Dossiers: <code>docs/operations/rebase-merge-and-steering</code> (AGT-W37), <code>docs/operations/lieferkette-robustheit</code> (AGT-W50), <code>docs/operations/operational-resilience</code> (AGT-W42), <code>docs/operations/unverifizierte-lieferungen</code> (AGT-W23), <code>docs/operations/token-retry-tax-analysis</code> (AGT-W44), <code>docs/operations/board-statusmodell-ist-soll</code> (AGT-W3), <code>docs/operations/live-improvement-log</code> (AGT-W39).</li>
 <li>Consolidation mandate: <code>docs/operations/dossier-consolidation-and-area-tags</code> (AGT-W55) &sect;3 consolidation map and &sect;4 archiving table, with the operator decisions D1 and D2 of 2026-09-13 07:53 UTC; the relevance matrix in <code>docs/operations/dossier-review-2026-09</code> (AGT-W53).</li>
-<li>Neighbouring decisions that stay separate and are referenced rather than copied: AGT-W51 isolated execution and the healing orchestrator, AGT-W36 batch gate, AGT-W18 remote gate, AGT-W15 global orchestrator watcher, AGT-W49 operations server.</li>
+  <li>Neighbouring decisions that stay separate and are referenced rather than copied: AGT-W51 isolated execution and the healing orchestrator, AGT-W59 Gates, AGT-W15 global orchestrator watcher, and AGT-W49 operations server. The integration-authority extension proposed by AGT-2881 is carried in &sect;6 because it changes the delivery chain beyond the gate boundary.</li>
+  <li>AGT-2881 evidence: task state and salvage ref <code>agent-studio/salvage/agent-runner-01/AGT-2881/run_0f60e197f5864df4bb74df4b01ab2572/fence-1/24b3a7f53e0e972dd68721f4589c96d5a37c6c26</code>. The card is escalated for operator decision and the commit is not an ancestor of <code>develop</code>.</li>
 <li>Measurement sources named by the merged Dossiers: the workspace attempt-authority ledger for 2026-08-13 to 2026-09-12, task-folder gate logs and post-processing outcome records, the backend log, the rollout session ledgers for 2026-08-11 and 2026-08-12, and the read-only live verification sweep of 2026-08-25.</li>
 <li>Policy sources: <code>docs/system/domains/model-routing-policy.md</code> for hard floors and the rule not to promote a stale-base or environmental reissue; <code>docs/operations/git/commit-push-doctrine.md</code> and the ADR archive for the integration and acceptance contract.</li>
 </ul>
