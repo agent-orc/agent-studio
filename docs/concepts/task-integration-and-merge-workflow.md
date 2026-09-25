@@ -96,7 +96,12 @@ If all three stages fail, the merge step persists one structured conflict report
   the usage and delivery, for example
   `automatic recovery budget used: 2/2 for delivery 5cd6b1d4bc07`. Concept and report-only cards
   remain in Human Review. The rail emits one action event per mutation plus a
-  structured sweep summary and a last-run/lane-depth read endpoint.
+  structured sweep summary and a last-run/lane-depth read endpoint. A durable
+  bounce obligation records each eligible conflict before action, including its
+  reviewed attempt, evidence fingerprint, route and idempotency key. The first
+  automatic round in an operator review epoch may proceed; further rounds in
+  that epoch remain for the operator. Global and per-project bounce switches
+  retain deferred obligations, and shadow mode projects them without mutation.
 - Gate environment retry: a merge gate that dies before test discovery is a
   broken gate host, not a verdict on the delivery.
   `GateEnvironmentRetryService` replays the integration alone on a bounded

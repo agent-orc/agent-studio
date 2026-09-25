@@ -403,7 +403,28 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   result ref and delivered SHA start a fresh one. Identifier-less legacy rounds
   count conservatively and are named in the park reason. The `orchestrator-hold` tag and entries
   in `AcceptanceRail:HoldList` match task id, key, or tag and suppress every
-  automatic action. `AcceptanceRail:Enabled`, `IntervalSeconds`, and
+  automatic action. The first eligible reviewed conflict in an operator review
+  epoch also writes a task-owned `logs/integration-bounce/<idempotency-key>.json`
+  obligation before any lane mutation. It binds the current RunAttempt, review
+  epoch, failure evidence, result ref and SHA, branch, conflict paths, round
+  count, hold state, operator route and the safe merge-into-delivery route.
+  Operator recovery writes the same
+  projection and records a manual action. The rail may queue only one automatic
+  round per review epoch; later recoverable conflicts in that epoch remain
+  visible with a `guardian-required` diagnosis route and no second automatic
+  lane move. `IntegrationBounceRail:ShadowOnly` records proposals
+  without a mutation. `IntegrationBounceRail:Enabled` and
+  `IntegrationBounceRail:Projects:<project>:Enabled` return ownership to the
+  operator while retaining deferred obligations. The action receipt records
+  the previous and selected model route, policy version, reason and pin state;
+  recovery lowers thinking only when the model routing policy floor permits it
+  and neither route field is explicitly pinned. The rail caps its interval at
+  five minutes and its status endpoint reports
+  `integration-bounce-worker-unavailable` when the pass is overdue.
+  `GET /api/pipeline/integration-bounce/metrics` reports durable eligible,
+  queued, manual, repeated and deferred counts with mean claim latency and the
+  latest sweep's false-eligibility count.
+  `AcceptanceRail:Enabled`, `IntervalSeconds`, and
   `MaxRequeues` configure the bounded loop. Each action is written to
   `timeline.jsonl`; the structured run log and
   `GET /api/pipeline/acceptance-rail` expose lane depth, action counts, failure
