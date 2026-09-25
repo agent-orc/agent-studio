@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
 using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.OrchestratorEngine;
@@ -167,9 +169,20 @@ public sealed class PostProcessingLoop : IOrchestrationStageHandler
 
 public sealed class GateDispatchLoop : IOrchestrationStageHandler
 {
+    private readonly EngineTaskServerClient? _client;
+    private readonly EngineOptions? _options;
+
+    public GateDispatchLoop() { }
+
+    public GateDispatchLoop(EngineTaskServerClient client, EngineOptions options)
+    {
+        _client = client;
+        _options = options;
+    }
+
     public OrchestrationStage Stage => OrchestrationStage.GateDispatch;
 
-    public Task<OrchestrationStageDecision> ExecuteAsync(
+    public async Task<OrchestrationStageDecision> ExecuteAsync(
         OrchestrationRunDto run,
         CancellationToken ct)
     {
@@ -187,14 +200,89 @@ public sealed class GateDispatchLoop : IOrchestrationStageHandler
         var action = failed > 0
             ? OrchestrationAction.Reissue
             : OrchestrationAction.Continue;
-        return Task.FromResult(new OrchestrationStageDecision(
+        if (_options?.RemotePostBuildTestEnabled == true && _client is not null && failed == 0
+            && payload.RootElement.TryGetProperty("reviewSubjectId", out var reviewId)
+            && reviewId.ValueKind == JsonValueKind.String)
+        {
+            var review = await _client.GetReviewSubjectAsync(reviewId.GetString()!, ct);
+            var verify = review.Plan.Commands.Where(command =>
+                command.ExecutionKind == ReviewCommandKinds.Tool
+                && (command.Aspect is "build-tests" or "lint")).ToArray();
+            if (verify.Length > 0)
+            {
+                var commands = (review.Plan.Preparation ?? [])
+                    .Select(command => new GateCommand(command.StepId, command.FileName,
+                        command.Arguments, Math.Clamp(command.TimeoutSeconds, 1, 7200), command.WorkingSubdir))
+                    .Concat(verify.Select(command => new GateCommand(command.StepId,
+                        command.FileName, command.Arguments,
+                        Math.Clamp(command.TimeoutSeconds, 1, 7200))))
+                    .ToArray();
+                var commandText = string.Join(' ', commands.SelectMany(command =>
+                    new[] { command.FileName }.Concat(command.Arguments))).ToLowerInvariant();
+                var capabilities = new HashSet<string>(StringComparer.Ordinal)
+                {
+                    CapabilityProtocol.GitFetch, CapabilityProtocol.RepositoryAccess,
+                };
+                if (commandText.Contains("dotnet", StringComparison.Ordinal))
+                    capabilities.Add(CapabilityProtocol.DotNet);
+                if (commandText.Contains("npm", StringComparison.Ordinal)
+                    || commandText.Contains("node", StringComparison.Ordinal)
+                    || commandText.Contains("npx", StringComparison.Ordinal))
+                    capabilities.Add(CapabilityProtocol.Node);
+                if (commandText.Contains("playwright", StringComparison.Ordinal))
+                    capabilities.Add(CapabilityProtocol.Playwright);
+                var plan = new GatePlan("post-build-test-gate", 1, commands, "", 21600,
+                    capabilities.Order(StringComparer.Ordinal).ToArray(),
+                    32768, "always");
+                static string Digest(string value) => Convert.ToHexString(
+                    SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
+                var planHash = Digest(JsonSerializer.Serialize(plan, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+                var selectionAuditDigest = Digest(JsonSerializer.Serialize(new
+                {
+                    gateId = plan.GateId,
+                    sourceReviewSubjectId = review.SubjectId,
+                    selectedSteps = verify.Select(command => command.StepId).ToArray(),
+                    preparationSteps = (review.Plan.Preparation ?? [])
+                        .Select(command => command.StepId).ToArray(),
+                    review.Plan.BuildProfileFingerprint,
+                }));
+                var gate = await _client.CreateGateSubjectAsync(new CreateGateSubjectRequest(
+                    run.TaskId, review.SourceRunId, review.RepositoryId,
+                    review.RepositoryUrl, review.ExpectedResultSha, review.ResultRef,
+                    review.SourceBundleArtifactId, review.SourceBundleSha256,
+                    planHash, review.ReviewPolicyHash, run.DefinitionVersion.ToString(),
+                    selectionAuditDigest, plan,
+                    (run.StageResults?.LastOrDefault()?.CompletedAt ?? run.CreatedAt).AddMinutes(15)), ct);
+                while (!GateStates.IsTerminal(gate.Phase))
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, _options.PollSeconds)), ct);
+                    gate = await _client.GetGateStatusAsync(gate.Subject.SubjectId, ct);
+                }
+                var remoteAction = gate.Phase switch
+                {
+                    GateStates.Passed => OrchestrationAction.Continue,
+                    GateStates.ProductFailed => OrchestrationAction.Reissue,
+                    _ => OrchestrationAction.Escalate,
+                };
+                return new OrchestrationStageDecision(remoteAction, JsonSerializer.Serialize(new
+                {
+                    component = nameof(GateDispatchLoop),
+                    gateSubjectId = gate.Subject.SubjectId,
+                    gateAttemptCount = gate.AttemptCount,
+                    gateOutcome = gate.TerminalOutcome,
+                    testedSha = gate.TestedSha,
+                    decision = remoteAction.ToString(),
+                }));
+            }
+        }
+        return new OrchestrationStageDecision(
             action,
             JsonSerializer.Serialize(new
             {
                 component = nameof(GateDispatchLoop),
                 failed,
                 decision = action.ToString(),
-            })));
+            }));
     }
 }
 

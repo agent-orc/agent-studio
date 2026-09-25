@@ -155,6 +155,14 @@ if (options.HealthCheckOnly)
 try
 {
     await client.EnsureCompatibleAsync(shutdown.Token);
+    if (options.Role == "gate")
+    {
+        if (!daemonMode)
+            throw new ArgumentException("Gate Executor runs as a polling service and does not accept coding task keys.");
+        await new RemoteGateDaemon(options, client, Log).RunAsync(shutdown.Token);
+        Log("gate daemon stopped");
+        return 0;
+    }
     if (options.Role == "review")
     {
         if (!daemonMode)

@@ -159,7 +159,7 @@ public sealed class TaskServerClient : IDisposable
         _supportsHostOrchestrator =
             _options?.Role != "review"
             && serverCapabilities.Contains("host-orchestrator", StringComparer.Ordinal);
-        _useV1 = _options?.Role == "review"
+        _useV1 = _options?.Role is "review" or "gate"
             ? serverCapabilities.Contains("review-plane", StringComparer.Ordinal)
             : serverCapabilities.Contains("coding-plane", StringComparer.Ordinal);
     }
@@ -181,8 +181,10 @@ public sealed class TaskServerClient : IDisposable
         {
             var options = _options ?? throw new InvalidOperationException("Runner options are unavailable for v1 registration.");
             var runnerId = options.RunnerId;
-            string[] capabilities = options.Role == "review"
-                ? [.. RunnerCapabilityProbe.ReviewRegistrationCapabilities(options)]
+            string[] capabilities = options.Role is "review" or "gate"
+                ? [.. options.Role == "gate"
+                    ? RunnerCapabilityProbe.GateRegistrationCapabilities(options)
+                    : RunnerCapabilityProbe.ReviewRegistrationCapabilities(options)]
                 : [
                     Contract.ReviewCapabilities.CodingExecutor,
                     "claim",
@@ -872,6 +874,45 @@ public sealed class TaskServerClient : IDisposable
                    },
                    ct)
                 ?? new Contract.ReviewClaimResponse("empty", Message: "Empty review claim response.");
+    }
+
+    public async Task<Contract.GateClaimResponse> ClaimGateAsync(Contract.GateClaimRequest request, CancellationToken ct)
+        => await PostJsonAsync<Contract.GateClaimRequest, Contract.GateClaimResponse>(
+               "/api/v1/gates/claims", request, ct)
+           ?? throw new TaskServerException(500, "Empty gate claim response.");
+
+    public async Task<Contract.GateLease> RenewGateAsync(
+        string attemptId, Contract.GateRenewRequest request, CancellationToken ct)
+        => await PostJsonAsync<Contract.GateRenewRequest, Contract.GateLease>(
+               $"/api/v1/gates/attempts/{Uri.EscapeDataString(attemptId)}/renew", request, ct)
+           ?? throw new TaskServerException(500, "Empty gate renewal response.");
+
+    public async Task<Contract.GateAttempt> AdvanceGateAsync(
+        string attemptId, Contract.GatePhaseRequest request, CancellationToken ct)
+        => await PostJsonAsync<Contract.GatePhaseRequest, Contract.GateAttempt>(
+               $"/api/v1/gates/attempts/{Uri.EscapeDataString(attemptId)}/phase", request, ct)
+           ?? throw new TaskServerException(500, "Empty gate phase response.");
+
+    public async Task<Contract.GateStatus> ReportGateAsync(
+        string attemptId, Contract.SubmitGateReportRequest request, CancellationToken ct)
+        => await PostJsonAsync<Contract.SubmitGateReportRequest, Contract.GateStatus>(
+               $"/api/v1/gates/attempts/{Uri.EscapeDataString(attemptId)}/report", request, ct)
+           ?? throw new TaskServerException(500, "Empty gate report response.");
+
+    public async Task<Contract.GateStatus> ConfirmGateContainmentAsync(
+        string attemptId, Contract.GateContainmentRequest request, CancellationToken ct)
+        => await PostJsonAsync<Contract.GateContainmentRequest, Contract.GateStatus>(
+               $"/api/v1/gates/attempts/{Uri.EscapeDataString(attemptId)}/containment", request, ct)
+           ?? throw new TaskServerException(500, "Empty gate containment response.");
+
+    public async Task<Contract.GateStatus?> GetGateStatusAsync(string subjectId, CancellationToken ct)
+    {
+        using var response = await _http.GetAsync($"/api/v1/gates/subjects/{Uri.EscapeDataString(subjectId)}", ct);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        var detail = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            throw new TaskServerException((int)response.StatusCode, $"Gate status failed: {Trim(detail)}");
+        return JsonSerializer.Deserialize<Contract.GateStatus>(detail, Json);
     }
 
     public async Task<Contract.ReviewLeaseDto> RenewReviewLeaseAsync(

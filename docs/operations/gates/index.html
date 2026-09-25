@@ -405,10 +405,11 @@ svg.diagram .num { font: 700 10px var(--article-sans); fill: var(--gate-note); l
   <p>Batching decides <i>what</i> a suite run covers. This section decides <i>who owns the run</i>. The
   direct SSH subprocess described by the source Dossier is no longer the canonical Remote Review
   build/test path: that work is claimed by an Agent Host as part of a durable, fenced
-  <code>ReviewAttempt</code>. The remaining gap is narrower and still open. Integration and release
-  gates run under the integration owner's in-process exact-subject transaction, so they are not
-  independently claimable, pipeline-stage-neutral <code>GateAttempt</code>s. The contract below remains
-  the proposed replacement for that ownership gap, not a description of shipped gate-step behavior.</p>
+  <code>ReviewAttempt</code>. On 25 September 2026, a dedicated
+  <code>GateAttempt</code> pilot was added behind a default-off switch for the
+  post-build-test stage. Integration and release gates still run under the integration
+  owner's in-process exact-subject transaction. The contract below governs the new
+  pilot and any later gate migration; it does not claim that the operator canary has passed.</p>
 
   <h3>What the replacement must make true</h3>
   <table>
@@ -538,11 +539,13 @@ svg.diagram .num { font: 700 10px var(--article-sans); fill: var(--gate-note); l
   removed or explicitly retained is a separate choice, and it must not survive by accident. The teardown
   threshold is open decision <a href="#d9">D9</a>.</p>
   <div class="box warn">
-    <b>Status of this section.</b> The dedicated <code>GateSubject</code>, <code>GateAttempt</code>,
-    <code>GateLease</code>, <code>GatePlan</code>, and <code>GateReport</code> contract is not implemented.
-    Review-plane primitives now prove the materialization, lease, fence, evidence, and cleanup patterns,
-    but they remain coupled to the Review lifecycle. The choice in D7 and the integration/release-gate
-    migration are still open.
+    <b>Implementation status, 25 September 2026.</b> The dedicated
+    <code>GateSubject</code>, <code>GateAttempt</code>, <code>GateLease</code>,
+    <code>GatePlan</code>, and <code>GateReport</code> pilot is implemented behind the
+    default-off post-build-test switch. The registered-host canary, restart matrix,
+    and throughput comparison are operator-run follow-ups. The backend gate remains
+    active while the switch is off. Integration/release-gate migration and SSH bridge
+    teardown are separate work.
   </div>
 
   <h2 id="sect5"><span class="number">&sect;5</span> Validation economy: what survives from async validation</h2>
@@ -735,6 +738,8 @@ svg.diagram .num { font: 700 10px var(--article-sans); fill: var(--gate-note); l
   </div>
 
   <h3>Remote gate</h3>
+  <p>The first remote gate delivery keeps the switch off. The registered host canary and throughput
+    comparison precede any change to the default.</p>
   <div class="decision" id="d7" data-decision-id="gate-ownership-shape" data-decision-kind="single" data-decision-label="Primary shape of remote gate execution" data-decision-status="decided" data-selected-option-id="claimable-step">
     <h3>D7 &middot; Primary shape of remote gate execution</h3>
     <label data-option-id="claimable-step" data-option-label="A &middot; Claimable GateAttempt in the Task Server protocol (recommended)"><input type="radio" name="gate-ownership-shape" value="claimable-step" checked><span><b>A &middot; A dedicated claimable gate step, with capability as an admission predicate and review workspace primitives reused but not the review lifecycle (recommended)</b><span class="d">Task Server owns durable gate truth, Engine owns dispatch, Agent Host executes. Share workspace materialization, containment namespace, command evidence and cleanup; keep the review attempt as the semantic review lifecycle. Start the catalogue with the post-build-test gate only.</span></span></label>
