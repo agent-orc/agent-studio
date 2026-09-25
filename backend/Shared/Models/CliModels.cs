@@ -312,7 +312,9 @@ public static class ModelMetadataRegistry
     private static readonly ModelMetadata[] Entries =
     [
         Claude(ModelIds.ClaudeOpus5, "Claude Opus 5", isDefault: true, context: 1_000_000,
-            thinkingLevels: ["low", "medium", "high", "xhigh", "max"], defaultThinkingLevel: "high"),
+            aliases: ["claude-opus-5-5"],
+            thinkingLevels: ["low", "medium", "high", "xhigh", "max"], defaultThinkingLevel: "high",
+            minimumCliVersion: "2.1.281"),
         Claude(ModelIds.ClaudeFable51, "Claude Fable 5.1", context: 200_000,
             aliases: ["claude-fable-5.1"],
             thinkingLevels: ["low", "medium", "high", "xhigh", "max"], defaultThinkingLevel: "high"),
@@ -817,10 +819,12 @@ public static class ModelMetadataRegistry
         long context = 200_000,
         string[]? aliases = null,
         string[]? thinkingLevels = null,
-        string? defaultThinkingLevel = null)
+        string? defaultThinkingLevel = null,
+        string? minimumCliVersion = null)
         => new(id, label, "anthropic", isDefault, Deprecated: false, Available: true,
             ContextWindow: context, Aliases: aliases,
-            ThinkingLevels: thinkingLevels, DefaultThinkingLevel: defaultThinkingLevel);
+            ThinkingLevels: thinkingLevels, DefaultThinkingLevel: defaultThinkingLevel,
+            MinimumCliVersion: minimumCliVersion);
 
     private static string? VendorForCli(string? cliType)
     {
