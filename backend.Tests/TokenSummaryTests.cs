@@ -144,9 +144,10 @@ public class TokenSummaryTests
     [Fact]
     public void Summarize_KnownModelWithoutPrice_IsUnpricedButNotCatalogDrift()
     {
+        var firstPrice = TokenPricing.Catalog["gpt-5-codex"].History.Min(price => price.ValidFrom);
         var entry = Entry("gpt-5-codex", 1_000, 100) with
         {
-            Ts = new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc),
+            Ts = firstPrice.AddTicks(-1),
         };
 
         var summary = TokenSummaryService.Summarize("Demo", [entry]);
@@ -219,9 +220,9 @@ public class TokenSummaryTests
         Assert.Equal("claude-haiku-4-5", summary.Entries[1].Model);
         Assert.Equal("Claude Haiku 4.5", summary.Entries[1].DisplayModel);
         Assert.Equal(t.AddMinutes(5), summary.LastUpdate);
-        Assert.False(summary.AllModelsPriced);
+        Assert.True(summary.AllModelsPriced);
         Assert.True(summary.EstimatedApiCostUsd > 0m);
-        Assert.False(summary.Entries[0].ModelPriced);
+        Assert.True(summary.Entries[0].ModelPriced);
         Assert.True(summary.Entries[1].ModelPriced);
     }
 
@@ -237,7 +238,7 @@ public class TokenSummaryTests
 
         var summary = TokenSummaryService.SummarizePerJob(entries)["job-a"];
 
-        Assert.True(summary.AllModelsPriced);
+        Assert.Equal(summary.Entries.All(entry => entry.ModelPriced), summary.AllModelsPriced);
         Assert.Equal(2, summary.Entries.Count);
         Assert.NotEqual(
             summary.Entries[0].EstimatedApiCostUsd,
@@ -245,6 +246,23 @@ public class TokenSummaryTests
         Assert.Equal(
             summary.Entries.Sum(entry => entry.EstimatedApiCostUsd),
             summary.EstimatedApiCostUsd);
+    }
+
+    [Fact]
+    public void SummarizePerJob_PricesPinnedOpus55ReceiptFromPublishedCatalog()
+    {
+        var at = new DateTime(2026, 9, 25, 0, 0, 0, DateTimeKind.Utc);
+        var summary = TokenSummaryService.SummarizePerJob([
+            JobEntry(ModelIds.ClaudeOpus55, 1_000_000, 100_000, at,
+                participantId: "agent:claude")
+        ])["job-a"];
+
+        var receipt = Assert.Single(summary.Entries);
+        Assert.Equal(ModelIds.ClaudeOpus55, receipt.Model);
+        Assert.Equal("Claude Opus 5.5", receipt.DisplayModel);
+        Assert.True(receipt.ModelPriced);
+        Assert.Equal(TokenPricing.Estimate(ModelIds.ClaudeOpus55,
+            1_000_000, 100_000, 0, 0, at).Total, receipt.EstimatedApiCostUsd);
     }
 
     [Fact]

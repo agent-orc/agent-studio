@@ -76,6 +76,25 @@ public sealed class ModelRoutingPolicyGuardTests
         Assert.True(registry.Policy.Tiers.Any(t => t.Id == "sonnet-low"));
         var astra = registry.ProviderRejectionFallback(CliTypes.Codex, ModelIds.Gpt6Astra);
         Assert.Equal(ModelIds.Gpt56Sol, astra!.ToModel);
+        Assert.Equal(ModelIds.ClaudeOpus5,
+            registry.ProviderRejectionFallback(CliTypes.Claude, ModelIds.ClaudeOpus55)!.ToModel);
+        Assert.Equal(ModelIds.Gpt56Sol,
+            registry.ProviderRejectionFallback(CliTypes.Codex, ModelIds.Gpt6Sol)!.ToModel);
+        Assert.Equal(ModelIds.Gpt56Luna,
+            registry.ProviderRejectionFallback(CliTypes.Codex, ModelIds.Gpt6Luna)!.ToModel);
+    }
+
+    [Fact]
+    public void Feature_recommendations_keep_the_existing_terra_tier_for_both_clis()
+    {
+        var registry = new ModelRoutingPolicyRegistry();
+        var codex = registry.Recommend(TaskTypes.Feature, GptCatalogue, economyMode: false);
+        var claude = registry.Recommend(TaskTypes.Feature, ClaudeCatalogue, economyMode: false);
+
+        Assert.Equal("terra-medium", codex.Tier);
+        Assert.Equal(ModelIds.Gpt56Terra, codex.Model);
+        Assert.Equal("terra-medium", claude.Tier);
+        Assert.Equal(ModelIds.ClaudeSonnet5, claude.Model);
     }
 
     [Fact]

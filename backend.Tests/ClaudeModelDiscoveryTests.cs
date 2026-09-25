@@ -33,6 +33,21 @@ public class ClaudeModelDiscoveryTests
     }
 
     [Fact]
+    public void Reconcile_Opus55_requires_claude_code_21281_even_when_picker_lists_it()
+    {
+        var parsed = ClaudeModelDiscovery.ParsePickerSnapshot("Select Model\n> Claude Opus 5.5 (selected)");
+        var old = ClaudeModelDiscovery.Reconcile(parsed, "2.1.270 (Claude Code)");
+        var unavailable = Assert.Single(old, m => m.Id == ModelIds.ClaudeOpus55);
+        Assert.False(unavailable.Available);
+        Assert.Contains("2.1.281", unavailable.AvailabilityNote);
+
+        var current = ClaudeModelDiscovery.Reconcile(parsed, "2.1.281");
+        var available = Assert.Single(current, m => m.Id == ModelIds.ClaudeOpus55);
+        Assert.True(available.Available);
+        Assert.Equal("high", available.DefaultThinkingLevel);
+    }
+
+    [Fact]
     public void ParsePickerSnapshot_MapsKnownClaudeLabelsThroughRegistry()
     {
         var models = ClaudeModelDiscovery.ParsePickerSnapshot("""

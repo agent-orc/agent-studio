@@ -60,7 +60,7 @@ public class WorkspaceTokensTimelineTests
         // for that cell and dollars must be null.
         var projectC = new[]
         {
-            Entry(windowStart.AddHours(4).AddMinutes(20), "gpt-5", 11_000, 1_100)
+            Entry(windowStart.AddHours(4).AddMinutes(20), "unknown-catalog-model", 11_000, 1_100)
         };
 
         var input = new (string Project, IReadOnlyList<OrchestratorLogEntry> Entries)[]
@@ -106,7 +106,7 @@ public class WorkspaceTokensTimelineTests
         Assert.Equal(220_000L, bravo3.Total);
         Assert.True(bravo3.AllModelsPriced);
 
-        // Project charlie: the gpt-5 call appears, but its dollar number
+        // Project charlie: the unknown-model call appears, but its dollar number
         // is null (model not in the catalog) and allModelsPriced is false.
         var charlieCells = t.Cells.Where(c => c.Project == "charlie").ToList();
         var charlie4 = Assert.Single(charlieCells);

@@ -1,6 +1,6 @@
 # Model Routing Policy
 
-Version: 2026-09-18
+Version: 2026-09-25
 
 Status: Canonical policy, initial hypothesis based on the 2026-07-23 historical benchmark
 
@@ -39,6 +39,25 @@ it, but it has no routing tier, is not the product default, and has no cohort
 in the benchmark below. Whether it becomes a tier or the default is a separate
 operator decision; until then it is selectable only as an explicit pin, and an
 explicit pin is not evidence that it clears any correctness floor.
+
+Claude Opus 5.5, GPT-6 Sol, and GPT-6 Luna are also known, untiered models.
+They can be explicitly pinned when the installed CLI offers them. This
+catalogue update does not change any routing tier, vendor override, or default:
+Claude Opus 5 remains the Claude default and Codex still derives its default
+from live `gpt-5.6-sol` discovery. The new models have no local outcome cohort
+that justifies a tier change. Claude Opus 5.5 uses Studio's `high` default
+effort, while [Anthropic's API default is `medium`](https://platform.claude.com/docs/en/models/opus-5-5/overview).
+Its CLI floor is claude-code `2.1.281`. GPT-6 Sol and GPT-6 Luna require
+codex-cli `0.155.0`; their reasoning ladders and defaults come from live CLI
+discovery. Sol ran successfully on a ChatGPT account with that CLI version.
+Luna appeared in discovery, but execution on that account is unverified.
+The [Sol model page](https://developers.openai.com/api/docs/models/gpt-6-sol)
+and [Luna model page](https://developers.openai.com/api/docs/models/gpt-6-luna)
+each list a 1,050,000 token context window.
+The picker disables a missing model with a version reason when an older CLI is
+installed. Pricing and aliases come from TokenEconomy `0.3.5`, using
+[Anthropic's pricing](https://platform.claude.com/docs/en/about-claude/pricing)
+and [OpenAI's pricing](https://developers.openai.com/api/docs/pricing).
 
 `gpt-5.6-luna`, `gpt-5.6-terra`, and `gpt-5.4-mini` above were already this
 policy's routing tiers, but until AGT-2707 round 2 they had no
@@ -179,7 +198,7 @@ the task, improve its evidence, or ask for a human decision.
 ### Benchmark candidate notes
 
 Agent Studio consumes the Token Economy `ModelBenchmarkMatrix.FindCandidates`
-query from package version 0.3.4. The benchmark library recommends alternatives;
+query from package version 0.3.5. The benchmark library recommends alternatives;
 Agent Studio keeps the selected route unchanged. A candidate can therefore
 inform an operator decision but cannot bypass the score ladder, correctness
 floors, explicit pins, or quota admission.
@@ -251,11 +270,17 @@ family-generation rule.
 
 `backend/Policies/model-migration-catalog.v1.json` (loaded by
 `ModelMigrationCatalogRegistry`, served at `GET /api/cli/model-migrations`) is
-the versioned list of known-safe "from model -> to model" replacements: same
-family, newer generation, `safeAuto: true` when the orchestrator may apply it
-without operator confirmation. Today it holds exactly the superseded Opus and
-Sonnet generations pointing at `claude-opus-5` / `claude-sonnet-5`; it holds no
-Haiku or gpt-mini entry for the reason above.
+the versioned list of same-family "from model -> to model" proposals.
+`safeAuto: true` permits the orchestrator to apply a replacement without
+operator confirmation. The older Opus and Sonnet generations point to
+`claude-opus-5` / `claude-sonnet-5`; the catalog holds no
+Haiku or gpt-mini entry for the reason above. It also proposes
+`claude-opus-5` to `claude-opus-5-5`, `gpt-5.6-sol` to `gpt-6-sol`, and
+`gpt-5.6-luna` to `gpt-6-luna`. These three entries have `safeAuto: false`:
+operators can review and apply them, while run admission never applies them.
+The release dates and model ids are documented in the
+[Anthropic release notes](https://platform.claude.com/docs/en/release-notes/overview#september-22-2026)
+and [OpenAI API changelog](https://developers.openai.com/api/docs/changelog).
 
 This catalog is currently an interim Studio-owned copy, following the same
 replaceable-seam posture as `IModelEconomyAdvisor` and the TokenEconomy pricing
@@ -374,7 +399,9 @@ load-bearing boundary is recorded in
 
 The interim equivalence table covers only the tiers already named above: Codex
 Sol/high with Claude Opus 5/high, and Codex Mini/high with Claude Sonnet
-5/medium. If quota fallback is needed, an explicit model or thinking pin that
+5/medium. The proposal catalog resolves GPT-6 Sol/high through GPT-5.6 Sol/high
+and Claude Opus 5.5/high through Opus 5/high for this comparable-model lookup.
+If quota fallback is needed, an explicit model or thinking pin that
 has no exact cross-family equivalence does not fall through to a weaker route;
 admission waits. Explicit operator fallback overrides remain available and win
 over the derived table.
@@ -389,9 +416,11 @@ can preserve its floor.
 
 A provider-side HTTP 400, 403, or 404 model-request refusal is distinct from
 quota and authentication. The versioned policy document declares same-provider
-sibling routes for this condition: `gpt-6-astra` to `gpt-5.6-sol`, Anthropic
-Opus 5 to Opus 4.8, and Anthropic Sonnet 5 to Sonnet 4.6. The continuation keeps
-the original thinking level and must still clear the card's correctness floor.
+sibling routes for this condition: `gpt-6-astra` and `gpt-6-sol` to
+`gpt-5.6-sol`, `gpt-6-luna` to `gpt-5.6-luna`, Claude Opus 5.5 to Opus 5,
+Anthropic Opus 5 to Opus 4.8, and Anthropic Sonnet 5 to Sonnet 4.6. The
+continuation keeps the original thinking level and must still clear the card's
+correctness floor.
 
 The first refusal uses a run-scoped `modelFallback` and leaves the card's model
 unchanged. A second refusal of the same configured model pins the card to the

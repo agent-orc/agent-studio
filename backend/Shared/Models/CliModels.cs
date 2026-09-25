@@ -137,6 +137,7 @@ public static class ContinueModes
 /// <summary>Canonical model id constants. Call sites should reference these instead of repeated literals.</summary>
 public static class ModelIds
 {
+    public const string ClaudeOpus55 = "claude-opus-5-5";
     public const string ClaudeOpus5 = "claude-opus-5";
     public const string ClaudeFable51 = "claude-fable-5-1";
     public const string ClaudeOpus48 = "claude-opus-4-8";
@@ -185,6 +186,8 @@ public static class ModelIds
     /// offer it yet (AGT-2707). It is not the product default; that stays with
     /// <see cref="Gpt56Sol"/> detection / the <see cref="Gpt55"/> baseline.</summary>
     public const string Gpt6Astra = "gpt-6-astra";
+    public const string Gpt6Sol = "gpt-6-sol";
+    public const string Gpt6Luna = "gpt-6-luna";
     public const string Gpt5Codex = "gpt-5-codex";
     public const string Gpt41 = "gpt-4.1";
     public const string Gpt4o = "gpt-4o";
@@ -311,6 +314,10 @@ public static class ModelMetadataRegistry
 {
     private static readonly ModelMetadata[] Entries =
     [
+        Claude(ModelIds.ClaudeOpus55, "Claude Opus 5.5", context: 1_000_000,
+            aliases: ["claude-opus-5.5"],
+            thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
+            defaultThinkingLevel: "high", minimumCliVersion: "2.1.281") with { Available = false },
         Claude(ModelIds.ClaudeOpus5, "Claude Opus 5", isDefault: true, context: 1_000_000,
             thinkingLevels: ["low", "medium", "high", "xhigh", "max"], defaultThinkingLevel: "high"),
         Claude(ModelIds.ClaudeFable51, "Claude Fable 5.1", context: 200_000,
@@ -340,6 +347,10 @@ public static class ModelMetadataRegistry
         // invented rates), same posture as the GPT-4.1 / GPT-4o entries.
         new(ModelIds.Gpt6Astra, "GPT-6 Astra", "openai", IsDefault: false, Deprecated: false, Available: true,
             ContextWindow: 272_000, MinimumCliVersion: "0.153.0"),
+        new(ModelIds.Gpt6Sol, "GPT-6 Sol", "openai", IsDefault: false, Deprecated: false, Available: false,
+            ContextWindow: 1_050_000, MinimumCliVersion: "0.155.0"),
+        new(ModelIds.Gpt6Luna, "GPT-6 Luna", "openai", IsDefault: false, Deprecated: false, Available: false,
+            ContextWindow: 1_050_000, MinimumCliVersion: "0.155.0"),
         // gpt-5.6-terra / gpt-5.6-luna are the lower cost tiers of the gpt-5.6
         // family used by model-routing-policy.md. Onboarded as registry entries
         // (AGT-2707 round 2) purely so the picker disables them with a reason on
@@ -435,7 +446,7 @@ public static class ModelMetadataRegistry
     /// only when that decision is made.
     /// </summary>
     private static readonly HashSet<string> LiveDiscoveredLadderModelIds =
-        new(StringComparer.OrdinalIgnoreCase) { ModelIds.Gpt6Astra };
+        new(StringComparer.OrdinalIgnoreCase) { ModelIds.Gpt6Astra, ModelIds.Gpt6Sol, ModelIds.Gpt6Luna };
 
     /// <summary>Whether <paramref name="model"/> is onboarded to take its reasoning
     /// ladder/default from live CLI discovery rather than the static table.</summary>
@@ -587,9 +598,15 @@ public static class ModelMetadataRegistry
     public static string? NormalizeForCli(string? cliType, string? model)
     {
         var trimmed = string.IsNullOrWhiteSpace(model) ? null : model.Trim();
-        if (string.IsNullOrWhiteSpace(cliType)) return trimmed;
+        var canonical = trimmed is null ? null : NormalizeId(trimmed);
+        // Preserve historic alias storage for existing models. New generation
+        // spellings must become the exact ids accepted by their CLIs.
+        var normalized = canonical is ModelIds.ClaudeOpus55 or ModelIds.Gpt6Sol or ModelIds.Gpt6Luna
+            ? canonical
+            : trimmed;
+        if (string.IsNullOrWhiteSpace(cliType)) return normalized;
         return IsCompatibleWithCli(cliType, trimmed)
-            ? trimmed ?? DefaultForCli(cliType)
+            ? normalized ?? DefaultForCli(cliType)
             : DefaultForCli(cliType);
     }
 
@@ -729,7 +746,7 @@ public static class ModelMetadataRegistry
     public static string UnavailableOnInstalledCliNote(string cliLabel, string? cliVersion)
         => string.IsNullOrWhiteSpace(cliVersion)
             ? $"Not offered by the installed {cliLabel}."
-            : $"Not offered by the installed {cliLabel} {cliVersion.Trim()}.";
+            : $"Not offered by the installed {cliLabel} {SemanticCliVersion.FromCliOutput(cliVersion)}.";
 
     /// <summary>
     /// Explains a missing model as an actionable version requirement whenever
@@ -743,6 +760,7 @@ public static class ModelMetadataRegistry
         string? cliVersion,
         string? modelId)
     {
+        cliVersion = SemanticCliVersion.FromCliOutput(cliVersion);
         var minimum = Find(modelId)?.MinimumCliVersion;
         if (!string.IsNullOrWhiteSpace(minimum)
             && SemanticCliVersion.TryCompare(cliVersion, minimum, out var comparison)
@@ -817,10 +835,12 @@ public static class ModelMetadataRegistry
         long context = 200_000,
         string[]? aliases = null,
         string[]? thinkingLevels = null,
-        string? defaultThinkingLevel = null)
+        string? defaultThinkingLevel = null,
+        string? minimumCliVersion = null)
         => new(id, label, "anthropic", isDefault, Deprecated: false, Available: true,
             ContextWindow: context, Aliases: aliases,
-            ThinkingLevels: thinkingLevels, DefaultThinkingLevel: defaultThinkingLevel);
+            ThinkingLevels: thinkingLevels, DefaultThinkingLevel: defaultThinkingLevel,
+            MinimumCliVersion: minimumCliVersion);
 
     private static string? VendorForCli(string? cliType)
     {
@@ -842,6 +862,22 @@ public static class ModelMetadataRegistry
 /// </summary>
 public static class SemanticCliVersion
 {
+    private static readonly Regex CliOutputVersion = new(
+        @"(?:^|\s)(?<version>[vV]?\d+(?:\.\d+){1,2}(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)(?=\s|$)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    /// <summary>Extract the semantic version from ordinary CLI --version output.</summary>
+    public static string? FromCliOutput(string? output)
+    {
+        if (string.IsNullOrWhiteSpace(output)) return null;
+        var trimmed = output.Trim();
+        if (TryParse(trimmed, out _)) return trimmed;
+        var match = CliOutputVersion.Match(trimmed);
+        return match.Success && TryParse(match.Groups["version"].Value, out _)
+            ? match.Groups["version"].Value
+            : trimmed;
+    }
+
     private static readonly Regex Pattern = new(
         @"^[vV]?(?<core>0|[1-9]\d*)(?:\.(?<minor>0|[1-9]\d*))?(?:\.(?<patch>0|[1-9]\d*))?(?:-(?<pre>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);

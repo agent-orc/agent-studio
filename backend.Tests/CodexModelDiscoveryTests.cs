@@ -115,6 +115,33 @@ public class CodexModelDiscoveryTests : IDisposable
     }
 
     [Fact]
+    public void NewGpt6Models_require_codex_0155_and_live_discovery()
+    {
+        const string output = """
+        {"models":[
+          {"slug":"gpt-6-sol","display_name":"GPT-6 Sol","visibility":"list","priority":1,
+           "supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"}],
+           "default_reasoning_level":"medium"}
+        ]}
+        """;
+        var parsed = CodexModelDiscovery.ParseDebugModelsJson(output);
+        var old = CodexModelDiscovery.WithKnownButUnavailableModels(
+            new CliModelCatalog { Models = parsed }, "codex-cli 0.154.0");
+        var oldSol = Assert.Single(old.Models, m => m.Id == ModelIds.Gpt6Sol);
+        Assert.False(oldSol.Available);
+        Assert.Contains("0.155", oldSol.AvailabilityNote);
+        Assert.False(Assert.Single(old.Models, m => m.Id == ModelIds.Gpt6Luna).Available);
+
+        var current = CodexModelDiscovery.WithKnownButUnavailableModels(
+            new CliModelCatalog { Models = parsed }, "0.155.0");
+        var sol = Assert.Single(current.Models, m => m.Id == ModelIds.Gpt6Sol);
+        Assert.True(sol.Available);
+        Assert.Equal(["low", "medium", "high"], sol.ThinkingLevels);
+        Assert.Equal("medium", sol.DefaultThinkingLevel);
+        Assert.False(Assert.Single(current.Models, m => m.Id == ModelIds.Gpt6Luna).Available);
+    }
+
+    [Fact]
     public void WithKnownButUnavailableModels_OnRealCodex01534Catalog_AstraUsesCliLadder_SolStaysStatic_MiniDisabled()
     {
         var catalog = new CliModelCatalog

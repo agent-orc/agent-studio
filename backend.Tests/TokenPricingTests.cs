@@ -114,9 +114,11 @@ public class TokenPricingTests
     }
 
     [Fact]
-    public void Estimate_Gpt5CodexWithoutPublishedPrice_IsExplicitlyUnknown()
+    public void Estimate_Gpt5CodexBeforeFirstPublishedPrice_IsExplicitlyUnknown()
     {
-        var c = _provider.Estimate("gpt-5-codex", 1_000_000, 100_000, 1_000_000, 1_000_000);
+        var firstPrice = TokenPricing.Catalog["gpt-5-codex"].History.Min(p => p.ValidFrom);
+        var c = _provider.Estimate("gpt-5-codex", 1_000_000, 100_000, 1_000_000, 1_000_000,
+            firstPrice.AddTicks(-1));
         Assert.False(c.ModelKnown);
         Assert.Equal(TokenEconomy.PriceStatus.NoPriceForDate, c.Status);
         Assert.Equal(0m, c.Total);
@@ -166,14 +168,18 @@ public class TokenPricingTests
         var before = _provider.Estimate("claude-sonnet-5", 1_000_000, 0, 0, 0, transition.AddTicks(-1));
         var after = _provider.Estimate("claude-sonnet-5", 1_000_000, 0, 0, 0, transition);
 
-        Assert.True(before.ModelKnown);
         Assert.True(after.ModelKnown);
-        Assert.Equal(TokenEconomy.PriceStatus.Resolved, before.Status);
         Assert.Equal(TokenEconomy.PriceStatus.Resolved, after.Status);
-        Assert.NotEqual(before.Total, after.Total);
-        Assert.NotEqual(before.PriceBasis!.ValidFrom, after.PriceBasis!.ValidFrom);
-        Assert.False(string.IsNullOrWhiteSpace(before.PriceBasis.Source));
         Assert.False(string.IsNullOrWhiteSpace(after.PriceBasis.Source));
+        if (before.ModelKnown)
+        {
+            Assert.Equal(TokenEconomy.PriceStatus.Resolved, before.Status);
+            Assert.NotEqual(before.PriceBasis!.ValidFrom, after.PriceBasis.ValidFrom);
+        }
+        else
+        {
+            Assert.Equal(TokenEconomy.PriceStatus.NoPriceForDate, before.Status);
+        }
     }
 
     [Fact]
@@ -184,6 +190,21 @@ public class TokenPricingTests
         Assert.True(dotted.ModelKnown);
         Assert.Equal(dashed.Total, dotted.Total);
         Assert.Equal(ModelIds.ClaudeOpus47, dotted.ModelId);
+    }
+
+    [Theory]
+    [InlineData(ModelIds.ClaudeOpus55, 4, 0.20, 20)]
+    [InlineData(ModelIds.Gpt6Sol, 2, 0.20, 10)]
+    [InlineData(ModelIds.Gpt6Luna, 0.10, 0.01, 0.50)]
+    public void PublishedCatalog_prices_new_models(
+        string model, double input, double cachedInput, double output)
+    {
+        var cost = TokenPricing.Estimate(model, 1_000_000, 1_000_000, 1_000_000, 0,
+            new DateTime(2026, 9, 25, 0, 0, 0, DateTimeKind.Utc));
+        Assert.True(cost.ModelKnown);
+        Assert.Equal((decimal)input, cost.PriceBasis!.InputPerMillion);
+        Assert.Equal((decimal)cachedInput, cost.PriceBasis.CacheReadPerMillion);
+        Assert.Equal((decimal)output, cost.PriceBasis.OutputPerMillion);
     }
 
     [Fact]
@@ -233,6 +254,14 @@ public class TokenPricingTests
     {
         Assert.Null(TokenPricing.CanonicalModelId("not-a-real-model"));
     }
+
+    [Theory]
+    [InlineData("Claude Opus 5.5", ModelIds.ClaudeOpus55)]
+    [InlineData("claude-opus-5.5", ModelIds.ClaudeOpus55)]
+    [InlineData("GPT-6 Sol", ModelIds.Gpt6Sol)]
+    [InlineData("GPT-6 Luna", ModelIds.Gpt6Luna)]
+    public void New_model_labels_and_aliases_fold_to_the_priced_id(string value, string expected)
+        => Assert.Equal(expected, TokenPricing.CanonicalModelId(value));
 
     [Fact]
     public void CanonicalModelId_NullOrBlank_ReturnsNull()

@@ -82,4 +82,21 @@ public class TokenSummaryAggregateTests
         Assert.Contains(agg.ByModel, m => m.Model == "totally-unknown-model-a");
         Assert.Contains(agg.ByModel, m => m.Model == "totally-unknown-model-b");
     }
+
+    [Theory]
+    [InlineData("Claude Opus 5.5", ModelIds.ClaudeOpus55)]
+    [InlineData("GPT-6 Sol", ModelIds.Gpt6Sol)]
+    [InlineData("GPT-6 Luna", ModelIds.Gpt6Luna)]
+    public void AggregateSummaries_NewModelDisplayAndId_FoldIntoPricedRow(
+        string display, string modelId)
+    {
+        var aggregate = TokenSummaryService.AggregateSummaries([
+            Project("display", Model(display, 1, 100, 10)),
+            Project("id", Model(modelId, 1, 100, 10))
+        ]);
+
+        var row = Assert.Single(aggregate.ByModel);
+        Assert.Equal(2, row.Calls);
+        Assert.Equal(display, row.Model);
+    }
 }

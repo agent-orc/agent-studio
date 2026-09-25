@@ -116,11 +116,8 @@ public class TaskMutationService
     /// </summary>
     private void AppendModelChangeMarker(TaskInfo info, string? previousModel, string? newModel)
     {
-        // Gate on the CANONICAL ids: NormalizeForCli trims but does not
-        // canonicalize aliases (e.g. "claude-opus-4.8" vs "claude-opus-4-8"),
-        // so comparing the raw spellings would fire a phantom "Model changed"
-        // notice for what is the same model. The human spelling is still what
-        // gets displayed in the line.
+        // Compare canonical ids so older persisted aliases cannot produce a
+        // phantom "Model changed" notice. The human spelling is displayed.
         if (string.Equals(
                 ModelMetadataRegistry.NormalizeId(previousModel),
                 ModelMetadataRegistry.NormalizeId(newModel),

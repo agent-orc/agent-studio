@@ -56,4 +56,15 @@ public class ModelMetadataRegistryTests
     {
         Assert.Equal("some-unlisted-model", ModelMetadataRegistry.NormalizeId(" some-unlisted-model "));
     }
+
+    [Theory]
+    [InlineData(CliTypes.Claude, "claude-opus-5.5", ModelIds.ClaudeOpus55)]
+    [InlineData(CliTypes.Codex, "GPT-6 Sol", ModelIds.Gpt6Sol)]
+    [InlineData(CliTypes.Codex, "GPT-6 Luna", ModelIds.Gpt6Luna)]
+    public void NormalizeForCli_canonicalizes_new_model_aliases_and_labels(
+        string cli, string value, string expected)
+    {
+        Assert.Equal(expected, ModelMetadataRegistry.NormalizeForCli(cli, value));
+        Assert.Equal(expected, ModelMetadataRegistry.NormalizeId(value));
+    }
 }

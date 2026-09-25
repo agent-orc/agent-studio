@@ -1,3 +1,5 @@
+using AgentStudio.Pipeline;
+
 namespace AgentStudio.Cli;
 
 /// <summary>
@@ -34,6 +36,7 @@ public interface IModelEquivalenceCatalog
 public sealed class ModelEquivalenceCatalog : IModelEquivalenceCatalog
 {
     private sealed record Tier(string CliType, string Model, string? ThinkingLevel);
+    private static readonly ModelMigrationCatalogRegistry MigrationCatalog = new();
 
     // One row per documented pair. model-routing-policy.md names Claude
     // Opus 5/high as "a reasonable equivalent-provider signal" for the
@@ -56,6 +59,15 @@ public sealed class ModelEquivalenceCatalog : IModelEquivalenceCatalog
     public (string Model, string? ThinkingLevel)? TryGetEquivalent(
         string fromCliType, string? fromModel, string? fromThinkingLevel, string toCliType)
     {
+        // Proposal-only successors inherit their predecessor's comparable
+        // cross-provider tier. This is a lookup, not an automatic migration.
+        var canonicalModel = string.IsNullOrWhiteSpace(fromModel)
+            ? null
+            : ModelMetadataRegistry.NormalizeId(fromModel);
+        var comparableModel = MigrationCatalog.Catalog.Migrations
+            .FirstOrDefault(m => !m.SafeAuto &&
+                string.Equals(m.To, canonicalModel, StringComparison.OrdinalIgnoreCase))?.From
+            ?? canonicalModel;
         foreach (var group in Groups)
         {
             // A caller with no explicit primary model pinned (the common case
@@ -64,7 +76,7 @@ public sealed class ModelEquivalenceCatalog : IModelEquivalenceCatalog
             // display default; an explicit model must match exactly.
             var from = Array.Find(group, t =>
                 string.Equals(t.CliType, fromCliType, StringComparison.OrdinalIgnoreCase)
-                && (string.IsNullOrWhiteSpace(fromModel) || string.Equals(t.Model, fromModel, StringComparison.OrdinalIgnoreCase))
+                && (string.IsNullOrWhiteSpace(comparableModel) || string.Equals(t.Model, comparableModel, StringComparison.OrdinalIgnoreCase))
                 && (string.IsNullOrWhiteSpace(fromThinkingLevel)
                     || string.Equals(t.ThinkingLevel, fromThinkingLevel, StringComparison.OrdinalIgnoreCase)));
             if (from is null) continue;

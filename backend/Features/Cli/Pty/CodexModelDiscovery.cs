@@ -293,6 +293,7 @@ public sealed class CodexModelDiscovery
     /// </summary>
     internal static CliModelCatalog WithKnownButUnavailableModels(CliModelCatalog cat, string? cliVersion)
     {
+        cliVersion = SemanticCliVersion.FromCliOutput(cliVersion);
         var models = ModelMetadataRegistry.AppendUnavailableRegistryEntries(
                 cat.Models,
                 vendor: "openai",
@@ -300,12 +301,19 @@ public sealed class CodexModelDiscovery
                 availabilityNote: ModelMetadataRegistry.UnavailableOnInstalledCliNote(CliLabel, cliVersion));
         return cat with
         {
-            Models = models.Select(model => model.Available ? model : model with
+            Models = models.Select(model =>
             {
-                AvailabilityNote = ModelMetadataRegistry.UnavailableOnInstalledCliNote(
-                    CliLabel,
-                    cliVersion,
-                    model.Id)
+                var minimum = ModelMetadataRegistry.Find(model.Id)?.MinimumCliVersion;
+                var belowFloor = !string.IsNullOrWhiteSpace(minimum)
+                    && SemanticCliVersion.TryCompare(cliVersion, minimum, out var comparison)
+                    && comparison < 0;
+                return model.Available && !belowFloor ? model : model with
+                {
+                    Available = false,
+                    IsDefault = false,
+                    AvailabilityNote = ModelMetadataRegistry.UnavailableOnInstalledCliNote(
+                        CliLabel, cliVersion, model.Id)
+                };
             }).ToList()
         };
     }
@@ -371,6 +379,7 @@ public sealed class CodexModelDiscovery
     /// </summary>
     private CliModelCatalog Publish(CliModelCatalog cat)
     {
+        cat = WithKnownButUnavailableModels(cat, _versionTracker?.CurrentVersion(CliTypes.Codex));
         // Ladders first: every later default resolution reads them.
         ModelMetadataRegistry.SetDetectedCodexLadders(cat.Models);
         var detected = PickDetectedDefault(cat);
@@ -382,7 +391,7 @@ public sealed class CodexModelDiscovery
             "openai", cat.Models.Where(m => m.Available).Select(m => m.Id));
         _logger.LogDebug("Codex detected default published: {Detected} (source={Source})",
             detected ?? "<none>", cat.Source);
-        return WithKnownButUnavailableModels(cat, _versionTracker?.CurrentVersion(CliTypes.Codex));
+        return cat;
     }
 
     private CliModelCatalog WithActiveModelApplied(CliModelCatalog cat)

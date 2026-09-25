@@ -23,7 +23,8 @@ public sealed class BetterCandidateServiceTests
         var settings = new ProjectSettings { BenchmarkCapabilityClass = "CodingAgent" };
 
         var projected = service.Attach(ready, settings);
-        var candidate = Assert.Single(projected.BetterCandidates!.Candidates);
+        var candidate = Assert.Single(projected.BetterCandidates!.Candidates,
+            item => item.BenchmarkType == "deepswe-v1.1");
         Assert.Equal("gpt-6-astra", candidate.Model);
         Assert.Equal("deepswe-v1.1", candidate.BenchmarkType);
         Assert.True(candidate.ScoreDelta > 0);
