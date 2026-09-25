@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "lieferkette-robustheit",
   "title": "Lieferkette: Robustheit statt Rezepte",
-  "summary": "Operator-Auftrag 12.09.2026: nachhaltige Lösung für die wiederkehrenden Ausfälle der Lieferkette. Datenbasis 13.08.–12.09.: 1.077 Review-Versuche für 157 Karten (6,9 je Karte), 411 identische Fehlversuche einer Karte ohne Abbruch, 138 rote QS-Gates aus fünf flaky Tests, Review-Dauer p90 sechs Stunden, rund 25 Operator-Rezepte als einziges Sicherheitsnetz. Fünf strukturelle Muster (veränderlicher Zustand ohne Nachweis, falsche Fehlerklasse, Wiederholung ohne Abbruch, drei Ausführungswelten, fehlender Lebenszyklus-Besitz), fünf Richtungen (Hermetik, Diagnosekontrakt, Unterbrecher auf Fingerprints, Besitz und Heilungen als Code, Durchsatz), Empfehlung in drei Wellen, vier Messgrößen, fünf Entscheidungen D1–D5, Kartenschnitt K1–K9. Abgrenzung 12.09. nachmittags: R1 und R4 sind in AGT-W51 ausgeführt (Vorbereitung, Isolation, Orchestrator, Tests/CI); hier bleiben Analyse, Welle 1 (Diagnosekontrakt, Unterbrecher, Flaky-Quarantäne, Guard zuerst), D4 und D5; D2/D3 fallen in AGT-W51 (D2/D6).",
+  "summary": "Operator-Auftrag 12.09.2026: nachhaltige L\u00F6sung f\u00FCr die wiederkehrenden Ausf\u00E4lle der Lieferkette. Datenbasis 13.08.\u201312.09.: 1.077 Review-Versuche f\u00FCr 157 Karten (6,9 je Karte), 411 identische Fehlversuche einer Karte ohne Abbruch, 138 rote QS-Gates aus f\u00FCnf flaky Tests, Review-Dauer p90 sechs Stunden, rund 25 Operator-Rezepte als einziges Sicherheitsnetz. F\u00FCnf strukturelle Muster (ver\u00E4nderlicher Zustand ohne Nachweis, falsche Fehlerklasse, Wiederholung ohne Abbruch, drei Ausf\u00FChrungswelten, fehlender Lebenszyklus-Besitz), f\u00FCnf Richtungen (Hermetik, Diagnosekontrakt, Unterbrecher auf Fingerprints, Besitz und Heilungen als Code, Durchsatz), Empfehlung in drei Wellen, vier Messgr\u00F6\u00DFen, f\u00FCnf Entscheidungen D1\u2013D5, Kartenschnitt K1\u2013K9. Abgrenzung 12.09. nachmittags: R1 und R4 sind in AGT-W51 ausgef\u00FChrt (Vorbereitung, Isolation, Orchestrator, Tests/CI); hier bleiben Analyse, Welle 1 (Diagnosekontrakt, Unterbrecher, Flaky-Quarant\u00E4ne, Guard zuerst), D4 und D5; D2/D3 fallen in AGT-W51 (D2/D6).",
   "entrypoint": "index.html",
   "status": "documented",
   "phase": "decision-ready",
@@ -31,9 +31,9 @@
     "supersededBy": [
       "AGT-W57"
     ],
-    "reviewedAt": "2026-09-14T18:43:49Z",
+    "reviewedAt": "2026-09-25T12:40:15Z",
     "reviewedBy": "Operator",
-    "note": "Consolidated into AGT-W57 Delivery chain: integration, recovery, robustness (AGT-2799), per AGT-W55 section 3 and operator decisions D1 and D2 of 2026-09-13. No separate archive artefact: the durable knowledge lives in the theme Dossier."
+    "note": "Operator review: AGT-W50 is consolidated into AGT-W57 Delivery chain Dossier; section 7 maps its durable knowledge. No archive artefact is needed."
   },
   "reviewHistory": [
     {
@@ -53,6 +53,15 @@
       "reviewedAt": "2026-09-14T18:43:49Z",
       "reviewedBy": "Operator",
       "note": "Consolidated into AGT-W57 Delivery chain: integration, recovery, robustness (AGT-2799), per AGT-W55 section 3 and operator decisions D1 and D2 of 2026-09-13. No separate archive artefact: the durable knowledge lives in the theme Dossier."
+    },
+    {
+      "verdict": "superseded",
+      "supersededBy": [
+        "AGT-W57"
+      ],
+      "reviewedAt": "2026-09-25T12:40:15Z",
+      "reviewedBy": "Operator",
+      "note": "Operator review: AGT-W50 is consolidated into AGT-W57 Delivery chain Dossier; section 7 maps its durable knowledge. No archive artefact is needed."
     }
   ]
 }
