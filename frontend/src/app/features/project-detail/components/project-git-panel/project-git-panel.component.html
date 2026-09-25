@@ -28,15 +28,24 @@
       }
     </div>
   } @else {
-    <div class="git__workspace" [class.git__workspace--with-changes]="!!inspectedCommit()">
-      <app-project-git-tree
-        class="git__tree"
-        [groups]="tree()"
-        [selectedId]="selectedId()"
-        (branchSelected)="selectBranch($event)"
-        (worktreeSelected)="selectWorktree($event)"
-        (activeSelected)="selectActive($event)"
-      />
+    <div class="git__workspace" [class.git__workspace--with-inspector]="!!selectedCommitSha()">
+      <div class="git__left">
+        <app-project-git-tree
+          class="git__tree"
+          [groups]="tree()"
+          [selectedId]="selectedId()"
+          (branchSelected)="selectBranch($event)"
+          (worktreeSelected)="selectWorktree($event)"
+          (activeSelected)="selectActive($event)"
+        />
+        <app-project-branch-sweep class="git__sweep" [projectName]="projectName()" />
+      </div>
+
+      <div class="git__splitter" appResizableSplitter
+           splitterStorageKey="taskboard.projectGit.treeWidth"
+           splitterCssProperty="--git-tree-width" [splitterDefaultSize]="300"
+           [splitterMinSize]="220" [splitterMinOppositeSize]="420"
+           aria-label="Resize refs and sweep column" data-testid="project-git-tree-splitter"></div>
 
       <div class="git__history">
         <app-project-git-history
@@ -55,16 +64,21 @@
         }
       </div>
 
-      @if (inspectedCommit(); as commit) {
-        <app-project-git-changes
-          class="git__changes"
-          [projectName]="projectName()"
-          [commit]="commit"
-          (closed)="closeChanges()"
-        />
+      @if (selectedCommit(); as selectedCommit) {
+        <div class="git__splitter" appResizableSplitter
+             splitterStorageKey="taskboard.projectGit.inspectorWidth"
+             splitterCssProperty="--git-inspector-width" [splitterDefaultSize]="360"
+             [splitterMinSize]="280" [splitterMinOppositeSize]="380" splitterSide="end"
+             aria-label="Resize commit inspector" data-testid="project-git-inspector-splitter"></div>
+        @if (inspectedCommit(); as commit) {
+          <app-project-git-changes class="git__inspector" [projectName]="projectName()"
+            [commit]="commit" [initialPath]="inspectedPath()" (closed)="closeChanges()" />
+        } @else {
+          <app-project-git-commit-details class="git__inspector" [projectName]="projectName()"
+            [commit]="selectedCommit" (parentSelected)="selectSha($event)"
+            (fileSelected)="inspectChanges(selectedCommit, $event)" (closed)="closeInspector()" />
+        }
       }
     </div>
-
-    <app-project-branch-sweep class="git__sweep" [projectName]="projectName()" />
   }
 </section>
