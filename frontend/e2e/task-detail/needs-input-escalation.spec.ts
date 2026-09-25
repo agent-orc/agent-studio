@@ -1,7 +1,8 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { dismissDevErrorDialog, setTheme } from '../helpers/theme';
+import { contrastRatio } from '../helpers/contrast';
+import { dismissDevErrorDialog, sampleColours, setTheme } from '../helpers/theme';
 
 const PROJECT = 'NeedsInput fixture';
 const WATCH_PATH = '/fixtures/needs-input';
@@ -29,6 +30,10 @@ function json(route: Route, body: unknown): Promise<void> {
 async function installRoutes(page: Page): Promise<void> {
   await page.route('**:5039/update/status', route => json(route, { isRunning: false, behindBy: 0 }));
   await page.route('**/api/**', route => json(route, []));
+  await page.route('**/api/cli/quota**', route => json(route, {
+    at: '2026-09-11T14:44:00.000Z', ttlSeconds: 600, snapshots: [],
+  }));
+  await page.route('**/api/cli/usage**', route => json(route, { sessions: [] }));
   await page.route('**/api/auth/status', route => json(route, {
     profile: 'local', bootstrapRequired: false, authenticated: false, user: null,
   }));
@@ -55,6 +60,9 @@ async function installRoutes(page: Page): Promise<void> {
       agent: 'codex',
       cliType: 'codex',
       model: 'gpt-5.6-codex',
+      modelExplicit: true,
+      thinkingLevel: 'xhigh',
+      thinkingLevelExplicit: true,
       createdAt: '2026-09-11T14:00:00.000Z',
       lastActivity: '2026-09-11T14:44:00.000Z',
       watchPath: WATCH_PATH,
@@ -102,14 +110,58 @@ async function installRoutes(page: Page): Promise<void> {
     promptMarkdown: 'Choose a deployment design.',
     statusMarkdown: '',
     log: [],
-    promptHistory: [],
+    promptHistory: [{
+      index: 1,
+      fileName: 'prompt-1.md',
+      markdown: 'Compare the connector and LAN options, then park for the operator decision.',
+      writtenAt: '2026-09-11T14:40:00.000Z',
+    }],
     reviewEvidence: [],
   }));
+  await page.route(new RegExp(`/api/tasks/${JOB_ID}/runs(\\?|$)`), route => json(route, {
+    runCount: 2,
+    firstStartedAt: '2026-09-11T14:01:00.000Z',
+    lastActivityAt: '2026-09-11T14:44:00.000Z',
+    hasActiveRun: false,
+    runs: [
+      {
+        index: 1, intent: 'start', startedAt: '2026-09-11T14:01:00.000Z', endedAt: '2026-09-11T14:30:00.000Z',
+        status: 'completed', cli: 'codex', model: 'gpt-5.6-codex', thinkingLevel: 'xhigh', exitCode: 0,
+        durationSeconds: 1740, inputSessionId: null, capturedSessionId: 'session-1', resumed: false,
+        reason: null, userFollowup: null, lineStart: 1, lineEnd: 2, headShaBefore: null, headShaAfter: null, contextRef: null,
+      },
+      {
+        index: 2, intent: 'continue', startedAt: '2026-09-11T14:40:00.000Z', endedAt: '2026-09-11T14:44:00.000Z',
+        status: 'completed', cli: 'codex', model: 'gpt-6-sol', thinkingLevel: 'high', exitCode: 0,
+        durationSeconds: 240, inputSessionId: 'session-1', capturedSessionId: 'session-1', resumed: true,
+        reason: null, userFollowup: null, lineStart: 3, lineEnd: 284, headShaBefore: null, headShaAfter: null, contextRef: null,
+      },
+    ],
+    promptEntries: [{
+      index: 2, runIndex: 2, intent: 'continue', at: '2026-09-11T14:40:00.000Z', label: 'Prompt #2',
+      fileName: 'prompt-1.md', promptTokenSource: 'prompt-history',
+      promptPreview: 'Compare the connector and LAN options, then park for the operator decision.',
+      promptTokenEstimate: 14, contextTokenEstimate: 200, contextRef: null, contextSnapshot: null,
+    }],
+  }));
+  const transcript = [
+    { timestamp: '2026-09-11T14:01:00.000Z', stream: 'system', text: '[taskboard] Started codex CLI' },
+    { timestamp: '2026-09-11T14:30:00.000Z', stream: 'system', text: '[taskboard] codex CLI exited' },
+    ...Array.from({ length: 278 }, (_, index) => ({
+      timestamp: `2026-09-11T14:4${index % 4}:00.000Z`,
+      stream: 'stdout',
+      text: index % 7 === 0 ? `* Read deployment-option-${index}.md` : `Compared deployment constraint ${index + 1}.`,
+    })),
+    { timestamp: '2026-09-11T14:43:58.000Z', stream: 'stdout', text: 'I need the operator to choose between the connector and LAN deployment.' },
+    { timestamp: '2026-09-11T14:44:00.000Z', stream: 'system', text: '[taskboard] codex CLI exited' },
+  ];
+  await page.route(new RegExp(`/api/tasks/${JOB_ID}/output(\\?|$)`), route => json(route, transcript));
 }
 
 test('NeedsInput escalation shows the full question, options, and answer field', async ({ page }, testInfo) => {
   await installRoutes(page);
   await page.goto(`/?job=${JOB_ID}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+  await page.addStyleTag({ content: HIDE_DEV_DIALOG });
   await dismissDevErrorDialog(page);
 
   const question = page.getByTestId('needs-input-question');
@@ -142,8 +194,12 @@ test('NeedsInput escalation shows the full question, options, and answer field',
  * derived escalation headline, because the park is the authoritative statement.
  */
 test('a parked card says why it is parked, above the derived escalation headline', async ({ page }, testInfo) => {
+  await page.addInitScript(([key, taskId]) => {
+    localStorage.setItem(key, JSON.stringify({ [taskId]: true }));
+  }, ['taskboard.parkedSession.expanded.v1', JOB_ID]);
   await installRoutes(page);
   await page.goto(`/?job=${JOB_ID}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+  await page.addStyleTag({ content: HIDE_DEV_DIALOG });
   await dismissDevErrorDialog(page);
 
   const park = page.getByTestId('parked-blocker');
@@ -171,12 +227,34 @@ test('a parked card says why it is parked, above the derived escalation headline
   const escalationTop = (await page.getByTestId('escalation-summary').boundingBox())!.y;
   expect(parkTop).toBeLessThan(escalationTop);
 
+  await expect(page.getByTestId('parked-session-context')).toBeVisible();
+  await expect(page.getByTestId('parked-session-model')).toContainText('gpt-6-sol');
+  await expect(page.getByTestId('parked-session-model')).toContainText('Pinned model');
+  await expect(page.getByTestId('parked-session-prompt')).toContainText('Compare the connector and LAN options');
+  await expect(page.getByTestId('parked-session-transcript')).toBeVisible();
+  await expect(page.getByTestId('parked-session-transcript')).toContainText('I need the operator to choose');
+  await expect(page.getByTestId('parked-session-transcript').getByTestId('convo-tools-pill').first()).toBeVisible();
+  await expect(page.getByTestId('parked-session-show-earlier')).toBeVisible();
+  await expect(page.getByTestId('parked-session-full-log')).toHaveAttribute('href', /cli-output\.log/);
+  await page.setViewportSize({ width: 1280, height: 1400 });
+
   mkdirSync(RESULTS, { recursive: true });
   for (const theme of ['dark', 'light'] as const) {
     await setTheme(page, theme);
     await dismissDevErrorDialog(page);
-    const path = join(RESULTS, `parked-blocker-${theme}--mocked.png`);
+    for (const selector of [
+      '[data-testid="parked-blocker-type"]',
+      '[data-testid="parked-blocker-since"]',
+      '[data-testid="parked-blocker-question"]',
+      '[data-testid="parked-blocker-fact-label"]',
+      '[data-testid="parked-blocker-condition"]',
+    ]) {
+      const { color, bg } = await sampleColours(page, selector);
+      expect(contrastRatio(color, bg), `${theme} ${selector}: ${color} on ${bg}`)
+        .toBeGreaterThanOrEqual(4.5);
+    }
+    const path = join(RESULTS, `parked-session-expanded-${theme}--mocked.png`);
     await park.screenshot({ path, style: HIDE_DEV_DIALOG });
-    await testInfo.attach(`Parked blocker ${theme}`, { path, contentType: 'image/png' });
+    await testInfo.attach(`Parked session expanded ${theme}`, { path, contentType: 'image/png' });
   }
 });

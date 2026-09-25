@@ -130,6 +130,14 @@ clear it, the last evaluation, and the documents the run named. On the board a
 park reads as `Waiting on you` when it needs a person's choice and as `Parked`
 when it needs a fix, so the two are distinguishable at a glance.
 
+The detail panel also provides a per-card session-context disclosure. It is
+collapsed by default, remembers its browser state, and loads the parking run's
+transcript only while open. The run timeline supplies the effective CLI, model,
+thinking level, prompt source, and log span; task settings are shown as pinned
+values only when they differ. The existing bounded CLI-output projection feeds
+the shared conversation renderer, with older lines disclosed in batches and a
+link to the complete run log. This adds no filesystem or HTTP contract.
+
 **The reason was a slug, not a question.** The marker now carries a `decision`
 block: `questionId` (the slug, kept as an identifier), `question` (one sentence),
 `options` (the ones the run had already weighed), and `documents`.

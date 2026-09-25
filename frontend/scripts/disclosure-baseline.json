@@ -15,6 +15,7 @@
     "src/app/features/task-detail/components/prompt-pane/agent-work-detail/agent-work-detail.component.html",
     "src/app/features/task-detail/components/prompt-pane/overview-pane/overview-pane.component.html",
     "src/app/features/task-detail/components/prompt-pane/pipeline-token-usage/pipeline-token-usage.component.html",
+    "src/app/features/task-detail/components/parked-blocker/parked-blocker.component.html",
     "src/app/features/task-detail/components/protocol-pane/previous-results-control/previous-results-control.component.html",
     "src/app/features/task-detail/components/protocol-pane/protocol-verdict-banner/protocol-verdict-banner.component.html"
   ],
