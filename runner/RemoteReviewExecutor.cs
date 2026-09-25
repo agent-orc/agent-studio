@@ -511,6 +511,11 @@ public sealed class RemoteReviewExecutor
                 // Built inside the gate and inside the retry loop: a takeover
                 // between attempts must make the next report use its new fence.
                 var lease = _authority.Lease;
+                var diagnosedClassification = evidence.Verdicts.FirstOrDefault(verdict =>
+                    verdict.Classification is
+                        DeliveryFailureDiagnosis.Environment or
+                        DeliveryFailureDiagnosis.Intermittent or
+                        DeliveryFailureDiagnosis.FirstOccurrence)?.Classification;
                 var request = new ReviewReportRequest(
                     lease.ExecutorId,
                     lease.InstanceId,
@@ -518,7 +523,7 @@ public sealed class RemoteReviewExecutor
                     lease.Fence,
                     $"review-report:{attempt.AttemptId}:{lease.Fence}",
                     failureClassification is null ? evidence.Outcome : "ReviewInfra",
-                    failureClassification,
+                    failureClassification ?? diagnosedClassification,
                     summary,
                     evidence.Workspace,
                     workspace.EnvironmentEvidence(
