@@ -275,6 +275,10 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         "cannot find module\\s+['\"]\\.{1,2}[\\\\/][^'\"]+['\"][\\s\\S]{0,8192}" +
         "require stack:[\\s\\S]{0,8192}node_modules[\\\\/]",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+    private static readonly Regex PreparationRunNuGetPath = new(
+        "agentstudio-preparation-cache[\\\\/]\\.runs[\\\\/][^\\s'\"\\\\/]+" +
+        "[\\\\/]nuget[\\\\/]",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     private static readonly string[] CodeExtensions =
     [
@@ -518,6 +522,21 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                             workspace!, preparation, commands, plan.Source, mode, timeout,
                             [], projectPreparation, ct)
                             .ConfigureAwait(false);
+                    if (completed.FailureKind == BuildTestGateFailureKind.Environment
+                        && IsPreparationCacheNuGetFailure(completed.Output + "\n" + completed.Reason))
+                    {
+                        foreach (var message in ProjectPreparationExecutor.EvictPublishedBlocks(
+                                     projectPreparation,
+                                     "nuget",
+                                     "gate-environment-failure",
+                                     item => _logger.LogWarning("{ProjectPreparationMessage}", item)))
+                        {
+                            completed = completed with
+                            {
+                                Output = AppendOutput(completed.Output, "# " + message),
+                            };
+                        }
+                    }
                     var completedAudit = CompleteAudit(staged.Audit, commands, completed.Processes);
                     completed = completed with
                     {
@@ -1832,10 +1851,13 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         // Only a genuine MSBuild build-output lock (MSB3026/MSB3027) is a real,
         // retryable host fault; every other string from a completed process is a
         // code/test defect that must flow through the normal reissue path instead.
-        // A genuine toolchain/bundler startup crash is the one other exemption:
+        // A genuine toolchain/bundler startup crash is one exemption:
         // it is an unambiguous signature that the process never reached test
         // discovery, so it cannot be a completed process reporting its own
-        // product result the way a logged lock string can (CAC-18).
+        // product result the way a logged lock string can (CAC-18). The other is
+        // a missing NuGet package inside this gate's private preparation-cache
+        // run directory: that path is executor-owned and cannot be changed by
+        // the delivery, so the torn-cache signature is equally narrow.
         if (CompletedNormally(process)
             && !IsGenuineBuildOutputLock(evidence)
             && classified != BuildTestGateFailureKind.Environment)
@@ -1869,9 +1891,34 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
            || (evidence.Contains("javascript-transformer-worker", StringComparison.OrdinalIgnoreCase)
                && evidence.Contains("node_modules/@angular/build", StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>
+    /// A high-confidence torn NuGet cache signature. The path must point into
+    /// this gate's own <c>agentstudio-preparation-cache/.runs/&lt;run&gt;/nuget</c>
+    /// directory; the same NuGet diagnostic for any repository or host path is
+    /// deliberately not exempted from the completed-process Code rule.
+    /// </summary>
+    internal static bool IsPreparationCacheNuGetFailure(string? evidence)
+    {
+        var value = evidence ?? string.Empty;
+        var cachePath = PreparationRunNuGetPath.Match(value);
+        if (!cachePath.Success) return false;
+        var nu1101 = value.IndexOf("NU1101", StringComparison.OrdinalIgnoreCase);
+        if (nu1101 >= 0 && Math.Abs(cachePath.Index - nu1101) <= 8_192) return true;
+
+        var missing = value.LastIndexOf(
+            "Could not find file",
+            cachePath.Index,
+            StringComparison.OrdinalIgnoreCase);
+        if (missing < 0 || cachePath.Index - missing > 8_192) return false;
+        var package = value.IndexOf(".nupkg", cachePath.Index, StringComparison.OrdinalIgnoreCase);
+        return package >= cachePath.Index && package - cachePath.Index <= 8_192;
+    }
+
     internal static BuildTestGateFailureKind ClassifyFailure(string? text)
     {
         var value = text ?? string.Empty;
+        if (IsPreparationCacheNuGetFailure(value))
+            return BuildTestGateFailureKind.Environment;
         if (IsGenuineToolchainStartupCrash(value))
             return BuildTestGateFailureKind.Environment;
         if (ContainsAny(value,

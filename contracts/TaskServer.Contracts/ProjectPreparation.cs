@@ -1367,10 +1367,32 @@ public static partial class ProjectPreparationExecutor
         var content = Path.Combine(entry, "content");
         var working = Path.Combine(runRoot, block);
         var entryExists = Directory.Exists(entry);
-        var hit = File.Exists(Path.Combine(entry, "manifest.json"))
-                  && Directory.Exists(content)
-                  && ContainsAnyFile(content);
+        var validation = ValidateCacheBlock(block, content);
+        var manifestPresent = File.Exists(Path.Combine(entry, "manifest.json"));
+        var hit = manifestPresent && Directory.Exists(content) && validation.Valid;
         var invalidEntry = entryExists && !hit;
+        var validationReason = !manifestPresent
+            ? "manifest-missing"
+            : !Directory.Exists(content)
+                ? "content-missing"
+                : validation.Reason;
+        if (entryExists)
+        {
+            log?.Invoke(
+                $"project-prepare cache validation block={block} key={key} " +
+                $"state={(hit ? "valid" : "invalid")} reason={validationReason}");
+        }
+        if (invalidEntry)
+        {
+            var evicted = ProjectPreparationCacheSweep.EvictEntry(entry);
+            if (evicted || !Directory.Exists(entry))
+            {
+                log?.Invoke(
+                    $"project-prepare cache block={block} key={key} state=evicted " +
+                    $"reason=validation-{validationReason}");
+                invalidEntry = false;
+            }
+        }
         if (hit)
         {
             CopyDirectory(content, working);
@@ -1390,6 +1412,53 @@ public static partial class ProjectPreparationExecutor
             StringComparer.Ordinal);
         return new(block, environmentVariable, key, entry, working, hit, invalidEntry,
             relativeInputs, inputHashes);
+    }
+
+    /// <summary>
+    /// Validates the reusable payload of one preparation-cache block. NuGet's
+    /// global-packages layout considers a package extraction complete only when
+    /// every package-version directory contains <c>.nupkg.metadata</c>. The
+    /// marker check catches a tree whose assemblies survived an external
+    /// eviction but whose package archive and extraction marker did not.
+    /// </summary>
+    internal static (bool Valid, string Reason) ValidateCacheBlock(
+        string block,
+        string contentRoot)
+    {
+        if (!Directory.Exists(contentRoot) || !ContainsAnyFile(contentRoot))
+            return (false, "empty-content");
+        if (!string.Equals(block, "nuget", StringComparison.OrdinalIgnoreCase))
+            return (true, "content-present");
+
+        try
+        {
+            var packageDirectories = Directory.EnumerateDirectories(contentRoot)
+                .Where(path => !Path.GetFileName(path).StartsWith(".", StringComparison.Ordinal))
+                .ToArray();
+            if (packageDirectories.Length == 0)
+                return (false, "nuget-package-directory-missing");
+
+            foreach (var packageDirectory in packageDirectories)
+            {
+                var versions = Directory.EnumerateDirectories(packageDirectory).ToArray();
+                if (versions.Length == 0)
+                    return (false, "nuget-version-directory-missing");
+                foreach (var version in versions)
+                {
+                    if (!File.Exists(Path.Combine(version, ".nupkg.metadata")))
+                    {
+                        var relative = Path.GetRelativePath(contentRoot, version)
+                            .Replace('\\', '/');
+                        return (false, "nuget-metadata-missing:" + relative);
+                    }
+                }
+            }
+            return (true, "nuget-metadata-complete");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return (false, "content-unreadable");
+        }
     }
 
     private static bool ContainsAnyFile(string root)
@@ -1554,6 +1623,17 @@ public static partial class ProjectPreparationExecutor
     {
         foreach (var binding in bindings.Where(binding => !binding.Hit))
         {
+            var validation = ValidateCacheBlock(binding.Block, binding.WorkingPath);
+            if (!validation.Valid)
+            {
+                log?.Invoke(
+                    $"project-prepare cache validation block={binding.Block} key={binding.Key} " +
+                    $"state=invalid reason={validation.Reason}");
+                log?.Invoke(
+                    $"project-prepare cache block={binding.Block} key={binding.Key} " +
+                    $"state=publish-rejected reason={validation.Reason}");
+                continue;
+            }
             if (Directory.Exists(binding.EntryPath))
             {
                 log?.Invoke($"project-prepare cache block={binding.Block} key={binding.Key} state=already-published");
@@ -1611,8 +1691,40 @@ public static partial class ProjectPreparationExecutor
             stopwatch.ElapsedMilliseconds, succeeded, read.Definition!.Commands.Prepare,
             tools, lockHashes,
             bindings.Select(binding => new PreparationCacheManifest(
-                binding.Block, binding.Key, binding.Hit ? "hit" : succeeded ? "published" : "discarded",
+                binding.Block, binding.Key,
+                binding.Hit ? "hit"
+                    : succeeded && ValidateCacheBlock(binding.Block, binding.WorkingPath).Valid ? "published"
+                    : succeeded ? "unused"
+                    : "discarded",
                 binding.EntryPath, binding.Inputs)).ToArray(), kind, signature, reason, outputTail);
+    }
+
+    /// <summary>
+    /// Evicts published blocks used by a successful preparation when later gate
+    /// evidence proves that their private run copy was torn. This is defensive:
+    /// normal lookup validation rejects a torn NuGet entry before it is copied.
+    /// </summary>
+    public static IReadOnlyList<string> EvictPublishedBlocks(
+        ProjectPreparationResult? preparation,
+        string block,
+        string reason,
+        Action<string>? log = null)
+    {
+        if (preparation?.Manifest is null) return [];
+        var messages = new List<string>();
+        foreach (var cache in preparation.Manifest.Caches.Where(cache =>
+                     string.Equals(cache.Block, block, StringComparison.OrdinalIgnoreCase)))
+        {
+            var state = ProjectPreparationCacheSweep.EvictEntry(cache.EntryPath)
+                ? "evicted"
+                : "noop-no-entry";
+            var message =
+                $"project-prepare cache block={cache.Block} key={cache.Key} " +
+                $"state={state} reason={reason}";
+            messages.Add(message);
+            log?.Invoke(message);
+        }
+        return messages;
     }
 
     private static void WriteManifest(string path, ProjectPreparationManifest manifest)

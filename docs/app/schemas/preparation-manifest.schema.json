@@ -27,7 +27,7 @@
         "properties": {
           "block": { "enum": ["npm", "nuget", "playwright"] },
           "key": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-          "state": { "enum": ["hit", "published", "discarded"] },
+          "state": { "enum": ["hit", "published", "unused", "discarded"] },
           "entryPath": { "description": "Executor-local immutable cache entry path.", "type": "string", "minLength": 1 },
           "inputs": { "description": "Repository-relative cache-key inputs.", "type": "array", "items": { "type": "string" } }
         }

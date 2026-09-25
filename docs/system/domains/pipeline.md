@@ -624,6 +624,13 @@ steer the pipeline in this policy version.
   restore never wrote to (NETSDK1064, TE-52). The folder is released when the
   gate finishes or the run's slot is freed; an unreleased folder is reclaimed by
   age after 24 hours.
+- A published preparation block is validated before the gate copies it into its
+  private run directory. A NuGet block is reusable only when every
+  `<package>/<version>` directory contains NuGet's `.nupkg.metadata` extraction
+  marker. A missing marker, missing content directory, or empty content tree is
+  logged with the block key, atomically evicted, and handled as a cache miss so
+  preparation restores a fresh block. A successful prepare that leaves a block
+  empty records that block as `unused` and does not publish it.
 - Immutable Remote Review plans carry that same preparation command, lockfile
   scopes, and preserve globs to the Review Executor. Preparation runs before
   verification in both the candidate and any materialized baseline workspace.
@@ -654,9 +661,16 @@ steer the pipeline in this policy version.
   always `Code`: only an unambiguous toolchain-startup signature qualifies, so
   a genuine product failure that happens to mention the same tool stays
   `Code`. `BuildTestGateResult.IsInfrastructureFailure` is true for it.
+  The same narrow exemption applies when NuGet reports a missing `.nupkg`, or a
+  cache-only `NU1101`, whose path is inside the gate-owned
+  `agentstudio-preparation-cache/.runs/<run>/nuget/` directory. The gate records
+  `Environment`, evicts the published NuGet block with reason
+  `gate-environment-failure`, and leaves an identical NuGet error outside that
+  directory classified as `Code`.
   A failed repository preparation discards its private cache staging area and
-  cannot publish an immutable entry. Recovery and cache eviction policy belong
-  to the orchestrator healing stage rather than to the gate.
+  cannot publish an immutable entry. The preparation boundary and gate own the
+  bounded cache eviction described above; the orchestrator healing stage owns
+  the integration retry policy.
 - A pre-develop/pre-main gate classified `Environment` still rolls the
   integration branch back to its exact pre-merge tip like any other red gate,
   but `MergeIntoDevelopRunner` reports it as the distinct
