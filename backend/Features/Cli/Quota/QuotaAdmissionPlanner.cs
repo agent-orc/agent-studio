@@ -39,6 +39,9 @@ public sealed record QuotaAdmissionPlan(
     /// </summary>
     public BetterCandidateNote? BetterCandidates { get; init; }
 
+    /// <summary>Shared run/one-shot fallback receipt, also used by provider rejection continuations.</summary>
+    public ModelFallbackInfo? ModelFallback { get; init; }
+
     /// <summary>True when the runner should proceed to a launch (primary or fallback).</summary>
     public bool ShouldLaunch => Outcome is QuotaAdmissionOutcome.LaunchPrimary or QuotaAdmissionOutcome.LaunchFallback;
 
@@ -74,7 +77,8 @@ public static class QuotaAdmissionPlanner
         Func<string?, QuotaSnapshot?> snapshotFor,
         DateTime nowUtc,
         int occupiedSlots,
-        ResolvedCliQuotaWaitPolicy? waitPolicy = null)
+        ResolvedCliQuotaWaitPolicy? waitPolicy = null,
+        CliFallbackPreference? preference = null)
     {
         var cli = string.IsNullOrWhiteSpace(requestedCli)
             ? CliTypes.Claude
@@ -108,6 +112,7 @@ public static class QuotaAdmissionPlanner
         var strictPrimaryEarly = Strict(cli);
         var nearbyReset = EarliestReset(primarySnapshot, nowUtc, caps, blockedOnly: true);
         if (waitPolicy?.Enabled == true
+            && preference?.Active != true
             && strictPrimaryEarly.Blocked
             && !strictPrimaryEarly.Suspicious
             && IsCheap(requestedThinking)
@@ -131,7 +136,8 @@ public static class QuotaAdmissionPlanner
             }
         }
 
-        var route = fallback?.Resolve(cli, requestedModel, requestedThinking, Admission);
+        var preferFallback = preference?.Active == true;
+        var route = fallback?.Resolve(cli, requestedModel, requestedThinking, Admission, preferFallback);
 
         // 2) The router switched us to the fallback (primary capped or projected;
         //    a usable fallback exists). Documented model switch before start.
@@ -139,7 +145,17 @@ public static class QuotaAdmissionPlanner
         {
             var primaryReset = EarliestReset(
                 snapshotFor(cli), nowUtc, caps, blockedOnly: false);
-            return new QuotaAdmissionPlan(
+            var fallbackReason = route.FallbackReason ?? (preferFallback ? "operator-preference" : "quota-cap");
+            var constrainedWindow = primarySnapshot?.Windows
+                .Where(window => window.UsedPct is not null)
+                .OrderByDescending(window => window.UsedPct!.Value
+                    / Math.Max(1, caps.GetCap(cli, window.Label)))
+                .FirstOrDefault();
+            var usedWindow = route.PrimaryCap.WindowLabel ?? constrainedWindow?.Label;
+            var usedPct = route.PrimaryCap.Blocked
+                ? route.PrimaryCap.UsedPct
+                : constrainedWindow?.UsedPct;
+            var plan = new QuotaAdmissionPlan(
                 QuotaAdmissionOutcome.LaunchFallback,
                 route.CliType,
                 route.Model,
@@ -149,6 +165,18 @@ public static class QuotaAdmissionPlanner
                 NextResetAt: primaryReset?.ResetAt,
                 Projection: QuotaWindowProjection.WorstProjection(snapshotFor(cli), caps, nowUtc),
                 ProjectionWarning: projectionWarning);
+            return plan with
+            {
+                ModelFallback = new ModelFallbackInfo(
+                    RouteLabel(requestedModel, requestedThinking),
+                    RouteLabel(route.Model, route.ThinkingLevel),
+                    fallbackReason,
+                    route.CliType,
+                    route.ThinkingLevel,
+                    usedWindow,
+                    usedPct,
+                    route.CatalogueVersion),
+            };
         }
 
         // Primary path (no fallback taken): resolve the concrete primary model
@@ -248,6 +276,11 @@ public static class QuotaAdmissionPlanner
         var why = !string.IsNullOrWhiteSpace(route.Reason) ? route.Reason : route.PrimaryCap.DescribeReason();
         return $"model switched pre-launch: {primaryCli} -> {route.CliType}/{route.Model ?? "<default>"}, reason: {why}";
     }
+
+    private static string RouteLabel(string? model, string? thinking)
+        => string.IsNullOrWhiteSpace(thinking)
+            ? model ?? "provider default"
+            : $"{model ?? "provider default"} {thinking}";
 
     /// <summary>Earliest future-resetting window in a snapshot (optionally only over-cap windows).</summary>
     private static QuotaWindow? EarliestReset(

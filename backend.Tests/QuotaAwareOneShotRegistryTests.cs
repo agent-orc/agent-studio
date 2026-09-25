@@ -21,6 +21,16 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
     [InlineData("post-code-review-grade")]
     [InlineData("ui-visual-verdict")]
     [InlineData("orchestrator-chat")]
+    [InlineData("result-summary")]
+    [InlineData("prompt-enrichment")]
+    [InlineData("title-generation")]
+    [InlineData("drift-post-step")]
+    [InlineData("code-pattern-drift")]
+    [InlineData("task-spawner")]
+    [InlineData("failure-intervention")]
+    [InlineData("watcher-analysis")]
+    [InlineData("wiki-search")]
+    [InlineData("proposal-drafting")]
     [InlineData("one-shot")]
     public async Task Capped_claude_routes_every_shared_one_shot_path_to_codex_once(string source)
     {
@@ -44,6 +54,9 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
         Assert.Equal(CliTypes.Codex, result.EffectiveCliType);
         Assert.Equal(ModelIds.Gpt56Sol, result.EffectiveModel);
         Assert.Equal("high", result.EffectiveThinkingLevel);
+        Assert.Equal("quota-cap", result.QuotaAdmission?.ModelFallback?.Reason);
+        Assert.Equal("Weekly", result.QuotaAdmission?.ModelFallback?.Window);
+        Assert.Contains("TokenEconomy", result.QuotaAdmission?.ModelFallback?.CatalogueVersion);
         Assert.Empty(claude.Requests);
         var dispatched = Assert.Single(codex.Requests);
         Assert.Equal(CliTypes.Codex, dispatched.CliType);
@@ -132,7 +145,8 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
         Assert.Null(QuotaFallbackMarker.TryRead(jobFolder));
         var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance).ReadAll(jobFolder);
         Assert.Contains(timeline, item => item.Kind == TimelineEventKinds.QuotaAdmissionDecision);
-        Assert.Contains(timeline, item => item.Kind == TimelineEventKinds.QuotaFallbackActivated);
+        var activated = Assert.Single(timeline, item => item.Kind == TimelineEventKinds.QuotaFallbackActivated);
+        Assert.Contains("catalogueVersion", activated.Details!["modelFallback"]);
         var feed = new OrchestratorLog(NullLogger<OrchestratorLog>.Instance).Read(watchPath);
         Assert.Contains(feed, item => item.Topic == OrchestratorLogTopics.LoadDistribution);
     }
