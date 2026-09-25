@@ -1,6 +1,6 @@
 # Review Domain Map
 
-Version: 2026-09-17
+Version: 2026-09-19
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
 
 Use this when a change touches ReviewSubject preparation, aspect prompts,
@@ -267,6 +267,13 @@ Every semantic aspect sentinel supplies these fields:
 the reviewer used. `missing` names the exact absent file, acceptance item,
 branch, or contract for a block; pass and concern verdicts use `none` when there
 is no missing gap.
+
+`contracts/TaskServer.Contracts/AspectVerdictMarker.cs` is the parser contract
+shared by the runner and backend. It accepts wrapped markers and reads status,
+summary, evidence checked, missing, and classification. The last complete
+marker wins. Within that marker the first value for a key is canonical;
+duplicates are preserved as detail and classified `malformed: duplicate-key`,
+so a repeated `summary` cannot silently replace the original conclusion.
 
 `contracts/TaskServer.Contracts/ReviewContracts.cs` owns the shared
 `ReviewVerdictCitationPolicy`. A semantic block without both meaningful

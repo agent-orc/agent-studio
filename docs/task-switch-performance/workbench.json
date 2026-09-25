@@ -1,0 +1,166 @@
+{
+  "schemaVersion": 1,
+  "id": "task-switch-performance",
+  "title": "Task switch performance",
+  "summary": "A bounded task core within 100 ms, progressive detail resources, and versioned Git facts outside request paths. Preserves the 30-request Stable replay and both recovery-overlay captures; eight implementation scopes begin with missing stage and paint measurements.",
+  "entrypoint": "index.html",
+  "status": "decision-pending",
+  "phase": "decision-ready",
+  "pattern": "concept",
+  "updatedAt": "2026-09-25T15:09:36.238136Z",
+  "sourceTaskKeys": [
+    "AGT-2910"
+  ],
+  "implementationTasks": [
+    {
+      "number": 1,
+      "title": "1. Correlate the Stable task-switch baseline",
+      "promptMarkdown": "Read docs/task-switch-performance/index.html and measurement.md. AGT-2910 measured 30 Stable v0.9.1 detail handlers at p50 486.133 ms and p95 2183.473 ms, but there are no correlated internal-stage or workstation paint timings. Close that evidence gap before attributing savings. This card changes observability only.\n\nAdd bounded, opt-in task-switch tracing to backend/Features/Tasks/TaskCrudEndpoints.cs, TaskScannerService, TaskIndexCache, TaskEndpointHelpers, and the existing GitProcessTelemetry scope. Preserve the existing task-op metric. Record exclusive index lookup/wait/refresh, task.json read, sidecar read, reconstructed commits, integration, merge/publish/test projection, review projection, tokens, runtime/dependency overlays, and serialization/write spans. Use a request correlation id and a switch id across browser requests; count nested Git spawns exactly once at the detail boundary with includeNested. Separate background Git index spans, serialize no prompt text, filesystem paths, or secrets. Emit bytes after serialization and record aborted requests and timeouts.\n\nIn the existing Playwright suite add a read-only capture mode using actual navigation events, resource timings, and a DOM-ready mark followed by animation frames. Existing job-select-to-rendered marks stop at a signal assignment, not paint. Record markdown conversion and DOM work separately. Capture a workstation baseline against Stable without restarting it; report cold client and backend readiness separately. Use 30 switches per cohort (board clicks, pager, back/forward, deep links; small, long-history, active, archived tasks) and use at least 100 per cohort for the later acceptance gate. Add an offline reducer with sample count, p50/p95, errors, git counts, source revision and run environment. Update only this Dossier\u0027s evidence and relevant observability documentation. Add deterministic correlation and nested-spawn tests; machine timing tests belong to MachineBound. Do not change task behavior.\n\nExpected effect: 0 ms intentional latency saving; target tracing overhead \u003C=1 ms p95 when enabled and no work when disabled. This is a prerequisite for cards 2-6, not a performance fix.",
+      "expectedEffectMs": {
+        "directSaving": 0,
+        "instrumentationOverheadBudgetP95": 1
+      },
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Correlate the Stable task-switch baseline",
+        "criteria": [
+          "Every stage has correlated timings or an explicit unavailable state.",
+          "Per-switch spawn counts exclude background index work and include nested request scopes.",
+          "Workstation baseline and all failed samples are preserved with provenance."
+        ]
+      }
+    },
+    {
+      "number": 2,
+      "title": "2. Serve bounded task core from the index",
+      "promptMarkdown": "Read docs/task-switch-performance/index.html, decisions D1 and D3, and docs/system/domains/tasks.md. Prerequisite: the tracing card and operator acceptance of the core field contract. Implement GET /api/tasks/{jobId}/core?project=PROJ-002 as an additive route; preserve the existing full-detail route during migration.\n\nAdd a task core DTO and keyed in-memory projection owned by the existing task index. Include identity/title/key, lane and lane-entry facts, explicit task pins and order, task mode, permission-safe action availability, typed blocking state, current execution location/activity/lease generation, an existing status summary, a bounded prompt head, and the last five timeline events. Bound UTF-8 payload to 16 KiB, status text to 1 KiB, prompt to 2 KiB, timeline to 2 KiB total. Return original lengths, hashes/cursors and explicit missing/warming/stale states. Do not synthesize a summary or invoke a model. Compute heads from sidecars in the index producer and mutation paths, never by reading them in this request.\n\nTaskIndexCache.GetSnapshotPartitions currently calls EnsureFresh. Add a cache-only lookup for this route rather than using FindJob as-is. No workspace traversal, ScanAllJobs, Git, token aggregation, review reads, or blocking refresh is allowed. With an indexed locator, an optional targeted task.json read is the only filesystem fallback; no search for its directory. Cold unknown identity returns a bounded warming response until hydration can distinguish missing from not indexed. API mutations publish the affected core record and generation after durable write and before acknowledgment; retain other runner/pickup freshness semantics. Reuse in-memory runtime and dependency facts and project access checks. Use per-task core and runtime versions for ETag validation, with no Git generation in the validator. Preserve archive, access revocation, move and delete semantics.\n\nProve warm, dirty, safety-TTL, concurrent mutation, archived and unknown cases with a filesystem spy and a throwing Git fake. A dirty unrelated task must not force a scan. Measure real core handler p95 \u003C=30 ms and \u003C=16 KiB; no new benchmark is meaningful without actual production-shaped records. Update the tasks domain for the additive contract. Expected effect, as a target compared with the measured legacy handler: 486 to \u003C=30 ms p50 (about 456 ms removed) and 2183 to \u003C=30 ms p95 (about 2153 ms removed). These are acceptance targets, not observed savings; do not add them to the frontend savings.",
+      "expectedEffectMs": {
+        "handlerTargetP95": 30,
+        "targetSavingFromLegacyP50": 456,
+        "targetSavingFromLegacyP95": 2153
+      },
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Serve bounded task core from the index",
+        "criteria": [
+          "Core handler p95 \u003C=30 ms with a \u003C=16 KiB response.",
+          "No Git, sidecar read or directory scan occurs on any core read.",
+          "Read-after-write, project access, archive and deletion correctness survive the split."
+        ]
+      }
+    },
+    {
+      "number": 3,
+      "title": "3. Publish versioned Git facts outside read requests",
+      "promptMarkdown": "Read docs/task-switch-performance/index.html decision D2, backend/Features/Git/GitStateIndexService.cs, backend/Features/Tasks/TaskListGitProjectionCache.cs, TaskIntegrationStatusService.cs and GitService.cs. Existing board reads already consume Git snapshots. Extend that ownership to task detail and its Git enrichment; do not create a second scheduler. Preserve AGT-2202 integration semantics and the distinction between origin/develop containment and a local merge.\n\nServe the task Git resource from the latest completed snapshot only. Remove direct detail calls to mergeStatus.BuildLookup, integrationStatus.BuildLookup, publishStatus.BuildLookup, Git-dependent test projection and reconstructed-commit reads once their snapshot equivalents exist. Reuse watcher debounce and the 45 s safety sweep, single-flight per repository and at most two repository computations at once. Scope invalidation to meaningful ref/config/settings/task-commit/review-subject changes. Runtime log churn and unchanged task metadata must not trigger full Git recomputation.\n\nTaskIntegrationStatusService.BuildRepositoryGroups calls ReadOriginUrlAt per attributed task before the reachability cache. Resolve origin/config identity once per repository and relevant configuration generation. Account for Git includes, worktree config, packed refs and project repository changes; do not replace Git configuration semantics with a partial parser. Key published facts by repository identity, ref signature, settings version, task commit/subject generation and schema version. Publish immutable snapshots atomically; discard out-of-order results and keep the last successful snapshot on errors. Expose warming, ready, stale, unavailable, computedAt, generation and a bounded reason code. A stale positive from a superseded attempt must never authorize a mutation. Existing acceptance actions retain authoritative checks or a version precondition outside this read-only cache.\n\nBound Git processes, kill stuck children on deadline, release the repository slot, and back off failures. No read request starts Git or waits for refresh, including stale or unavailable cases. Test with a hanging Git fake, branch changes during refresh, missing repo, worktree deletion, repeated task writes and retry exhaustion. Report request spawns=0 and background spawns separately. Expected effect after core split: 0 additional direct core ms; remove the legacy Git portion, currently unattributed, from all read requests. For the supplied 68-config/4759 ms index example, 4759/68=69.99 ms each and one reusable config read would save about 4689 ms of summed config subprocess time per comparable index run. Wall-time savings depend on concurrency. This is a conditional background estimate, not 4689 ms per switch. Update the tasks/Git domain contract.",
+      "expectedEffectMs": {
+        "additionalCoreSavingAfterTask2": 0,
+        "requestGitBudget": 0,
+        "conditionalSummedConfigSavingPerIndexRun": 4689
+      },
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Publish versioned Git facts outside read requests",
+        "criteria": [
+          "Core and Git enrichment reads spawn zero Git even on misses.",
+          "One config lookup per repository/config generation replaces per-task origin lookups.",
+          "Superseded attempt evidence and failed refreshes cannot create a false integrated verdict."
+        ]
+      }
+    },
+    {
+      "number": 4,
+      "title": "4. Render core and load detail resources progressively",
+      "promptMarkdown": "Read docs/task-switch-performance/index.html, frontend/AGENTS.md and the frontend domain. Prerequisite: core route and versioned Git resource from cards 2-3. Extend TaskSelectionService, the existing detail preview/load sections, and TaskDetailPrefetchService; preserve route and pager identity guards.\n\nRender the selected task\u0027s complete bounded core before requesting enrichment. Replace the single TaskDetail readiness condition with separate core, Git, usage, review, document and history states. Define additive cacheable resources under /api/tasks/{id}/details/{git,usage,review,documents,history}, reusing existing specialized routes where their authorization/version contract suffices. Explicit DTOs must prevent the old full-detail route from hiding behind a new endpoint. Start at most two visible-resource requests after core paint; Git waits for its pane, full log/history and review evidence wait for explicit expansion. Each resource has independent errors, retry, freshness and ETag. Git unavailable must show its reason while core remains usable. Keep expensive markdown conversion and highlighting out of core; render bounded escaped text first, rich documents in the selected pane.\n\nAbort superseded subscriptions. Apply replies only to the same project, task, attempt and compatible core generation. A-\u003EB-\u003EA with late A and B responses must not replace the selected task. Retain keyboard navigation, unsaved editing, pane sizes, scroll anchors and action preconditions. Use existing design tokens and skeleton components, accessible aria-busy/announcements, light and dark themes. Avoid left accent bars and new color systems.\n\nPlaywright must cover slow/hung Git, partial usage failure, no prior board state, large markdown, rapid navigation, keyboard and back/forward. Capture genuine screenshots in both themes. Core-ready means identity, state, pins, execution, status summary, prompt head and timeline head (or explicit empty states) painted, not merely a title or signal assignment. Target p95 \u003C=100 ms on the workstation. Expected effect: exclude the measured legacy handler\u0027s 486 ms p50 / 2183 ms p95 wait from an already cached core switch, leaving a \u003C=35 ms client render budget. These savings overlap card 2; local end-to-end savings must be measured, not inferred from Linux tunnel totals. Update frontend behavior docs.",
+      "expectedEffectMs": {
+        "clientRenderingBudget": 35,
+        "legacyWaitRemovedP50": 486,
+        "legacyWaitRemovedP95": 2183
+      },
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Render core and load detail resources progressively",
+        "criteria": [
+          "Full bounded core is painted before any enrichment can block it.",
+          "Per-resource failures and late responses cannot blank or replace core.",
+          "Real screenshots and Playwright evidence cover both themes and navigation paths."
+        ]
+      }
+    },
+    {
+      "number": 5,
+      "title": "5. Reuse board records across task navigation",
+      "promptMarkdown": "Read docs/task-switch-performance/index.html and the conditional board read section of docs/system/domains/tasks.md. Prerequisite: cards 2 and 4. Extend the existing TaskService grouped store and TaskDetailPrefetchService rather than adding an unrelated cache.\n\nSeed identity/lane/runtime/pin core from the resident board record immediately. Share a bounded core cache keyed by project and stable task identity, independent of full-detail payloads. Do not expand the whole board with every prompt/status/timeline head: fetch missing heads through core, retain visited cores and prefetch only the next two pager cores after paint. Coalesce concurrent reads. Never refetch grouped just because a task or editor tab changed; preserve the board filter, scroll, sort, and selection state on return. Retain background reconciliation and conditional requests for actual invalidations.\n\nTrack core/runtime/content versions separately from Git and usage versions. Patch affected tasks from mutation replies and SignalR events; invalidate only the changed resource. A global sidecar or Git generation must not discard all core entries. Retain ETag 304 processing, the legacy review lane opt-out, project-access changes, deletes, archive moves, reconnect resync and lane dependencies. Bound the cache by both entry count and estimated bytes; cancel obsolete lookahead. Keep changes scoped to data reuse, not board restyling.\n\nTest board-\u003EA-\u003EB-\u003Eboard, pager reuse, A-\u003EB-\u003EA races, cross-project identical slugs, reconnect, denied access and deleted tasks. Assert zero selection-triggered grouped requests and zero duplicate in-flight core requests. With a resident core, target p95 \u003C=50 ms; uncached core must satisfy the common \u003C=100 ms gate. Expected effect: eliminate one avoidable grouped handler of p50 350 ms / p95 956 ms when such a navigation refetch exists, plus its roughly 2.56 MB body. This is a conditional saving; AGT-2910 did not prove that every selection currently issues grouped. Do not claim the tunnel\u0027s seconds of transfer as workstation savings. Update the frontend cache contract.",
+      "expectedEffectMs": {
+        "conditionalGroupedHandlerSavingP50": 350,
+        "conditionalGroupedHandlerSavingP95": 956,
+        "residentCoreTargetP95": 50
+      },
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Reuse board records across task navigation",
+        "criteria": [
+          "Selection triggers no grouped reload and does not add all prompt heads to the board payload.",
+          "Cache correctness covers resource versions, access changes, moves, deletes and reconnect.",
+          "Cached navigation p95 \u003C=50 ms and uncached core p95 \u003C=100 ms are measured."
+        ]
+      }
+    },
+    {
+      "number": 6,
+      "title": "6. Enforce the task-switch performance gate",
+      "promptMarkdown": "Read docs/task-switch-performance/measurement.md and index.html. Prerequisites: cards 1-5. Add a task-switch budget spec to the existing Playwright suite and wire it into the appropriate performance gate using the existing pipeline, not a new workflow engine. Use frontend/e2e/fixtures/dev-backend.ts for any task-worktree backend lifecycle. Stable measurements are read-only; isolated fixtures may simulate faults and must be labeled.\n\nRun at least 100 measured switches per cohort after declared warmups on the designated workstation profile. Keep board-click, pager, back/forward, deep-link and long-document cohorts separate. Include both themes, active/review/archived tasks, cold client data with a ready server, dirty unrelated index, own-task mutation, Git unavailable and hung refresh. Measure from the actual click/keyboard/popstate event to verified core DOM plus a paint opportunity. Detect all core facts and explicit empty states, not a loading shell. Capture resource waterfall, per-stage Server-Timing, payload bytes, correlated request Git counts, errors and screenshots. Preserve raw samples and compute p50/p95 consistently. Report cold process startup and remote browser runs separately.\n\nGate requirements: workstation core p95 \u003C=100 ms in every normal and Git-failure cohort, cached core p95 \u003C=50 ms, core handler p95 \u003C=30 ms, \u003C=16 KiB core payload, zero Git spawns and workspace scans per core request, and zero grouped reads caused by selection. Bound concurrency and trace overhead. A timeout, warming core on a ready server, missing required span, missing spawn counter or page error fails rather than being removed from the population. MachineBound marks apply to timing-sensitive .NET helpers. Prove the gate fails by injecting a controlled 150 ms core delay, a request-path Git invocation and a selection-triggered board refetch in isolated test conditions, then remove the injections.\n\nReplace the Dossier\u0027s unavailable stage cells with actual values and repeat the baseline cohort before claiming improvement. Expected direct effect: 0 ms. The maintained limit is \u003C=100 ms p95 and a 0 ms Git contribution to core; this card prevents regression rather than buying another latency reduction.",
+      "expectedEffectMs": {
+        "directSaving": 0,
+        "coreGateP95": 100,
+        "coreGitContribution": 0
+      },
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Enforce the task-switch performance gate",
+        "criteria": [
+          "Each cohort fails independently above its budget, with no discarded timeouts.",
+          "Controlled slow-core, Git-spawn and board-refetch regressions fail the gate.",
+          "Measured before/after workstation evidence completes the Dossier stage table."
+        ]
+      }
+    },
+    {
+      "number": 7,
+      "title": "7. Register the Dossier in the North star map",
+      "promptMarkdown": "Read docs/task-switch-performance/catalogue-entry.md. This concept run was restricted to one new docs/\u003Cslug\u003E/ directory, so it could not edit the existing North star or documentation index. Complete this publication step after sight review without relocating or duplicating the Dossier.\n\nAdd the prepared entry linking ../../task-switch-performance/index.html to the current-Dossier map in docs/operations/nordstern/index.html. Add one row in docs/start/README.md linking ../task-switch-performance/index.html. Match the surrounding map and index style; retain the source card AGT-2910 and decision-pending status until the operator actually decides. Use a server-assigned Dossier key if one exists by then; do not invent an AGT-W key. Confirm card results/deliverables.md and status.md name docs/task-switch-performance/index.html through the task API. Do not promote other cards, mutate product source, or claim human sight review completed.\n\nVerify both relative links, existing navigation and a diff confined to the two navigation files plus the Dossier publication status when complete. Expected effect: 0 ms runtime saving; this card closes discoverability acceptance only.",
+      "expectedEffectMs": {
+        "directSaving": 0
+      },
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Register the Dossier in the North star map",
+        "criteria": [
+          "The existing North star map links to the canonical Dossier.",
+          "The docs index contains exactly one new row.",
+          "Both task-file references resolve to the same canonical repository path."
+        ]
+      }
+    },
+    {
+      "number": 8,
+      "title": "8. Remove persistent recovery overlays from task navigation",
+      "promptMarkdown": "Read docs/task-switch-performance/index.html, measurement.md, evidence/browser-replay.json and assets/stable-recovery-dialog-light--real.png and assets/stable-recovery-dialog-dark--real.png. The operator reports a Stable restart at 2026-09-25 12:23 Europe/Berlin (10:23 UTC). The recovery dialog remained present at 16:17:53 local (14:17:53 UTC), 3 h 54 min 53 s later, over AGT-2910. The visible pending item is dated 22 September. This proves a persistent navigation obstruction in that session, but does not identify which restart created the recovery record or prove continuous display. No shared recovery action was taken. Treat the persistent blocking presentation as a separate product bug, not as a slow task-detail measurement.\n\nRead docs/concepts/orchestrator-drive-to-conclusion.html and the existing crash-recovery component/service, endpoints, and frontend/e2e/system/crash-recovery-prompt.spec.ts before changing recovery behavior. Reproduce with a real isolated pending recovery record, record its creation/boot identifiers, and write a failing regression for task navigation while that record remains pending. Do not dismiss, commit, or otherwise resolve the operator\u0027s live recovery records as part of measurement.\n\nKeep the durable recovery decision pending and discoverable through the existing recovery entry point. Offer a view-local close/defer that does not acknowledge the shared record or commit files, and do not automatically reopen a blocking modal on every task selection, poll, reconnect, or browser reload for the same record. Explicit operator opening may remain modal. Preserve the explicit commit/leave-uncommitted actions and their existing authority and concurrency checks. Avoid adding a second recovery state machine; limit the fix to presentation and record identity/lifetime handling. Expiry must never silently commit or discard recovered files.\n\nUse the existing Playwright suite and dev-backend fixture for isolated lifecycle. Prove board click, pager, keyboard, deep-link and back/forward navigation remain usable with a pending record, the record remains reachable, local closing causes no shared recovery mutation, and a deliberate recovery action still works. Capture both themes with real isolated backend provenance. Append the dated incident to the drive-to-conclusion case log and update the recovery behavior documentation. Report whether the original record came from the 12:23 restart only if boot/record evidence establishes that relation.\n\nExpected effect: the observed intervention-dependent navigation block has no finite measured duration, so no millisecond saving can be honestly assigned. Target added recovery obstruction is 0 ms on ordinary task switches. The common core p95 \u003C=100 ms budget must also hold while a recovery item is pending; measure the actual before/after result rather than attributing the whole 3 h 54 min interval to one switch.",
+      "expectedEffectMs": {
+        "navigationObstructionTarget": 0,
+        "coreGateP95": 100,
+        "measuredSaving": null
+      },
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Keep pending recovery decisions discoverable without blocking task navigation.",
+        "criteria": [
+          "A pending recovery record does not automatically block ordinary task navigation.",
+          "View-local deferral causes no shared recovery mutation; explicit recovery actions retain their safeguards.",
+          "The regression is reproduced, fixed and covered by both-theme Playwright evidence; restart attribution remains evidence-based."
+        ]
+      }
+    }
+  ],
+  "key": "AGT-W64"
+}

@@ -23,7 +23,10 @@ internal static class RemotePipelineExecutionProjection
         string AttemptId,
         DateTime ReceivedAt,
         string Outcome,
-        string? Summary);
+        string? Summary,
+        IReadOnlyDictionary<string, ReviewGradeAspect> Aspects);
+
+    internal sealed record ReviewGradeAspect(string Status, string Summary);
 
     public static Result Project(
         PipelineExecutionRecord? local,
@@ -77,6 +80,9 @@ internal static class RemotePipelineExecutionProjection
         var steps = execution.Steps
             .Select(step => step with { Attempt = step.Attempt ?? attempt })
             .ToList();
+
+        if (grade is not null)
+            ReconcileLegacyRemoteAspectSteps(steps, grade);
 
         SkipRemoteOnlySteps(steps, pipeline.Pre.Select(step => step.Id));
         SkipRemoteOnlySteps(
@@ -331,6 +337,32 @@ internal static class RemotePipelineExecutionProjection
         }
     }
 
+    private static void ReconcileLegacyRemoteAspectSteps(
+        List<PipelineStepExecution> steps,
+        ReviewGrade grade)
+    {
+        for (var index = 0; index < steps.Count; index++)
+        {
+            var step = steps[index];
+            if (step.Kind != StepKind.Aspect
+                || step.Status != PipelineStepStatus.Failed
+                || !string.Equals(step.ExecutionLocation, "remote", StringComparison.OrdinalIgnoreCase))
+                continue;
+            var aspectId = step.StepId.StartsWith("aspect-", StringComparison.OrdinalIgnoreCase)
+                ? step.StepId["aspect-".Length..]
+                : step.StepId;
+            if (!grade.Aspects.TryGetValue(aspectId, out var aspect)
+                || !string.Equals(aspect.Status, "concerns", StringComparison.OrdinalIgnoreCase))
+                continue;
+            steps[index] = step with
+            {
+                Status = PipelineStepStatus.Passed,
+                Verdict = "concerns",
+                VerdictSummary = aspect.Summary,
+            };
+        }
+    }
+
     private static void Upsert(
         List<PipelineStepExecution> steps,
         TaskPipeline pipeline,
@@ -444,7 +476,60 @@ internal static class RemotePipelineExecutionProjection
             }
         }
 
-        return new ReviewGrade(attemptId, receivedAt, outcome, summary);
+        return new ReviewGrade(attemptId, receivedAt, outcome, summary, ParseAspectRows(lines));
+    }
+
+    private static IReadOnlyDictionary<string, ReviewGradeAspect> ParseAspectRows(string[] lines)
+    {
+        var aspects = new Dictionary<string, ReviewGradeAspect>(StringComparer.OrdinalIgnoreCase);
+        var heading = Array.FindIndex(lines, line =>
+            line.Trim().Equals("## Aspect verdicts", StringComparison.OrdinalIgnoreCase));
+        if (heading < 0) return aspects;
+        for (var index = heading + 1; index < lines.Length; index++)
+        {
+            var line = lines[index].Trim();
+            if (line.StartsWith("## ", StringComparison.Ordinal)) break;
+            if (!line.StartsWith('|') || line.Contains("---", StringComparison.Ordinal)) continue;
+            var cells = SplitMarkdownRow(line);
+            if (cells.Count < 2 || cells[0].Equals("Aspect", StringComparison.OrdinalIgnoreCase)) continue;
+            aspects[MarkdownLinkLabel(cells[0])] = new ReviewGradeAspect(
+                cells[1],
+                cells.Count >= 6 ? cells[5] : string.Empty);
+        }
+        return aspects;
+    }
+
+    private static string MarkdownLinkLabel(string value)
+    {
+        if (!value.StartsWith("[", StringComparison.Ordinal)
+            || !value.EndsWith(")", StringComparison.Ordinal))
+            return value;
+        var separator = value.IndexOf("](", StringComparison.Ordinal);
+        return separator > 1 ? value[1..separator] : value;
+    }
+
+    private static IReadOnlyList<string> SplitMarkdownRow(string line)
+    {
+        var cells = new List<string>();
+        var cell = new System.Text.StringBuilder();
+        var escaped = false;
+        foreach (var ch in line.Trim().Trim('|'))
+        {
+            if (escaped)
+            {
+                cell.Append(ch);
+                escaped = false;
+            }
+            else if (ch == '\\') escaped = true;
+            else if (ch == '|')
+            {
+                cells.Add(cell.ToString().Trim());
+                cell.Clear();
+            }
+            else cell.Append(ch);
+        }
+        cells.Add(cell.ToString().Trim());
+        return cells;
     }
 
     private static string Unquote(string value)

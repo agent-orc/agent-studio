@@ -401,6 +401,7 @@
                  [appTooltip]="tabTooltip(t)"
                  [attr.data-testid]="'studio-tab-' + tabKey(t)"
                  [attr.data-tab-key]="tabKey(t)"
+                 [attr.data-tab-kind]="t.kind"
                  (click)="selectTab(tabKey(t))"
                  (auxclick)="onTabAuxClick($event, tabKey(t))"
                  (keydown.enter)="selectTab(tabKey(t))"
@@ -417,8 +418,8 @@
                       [attr.data-testid]="'studio-tab-dot'"
                       aria-hidden="true"></span>
               }
-              @if (tabNum(t); as n) {
-                <span class="studio-tab__num">{{ n }}</span>
+              @if (tabPrefix(t); as prefix) {
+                <span class="studio-tab__prefix">{{ prefix }}</span>
               }
               @if (t.kind === 'epic') {
                 <app-studio-icon name="epic" [size]="13"></app-studio-icon>
@@ -426,7 +427,7 @@
               @if (tabIcon(t); as icon) {
                 <app-studio-icon [name]="icon" [size]="13"></app-studio-icon>
               }
-              <span class="studio-tab__title">{{ tabLabel(t) }}</span>
+              <span class="studio-tab__title">{{ tabVisibleTitle(t) }}</span>
               <button type="button"
                       class="studio-tab__close"
                       aria-label="Close tab"

@@ -176,7 +176,7 @@ remediation instead of waiting on a runner request.
 The controller is intentionally repeatable after a host wipe:
 
 1. Verify SSH key access, passwordless sudo, .NET 10, and Task Server health
-   from the host.
+   from the host. Install the sshd client-liveness drop-in described below.
 2. Install or update the `CodingAgentRunner` NuGet global tool and require
    version `0.5.0` or newer, then install the Codex and Claude CLIs.
 3. Before the visible setup task starts, provision provider authentication from
@@ -201,6 +201,17 @@ The controller is intentionally repeatable after a host wipe:
 5. Prove `systemctl is-enabled`, `systemctl is-active`, agent-host health, the
    variable name in `/proc/<MainPID>/environ`, a fresh provider-auth probe, and
    an authenticated claim or empty-queue response before setup completes.
+
+### SSH session liveness for tunnel hosts
+
+Onboarding writes `/etc/ssh/sshd_config.d/05-agent-runner-client-alive.conf`
+with `ClientAliveInterval 30` and `ClientAliveCountMax 3`, checks the effective
+configuration with `sshd -T`, and reloads sshd. The server then closes an
+abandoned SSH session within roughly 90 seconds, releasing its reverse-port
+listener. The Task Server's [link supervisor](./remote-runner-persistent-connection.md#health-and-recovery)
+also runs a bounded, same-user listener inspection and cleanup on reconnect.
+If the listener remains held, Execution Hosts reports its PID and age and the
+supervisor retries at the longest configured interval.
 
 The NuGet package must be published with package type `DotnetTool` and expose
 the `agent-host` command. A library-only `CodingAgentRunner` package cannot be

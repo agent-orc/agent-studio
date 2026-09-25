@@ -211,6 +211,115 @@ public sealed class CarWorkerExecutionTests : IDisposable
     }
 
     [Fact]
+    [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
+    [Trait("Category", "MachineBound")]
+    [Trait("Category", "ReviewFlaky")]
+    public async Task Car_production_spawner_distinguishes_sigkill_from_voluntary_exit_137()
+    {
+        PlatformGate.LinuxOnly("the production signal record uses Bash child wait status");
+        const string refusal = "usage limit reached; resets at 2099-09-19T12:40:00Z";
+        Directory.CreateDirectory(_root);
+        var cliPath = Path.Combine(_root, "fake-claude");
+        await File.WriteAllTextAsync(
+            cliPath,
+            $$"""
+              #!/bin/bash
+              if [[ "$1" == "--version" ]]; then
+                printf '1.0.0\n'
+                exit 0
+              fi
+              printf '%s\n' '{{refusal}}' >&2
+              if [[ "$FAKE_TERMINATION" == "sigkill" ]]; then
+                exec /bin/kill -KILL $$
+              fi
+              exit 137
+              """);
+        File.SetUnixFileMode(
+            cliPath,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+
+        async Task<ProcessResult> RunAsync(string mode)
+        {
+            var workerDirectory = Path.Combine(_root, mode);
+            var worktree = Path.Combine(workerDirectory, "worktree");
+            var results = Path.Combine(workerDirectory, "results");
+            Directory.CreateDirectory(worktree);
+            Directory.CreateDirectory(results);
+            var spec = new DetachedJobSpec(
+                cliPath,
+                [],
+                worktree,
+                "prompt",
+                results,
+                TimeoutSeconds: 10,
+                CliType: "claude",
+                ContextMode: "shared",
+                Engine: RunnerOptions.ExecEngineCar,
+                RunId: $"car-{mode}");
+            var (result, timedOut, launchFailed) = await CarWorkerExecution.RunAsync(
+                spec,
+                workerDirectory,
+                (_, _) => { },
+                options => options with
+                {
+                    ClaudePath = cliPath,
+                    EnvironmentOverrides = new Dictionary<string, string>
+                    {
+                        ["FAKE_TERMINATION"] = mode,
+                    },
+                });
+            Assert.False(timedOut);
+            Assert.False(launchFailed);
+            return result;
+        }
+
+        var killed = await RunAsync("sigkill");
+        var voluntary = await RunAsync("exit137");
+        Assert.Equal(137, killed.ExitCode);
+        Assert.Equal(9, killed.Signal);
+        Assert.Equal(137, voluntary.ExitCode);
+        Assert.Null(voluntary.Signal);
+
+        var probe = new ProviderAuthProbe(
+            launcher: (_, _, _) => Task.FromResult(new ProcessResult(0, "Logged in", string.Empty)),
+            executableExists: _ => true,
+            credentialFreshness: _ => new ProviderCredentialFreshness(
+                null,
+                null,
+                "Credential metadata fixture has no expiry."));
+        await probe.RefreshAsync("claude", CancellationToken.None);
+        var afterKilled = RemoteTaskRunner.RecordProviderProcessResult(
+            probe,
+            "claude",
+            killed,
+            new ExecutionRawFacts(
+                "car-sigkill",
+                ExecutionAttemptKind.Coding,
+                StdErr: killed.StdErr,
+                ExitCode: killed.ExitCode,
+                Signal: killed.Signal,
+                DurableOutputState: DurableOutputState.LocalOnly),
+            evidenceId: "car-sigkill");
+        Assert.Equal(ProviderAuthProbe.Ready, afterKilled.Status);
+
+        var afterVoluntary = RemoteTaskRunner.RecordProviderProcessResult(
+            probe,
+            "claude",
+            voluntary,
+            new ExecutionRawFacts(
+                "car-exit-137",
+                ExecutionAttemptKind.Coding,
+                StdErr: voluntary.StdErr,
+                ExitCode: voluntary.ExitCode,
+                Signal: voluntary.Signal,
+                DurableOutputState: DurableOutputState.LocalOnly),
+            evidenceId: "car-exit-137");
+
+        Assert.Equal(ProviderAuthProbe.Limited, afterVoluntary.Status);
+        Assert.Equal("car-exit-137", afterVoluntary.EvidenceId);
+    }
+
+    [Fact]
     public async Task Car_worker_starts_without_CultureNotFoundException_under_invariant_globalization()
     {
         if (NodeMissing()) return;

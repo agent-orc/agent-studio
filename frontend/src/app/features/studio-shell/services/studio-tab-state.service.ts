@@ -607,7 +607,11 @@ export class StudioTabStateService {
 
   private normalizeWikiTarget(target: NonNullable<Extract<StudioTab, { kind: 'hub' }>['wikiTarget']>) {
     if (target.kind === 'overview') return { kind: 'overview' as const };
-    return { kind: target.kind, relPath: target.relPath.trim().replace(/^docs\//i, '') };
+    return {
+      kind: target.kind,
+      relPath: target.relPath.trim().replace(/^docs\//i, ''),
+      ...(target.title?.trim() ? { title: target.title.trim() } : {}),
+    };
   }
 
   private activate(key: string): void {

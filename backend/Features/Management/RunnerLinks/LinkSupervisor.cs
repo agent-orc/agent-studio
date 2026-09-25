@@ -77,7 +77,11 @@ public sealed record RunnerLinkResource(
     DateTime? NextRetryAt,
     int? ChildPid,
     DateTime? NotificationRaisedAt,
-    DateTime? UnreachableSince);
+    DateTime? UnreachableSince,
+    string? BlockedBy,
+    int? RemoteListenerPid,
+    int? RemoteListenerAgeSeconds,
+    string? Transport);
 
 public sealed record RunnerLinkTransition(
     string State,
@@ -89,6 +93,26 @@ public sealed record RunnerLinkTransition(
 /// <summary>Pure lifecycle policy. The hosted service owns only observations and bounded effects.</summary>
 public static class RunnerLinkPolicy
 {
+    public static string? Transport(int exitCode, string stderr)
+        => stderr.Contains("No route to host", StringComparison.OrdinalIgnoreCase) ? "no-route" : null;
+
+    public static string ProbeDetail(int exitCode, string kind, string command, string stdout, string stderr)
+    {
+        var transport = Transport(exitCode, stderr);
+        if (transport is not null) return $"transport: {transport}; {stderr.Trim()}";
+        if (kind is "listener-cleanup" or "adopted-listener-release")
+            return exitCode switch
+            {
+                0 => "Remote listener cleanup succeeded.",
+                1 => $"Remote listener remains held. {stdout.Trim()} {stderr.Trim()}".Trim(),
+                124 => $"Cleanup command timed out: {command}",
+                255 => $"Cleanup SSH transport failed (exit 255): {stderr.Trim()}",
+                _ => $"Cleanup command exited with code {exitCode}: {stderr.Trim()}",
+            };
+        return exitCode == 0 ? "Route probe succeeded."
+            : $"ssh route probe exited with code {exitCode}: {stderr.Trim()}";
+    }
+
     public static RunnerLinkTransition Decide(
         string state,
         bool paused,
@@ -133,6 +157,8 @@ public interface IRunnerLinkProcess : IAsyncDisposable
     int Pid { get; }
     bool HasExited { get; }
     int? ExitCode { get; }
+    string StandardOutput { get; }
+    string StandardError { get; }
     Task<int> WaitAsync(CancellationToken cancellationToken);
     Task TerminateAsync(CancellationToken cancellationToken);
 }
@@ -252,18 +278,22 @@ internal sealed class RealRunnerLinkProcess : IRunnerLinkProcess
     private readonly Task _stdout;
     private readonly Task _stderr;
     private readonly TimeSpan? _timeout;
+    private readonly System.Text.StringBuilder _standardOutput = new();
+    private readonly System.Text.StringBuilder _standardError = new();
 
     public RealRunnerLinkProcess(Process process, string logPath, TimeSpan? timeout)
     {
         _process = process;
         _timeout = timeout;
-        _stdout = PumpAsync(process.StandardOutput, logPath, "stdout", _logGate, _lifetime.Token);
-        _stderr = PumpAsync(process.StandardError, logPath, "stderr", _logGate, _lifetime.Token);
+        _stdout = PumpAsync(process.StandardOutput, logPath, "stdout", _standardOutput, _logGate, _lifetime.Token);
+        _stderr = PumpAsync(process.StandardError, logPath, "stderr", _standardError, _logGate, _lifetime.Token);
     }
 
     public int Pid => _process.Id;
     public bool HasExited => _process.HasExited;
     public int? ExitCode => _process.HasExited ? _process.ExitCode : null;
+    public string StandardOutput => _standardOutput.ToString();
+    public string StandardError => _standardError.ToString();
 
     public async Task<int> WaitAsync(CancellationToken cancellationToken)
     {
@@ -274,6 +304,7 @@ internal sealed class RealRunnerLinkProcess : IRunnerLinkProcess
         catch (OperationCanceledException) when (timeout?.IsCancellationRequested == true)
         {
             await TerminateAsync(CancellationToken.None);
+            await Task.WhenAll(_stdout, _stderr);
             return 124;
         }
         await Task.WhenAll(_stdout, _stderr);
@@ -304,6 +335,7 @@ internal sealed class RealRunnerLinkProcess : IRunnerLinkProcess
         StreamReader reader,
         string path,
         string stream,
+        System.Text.StringBuilder capture,
         SemaphoreSlim logGate,
         CancellationToken cancellationToken)
     {
@@ -312,6 +344,7 @@ internal sealed class RealRunnerLinkProcess : IRunnerLinkProcess
             await logGate.WaitAsync(cancellationToken);
             try
             {
+                if (capture.Length < 8192) capture.AppendLine(line);
                 Rotate(path);
                 await File.AppendAllTextAsync(
                     path,
@@ -515,6 +548,13 @@ public sealed class LinkSupervisor : BackgroundService
 
     private async Task RecoverAsync(LinkState link, CancellationToken cancellationToken)
     {
+        if (link.Child is { HasExited: true } exited)
+        {
+            await exited.WaitAsync(cancellationToken);
+            link.Transport = RunnerLinkPolicy.Transport(exited.ExitCode ?? 255, exited.StandardError);
+            if (link.Transport is not null)
+                link.LastError = $"transport: {link.Transport}; {exited.StandardError.Trim()}";
+        }
         await TransitionAsync(link, RunnerLinkStates.Reconnecting, link.LastError, cancellationToken);
         link.HeartbeatRequiredAfter = UtcNow();
         link.Adopted = false;
@@ -523,9 +563,23 @@ public sealed class LinkSupervisor : BackgroundService
         var result = await RunBoundedAsync(link, cleanup, "listener-cleanup", TimeSpan.FromSeconds(10), cancellationToken);
         if (!result.Succeeded)
         {
+            if (result.ExitCode == 1 && result.Detail.Contains("LISTENER", StringComparison.Ordinal))
+            {
+                link.BlockedBy = "remote-listener-held";
+                if (!link.ListenerAlarmRaised)
+                {
+                    link.ListenerAlarmRaised = true;
+                    await _feed.EmitRunnerLinkTransitionAsync(
+                        "link_remote_listener_held", link.Options.RunnerId, result.Detail, link.Attempt, cancellationToken);
+                }
+            }
             await ScheduleFailureAsync(link, $"Remote listener cleanup failed: {result.Detail}", cancellationToken);
             return;
         }
+        link.BlockedBy = null;
+        link.RemoteListenerPid = null;
+        link.RemoteListenerAgeSeconds = null;
+        link.ListenerAlarmRaised = false;
         link.NeedsCleanup = false;
         link.NextRetryAt = UtcNow();
     }
@@ -547,7 +601,11 @@ public sealed class LinkSupervisor : BackgroundService
         await TransitionAsync(link, RunnerLinkStates.Connecting, null, cancellationToken);
         await Task.Yield();
         if (link.Child.HasExited)
-            await ScheduleFailureAsync(link, $"ssh exited before a heartbeat (exit {link.Child.ExitCode}).", cancellationToken);
+        {
+            await link.Child.WaitAsync(cancellationToken);
+            link.Transport = RunnerLinkPolicy.Transport(link.Child.ExitCode ?? 255, link.Child.StandardError);
+            await ScheduleFailureAsync(link, $"ssh exited before a heartbeat (exit {link.Child.ExitCode}). {link.Child.StandardError.Trim()}".Trim(), cancellationToken);
+        }
     }
 
     private async Task<bool> RouteProbeAsync(LinkState link, string kind, CancellationToken cancellationToken)
@@ -559,16 +617,35 @@ public sealed class LinkSupervisor : BackgroundService
         return result.Succeeded;
     }
 
-    private static IReadOnlyList<string> CleanupCommand(RunnerLinkOptions options)
+    public static IReadOnlyList<string> CleanupCommand(RunnerLinkOptions options)
     {
-        var command = "port=" + options.RemotePort + "; endpoint=127.0.0.1:$port; "
-            + "pids=$(ss -H -ltnp \"sport = :$port\" 2>/dev/null | awk -v endpoint=\"$endpoint\" '$4 == endpoint { line=$0; while (match(line, /pid=[0-9]+/)) { print substr(line, RSTART+4, RLENGTH-4); line=substr(line, RSTART+RLENGTH) } }' | sort -u); "
-            + "if [ -n \"$pids\" ]; then kill $pids 2>/dev/null || true; sleep 2; "
-            + "for pid in $pids; do kill -0 \"$pid\" 2>/dev/null && kill -KILL \"$pid\" 2>/dev/null || true; done; fi; "
-            + "i=0; while [ $i -lt 10 ] && ss -H -ltn \"sport = :$port\" 2>/dev/null | awk -v endpoint=\"$endpoint\" '$4 == endpoint { found=1 } END { exit !found }'; do sleep 1; i=$((i+1)); done; "
-            + "if ss -H -ltn \"sport = :$port\" 2>/dev/null | awk -v endpoint=\"$endpoint\" '$4 == endpoint { found=1 } END { exit !found }'; then exit 1; fi";
+        var script = $$"""
+            port={{options.RemotePort}}
+            endpoint=127.0.0.1:$port
+            listener() { ss -H -ltnp "sport = :$port" | awk -v endpoint="$endpoint" '$4 == endpoint { print }'; }
+            rows=$(listener) || exit 2
+            [ -n "$rows" ] || exit 0
+            pids=$(printf '%s\n' "$rows" | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u)
+            [ -n "$pids" ] || { echo 'LISTENER pid=unknown ageSeconds=unknown'; exit 1; }
+            self_uid=$(id -u)
+            for pid in $pids; do
+              owner_uid=$(ps -o uid= -p "$pid" | tr -d ' ')
+              command=$(ps -o comm= -p "$pid" | tr -d ' ')
+              age=$(ps -o etimes= -p "$pid" | tr -d ' ')
+              echo "LISTENER pid=$pid ageSeconds=${age:-unknown} owner=$command uid=$owner_uid"
+              if [ "$owner_uid" = "$self_uid" ] && [ "$command" = sshd ]; then
+                kill "$pid" 2>&1 || true
+                sleep 1
+                kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>&1 || true
+              fi
+            done
+            [ -z "$(listener)" ] || exit 1
+            """;
+        var command = "timeout 4s sh -c " + ShellQuote(script);
         return ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", options.SshTarget, command];
     }
+
+    private static string ShellQuote(string value) => "'" + value.Replace("'", "'\\''", StringComparison.Ordinal) + "'";
 
     private async Task<RunnerLinkProbe> RunBoundedAsync(
         LinkState link, IReadOnlyList<string> arguments, string kind, TimeSpan timeout, CancellationToken cancellationToken)
@@ -576,8 +653,17 @@ public sealed class LinkSupervisor : BackgroundService
         var log = Path.Combine(link.Options.LogDirectory, SafeName(link.Options.RunnerId) + ".log");
         await using var process = _processes.Start(new SshCommand(link.Options.SshExecutable, arguments, log, timeout));
         var exit = await process.WaitAsync(cancellationToken);
+        var command = arguments[^1];
         var probe = new RunnerLinkProbe(UtcNow(), kind, exit == 0, exit,
-            exit == 0 ? "Route probe succeeded." : $"ssh route probe exited with code {exit}.");
+            RunnerLinkPolicy.ProbeDetail(exit, kind, command, process.StandardOutput, process.StandardError));
+        link.Transport = RunnerLinkPolicy.Transport(exit, process.StandardError) ?? link.Transport;
+        if (kind is "listener-cleanup" or "adopted-listener-release")
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(process.StandardOutput,
+                @"LISTENER pid=(\d+) ageSeconds=(\d+)");
+            link.RemoteListenerPid = match.Success ? int.Parse(match.Groups[1].Value) : null;
+            link.RemoteListenerAgeSeconds = match.Success ? int.Parse(match.Groups[2].Value) : null;
+        }
         link.LastProbe = probe;
         if (!probe.Succeeded) link.LastError = probe.Detail;
         return probe;
@@ -587,9 +673,11 @@ public sealed class LinkSupervisor : BackgroundService
     {
         link.LastError = error;
         await TransitionAsync(link, RunnerLinkStates.Reconnecting, error, cancellationToken);
-        var index = Math.Clamp(link.Attempt, 0, link.Options.BackoffSeconds.Count - 1);
+        var index = link.BlockedBy is not null ? link.Options.BackoffSeconds.Count - 1
+            : Math.Clamp(link.Attempt, 0, link.Options.BackoffSeconds.Count - 1);
         link.NextRetryAt = UtcNow().AddSeconds(link.Options.BackoffSeconds[index]);
-        await _feed.EmitRunnerLinkTransitionAsync("link_reconnect_failed", link.Options.RunnerId, error, link.Attempt, cancellationToken);
+        if (link.BlockedBy is null)
+            await _feed.EmitRunnerLinkTransitionAsync("link_reconnect_failed", link.Options.RunnerId, error, link.Attempt, cancellationToken);
     }
 
     private async Task StopChildAsync(LinkState link, CancellationToken cancellationToken)
@@ -631,6 +719,12 @@ public sealed class LinkSupervisor : BackgroundService
         if (!string.IsNullOrWhiteSpace(error)) link.LastError = error;
         if (next == RunnerLinkStates.Up)
         {
+            link.LastError = null;
+            link.BlockedBy = null;
+            link.RemoteListenerPid = null;
+            link.RemoteListenerAgeSeconds = null;
+            link.ListenerAlarmRaised = false;
+            link.Transport = null;
             link.UnreachableSince = null;
             link.NotificationRaisedAt = null;
             await _feed.EmitRunnerLinkTransitionAsync(
@@ -647,6 +741,7 @@ public sealed class LinkSupervisor : BackgroundService
     private async Task MaybeNotifyAsync(LinkState link, DateTime now, CancellationToken cancellationToken)
     {
         if (link.NotificationRaisedAt is not null || link.State == RunnerLinkStates.Paused
+            || link.BlockedBy is not null
             || link.UnreachableSince is not { } unreachableSince
             || now - unreachableSince < TimeSpan.FromMinutes(5)
             || !ReadyTargets(link.Options.RunnerId)) return;
@@ -699,10 +794,15 @@ public sealed class LinkSupervisor : BackgroundService
         public DateTime? NotificationRaisedAt;
         public DateTime? UnreachableSince = now;
         public bool NeedsCleanup;
+        public string? BlockedBy;
+        public int? RemoteListenerPid;
+        public int? RemoteListenerAgeSeconds;
+        public string? Transport;
+        public bool ListenerAlarmRaised;
 
         public RunnerLinkResource Resource() => new(
             Options.RunnerId, Options.Kind, State, Since, LastHeartbeatAt, LastProbe, LastError,
             Attempt, NextRetryAt, Child is { HasExited: false } ? Child.Pid : null, NotificationRaisedAt,
-            UnreachableSince);
+            UnreachableSince, BlockedBy, RemoteListenerPid, RemoteListenerAgeSeconds, Transport);
     }
 }

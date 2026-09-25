@@ -64,11 +64,20 @@ state.
   identity. The connectivity capability's three-minute freshness deadline is
   the remote alarm because a broken route cannot deliver its own failure
   telemetry.
+- Provider-auth capability limits are accepted only from an explicit provider
+  refusal with a parseable reset. Signal-terminated runs and allowed quota
+  telemetry are excluded. Limited advertisements carry a scrubbed source run
+  and excerpt; expiry or a claim response's re-probe request refreshes the
+  provider status without restarting the daemon. A live same-provider run is
+  counter-evidence and makes the conflicting state claimable but degraded.
 - `backend/Features/Management/RunnerLinks/LinkSupervisor.cs`: Task Server-owned
   SSH reverse-link lifecycle, heartbeat subscription, functional route probe,
   remote listener cleanup, bounded retry ladder, silent child process and
   Windows kill-on-close job ownership. `GET /api/v1/management/links` is the
-  canonical resource for Execution Hosts and Ready-card wait reasons. The old
+  canonical resource for Execution Hosts and Ready-card wait reasons. A held
+  listener exposes `blockedBy: remote-listener-held` with PID and age, emits one
+  alarm, and uses the longest retry interval. Runner onboarding installs sshd
+  client liveness so abandoned sessions release their listener. The old
   assets under `deploy/windows/agent-runner-tunnel/` are an emergency path only.
 - `deploy/windows/agent-runner-tunnel/`: documented emergency rollback assets.
   They are never called by the product and must not run alongside an enabled
@@ -736,7 +745,12 @@ state.
   Tool failures and indeterminate non-zero exits retain last-good; rate limits
   use the limited state. Two consecutive explicit failures are required before
   sign-in is blocked, and a later positive probe clears that provider circuit
-  without a runner restart.
+  without a runner restart. Provider-limit evidence is suppressed only by an
+  independently recorded termination fact. The legacy process boundary records
+  Bash's child wait status before it returns a conventional high exit code;
+  CAR does not infer a signal from an exit number. A voluntary exit 137 remains
+  eligible evidence, while recorded SIGTERM, SIGKILL, operator stop, and host
+  shutdown facts are excluded.
 - Provider HTTP 400, 403, or 404 request refusals such as
   `unsupported_parameter` are typed `ProviderRejectedRequest`. They do not
   update provider-auth capability state. A salvaged coding run continues on

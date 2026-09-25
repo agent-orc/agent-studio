@@ -21,6 +21,7 @@ public static partial class WorkbenchDecisionPointCounter
         var count = 0;
         foreach (var element in document.QuerySelectorAll("[data-decision-id][data-decision-kind]"))
         {
+            if (element.GetAttribute("data-decision-status") == "decided") continue;
             var id = element.GetAttribute("data-decision-id")?.Trim() ?? "";
             var kind = element.GetAttribute("data-decision-kind")?.Trim() ?? "";
             if (!SafeId().IsMatch(id) || !Kinds.Contains(kind) || decisionIds.Contains(id))

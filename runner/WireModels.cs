@@ -291,7 +291,8 @@ public sealed record RunnerClaimResponse(
     // from the integration branch, so the rescued work is present before the
     // agent reads its finishing instruction.
     string? ContinuationBaseRef = null,
-    string? ContinuationBaseSha = null);
+    string? ContinuationBaseSha = null,
+    IReadOnlyList<string>? ReprobeCapabilities = null);
 
 public static class RemoteChatWorkKinds
 {

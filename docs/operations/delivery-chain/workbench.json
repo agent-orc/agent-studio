@@ -3,12 +3,12 @@
   "id": "delivery-chain",
   "key": "AGT-W57",
   "title": "Delivery chain: integration, recovery, robustness",
-  "summary": "Theme Dossier for the path from an agent's last commit to a published release. It carries the settled Git policy per stage (renew identity on a fresh fenced recovery round, preserve delivery SHAs at canonical integration with merge first, publish only the exact gated candidate to main), the board status contract that policy depends on (integration truth derived from target-branch presence, 'completed' as an evidence-bearing statement), the five structural patterns behind the incidents of 2026-08-13 to 2026-09-12, the eleven failure classes from live operation, the measured retry tax of 2026-08-11 and 2026-08-12 (11.1 percent useful first-run coding, 88.9 percent retry tax), and the recurring failure shapes synthesised from the rolling supervision log. Recommends the wave order diagnosis contract and cause breaker first, then isolation per AGT-W51, then lifecycle ownership and executable healings. Seven open decisions: first-bounce ownership, guardian trigger, batch member assembly, flaky policy, integrated-only human review, pull-request projects, and how a mechanical rebase round is executed. Consolidates AGT-W3, W23, W37, W42, W44, W50 and synthesises AGT-W39.",
+  "summary": "Theme Dossier for the path from an agent's last commit to a published release. It carries the settled Git policy per stage (renew identity on a fresh fenced recovery round, preserve delivery SHAs at canonical integration with merge first, publish only the exact gated candidate to main), the board status contract that policy depends on (integration truth derived from target-branch presence, 'completed' as an evidence-bearing statement), the five structural patterns behind the incidents of 2026-08-13 to 2026-09-12, the eleven failure classes from live operation, the measured retry tax of 2026-08-11 and 2026-08-12 (11.1 percent useful first-run coding, 88.9 percent retry tax), and the recurring failure shapes synthesised from the rolling supervision log. Recommends the wave order diagnosis contract and cause breaker first, then isolation per AGT-W51, then lifecycle ownership and executable healings. 7 operator decisions recorded on 2026-09-25; option A selected for each. Consolidates AGT-W3, W23, W37, W42, W44, W50 and synthesises AGT-W39.",
   "entrypoint": "index.html",
   "status": "decision-pending",
   "phase": "decision-ready",
   "pattern": "concept",
-  "updatedAt": "2026-09-14T18:43:49Z",
+  "updatedAt": "2026-09-25T12:40:00Z",
   "sourceTaskKeys": [
     "AGT-2799"
   ],
@@ -130,5 +130,78 @@
       "reviewedBy": "AGT-2894",
       "note": "The consolidated Dossier still owns delivery-chain policy and open choices, now including AGT-2881's unimplemented remote-integration authority and Studio-observer direction."
     }
-  ]
+  ],
+  "decision": {
+    "outcome": "record-only",
+    "action": "recorded",
+    "state": "succeeded",
+    "decidedBy": "Operator",
+    "decidedAt": "2026-09-25T10:56:00Z",
+    "responses": [
+      {
+        "decisionId": "first-bounce-owner",
+        "kind": "single",
+        "selectedOptionIds": [
+          "platform-rule"
+        ],
+        "comment": "A deterministic backend rule owns one idempotent round per operator review epoch."
+      },
+      {
+        "decisionId": "guardian-trigger",
+        "kind": "single",
+        "selectedOptionIds": [
+          "on-repeat"
+        ],
+        "comment": "A strong guardian handles repeats or genuine ambiguity and only authors diagnosis and steer."
+      },
+      {
+        "decisionId": "batch-member-assembly",
+        "kind": "single",
+        "selectedOptionIds": [
+          "shadow-compare"
+        ],
+        "comment": "Shadow measurement compares mapped replay with member merges before fixing the assembly shape."
+      },
+      {
+        "decisionId": "flaky-policy",
+        "kind": "single",
+        "selectedOptionIds": [
+          "quarantine"
+        ],
+        "comment": "Quarantine has an expiry date and a card, so flaky coverage remains accountable."
+      },
+      {
+        "decisionId": "integrated-only-review",
+        "kind": "single",
+        "selectedOptionIds": [
+          "integrated-only"
+        ],
+        "comment": "Human review starts after integration; acceptance confirms it and archive requires an audited override."
+      },
+      {
+        "decisionId": "pull-request-projects",
+        "kind": "single",
+        "selectedOptionIds": [
+          "pr-surface"
+        ],
+        "comment": "Pull request approval is separate, and human review starts after the merge."
+      },
+      {
+        "decisionId": "mechanical-round-execution",
+        "kind": "single",
+        "selectedOptionIds": [
+          "resume-session"
+        ],
+        "comment": "Resume is bounded by lineage checks, a compact delta and token cap, with a typed fresh-run fallback."
+      }
+    ],
+    "operationId": "operator-20260925-delivery-chain",
+    "sourceFingerprint": "5c3c964ead1a8cfd02748369d0b538a07c8bc35495250ed26e17a1eda0dfc6cb",
+    "sourceEntryFingerprint": "5c3c964ead1a8cfd02748369d0b538a07c8bc35495250ed26e17a1eda0dfc6cb",
+    "preparedAt": "2026-09-25T12:40:00Z",
+    "preparedBy": "Operator",
+    "confirmedAt": "2026-09-25T12:40:00Z",
+    "confirmedBy": "Operator",
+    "spawnedTaskKeys": []
+  }
 }

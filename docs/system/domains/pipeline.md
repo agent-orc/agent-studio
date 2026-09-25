@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-09-11
+Version: 2026-09-19
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -516,7 +516,9 @@ steer the pipeline in this policy version.
   skipping blank / unparseable lines.
 - `backend/Features/Tasks/TaskPipelineEndpoints.cs`: API surface for task
   pipeline data, including `GET /{jobId}/step-prompts`, the read-model the
-  Overview "Prompt" affordance parses from `.metadata/prompts.jsonl`.
+  Overview "Prompt" affordance parses from `.metadata/prompts.jsonl`. The main
+  pipeline response also exposes latest-first aspect evidence links for the
+  canonical report, attempt stdout, and Remote Review grade.
 - `backend/Features/Tasks/TaskLiveStatusProjection.cs`: board and detail
   read-model for the current pipeline step, recorded CLI/model provenance,
   enabled upcoming steps, current runner/review queue position, and latest
@@ -542,6 +544,14 @@ steer the pipeline in this policy version.
   Overview. `Not run` is reserved for a step the current attempt genuinely
   never reached. Remote token totals, historical list-price estimates, and call
   counts come from the same token ledger as the Task tab.
+- A successfully executed semantic aspect is a passed pipeline step even when
+  its verdict is `concerns` or `block`; the verdict carries the review result.
+  Remote projection writes the same status, verdict, summary, and evidence
+  reference as local execution. At read time, a legacy failed remote aspect is
+  repaired to passed-with-concerns when its grade row records `concerns`.
+  Overview rows show the verdict and summary for every completed aspect and
+  link the report, raw attempt log, and grade without requiring file-name
+  knowledge.
 - Test execution has three stable levels: `continuous` runs the configured
   fixed baseline, `work-package` adds tests selected from the current diff and
   Test Hub history, and `full` runs every declared test command. Project

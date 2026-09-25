@@ -27,7 +27,7 @@ public sealed record ProviderAccessEvidence(
 /// </summary>
 public static partial class ProviderAccessClassifier
 {
-    public static readonly TimeSpan UnknownLimitRetry = TimeSpan.FromMinutes(15);
+    public static readonly TimeSpan UnknownLimitRetry = TimeSpan.FromMinutes(10);
 
     private static readonly string[] RateLimitSignals =
     [
@@ -103,6 +103,23 @@ public static partial class ProviderAccessClassifier
         var text = string.Join('\n', new[] { stdout, stderr }
             .Where(value => !string.IsNullOrWhiteSpace(value)));
 
+        // Provider telemetry reports approaching limits as normal stream events.
+        // Those events are evidence that the request was admitted, even when a
+        // human-readable field happens to contain "usage limit". They must not
+        // poison the host-wide authentication capability.
+        var lines = text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        var allowedTelemetry = lines.Where(line => AllowedRateLimitEventRegex().IsMatch(line)).ToArray();
+        if (allowedTelemetry.Length > 0)
+            text = string.Join('\n', lines.Except(allowedTelemetry));
+        if (allowedTelemetry.Length > 0 && string.IsNullOrWhiteSpace(text))
+            return exitCode == 0
+                ? new ProviderAccessEvidence(
+                    ProviderAccessEvidenceKind.Authenticated,
+                    "The provider admitted the request and emitted quota telemetry.")
+                : new ProviderAccessEvidence(
+                    ProviderAccessEvidenceKind.IndeterminateFailure,
+                    "The run emitted allowed quota telemetry but ended for another reason.");
+
         if (ProviderRequestRejectionClassifier.TryClassify(text, out var rejection))
         {
             return new ProviderAccessEvidence(
@@ -110,10 +127,20 @@ public static partial class ProviderAccessClassifier
                 rejection.Message);
         }
 
-        if (Contains(text, RateLimitSignals) || Http429Regex().IsMatch(text))
+        var explicitRefusal = Contains(text, RateLimitSignals) || Http429Regex().IsMatch(text);
+        if (explicitRefusal)
         {
             var now = observedAt ?? DateTimeOffset.UtcNow;
             var reset = ParseResetAt(text, now, localZone ?? TimeZoneInfo.Local);
+            // An allowed telemetry event is counter-evidence for nearby warning
+            // prose. Only a separate refusal with a reset or an HTTP 429 can
+            // override it.
+            if (allowedTelemetry.Length > 0
+                && reset is null
+                && !Http429Regex().IsMatch(text))
+                return new ProviderAccessEvidence(
+                    ProviderAccessEvidenceKind.IndeterminateFailure,
+                    "The provider admitted the request and emitted quota telemetry.");
             return new ProviderAccessEvidence(
                 ProviderAccessEvidenceKind.RateLimited,
                 FirstMatchingLine(text, RateLimitSignals, "provider rate limit"),
@@ -227,6 +254,9 @@ public static partial class ProviderAccessClassifier
 
     [GeneratedRegex(@"(?:\bhttp\s*429\b|\bstatus(?:\s+code)?\s*[:=]?\s*429\b|\berror\s*[:=]?\s*429\b|\b429\s+too\s+many\s+requests\b)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex Http429Regex();
+
+    [GeneratedRegex("\\\"status\\\"\\s*:\\s*\\\"(?:allowed|allowed_warning)\\\"", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex AllowedRateLimitEventRegex();
 
     [GeneratedRegex(@"(?:\bhttp\s*401\b|\bstatus(?:\s+code)?\s*[:=]?\s*401\b|\berror\s*[:=]?\s*401\b|\b401\s+(?:unauthori[sz]ed|missing\s+(?:bearer|basic)))", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex ExplicitHttp401Regex();

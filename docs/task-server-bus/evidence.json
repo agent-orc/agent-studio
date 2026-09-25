@@ -1,0 +1,356 @@
+{
+  "revision": "d713e8a156b565374166d545a0f079dc8be23926",
+  "asOf": "2026-09-25",
+  "method": "Local source inspection; develop and origin/develop match HEAD; no remote fetch, product runtime or historical incident measurement.",
+  "sources": {
+    "A": {
+      "path": "backend/Features/Runner/AttemptAuthorityService.cs",
+      "line": 45,
+      "symbol": "public const string RelativePath",
+      "description": "File-backed attempt authority; acquisition, fencing, epochs, settlement and restart adoption.",
+      "sha256": "79f4e392dfe94855ba72dbcfbbe702673c9937373b9618f5ad902ca171999846"
+    },
+    "AT": {
+      "path": "backend/Shared/Attempts/AttemptAuthorityModels.cs",
+      "line": 108,
+      "symbol": "public sealed record AttemptWriteReference",
+      "description": "AttemptWriteReference, RunAttemptDto, ReviewSubjectDto and ReviewAttemptDto wire identities.",
+      "sha256": "6c15002c7c7df9a32848f4c5a17b6c69dbb205a2d67d1892202d2a92adad1139"
+    },
+    "L": {
+      "path": "backend/Features/Tasks/LeaseEndpoints.cs",
+      "line": 225,
+      "symbol": "app.MapPost(\"/api/runner/claim\"",
+      "description": "Monolith claim selection, assignment, admission, lease and Ready-to-Progress transition.",
+      "sha256": "7afb67a57bc46ad1b41cf55786a7361b9fc33b2cd3b1eff6ed0fdaa46388ceb8"
+    },
+    "C": {
+      "path": "backend/Features/Tasks/LeaseEndpoints.cs",
+      "line": 1171,
+      "symbol": "app.MapPost(\"/api/runner/completion\"",
+      "description": "Fenced completion, immutable result envelope, review creation and outcome lane routing.",
+      "sha256": "7afb67a57bc46ad1b41cf55786a7361b9fc33b2cd3b1eff6ed0fdaa46388ceb8"
+    },
+    "W": {
+      "path": "backend/Shared/Lease/RunLeaseWireModels.cs",
+      "line": 127,
+      "symbol": "public sealed record RunnerClaimRequest",
+      "description": "RunnerClaimRequest, RunSpecDto, completion and lease DTOs.",
+      "sha256": "9bd9d3998ddd7bc9efc70f97e815ec6bd6181fadf1a5800cd932509df94346a3"
+    },
+    "RL": {
+      "path": "backend/Features/Runner/RunLeaseService.cs",
+      "line": 11,
+      "symbol": "public sealed class RunLeaseService",
+      "description": "Run lease facade backed by AttemptAuthorityService, not a second lease owner.",
+      "sha256": "5741e84c486218387729f333e62de366b1cd6418166739ac9bda90c3eb5c24b2"
+    },
+    "V": {
+      "path": "backend/Features/Runner/V1ReviewPlaneEndpoints.cs",
+      "line": 319,
+      "symbol": "api.MapPost(\"/runners/{runnerId}/review-claims\"",
+      "description": "Monolith Review Plane registration, claims, renewal, reclaim, report and cleanup.",
+      "sha256": "9abe5da079893ba5246d613f26f9efd1fb41f90dd66ab6d9e1237d6a0b6fe5fa"
+    },
+    "VR": {
+      "path": "backend/Features/Runner/V1ReviewPlaneEndpoints.cs",
+      "line": 1984,
+      "symbol": "public sealed class V1ReviewExecutorRegistry",
+      "description": "In-memory executor registration and capability freshness/admission.",
+      "sha256": "9abe5da079893ba5246d613f26f9efd1fb41f90dd66ab6d9e1237d6a0b6fe5fa"
+    },
+    "RP": {
+      "path": "backend/Features/Runner/V1ReviewPlaneEndpoints.cs",
+      "line": 586,
+      "symbol": "api.MapPost(\"/reviews/attempts/{attemptId}/report\"",
+      "description": "Fenced review report, duplicate fast path, settlement sidecar and integration.",
+      "sha256": "9abe5da079893ba5246d613f26f9efd1fb41f90dd66ab6d9e1237d6a0b6fe5fa"
+    },
+    "S": {
+      "path": "backend/Features/Pipeline/RemoteDeliverySettlementStore.cs",
+      "line": 43,
+      "symbol": "public sealed record RemoteDeliverySettlementRecord",
+      "description": "Atomic sidecar write; attempt match and monotonic stage advancement.",
+      "sha256": "3e10ead539e0276dab4f46a40067aaea8edac8b024504fa891bd5cdabccc33f3"
+    },
+    "I": {
+      "path": "backend/Features/Pipeline/RemoteDeliveryIntegration.cs",
+      "line": 140,
+      "symbol": "public sealed class RemoteDeliveryIntegrationCoordinator",
+      "description": "Per-project in-memory integration queue and coalescing, gate policy and integration runner call.",
+      "sha256": "0517ac0f955659ece0a42708900a91d3cb29fcf3b001e55a36a0046109686263"
+    },
+    "R": {
+      "path": "backend/Features/Runner/AutoReviewDeliveryResumeService.cs",
+      "line": 130,
+      "symbol": "public async Task<AutoReviewResumeOutcome> ResumeAsync",
+      "description": "Matching current attempt and sidecar before integration/lane recovery.",
+      "sha256": "a0adcebddc46abf19a4ea3e03889555a5d89d7c46b5409f7a9f404f7211244c7"
+    },
+    "Q": {
+      "path": "backend/Features/Runner/RemoteReviewEvidenceProjectionQueue.cs",
+      "line": 122,
+      "symbol": "public sealed class RemoteReviewEvidenceProjectionQueue",
+      "description": "In-memory Channel, bounded retry worker; no durable pending report payload here.",
+      "sha256": "194c5f3e53f9cf13a354b673d3ec2b4d53ee8a222a9e6b3a17845cc03b8bc193"
+    },
+    "T": {
+      "path": "backend/Features/Tasks/TaskMutationService.cs",
+      "line": 89,
+      "symbol": "public bool SetJobModel",
+      "description": "Server-side task.json model mutation; continuation, references and integration records.",
+      "sha256": "9ea74db6e77a59c347882f87f96467566fbbe4d8be925b203c90d47c3f3b2b15"
+    },
+    "TI": {
+      "path": "backend/Shared/Models/TaskInfo.cs",
+      "line": 5,
+      "symbol": "public record TaskInfo",
+      "description": "Persisted metadata versus scanner/runtime-only projections.",
+      "sha256": "3bddeb2ebdf687e56149f2fe4c9f3c11e15cdadb6b4b69d5330c9ed0d1c336d2"
+    },
+    "TM": {
+      "path": "backend/Features/Tasks/TaskCrudEndpoints.cs",
+      "line": 677,
+      "symbol": "group.MapPost(\"/{jobId}/move\"",
+      "description": "Task mutation routes, move/model/references/release.",
+      "sha256": "81591ea6c58f38580afe070d7b83f5d7aa6346c7ce7a2660b3305afcc9ef554b"
+    },
+    "TF": {
+      "path": "backend/Features/Tasks/TaskFilesEndpoints.cs",
+      "line": 109,
+      "symbol": "group.MapPut(\"/{jobId}/files/{fileName}\"",
+      "description": "Prompt/file update and file read endpoints.",
+      "sha256": "430e0ff71487709fe39b3ffc26e7482008a8418112f315cdad45b3ea65131eab"
+    },
+    "TS": {
+      "path": "backend/Features/Tasks/TaskTransitionService.cs",
+      "line": 10,
+      "symbol": "public sealed class TaskTransitionService",
+      "description": "Lane transition service with lifecycle side effects.",
+      "sha256": "ec257151bc29cf7d42e46d8a42f34c27a19dbf80bd20867194d9efae28846e1a"
+    },
+    "F": {
+      "path": "backend/Features/Runner/TaskRunnerService.cs",
+      "line": 689,
+      "symbol": "public async Task<ContinueJobResponse> ContinueJobAsync",
+      "description": "Follow-up admission, prompt append, queued intent, local direct continuation.",
+      "sha256": "7082c771069aa4b7eae5648262afa0afa35b4afb9cf16c91c7629ca209c79324"
+    },
+    "PI": {
+      "path": "backend/Features/Tasks/TaskMutationService.cs",
+      "line": 1971,
+      "symbol": "public PendingIntent? SavePendingIntent",
+      "description": "Latest-wins pending-intent.json and consumed-file rollback protocol.",
+      "sha256": "9ea74db6e77a59c347882f87f96467566fbbe4d8be925b203c90d47c3f3b2b15"
+    },
+    "STOP": {
+      "path": "backend/Features/Runner/RemoteRunStopRequests.cs",
+      "line": 95,
+      "symbol": "public sealed class RemoteRunStopRequestStore",
+      "description": "Volatile stop requests, keyed to task/attempt and returned on lease renewal.",
+      "sha256": "ede30c7c3fa81aa43ec53d75a2b809523b27a1340d613c57fbf56aac39e40ab0"
+    },
+    "TR": {
+      "path": "backend/Features/Tasks/TaskRunnerEndpoints.cs",
+      "line": 49,
+      "symbol": "group.MapPost(\"/{jobId}/stop\"",
+      "description": "Stop/continue routes and timeline/runs reads.",
+      "sha256": "3f7b98943745d8427502f9da824b9cc4abe7ffb609eb3c514c7d5fc050d3157e"
+    },
+    "LOG": {
+      "path": "backend/Features/Tasks/TimelineLog.cs",
+      "line": 74,
+      "symbol": "public bool Append(string jobFolderPath, TimelineEvent evt)",
+      "description": "Best-effort append-only logs/timeline.jsonl and tolerant ReadAll.",
+      "sha256": "56b48091d5a1763c5c2597e4cc385c6f8722d3d51332a13862ab5668a44dfcb4"
+    },
+    "BUS": {
+      "path": "backend/Features/Bus/AgentMessageBusBridge.cs",
+      "line": 32,
+      "symbol": "public sealed class AgentMessageBusBridge",
+      "description": "Typed observation bridge; operator alerts and user/orchestrator messages.",
+      "sha256": "19b81d38551ee1a3ade69b801a40d278bc33206f5e55dd552aaa953e404ab841"
+    },
+    "BR": {
+      "path": "backend/Features/Bus/BusEndpoints.cs",
+      "line": 15,
+      "symbol": "var group = app.MapGroup",
+      "description": "AgentMessageBusStore read API, separate from scheduling authority.",
+      "sha256": "c54ff0846044ea74845545390774d1c1c9fb80720b1cefbe907f39c4d51c1d54"
+    },
+    "ING": {
+      "path": "backend/Features/Diagnostics/ArtifactIngestionEndpoints.cs",
+      "line": 71,
+      "symbol": "app.MapPost(\"/api/runner/artifacts\"",
+      "description": "Manifest-bound fenced artifact writes and duplicate handling.",
+      "sha256": "5ffbc2b4f1db6255d90d20847fb60bf7bfb35f44abf73598953bb25496a47255"
+    },
+    "LG": {
+      "path": "backend/Features/Diagnostics/LogIngestionEndpoints.cs",
+      "line": 24,
+      "symbol": "app.MapPost(\"/api/runner/logs\"",
+      "description": "Fenced log ingestion and log replay identity.",
+      "sha256": "046ef211f900028700fa5cdbdfd776e87649764d58b1df8dc42184a646b0dddc"
+    },
+    "D": {
+      "path": "runner/RemoteRunnerDaemon.cs",
+      "line": 19,
+      "symbol": "public sealed class RemoteRunnerDaemon",
+      "description": "Coding daemon polling, registration, capacity and finalization reconciliation.",
+      "sha256": "d95467ccf0d2019a9947868fc695efbca8f237b707972de4c887a4837bed7a83"
+    },
+    "RD": {
+      "path": "runner/RemoteReviewDaemon.cs",
+      "line": 9,
+      "symbol": "public sealed class RemoteReviewDaemon",
+      "description": "Review daemon poll and separate review slot admission.",
+      "sha256": "67ba6fc4dc32e99f062411d5477fa050640b4ceb4ff879e07ea6b8ec02e749f4"
+    },
+    "EX": {
+      "path": "runner/RemoteReviewExecutor.cs",
+      "line": 10,
+      "symbol": "public sealed class RemoteReviewExecutor",
+      "description": "Exact-subject workspace, detached review worker, report replay and cleanup.",
+      "sha256": "c49fe5d91bbe364490d372b0b550a19ee9d7e68b1e75c7ac171cab34337e8111"
+    },
+    "HB": {
+      "path": "runner/LeaseHeartbeat.cs",
+      "line": 59,
+      "symbol": "public async Task RunAsync",
+      "description": "Authority deadline, bounded network uncertainty, stop directive and lease-loss cancellation.",
+      "sha256": "33c0e8fa6737186a8c7a1d991dea479ac1655d966325d6853d1421d568be9b93"
+    },
+    "RT": {
+      "path": "runner/RemoteTaskRunner.cs",
+      "line": 902,
+      "symbol": "lease-loss worktree quarantined",
+      "description": "Lease-loss quarantine; normal fenced completion and artifact upload.",
+      "sha256": "31602218e497f6259298ccb0f40ed0a7fc6d133b078412cc6931fd79b8b7ba88"
+    },
+    "O": {
+      "path": "runner/RunnerOptions.cs",
+      "line": 474,
+      "symbol": "PollSeconds = overrides",
+      "description": "Default polling 5 s; heartbeat 30 s and requested TTL 900 s nearby.",
+      "sha256": "b86a6eb12333460297fb364d29cf5d2dcf028819625da56f80e54a84c59b0140"
+    },
+    "CLIENT": {
+      "path": "runner/TaskServerClient.cs",
+      "line": 344,
+      "symbol": "public bool UsesDurableTaskServer",
+      "description": "Explicit protocol selection and mapping between legacy and standalone routes.",
+      "sha256": "56372211223723b7cdfa881f057cfda96e02b9ca3ed2fb898102a9f26abbb086"
+    },
+    "OUT": {
+      "path": "runner/DurableRunOutbox.cs",
+      "line": 36,
+      "symbol": "public sealed class DurableRunOutbox",
+      "description": "Persisted runner delivery outbox and replay state.",
+      "sha256": "03a5a495faa6f89be65abbd7aa331c24dc24768c55195087e46bfee3cda3f91d"
+    },
+    "CF": {
+      "path": "runner/CodingFinalizationReconciler.cs",
+      "line": 18,
+      "symbol": "public sealed class CodingFinalizationReconciler",
+      "description": "Daemon-loop retry of persisted finalization, including startup recovery.",
+      "sha256": "85cf8fa193a45449138a048413944e174aa8c9c20f593d99c7e2cc58b0d8d387"
+    },
+    "E": {
+      "path": "orchestrator-engine/EngineTaskServerClient.cs",
+      "line": 46,
+      "symbol": "public Task<OrchestrationClaimResponse> ClaimAsync",
+      "description": "Engine only calls the Task Server, claims stages and posts fenced decisions.",
+      "sha256": "af638ed7cc250068606efadb6baf1954db51fd8a28dacbcad0becb0ae5fa2f97"
+    },
+    "EH": {
+      "path": "orchestrator-engine/OrchestrationStageHandlers.cs",
+      "line": 51,
+      "symbol": "public sealed class ReviewDecisionOrchestratorLoop",
+      "description": "Existing engine stage handlers are bounded outcome decisions, not a full bus observer.",
+      "sha256": "808dcd5ffdc7bb1280469e4ab342fd02a00a57a0767dc0384a030d71a7e72384"
+    },
+    "SE": {
+      "path": "task-server/TaskServerEndpoints.cs",
+      "line": 258,
+      "symbol": "runners.MapPost(\"/{runnerId}/claims\"",
+      "description": "Standalone v1 runner, review, orchestration, event and artifact routes.",
+      "sha256": "2465c93d3858f410f93db32e6519d546e1ae991e814c44282ac85bd0e5ea6be7"
+    },
+    "DB": {
+      "path": "task-server/TaskServerStore.cs",
+      "line": 1209,
+      "symbol": "public async Task<ClaimResponse> ClaimAsync",
+      "description": "SQLite claim transaction, run/lease/fence rows, completion, events and artifacts.",
+      "sha256": "a54a09bb714ad3e1e675342a3a7c844fd3603c3933712a1e7a76f243347e4044"
+    },
+    "DBR": {
+      "path": "task-server/TaskServerReviewStore.cs",
+      "line": 705,
+      "symbol": "public async Task<ReviewReportDto> ReportReviewAsync",
+      "description": "Standalone persisted review report/settlement implementation.",
+      "sha256": "4021634218ea2c90b5a16ba571c03f7f2f394b2e5c60b2537e6fcc67d3dd4f57"
+    },
+    "OE": {
+      "path": "task-server/TaskServerOrchestrationStore.cs",
+      "line": 288,
+      "symbol": "public async Task<OrchestrationClaimResponse> ClaimOrchestrationAsync",
+      "description": "Durable engine stage claims, stage idempotency and task settlement transaction.",
+      "sha256": "ec9cc627321b3d80da675869015f3ac0dc5519ed635d63dc0b622b36133976dd"
+    },
+    "FEED": {
+      "path": "task-server/TaskServerStudioRunnerOrchestratorStore.cs",
+      "line": 487,
+      "symbol": "public async Task<OrchestratorFeedResponse> GetOrchestratorFeedAsync",
+      "description": "Standalone operator-feed read projection.",
+      "sha256": "dd1f3e002b1d2c42d38fe4231d879e40f81b25be617508958d5b4f0860692abe"
+    },
+    "ADOPT": {
+      "path": "backend/Features/Runner/AttemptAuthorityService.cs",
+      "line": 1387,
+      "symbol": "public IReadOnlyList<AgentStudio.TaskServer.Contracts.RunnerAttemptAdoption> ReAdoptRunnerAttempts",
+      "description": "Expiry-only adoption can reopen an exact current leased generation; takeover or terminal state prevents it.",
+      "sha256": "79f4e392dfe94855ba72dbcfbbe702673c9937373b9618f5ad902ca171999846"
+    },
+    "MERGE": {
+      "path": "backend/Features/Pipeline/MergeIntoDevelopRunner.cs",
+      "line": 28,
+      "symbol": "public sealed class MergeIntoDevelopRunner",
+      "description": "Integration gate, containment, push and remote-durability outcomes.",
+      "sha256": "3aa2edd6a3c234bab325b7abdb42c92e8b97ce49cd95780f4cea7c9fe16a4c49"
+    },
+    "GATE": {
+      "path": "backend/Features/Pipeline/IntegrationGateJournal.cs",
+      "line": 55,
+      "symbol": "public static class IntegrationGateJournal",
+      "description": "Durable in-flight integration gate journal read/write boundary.",
+      "sha256": "584e58693c065207ddc67d37755080c993e0ea309de6d8ea4f9a12c34f2b9b21"
+    },
+    "PLAN": {
+      "path": "backend/Features/Runner/RemoteReviewPlanBuilder.cs",
+      "line": 12,
+      "symbol": "public sealed class RemoteReviewPlanBuilder",
+      "description": "Server-side review command-plan composition.",
+      "sha256": "625c334674411ebbd93297abe8b2b7d298a2d5e4f9d0444bf43b23f5198911e0"
+    },
+    "LIFE": {
+      "path": "backend/Features/Runner/ReviewAttemptTaskLifecycleService.cs",
+      "line": 8,
+      "symbol": "public sealed class ReviewAttemptTaskLifecycleService",
+      "description": "Review claim/task-state validation and queued-plan refresh.",
+      "sha256": "4d53192bd583c428291c9e3f1f530c33c2a11c265d9327f5908687e343c0c4f1"
+    },
+    "AUTHAPI": {
+      "path": "backend/Features/Tasks/AttemptAuthorityEndpoints.cs",
+      "line": 8,
+      "symbol": "var group = app.MapGroup",
+      "description": "Attempt projection reads and low-level review create/claim/settle routes.",
+      "sha256": "28a983cdcf044b5e66756382a3c01a2008fcc9a3f2cae81e1d64e417141144b9"
+    }
+  },
+  "incident": {
+    "date": "2026-09-24/25",
+    "provenance": "Operator task prompt, AGT-2905",
+    "measuredTimelineAvailable": false,
+    "reconstruction": "index.html#sequences"
+  }
+}
