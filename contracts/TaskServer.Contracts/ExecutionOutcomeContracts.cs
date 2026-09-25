@@ -257,7 +257,9 @@ public static class ExecutionOutcomeAdapter
             facts.ExitCode ?? (providerFailed ? 1 : 0),
             failedStdOut,
             Join(providerFailureEvent, facts.StdErr));
-        if (!honestTerminal && providerAccess.Kind == ProviderAccessEvidenceKind.RateLimited)
+        if (!honestTerminal
+            && facts.Signal is null
+            && providerAccess.Kind == ProviderAccessEvidenceKind.RateLimited)
             return Decide(facts, ExecutionOutcomeKind.QuotaExceeded, OutcomeConfidence.High, null, infrastructure: true);
         if (!honestTerminal && providerAccess.Kind == ProviderAccessEvidenceKind.AuthenticationFailure)
             return Decide(facts, ExecutionOutcomeKind.AuthenticationFailure, OutcomeConfidence.High, null, infrastructure: true);

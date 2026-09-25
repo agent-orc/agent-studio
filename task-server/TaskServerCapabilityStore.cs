@@ -97,12 +97,12 @@ public sealed partial class TaskServerStore
                         runner_id, capability_key, category, schema_version,
                         advertised_status, health_state, reason, version,
                         identity_value, detail, signal, credential_expires_at,
-                        limited_until, credential_modified_at, advertised_at, fresh_until,
+                        limited_until, credential_modified_at, evidence_id, evidence_excerpt, advertised_at, fresh_until,
                         generation, recovery_history_json, updated_at)
                     VALUES (
                         $runner, $key, $category, $schema, $status, 'healthy',
                         NULL, $version, $identity, $detail, $signal, $expires,
-                        $limited, $credential_modified, $advertised,
+                        $limited, $credential_modified, $evidence_id, $evidence_excerpt, $advertised,
                         $fresh, $generation, $history, $updated)
                     ON CONFLICT(runner_id, capability_key) DO UPDATE SET
                         category = excluded.category,
@@ -122,6 +122,8 @@ public sealed partial class TaskServerStore
                         credential_expires_at = excluded.credential_expires_at,
                         limited_until = excluded.limited_until,
                         credential_modified_at = excluded.credential_modified_at,
+                        evidence_id = excluded.evidence_id,
+                        evidence_excerpt = excluded.evidence_excerpt,
                         advertised_at = excluded.advertised_at,
                         fresh_until = excluded.fresh_until,
                         generation = excluded.generation,
@@ -143,6 +145,8 @@ public sealed partial class TaskServerStore
                     ("$expires", capability.ExpiresAt is null ? null : Iso(capability.ExpiresAt.Value.ToUniversalTime())),
                     ("$limited", capability.LimitedUntil is null ? null : Iso(capability.LimitedUntil.Value.ToUniversalTime())),
                     ("$credential_modified", capability.CredentialModifiedAt is null ? null : Iso(capability.CredentialModifiedAt.Value.ToUniversalTime())),
+                    ("$evidence_id", capability.EvidenceId),
+                    ("$evidence_excerpt", capability.EvidenceExcerpt),
                     ("$advertised", Iso(advertisedAt)),
                     ("$fresh", Iso(freshUntil)),
                     ("$generation", request.Generation),
@@ -416,7 +420,7 @@ public sealed partial class TaskServerStore
                        last_failure_at, cooldown_until, canary_claim_id,
                        consecutive_failures, version, identity_value, detail,
                        recovery_history_json, signal, credential_expires_at,
-                       limited_until, credential_modified_at
+                       limited_until, credential_modified_at, evidence_id, evidence_excerpt
                   FROM runner_capabilities
                  WHERE runner_id = $runner
                  ORDER BY category, capability_key;
@@ -449,7 +453,9 @@ public sealed partial class TaskServerStore
                         reader.IsDBNull(16) ? null : reader.GetString(16),
                         reader.IsDBNull(17) ? null : Parse(reader.GetString(17)),
                         reader.IsDBNull(18) ? null : Parse(reader.GetString(18)),
-                        reader.IsDBNull(19) ? null : Parse(reader.GetString(19))));
+                        reader.IsDBNull(19) ? null : Parse(reader.GetString(19)),
+                        reader.IsDBNull(20) ? null : reader.GetString(20),
+                        reader.IsDBNull(21) ? null : reader.GetString(21)));
                 }
             }
             HostTelemetrySnapshotDto? telemetry = null;
@@ -625,9 +631,9 @@ public sealed partial class TaskServerStore
             if (capability.FreshUntil <= UtcNow)
                 return CapabilityAdmission.Blocked(
                     $"Required capability '{key}' is stale since {capability.FreshUntil:O}.");
-            if (!string.Equals(capability.AdvertisedStatus, "ready", StringComparison.Ordinal))
+            if (!Claimable(capability.AdvertisedStatus))
                 return CapabilityAdmission.Blocked(
-                    $"Required capability '{key}' is advertised as {capability.AdvertisedStatus}.");
+                    CapabilityMismatchMessage(key, capability));
             if (capability.HealthState == CapabilityHealthStates.Draining)
             {
                 if (capability.CooldownUntil is null || capability.CooldownUntil > UtcNow)
@@ -768,7 +774,8 @@ public sealed partial class TaskServerStore
                    reason, advertised_at, fresh_until, first_failure_at,
                    last_failure_at, cooldown_until, canary_claim_id,
                    consecutive_failures, recovery_history_json, signal,
-                   credential_expires_at, limited_until, credential_modified_at
+                   credential_expires_at, limited_until, credential_modified_at,
+                   evidence_id, evidence_excerpt
               FROM runner_capabilities
              WHERE runner_id = $runner AND canary_claim_id = $claim;
             """, transaction, ("$runner", runnerId), ("$claim", claimId)))
@@ -864,7 +871,8 @@ public sealed partial class TaskServerStore
                    reason, advertised_at, fresh_until, first_failure_at,
                    last_failure_at, cooldown_until, canary_claim_id,
                    consecutive_failures, recovery_history_json, signal,
-                   credential_expires_at, limited_until, credential_modified_at
+                   credential_expires_at, limited_until, credential_modified_at,
+                   evidence_id, evidence_excerpt
               FROM runner_capabilities
              WHERE runner_id = $runner AND capability_key = $key;
             """, transaction, ("$runner", runnerId), ("$key", key));
@@ -890,7 +898,9 @@ public sealed partial class TaskServerStore
             reader.IsDBNull(13) ? null : reader.GetString(13),
             reader.IsDBNull(14) ? null : Parse(reader.GetString(14)),
             reader.IsDBNull(15) ? null : Parse(reader.GetString(15)),
-            reader.IsDBNull(16) ? null : Parse(reader.GetString(16)));
+            reader.IsDBNull(16) ? null : Parse(reader.GetString(16)),
+            reader.IsDBNull(17) ? null : reader.GetString(17),
+            reader.IsDBNull(18) ? null : reader.GetString(18));
 
     private async Task<RemoteHostAdmissionDto> ReadHostAdmissionAsync(
         SqliteConnection connection,
@@ -955,6 +965,23 @@ public sealed partial class TaskServerStore
 
     private static string NormalizeCapability(string value)
         => value?.Trim().ToLowerInvariant() ?? string.Empty;
+
+    private static bool Claimable(string status)
+        => string.Equals(status, "ready", StringComparison.Ordinal)
+           || string.Equals(status, "degraded", StringComparison.Ordinal);
+
+    private static string CapabilityMismatchMessage(string key, CapabilityRow capability)
+    {
+        if (!string.Equals(capability.AdvertisedStatus, "limited", StringComparison.Ordinal))
+            return $"Required capability '{key}' is advertised as {capability.AdvertisedStatus}.";
+        var until = capability.LimitedUntil is { } reset
+            ? $" until {reset.ToUniversalTime():HH:mm} UTC"
+            : string.Empty;
+        var evidence = string.IsNullOrWhiteSpace(capability.EvidenceId)
+            ? string.Empty
+            : $" (evidence: run {capability.EvidenceId}, '{capability.EvidenceExcerpt ?? "no excerpt"}')";
+        return $"Required capability '{key}' is limited{until}{evidence}.";
+    }
 
     private static IReadOnlyList<CapabilityRecoveryEventDto> DeserializeHistory(string json)
         => JsonSerializer.Deserialize<List<CapabilityRecoveryEventDto>>(json) ?? [];
@@ -1024,7 +1051,9 @@ public sealed partial class TaskServerStore
         string? Signal,
         DateTime? ExpiresAt,
         DateTime? LimitedUntil,
-        DateTime? CredentialModifiedAt);
+        DateTime? CredentialModifiedAt,
+        string? EvidenceId,
+        string? EvidenceExcerpt);
 }
 
 internal static class ProviderAuthProbeStatuses
