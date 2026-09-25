@@ -713,11 +713,13 @@ public class TaskRunnerPromptTests
     // ---- Per-mode prompt framing (planning/research read-only + web hint) ----
 
     [Fact]
-    public void RenderModeFraming_CodingWithoutWeb_IsEmpty()
+    public void RenderModeFraming_CodingWithoutWeb_ExplainsApprovalModel()
     {
-        // Coding with web off is the legacy default; framing must stay empty so
-        // the rendered runner prompt is byte-identical to the pre-mode output.
-        Assert.Equal(string.Empty, Prompts().RenderModeFraming("coding", allowWebAccess: false));
+        var framing = Prompts().RenderModeFraming("coding", allowWebAccess: false);
+        Assert.Contains("Sight review, decision acceptance, and operator approval", framing);
+        Assert.Contains("pipeline lanes after delivery", framing);
+        Assert.Contains("missing fact", framing);
+        Assert.Contains("older card or Dossier instruction to wait", framing);
     }
 
     [Theory]
@@ -790,6 +792,8 @@ public class TaskRunnerPromptTests
         Assert.Contains("frontend/e2e/visual-evidence/presentation-capture.spec.ts", framing);
         Assert.Contains("scripts/stable-frontend-boot-probe.mjs", framing);
         Assert.Contains("frontend/e2e/fixtures/dev-backend.ts", framing);
+        Assert.Contains("[[TASK_DONE]]", framing);
+        Assert.Contains("pipeline lanes after delivery", framing);
         Assert.Contains("[[TASK_NEEDS_INPUT:", framing);
         Assert.DoesNotContain("Read-only run", framing);
     }
@@ -813,7 +817,7 @@ public class TaskRunnerPromptTests
     }
 
     [Fact]
-    public void RenderModeFraming_CodingWithWeb_AddsWebHintOnly()
+    public void RenderModeFraming_CodingWithWeb_AddsWebHint()
     {
         // Decision 2: the web toggle is independent of the mode. A coding task
         // with web opted in gets the web hint but no read-only constraint.

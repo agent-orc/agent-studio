@@ -28,6 +28,7 @@ public sealed partial class RuntimePromptService
     public const string ModeFramingReadOnly = "mode-framing-readonly.md";
     public const string ModeFramingResearch = "mode-framing-research.md";
     public const string ModeFramingConcept = "mode-framing-concept.md";
+    public const string ModeFramingApproval = "mode-framing-approval.md";
     public const string ModeFramingDossierMaintenance = "mode-framing-dossier-maintenance.md";
     public const string ModeFramingWeb = "mode-framing-web.md";
     public const string ProposalFeedbackRefine = "proposal-feedback-refine.md";
@@ -145,6 +146,8 @@ public sealed partial class RuntimePromptService
             parts.Add(Render(ModeFramingResearch, NoValues, context).Trim());
         if (TaskModes.IsConcept(mode))
             parts.Add(Render(ModeFramingConcept, NoValues, context).Trim());
+        if (TaskModes.IsConcept(mode) || TaskModes.Normalize(mode) == TaskModes.Coding)
+            parts.Add(Render(ModeFramingApproval, NoValues, context).Trim());
         if (allowWebAccess)
             parts.Add(Render(ModeFramingWeb, NoValues, context).Trim());
         if (parts.Count == 0) return string.Empty;

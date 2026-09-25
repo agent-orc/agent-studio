@@ -1576,7 +1576,10 @@ public sealed class RemoteTaskRunner
             EffectiveThinkingLevel: invocation?.ThinkingLevel);
         var typed = ExecutionOutcomeAdapter.Classify(factsAfterExit);
         var sentinelOutcome = SentinelScanner.Scan(result.StdOut);
-        var outcome = BuildRunOutcome(typed, provider, sentinelOutcome, result.StdErr);
+        var rawOutcome = BuildRunOutcome(typed, provider, sentinelOutcome, result.StdErr);
+        var outcome = ApprovalOnlyNeedsInputPolicy.Classify(rawOutcome);
+        if (rawOutcome.Kind == RunOutcomeKind.NeedsInput && outcome.Kind == RunOutcomeKind.Done)
+            _log($"[runner] review-requested: reclassified approval-only NeedsInput as Done for {lease.TaskKey}");
         return new RemoteExecutionResult(
             outcome,
             result.StdOut.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries),

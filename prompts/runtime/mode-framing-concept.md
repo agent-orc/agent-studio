@@ -17,4 +17,4 @@ Use `data-concept-section="alternatives"`, `"recommendation"`, `"evidence"`, and
 
 Make the Dossier discoverable from the card. In the task job folder, name the exact repository-relative `docs/<slug>/index.html` path in both `results/deliverables.md` and `status.md`. The application may regenerate the rest of `status.md`, but preserves this Dossier reference. A Dossier without both task-file references is incomplete.
 
-You may recommend a default, but do not claim the human sight review is complete. If a human choice is needed after the Dossier is complete, finish with `[[TASK_NEEDS_INPUT:<short decision>]]`; this is a successful concept delivery, not a failure.
+Recommend a working option for every decision point. Deliver the completed Dossier with `[[TASK_DONE]]`. Sight review, decision acceptance, and operator approval are pipeline lanes after delivery; do not stop this run to request them or claim that they have already happened. Use `[[TASK_NEEDS_INPUT:<short missing fact>]]` only when a fact you cannot obtain, such as credentials, an absent required file, or ambiguous scope with no defensible recommendation, prevents delivery.

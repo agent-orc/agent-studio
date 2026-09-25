@@ -1194,10 +1194,17 @@ operator changes cause the step to fail before its writer runs.
   open-ended all-recommendations entry. The concept pipeline deliberately does not run
   build, test, code aspects, or integration.
   A complete Dossier moves to `5-human-review` with a durable
-  `concept-sight-review` marker. `DONE` and `NEEDS_INPUT` both count as
-  successful delivery at this gate. Sight-review acceptance completes the
-  source card; `POST /api/tasks/{id}/promote-concept` additionally creates the
-  selected coding cards from the published document.
+  `concept-sight-review` marker. The agent delivers with `DONE` even when
+  recommendations await sight review, decision acceptance, or operator approval;
+  those are later pipeline actions. `NEEDS_INPUT` is for a missing fact that
+  prevents delivery, such as credentials, an absent file, or scope with no
+  defensible recommendation. An approval-only `NEEDS_INPUT` is reclassified as
+  `Done` with a `review-requested` note and continues to review. Requests that
+  also report missing facts or no delivered work remain `NeedsInput`. Sight-review
+  acceptance completes the source card; `POST /api/tasks/{id}/promote-concept`
+  additionally creates selected coding cards from the published document. Each
+  promoted prompt lists the Dossier's recommended options as working assumptions;
+  choices recorded in its `decision.responses` block override those defaults.
 - A `Deferred` step is fully implemented but is not executed by the ordinary
   local post-bracket. It is distinct from a `Stub`: a stub has no implementation
   and renders "planned", while a deferred step renders "pending" until a named

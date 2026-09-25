@@ -60,6 +60,17 @@ public sealed record ConceptSourceDocument
 {
     public string RepoRelativePath { get; init; } = "";
     public string Title { get; init; } = "";
+    public List<ConceptDecisionAssumption> Decisions { get; init; } = [];
+}
+
+public sealed record ConceptDecisionAssumption
+{
+    public string Id { get; init; } = "";
+    public string Label { get; init; } = "";
+    public string OptionId { get; init; } = "";
+    public string OptionLabel { get; init; } = "";
+    public bool OperatorSelected { get; init; }
+    public bool IsWorkingAssumption { get; init; }
 }
 
 public sealed record PromoteConceptResponse

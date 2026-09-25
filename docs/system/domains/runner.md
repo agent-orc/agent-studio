@@ -124,6 +124,14 @@ state.
   missing or unwritable report is an admission failure, while selector failure
   may use the authored prompt only after a `fallback-unenriched` report has been
   persisted.
+- `RemoteRunPrompt` receives server-composed concept and coding mode framing.
+  Both modes tell the agent to deliver before sight review, decision acceptance,
+  and operator approval. Promoted coding prompts list Dossier decisions and
+  identify recommendations as working assumptions unless a recorded operator
+  response chose another option. `NeedsInput` is reserved for a missing fact
+  that blocks delivery. The remote outcome guard turns approval-only
+  `NeedsInput` into `Done`, logs the reclassification, and adds a
+  `review-requested` reason so the card reaches review.
 - `backend/Features/Runner/RunTimelineEventFactory.cs`: canonical projection of
   run execution context and terminal run facts into timeline events. Execution
   context preserves model, thinking level, source origin, and exact source
