@@ -1708,3 +1708,17 @@
   right: 16px;
   z-index: 1001;
 }
+.pwiki__glossary-open {
+  display: block;
+  width: 100%;
+  padding: var(--studio-spacing-2) var(--studio-spacing-3);
+  border: 0;
+  border-bottom: 1px solid var(--studio-border);
+  background: transparent;
+  color: var(--studio-fg-muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.pwiki__glossary-open:hover { background: var(--studio-bg-hover); color: var(--studio-fg-strong); }
+.pwiki__glossary-open:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: -2px; }
