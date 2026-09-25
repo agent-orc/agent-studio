@@ -26,6 +26,8 @@ import { WorkbenchOverviewCardComponent } from '../workbench-overview-card/workb
 import { WorkbenchOverviewControlsComponent } from '../workbench-overview-controls/workbench-overview-controls.component';
 import { WorkbenchViewerComponent } from '../workbench-viewer/workbench-viewer.component';
 import { WorkbenchOverviewViewStateService } from './workbench-overview-view-state.service';
+import { BoardFiltersService } from '../../../board/state/board-filters.service';
+import { TagFiltersComponent } from '../../../../components/tag-filters/tag-filters.component';
 import type { WorkbenchOverview, WorkbenchOverviewItem } from '../../../../models/project-docs.model';
 @Component({
   selector: 'app-workbench-overview',
@@ -37,6 +39,7 @@ import type { WorkbenchOverview, WorkbenchOverviewItem } from '../../../../model
     WorkbenchOverviewCardComponent,
     WorkbenchOverviewControlsComponent,
     WorkbenchViewerComponent,
+    TagFiltersComponent,
   ],
   providers: [WorkbenchOverviewViewStateService],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -49,6 +52,7 @@ export class WorkbenchOverviewComponent {
   readonly openWorkbench = output<WorkbenchOverviewItem>();
 
   private readonly docs = inject(ProjectDocsService);
+  private readonly tagFilters = inject(BoardFiltersService);
   private readonly hub = inject(JobsHubClient);
   private readonly tasks = inject(TaskService);
   private readonly sectionState = inject(DossierSectionStateService);
@@ -66,7 +70,8 @@ export class WorkbenchOverviewComponent {
   readonly referenceStatusesLoading = signal(false);
 
   readonly filteredItems = computed(() => this.viewState.filter(
-    this.overview()?.items ?? [],
+    (this.overview()?.items ?? []).filter(item => [...this.tagFilters.activeTagFilter()]
+      .every(id => item.workbench.tags?.includes(id))),
     item => this.statusLabel(item),
   ));
   readonly filteredCount = computed(() => this.filteredItems().length);

@@ -337,6 +337,7 @@
       }
     </div>
   }
+  <app-tag-proposals [projectName]="job().projectName" subjectKind="task" [subjectId]="job().taskKey" [taggingStatus]="job().taggingStatus ?? null" />
   @if (publishableChip(); as pub) {
     <div class="task-card__publishable" data-testid="task-card-publishable">
       <span class="task-card__publishable-chip"

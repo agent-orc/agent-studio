@@ -1,0 +1,5 @@
+.tag-filters { display: flex; flex-wrap: wrap; align-items: end; gap: var(--studio-spacing-2); }
+.tag-filters label { display: grid; gap: var(--studio-spacing-1); color: var(--studio-fg-muted); font-size: .75rem; }
+.tag-filters select { min-height: 32px; min-width: 110px; padding: var(--studio-spacing-1) var(--studio-spacing-2); border: 1px solid var(--studio-border); border-radius: 6px; background: var(--studio-bg-editor); color: var(--studio-fg-strong); font: inherit; }
+.tag-filters select:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
+@media (max-width: 600px) { .tag-filters { width: 100%; } .tag-filters label { flex: 1; min-width: 0; } .tag-filters select { width: 100%; min-width: 0; } }

@@ -29,6 +29,7 @@
       (sortChange)="viewState.selectSort($event)"
       (reviewFilterChange)="viewState.setReviewFilter($event)"
       (resetView)="viewState.reset()" />
+    <app-tag-filters [projectName]="projectName()" />
   </header>
   @if (loading() && !overview()) {
     <app-loading-surface kind="list" label="Loading Dossiers…" />
