@@ -38,5 +38,21 @@
       "promptMarkdown": "# Decision cards, migration and docs\n\nContext: Dossier docs/operations/decision-cards (D4 migration as decided by the operator); backend and frontend cards of the same Dossier.\n\nDeliver:\n\n1. One-off migration script (operator-run, dry-run first) that turns the existing prose decision cards into decision cards: AGT-2792 (options A lock file, B no lock file, from its text), AGT-2736, AGT-2737, AGT-2738, AGT-2795; the script reports what it changed and never touches cards without a recognisable decision request.\n2. Docs page 'Decision cards' in the product docs: lifecycle, fields, who may decide, apply outcomes, reminders, API.\n3. A paragraph in docs/concepts/task-integration-and-merge-workflow.md on how decisions block and unblock work.\n4. Acceptance example from the Dossier: AGT-2792 migrated shows the badge, the two options with the recorded consequences, the recommendation, and one click plus a rationale moves it to decided and turns the implementation requirements into a 2-ready card that references the decision."
     }
   ],
-  "key": "AGT-W54"
+  "key": "AGT-W54",
+  "review": {
+    "verdict": "current",
+    "supersededBy": [],
+    "reviewedAt": "2026-09-25T05:31:21Z",
+    "reviewedBy": "AGT-2897",
+    "note": "D1 representation remains open with AGT-2795 parked; AGT-2816 adds a parked-question surface but not the proposed decision-card kind or API."
+  },
+  "reviewHistory": [
+    {
+      "verdict": "current",
+      "supersededBy": [],
+      "reviewedAt": "2026-09-25T05:31:21Z",
+      "reviewedBy": "AGT-2897",
+      "note": "D1 representation remains open with AGT-2795 parked; AGT-2816 adds a parked-question surface but not the proposed decision-card kind or API."
+    }
+  ]
 }

@@ -4,7 +4,8 @@
   "title": "Narrative task view",
   "summary": "A proactive pipeline-generated reading view for task detail: fixed AHP Deck / Panel v1 presentation, honest PRE/POST state markers, two real-card mock reports, and measured per-card economics. [Curation 2026-08-18 (AGT-2671): DONE CHECK - decision-ready since 2026-07-24, no runner-work task evidence for AGT-2281/2222/2135 and no AHP Deck/Panel v1 narrative-view code found in the frontend tree; no completion claim to verify. Stays active, decision pending, not closable.]",
   "entrypoint": "index.html",
-  "status": "active",
+  "status": "archived",
+  "statusReason": "Archived after consolidation into AGT-W60, which preserves the narrative-view choice and evidence.",
   "phase": "decision-ready",
   "updatedAt": "2026-08-18T12:00:00Z",
   "sourceTaskKeys": [
@@ -18,9 +19,9 @@
     "supersededBy": [
       "AGT-W60"
     ],
-    "reviewedAt": "2026-09-14T00:00:00Z",
-    "reviewedBy": "Operator",
-    "note": "Consolidated into AGT-W60 Task and board UI decisions (AGT-2802, AGT-W55 D1): decisions, open choices and the evidence that still holds were carried over; this Dossier stays readable as History."
+    "reviewedAt": "2026-09-25T05:31:21Z",
+    "reviewedBy": "AGT-2897",
+    "note": "AGT-W60 now owns the still-open narrative-view choice; develop has no narrative task-detail mode or PRE/POST generation path."
   },
   "reviewHistory": [
     {
@@ -38,6 +39,15 @@
       "reviewedAt": "2026-09-14T00:00:00Z",
       "reviewedBy": "Operator",
       "note": "Consolidated into AGT-W60 Task and board UI decisions (AGT-2802, AGT-W55 D1): decisions, open choices and the evidence that still holds were carried over; this Dossier stays readable as History."
+    },
+    {
+      "verdict": "superseded",
+      "supersededBy": [
+        "AGT-W60"
+      ],
+      "reviewedAt": "2026-09-25T05:31:21Z",
+      "reviewedBy": "AGT-2897",
+      "note": "AGT-W60 now owns the still-open narrative-view choice; develop has no narrative task-detail mode or PRE/POST generation path."
     }
   ]
 }
