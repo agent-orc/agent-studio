@@ -1,36 +1,177 @@
 {
   "schemaVersion": 1,
   "id": "remote-gate-zielbild",
-  "title": "Remote Gate Target Architecture",
-  "summary": "Decision Dossier for replacing the fast but out-of-band SSH gate bridge with a first-class Tranche 0 execution contract. It compares claimable gate steps, the Review Plane, and capability-only dispatch; recommends a bounded GateAttempt protocol with capability-based admission; and defines the implementation-to-AGT-2262 teardown chain. [Curation 2026-08-18 (AGT-2671): DONE CHECK - design not yet approved by operator sight review and zero implementation of this target model exists (re-verified against develop 2026-08-24: the only Gate* types in the backend are the unrelated build-test gate's MachineGateLease in BuildTestGateRunner.cs and BuildTestGateSubject in ReviewDecisionOrchestrator.cs; no remote-gate GateSubject/GateAttempt/GateLease entity exists). AGT-2262 stays parked per its own eight-item cutover acceptance list. Stays active. DOC TRANSFER - GateSubject/GateAttempt/GateLease target model extracted to docs/concepts/platform-architecture/remote-gate.md.]",
+  "title": "Remote Gate and Integration Target Architecture",
+  "summary": "Adopted D1-D14 target for remote candidate construction, verification, merge and push under Task Server authority, with local Studio as observer. Eight ordered, bounded implementation cards are specified. This is a concept decision, not shipped behavior or completed human sight review.",
   "entrypoint": "index.html",
-  "status": "active",
-  "phase": "decision-ready",
-  "updatedAt": "2026-08-18T12:00:00Z",
+  "status": "decided",
+  "phase": "implementation-ready",
+  "updatedAt": "2026-09-25T10:18:23Z",
   "sourceTaskKeys": [
-    "AGT-2369"
+    "AGT-2369",
+    "AGT-2881"
   ],
   "implementationTasks": [
     {
-      "title": "Move build/test gates to claimable Task Server gate steps",
-      "promptMarkdown": "Implement the approved GateAttempt target from the Remote Gate Target Architecture Dossier. Add the bounded Task Server GateSubject/GateAttempt/lease/report lifecycle, capability-based Agent Host gate claims, exact-SHA materialization, typed timeout and infrastructure retry behavior, central visibility, and Orchestrator Engine dispatch. Migrate post-build-test-gate to the new path and prove throughput and restart/failure parity. Do not tear down the SSH bridge in this card; keep AGT-2262 blocked until the cutover acceptance conditions are met."
+      "id": "integration-authority",
+      "title": "Persist integration authority and fenced publication",
+      "promptMarkdown": "# Persist integration authority and fenced publication\n\nSource: docs/operations/remote-gate-zielbild/index.html (AGT-W18, AGT-2881). This card implements the adopted recommendations, not an already shipped runtime.\n\n**Goal:** Durable authority and publication boundary.\n\n**Decisions and option to take:** D1 dedicated GateAttempt; D2 capability admission; D7 one project ref-mutation authority; D8 separate IntegrationAttempt. Preserve the Dossier's selected options and their consequences.\n\n**Dependencies:** None among these eight cards. Task type: feature. Do not begin dependent publication/cutover work before these slices are accepted.\n\n**Scope:** Persist IntegrationSubject, IntegrationAttempt, owner/epoch/fence, expected old/new ref, and idempotent publication intent. Enforce one project-wide ref-mutation lease across develop, main, release and enabled publisher paths. Protect canonical refs with scoped credentials and reject an old owner at the Git publication boundary.\n\n**Acceptance:**\n- One live publication owner per project; stale, expired or wrong-epoch writers cannot update a canonical ref.\n- Identical retried requests return the recorded result; conflicting digest, expected tip or target is rejected.\n- Attempt, lease, ref intent and outcome survive Task Server restart.\n\n**Evidence:** Unit and integration tests for concurrent claims, lease expiry, restart, old-writer races and duplicate/conflicting publication requests; attach ref traces and authority audit events.\n\nKeep product changes within this slice. Maintain the relevant domain docs/ADR only when the implemented contract changes public behavior or architecture; record exact commands and outcomes in the task results.",
+      "dependsOn": [],
+      "taskType": "feature",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Durable authority and publication boundary",
+        "criteria": [
+          "One live publication owner per project; stale, expired or wrong-epoch writers cannot update a canonical ref.",
+          "Identical retried requests return the recorded result; conflicting digest, expected tip or target is rejected.",
+          "Attempt, lease, ref intent and outcome survive Task Server restart."
+        ]
+      }
+    },
+    {
+      "id": "integration-executor",
+      "title": "Execute remote integration candidates and reconcile publication",
+      "promptMarkdown": "# Execute remote integration candidates and reconcile publication\n\nSource: docs/operations/remote-gate-zielbild/index.html (AGT-W18, AGT-2881). This card implements the adopted recommendations, not an already shipped runtime.\n\n**Goal:** Remote candidate execution and push reconciliation.\n\n**Decisions and option to take:** D1-D5 bounded gate claims; D7 project lease; D8 IntegrationAttempt; D9 exact reviewed candidate. Preserve the Dossier's selected options and their consequences.\n\n**Dependencies:** Persist integration authority and fenced publication. Task type: feature. Do not begin dependent publication/cutover work before these slices are accepted.\n\n**Scope:** On the remote executor, fetch the declared immutable source, validate repository and SHA, construct the final candidate through approved mechanical merge/rebase, retain it through verification, consume exact gate/review receipts, then publish without force under the D7 lease. Persist intent before push and reconcile remote refs/ancestry if push succeeded but acknowledgement was lost. A red gate discards the unpublished candidate; never reset a published canonical ref.\n\n**Acceptance:**\n- State transitions cover queued, claimed, materializing, candidate-ready, verifying, publish-intent, reconciling and terminal outcomes with cleanup.\n- Red/timeout/moved-base outcomes leave canonical refs unchanged; moved base builds and verifies a new candidate.\n- Lost push acknowledgement resolves to one correct terminal outcome without a second merge or force push.\n\n**Evidence:** Prove exact SHA/tree, red-gate no-publication, moved tip, crash before/after push, lost report, stale fence, cleanup failure and retry by automated fault injection plus ref/evidence traces.\n\nKeep product changes within this slice. Maintain the relevant domain docs/ADR only when the implemented contract changes public behavior or architecture; record exact commands and outcomes in the task results.",
+      "dependsOn": [
+        "integration-authority"
+      ],
+      "taskType": "feature",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Remote candidate execution and push reconciliation",
+        "criteria": [
+          "State transitions cover queued, claimed, materializing, candidate-ready, verifying, publish-intent, reconciling and terminal outcomes with cleanup.",
+          "Red/timeout/moved-base outcomes leave canonical refs unchanged; moved base builds and verifies a new candidate.",
+          "Lost push acknowledgement resolves to one correct terminal outcome without a second merge or force push."
+        ]
+      }
+    },
+    {
+      "id": "review-verification",
+      "title": "Share exact candidate verification between Review and Integration",
+      "promptMarkdown": "# Share exact candidate verification between Review and Integration\n\nSource: docs/operations/remote-gate-zielbild/index.html (AGT-W18, AGT-2881). This card implements the adopted recommendations, not an already shipped runtime.\n\n**Goal:** Exact Review and Integration verification receipt.\n\n**Decisions and option to take:** D4 shared primitives, distinct lifecycles; D8 separate IntegrationAttempt; D9 one immutable candidate; D10 OS-specific required receipt. Preserve the Dossier's selected options and their consequences.\n\n**Dependencies:** Execute remote integration candidates and reconcile publication. Task type: feature. Do not begin dependent publication/cutover work before these slices are accepted.\n\n**Scope:** Bind ReviewSubject and passed receipt to repository/ref, delivery generation, pre-tip, immutable candidate SHA, ordered parents, tested tree, clean state, plan/profile/toolchain/environment digests and every mandatory command outcome. Reuse the review as the gate only when all identity and policy conditions match; otherwise re-verify on a capable remote host. Keep required Windows evidence separate from Linux evidence.\n\n**Acceptance:**\n- Unchanged tip and fully matching complete receipt permit exact-object publication without a second Linux gate.\n- Moved tip, changed tree/generation/policy, missing proof, partial/waived report or dirty workspace rejects reuse and re-verifies remotely.\n- No fresh untested merge commit is created after a reused receipt.\n\n**Evidence:** Focused receipt compatibility and negative tests for stale tip, tree, generation, replay, policy and incomplete commands; record candidate SHA, tested tree and command ledger on a canary.\n\nKeep product changes within this slice. Maintain the relevant domain docs/ADR only when the implemented contract changes public behavior or architecture; record exact commands and outcomes in the task results.",
+      "dependsOn": [
+        "integration-executor"
+      ],
+      "taskType": "feature",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Exact Review and Integration verification receipt",
+        "criteria": [
+          "Unchanged tip and fully matching complete receipt permit exact-object publication without a second Linux gate.",
+          "Moved tip, changed tree/generation/policy, missing proof, partial/waived report or dirty workspace rejects reuse and re-verifies remotely.",
+          "No fresh untested merge commit is created after a reused receipt."
+        ]
+      }
+    },
+    {
+      "id": "windows-executor",
+      "title": "Provide a Windows gate executor and coverage policy",
+      "promptMarkdown": "# Provide a Windows gate executor and coverage policy\n\nSource: docs/operations/remote-gate-zielbild/index.html (AGT-W18, AGT-2881). This card implements the adopted recommendations, not an already shipped runtime.\n\n**Goal:** Windows candidate gate executor and coverage policy.\n\n**Decisions and option to take:** D1-D3 claim/lease/capability model; D9 candidate identity; D10 first-class os:windows gate executor. Preserve the Dossier's selected options and their consequences.\n\n**Dependencies:** Persist integration authority and fenced publication; Share exact candidate verification between Review and Integration. Task type: feature. Do not begin dependent publication/cutover work before these slices are accepted.\n\n**Scope:** Admit an independent os:windows, executor:gate host with bounded slots, pinned toolchain and fenced GateAttempt reports against the exact candidate. Define the versioned Windows-sensitive test policy, including setup and flaky-rerun behavior, with conservative selection for unknown impact. Do not use the operator workstation as the required host.\n\n**Acceptance:**\n- A required Windows receipt gates publication when project policy demands it; Linux evidence cannot satisfy it.\n- No eligible Windows host or host loss yields typed infrastructure wait/retry, never a fabricated product failure.\n- Windows-sensitive path, temp, locking, process and setup defects are covered by a documented test inventory.\n\n**Evidence:** Automated Linux-green/Windows-red, no-host, host-loss and stale/mismatched receipt cases; capture queue/runtime, host maintenance assumptions and exact candidate test evidence.\n\nKeep product changes within this slice. Maintain the relevant domain docs/ADR only when the implemented contract changes public behavior or architecture; record exact commands and outcomes in the task results.",
+      "dependsOn": [
+        "integration-authority",
+        "review-verification"
+      ],
+      "taskType": "feature",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Windows candidate gate executor and coverage policy",
+        "criteria": [
+          "A required Windows receipt gates publication when project policy demands it; Linux evidence cannot satisfy it.",
+          "No eligible Windows host or host loss yields typed infrastructure wait/retry, never a fabricated product failure.",
+          "Windows-sensitive path, temp, locking, process and setup defects are covered by a documented test inventory."
+        ]
+      }
+    },
+    {
+      "id": "recovery-observer",
+      "title": "Move integration recovery and operator requests to the remote authority",
+      "promptMarkdown": "# Move integration recovery and operator requests to the remote authority\n\nSource: docs/operations/remote-gate-zielbild/index.html (AGT-W18, AGT-2881). This card implements the adopted recommendations, not an already shipped runtime.\n\n**Goal:** Remote conflict recovery and observer requests.\n\n**Decisions and option to take:** D7-D8 remote authority/attempt; D11 bounded remote conflict recovery; D12 Studio observer and request client. Preserve the Dossier's selected options and their consequences.\n\n**Dependencies:** Execute remote integration candidates and reconcile publication; Share exact candidate verification between Review and Integration. Task type: feature. Do not begin dependent publication/cutover work before these slices are accepted.\n\n**Scope:** Move direct/mechanical merge and guarded rebase recovery to the remote plane. Persist AGT-2875 conflict evidence: base/result/candidate SHAs, paths, operation, typed reason, attempt/fence and recovery count. Engine requests at most one automatic recovery RunAttempt per operator epoch; changed content returns to Review. Studio projects Task Server attempts, receipts and refs and sends authenticated idempotent accept, continue, stop and release requests without integration checkout or push credential.\n\n**Acceptance:**\n- Mechanical recovery stays within approved Git invariants; semantic/attribution ambiguity gets one bounded agent round then visible escalation.\n- Conflict reports distinguish merge conflicts from gate timeout and preserve all cited identities.\n- Review, recovery, publication and request reconciliation continue with Studio shut down.\n\n**Evidence:** Fault-injection and end-to-end checks for mechanical and semantic conflicts, changed-result re-review, repeated conflicts, duplicate operator requests and workstation-off continuation; attach Task Server event and ref traces.\n\nKeep product changes within this slice. Maintain the relevant domain docs/ADR only when the implemented contract changes public behavior or architecture; record exact commands and outcomes in the task results.",
+      "dependsOn": [
+        "integration-executor",
+        "review-verification"
+      ],
+      "taskType": "feature",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Remote conflict recovery and observer requests",
+        "criteria": [
+          "Mechanical recovery stays within approved Git invariants; semantic/attribution ambiguity gets one bounded agent round then visible escalation.",
+          "Conflict reports distinguish merge conflicts from gate timeout and preserve all cited identities.",
+          "Review, recovery, publication and request reconciliation continue with Studio shut down."
+        ]
+      }
+    },
+    {
+      "id": "publisher-unification",
+      "title": "Unify promotion and Batch Gate publication authority",
+      "promptMarkdown": "# Unify promotion and Batch Gate publication authority\n\nSource: docs/operations/remote-gate-zielbild/index.html (AGT-W18, AGT-2881). This card implements the adopted recommendations, not an already shipped runtime.\n\n**Goal:** Unified operator, release, promotion and Batch Gate publication.\n\n**Decisions and option to take:** D7 single project ref-mutation lease; D8 IntegrationAttempt publication; D11 remote recovery; D12 request authority. Preserve the Dossier's selected options and their consequences.\n\n**Dependencies:** Persist integration authority and fenced publication; Execute remote integration candidates and reconcile publication. Task type: feature. Do not begin dependent publication/cutover work before these slices are accepted.\n\n**Scope:** Route every enabled operator merge, release commit, existing Linux promotion train and Batch Gate final publication through D7 authority. Keep Batch Gate coordinator lease for manifest/candidate preparation, then acquire the project publication lease in fixed order only for final validation/push; release in reverse order. Preserve exact-SHA main promotion and atomic main/tag publication without force.\n\n**Acceptance:**\n- No enabled publisher can bypass project authority or overlap another canonical writer.\n- Batch coordinator and publication lease cannot deadlock or promote a temporary ref; moved base invalidates publication.\n- Promotion keeps its exact candidate and atomic main/tag semantics.\n\n**Evidence:** Concurrent direct/batch/operator/promotion race tests, lease-order and stale-member checks, atomic push failure proof, plus ref/authority audit traces.\n\nKeep product changes within this slice. Maintain the relevant domain docs/ADR only when the implemented contract changes public behavior or architecture; record exact commands and outcomes in the task results.",
+      "dependsOn": [
+        "integration-authority",
+        "integration-executor"
+      ],
+      "taskType": "feature",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Unified operator, release, promotion and Batch Gate publication",
+        "criteria": [
+          "No enabled publisher can bypass project authority or overlap another canonical writer.",
+          "Batch coordinator and publication lease cannot deadlock or promote a temporary ref; moved base invalidates publication.",
+          "Promotion keeps its exact candidate and atomic main/tag semantics."
+        ]
+      }
+    },
+    {
+      "id": "shadow-cutover",
+      "title": "Run remote integration shadow and cutover acceptance",
+      "promptMarkdown": "# Run remote integration shadow and cutover acceptance\n\nSource: docs/operations/remote-gate-zielbild/index.html (AGT-W18, AGT-2881). This card implements the adopted recommendations, not an already shipped runtime.\n\n**Goal:** One-project shadow, authority cutover and fallback rehearsal.\n\n**Decisions and option to take:** D1-D6 gate model/cutover threshold; D7-D12 remote integration contract; D13 N=20 shadow and fenced cutover; D14 transitional policy. Preserve the Dossier's selected options and their consequences.\n\n**Dependencies:** Provide a Windows gate executor and coverage policy; Move integration recovery and operator requests to the remote authority; Unify promotion and Batch Gate publication authority. Task type: feature. Do not begin dependent publication/cutover work before these slices are accepted.\n\n**Scope:** After AGT-2737 remote Task Server authority readiness, run 20 consecutive comparable cards in one project with host write permission limited to attempt-specific shadow refs and local integration as sole canonical writer. Compare pinned pre-tip/result/policy, trees, ordered parent/attribution semantics, command coverage and outcomes. Run failure matrix, measure latency and workstation load, then drain local writers, reconcile intents, revoke local grants and transfer authority for one remote canonical canary. AGT-2736 is a deployment decision dependency only where observer routing requires it.\n\n**Acceptance:**\n- Twenty comparable cards have no unexplained discrepancy; moved-base pairs are excluded and repeated.\n- Canary includes pass, red, Windows red, conflict, lease loss, stale writer, restart, lost push acknowledgement and cleanup failure; zero unauthorized ref writes.\n- Studio-off window lasts 12 hours with review, recovery and publication; explicit rollback uses a drained, fenced credential transfer with no dual writers.\n\n**Evidence:** Publish comparison ledger, failure traces, p95 queue/execution/end-to-end timing against matched local cards, authority transfer record and rollback rehearsal; document remaining risk rather than infer tail reliability from 20 cards.\n\nKeep product changes within this slice. Maintain the relevant domain docs/ADR only when the implemented contract changes public behavior or architecture; record exact commands and outcomes in the task results.",
+      "dependsOn": [
+        "windows-executor",
+        "recovery-observer",
+        "publisher-unification"
+      ],
+      "taskType": "feature",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "One-project shadow, authority cutover and fallback rehearsal",
+        "criteria": [
+          "Twenty comparable cards have no unexplained discrepancy; moved-base pairs are excluded and repeated.",
+          "Canary includes pass, red, Windows red, conflict, lease loss, stale writer, restart, lost push acknowledgement and cleanup failure; zero unauthorized ref writes.",
+          "Studio-off window lasts 12 hours with review, recovery and publication; explicit rollback uses a drained, fenced credential transfer with no dual writers."
+        ]
+      }
+    },
+    {
+      "id": "retire-local",
+      "title": "Retire local integration execution and reconcile architecture pages",
+      "promptMarkdown": "# Retire local integration execution and reconcile architecture pages\n\nSource: docs/operations/remote-gate-zielbild/index.html (AGT-W18, AGT-2881). This card implements the adopted recommendations, not an already shipped runtime.\n\n**Goal:** Retire local integration and publish architecture knowledge.\n\n**Decisions and option to take:** D5 whole-integration target; D6 accepted teardown threshold; D12 observer-only Studio; D13 canary/cutover; D14 retain portable rules. Preserve the Dossier's selected options and their consequences.\n\n**Dependencies:** Run remote integration shadow and cutover acceptance. Task type: chore. Do not begin dependent publication/cutover work before these slices are accepted.\n\n**Scope:** After remote default acceptance, remove Studio-owned merge/push execution, local BuildTestGateRunner integration path, Path.GetTempPath()/agentstudio-review-gates lifecycle and workstation-specific integration budgets. Retain portable test selection, receipt, timeout classification and promotion policy. Audit AGT-2262 against current symbols before removing actual SSH remnants. In separately authorized documentation scope, publish this staged remote-gate.md at the stable canonical URL and reconcile AGT-W59/navigation.\n\n**Acceptance:**\n- Studio integration requires no checkout, local gate workspace or canonical push credentials.\n- No remaining local budget or retry path silently executes a gate; portable AGT-2839/2854/2872 rules still apply remotely.\n- Stable architecture URL and links resolve; legacy SSH cleanup removes only extant code.\n\n**Evidence:** Repository search and behavior tests for remaining canonical writers and local gate path, Studio-off integration smoke, ref audit, documentation link checks and a before/after deletion inventory.\n\nKeep product changes within this slice. Maintain the relevant domain docs/ADR only when the implemented contract changes public behavior or architecture; record exact commands and outcomes in the task results.",
+      "dependsOn": [
+        "shadow-cutover"
+      ],
+      "taskType": "chore",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Retire local integration and publish architecture knowledge",
+        "criteria": [
+          "Studio integration requires no checkout, local gate workspace or canonical push credentials.",
+          "No remaining local budget or retry path silently executes a gate; portable AGT-2839/2854/2872 rules still apply remotely.",
+          "Stable architecture URL and links resolve; legacy SSH cleanup removes only extant code."
+        ]
+      }
     }
   ],
   "relatedTaskKeys": [
     "AGT-2229",
-    "AGT-2262"
+    "AGT-2262",
+    "AGT-2736",
+    "AGT-2737",
+    "AGT-2824",
+    "AGT-2839",
+    "AGT-2854",
+    "AGT-2872",
+    "AGT-2875"
   ],
   "key": "AGT-W18",
-  "review": {
-    "verdict": "partially-superseded",
-    "supersededBy": [
-      "AGT-W59",
-      "AGT-W57"
-    ],
-    "reviewedAt": "2026-09-25T05:22:58Z",
-    "reviewedBy": "AGT-2894",
-    "note": "AGT-W59 owns gate mechanics, while AGT-W57 now preserves AGT-2881's open remote-integration authority and Studio-observer direction, which is absent from develop and still awaits operator decision."
-  },
   "reviewHistory": [
     {
       "verdict": "current",
@@ -47,16 +188,12 @@
       "reviewedAt": "2026-09-14T00:00:00Z",
       "reviewedBy": "AGT-2801",
       "note": "Consolidated into the Gates theme Dossier docs/operations/gates (AGT-W59) on 2026-09-14 per AGT-W55 D1 and D2; content preserved there, this Dossier stays readable as History."
-    },
-    {
-      "verdict": "partially-superseded",
-      "supersededBy": [
-        "AGT-W59",
-        "AGT-W57"
-      ],
-      "reviewedAt": "2026-09-25T05:22:58Z",
-      "reviewedBy": "AGT-2894",
-      "note": "AGT-W59 owns gate mechanics, while AGT-W57 now preserves AGT-2881's open remote-integration authority and Studio-observer direction, which is absent from develop and still awaits operator decision."
     }
-  ]
+  ],
+  "decisionRecord": {
+    "adoptedAt": "2026-09-25",
+    "source": "AGT-2881 continuous-session operator direction",
+    "adoptedOptions": "Recommended options D1-D14",
+    "humanSightReview": "pending"
+  }
 }
