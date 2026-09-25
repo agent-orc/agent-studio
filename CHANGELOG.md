@@ -12,6 +12,14 @@ release yet.
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-09-25
+
+Hotfix release. Since 0.9.0 every work-package merge gate on a Windows operator
+host failed with `MSB4177: Invalid property "console%3bverbosity"`, because the
+composed `dotnet test` command with its quoted `--logger` arguments ran through
+`cmd.exe /c` and lost its quoting. Platform gate commands on Windows now run
+through Git Bash, as explicit build-profile commands already did (AGT-2912).
+
 ## [0.9.0] - 2026-09-25
 
 Operations and integration release, 80 commits since 0.8.0. Integration
