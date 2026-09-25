@@ -177,6 +177,11 @@
     </ul>
   </section>
 
+  <section id="status-2026-09-25" class="callout" data-tone="warn">
+    <h4>Status 2026-09-25</h4>
+    <p>The route inventory has overtaken the original 268-handler statement: <code>docs/studio-route-ownership/routes.json</code> now counts 408 frontend operations, 309 classified for the Task Server and 99 for the dev seat. AGT-2755 to AGT-2758 delivered the four migration bundles, so AGT-W47 is now historical input to this Dossier rather than a separate current decision. No independently deployable Operations Server or Operations Agent exists on <code>develop</code>; D1 to D4 and the five implementation slices remain open. AGT-2764 is escalated because the production LinkSupervisor is not enabled, so the interim runner-link migration remains visible here.</p>
+  </section>
+
   <section id="current" data-concept-section="evidence" data-document-section="evidence">
     <h2><span class="number">01</span> Current system</h2>
     <p>The repository contains several valid process shapes at once. They are profile-dependent and should not be read as one production chain. The local monolith is still the broad compatibility backend. The distributed preview adds independent Task Server and Engine services. The Connector is the approved local edge for the remote Task Server topology. The current <code>studio-bff</code> is network-addressable inside Compose but only fronts <code>/api/v1</code> and <code>/hubs</code>.</p>

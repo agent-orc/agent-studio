@@ -23,9 +23,9 @@
     "supersededBy": [
       "AGT-W49"
     ],
-    "reviewedAt": "2026-09-13T10:20:00Z",
-    "reviewedBy": "Operator",
-    "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    "reviewedAt": "2026-09-25T05:22:58Z",
+    "reviewedBy": "AGT-2894",
+    "note": "AGT-2763 delivered the Task Server LinkSupervisor and AGT-W49 owns the later operations topology, but AGT-2764 remains escalated on production enablement and tunnel retirement."
   },
   "reviewHistory": [
     {
@@ -36,6 +36,15 @@
       "reviewedAt": "2026-09-13T10:20:00Z",
       "reviewedBy": "Operator",
       "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    },
+    {
+      "verdict": "partially-superseded",
+      "supersededBy": [
+        "AGT-W49"
+      ],
+      "reviewedAt": "2026-09-25T05:22:58Z",
+      "reviewedBy": "AGT-2894",
+      "note": "AGT-2763 delivered the Task Server LinkSupervisor and AGT-W49 owns the later operations topology, but AGT-2764 remains escalated on production enablement and tunnel retirement."
     }
   ]
 }
