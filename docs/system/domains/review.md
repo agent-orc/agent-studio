@@ -286,53 +286,45 @@ escalate on the uncited refusal. `orchestrator-engine/CouncilLoop` still records
 that verdict in its finding count but explicitly excludes the
 `block-without-citation` classification from its blocker count.
 
-Deterministic build and test verdicts are not model opinions. Their command,
-baseline SHA, and exact new failures provide their citation and retain normal
-blocking behavior.
+Deterministic build and test verdicts are not model opinions. A failed command
+needs the diagnosis evidence below before its verdict can block the card.
 
-## Failure attribution contract (AGT-2819)
+## Mandatory failure diagnosis (AGT-2916)
 
-A failing verification command is attributed before it is graded. Every
-deterministic gate in the frozen plan carries `CompareToBaseline: true`, so when
-it fails on the delivery the executor runs the same command on the merge base and
-records that run's exit code as `BaselineExitCode` alongside the baseline SHA.
-`contracts/TaskServer.Contracts/ReviewFailureAttributionPolicy.cs` then names the
-owner:
+A failed deterministic command is diagnosed before review grading. The runner
+compares the same command on the integration merge base, executes it again in a
+fresh same-host clone without restoring the dependency cache, and reads the
+normalized fingerprint's Task Server history for the previous 24 hours. This
+order is mandatory even if an older frozen plan did not opt into baseline
+comparison. The Task Server requires baseline, clean-repeat, and diagnosis
+evidence before it accepts a product failure. Green baseline results can be
+reused from the baseline cache; red baselines are reported and never cached as
+green.
 
-| Gate failed on delivery | New failure names | Merge base | Owner |
-|---|---|---|---|
-| yes | any | not measured | `Delivery` (fails closed) |
-| yes | one or more | any | `Delivery` |
-| yes | none | red | `IntegrationBranch` |
-| yes | none, exit-status gate | green | `Delivery` |
-| yes | none, failure-name gate | green | `Tolerated` (flaky retry) |
-| no | - | - | `None` |
+| Evidence | Diagnosis | Card charge |
+|---|---|---|
+| Baseline green, clean repeat red with the same fingerprint, no other card matches | `product` | yes |
+| Baseline red or same fingerprint on the baseline or other cards | `environment` | no |
+| Clean repeat green and fingerprint has known intermittent pattern or prior occurrence | `intermittent` | no |
+| Clean repeat green without history, or required evidence unavailable | `unclassified-first-occurrence` | no |
+| Reviewer block without evidence against a changed path | `concern` | no |
 
-Two comparison modes exist because the evidence differs by gate. A test gate uses
-`ReviewBaselineModes.TestFailures`: failure names are diffed, so a new failure
-inside an already-red suite still blocks the card. A lint or build gate uses
-`ReviewBaselineModes.ExitStatus`: there are no names to diff, and synthesising an
-`<unparsed failure in verify-N>` marker for one was exactly the bug - it made a
-gate that was already red on the branch look like a brand-new product failure on
-every card.
+The shared decision table is `DeliveryFailureDiagnosis`. Review and gate
+reporters append observations to the Task Server's fingerprint event store via
+the runner API. The cause breaker can read the same 24-hour summaries; a
+management endpoint exposes the store without a new UI. Only confirmed
+`product` diagnoses spend the retry budget, anti-churn limit, and reissue
+counter. `environment` evacuates the participating dependency cache entry and
+frozen review state. An unavailable fingerprint store cannot establish a
+card-specific failure, so it cannot produce `product`.
 
-The terminal follows the attribution. Any `Delivery` owner grades
-`ProductFailure`. Otherwise, one or more `IntegrationBranch` owners grade the
-distinct terminal `ReviewTerminalOutcome.IntegrationBranchDefect`, which:
-
-- is `AttemptLifecycleState.Completed`, not `Failed` - the review reached a
-  verdict and it was not against the card;
-- is admissible for integration (`RemoteDeliveryIntegrationPolicy`), because the
-  delivery does not make the branch worse. Refusing the card for branch debt is
-  what stalled the whole board in Human Review with "Remote Review ended with
-  'ProductFailure', not Pass" while the deliveries were merged by hand;
-- appears as a per-gate `integration-branch-defect` status in the orchestration
-  gate projection rather than `passed`, so the branch defect is never hidden;
-- carries an operator-feed alert and a card timeline entry, see below.
-
-A report that records a `BaselineSha` without a `BaselineExitCode` is
-`ReviewInfra/BaselineEvidenceInvalid`: incomplete evidence, not a product
-finding.
+The older `ReviewFailureAttributionPolicy` still explains pre-AGT-2916
+reports, but does not authorize a new card charge. A red baseline now yields
+`ReviewInfra/environment` even if a failure name appears new against it. A
+semantic reviewer block needs a cited changed path and carries an explicit
+`product` diagnosis with confidence and citation; uncited blocks settle as
+`concern` diagnoses. Missing baseline or clean-repeat evidence settles as review
+infrastructure, with no product charge.
 
 ## Integration-branch gate health (AGT-2819)
 

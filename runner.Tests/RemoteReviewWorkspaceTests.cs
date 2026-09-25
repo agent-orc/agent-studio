@@ -722,7 +722,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             [ReviewInfraAttributionPolicyTests.FailedTestName],
             candidate.NewFailures);
         var verdict = Assert.Single(evidence.Verdicts);
-        Assert.Equal("NewTestFailures", verdict.Classification);
+        Assert.Equal(DeliveryFailureDiagnosis.Product, verdict.Classification);
         Assert.Equal("block", verdict.Status);
         Assert.Contains(
             ReviewInfraAttributionPolicyTests.FailedTestName,
@@ -871,7 +871,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Fact]
-    public async Task Baseline_comparison_blocks_only_new_test_failures_and_names_them()
+    public async Task Red_baseline_keeps_new_test_name_off_the_card()
     {
         var (_, subjectSha) = await SeedSubjectBranchAsync();
         var command = BaselineCommand(
@@ -889,19 +889,19 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
 
         var evidence = await workspace.ExecutePlanAsync(default);
 
-        Assert.Equal("ProductFailure", evidence.Outcome);
+        Assert.Equal("ReviewInfra", evidence.Outcome);
         var commandEvidence = CandidateVerification(evidence);
         Assert.Equal(["Product.NewFailure"], commandEvidence.NewFailures);
         Assert.Equal(["Product.ExistingFailure"], commandEvidence.PreExistingFailures);
         Assert.True(commandEvidence.RetryPerformed);
         var verdict = Assert.Single(evidence.Verdicts);
-        Assert.Equal("block", verdict.Status);
-        Assert.Contains("1 new failures: Product.NewFailure", verdict.Summary, StringComparison.Ordinal);
-        Assert.Contains("1 pre-existing failures: Product.ExistingFailure", verdict.Summary, StringComparison.Ordinal);
+        Assert.Equal("pass", verdict.Status);
+        Assert.Equal(DeliveryFailureDiagnosis.Environment, verdict.Classification);
+        Assert.Contains("baseline=red", verdict.Summary, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task Baseline_comparison_blocks_only_new_vitest_failures_and_names_them()
+    public async Task Red_baseline_keeps_new_vitest_name_off_the_card()
     {
         var (_, subjectSha) = await SeedSubjectBranchAsync();
         var command = BaselineCommand(
@@ -920,7 +920,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
 
         var evidence = await workspace.ExecutePlanAsync(default);
 
-        Assert.Equal("ProductFailure", evidence.Outcome);
+        Assert.Equal("ReviewInfra", evidence.Outcome);
         var commandEvidence = CandidateVerification(evidence);
         Assert.Equal(
             ["src/math.spec.ts > arithmetic > new failure"],
@@ -950,16 +950,16 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         // AGT-2819: the card adds no failure, so it is not a ProductFailure, and
         // the step is not green either - the merge base carries the failure and
         // the review says so with its own terminal.
-        Assert.Equal("IntegrationBranchDefect", evidence.Outcome);
+        Assert.Equal("ReviewInfra", evidence.Outcome);
         var commandEvidence = CandidateVerification(evidence);
         Assert.Empty(commandEvidence.NewFailures!);
         Assert.Equal(["Product.ExistingFailure"], commandEvidence.PreExistingFailures);
-        Assert.False(commandEvidence.RetryPerformed);
+        Assert.True(commandEvidence.RetryPerformed);
         Assert.Equal(1, commandEvidence.BaselineExitCode);
         var verdict = Assert.Single(evidence.Verdicts);
         Assert.Equal("pass", verdict.Status);
-        Assert.Equal("IntegrationBranchDefect", verdict.Classification);
-        Assert.Contains("0 new failures", verdict.Summary, StringComparison.Ordinal);
+        Assert.Equal(DeliveryFailureDiagnosis.Environment, verdict.Classification);
+        Assert.Contains("baseline=red", verdict.Summary, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -985,15 +985,15 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
 
         var evidence = await workspace.ExecutePlanAsync(default);
 
-        Assert.Equal("IntegrationBranchDefect", evidence.Outcome);
+        Assert.Equal("ReviewInfra", evidence.Outcome);
         var commandEvidence = CandidateVerification(evidence);
         Assert.Equal(1, commandEvidence.ExitCode);
         Assert.Equal(1, commandEvidence.BaselineExitCode);
         Assert.Empty(commandEvidence.NewFailures!);
-        Assert.False(commandEvidence.RetryPerformed);
+        Assert.True(commandEvidence.RetryPerformed);
         var verdict = Assert.Single(evidence.Verdicts);
         Assert.Equal("pass", verdict.Status);
-        Assert.Equal("IntegrationBranchDefect", verdict.Classification);
+        Assert.Equal(DeliveryFailureDiagnosis.Environment, verdict.Classification);
     }
 
     [Fact]
@@ -1139,7 +1139,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         await second.PrepareAsync(null!, default);
         var evidence = await second.ExecutePlanAsync(default);
 
-        Assert.Equal("ProductFailure", evidence.Outcome);
+        Assert.Equal("ReviewInfra", evidence.Outcome);
         var candidate = CandidateVerification(evidence);
         Assert.True(candidate.BaselineCacheHit);
         Assert.Equal(["Product.NewFailure"], candidate.NewFailures);
@@ -1150,8 +1150,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.Equal(1, candidate.ExitCode);
         Assert.Equal("attempt-new-reuse", candidate.AttemptId);
         var verdict = Assert.Single(evidence.Verdicts);
-        Assert.Equal("NewTestFailures", verdict.Classification);
-        Assert.Equal("block", verdict.Status);
+        Assert.Equal(DeliveryFailureDiagnosis.Environment, verdict.Classification);
+        Assert.Equal("pass", verdict.Status);
     }
 
     [Theory]
@@ -1256,7 +1256,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Fact]
-    public async Task Review_flaky_new_failure_gets_one_retry_and_is_quarantined_when_it_disappears()
+    public async Task Known_flaky_test_that_repeats_in_a_clean_workspace_remains_a_product_failure()
     {
         const string failure =
             "AgentRunner.Tests.RemoteTaskRunnerRestartTests.Restarted_runner_follows_fake_job_and_delivers_completion_without_a_zombie_lease";
@@ -1281,14 +1281,14 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
 
         var evidence = await workspace.ExecutePlanAsync(default);
 
-        Assert.Equal("Pass", evidence.Outcome);
+        Assert.Equal("ProductFailure", evidence.Outcome);
         var commandEvidence = CandidateVerification(evidence);
         Assert.True(commandEvidence.RetryPerformed);
-        Assert.Empty(commandEvidence.NewFailures!);
-        Assert.Equal([failure], commandEvidence.FlakyQuarantinedFailures);
-        Assert.Equal(0, commandEvidence.ExitCode);
+        Assert.Equal([failure], commandEvidence.NewFailures);
+        Assert.Empty(commandEvidence.FlakyQuarantinedFailures!);
+        Assert.Equal(1, commandEvidence.ExitCode);
         Assert.False(evidence.Workspace.DirtyAfter);
-        Assert.Equal("FlakyQuarantine", Assert.Single(evidence.Verdicts).Classification);
+        Assert.Equal(DeliveryFailureDiagnosis.Product, Assert.Single(evidence.Verdicts).Classification);
     }
 
     [Fact]
@@ -1687,7 +1687,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             CommandSilenceWatchdogSeconds = commandSilenceWatchdogSeconds,
             ReviewNoCpuProgressSeconds = reviewNoCpuProgressSeconds,
         };
-        return (new RemoteReviewWorkspace(options, subject, lease, _ => { }), subject);
+        return (new RemoteReviewWorkspace(options, subject, lease, _ => { },
+            _ => Task.FromResult<FailureFingerprintHistoryDto?>(null)), subject);
     }
 
     private async Task<(string BaselineSha, string SubjectSha)> SeedSubjectBranchAsync()

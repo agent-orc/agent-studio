@@ -901,7 +901,10 @@ as `acceptance-rail-run`.
   attempts for the task; it does not reset with Studio or Engine restart.
   Consecutive Remote Review decisions with the same blocking aspect,
   classification, and summary escalate with that reason after two rounds by
-  default, even when the broader reissue budget remains.
+  default, even when the broader reissue budget remains. The AGT-2916 diagnosis
+  contract limits both this anti-churn rule and the reissue counter to confirmed
+  `product` failures. Environment, intermittent, first-occurrence, and uncited
+  reviewer concerns do not charge a card.
 - Integration remains an explicit operator decision after Human Review. The
   Remote control plane may durably accept and schedule that command, but Post
   Processing does not infer acceptance or move directly to `6-completed`.
