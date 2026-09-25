@@ -179,6 +179,7 @@ public static class OrchestratorLogKinds
 
 public static class OrchestratorLogTopics
 {
+    public const string DecisionCard = "decision-card";
     public const string PipelineHealth = "pipeline-health";
     public const string FailureIntervention = "failure-intervention";
     public const string TaskQueued = "task-queued";

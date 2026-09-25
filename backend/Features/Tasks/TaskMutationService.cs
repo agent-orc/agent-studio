@@ -30,6 +30,7 @@ public class TaskMutationService
     // tests that construct TaskMutationService directly may pass null and
     // simply skip the timeline event.
     private readonly TimelineLog? _timeline;
+    private readonly OrchestratorLog? _activityFeed;
     private readonly GitService? _git;
     // Lane mutex: serialise the slug-uniqueness check + folder create in
     // CreateJob with the other lane writers (move/archive/delete) so two
@@ -45,7 +46,7 @@ public class TaskMutationService
     /// </summary>
     private readonly IAtomicJsonFileWriter? _keyFileWriter;
 
-    public TaskMutationService(TaskScannerService scanner, ClientIdentityStore clients, ProjectRegistry projectRegistry, TaskChangeNotifier notifier, ILogger<TaskMutationService> logger, TimelineLog? timeline = null, LaneMutexRegistry? laneMutex = null, GitService? git = null, IAtomicJsonFileWriter? fileWriter = null)
+    public TaskMutationService(TaskScannerService scanner, ClientIdentityStore clients, ProjectRegistry projectRegistry, TaskChangeNotifier notifier, ILogger<TaskMutationService> logger, TimelineLog? timeline = null, LaneMutexRegistry? laneMutex = null, GitService? git = null, IAtomicJsonFileWriter? fileWriter = null, OrchestratorLog? activityFeed = null)
     {
         _scanner = scanner;
         _clients = clients;
@@ -53,6 +54,7 @@ public class TaskMutationService
         _notifier = notifier;
         _logger = logger;
         _timeline = timeline;
+        _activityFeed = activityFeed;
         _laneMutex = laneMutex ?? LaneMutexRegistry.NullSingleton;
         _git = git;
         _keyFileWriter = fileWriter;
@@ -973,6 +975,23 @@ public class TaskMutationService
     }
 
     /// <summary>
+    /// AGT-2795: replace-all write of the structured <c>decision</c> object on a
+    /// decision card. The caller (the decision-card service) owns validation and
+    /// the transition side effects; this writer is deliberately thin so it can
+    /// persist the requested, decided, and reopened shapes alike.
+    /// </summary>
+    public bool SetDecisionContent(string jobId, DecisionContent decision, string? watchPath = null)
+    {
+        var info = _scanner.FindJob(jobId, watchPath);
+        if (info == null) return false;
+        if (!TaskJsonFile.UpdateField(info.FolderPath, "decision", decision, _logger)) return false;
+        _logger.LogInformation(
+            "decision-content-set job={JobId} status={Status} chosen={Chosen}",
+            jobId, decision.Status, decision.ChosenOptionId ?? "");
+        return Updated();
+    }
+
+    /// <summary>
     /// Replace-all write of the per-job tag id array. Tag ids are normalized
     /// via <see cref="NormalizeTagId"/> (lowercase, <c>[a-z0-9-]</c>, max 32
     /// chars), de-duplicated case-insensitively, and the order of the
@@ -1577,18 +1596,48 @@ public class TaskMutationService
 
         var acceptanceScope = TaskAcceptanceScopes.Normalize(req.AcceptanceScope);
         if (req.AcceptanceScope is not null && acceptanceScope is null) return null;
+        if (req.Kind is not null && !TaskKinds.All.Contains(req.Kind.Trim(), StringComparer.OrdinalIgnoreCase)) return null;
 
         // Backlog is the default landing lane when the caller supplies no
         // targetState. An explicit valid lane is authoritative. In particular,
         // operator and automation callers may intentionally create a card in a
         // review lane; silently clamping those requests to Backlog loses the
         // caller's routing decision and lets later guards misclassify the card.
+        var isDecision = TaskKinds.IsDecision(req.Kind);
+        // AGT-2795: a decision card is a decision request, not runnable work. Its
+        // structured content is validated up front so a malformed request is
+        // rejected before a card folder is created, and a default create lands it
+        // in preparation with the decision badge rather than backlog.
+        DecisionContent? decisionContent = null;
+        if (isDecision)
+        {
+            decisionContent = (req.Decision ?? new DecisionContent()) with
+            {
+                Status = DecisionStatuses.Pending,
+                ChosenOptionId = null,
+                Rationale = null,
+                DecidedBy = null,
+                DecidedAt = null,
+                RecordPath = null,
+                History = [],
+                Dependants = (req.Decision?.Dependants ?? [])
+                    .Where(key => !string.IsNullOrWhiteSpace(key))
+                    .Select(key => key.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList(),
+                Decider = string.IsNullOrWhiteSpace(req.Decision?.Decider)
+                    ? DecisionDeciders.Operator : req.Decision.Decider.Trim(),
+            };
+            if (DecisionCardPolicy.ValidateContent(decisionContent).Count > 0) return null;
+        }
+
         var targetState = string.IsNullOrWhiteSpace(req.TargetState)
-            ? TaskStates.Backlog
+            ? isDecision ? TaskStates.Preparation : TaskStates.Backlog
             : TaskStates.All.Contains(req.TargetState, StringComparer.Ordinal)
                 ? req.TargetState
                 : null;
         if (targetState == null) return null;
+        if (isDecision && targetState != TaskStates.Preparation) return null;
 
         // Sanitize ID: transliterate umlauts, lowercase, replace spaces with dashes, only allow safe chars
         var baseSlug = string.IsNullOrWhiteSpace(req.Id)
@@ -1708,8 +1757,11 @@ public class TaskMutationService
         // (research on, else off) - see planning-research-task-kinds note.
         var effectiveMode = TaskModes.Normalize(req.Mode);
         jobJson["mode"] = effectiveMode;
-        if (req.NoBranchExpected || AcceptanceIntegrationPolicy.IsNoBranchTaskType(req.TaskType))
+        if (req.NoBranchExpected || isDecision || AcceptanceIntegrationPolicy.IsNoBranchTaskType(req.TaskType))
             jobJson["noBranchExpected"] = true;
+        // AGT-2795: persist the validated decision content on a decision card.
+        if (isDecision && decisionContent != null)
+            jobJson["decision"] = decisionContent;
         jobJson["allowWebAccess"] = req.AllowWebAccess ?? (effectiveMode == TaskModes.Research);
         if (req.Fixture)
             jobJson["fixture"] = true;
@@ -1755,6 +1807,32 @@ public class TaskMutationService
                 ["agent"] = effectiveAgent ?? string.Empty,
                 ["creationSource"] = string.IsNullOrWhiteSpace(req.CreationSource) ? "human" : req.CreationSource.Trim(),
                 ["createdBy"] = string.IsNullOrWhiteSpace(req.CreatedBy) ? ownerClientId : req.CreatedBy.Trim(),
+            });
+
+        // AGT-2795: a decision card opens its ledger with decision_requested so
+        // its history shows the fork the moment it is raised.
+        if (isDecision && decisionContent != null)
+            _timeline?.Append(
+                jobDir,
+                TimelineEventKinds.DecisionRequested,
+                string.Equals(req.CreationSource, TimelineActors.Orchestrator, StringComparison.OrdinalIgnoreCase)
+                    ? TimelineActors.Orchestrator
+                    : TimelineActors.Human(ownerClientId),
+                summary: string.IsNullOrWhiteSpace(decisionContent.Question)
+                    ? "Decision requested"
+                    : $"Decision requested: {decisionContent.Question}",
+                details: new()
+                {
+                    ["decider"] = decisionContent.Decider,
+                    ["options"] = decisionContent.Options.Count.ToString(),
+                });
+        if (isDecision && decisionContent != null)
+            _activityFeed?.Append(entry.Path, new OrchestratorLogEntry
+            {
+                Kind = OrchestratorLogKinds.Decision,
+                Topic = OrchestratorLogTopics.DecisionCard,
+                Summary = $"Decision requested: {decisionContent.Question}",
+                JobId = jobId,
             });
 
         _scanner.InvalidateCache();

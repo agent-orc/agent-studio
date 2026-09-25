@@ -1,6 +1,6 @@
 # Tasks Domain Map
 
-Version: 2026-09-15
+Version: 2026-09-25
 Status: System-of-record map for task storage, lanes, and API mutation changes.
 
 Use this when a change touches job folders, lane states, task metadata,
@@ -91,6 +91,30 @@ or commit attribution.
 - [docs/operations/setup/task-server.md#legacy-single-writer-migration](../../operations/setup/task-server.md#legacy-single-writer-migration)
   is the operator sequence for inventorying, freezing, importing, proving, and
   cutting over a legacy workspace.
+
+## Decision cards
+
+The `decision` card kind is distinct from area and facet tags and from an Epic.
+`POST /api/tasks` accepts a `decision` object with a question, two to four
+structured options (`id`, `label`, `consequences`, `effort`, `risk`), an optional
+recommendation and reason, a decider, and an optional due date. The decider is a
+client id or role (for example `role:owner`, with `operator` by default). Decision cards start in
+`1-preparation` and cannot enter a runner lane.
+
+`POST /api/tasks/{id}/decision` records the selected option, optional rationale,
+client identity, and timestamp, then moves the card to `6-completed` and writes
+an ADR-style record in the project wiki under `operations/decisions/`.
+Request, decision, and reopen actions also appear in the project activity feed.
+`DecisionRecordService` supplies the receipt format shared with Dossier decisions;
+`WorkbenchDecisionService` keeps the Dossier lifecycle, while the card service
+binds the same record to card lanes and dependency gates.
+`POST /api/tasks/{id}/decision/reopen` requires a note, returns the card to
+`1-preparation`, and appends the reopen entry to the same record. A dependant
+whose `references.dependsOn` points to a pending decision reports the key in
+`blockedBy`; moves into Ready or Progress and runner claims are refused while
+the decision is pending. Deciding only releases that dependency gate. Applying
+the choice to prompts or creating implementation cards belongs to the separate
+apply delivery.
 
 ## Result history
 
