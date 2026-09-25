@@ -1,5 +1,5 @@
 # Agent Studio frontend: production Angular build served statically by Caddy,
-# API calls reverse-proxied to the orchestrator API.
+# Versioned API calls reverse-proxied to the configured Studio BFF.
 # Build context is the repository root: docker build -f frontend/Dockerfile .
 FROM node:22-alpine AS build
 WORKDIR /src

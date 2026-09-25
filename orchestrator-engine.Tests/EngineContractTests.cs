@@ -1,6 +1,8 @@
 using AgentStudio.OrchestratorEngine;
 using AgentStudio.TaskServer;
 using AgentStudio.TaskServer.Contracts;
+using System.Net;
+using System.Text.Json;
 using Microsoft.Extensions.Options;
 using Xunit;
 
@@ -8,6 +10,36 @@ namespace OrchestratorEngine.Tests;
 
 public sealed class EngineContractTests
 {
+    [Fact]
+    public async Task Engine_claim_uses_the_Task_Server_HTTP_enum_contract()
+    {
+        string? body = null;
+        using var handler = new CaptureHandler(async request =>
+        {
+            body = await request.Content!.ReadAsStringAsync();
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"status\":\"empty\"}"),
+            };
+        });
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:5071") };
+        using var client = new EngineTaskServerClient(http);
+
+        await client.ClaimAsync(new OrchestrationClaimRequest(
+            "engine-a", "instance-a", [OrchestrationStage.ReviewDecision]), default);
+
+        using var json = JsonDocument.Parse(body!);
+        Assert.Equal(JsonValueKind.Number,
+            json.RootElement.GetProperty("supportedStages")[0].ValueKind);
+    }
+
+    private sealed class CaptureHandler(
+        Func<HttpRequestMessage, Task<HttpResponseMessage>> respond) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken) => respond(request);
+    }
+
     [Fact]
     public void Engine_env_contract_resolves_identity_credential_and_stage_caps()
     {

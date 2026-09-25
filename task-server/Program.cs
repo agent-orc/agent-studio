@@ -207,6 +207,14 @@ if (bootstrap.RequiresAuthentication)
             bootstrap.BootstrapRunnerAuthenticationToken,
             bootstrap.BootstrapRunnerId,
             app.Lifetime.ApplicationStopping);
+    if (bootstrap.BootstrapReviewRunnerAuthenticationToken is not null)
+        await BootstrapPrincipalAsync(
+            store,
+            $"runner:{bootstrap.BootstrapReviewRunnerId}",
+            TaskServerPrincipalKinds.Runner,
+            bootstrap.BootstrapReviewRunnerAuthenticationToken,
+            bootstrap.BootstrapReviewRunnerId,
+            app.Lifetime.ApplicationStopping);
     if (bootstrap.LegacyRunnerAuthenticationToken is not null)
         await BootstrapPrincipalAsync(
             store,

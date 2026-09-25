@@ -477,11 +477,12 @@ Each image is tagged three times: `v<version>` (matching the release's Git
 tag), `sha-<short-commit>` (the first 7 characters of the release commit), and
 `latest`. All three tags point at the same image content for that release; use
 the version tag for a normal upgrade, the SHA tag to pin an exact commit
-during a rollback rehearsal, and `latest` only for a first try or a
-non-production demo - `docker-compose.yml` and `.env.example` default
-`AGENT_STUDIO_VERSION` to `latest` so `docker compose up --wait` works before
-any version pin is chosen, but a tracked deployment should set
-`AGENT_STUDIO_VERSION` to an exact `v<version>` instead. Images build for
+during a rollback rehearsal, and `latest` only for a non-production demo.
+Root `docker-compose.yml` uses one `AGENT_STUDIO_IMAGE_TAG` for every service.
+The template leaves it as `unpublished` until this one-box code has a compatible
+release. Set it to an exact verified `v<version>` and confirm all six images
+exist before a published-image installation. `AGENT_STUDIO_VERSION=0.9.1`
+labels interim source builds; that is separate evidence. Images build for
 `linux/amd64`; `linux/arm64` is not yet published.
 
 Every image carries standard OCI labels -
@@ -540,15 +541,13 @@ docker run --rm -p 127.0.0.1:5071:5071 \
 ### `docker-compose.yml` profiles
 
 [`docker-compose.yml`](../../../docker-compose.yml) at the repository root
-composes these images into four profiles, copy [`.env.example`](../../../.env.example)
-to `.env` to override ports, the pinned `AGENT_STUDIO_VERSION`, and the
-`distributed` profile's bearer credentials:
+uses one pinned image set. Run `scripts/compose-distributed-bootstrap.sh` to
+create owner-only `.env`, `runner.env`, and four service credentials first:
 
 | Profile | Services | Purpose |
 |---|---|---|
-| (none) | `orchestrator-api`, `frontend` | The default install: a working Studio, pulling pinned images. See [Getting started](./getting-started.md). |
-| `runner` | adds `agent-host-coding`, `agent-host-review` | Coding/review Agent Hosts against `orchestrator-api`. |
-| `distributed` | `task-server`, `orchestrator-engine`, `studio-bff`, `agent-host-distributed`, plus the default two | The target architecture from [Distributed Agent Studio target architecture](../../concepts/distributed-agent-studio-target-architecture.md), previewed locally. |
+| (none) | `task-server`, `orchestrator-engine`, `studio-bff`, `frontend`, coding and review `agent-host` services | Transitional one-box baseline with one task authority. See [Getting started](./getting-started.md) for route and acceptance limits. |
+| `legacy` | `orchestrator-api`, `agent-host-coding`, `agent-host-review` | Compatibility API forwards only versioned routes to the same Task Server; old runner routes are unsupported in the one-box installation. |
 | `dev` | a `-dev` sibling of every service above | Builds from this checkout's Dockerfiles instead of pulling. This is the only place `build:` is wired in the compose file; name the exact `-dev` services you want (e.g. `docker compose --profile dev up --build orchestrator-api-dev frontend-dev`) rather than a bare `--profile dev up`, which also starts every profile-less default service and collides on their ports. |
 
 The disposable Compose topology explicitly sets
@@ -556,8 +555,8 @@ The disposable Compose topology explicitly sets
 service-name traffic inside its private container network. Both opt-ins stay
 disabled by default. A remote Task Server URL must use HTTPS.
 
-`scripts/compose-smoke-test.sh` exercises all three non-dev topologies (default,
-`distributed`, and a Task-Server-registered agent-host) by building through the
+`scripts/compose-smoke-test.sh` exercises the one-box route boundary,
+compatibility guard and a Task-Server-registered agent-host by building through the
 `dev` profile, so CI proves the Dockerfiles on every commit without needing
 registry access.
 
