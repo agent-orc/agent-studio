@@ -734,18 +734,14 @@ steer the pipeline in this policy version.
   failure is non-blocking at the pre-main full-suite boundary. If one physical
   command belongs to both the baseline and the diff-selected set, the stricter
   work-package classification wins.
-- A remote ReviewAttempt does not require an historically red integration
-  branch to become absolutely green. For each baseline-compared test command,
-  its verdict is based on `subject failures - merge-base failures`.
-  Intersecting failures remain visible as pre-existing, while the aspect summary
-  names every new failure. The Review Executor reads xUnit
-  `Category=ReviewFlaky` traits from the exact subject's built test assemblies.
-  A newly failing marked test is retried once; if it does not reproduce, the
-  report retains its identity as `FlakyQuarantine` and does not classify the
-  card as `ProductFailure`. A reproduced marked failure remains a blocking new
-  failure. A command with unparseable failing-test output stays fail-closed as a
-  new failure. This comparison does not weaken the absolute full-suite boundary
-  before advancing `main`.
+- A failed remote verification command triggers the mandatory diagnosis in
+  [Remote Review](review.md#mandatory-failure-diagnosis-agt-2916). The
+  integration baseline, clean same-host clone, and shared fingerprint history
+  decide whether it can block or charge the card. A red baseline is reported
+  as `environment` even if the candidate has a new failure name. A clean pass
+  with known or prior matching fingerprint is `intermittent`; without that
+  history it is `unclassified-first-occurrence`. Neither consumes a card
+  counter. The absolute full-suite boundary before advancing `main` remains.
 - Remote Review command execution survives a planned Review daemon restart.
   Recovered attempts retain their original fence and containment namespace and
   resume before load-aware admission evaluates any fresh slot. Completed

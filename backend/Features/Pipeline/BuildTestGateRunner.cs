@@ -1,9 +1,12 @@
 using System.Diagnostics;
+using System.Net.Http.Json;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using AgentStudio.Git;
+using AgentStudio.Host;
 using AgentStudio.Runner;
 using AgentStudio.TaskServer.Contracts;
 
@@ -51,6 +54,7 @@ public sealed record BuildTestGateRequest(
     public string? JobId { get; init; }
     public string? AttemptChainId { get; init; }
     public string? SubjectRef { get; init; }
+    public string? IntegrationRef { get; init; }
     public string Lane { get; init; } = TaskStates.AutoReview;
     public string? RequiredTestLevel { get; init; }
     public TestExecutionPolicy? TestExecution { get; init; }
@@ -178,6 +182,7 @@ public sealed record BuildTestGateResult(
     public string? TerminationSignal { get; init; }
     public BuildTestGateFailureKind FailureKind { get; init; }
     public string? FailureFingerprint { get; init; }
+    public DeliveryFailureDiagnosisResult? Diagnosis { get; init; }
     public IReadOnlyList<BuildTestGateProcessEvidence> Processes { get; init; } = [];
     public IReadOnlyList<BuildTestGateDependencyCacheEvidence> DependencyCache { get; init; } = [];
     public BuildTestGateDependencyCacheDecision? DependencyCacheDecision { get; init; }
@@ -286,6 +291,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
     private readonly ILoadThrottleGate? _loadThrottle;
     private readonly ITestSelectionAdvisor? _testSelectionAdvisor;
     private readonly IPipelineHealthSensor? _health;
+    private readonly IHttpClientFactory? _failureHistoryClients;
     private readonly BuildTestMachineGateMode _machineGateMode;
     private readonly Func<int, IGateProcessResources> _resourceFactory = pid => new GateProcessResources(pid);
 
@@ -293,12 +299,14 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         ILogger<BuildTestGateRunner> logger,
         ILoadThrottleGate? loadThrottle = null,
         ITestSelectionAdvisor? testSelectionAdvisor = null,
-        IPipelineHealthSensor? health = null)
+        IPipelineHealthSensor? health = null,
+        IHttpClientFactory? failureHistoryClients = null)
     {
         _logger = logger;
         _loadThrottle = loadThrottle;
         _testSelectionAdvisor = testSelectionAdvisor;
         _health = health;
+        _failureHistoryClients = failureHistoryClients;
         _machineGateMode = BuildTestMachineGateMode.Shared;
     }
 
@@ -529,6 +537,14 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 }
             }
 
+            if (completed is { Verdict: BuildTestGateVerdict.Fail }
+                && !string.IsNullOrWhiteSpace(request.JobId))
+            {
+                completed = await DiagnoseGateFailureAsync(
+                    request, repositoryPath, completed, profile, changedFiles,
+                    timeout, infrastructureTimeout, ct).ConfigureAwait(false);
+            }
+
             if (workspaceLease is not null)
             {
                 var cleanupError = await workspaceLease.RemoveAsync(
@@ -635,6 +651,302 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         => !string.IsNullOrWhiteSpace(request.Project)
            && !string.IsNullOrWhiteSpace(request.WatchPath)
            && !string.IsNullOrWhiteSpace(request.JobId);
+
+    private async Task<BuildTestGateResult> DiagnoseGateFailureAsync(
+        BuildTestGateRequest request,
+        string repositoryPath,
+        BuildTestGateResult original,
+        BuildProfile? profile,
+        IReadOnlyList<string>? changedFiles,
+        TimeSpan timeout,
+        TimeSpan infrastructureTimeout,
+        CancellationToken ct)
+    {
+        var fingerprint = DiagnosticFingerprint(original);
+        var baselineSha = await ResolveDiagnosticBaselineAsync(
+            repositoryPath, request.ExpectedSha, request.IntegrationRef,
+            infrastructureTimeout, ct).ConfigureAwait(false);
+        var baseline = baselineSha is null ? null : await ReadOrRunDiagnosticBaselineAsync(
+            repositoryPath, baselineSha, profile, changedFiles, request,
+            timeout, infrastructureTimeout, ct).ConfigureAwait(false);
+        var clean = string.IsNullOrWhiteSpace(request.ExpectedSha) ? null : await RunDiagnosticSideAsync(
+            repositoryPath, request.ExpectedSha!, profile, changedFiles, request,
+            timeout, infrastructureTimeout, "clean-repeat", ct).ConfigureAwait(false);
+
+        var historyAvailable = false;
+        var prior = 0;
+        var otherCards = 0;
+        HttpClient? client = null;
+        try
+        {
+            client = _failureHistoryClients?.CreateClient(TaskServerPlaneProxy.ClientName);
+            if (client is not null)
+            {
+                var path = "/api/v1/failure-fingerprints?fingerprint=" +
+                           Uri.EscapeDataString(fingerprint) + "&sinceUtc=" +
+                           Uri.EscapeDataString(DateTime.UtcNow.AddHours(-24).ToString("O"));
+                var entries = await client.GetFromJsonAsync<FailureFingerprintHistoryDto[]>(path, ct)
+                    .ConfigureAwait(false) ?? [];
+                var history = entries.FirstOrDefault();
+                prior = history?.Count ?? 0;
+                otherCards = history?.CardKeys.Count(card =>
+                    !string.Equals(card, request.JobId, StringComparison.Ordinal)) ?? 0;
+                historyAvailable = true;
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogWarning(exception, "build_test_gate_fingerprint_history_unavailable job_id={JobId}", request.JobId);
+        }
+
+        var diagnosis = DeliveryFailureDiagnosis.Classify(new(
+            historyAvailable ? fingerprint : null,
+            baseline is null ? null : baseline.Verdict == BuildTestGateVerdict.Ok,
+            baseline is { Verdict: BuildTestGateVerdict.Fail }
+                ? DiagnosticFingerprint(baseline) : null,
+            clean is null ? null : clean.Verdict == BuildTestGateVerdict.Ok,
+            clean is { Verdict: BuildTestGateVerdict.Fail }
+                ? DiagnosticFingerprint(clean) : null,
+            otherCards,
+            prior));
+        diagnosis = diagnosis with
+        {
+            Evidence = diagnosis.Evidence.Concat(
+            [
+                $"baseline-sha={baselineSha ?? "unavailable"}",
+                $"baseline-source={(baseline is null ? "unavailable" : baseline.Output == "# baseline cache hit" ? "cache" : "fresh")}",
+                "clean-repeat-workspace=fresh; restored-dependency-cache=false",
+            ]).ToArray(),
+        };
+
+        if (client is not null)
+        {
+            try
+            {
+                using var response = await client.PostAsJsonAsync("/api/v1/failure-fingerprints",
+                    new RecordFailureFingerprintRequest(
+                        fingerprint, request.JobId!, request.Executor, "gate",
+                        $"gate:{request.GateId}:{request.JobId}:{original.GateRunId ?? Guid.NewGuid().ToString("N")}"), ct)
+                    .ConfigureAwait(false);
+                response.EnsureSuccessStatusCode();
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                _logger.LogWarning(exception, "build_test_gate_fingerprint_report_failed job_id={JobId}", request.JobId);
+            }
+        }
+
+        if (baseline is { Verdict: BuildTestGateVerdict.Fail })
+            _logger.LogWarning(
+                "build_test_gate_baseline_red job_id={JobId} baseline_sha={BaselineSha} fingerprint={Fingerprint}",
+                request.JobId, baselineSha, DiagnosticFingerprint(baseline));
+        if (diagnosis.Classification == DeliveryFailureDiagnosis.Environment)
+            EvacuateGateFailureState(original, request);
+
+        return original with
+        {
+            Diagnosis = diagnosis,
+            FailureKind = diagnosis.ChargesCard
+                ? BuildTestGateFailureKind.Code : BuildTestGateFailureKind.Environment,
+            FailureFingerprint = fingerprint,
+            Reason = original.Reason + "; diagnosis=" + diagnosis.Classification +
+                     $" confidence={diagnosis.Confidence:0.00}; " + string.Join("; ", diagnosis.Evidence),
+        };
+    }
+
+    private sealed record GateBaselineCacheEntry(string Key, DateTimeOffset RecordedAtUtc);
+
+    private async Task<BuildTestGateResult?> ReadOrRunDiagnosticBaselineAsync(
+        string repositoryPath, string sha, BuildProfile? profile,
+        IReadOnlyList<string>? changedFiles, BuildTestGateRequest request,
+        TimeSpan timeout, TimeSpan infrastructureTimeout, CancellationToken ct)
+    {
+        var identity = JsonSerializer.Serialize(new
+        {
+            Repository = repositoryPath,
+            BaselineSha = sha,
+            profile,
+            changedFiles,
+            request.TestExecution,
+            request.RequiredTestLevel,
+            request.Lane,
+            request.Executor,
+        });
+        var key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity))).ToLowerInvariant();
+        var path = Path.Combine(_preparationCacheRoot, "baseline-results", key + ".json");
+        try
+        {
+            if (File.Exists(path))
+            {
+                var cached = JsonSerializer.Deserialize<GateBaselineCacheEntry>(
+                    await File.ReadAllTextAsync(path, ct).ConfigureAwait(false));
+                if (cached?.Key == key && DateTimeOffset.UtcNow - cached.RecordedAtUtc < TimeSpan.FromMinutes(15))
+                    return new BuildTestGateResult(
+                        BuildTestGateVerdict.Ok, 0, 0, "# baseline cache hit",
+                        $"baseline {sha} green from cache", false, false);
+            }
+        }
+        catch (Exception exception) when (exception is IOException or JsonException)
+        {
+            _logger.LogWarning(exception, "build_test_gate_baseline_cache_read_failed path={Path}", path);
+        }
+        var result = await RunDiagnosticSideAsync(
+            repositoryPath, sha, profile, changedFiles, request,
+            timeout, infrastructureTimeout, "baseline", ct).ConfigureAwait(false);
+        if (result?.Verdict == BuildTestGateVerdict.Ok)
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                var temporary = path + ".tmp-" + Guid.NewGuid().ToString("N");
+                await File.WriteAllTextAsync(temporary,
+                    JsonSerializer.Serialize(new GateBaselineCacheEntry(key, DateTimeOffset.UtcNow)), ct)
+                    .ConfigureAwait(false);
+                File.Move(temporary, path, overwrite: true);
+            }
+            catch (IOException exception)
+            {
+                _logger.LogWarning(exception, "build_test_gate_baseline_cache_write_failed path={Path}", path);
+            }
+        }
+        return result;
+    }
+
+    private async Task<string?> ResolveDiagnosticBaselineAsync(
+        string repositoryPath, string? subjectSha, string? integrationRef,
+        TimeSpan timeout, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(subjectSha) || string.IsNullOrWhiteSpace(integrationRef))
+            return null;
+        try
+        {
+            var result = await RunGitAsync(repositoryPath,
+                ["merge-base", subjectSha, integrationRef], timeout, ct).ConfigureAwait(false);
+            return result.ExitCode == 0 && SafeSha.IsMatch(result.StandardOutput.Trim())
+                && !string.Equals(result.StandardOutput.Trim(), subjectSha, StringComparison.OrdinalIgnoreCase)
+                ? result.StandardOutput.Trim() : null;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogWarning(exception, "build_test_gate_baseline_resolution_failed ref={Ref}", integrationRef);
+            return null;
+        }
+    }
+
+    private async Task<BuildTestGateResult?> RunDiagnosticSideAsync(
+        string repositoryPath, string sha, BuildProfile? profile,
+        IReadOnlyList<string>? changedFiles, BuildTestGateRequest request,
+        TimeSpan timeout, TimeSpan infrastructureTimeout, string role, CancellationToken ct)
+    {
+        ExactWorkspaceLease? lease = null;
+        string? clonePath = null;
+        ProjectPreparationResult? preparation = null;
+        var cacheRoot = Path.Combine(_preparationCacheRoot, "diagnostics", Guid.NewGuid().ToString("N"));
+        try
+        {
+            string workspacePath;
+            if (role == "clean-repeat")
+            {
+                Directory.CreateDirectory(ReviewWorkspaceRoot);
+                clonePath = Path.Combine(ReviewWorkspaceRoot, "clean-diagnostic-" + Guid.NewGuid().ToString("N"));
+                var cloned = await RunGitAsync(repositoryPath,
+                    ["clone", "--shared", "--no-checkout", repositoryPath, clonePath],
+                    infrastructureTimeout, ct).ConfigureAwait(false);
+                if (cloned.ExitCode != 0) return null;
+                var checkedOut = await RunGitAsync(clonePath,
+                    ["checkout", "--detach", sha], infrastructureTimeout, ct).ConfigureAwait(false);
+                if (checkedOut.ExitCode != 0) return null;
+                workspacePath = clonePath;
+            }
+            else
+            {
+                var materialized = await PrepareExactWorkspaceAsync(
+                    repositoryPath, sha, null, Guid.NewGuid().ToString("N"),
+                    infrastructureTimeout, ct).ConfigureAwait(false);
+                lease = materialized.Lease;
+                if (lease is null) return null;
+                workspacePath = lease.Path;
+            }
+            preparation = await ProjectPreparationExecutor.RunAsync(
+                workspacePath, cacheRoot, Path.Combine(cacheRoot, "manifest.json"), sha,
+                message => _logger.LogInformation("{DiagnosticPreparation}", message),
+                timeout, ct).ConfigureAwait(false);
+            if (preparation.Configured && !preparation.Succeeded)
+                return WithFailure(new BuildTestGateResult(
+                    BuildTestGateVerdict.Fail, preparation.ExitCode, 0, preparation.Output,
+                    preparation.FailureReason ?? "diagnostic preparation failed", false, false),
+                    BuildTestGateFailureKind.Environment);
+            var plan = VerifyCommandPlanner.Plan(workspacePath, profile);
+            var selected = TestSelectionPlanner.Plan(
+                workspacePath, plan, changedFiles, request.TestExecution,
+                request.Lane, request.RequiredTestLevel);
+            var commands = selected.Commands.Where(command => ShouldRunForChange(command, changedFiles)).ToArray();
+            if (commands.Length == 0) return null;
+            IReadOnlyList<GatePreparationCommand> prepCommands = preparation.Configured
+                ? [] : GatePreparationPlanner.Plan(workspacePath, profile, commands);
+            return await RunCommandsAsync(
+                workspacePath, prepCommands, commands, $"diagnostic-{role}",
+                PostStepMode.Fail, timeout, [], preparation, ct).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogWarning(exception, "build_test_gate_diagnostic_failed role={Role} sha={Sha}", role, sha);
+            return null;
+        }
+        finally
+        {
+            ProjectPreparationExecutor.ReleaseRunRoot(preparation);
+            if (lease is not null) await lease.RemoveBestEffortAsync(infrastructureTimeout)
+                .ConfigureAwait(false);
+            try { if (clonePath is not null && Directory.Exists(clonePath)) Directory.Delete(clonePath, recursive: true); }
+            catch (IOException exception)
+            {
+                _logger.LogWarning(exception, "build_test_gate_diagnostic_clone_cleanup_failed path={Path}", clonePath);
+            }
+            try { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+            catch (IOException exception)
+            {
+                _logger.LogWarning(exception, "build_test_gate_diagnostic_cache_cleanup_failed path={Path}", cacheRoot);
+            }
+        }
+    }
+
+    internal static string DiagnosticFingerprint(BuildTestGateResult result)
+    {
+        var failed = result.Processes.LastOrDefault(process =>
+            process.ExitCode != 0 || process.TimedOut || process.LaunchError is not null);
+        if (failed is null) return Fingerprint(BuildTestGateFailureKind.Code, result.Reason);
+        var output = failed.StandardOutput + "\n" + failed.StandardError;
+        var tests = GateFlakyRerunPolicy.ParseFailedTests(output);
+        var normalized = tests.Count > 0
+            ? string.Join("\n", tests)
+            : output.Replace(failed.WorkingDirectory, "<workspace>", StringComparison.OrdinalIgnoreCase);
+        return Fingerprint(BuildTestGateFailureKind.Code,
+            $"{failed.Phase}\n{failed.Command}\nexit={failed.ExitCode}\n{normalized}");
+    }
+
+    private void EvacuateGateFailureState(BuildTestGateResult result, BuildTestGateRequest request)
+    {
+        var root = Path.GetFullPath(_preparationCacheRoot) + Path.DirectorySeparatorChar;
+        foreach (var entry in result.PreparationManifest?.Caches ?? [])
+        {
+            var path = Path.GetFullPath(entry.EntryPath);
+            if (!path.StartsWith(root, StringComparison.OrdinalIgnoreCase)) continue;
+            try { if (Directory.Exists(path)) Directory.Delete(path, recursive: true); }
+            catch (IOException exception)
+            {
+                _logger.LogWarning(exception, "build_test_gate_cache_evacuation_failed path={Path}", path);
+            }
+        }
+        if (!string.IsNullOrWhiteSpace(request.JobFolderPath))
+        {
+            try { ReviewSubjectStore.InvalidateForNewAttempt(request.JobFolderPath); }
+            catch (IOException exception)
+            {
+                _logger.LogWarning(exception, "build_test_gate_review_plan_evacuation_failed job_id={JobId}", request.JobId);
+            }
+        }
+    }
 
     private void ReportGateAcquired(PipelineGateContext gate)
     {
