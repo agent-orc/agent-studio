@@ -129,6 +129,10 @@ public sealed class RemoteReviewReportEvidenceTests : IDisposable
             new DateTime(2026, 9, 15, 20, 0, 0, DateTimeKind.Utc), default);
 
         var report = await File.ReadAllTextAsync(Path.Combine(_root, reportFile));
+        Assert.Contains(
+            "| [build-tests](aspect-build-tests.md) | block |",
+            report,
+            StringComparison.Ordinal);
         Assert.Contains("baselineReused: true", report, StringComparison.Ordinal);
         Assert.Contains(
             "baselineReuse: \"baseline result reused from attempt review_earlier (2h 5m)\"",

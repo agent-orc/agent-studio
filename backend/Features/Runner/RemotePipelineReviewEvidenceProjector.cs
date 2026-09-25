@@ -129,9 +129,6 @@ public sealed class RemotePipelineReviewEvidenceProjector
             Attempt = pipelineAttempt,
             Model = command.Model,
             ThinkingLevel = command.ThinkingLevel,
-            Status = status == AspectStatus.Pass
-                ? PipelineStepStatus.Passed
-                : PipelineStepStatus.Failed,
             StartedAt = command.StartedAt,
             CompletedAt = command.FinishedAt,
             DurationMs = duration,
@@ -140,6 +137,13 @@ public sealed class RemotePipelineReviewEvidenceProjector
             CacheReadTokens = command.CacheReadTokens,
             CacheCreationTokens = command.CacheCreationTokens,
             InputIncludesCached = command.InputIncludesCached,
+            Verdict = AspectVerdictParsing.StatusToken(status),
+            VerdictSummary = summary,
+            EvidenceRef = markdownName,
+            // Semantic concerns and blocks are successful aspect executions.
+            // A command failure remains a failed pipeline step even though the
+            // runner also supplies a semantic block verdict for fail-closed review.
+            Status = AspectStepStatus(command),
             Reason = summary,
             ExecutionLocation = "remote",
             ExecutionHostId = review.Lease?.HostId ?? report.Environment.HostId,
@@ -147,6 +151,11 @@ public sealed class RemotePipelineReviewEvidenceProjector
             ExecutionAttemptId = review.AttemptId,
         });
     }
+
+    internal static PipelineStepStatus AspectStepStatus(Contract.ReviewCommandEvidenceDto command)
+        => Contract.ReviewFailureAttributionPolicy.Failed(command)
+            ? PipelineStepStatus.Failed
+            : PipelineStepStatus.Passed;
 
     private void ProjectToolGate(
         TaskInfo task,

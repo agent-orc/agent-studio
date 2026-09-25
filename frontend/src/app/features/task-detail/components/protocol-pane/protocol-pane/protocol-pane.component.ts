@@ -507,6 +507,10 @@ export class ProtocolPaneComponent implements OnDestroy {
     if (metricId === 'artifacts') this.layout.openPromptTab('description');
   }
 
+  openAspectDocument(fileName: string): void {
+    this.layout.openPromptTab('description', undefined, fileName);
+  }
+
   /**
    * Status.md body with the `# Status` header (Result + Duration) lifted out
    * so it does not duplicate what the verdict pill already shows. Used for

@@ -80,10 +80,9 @@ import { OverviewAgentWorkComponent } from './overview-agent-work/overview-agent
 import { distinctStepVerdict } from './pipeline-status-verdict.util';
 import type { ProtocolVerdict } from '../../protocol-pane/protocol-verdict';
 import { outcomeDecisionBadge, type DecisionBadgeVm } from './outcome-decision-badge.util';
+import { PipelineAspectResultComponent } from './pipeline-aspect-result/pipeline-aspect-result.component';
 import {
-  type PipelineRowVm,
-  type PipelineRunOptionVm,
-  type PipelineTotalVm,
+  type PipelineRowVm, type PipelineRunOptionVm, type PipelineTotalVm,
 } from './pipeline-row.vm';
 import {
   FINAL_VERDICT_STEP_ID,
@@ -92,17 +91,17 @@ import {
 } from './pipeline-step-explanations.util';
 import {
   buildConcernTooltip,
+  buildAspectStatusTooltip,
   buildDecisionTooltip,
   buildStepStatusTooltip,
   decisionTooltipSeverity,
   reconcileCoreVerdict,
 } from './pipeline-step-tooltips.util';
-
 @Component({
   selector: 'app-overview-pane',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, CliModelSelectorComponent, RegressionRadarComponent, ReferencesSectionComponent, TooltipDirective, CompletionLoopIndicatorComponent, PipelineRunHistoryComponent, PipelineTokenUsageComponent, PipelineStepDetailsComponent, PipelineStepToggleComponent, PostStepControlsComponent, StudioIconComponent, DisclosureMarkerComponent, CostBreakdownTriggerDirective, PipelineHistoryNoticeComponent, OverviewRunsComponent, OverviewTitleBlockComponent, OverviewStepTokenModalComponent, OverviewAgentWorkComponent],
+  imports: [FormsModule, CliModelSelectorComponent, RegressionRadarComponent, ReferencesSectionComponent, TooltipDirective, CompletionLoopIndicatorComponent, PipelineRunHistoryComponent, PipelineTokenUsageComponent, PipelineStepDetailsComponent, PipelineStepToggleComponent, PostStepControlsComponent, StudioIconComponent, DisclosureMarkerComponent, CostBreakdownTriggerDirective, PipelineHistoryNoticeComponent, OverviewRunsComponent, OverviewTitleBlockComponent, OverviewStepTokenModalComponent, OverviewAgentWorkComponent, PipelineAspectResultComponent],
   templateUrl: './overview-pane.component.html',
   styleUrl: './overview-pane.component.scss',
 })
@@ -134,7 +133,7 @@ export class OverviewPaneComponent {
   /** Fired after a successful title PUT so the parent can re-fetch the
    *  detail and let the optimistic override drop back to the canonical
    *  `job().title`. */
-  readonly titleSaved = output<void>();
+  readonly titleSaved = output<void>(); readonly documentRequested = output<string>();
 
   private readonly runTimelinePoll = inject(RunTimelinePollService);
   private readonly agentWorkPoll = inject(AgentWorkSummaryPollService);
@@ -347,7 +346,7 @@ export class OverviewPaneComponent {
         hasExecution: e != null || onDemand != null,
         config: cfg ?? null,
         status,
-        statusTooltip: buildStepStatusTooltip(label, status, statusDetail),
+        statusTooltip: buildAspectStatusTooltip(label, status, verdict, statusDetail) ?? buildStepStatusTooltip(label, status, statusDetail),
         skipHint: status === 'not-run'
           ? 'not run: lightweight pipeline or escalation'
           : status === 'notApplicable' && legacyNoVerifyCommands
@@ -372,6 +371,7 @@ export class OverviewPaneComponent {
         thinkingLevelOverride,
         verdict: onDemand ? `attempt ${onDemand.attempt}` : verdict,
         concernTooltip: buildConcernTooltip(label, verdict, statusDetail),
+        aspectSummary: step.kind === 'aspect' ? statusDetail : null, aspectEvidence: res.aspectEvidence?.[step.id] ?? [],
         explanation: buildStepExplanation(step.id, label, step.kind),
         durationMs: onDemand?.durationMs ?? e?.durationMs ?? 0,
         startedAt: onDemand?.startedAt ?? e?.startedAt ?? null,
