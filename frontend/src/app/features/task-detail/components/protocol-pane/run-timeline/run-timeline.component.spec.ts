@@ -53,9 +53,14 @@ describe('RunTimelineComponent (smoke)', () => {
 
     const fixture = TestBed.createComponent(RunTimelineComponent);
     fixture.componentRef.setInput('runs', [
-      runRecord(3, 'restart', 'completed', 'Fix review note', 15),
-      runRecord(1, 'start', 'completed', null, 125),
-      runRecord(2, 'continue', 'failed', 'Please try again', 33),
+      { ...runRecord(3, 'restart', 'completed', 'Fix review note', 15), trigger: 'restart' },
+      { ...runRecord(1, 'start', 'completed', null, 125), trigger: 'initial' },
+      {
+        ...runRecord(2, 'continue', 'failed', 'Please try again', 33),
+        trigger: 'operator-continue',
+        triggeredBy: 'operator local-default',
+        triggerReason: 'Please try again.',
+      },
     ]);
     fixture.detectChanges();
 
@@ -74,9 +79,28 @@ describe('RunTimelineComponent (smoke)', () => {
     const text = fixture.nativeElement.textContent as string;
     expect(text.indexOf('Prompt #1')).toBeLessThan(text.indexOf('Prompt #2'));
     expect(text.indexOf('Prompt #2')).toBeLessThan(text.indexOf('Prompt #3'));
-    expect(text).toContain('Run #1 re-opened into #2 via user follow-up');
-    expect(text).toContain('Run #2 re-opened into #3 via user follow-up');
+    expect(text).toContain('Run #1 re-opened into #2 via Operator continue by local-default: Please try again.');
+    expect(text).toContain('Run #2 re-opened into #3 via Restart');
+    expect(fixture.componentInstance.triggerLabel(runRecord(4, 'continue', 'completed', 'legacy', 1)))
+      .toBe('Not recorded');
     expect(text).toContain('🌀');
+  });
+
+  it('links review-trigger provenance to its report', async () => {
+    await TestBed.configureTestingModule({
+      imports: [RunTimelineComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(RunTimelineComponent);
+    fixture.componentRef.setInput('job', taskInfo());
+    const reviewRun: RunRecord = {
+      ...runRecord(2, 'continue', 'completed', null, 20),
+      trigger: 'review-concern',
+      triggerSource: 'review=review_01bb;aspects=code-quality',
+    };
+
+    expect(fixture.componentInstance.triggerLabel(reviewRun)).toBe('Review concern: Code Quality (review_01bb)');
+    expect(fixture.componentInstance.triggerReportHref(reviewRun)).toContain('remote-review-grade-review_01bb.md');
   });
 
   it('surfaces captured reissue prompt context from the run header', async () => {

@@ -514,6 +514,7 @@ const LANE_MIRROR_CARD_TAG_TEXT: Record<string, readonly string[]> = {
 };
 
 const HISTORY_TAG_RE = /^(?:reissue|abort-review):(.+)$/i;
+const CONCERN_ROUND_USED_TAG_RE = /^review:concern-round-(\d+)-of-(\d+)-used$/i;
 const HISTORY_PRESENTATION_LANES = new Set<string>([
   TaskState.HumanReview,
   TaskState.Completed,
@@ -561,6 +562,19 @@ export function buildTagChips(
     if (isSuppressedCardTag(id, entry, state)) return [];
     // Reissue/abort tags are event history, not current card status.
     if (HISTORY_TAG_RE.test(id)) return [];
+    const concernRound = CONCERN_ROUND_USED_TAG_RE.exec(id);
+    if (concernRound) {
+      const label = `Concern round ${concernRound[1]} of ${concernRound[2]} used`;
+      return [{
+        id,
+        label,
+        color: '#f9e2af',
+        ghost: false,
+        concern: false,
+        unparseable: false,
+        tooltip: `${label}. Further concerns require human review.`
+      }];
+    }
     if (entry) {
       return {
         id,

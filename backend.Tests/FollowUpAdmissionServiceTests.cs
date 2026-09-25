@@ -85,7 +85,10 @@ public sealed class FollowUpAdmissionServiceTests : IDisposable
         harness.Settings.SetExecutionRunner(ProjectName, "agent-runner-01", remoteExecutionEnabled: true);
 
         var response = await harness.Service.ContinueJobAsync(
-            "remote-card", "Keep the cardinality one-to-one.", _watchPath, mode: ContinueModes.Steer);
+            "remote-card", "Keep the cardinality one-to-one.", _watchPath,
+            mode: ContinueModes.Steer,
+            reason: "Fix the multi-dependency classification.",
+            triggeredBy: "desktop-client");
 
         Assert.Equal("queued", response.Status);
         Assert.Equal(FollowUpQueueReasons.RemoteExecution, response.Queued!.Reason);
@@ -95,6 +98,15 @@ public sealed class FollowUpAdmissionServiceTests : IDisposable
         var intent = ReadIntent(readyFolder);
         Assert.NotNull(intent);
         Assert.Equal(FollowUpQueueReasons.RemoteExecution, intent!.SavedReason);
+        Assert.Equal("operator desktop-client", intent.TriggeredBy);
+        Assert.Equal("Fix the multi-dependency classification.", intent.TriggerReason);
+
+        var claimTrigger = LeaseEndpoints.BuildRemoteClaimTrigger(
+            "task-owner", intent, 1, null, "runner-1", "run-2");
+        Assert.Equal(RunTriggers.OperatorContinue, claimTrigger.Trigger);
+        Assert.Equal("operator desktop-client", claimTrigger.TriggeredBy);
+        Assert.Equal("Fix the multi-dependency classification.", claimTrigger.TriggerReason);
+        Assert.Contains("Keep the cardinality one-to-one.", claimTrigger.TriggerSource, StringComparison.Ordinal);
 
         // The remote runner reads prompt.md when it claims the card, so the
         // follow-up has to be in there too.
@@ -137,10 +149,17 @@ public sealed class FollowUpAdmissionServiceTests : IDisposable
             Path.Combine(_watchPath, TaskStates.Progress, "slot-hog"),
             followup: null, mode: null);
 
-        var response = await harness.Service.ContinueJobAsync("runnable", "Carry on.", _watchPath);
+        var response = await harness.Service.ContinueJobAsync(
+            "runnable", "Carry on.", _watchPath,
+            reason: "Retry after the other task completes.",
+            triggeredBy: "desktop-client");
 
         Assert.Equal("queued", response.Status);
         Assert.Equal(FollowUpQueueReasons.ProjectBusy, response.Queued!.Reason);
+        var saved = ReadIntent(Path.Combine(_watchPath, TaskStates.Ready, "runnable"));
+        Assert.NotNull(saved);
+        Assert.Equal("operator desktop-client", saved!.TriggeredBy);
+        Assert.Equal("Retry after the other task completes.", saved.TriggerReason);
     }
 
     [Fact]

@@ -397,6 +397,15 @@ public record ProjectSettings
     /// </summary>
     public bool? IntegrationGateReviewReuse { get; init; }
 
+    /// <summary>Maximum automatic coding rounds for actionable review concerns. Default 1; 0 disables.</summary>
+    public int MaxReviewConcernRounds { get; init; } = 1;
+
+    /// <summary>When true (default), unaffected semantic aspects may carry over after a review-driven fix.</summary>
+    public bool ScopedReviewAfterFinding { get; init; } = true;
+
+    /// <summary>Maximum changed-file count eligible for scoped semantic re-review. Larger deltas run every aspect.</summary>
+    public int ScopedReviewMaximumDeltaFiles { get; init; } = 20;
+
     /// <summary>
     /// AGT-2803: this project's additions to the areas registry. The ten
     /// product-default areas are inherited by every project and are not stored
