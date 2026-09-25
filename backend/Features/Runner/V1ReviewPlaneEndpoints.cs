@@ -626,6 +626,8 @@ public static class V1ReviewPlaneEndpoints
                     .Where(command => Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind))
                     .Select(command => command.Aspect)
                 ?? []);
+            request = Contract.ReviewReportDiagnosisPolicy.Normalize(
+                request, currentReview.Subject.Plan);
             if (!string.Equals(request.Environment.ExecutorId, authoritativeLease.ExecutorId, StringComparison.Ordinal)
                 || !string.Equals(request.Environment.InstanceId, authoritativeLease.ClientId, StringComparison.Ordinal)
                 || !string.Equals(request.Environment.HostId, authoritativeLease.HostId, StringComparison.Ordinal)

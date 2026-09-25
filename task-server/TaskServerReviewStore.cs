@@ -720,6 +720,7 @@ public sealed partial class TaskServerStore
                 subject.Plan.Commands
                     .Where(command => ReviewCommandKinds.IsAgent(command.ExecutionKind))
                     .Select(command => command.Aspect));
+            request = ReviewReportDiagnosisPolicy.Normalize(request, subject.Plan);
             var payloadJson = JsonSerializer.Serialize(request, ReviewJson);
             var payloadHash = Hash(payloadJson);
             if (!string.IsNullOrWhiteSpace(attempt.ReportIdempotencyKey))
@@ -1102,6 +1103,29 @@ public sealed partial class TaskServerStore
         if (request.Verdicts.Any(verdict =>
                 verdict.Status is not ("pass" or "concerns" or "block" or "fail")))
             return ("ReviewInfra", "InvalidAspectVerdict");
+        var failedDeterministic = request.Commands
+            .Where(command => command.Phase == "verification"
+                              && command.WorkspaceRole == "candidate"
+                              && command.ExitCode != 0
+                              && !ReviewCommandKinds.IsAgent(command.ExecutionKind))
+            .ToArray();
+        foreach (var failed in failedDeterministic)
+        {
+            if (failed.Diagnosis is null)
+                return ("ReviewInfra", "DiagnosisMissing");
+            if (string.IsNullOrWhiteSpace(failed.BaselineSha) || failed.BaselineExitCode is null)
+                return ("ReviewInfra", "BaselineEvidenceMissing");
+            var clean = request.Commands.FirstOrDefault(command =>
+                command.StepId == failed.StepId
+                && command.Phase == "clean-repeat"
+                && command.WorkspaceRole == "clean-repeat");
+            if (clean is null)
+                return ("ReviewInfra", "CleanRepeatMissing");
+            if (failed.Diagnosis.ChargesCard
+                && (failed.BaselineExitCode != 0 || clean.ExitCode == 0
+                    || failed.Diagnosis.Confidence <= 0))
+                return ("ReviewInfra", "DiagnosisEvidenceInvalid");
+        }
         // AGT-2819: a failing verification command is attributed before it is
         // graded. Only a failure the merge base did not already have charges the
         // card; a step that is red on the integration branch too is reported as
@@ -1110,13 +1134,20 @@ public sealed partial class TaskServerStore
             .Where(command => command.Phase == "verification" && command.WorkspaceRole == "candidate")
             .Select(command => (
                 command.StepId,
-                Owner: ReviewFailureAttributionPolicy.Attribute(
-                    subject.Plan.Commands.Single(item =>
-                        string.Equals(item.StepId, command.StepId, StringComparison.Ordinal)),
-                    command)))
+                Owner: command.Diagnosis is { } diagnosis
+                    ? diagnosis.ChargesCard
+                        ? ReviewFailureOwner.Delivery
+                        : command.BaselineExitCode != 0
+                            ? ReviewFailureOwner.IntegrationBranch
+                            : ReviewFailureOwner.Tolerated
+                    : ReviewFailureAttributionPolicy.Failed(command)
+                        ? ReviewFailureOwner.Tolerated
+                        : ReviewFailureOwner.None))
             .ToArray();
         if (attributions.Any(item => item.Owner == ReviewFailureOwner.Delivery)
-            || ReviewGradingPolicy.Grade(request.Verdicts.Select(verdict => verdict.Status))
+            || ReviewGradingPolicy.Grade(request.Verdicts
+                .Where(verdict => verdict.Diagnosis?.ChargesCard == true)
+                .Select(verdict => verdict.Status))
                 == ReviewGrade.ProductFailure)
             return ("ProductFailure", request.FailureClassification ?? "ReviewFinding");
         if (string.Equals(request.Outcome, "ReviewInfra", StringComparison.Ordinal))
@@ -1179,9 +1210,10 @@ public sealed partial class TaskServerStore
                    && string.Equals(plannedPreparation.FileName, command.FileName, StringComparison.Ordinal)
                    && plannedPreparation.Arguments.SequenceEqual(command.Arguments, StringComparer.Ordinal)
                    && (command.WorkspaceRole == "candidate"
+                       || command.WorkspaceRole == "clean-repeat"
                        || command.WorkspaceRole.StartsWith("baseline-", StringComparison.Ordinal));
         }
-        return command.Phase == "verification"
+        return command.Phase is "verification" or "clean-repeat"
                && plannedCommand is not null
                && string.Equals(plannedCommand.Aspect, command.Aspect, StringComparison.Ordinal)
                && string.Equals(plannedCommand.FileName, command.FileName, StringComparison.Ordinal)
@@ -1191,6 +1223,7 @@ public sealed partial class TaskServerStore
                    || (string.Equals(plannedCommand.Model, command.Model, StringComparison.Ordinal)
                        && string.Equals(plannedCommand.ThinkingLevel, command.ThinkingLevel, StringComparison.Ordinal)))
                && (command.WorkspaceRole == "candidate"
+                   || command.WorkspaceRole == "clean-repeat"
                    || command.WorkspaceRole.StartsWith("baseline-", StringComparison.Ordinal));
     }
 

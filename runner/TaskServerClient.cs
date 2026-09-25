@@ -930,6 +930,23 @@ public sealed class TaskServerClient : IDisposable
     /// </summary>
     internal static readonly TimeSpan ReviewReportAckTimeout = TimeSpan.FromSeconds(10);
 
+    public async Task<IReadOnlyList<Contract.FailureFingerprintHistoryDto>> ReadFailureFingerprintsAsync(
+        string fingerprint, CancellationToken ct)
+    {
+        using var response = await _http.GetAsync(
+            $"/api/v1/failure-fingerprints?fingerprint={Uri.EscapeDataString(fingerprint)}" +
+            $"&sinceUtc={Uri.EscapeDataString(DateTime.UtcNow.AddHours(-24).ToString("O"))}", ct);
+        var detail = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            throw new TaskServerException((int)response.StatusCode, $"Fingerprint history failed: {Trim(detail)}");
+        return JsonSerializer.Deserialize<Contract.FailureFingerprintHistoryDto[]>(detail, Json) ?? [];
+    }
+
+    public async Task RecordFailureFingerprintAsync(
+        Contract.RecordFailureFingerprintRequest request, CancellationToken ct)
+        => await PostJsonAsync<Contract.RecordFailureFingerprintRequest, Contract.FailureFingerprintHistoryDto>(
+            "/api/v1/failure-fingerprints", request, ct);
+
     public async Task<Contract.ReviewReportDto> ReportReviewAsync(
         string attemptId,
         Contract.ReviewReportRequest request,

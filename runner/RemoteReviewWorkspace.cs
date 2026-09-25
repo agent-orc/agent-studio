@@ -20,6 +20,7 @@ public sealed class RemoteReviewWorkspace
     private readonly ReviewSubjectDto _subject;
     private readonly ReviewLeaseDto _lease;
     private readonly Action<string> _log;
+    private readonly Func<string, Task<FailureFingerprintHistoryDto?>>? _historyReader;
     private readonly RemoteReviewAgentCommandRunner _agentCommands;
     private string? _initialTree;
     private string? _baselineSha;
@@ -32,12 +33,14 @@ public sealed class RemoteReviewWorkspace
         RunnerOptions options,
         ReviewSubjectDto subject,
         ReviewLeaseDto lease,
-        Action<string> log)
+        Action<string> log,
+        Func<string, Task<FailureFingerprintHistoryDto?>>? historyReader = null)
     {
         _options = options;
         _subject = subject;
         _lease = lease;
         _log = log;
+        _historyReader = historyReader;
         var root = Path.GetFullPath(options.ReviewWorkDir);
         AttemptRoot = Path.Combine(root, SafeSegment(lease.ResourceNamespace));
         RepositoryPath = Path.Combine(AttemptRoot, "repository");
@@ -477,8 +480,9 @@ public sealed class RemoteReviewWorkspace
 
                 BaselineComparison? comparison = null;
                 var retryPerformed = false;
-                if (command.CompareToBaseline && !execution.Process.Success)
+                if (!ReviewCommandKinds.IsAgent(command.ExecutionKind) && !execution.Process.Success)
                 {
+                    var firstProcess = execution.Process;
                     comparison = await CompareToBaselineAsync(
                         command,
                         execution.Process,
@@ -486,7 +490,7 @@ public sealed class RemoteReviewWorkspace
                         commands,
                         artifacts,
                         ct);
-                    if (comparison.NewFailures.Count > 0)
+                    if (comparison is not null)
                     {
                         var reviewFlakyTests = ReviewFlakyTestIndex.Discover(RepositoryPath, _log);
                         retryPerformed = true;
@@ -495,7 +499,7 @@ public sealed class RemoteReviewWorkspace
                             execution.Process,
                             artifacts,
                             ct);
-                        execution = await RunCommandAsync(command, RepositoryPath, ct);
+                        execution = await RunCleanRepeatAsync(command, commands, artifacts, ct);
                         if (MissingToolchain(execution.Process))
                         {
                             commands.Add(await AddCommandEvidenceAsync(
@@ -600,6 +604,18 @@ public sealed class RemoteReviewWorkspace
                             SubjectFailures(command, execution.Process),
                             reviewFlakyTests);
                     }
+                    comparison = comparison! with
+                    {
+                        Diagnosis = await DiagnoseFailureAsync(
+                            command, comparison, firstProcess, execution.Process, ct),
+                    };
+                    if (comparison.Diagnosis.Classification == DeliveryFailureDiagnosis.Environment
+                        && candidateCache is not null)
+                    {
+                        foreach (var message in candidateCache.DiscardIncludingWorkspace("diagnosed-environment"))
+                            _log(message);
+                        candidateCache = null;
+                    }
                 }
 
                 commands.Add(await AddCommandEvidenceAsync(
@@ -654,7 +670,20 @@ public sealed class RemoteReviewWorkspace
                 foreach (var message in candidateCache.Save()) _log(message);
         }
 
-        var proof = await CurrentProofAsync(ct);
+        var semanticAspects = _subject.Plan.Commands
+            .Where(command => ReviewCommandKinds.IsAgent(command.ExecutionKind))
+            .Select(command => command.Aspect)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        IReadOnlyList<string> changedPaths = [];
+        if (verdicts.Any(verdict => semanticAspects.Contains(verdict.Aspect)
+                                   && ReviewGradingPolicy.IsBlockingToken(verdict.Status)))
+        {
+            changedPaths = await ChangedPathsAgainstBaselineAsync(ct);
+            for (var index = 0; index < verdicts.Count; index++)
+                if (semanticAspects.Contains(verdicts[index].Aspect))
+                    verdicts[index] = ReviewDiffEvidencePolicy.Normalize(verdicts[index], changedPaths);
+        }
+        var proof = (await CurrentProofAsync(ct)) with { ChangedPaths = changedPaths };
         // AGT-2749: a lone "concerns" verdict is a reservation, not a refusal
         // (AGT-2706 settled ProductFailure with every aspect pass and one
         // documentation-impact concern). ReviewGradingPolicy is the single
@@ -662,6 +691,11 @@ public sealed class RemoteReviewWorkspace
         var outcome = ReviewGradingPolicy.Grade(verdicts.Select(verdict => verdict.Status))
             == ReviewGrade.ProductFailure
             ? "ProductFailure"
+            : verdicts.Any(verdict => verdict.Classification is
+                DeliveryFailureDiagnosis.Environment or
+                DeliveryFailureDiagnosis.Intermittent or
+                DeliveryFailureDiagnosis.FirstOccurrence)
+                ? "ReviewInfra"
             // AGT-2819: no verdict refuses the change, but at least one gate was
             // already red on the merge base. That is a defect of the integration
             // branch and reported as such, not a silent pass and not this
@@ -691,6 +725,25 @@ public sealed class RemoteReviewWorkspace
                                  == ReviewFailureOwner.IntegrationBranch)
             .Select(command => command.StepId)
             .ToArray();
+
+    private async Task<IReadOnlyList<string>> ChangedPathsAgainstBaselineAsync(CancellationToken ct)
+    {
+        try
+        {
+            var baseline = await ResolveBaselineShaAsync(ct);
+            var result = await ProcessRunner.RunAsync(
+                "git", ["diff", "--name-only", baseline, _subject.ExpectedResultSha],
+                RepositoryPath, environment: ProcessEnvironment(), clearEnvironment: true, ct: ct);
+            return result.Success
+                ? result.StdOut.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+                : [];
+        }
+        catch (ReviewInfrastructureException exception)
+        {
+            _log($"review diff evidence unavailable: {exception.Message}");
+            return [];
+        }
+    }
 
     private static bool CanResumeCommand(
         ReviewCommandDto command,
@@ -924,7 +977,8 @@ public sealed class RemoteReviewWorkspace
         IReadOnlyDictionary<string, string?> environment,
         ICollection<ReviewCommandEvidenceDto> commands,
         ICollection<ReviewArtifactEvidenceDto> artifacts,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool restoreCache = true)
     {
         var preparation = _subject.Plan.Preparation ?? [];
         if (preparation.Count == 0) return null;
@@ -942,14 +996,14 @@ public sealed class RemoteReviewWorkspace
             ? "baseline"
             : "candidate";
         var cache = DependencyCacheSession.Create(
-            DependencyCacheRoot,
+            restoreCache ? DependencyCacheRoot : Path.Combine(AttemptRoot, "clean-dependency-cache"),
             _subject.RepositoryId,
             workspacePath,
             scopes,
             _subject.Plan.PreserveGlobs,
             cacheRole,
             _log);
-        var cacheMessages = cache.Restore();
+        var cacheMessages = restoreCache ? cache.Restore() : [];
 
         foreach (var command in preparation)
         {
@@ -1158,7 +1212,8 @@ public sealed class RemoteReviewWorkspace
             agentUsage?.InputIncludesCached,
             reusedFromAttemptId ?? comparison?.ReusedFromAttemptId,
             (long)Math.Max(0, (reusedAge ?? comparison?.ReusedAge ?? TimeSpan.Zero).TotalSeconds),
-            comparison?.BaselineExitCode);
+            comparison?.BaselineExitCode,
+            comparison?.Diagnosis);
     }
 
     private async Task<ReviewArtifactEvidenceDto> WriteArtifactAsync(
@@ -1529,6 +1584,124 @@ public sealed class RemoteReviewWorkspace
             SubjectFailures(command, subjectResult),
             cacheHit: false,
             execution.Process.ExitCode);
+    }
+
+    private async Task<CommandExecution> RunCleanRepeatAsync(
+        ReviewCommandDto command,
+        ICollection<ReviewCommandEvidenceDto> commands,
+        ICollection<ReviewArtifactEvidenceDto> artifacts,
+        CancellationToken ct)
+    {
+        var hash = CommandHash(command);
+        var path = Path.Combine(AttemptRoot, $"clean-repeat-{hash[..12]}-{Guid.NewGuid():N}");
+        var cloned = await ProcessRunner.RunAsync(
+            "git", ["clone", "--shared", "--no-checkout", RepositoryPath, path],
+            RepositoryPath, environment: ProcessEnvironment(), clearEnvironment: true, ct: ct);
+        if (!cloned.Success)
+            throw new ReviewInfrastructureException(
+                "CleanRepeatUnavailable", $"Clean repeat clone could not be created: {cloned.StdErr.Trim()}");
+        try
+        {
+            var checkedOut = await ProcessRunner.RunAsync(
+                "git", ["checkout", "--detach", _subject.ExpectedResultSha],
+                path, environment: ProcessEnvironment(), clearEnvironment: true, ct: ct);
+            if (!checkedOut.Success)
+                throw new ReviewInfrastructureException(
+                    "CleanRepeatUnavailable", $"Clean repeat subject could not be checked out: {checkedOut.StdErr.Trim()}");
+            var environment = BaselineProcessEnvironment("clean-" + hash);
+            await ExecutePreparationAsync(
+                path, "clean-repeat", _subject.ExpectedResultSha, environment,
+                commands, artifacts, ct, restoreCache: false);
+            var head = await GitValueAtAsync(path, ["rev-parse", "HEAD"], environment, ct);
+            var tree = await GitValueAtAsync(path, ["rev-parse", "HEAD^{tree}"], environment, ct);
+            var execution = await RunCommandAsync(command, path, ct, environment);
+            commands.Add(await AddCommandEvidenceAsync(
+                command.StepId, command.Aspect, command.FileName, command.Arguments,
+                head, tree, execution.Process, execution.StartedAt, execution.FinishedAt,
+                execution.Signal, command.TimeoutSeconds, "clean-repeat", "clean-repeat",
+                _baselineSha, comparison: null, retryPerformed: true,
+                dependencyCacheHit: false, dependencyCache: null, artifacts, ct,
+                command, execution.AgentUsage));
+            return execution;
+        }
+        finally
+        {
+            try { if (Directory.Exists(path)) Directory.Delete(path, recursive: true); }
+            catch (IOException exception) { _log($"clean repeat clone removal failed: {exception.Message}"); }
+        }
+    }
+
+    private async Task<DeliveryFailureDiagnosisResult> DiagnoseFailureAsync(
+        ReviewCommandDto command,
+        BaselineComparison comparison,
+        ProcessResult firstResult,
+        ProcessResult cleanResult,
+        CancellationToken ct)
+    {
+        var initial = comparison.InitialFailures.Count > 0
+            ? comparison.InitialFailures : comparison.PreExistingFailures;
+        var fingerprint = ReviewFailureFingerprint(command.StepId, initial, firstResult);
+        var cleanFingerprint = cleanResult.Success
+            ? null : ReviewFailureFingerprint(command.StepId, SubjectFailures(command, cleanResult), cleanResult);
+        var known = ReviewFlakyTestIndex.Discover(RepositoryPath, _log);
+        var historyAvailable = false;
+        var prior = 0;
+        var otherCards = 0;
+        using var client = _historyReader is null ? new TaskServerClient(_options) : null;
+        try
+        {
+            var history = _historyReader is null
+                ? (await client!.ReadFailureFingerprintsAsync(fingerprint, ct)).FirstOrDefault()
+                : await _historyReader(fingerprint);
+            prior = history?.Count ?? 0;
+            otherCards = history?.CardKeys.Count(card =>
+                !string.Equals(card, _subject.TaskId, StringComparison.Ordinal)) ?? 0;
+            historyAvailable = true;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _log($"review fingerprint history unavailable step={command.StepId}: {exception.Message}");
+        }
+        var diagnosis = DeliveryFailureDiagnosis.Classify(new(
+            historyAvailable ? fingerprint : null,
+            comparison.BaselineExitCode == 0,
+            comparison.BaselineFailures.Count > 0
+                ? ReviewFailureFingerprint(command.StepId, comparison.BaselineFailures, null) : null,
+            cleanResult.Success,
+            cleanFingerprint,
+            otherCards,
+            prior,
+            initial.Any(known.Contains)));
+        try
+        {
+            if (client is not null)
+                await client.RecordFailureFingerprintAsync(new(
+                    fingerprint, _subject.TaskId, _lease.ExecutorId, "review",
+                    $"{_lease.AttemptId}:{command.StepId}"), ct);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _log($"review fingerprint report failed step={command.StepId}: {exception.Message}");
+        }
+        return diagnosis;
+    }
+
+    private string ReviewFailureFingerprint(
+        string stepId, IReadOnlyList<string> failures, ProcessResult? process)
+    {
+        var specific = failures.Count > 0
+                       && !failures.All(failure => failure.StartsWith("<unparsed failure", StringComparison.Ordinal));
+        var raw = process is null ? string.Empty : process.StdOut + "\n" + process.StdErr;
+        raw = Regex.Replace(raw,
+            Regex.Escape(AttemptRoot) + @"[/\\](?:repository|clean-repeat-[0-9a-f]+)",
+            "<workspace>", RegexOptions.IgnoreCase);
+        var normalized = stepId.Trim().ToLowerInvariant() + "\n" +
+            (specific
+                ? string.Join("\n", failures.Select(failure => failure.Trim().ToLowerInvariant())
+                    .Order(StringComparer.Ordinal))
+                : raw.Trim().ToLowerInvariant());
+        return "review:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized)))
+            .ToLowerInvariant();
     }
 
     /// <summary>
@@ -2157,6 +2330,18 @@ public sealed class RemoteReviewWorkspace
             _ when comparison.FlakyQuarantinedFailures.Count > 0 => ReviewFlakyTestIndex.VerdictClassification,
             _ => "BaselineCompared",
         };
+        if (comparison.Diagnosis is { } diagnosis)
+        {
+            return new ReviewVerdictDto(
+                command.Aspect,
+                diagnosis.ChargesCard ? "block" : "pass",
+                diagnosis.Classification,
+                string.Join("; ", diagnosis.Evidence) +
+                $"; failed-tests={string.Join(", ", comparison.InitialFailures)}" +
+                $"; confidence={diagnosis.Confidence:0.00}; baseline={comparison.BaselineSha} ({comparison.Provenance})",
+                $"command:{command.StepId}; baseline:{comparison.BaselineSha}",
+                diagnosis.ChargesCard ? string.Join(", ", comparison.InitialFailures) : "none");
+        }
         var baselineState = comparison.BaselineExitCode == 0
             ? "green on the merge base"
             : $"already exiting {comparison.BaselineExitCode} on the merge base";
@@ -2554,6 +2739,8 @@ internal sealed record BaselineComparison(
     string? ReusedFromAttemptId = null,
     TimeSpan? ReusedAge = null)
 {
+    public IReadOnlyList<string> InitialFailures { get; init; } = [];
+    public DeliveryFailureDiagnosisResult? Diagnosis { get; init; }
     /// <summary>
     /// How the baseline side of this comparison was produced, worded once for
     /// the verdict summary, the Markdown grade, and the card projection.
@@ -2588,7 +2775,10 @@ internal sealed record BaselineComparison(
             cacheHit,
             baselineExitCode,
             reusedFromAttemptId,
-            reusedAge);
+            reusedAge)
+        {
+            InitialFailures = subjectFailures,
+        };
     }
 
     public BaselineComparison Reclassify(
@@ -2606,6 +2796,7 @@ internal sealed record BaselineComparison(
         var retriedFailures = subjectFailures.ToHashSet(StringComparer.Ordinal);
         return retried with
         {
+            InitialFailures = InitialFailures,
             FlakyQuarantinedFailures = NewFailures
                 .Where(failure => !retriedFailures.Contains(failure) && reviewFlakyTests.Contains(failure))
                 .Order(StringComparer.Ordinal)

@@ -227,7 +227,8 @@ public sealed record ReviewCommandEvidenceDto(
     /// plan asked for a baseline comparison (AGT-2819). Null means no baseline
     /// run happened, which attributes any failure to the delivery.
     /// </summary>
-    int? BaselineExitCode = null);
+    int? BaselineExitCode = null,
+    DeliveryFailureDiagnosisResult? Diagnosis = null);
 
 /// <summary>
 /// The one word every surface uses for a test failure that a targeted re-run
@@ -305,7 +306,8 @@ public sealed record ReviewWorkspaceProofDto(
     string ResourceNamespace,
     string? IntegrationRef = null,
     string? MergeBaseSha = null,
-    string? IntegrationTipSha = null);
+    string? IntegrationTipSha = null,
+    IReadOnlyList<string>? ChangedPaths = null);
 
 public sealed record ReviewEnvironmentDto(
     string HostId,
@@ -376,7 +378,8 @@ public sealed record ReviewVerdictDto(
     string Classification,
     string Summary,
     string? EvidenceChecked = null,
-    string? Missing = null);
+    string? Missing = null,
+    DeliveryFailureDiagnosisResult? Diagnosis = null);
 
 /// <summary>
 /// Enforces the citation contract for semantic review blocks. A model may
