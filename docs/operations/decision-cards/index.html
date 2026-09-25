@@ -102,7 +102,7 @@
   <h1>Decision cards</h1>
   <p class="lede">A decision request today is an ordinary task card with "decision needed" somewhere in its prose. The decider cannot see that a decision is wanted, has nothing to click, and the dependent work sits idle. This Dossier describes decisions as first-class objects on the board: typed, visible, decidable in one action, and connected to the work they unblock.</p>
   <div class="meta">
-    <span><b>Status</b> 2026-09-13, decision-pending</span>
+    <span><b>Status</b> 2026-09-25, decided</span>
     <span><b>Trigger</b> Operator feedback on AGT-2792: decision task without interface, calls to action or a visible type</span>
     <span><b>Builds on</b> Dossier decisions (AGT-2520 inline decisions), decision briefing, concept promotion</span>
     <span><b>Concept card</b> AGT-2795</span>
@@ -110,7 +110,7 @@
 </header>
 
 <div class="box warn">
-  <p><b>Status 2026-09-24.</b> D1, how a decision is represented, remains open and AGT-2795 is parked for that operator choice. AGT-2816 delivered a structured parked-question surface and a "Waiting on you" board signal, but it did not deliver the proposed card kind or decision API: <code>TaskKinds</code> on develop still contains only <code>task</code> and <code>epic</code>, and no <code>POST /api/tasks/{id}/decision</code> or reopen route exists. D2 to D5 remain contingent on D1.</p>
+  <p><b>Status 2026-09-25.</b> The operator chose D1 option A and adopted the recommended options for D2 to D5. The four implementation tasks in <code>workbench.json</code> are ready for concept promotion. AGT-2803's area and facet tags classify cards and do not replace the decision kind.</p>
 </div>
 
 <nav class="toc" aria-label="Contents">
@@ -254,49 +254,49 @@
 
 <section id="s8" data-concept-section="open-decisions">
 <h2><span class="no">§8</span>Decisions</h2>
-<p>Five questions for the operator. The recommendation is marked in each.</p>
+<p>The operator decided D1 on 2026-09-25 and adopted the recommended options for D2 to D5. Each selected option and its reason are recorded below.</p>
 
-<div class="decision" data-decision-id="representation" data-decision-kind="single" data-decision-label="Representation of a decision">
+<div class="decision" data-decision-id="representation" data-decision-kind="single" data-decision-label="Representation of a decision" data-decision-status="decided" data-selected-option-id="card-kind">
   <h3>D1 · How is a decision represented?</h3>
-  <label data-option-id="card-kind" data-option-label="A · Card kind decision with structured options (recommendation)"><input type="radio" name="representation" value="card-kind"><span><b>A · Card kind <code>decision</code> with structured options</b><span class="d">Visible on the board, decidable in the card, blocking computed from dependsOn. The shared piece is a host-agnostic decision service (question, options, choice, rationale, record); the card binds it to the card lifecycle, the Dossier to its own. Not a second copy of the Dossier mechanism, and not the Dossier mechanism stretched over a card.</span></span></label>
+  <label data-option-id="card-kind" data-option-label="A · Card kind decision with structured options (recommendation)"><input type="radio" name="representation" value="card-kind" checked><span><b>A · Card kind <code>decision</code> with structured options</b><span class="d">Visible on the board, decidable in the card, blocking computed from dependsOn. The shared piece is a host-agnostic decision service (question, options, choice, rationale, record); the card binds it to the card lifecycle, the Dossier to its own. Not a second copy of the Dossier mechanism, and not the Dossier mechanism stretched over a card.</span></span></label>
   <label data-option-id="dossier-per-decision" data-option-label="B · Every decision is a small Dossier"><input type="radio" name="representation" value="dossier-per-decision"><span><b>B · Every decision is a small Dossier</b><span class="d">Reuses the existing UI fully, but every two-option question becomes a document and stays invisible on the board.</span></span></label>
   <label data-option-id="lane-only" data-option-label="C · Decision lane for ordinary cards"><input type="radio" name="representation" value="lane-only"><span><b>C · Decision lane for ordinary cards</b><span class="d">Cheapest; no options, no call to action, dependants unprotected. Interim at best.</span></span></label>
-  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+  <p><b>Decision, 2026-09-25, operator: A.</b> A typed card gives the decider the requested board signal, structured options and action, while its lifecycle can block dependent work.</p>
 </div>
 
-<div class="decision" data-decision-id="decider" data-decision-kind="single" data-decision-label="Who may decide">
+<div class="decision" data-decision-id="decider" data-decision-kind="single" data-decision-label="Who may decide" data-decision-status="decided" data-selected-option-id="named-decider">
   <h3>D2 · Who may decide?</h3>
   <label data-option-id="operator-only" data-option-label="A · The operator only"><input type="radio" name="decider" value="operator-only"><span><b>A · The operator only</b><span class="d">Simplest rule; every decision lands with one person.</span></span></label>
-  <label data-option-id="named-decider" data-option-label="B · A named client identity or role per card, operator by default (recommendation)"><input type="radio" name="decider" value="named-decider"><span><b>B · A named client identity or role per card, operator by default</b><span class="d">Lets the requester address a reviewer or a team, keeps the operator as fallback; the record names who decided.</span></span></label>
-  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+  <label data-option-id="named-decider" data-option-label="B · A named client identity or role per card, operator by default (recommendation)"><input type="radio" name="decider" value="named-decider" checked><span><b>B · A named client identity or role per card, operator by default</b><span class="d">Lets the requester address a reviewer or a team, keeps the operator as fallback; the record names who decided.</span></span></label>
+  <p><b>Decision, 2026-09-25, operator: B.</b> A named decider addresses the right person or role, with the operator as the default.</p>
 </div>
 
-<div class="decision" data-decision-id="apply-mode" data-decision-kind="single" data-decision-label="What happens after the decision">
+<div class="decision" data-decision-id="apply-mode" data-decision-kind="single" data-decision-label="What happens after the decision" data-decision-status="decided" data-selected-option-id="both">
   <h3>D3 · What happens after the decision?</h3>
   <label data-option-id="rewrite-prompt" data-option-label="A · Append the decision block to the linked implementation card and move it to 2-ready"><input type="radio" name="apply-mode" value="rewrite-prompt"><span><b>A · Append the decision to the linked implementation card, move it to 2-ready</b><span class="d">Works when the implementation card already exists (AGT-2792 shape).</span></span></label>
   <label data-option-id="spawn-cards" data-option-label="B · Create cards from the chosen option's requirements"><input type="radio" name="apply-mode" value="spawn-cards"><span><b>B · Create cards from the chosen option's requirements</b><span class="d">Works when the decision precedes the work; same mechanism as concept promotion.</span></span></label>
-  <label data-option-id="both" data-option-label="C · Both, chosen by whether an implementation card is linked (recommendation)"><input type="radio" name="apply-mode" value="both"><span><b>C · Both, depending on whether an implementation card is linked</b><span class="d">One "apply" step with two outcomes; the record links whatever it produced.</span></span></label>
-  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+  <label data-option-id="both" data-option-label="C · Both, chosen by whether an implementation card is linked (recommendation)"><input type="radio" name="apply-mode" value="both" checked><span><b>C · Both, depending on whether an implementation card is linked</b><span class="d">One "apply" step with two outcomes; the record links whatever it produced.</span></span></label>
+  <p><b>Decision, 2026-09-25, operator: C.</b> Apply updates a linked implementation card or creates one when the decision precedes the work.</p>
 </div>
 
-<div class="decision" data-decision-id="migration" data-decision-kind="single" data-decision-label="Migration of existing prose decisions">
+<div class="decision" data-decision-id="migration" data-decision-kind="single" data-decision-label="Migration of existing prose decisions" data-decision-status="decided" data-selected-option-id="migrate-now">
   <h3>D4 · Migrate the five existing prose decision cards?</h3>
-  <label data-option-id="migrate-now" data-option-label="A · Yes, with a one-off script as part of the first delivery, AGT-2792 first (recommendation)"><input type="radio" name="migration" value="migrate-now"><span><b>A · Yes, one-off script in the first delivery, AGT-2792 first</b><span class="d">The acceptance example of the implementation card; proves the migration path.</span></span></label>
+  <label data-option-id="migrate-now" data-option-label="A · Yes, with a one-off script as part of the first delivery, AGT-2792 first (recommendation)"><input type="radio" name="migration" value="migrate-now" checked><span><b>A · Yes, one-off script in the first delivery, AGT-2792 first</b><span class="d">The acceptance example of the implementation card; proves the migration path.</span></span></label>
   <label data-option-id="manual" data-option-label="B · No, recreate them by hand when needed"><input type="radio" name="migration" value="manual"><span><b>B · No, recreate them by hand when needed</b><span class="d">Less code, but the five cards stay invisible until someone touches them.</span></span></label>
-  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+  <p><b>Decision, 2026-09-25, operator: A.</b> Migrating AGT-2792 first proves the acceptance path and makes the existing requests visible.</p>
 </div>
 
-<div class="decision" data-decision-id="reminders" data-decision-kind="single" data-decision-label="Reminders and escalation">
+<div class="decision" data-decision-id="reminders" data-decision-kind="single" data-decision-label="Reminders and escalation" data-decision-status="decided" data-selected-option-id="reminder">
   <h3>D5 · Reminders when a decision waits?</h3>
-  <label data-option-id="reminder" data-option-label="A · Reminder in inbox and activity feed after the due date, default three days (recommendation)"><input type="radio" name="reminders" value="reminder"><span><b>A · Reminder in inbox and activity feed after the due date, default three days</b><span class="d">The blocked work has a cost of delay; the reminder names it.</span></span></label>
+  <label data-option-id="reminder" data-option-label="A · Reminder in inbox and activity feed after the due date, default three days (recommendation)"><input type="radio" name="reminders" value="reminder" checked><span><b>A · Reminder in inbox and activity feed after the due date, default three days</b><span class="d">The blocked work has a cost of delay; the reminder names it.</span></span></label>
   <label data-option-id="none" data-option-label="B · No reminders"><input type="radio" name="reminders" value="none"><span><b>B · No reminders</b><span class="d">Badge and inbox only.</span></span></label>
-  <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+  <p><b>Decision, 2026-09-25, operator: A.</b> A due-date reminder names the waiting decision and the cards it blocks.</p>
 </div>
 </section>
 
 <section id="s9">
 <h2><span class="no">§9</span>Implementation</h2>
-<p>Four cards, created by concept promotion once §8 is decided. They are listed in <code>workbench.json</code> as implementation tasks; AGT-2795 is the concept card and holds the full requirement text until then.</p>
+<p>Four cards are ready for concept promotion now that §8 is decided. They are listed in <code>workbench.json</code> as implementation tasks; AGT-2795 remains the concept card.</p>
 <div class="tablewrap">
 <table>
 <thead><tr><th>Card</th><th>Scope</th><th>Depends on</th></tr></thead>
@@ -304,7 +304,7 @@
 <tr><td>Backend: host-agnostic decision service, decision kind, options, decide and reopen API, blocking, wiki record</td><td><code>TaskKinds.Decision</code>, options model, <code>POST /api/tasks/{id}/decision</code> and <code>/reopen</code>, claim guard for blocked dependants, record via the decision service, tests</td><td></td></tr>
 <tr><td>Frontend: badge, detail call to action, blocked-by, inbox</td><td>Board and list badge with decider, header count, card detail with options and rationale, blocked-by marker, inbox entries next to Dossier decisions, tests</td><td>Backend</td></tr>
 <tr><td>Apply step and creation paths</td><td>Apply on decide (prompt block or new cards), decision cards offered by runner Blocked outcome, failure intervention and Dossier promotion; reminder after due date</td><td>Backend</td></tr>
-<tr><td>Migration and docs</td><td>One-off migration of the five prose cards, docs page "Decision cards", paragraph in the task-integration workflow</td><td>Backend, Frontend</td></tr>
+<tr><td>Migration and docs</td><td>One-off migration of remaining prose decision cards, starting with AGT-2792; docs page "Decision cards" and a paragraph in the task-integration workflow. AGT-2795 remains this concept card.</td><td>Backend, Frontend</td></tr>
 </tbody>
 </table>
 </div>
