@@ -31,7 +31,7 @@ finish()
     trap - EXIT HUP INT TERM
     if [ "$status" -ne 0 ]; then
         "${compose[@]}" ps || true
-        "${compose[@]}" logs --no-color || true
+        "${compose[@]}" logs --no-color --tail 100 || true
     fi
     down
     rm -rf "$work_dir"
@@ -46,9 +46,14 @@ umask 077
 openssl rand -hex 32 >"$secrets_dir/studio.token"
 openssl rand -hex 32 >"$secrets_dir/engine.token"
 openssl rand -hex 32 >"$secrets_dir/runner.token"
+command -v setfacl >/dev/null 2>&1 || { echo "setfacl is required for nonroot Compose secrets" >&2; exit 1; }
+setfacl -m u:10001:r-- "$secrets_dir/studio.token" "$secrets_dir/engine.token" "$secrets_dir/runner.token"
+setfacl -m u:10001:rwx "$offhost_dir"
 
 cat >"$env_file" <<EOF
 CONTROL_PLANE_VERSION=ci-test
+CONTROL_PLANE_SOURCE_VERSION=$(tr -d '\r\n' < "$repo_root/VERSION")
+CONTROL_PLANE_SOURCE_SHA=$(git -C "$repo_root" rev-parse HEAD)
 CONTROL_PLANE_RUNNER_ID=ci-runner
 WG_ADDRESS=127.0.0.1
 CONTROL_PLANE_DOMAIN=localhost
@@ -60,11 +65,12 @@ EOF
 
 down
 "${compose[@]}" config --quiet
-"${compose[@]}" up --build --wait --wait-timeout 180
+"${compose[@]}" build task-server orchestrator-engine
+"${compose[@]}" up --no-build --wait --wait-timeout 180
 
 echo "== check: no listener outside the edge's published port =="
-test -z "$("${compose[@]}" port task-server 5071 2>/dev/null || true)"
-test -z "$("${compose[@]}" port orchestrator-engine 5071 2>/dev/null || true)"
+test "$(docker inspect -f '{{len .HostConfig.PortBindings}}' "$("${compose[@]}" ps -q task-server)")" = "0"
+test "$(docker inspect -f '{{len .HostConfig.PortBindings}}' "$("${compose[@]}" ps -q orchestrator-engine)")" = "0"
 edge_binding="$("${compose[@]}" port edge 443)"
 case "$edge_binding" in
     127.0.0.1:*) ;;
@@ -92,6 +98,12 @@ unauth_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
 test "$unauth_status" = "401"
 echo "OK: unauthenticated /api/v1/runners returned 401."
 
+invalid_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    --cacert "$leaf_cert" --resolve localhost:443:127.0.0.1 \
+    -H 'Authorization: Bearer invalid-topology-token' https://localhost/api/v1/runners)"
+test "$invalid_status" = "401"
+echo "OK: an invalid bearer returned 401."
+
 client_id_only_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
     --cacert "$leaf_cert" --resolve localhost:443:127.0.0.1 \
     -H 'X-Client-Id: topology-test' https://localhost/api/v1/runners)"
@@ -105,6 +117,13 @@ runner_on_management_status="$(curl --silent --output /dev/null --write-out '%{h
     --data '{"mode":0,"reason":"topology test"}' https://localhost/api/v1/management/mode)"
 test "$runner_on_management_status" = "403"
 echo "OK: a Runner bearer against a management route returned 403."
+runner_on_studio_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    --cacert "$leaf_cert" --resolve localhost:443:127.0.0.1 \
+    -H "Authorization: Bearer $runner_token" -H 'X-Task-Protocol-Version: 2' \
+    https://localhost/api/v1/studio/board)"
+test "$runner_on_studio_status" = "403" \
+    || { echo "FAIL: Runner bearer on Studio board returned $runner_on_studio_status, expected 403." >&2; exit 1; }
+echo "OK: a Runner bearer against a Studio route returned 403."
 
 echo "== check: task-server stays healthy across an independent engine restart =="
 "${compose[@]}" restart orchestrator-engine
@@ -122,6 +141,12 @@ post_restart_health="$(curl --fail --silent --cacert "$leaf_cert" --resolve loca
     https://localhost/healthz)"
 test -n "$post_restart_health"
 echo "OK: orchestrator-engine restarted independently; task-server kept answering /healthz."
+sleep 4
+if "${compose[@]}" logs orchestrator-engine --no-color --tail 100 | grep -q 'orchestration loop failed'; then
+    echo "FAIL: orchestrator-engine is healthy but its claim loop is failing." >&2
+    exit 1
+fi
+echo "OK: orchestrator-engine claim loops have no API errors after restart."
 
 echo "== check: backup archive evidence =="
 deadline=$(($(date +%s) + 60))
@@ -135,6 +160,6 @@ while [ "$(date +%s)" -le "$deadline" ]; do
 done
 test "$found" -eq 1
 "${compose[@]}" logs backup --no-color | grep -qi 'sha256'
-echo "OK: the backup sidecar produced a verified archive and copied it to the off-host mount."
+echo "OK: the backup sidecar produced a verified archive and copied it to the local test destination."
 
 echo "control-plane-topology=passed"

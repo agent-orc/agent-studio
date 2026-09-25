@@ -1,11 +1,12 @@
 # Remote Task Server with local Agent Studio
 
-Status: Phase A architecture delivered. Phase B slice B2 principal and scope
-hardening was implemented by AGT-2730 on 2026-09-07. Phase B slice B4
-(Windows fallback and switch tooling) was implemented by AGT-2735 on
-2026-09-09; see the [Windows fallback runbook](setup/windows-fallback-runbook.md).
-Deployment and migration remain gated on the other Phase B slices and the
-full release-gate rehearsal.
+Status: Phase A architecture delivered. The 2026-09-25 operator decision
+approved an interim single-host rehearsal on `agent-runner-01`. The synthetic
+rehearsal is recorded below, with production release gates still open. Robert's
+Windows workspace and Studio have not been cut over.
+The original dedicated-VM and WireGuard design below remains the later target.
+See the [single-host operator runbook](setup/single-host-task-server.md) and
+the [AGT-2737 evidence report](/api/tasks/AGT-2737/results/report.md).
 
 ## Purpose and scope
 
@@ -295,6 +296,13 @@ and AGT-2758 (administration and long tail):
 | Frontend operations already calling `/api/v1/*` | 31 |
 | — of which the standalone Task Server implements | 31 |
 | `task-server` operations still needing a v1 route (`d4bRoutesToAdd`) | 278 |
+
+The AGT-2835 result branch remains the route-inventory reference pending
+acceptance. On 2026-09-25, regeneration against this checkout found 419
+frontend operations, up from 408, with 11 added and none removed. All 419 have
+an ownership classification, but the exact-output guard fails until that
+reference is reconciled. The added routes and counts are in the
+[AGT-2737 route delta](/api/tasks/AGT-2737/results/route-inventory-delta.json).
 
 Every frontend operation is classified (0 unclassified, 0 retired), which
 satisfies the "classify every Studio route" half of gate 1 above. The 278
@@ -689,11 +697,34 @@ Phase B is complete only when all of the following are true:
 - the sole-writer invariant is visible in both cutover and rollback evidence;
 - the measured rollback completes in less than 15 minutes.
 
+## 2026-09-25 single-host rehearsal record
+
+The source-built Docker control-plane topology passed its loopback binding,
+private TLS, 401/403, independent Engine restart, live claim-loop, and backup
+copy checks on `agent-runner-01`. The full Compose fake-CLI deployment scenario
+passed, and a separate topology test completed a claimed run while Studio BFF
+was stopped. A synthetic two-task frozen source imported with equal before and
+after counts, matching inventory SHA-256, a signed migration report, and a
+verified Linux full-backup restore. The complete evidence and exact commands
+are in the [AGT-2737 report](/api/tasks/AGT-2737/results/report.md).
+
+This is the **rehearsal slice**, not production execution of the plan. The
+Windows workspace was not available on the Runner host; the source used for
+import has no real workspace Git bundle. Windows connector and fallback were
+not switched. A real Windows-to-Runner `-L` path is still needed because the
+existing `RunnerLinks` connection contains only `-R` forwards. The current
+remote Task Server has no claimable `post-build-test-gate` implementation, and
+the deployment scenario's review step uses a separate synthetic coding
+attempt. The real detached post-processing wave, Windows restore, sole-writer
+check, and timed D6 switch in both directions remain release gates for the
+maintenance window. No production authority was changed.
+
 ## Related documents
 
 - [Distributed Agent Studio target architecture](../concepts/distributed-agent-studio-target-architecture.md)
 - [Task Server deployment and recovery](setup/task-server.md)
 - [Control plane on Docker (task-server-01)](setup/control-plane-docker.md)
+- [Single-host Task Server operator runbook](setup/single-host-task-server.md)
 - [Security overview](security/overview.md)
 - [Security requirements](security/requirements.md)
 - [Release, installation, update, and rollback](releases.md)

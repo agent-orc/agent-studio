@@ -9,13 +9,19 @@ services:
     build:
       context: ../../..
       dockerfile: task-server/Dockerfile
+      args:
+        VERSION: ${CONTROL_PLANE_SOURCE_VERSION:?set CONTROL_PLANE_SOURCE_VERSION from VERSION}
+        SHA: ${CONTROL_PLANE_SOURCE_SHA:?set CONTROL_PLANE_SOURCE_SHA from git HEAD}
 
   orchestrator-engine:
     build:
       context: ../../..
       dockerfile: orchestrator-engine/Dockerfile
+      args:
+        VERSION: ${CONTROL_PLANE_SOURCE_VERSION:?set CONTROL_PLANE_SOURCE_VERSION from VERSION}
+        SHA: ${CONTROL_PLANE_SOURCE_SHA:?set CONTROL_PLANE_SOURCE_SHA from git HEAD}
 
   backup:
-    build:
-      context: ../../..
-      dockerfile: task-server/Dockerfile
+    # Reuse task-server's image. Building both services to the same tag makes
+    # BuildKit race while exporting two copies of that image.
+    pull_policy: never

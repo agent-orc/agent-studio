@@ -9,6 +9,36 @@ namespace OrchestratorEngine.Tests;
 public sealed class EngineContractTests
 {
     [Fact]
+    public async Task Claim_request_uses_Task_Server_numeric_stage_wire_contract()
+    {
+        string? body = null;
+        using var handler = new ClaimCaptureHandler(async request =>
+        {
+            body = await request.Content!.ReadAsStringAsync();
+            return new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new System.Net.Http.StringContent("{\"status\":\"empty\"}"),
+            };
+        });
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
+        using var client = new EngineTaskServerClient(http);
+
+        var response = await client.ClaimAsync(
+            new OrchestrationClaimRequest("engine-a", "instance-a", [OrchestrationStage.ReviewDecision]),
+            CancellationToken.None);
+
+        Assert.Equal("empty", response.Status);
+        Assert.Contains("\"supportedStages\":[0]", body, StringComparison.Ordinal);
+    }
+
+    private sealed class ClaimCaptureHandler(
+        Func<HttpRequestMessage, Task<HttpResponseMessage>> respond) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken) => respond(request);
+    }
+
+    [Fact]
     public void Engine_env_contract_resolves_identity_credential_and_stage_caps()
     {
         var values = new Dictionary<string, string?>

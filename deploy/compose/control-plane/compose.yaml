@@ -66,6 +66,7 @@ services:
     environment:
       SERVER_URL: http://task-server:5071
       CLIENT_ID: orchestrator-engine
+      ENGINE_ALLOW_INSECURE_HTTP: "1"
     secrets:
       - engine_token
     logging: *bounded-logging
@@ -85,15 +86,26 @@ services:
       - control-plane
     entrypoint: ["/bin/sh", "/opt/backup/backup-loop.sh"]
     volumes:
-      - store:/var/lib/agent-orchestrator/store:ro
+      # The backup CLI records an audit row in the same SQLite store.
+      - store:/var/lib/agent-orchestrator/store
       - backup:/var/lib/agent-orchestrator/backup
       - ${CONTROL_PLANE_OFFHOST_BACKUP_PATH:?set CONTROL_PLANE_OFFHOST_BACKUP_PATH to an off-host mounted destination}:/mnt/offhost-backup
       - ./backup-loop.sh:/opt/backup/backup-loop.sh:ro
     environment:
+      LISTEN_URL: http://127.0.0.1:5071
+      AUTH: none
       STORE_PATH: /var/lib/agent-orchestrator/store
       BACKUP_PATH: /var/lib/agent-orchestrator/backup
       BACKUP_OFFHOST_PATH: /mnt/offhost-backup
       BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-300}
+    # This service runs the backup loop, not the Task Server HTTP listener.
+    # Backup success and off-host copying are checked separately below.
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 10s
     logging: *bounded-logging
     deploy:
       resources:
@@ -109,6 +121,8 @@ services:
         condition: service_healthy
     networks:
       - control-plane
+    extra_hosts:
+      - "${CONTROL_PLANE_DOMAIN:?set CONTROL_PLANE_DOMAIN}:127.0.0.1"
     # Bound to the WireGuard interface address only. A bare "443:443"
     # publish (implicit 0.0.0.0) is exactly the wildcard bind the network
     # contract forbids.
@@ -121,7 +135,7 @@ services:
     environment:
       CONTROL_PLANE_DOMAIN: ${CONTROL_PLANE_DOMAIN:?set CONTROL_PLANE_DOMAIN, the private WireGuard-only DNS name}
     healthcheck:
-      test: ["CMD", "wget", "--no-check-certificate", "--quiet", "--output-document=-", "https://127.0.0.1:443/healthz"]
+      test: ["CMD-SHELL", "wget --no-check-certificate --quiet --output-document=- https://$${CONTROL_PLANE_DOMAIN}/healthz"]
       interval: 5s
       timeout: 3s
       retries: 24

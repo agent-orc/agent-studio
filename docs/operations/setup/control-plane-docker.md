@@ -16,6 +16,11 @@ runs Task Server, Orchestrator Engine, a scheduled backup sidecar, and a
 private TLS edge behind WireGuard. It never serves Angular; Robert's Studio
 stays on Windows.
 
+The 2026-09-25 operator decision permits an interim **single-host rehearsal**
+on `agent-runner-01` with the edge on loopback. It does not replace the
+dedicated-host target or authorize the Windows connector cutover. See the
+[single-host runbook](single-host-task-server.md).
+
 ## What this card prepares vs. what stays an operator action
 
 Everything in this document runs from a checkout of this repository once the
@@ -75,8 +80,10 @@ Both paths:
    `/etc/agent-orchestrator/{docker.env,secrets/}`.
 3. Copy `deploy/compose/control-plane/` to
    `/opt/agent-orchestrator/compose/`.
-4. Generate `studio.token`, `engine.token`, and `runner.token` (mode `0600`)
-   under the configured secrets directory and mount them as Docker secrets;
+4. Generate `studio.token`, `engine.token`, and `runner.token` (owner-only plus
+   a read ACL for container UID 10001) under the protected secrets directory
+   and mount them as Docker secrets. The host needs `setfacl` from the `acl`
+   package because file-backed Compose secrets keep host permissions;
    the containers never receive a credential as a plain environment value
    except the Engine, which reads its secret file into `CLIENT_CREDENTIAL` at
    container start because the Engine binary only accepts that variable

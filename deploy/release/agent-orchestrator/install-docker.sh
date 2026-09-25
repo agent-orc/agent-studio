@@ -84,6 +84,9 @@ fi
 generate_secret "$SECRETS_DIR/studio.token" "${STUDIO_AUTH_TOKEN:-}"
 generate_secret "$SECRETS_DIR/engine.token" "${ENGINE_AUTH_TOKEN:-}"
 generate_secret "$SECRETS_DIR/runner.token" "${RUNNER_AUTH_TOKEN:-}"
+command -v setfacl >/dev/null 2>&1 \
+    || die "setfacl is required to grant the nonroot containers read access to Compose secret files. Install the acl package."
+setfacl -m u:10001:r-- "$SECRETS_DIR/studio.token" "$SECRETS_DIR/engine.token" "$SECRETS_DIR/runner.token"
 if [ "${AGENT_ORCHESTRATOR_SKIP_USER_CREATE:-0}" != "1" ]; then
     chown -R "$SERVICE_USER:$SERVICE_USER" "$SECRETS_DIR" 2>/dev/null || true
 fi

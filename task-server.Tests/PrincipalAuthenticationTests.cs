@@ -163,6 +163,25 @@ public sealed class PrincipalAuthenticationTests
     }
 
     [Fact]
+    public async Task Runner_with_tasks_read_cannot_read_studio_board()
+    {
+        using var temp = new TempDirectory();
+        await using var factory = Factory(temp.Path);
+        using var manager = Client(factory, StudioToken);
+        var runner = await CreateAsync(
+            manager,
+            "runner-studio-read",
+            TaskServerPrincipalKinds.Runner,
+            [TaskServerScopes.TasksRead],
+            "runner-studio-read");
+        using var compromised = Client(factory, runner.Credential);
+
+        var response = await compromised.GetAsync("/api/v1/studio/board");
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
     public async Task Runner_principal_is_bound_to_its_runner_id()
     {
         using var temp = new TempDirectory();

@@ -31,6 +31,17 @@ public sealed class TaskServerAuthenticationMiddleware(
             return;
         }
 
+        if (context.Request.Path.StartsWithSegments("/api/v1/studio")
+            && principal.Kind != TaskServerPrincipalKinds.Studio)
+        {
+            await DenyAsync(
+                context,
+                StatusCodes.Status403Forbidden,
+                "insufficient-scope",
+                "A Studio principal is required for Studio routes.");
+            return;
+        }
+
         var requiredScope = RequiredScope(context);
         if (requiredScope is null || !principal.Scopes.Contains(requiredScope))
         {

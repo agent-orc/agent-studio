@@ -21,7 +21,11 @@ while true; do
     if output=$(dotnet /app/task-server.dll backup --name "$name" 2>&1); then
         log "$output"
         log "Copying $BACKUP_PATH to off-host destination $BACKUP_OFFHOST_PATH"
-        cp -a "$BACKUP_PATH"/. "$BACKUP_OFFHOST_PATH"/
+        cp -R "$BACKUP_PATH"/. "$BACKUP_OFFHOST_PATH"/
+        backup_file=$(printf '%s\n' "$output" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')
+        backup_sha=$(printf '%s\n' "$output" | sed -n 's/.*"sha256":"\([^"]*\)".*/\1/p')
+        [ -n "$backup_file" ] && [ -n "$backup_sha" ]
+        printf '%s  %s\n' "$backup_sha" "$BACKUP_OFFHOST_PATH/$(basename "$backup_file")" | sha256sum --check --status
         log "Off-host copy complete."
     else
         log "Backup failed: $output"
