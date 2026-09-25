@@ -162,6 +162,9 @@ export interface WikiTreeNode {
   relPath: string | null;
   type: WikiNodeType;
   children: WikiTreeNode[];
+  /** Area and facet ids from article front matter or a Dossier descriptor. */
+  tags?: string[];
+  taggingStatus?: 'tagged' | 'tags-proposed' | null;
   metadata?: WikiTreeMetadata | null;
   /** Curated classification (pages only; null for folders and unclassified pages). */
   classification?: WikiClassification | null;
@@ -344,6 +347,8 @@ export interface WorkbenchListItem {
   /** Stable project-scoped reference key. Null for legacy entries or a read-only source awaiting checkout backfill. */
   key?: string | null;
   title: string;
+  tags?: string[];
+  taggingStatus?: 'tagged' | 'tags-proposed' | null;
   summary: string;
   status: WorkbenchStatus;
   phase: 'shaping' | 'testing' | 'decision-ready' | null;

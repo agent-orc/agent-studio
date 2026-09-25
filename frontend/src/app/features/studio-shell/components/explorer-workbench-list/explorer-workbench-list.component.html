@@ -54,6 +54,7 @@
                   [tooltipTestId]="'studio-explorer-workbench-tooltip-' + projectName() + '-' + workbench.id"
                   [testid]="'studio-explorer-workbench-' + projectName() + '-' + workbench.id"
                   (selectRequest)="openWorkbench.emit(workbench)">
+                  <app-tag-chips [ids]="workbench.tags ?? []" />
                   @if (openCount(workbench) > 0) {
                     <span class="studio-workbench-topic__status"
                           [attr.data-status]="workbench.status"
