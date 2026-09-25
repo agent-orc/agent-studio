@@ -1,0 +1,43 @@
+{
+  "sourceTaskKey": "AGT-2910",
+  "reportedRestart": {
+    "local": "2026-09-25T12:23:00+02:00",
+    "utc": "2026-09-25T10:23:00Z",
+    "provenance": "Operator continuation, not independently confirmed by a restart log"
+  },
+  "captures": [
+    {
+      "filename": "stable-recovery-dialog-light--real.png",
+      "theme": "light",
+      "at": "2026-09-25T14:17:53.207Z",
+      "url": "http://127.0.0.1:4011/?perf=1&task=AGT-2910#/tasks/AGT-2910?view=overview%3Aactivity",
+      "viewport": {
+        "width": 1600,
+        "height": 1000
+      },
+      "deviceScaleFactor": 1
+    },
+    {
+      "filename": "stable-recovery-dialog-dark--real.png",
+      "theme": "dark",
+      "at": "2026-09-25T14:17:53.374Z",
+      "url": "http://127.0.0.1:4011/?perf=1&task=AGT-2910#/tasks/AGT-2910?view=overview%3Aactivity",
+      "viewport": {
+        "width": 1600,
+        "height": 1000
+      },
+      "deviceScaleFactor": 1
+    }
+  ],
+  "restartAttribution": "unknown: no boot identifier or recovery record creation trace retained",
+  "observed": "Global recovery modal present nearly four hours after the reported restart; final replay stopped before pager navigation.",
+  "continuousPresenceMeasured": false,
+  "visibleRecoveryItemDate": "2026-09-22",
+  "productBugScope": 8,
+  "newLiveMeasurementsInContinuation": false,
+  "recoveredFromCommit": "d06d426fd",
+  "assetsSha256": {
+    "stable-recovery-dialog-light--real.png": "042029b7bb829a0dd6743b13ffd563c9f7d460bacb743b8b084bbc13978b3c92",
+    "stable-recovery-dialog-dark--real.png": "662294370699a95e091689f02c90e5c39ca85fc5f5da2113e463d9448ec6d2bd"
+  }
+}
