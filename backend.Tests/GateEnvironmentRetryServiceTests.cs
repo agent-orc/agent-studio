@@ -158,7 +158,11 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
         var stack = Build();
         var delivery = SeedGateEnvironmentFailure(stack, "operator", failedMinutesAgo: 1);
         var job = stack.Scanner.FindJob("operator", _watchPath)!;
-        var reviewsBefore = stack.Authority.GetTaskProjection(job.TaskKey).ReviewAttempts.Count;
+        var authorityKey = job.Key ?? job.TaskKey;
+        var review = Assert.Single(stack.Authority.GetTaskProjection(authorityKey).ReviewAttempts);
+        Assert.Equal(delivery, review.Subject.ExpectedResultSha);
+        Assert.Equal(ReviewTerminalOutcome.Pass, review.Outcome);
+        var reviewsBefore = 1;
 
         var result = await stack.Retries.RetryNowAsync(job);
 
@@ -166,7 +170,7 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
         Assert.Equal(delivery, result.DeliverySha);
         Assert.True(result.Outcome!.Value.IsSuccessfulIntegration());
         Assert.True(IsAncestor(delivery, "develop"));
-        Assert.Equal(reviewsBefore, stack.Authority.GetTaskProjection(job.TaskKey).ReviewAttempts.Count);
+        Assert.Equal(reviewsBefore, stack.Authority.GetTaskProjection(authorityKey).ReviewAttempts.Count);
         Assert.Equal(
             GateEnvironmentRetrySources.Operator,
             Assert.Single(Receipts(stack, "operator")).Details![GateEnvironmentRetryReceipts.SourceKey]);
@@ -275,7 +279,86 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
         var result = await stack.Retries.RetryNowAsync(job);
 
         Assert.Equal(GateEnvironmentRetryStatus.NoPassedReview, result.Status);
+        Assert.Equal(result.DeliverySha, result.ComparedDeliverySha);
+        Assert.Null(result.LatestAttempt);
         Assert.Equal(0, stack.Gate.Invocations);
+    }
+
+    [Fact]
+    public async Task RetryNow_ReusesAGT2880PassedReviewFromPersistedAuthority()
+    {
+        var stack = Build();
+        var delivery = SeedGateEnvironmentFailure(stack, "agt-2880-card", failedMinutesAgo: 600,
+            passedReview: false, key: "AGT-2880");
+        var fixture = File.ReadAllText(Path.Combine(AppContext.BaseDirectory,
+            "Fixtures", "gate-environment-retry", "agt-2880-review-archive.json"));
+        using var document = JsonDocument.Parse(fixture.Replace(
+            "3577cfa1452274c845fc36efd72ad9ffd7712bdb", delivery, StringComparison.Ordinal));
+        var authorityPath = Path.Combine(_root, AttemptAuthorityService.RelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(authorityPath)!);
+        File.WriteAllText(authorityPath, JsonSerializer.Serialize(new
+        {
+            schemaVersion = 6,
+            authorityEpoch = 1,
+            reviewAttempts = document.RootElement.GetProperty("reviewAttempts").Clone(),
+        }));
+        stack = Build();
+
+        // These attempt fields came from GET /api/attempts/tasks/AGT-2880,
+        // which projects the persisted authority record for the real card.
+        var projection = stack.Authority.GetTaskProjection("AGT-2880", includeArchived: true);
+        var passed = Assert.Single(projection.ReviewAttempts);
+        Assert.Equal(delivery, passed.Subject.ExpectedResultSha);
+        Assert.Equal(ReviewTerminalOutcome.Pass, passed.Outcome);
+        Assert.NotEqual("AGT-2880", stack.Scanner.FindJob("agt-2880-card", _watchPath)!.TaskKey);
+
+        var result = await stack.Retries.RetryNowAsync(stack.Scanner.FindJob("agt-2880-card", _watchPath)!);
+
+        Assert.Equal(GateEnvironmentRetryStatus.Replayed, result.Status);
+        Assert.Equal(1, stack.Gate.Invocations);
+        Assert.True(IsAncestor(delivery, "develop"));
+    }
+
+    [Fact]
+    public async Task RetryNow_ReusesAnArchivedPassedReviewForTheSameDelivery()
+    {
+        var stack = Build();
+        var delivery = SeedGateEnvironmentFailure(stack, "archived-review", failedMinutesAgo: 600,
+            passedReview: false, key: "AGT-2880");
+        var fixture = File.ReadAllText(Path.Combine(AppContext.BaseDirectory,
+            "Fixtures", "gate-environment-retry", "agt-2880-review-archive.json"));
+        var archivePath = Path.Combine(_root, ".metadata", "attempt-authority.archive-2026-09-25.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(archivePath)!);
+        File.WriteAllText(archivePath,
+            fixture.Replace("3577cfa1452274c845fc36efd72ad9ffd7712bdb", delivery, StringComparison.Ordinal));
+
+        Assert.Empty(stack.Authority.GetTaskProjection("AGT-2880").ReviewAttempts);
+        Assert.Single(stack.Authority.GetTaskProjection("AGT-2880", includeArchived: true).ReviewAttempts);
+        var result = await stack.Retries.RetryNowAsync(stack.Scanner.FindJob("archived-review", _watchPath)!);
+
+        Assert.Equal(GateEnvironmentRetryStatus.Replayed, result.Status);
+        Assert.True(IsAncestor(delivery, "develop"));
+    }
+
+    [Fact]
+    public async Task RetryNow_WhenReviewHistoryCannotBeRead_ExplainsTheLookupFailure()
+    {
+        var logger = new RecordingLogger<GateEnvironmentRetryService>();
+        var stack = Build(logger: logger);
+        var delivery = SeedGateEnvironmentFailure(stack, "bad-archive", failedMinutesAgo: 600, passedReview: false);
+        var archivePath = Path.Combine(_root, ".metadata", "attempt-authority.archive-2026-09-25.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(archivePath)!);
+        File.WriteAllText(archivePath,
+            "{ invalid archive");
+
+        var result = await stack.Retries.RetryNowAsync(stack.Scanner.FindJob("bad-archive", _watchPath)!);
+
+        Assert.Equal(GateEnvironmentRetryStatus.NoPassedReview, result.Status);
+        Assert.Equal(delivery, result.ComparedDeliverySha);
+        Assert.Null(result.LatestAttempt);
+        Assert.Contains("Review lookup failed: InvalidDataException", result.Reason, StringComparison.Ordinal);
+        Assert.Contains(logger.Events, entry => entry.Level == LogLevel.Warning &&
+            entry.Message.Contains("passed-review lookup failed", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -312,6 +395,9 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
 
         Assert.Equal(GateEnvironmentRetryStatus.NoPassedReview, result.Status);
         Assert.Equal(GateEnvironmentRetryReasons.NoPassedReview, result.Code);
+        Assert.Equal(delivery, result.ComparedDeliverySha);
+        Assert.Equal(ReviewTerminalOutcome.ProductFailure, result.LatestAttempt?.Outcome);
+        Assert.NotNull(result.LatestAttempt?.TerminalAt);
         Assert.Equal(0, stack.Gate.Invocations);
         Assert.False(IsAncestor(delivery, "develop"), "an overturned review must not be reused");
     }
@@ -400,7 +486,8 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
         bool passedReview = true,
         string failureCode = AcceptedIntegrationFailureCodes.GateEnvironmentFailure,
         string state = TaskStates.HumanReview,
-        string? failureReason = null)
+        string? failureReason = null,
+        string? key = null)
     {
         Git(_repo, "checkout", "-q", "-b", "task/" + id, "develop");
         File.WriteAllText(Path.Combine(_repo, id + ".txt"), id + "\n");
@@ -417,7 +504,7 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
                 new
                 {
                     id,
-                    key = "AGT-2811",
+                    key = key ?? (id.StartsWith("AGT-", StringComparison.Ordinal) ? id : "AGT-2811"),
                     title = id,
                     state,
                     order = 1,
@@ -434,7 +521,7 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
         File.WriteAllText(Path.Combine(folder, "status.md"), "- Result: Awaiting acceptance.\n");
         ReviewSubjectStore.Write(folder, new ReviewSubjectRecord
         {
-            TaskKey = "AGT-2811",
+            TaskKey = key ?? (id.StartsWith("AGT-", StringComparison.Ordinal) ? id : "AGT-2811"),
             RunAttemptId = "run-" + id,
             Project = Project,
             Repository = _repo,
@@ -537,7 +624,8 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
 
     private Stack Build(
         bool gateEnvironmentFails = false,
-        Action? onGateRun = null)
+        Action? onGateRun = null,
+        ILogger<GateEnvironmentRetryService>? logger = null)
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -586,7 +674,7 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
             authority,
             new TaskProvenanceService(git, settings, mutations, NullLogger<TaskProvenanceService>.Instance),
             configuration,
-            NullLogger<GateEnvironmentRetryService>.Instance);
+            logger ?? NullLogger<GateEnvironmentRetryService>.Instance);
         return new Stack(scanner, timeline, pipeline, integration, authority, gate, retries, _watchPath);
     }
 
@@ -650,7 +738,28 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
         GateEnvironmentRetryService Retries,
         string WatchPath)
     {
-        public string TaskKey(string id) => Scanner.FindJob(id, WatchPath)!.TaskKey;
+        public string TaskKey(string id)
+        {
+            var job = Scanner.FindJob(id, WatchPath)!;
+            return job.Key ?? job.TaskKey;
+        }
+    }
+
+    private sealed class RecordingLogger<T> : ILogger<T>
+    {
+        public List<(LogLevel Level, string Message)> Events { get; } = [];
+
+        public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
+            Exception? exception, Func<TState, Exception?, string> formatter)
+            => Events.Add((logLevel, formatter(state, exception)));
+
+        private sealed class NullScope : IDisposable
+        {
+            public static NullScope Instance { get; } = new();
+            public void Dispose() { }
+        }
     }
 
     /// <summary>

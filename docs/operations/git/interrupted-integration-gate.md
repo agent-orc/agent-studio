@@ -86,6 +86,16 @@ are re-driven by the accepted-integration backstop instead; `gate-interrupted` i
 deliberately not a decided attempt, so that sweep retries rather than returning
 the card to an operator.
 
+The **Retry integration** action returns `409` when the card cannot be replayed.
+Its response includes `comparedDeliverySha`, the full delivery SHA compared
+with review history (or `null` if no comparison ran), and `latestAttempt` with
+`id`, `outcome`, and `terminalAt`.
+`latestAttempt: null` means no review matched that SHA, or that review history
+was not consulted because another eligibility rule refused the retry. A failed
+history read is named in `error` as `Review lookup failed: <exception>` and
+logged at Warning level. Compare these fields with
+`GET /api/attempts/tasks/{key}` using the card's stable key.
+
 An escalated branch gets a failed merge step naming the reason and needs manual
 repair. Every case appends an `integration_gate_interrupted` timeline event
 carrying the action, the policy reason, the gated SHA, and the rollback anchor,

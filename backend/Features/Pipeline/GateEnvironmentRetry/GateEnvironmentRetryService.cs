@@ -27,6 +27,8 @@ public enum GateEnvironmentRetryStatus
 /// The <see cref="GateEnvironmentRetryReasons"/> slug the policy decided on, so
 /// a refusal names the rule that refused it instead of a generic category.
 /// </param>
+/// <param name="ComparedDeliverySha">Full SHA used to find a matching review attempt.</param>
+/// <param name="LatestAttempt">Latest review for that SHA, or null when none was found or consulted.</param>
 public sealed record GateEnvironmentRetryResult(
     GateEnvironmentRetryStatus Status,
     string Reason,
@@ -34,7 +36,19 @@ public sealed record GateEnvironmentRetryResult(
     string? IntegrationBranch = null,
     int Rung = 0,
     MergeIntoIntegrationOutcome? Outcome = null,
-    string? Code = null);
+    string? Code = null,
+    string? ComparedDeliverySha = null,
+    GateEnvironmentReviewAttempt? LatestAttempt = null);
+
+public sealed record GateEnvironmentReviewAttempt(
+    string Id,
+    ReviewTerminalOutcome? Outcome,
+    DateTime? TerminalAt);
+
+internal sealed record GateEnvironmentReviewLookup(
+    bool Passed,
+    GateEnvironmentReviewAttempt? LatestAttempt,
+    string? FailureReason = null);
 
 /// <summary>Counters of one sweep, published for logging and tests.</summary>
 public sealed record GateEnvironmentRetrySweep(
@@ -241,14 +255,17 @@ public sealed class GateEnvironmentRetryService
             // replay, and the sweep and the button must agree about that.
             if (decision.Action == GateEnvironmentRetryAction.Ignore)
             {
+                var lookupFailure = evaluation.ReviewLookup.FailureReason;
                 return new GateEnvironmentRetryResult(
                     decision.Reason == GateEnvironmentRetryReasons.NoPassedReview
                         ? GateEnvironmentRetryStatus.NoPassedReview
                         : GateEnvironmentRetryStatus.NotApplicable,
-                    GateEnvironmentRetryReasons.Explain(decision.Reason),
+                    lookupFailure ?? GateEnvironmentRetryReasons.Explain(decision.Reason),
                     evaluation.DeliverySha,
                     evaluation.IntegrationBranch,
-                    Code: decision.Reason);
+                    Code: decision.Reason,
+                    ComparedDeliverySha: evaluation.DeliverySha,
+                    LatestAttempt: evaluation.ReviewLookup.LatestAttempt);
             }
 
             return await ReplayAsync(
@@ -281,17 +298,34 @@ public sealed class GateEnvironmentRetryService
                                 ?? TaskIntegrationBranch.Resolve(job, projectSettings.IntegrationBranch);
         var mergeStep = _integrationStatus.ReadLatestMergeStep(job);
         var ledger = GateEnvironmentRetryReceipts.Read(_timeline, job.FolderPath, deliverySha);
-        var reviewPassed = HasPassedReview(job.TaskKey, deliverySha);
-
-        var decision = GateEnvironmentRetryPolicy.Decide(
+        // TaskKey is a path-qualified scanner identity. Attempt authority uses
+        // the card's stable public key, as GET /api/attempts/tasks/{key} does.
+        var now = _time.GetUtcNow();
+        var withoutReview = GateEnvironmentRetryPolicy.Decide(
             job,
             status,
-            reviewPassed,
+            false,
             ledger.AttemptsSpent,
             ledger.LastAttemptAt,
             AsOffset(mergeStep?.CompletedAt ?? mergeStep?.StartedAt),
             options,
-            _time.GetUtcNow());
+            now);
+        // Let the policy decide whether review evidence matters before loading
+        // archives. Most cards in these lanes have no gate failure to retry.
+        var reviewLookup = withoutReview.Reason == GateEnvironmentRetryReasons.NoPassedReview
+            ? HasPassedReview(job.Key ?? job.TaskKey, deliverySha)
+            : new GateEnvironmentReviewLookup(false, null);
+        var decision = reviewLookup.Passed
+            ? GateEnvironmentRetryPolicy.Decide(
+                job,
+                status,
+                true,
+                ledger.AttemptsSpent,
+                ledger.LastAttemptAt,
+                AsOffset(mergeStep?.CompletedAt ?? mergeStep?.StartedAt),
+                options,
+                now)
+            : withoutReview;
 
         return new GateEnvironmentRetryEvaluation(
             decision,
@@ -299,7 +333,8 @@ public sealed class GateEnvironmentRetryService
             deliverySha,
             integrationBranch,
             projectSettings.IntegrationStrategy,
-            mergeStep);
+            mergeStep,
+            reviewLookup);
     }
 
     /// <summary>
@@ -315,29 +350,42 @@ public sealed class GateEnvironmentRetryService
     /// review also refuses replay.
     /// </para>
     /// </summary>
-    private bool HasPassedReview(string taskKey, string? deliverySha)
+    private GateEnvironmentReviewLookup HasPassedReview(string taskKey, string? deliverySha)
     {
-        if (string.IsNullOrWhiteSpace(deliverySha)) return false;
+        if (string.IsNullOrWhiteSpace(deliverySha)) return new(false, null);
         try
         {
-            var projection = _authority.GetTaskProjection(taskKey);
-            // OrderBy is stable and the projection preserves creation order, so
-            // two reviews settled in the same tick still resolve to the later
-            // one rather than to an arbitrary winner.
-            var latest = projection.ReviewAttempts
-                .Where(attempt => string.Equals(
-                    attempt.Subject.ExpectedResultSha,
-                    deliverySha,
-                    StringComparison.OrdinalIgnoreCase))
-                .OrderBy(attempt => Utc(attempt.TerminalAt ?? attempt.CreatedAt))
-                .LastOrDefault();
-            return latest?.Outcome == ReviewTerminalOutcome.Pass;
+            // The attempts API includes compacted history. A settled review can
+            // leave the live authority file while its delivery remains retryable.
+            var projection = _authority.GetTaskProjection(taskKey, includeArchived: true);
+            return MatchReview(projection, deliverySha);
         }
         catch (Exception ex)
         {
-            SilentCatch.Note(ex, "GateEnvironmentRetryService: passed-review lookup is best-effort");
-            return false;
+            _logger.LogWarning(ex,
+                "gate-environment-retry passed-review lookup failed task={TaskKey} deliverySha={DeliverySha}",
+                taskKey, deliverySha);
+            return new(false, null, $"Review lookup failed: {ex.GetType().Name}: {ex.Message}");
         }
+    }
+
+    internal static GateEnvironmentReviewLookup MatchReview(
+        AttemptAuthorityProjection projection,
+        string deliverySha)
+    {
+        // OrderBy is stable and the projection preserves creation order, so
+        // two reviews settled in the same tick still resolve to the later
+        // one rather than to an arbitrary winner.
+        var latest = projection.ReviewAttempts
+            .Where(attempt => string.Equals(
+                attempt.Subject.ExpectedResultSha,
+                deliverySha,
+                StringComparison.Ordinal))
+            .OrderBy(attempt => Utc(attempt.TerminalAt ?? attempt.CreatedAt))
+            .LastOrDefault();
+        return new(
+            latest?.Outcome == ReviewTerminalOutcome.Pass,
+            latest is null ? null : new(latest.AttemptId, latest.Outcome, latest.TerminalAt));
     }
 
     /// <summary>
@@ -491,4 +539,5 @@ internal sealed record GateEnvironmentRetryEvaluation(
     string? DeliverySha,
     string IntegrationBranch,
     string IntegrationStrategy,
-    PipelineStepExecution? MergeStep);
+    PipelineStepExecution? MergeStep,
+    GateEnvironmentReviewLookup ReviewLookup);

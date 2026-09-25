@@ -170,7 +170,20 @@ The one contention allowance and slow-test evidence are documented in
   `acceptance-integration-in-flight`, `outside-retry-lanes`, `no-code-delivery`,
   `gate-environment-retry-disabled`). Replaying past an in-flight acceptance
   integration in particular would race a second merge into the integration
-  branch against the acceptance transaction that already owns it.
+  branch against the acceptance transaction that already owns it. Every `409`
+  refusal includes `comparedDeliverySha`, the full SHA read from the card's
+  review subject (or `null` if no comparison ran), and `latestAttempt`: the latest
+  review found for that exact SHA, with `id`, `outcome`, and `terminalAt`, or
+  `null` if none was found. Review history is checked only after the card has
+  a gate environment failure eligible for a retry; other refusals carry a
+  `null` attempt because review history was not consulted. The review lookup
+  reads archived attempts as well as live attempts, matching
+  `GET /api/attempts/tasks/{id}`. A failed history
+  read appears in `error` as `Review lookup failed: <exception>` and is logged
+  at Warning level, so a lookup defect can be distinguished from a missing
+  review. The lookup uses the card's stable `key` (for example `AGT-2880`),
+  which is also the attempt authority key; the scanner's path-qualified
+  `taskKey` is only an internal card identity.
 - **One replay per card.** A sweep rung and the operator action take the same
   in-flight guard before reading anything. During a replay the merge is already
   in the integration branch and its gate has not run yet, so deciding from the
