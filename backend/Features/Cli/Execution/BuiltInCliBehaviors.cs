@@ -339,9 +339,11 @@ internal static class BuiltInCliBehaviors
         {
             using var doc = JsonDocument.Parse(text);
             var modelHint = info.Execution.Model;
-            if (!parser.TryParse(doc.RootElement, modelHint, modelRegistry, out var usage)) return;
+            var usages = parser.ParseAll(doc.RootElement, modelHint, modelRegistry);
+            if (usages.Count == 0) return;
 
-            info.LastParsedUsage = usage;
+            info.LastParsedUsages = usages;
+            info.LastParsedUsage = usages.Count == 1 ? usages[0] : AggregateUsage(usages, modelHint, modelRegistry);
             info.LastParsedUsageAt = line.Timestamp == default ? DateTime.UtcNow : line.Timestamp;
         }
         catch (JsonException __ex) { SilentCatch.Note(__ex, "BuiltInCliBehaviors.Claude: malformed frame; nothing to capture"); /* malformed frame; nothing to capture */ }
@@ -1154,10 +1156,40 @@ internal static class BuiltInCliBehaviors
             if (!parser.TryParse(doc.RootElement, modelHint, modelRegistry, out var usage)) return;
 
             info.LastParsedUsage = usage;
+            info.LastParsedUsages = [usage];
             info.LastParsedUsageAt = line.Timestamp == default ? DateTime.UtcNow : line.Timestamp;
         }
         catch (JsonException __ex) { SilentCatch.Note(__ex, "BuiltInCliBehaviors.Codex: malformed frame; nothing to capture"); /* malformed frame; nothing to capture */ }
         catch (Exception ex) { ctx.Logger.LogDebug(ex, "Codex turn-usage capture skipped"); }
+    }
+
+    private static ParsedTurnUsage AggregateUsage(
+        IReadOnlyList<ParsedTurnUsage> usages,
+        string? modelHint,
+        ICliModelRegistry modelRegistry)
+    {
+        var models = usages.Select(usage => usage.Model)
+            .Where(model => !string.IsNullOrWhiteSpace(model))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var model = models.Length == 1 ? models[0] : null;
+        var input = usages.Sum(usage => usage.Input);
+        var cacheRead = usages.Sum(usage => usage.CacheRead);
+        var totalContext = modelRegistry.TotalContextSize(model);
+        return new ParsedTurnUsage(
+            model,
+            input,
+            usages.Sum(usage => usage.Output),
+            cacheRead,
+            usages.Sum(usage => usage.CacheWrite),
+            usages.Sum(usage => usage.ReasoningOutput ?? 0),
+            new AgentMessageContextWindow(
+                totalContext,
+                input + cacheRead,
+                totalContext is { } total ? Math.Max(0, total - input - cacheRead) : null),
+            usages.Any(usage => usage.InputIncludesCached),
+            modelHint,
+            usages.Any(usage => usage.ModelMismatch));
     }
 
     /// <summary>

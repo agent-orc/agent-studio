@@ -489,9 +489,12 @@ public class TaskMutationService
                     .Where(entry => TokenModelDisplay.IsAgentParticipant(entry.ParticipantId)
                                     && !string.IsNullOrWhiteSpace(entry.Model))
                     .OrderBy(entry => entry.Ts)
-                    .LastOrDefault()?.Model,
+                    .LastOrDefault() is { } lastAgentEntry
+                        ? lastAgentEntry.DisplayModel ?? lastAgentEntry.Model
+                        : null,
                 LastUpdate = entries.Max(entry => entry.Ts),
                 Entries = entries,
+                HasModelMismatch = entries.Any(entry => entry.ModelMismatch),
             };
             TaskJsonFile.UpdateFieldOrThrow(folderPath, "tokenSummary", summary);
             return Updated();

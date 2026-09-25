@@ -63,6 +63,43 @@ public class CliUsageParserTests
     }
 
     [Fact]
+    public void ClaudeParser_UsesActualModelUsageModelAndFlagsPinnedMismatch()
+    {
+        var parser = new ClaudeUsageParser();
+        var frame = JsonDocument.Parse("""
+        {
+          "type": "result",
+          "subtype": "success",
+          "is_error": false,
+          "result": "ok",
+          "usage": {
+            "input_tokens": 11,
+            "output_tokens": 7,
+            "cache_read_input_tokens": 13,
+            "cache_creation_input_tokens": 17
+          },
+          "modelUsage": {
+            "claude-haiku-4-5-20251001": {
+              "inputTokens": 11,
+              "outputTokens": 7,
+              "cacheReadInputTokens": 13,
+              "cacheCreationInputTokens": 17
+            }
+          }
+        }
+        """).RootElement;
+
+        var usages = parser.ParseAll(frame, "claude-opus-5-5", Registry);
+
+        var usage = Assert.Single(usages);
+        Assert.Equal("claude-haiku-4-5-20251001", usage.Model);
+        Assert.Equal("claude-opus-5-5", usage.PinnedModel);
+        Assert.True(usage.ModelMismatch);
+        Assert.Equal(11, usage.Input);
+        Assert.Equal(7, usage.Output);
+    }
+
+    [Fact]
     public void CodexParser_NormalizesRealTurnCompletedAndPricesAtDatedSolRate()
     {
         var parser = new CodexUsageParser();
