@@ -1,4 +1,5 @@
 using Xunit;
+using System.Text.Json;
 
 namespace AgentRunner.Tests;
 
@@ -47,6 +48,42 @@ public sealed class RemoteArtifactTransferTests
         Assert.Contains(skipped, issue =>
             issue.Path.EndsWith("video.webm", StringComparison.Ordinal)
             && issue.Reason.Contains("video", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Thirty_mebibyte_trace_is_withheld_with_path_size_and_sha_in_manifest()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "artifact-policy-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var trace = Path.Combine(root, "playwright", "trace.zip");
+            Directory.CreateDirectory(Path.GetDirectoryName(trace)!);
+            await using (var stream = File.Create(trace))
+                stream.SetLength(30L * 1024 * 1024);
+            var limits = new ArtifactTransferLimitsResponse(
+                25L * 1024 * 1024, 8L * 1024 * 1024, 100L * 1024 * 1024);
+            var (selected, skipped) = ArtifactTransferPolicy.Select(
+                root, RemoteTaskRunner.ObserveResultFiles(root), limits);
+            Assert.Empty(selected);
+            var issue = Assert.Single(skipped);
+
+            var entries = await RemoteTaskRunner.BuildWithheldManifestEntriesAsync(
+                root, skipped, CancellationToken.None);
+            var entry = Assert.Single(entries);
+            Assert.Equal("results/playwright/trace.zip", entry.Path);
+            Assert.Equal(30L * 1024 * 1024, entry.SizeBytes);
+            Assert.Equal("withheld", entry.TransferStatus);
+            Assert.Matches("^[0-9a-f]{64}$", entry.Sha256);
+            using var manifest = JsonDocument.Parse(RemoteTaskRunner.BuildArtifactManifest(entries).Json);
+            Assert.Equal(entry.Sha256,
+                manifest.RootElement[0].GetProperty("sha256").GetString());
+            Assert.Equal(issue.Reason,
+                manifest.RootElement[0].GetProperty("reason").GetString());
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
     }
 
     [Fact]

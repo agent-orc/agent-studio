@@ -1231,6 +1231,32 @@ public sealed class TaskServerClient : IDisposable
         return lease;
     }
 
+    /// <summary>
+    /// Restore the original fence for artifact-only replay after completion.
+    /// The Task Server validates that fence and permits completed-run artifact
+    /// writes; renewing a completed lease would correctly be rejected.
+    /// </summary>
+    public void RestoreCompletedOutboxAuthority(RunOutboxAuthority authority)
+    {
+        if (!_useV1)
+            throw new InvalidOperationException("Completed artifact replay requires the versioned Task Server.");
+        _v1Leases[authority.TaskKey] = (
+            authority.RunId,
+            new RunLeaseInfoDto(
+                authority.TaskKey,
+                authority.RunnerId,
+                authority.RunnerId,
+                _options?.Hostname ?? "recovery",
+                Environment.ProcessId,
+                _options?.BackendName ?? "task-server",
+                authority.LeaseId,
+                authority.Fence,
+                DateTime.UtcNow,
+                DateTime.UtcNow,
+                authority.RunId),
+            authority.InstanceId);
+    }
+
     private static Contract.RunnerProcessInventory? ToContract(RunnerProcessInventory? inventory)
         => inventory is null
             ? null

@@ -39,9 +39,10 @@ state.
   `task-server/TaskServerEndpoints.cs`: post-delivery
   result evidence transport. Git result or salvage publication and fenced
   completion happen first. The server advertises its base64-safe request
-  budget plus project file and total caps; the runner selects bounded files,
+  budget plus project file and total caps (8 MiB per file by default); the runner selects bounded files,
   excludes Playwright traces, videos, dependency trees, and build output,
-  then uploads one manifest-bound file per request. Deterministic skips are
+  then uploads one manifest-bound file per request. The attempt-scoped host
+  evidence copy survives a later task results reset. Deterministic skips are
   written to `results/deliverables.md` before the manifest is created. A later
   HTTP 413/507 never rewrites a manifested file; it is recorded as the
   non-fatal `ArtifactTooLarge` / `artifacts: partial` board fact instead. The

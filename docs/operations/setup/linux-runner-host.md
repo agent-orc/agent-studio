@@ -558,7 +558,7 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 | `RUNNER_GIT_PUSH_REMOTE` | `--git-push-remote` | (fetch URL) | Startup push-probe and legacy one-shot write URL. It is never inherited by a project clone. |
 | `RUNNER_BRANCH` | `--branch` | (base branch) | Branch to check out for the run. |
 | `RUNNER_BASE_BRANCH` | `--base-branch` | `main` | Fallback when the task branch is absent on origin. |
-| `RUNNER_WORKDIR` | `--workdir` | `$TMPDIR/agent-runner-work` | Where the repo checkout and `results/` live. |
+| `RUNNER_WORKDIR` | `--workdir` | `$TMPDIR/agent-runner-work` | Where repo checkouts, result files, and attempt evidence live. |
 | `RUNNER_ROLE` | `--role` | `coding` | `coding` or the separately registered `review` service. |
 | `RUNNER_REVIEW_WORKDIR` | `--review-workdir` | `$TMPDIR/agent-review-work` | Disposable review-only workspace, cache, temp, and evidence root. Must differ from `RUNNER_WORKDIR`. Settled attempt workspaces are removed after report acceptance; inactive attempt remnants older than 72 hours are swept hourly. The reusable `.baseline-cache` is preserved; see [Baseline verify result cache](#baseline-verify-result-cache). |
 | `RUNNER_REVIEW_CREDENTIAL_ENV` | `--review-credential-env` | (none) | Comma-separated read-only credential variable names admitted into the cleared review environment. |
@@ -1684,7 +1684,7 @@ dropped tunnel is reported cleanly *before* any lease or CLI work), **registers
 its client identity** (see below), acquires the fenced lease, starts
 heartbeating, checks out the branch from origin, fetches `prompt.md` over the
 API, spawns the CLI in the working tree, journals and ships stdout/stderr,
-journals everything under `results/`, secures the exact result on an immutable
+snapshots `results/` under attempt evidence, secures the exact result on an immutable
 remote ref, obtains the durable Task Server acknowledgement, removes the
 worktree, posts the idempotent fenced completion, and releases the lease.
 Exit code `0` means a clean handoff; `1` a
@@ -1697,6 +1697,30 @@ a service. Both are covered in
 [remote-runner-persistent-connection.md](./remote-runner-persistent-connection.md).
 
 ### Durable result handoff before teardown
+
+Result evidence is uploaded one file per request after the runner has pushed
+the delivery ref and the Task Server has accepted completion. The Task Server
+advertises the request, file, and total byte limits. The default per-file cap
+is 8 MiB; the request cap remains 25 MiB. Playwright `trace.zip` files and
+videos are withheld even when smaller than the cap. Screenshots and reports
+within budget are transported. The artifact manifest records each withheld
+file's `results/` path, byte size, SHA-256 digest, and reason. The runner keeps
+those files under `<RUNNER_WORKDIR>/evidence/<task-key>/<attempt-id>/results/`
+on the host, where a later attempt cannot clear them.
+`results/deliverables.md` lists them for the reviewer. A partial artifact
+transfer is a typed card fact and does not undo a completed delivery.
+Transient file uploads are retried three times. The versioned Task Server
+runner records remaining transfer failures as `artifact-replay` in its durable
+outbox and replays from the attempt evidence copy without rerunning the worker.
+
+While completion is being retried, the runner reports its persisted terminal
+attempt in the active task set even though the coding process has exited. This
+keeps lease-grace recovery from treating a finished worker as a dead worker.
+
+When a stopped or lost worker needs salvage, the runner publishes its work
+under `agent-studio/salvage/<runner-id>/<task-key>/<attempt-id>/fence-<n>/<sha>`
+before releasing the lease. The release names both the salvage branch and
+commit. Operators can fetch that ref to inspect or continue the exact attempt.
 
 The runner never removes a checkout that contains work available only on the
 host. This rule applies to success, missing terminal sentinels, failure,
