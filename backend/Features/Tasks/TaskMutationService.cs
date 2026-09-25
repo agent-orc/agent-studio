@@ -1975,7 +1975,8 @@ public class TaskMutationService
         string reason,
         string? activeJobId,
         string? watchPath = null,
-        ModelFallbackInfo? modelFallback = null)
+        ModelFallbackInfo? modelFallback = null,
+        string? author = null)
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return null;
@@ -1985,6 +1986,7 @@ public class TaskMutationService
             Prompt = prompt ?? string.Empty,
             SavedAt = DateTime.UtcNow,
             SavedReason = string.IsNullOrWhiteSpace(reason) ? "project-busy" : reason,
+            Author = string.IsNullOrWhiteSpace(author) ? null : author.Trim(),
             SavedAgainstActiveJobId = activeJobId,
             ModelFallback = modelFallback,
         };
@@ -2013,13 +2015,12 @@ public class TaskMutationService
     };
 
     /// <summary>
-    /// Read and consume a saved pending intent. Returns null when there is
-    /// nothing to consume. The file is renamed to
-    /// <c>pending-intent.consumed.json</c>, which stays on disk as the
-    /// operator-visible proof that a queued follow-up reached a run (paired with
-    /// a <c>follow_up_consumed</c> ledger row). If the caller's run fails to
-    /// spawn, the rollback rule is to rename it back so the next tick retries
-    /// instead of losing the user's input - see
+    /// Reserves a saved pending intent for one pickup. Returns null when there
+    /// is nothing to reserve. The file is renamed to
+    /// <c>pending-intent.consumed.json</c> until the worker-start prompt hash is
+    /// acknowledged. If the caller's run fails to spawn, the rollback rule is
+    /// to rename it back so the next tick retries instead of losing the user's
+    /// input; see
     /// <see cref="RollbackStashedPendingIntent"/>, which only the run that
     /// stashed the intent may call.
     /// </summary>
@@ -2045,6 +2046,121 @@ public class TaskMutationService
             return null;
         }
     }
+
+    /// <summary>Reads the claim-owned stash without changing its lifecycle.</summary>
+    public PendingIntent? ReadStashedPendingIntent(string jobFolder)
+    {
+        var stash = Path.Combine(jobFolder, "pending-intent.consumed.json");
+        if (!File.Exists(stash)) return null;
+        try
+        {
+            return JsonSerializer.Deserialize<PendingIntent>(File.ReadAllText(stash), TaskJsonFile.ReadOpts);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to read stashed pending intent at {Path}", stash);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Commits claim-time intent consumption after the runner proves that the
+    /// CLI child started with the exact prompt hash. The stash is then removed;
+    /// durable proof lives in the task timeline, not in a replayable side file.
+    /// </summary>
+    public PendingIntentAcknowledgeResult AcknowledgeStashedPendingIntent(
+        string jobFolder,
+        string promptSha256,
+        string runId,
+        string source = "runner-start")
+    {
+        var stash = Path.Combine(jobFolder, "pending-intent.consumed.json");
+        if (!File.Exists(stash)) return PendingIntentAcknowledgeResult.AlreadyResolved;
+        try
+        {
+            var intent = JsonSerializer.Deserialize<PendingIntent>(File.ReadAllText(stash), TaskJsonFile.ReadOpts);
+            if (intent is null) return PendingIntentAcknowledgeResult.InvalidStash;
+            var actual = AgentStudio.TaskServer.Contracts.FollowUpPromptDigest.Compute(intent.Prompt);
+            if (!string.Equals(actual, promptSha256, StringComparison.OrdinalIgnoreCase))
+                return PendingIntentAcknowledgeResult.HashMismatch;
+
+            if (_timeline is not null
+                && !_timeline.Append(
+                    jobFolder,
+                    TimelineEventKinds.FollowUpConsumed,
+                    string.IsNullOrWhiteSpace(intent.Author) ? TimelineActors.System : intent.Author!,
+                    summary: $"Follow-up delivered to run {runId} ({intent.Mode}).",
+                    runId: runId,
+                    details: PendingIntentDetails(intent, actual, "delivered", source)))
+                return PendingIntentAcknowledgeResult.HistoryWriteFailed;
+
+            File.Delete(stash);
+            _scanner.InvalidateCache();
+            return PendingIntentAcknowledgeResult.Consumed;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to acknowledge pending intent at {Stash}", stash);
+            return PendingIntentAcknowledgeResult.InvalidStash;
+        }
+    }
+
+    /// <summary>
+    /// Removes any queued or stashed intent because a terminal task state wins,
+    /// while retaining a non-replayable timeline receipt.
+    /// </summary>
+    public virtual bool SupersedePendingIntent(
+        string jobFolder,
+        string resolution = "superseded-by-completion",
+        string? runId = null,
+        string source = "terminal-transition")
+    {
+        var canonical = Path.Combine(jobFolder, "pending-intent.json");
+        var stash = Path.Combine(jobFolder, "pending-intent.consumed.json");
+        if (!File.Exists(canonical) && !File.Exists(stash)) return false;
+        try
+        {
+            var evidencePath = File.Exists(canonical) ? canonical : stash;
+            var intent = JsonSerializer.Deserialize<PendingIntent>(File.ReadAllText(evidencePath), TaskJsonFile.ReadOpts);
+            if (intent is not null)
+            {
+                var hash = AgentStudio.TaskServer.Contracts.FollowUpPromptDigest.Compute(intent.Prompt);
+                if (_timeline is not null
+                    && !_timeline.Append(
+                        jobFolder,
+                        TimelineEventKinds.FollowUpSuperseded,
+                        TimelineActors.System,
+                        summary: "Queued follow-up superseded by task completion.",
+                        runId: runId,
+                        details: PendingIntentDetails(intent, hash, resolution, source)))
+                    return false;
+            }
+            if (File.Exists(canonical)) File.Delete(canonical);
+            if (File.Exists(stash)) File.Delete(stash);
+            _scanner.InvalidateCache();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to supersede pending intent at {Folder}", jobFolder);
+            return false;
+        }
+    }
+
+    private static Dictionary<string, string> PendingIntentDetails(
+        PendingIntent intent,
+        string promptSha256,
+        string state,
+        string source) => new()
+    {
+        ["state"] = state,
+        ["mode"] = intent.Mode,
+        ["author"] = intent.Author ?? string.Empty,
+        ["savedReason"] = intent.SavedReason,
+        ["savedAt"] = intent.SavedAt.ToString("O"),
+        ["promptSha256"] = promptSha256,
+        ["source"] = source,
+    };
 
     /// <summary>
     /// Drops both forms of a pending intent when authority proves that no
@@ -2460,6 +2576,15 @@ public class TaskMutationService
         s = s.ToLowerInvariant().Replace(' ', '-');
         return System.Text.RegularExpressions.Regex.Replace(s, @"[^a-z0-9\-]", "");
     }
+}
+
+public enum PendingIntentAcknowledgeResult
+{
+    Consumed,
+    AlreadyResolved,
+    HashMismatch,
+    InvalidStash,
+    HistoryWriteFailed,
 }
 
 public sealed record IntegrationRecordWriteResult(bool Succeeded, bool Appended);

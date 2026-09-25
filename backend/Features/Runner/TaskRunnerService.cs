@@ -686,7 +686,7 @@ public class TaskRunnerService : BackgroundService
     /// continuation they asked for instead of a 400 - at the cost of conversation
     /// memory that wasn't already on disk.
     /// </summary>
-    public async Task<ContinueJobResponse> ContinueJobAsync(string jobId, string followupPrompt, string? watchPath = null, string? modelOverride = null, string? cliTypeOverride = null, string? thinkingLevelOverride = null, string? mode = null, string? modeOverride = null, CancellationToken ct = default)
+    public async Task<ContinueJobResponse> ContinueJobAsync(string jobId, string followupPrompt, string? watchPath = null, string? modelOverride = null, string? cliTypeOverride = null, string? thinkingLevelOverride = null, string? mode = null, string? modeOverride = null, string? author = null, CancellationToken ct = default)
     {
         _executionAdmission?.Demand(ExecutionAdmissionPath.Continue);
         var info = _scanner.FindJob(jobId, watchPath);
@@ -736,14 +736,14 @@ public class TaskRunnerService : BackgroundService
         await RecordUserFollowUpAsync(info, jobId, followupPrompt, normalizedMode, watchPath, ct);
 
         if (admission.Action == FollowUpAdmissionAction.Queue)
-            return QueueFollowUp(info, jobId, watchPath, normalizedMode, followupPrompt, admission);
+            return QueueFollowUp(info, jobId, watchPath, normalizedMode, followupPrompt, admission, author);
 
         var cli = _router.Get(info.CliType);
         if (!cli.IsAvailable()) throw new TaskOperationException($"{cli.CliType} CLI is not installed or not on PATH", 400);
 
         var startedFrom = info.State;
         var outcome = await runner.ContinueJobAsync(jobId, followupPrompt, normalizedMode, ct);
-        var response = ShapeOutcome(outcome, info, jobId, watchPath, normalizedMode, followupPrompt);
+        var response = ShapeOutcome(outcome, info, jobId, watchPath, normalizedMode, followupPrompt, author);
         return await ConfirmStartedRunAsync(response, info, jobId, watchPath, startedFrom, ct);
     }
 
@@ -803,7 +803,8 @@ public class TaskRunnerService : BackgroundService
         string jobId,
         string? watchPath,
         string mode,
-        string prompt)
+        string prompt,
+        string? author = null)
     {
         if (outcome.Execution != null)
         {
@@ -822,7 +823,8 @@ public class TaskRunnerService : BackgroundService
                 jobId, mode, prompt,
                 reason: FollowUpQueueReasons.ProjectBusy,
                 activeJobId: rej.BusyJobId,
-                watchPath: watchPath);
+                watchPath: watchPath,
+                author: author);
 
             var fromState = info.State;
             // A user follow-up queued behind the busy project: the lane change is
@@ -913,7 +915,8 @@ public class TaskRunnerService : BackgroundService
         string? watchPath,
         string mode,
         string prompt,
-        FollowUpAdmissionDecision decision)
+        FollowUpAdmissionDecision decision,
+        string? author = null)
     {
         var reason = decision.QueueReason ?? FollowUpQueueReasons.LaneNotRunnable;
         var hasPrompt = !string.IsNullOrWhiteSpace(prompt);
@@ -923,7 +926,8 @@ public class TaskRunnerService : BackgroundService
                 jobId, mode, prompt,
                 reason: reason,
                 activeJobId: null,
-                watchPath: watchPath);
+                watchPath: watchPath,
+                author: author);
         }
 
         var fromState = info.State;

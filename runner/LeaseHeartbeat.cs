@@ -18,6 +18,7 @@ public sealed class LeaseHeartbeat
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
     private readonly Func<DateTime> _utcNow;
     private readonly DurableLeaseAuthority? _authority;
+    private string? _startedPromptSha256;
 
     public LeaseHeartbeat(
         TaskServerClient client,
@@ -51,6 +52,12 @@ public sealed class LeaseHeartbeat
     /// </summary>
     public RunStopDirectiveDto? StopRequest { get; private set; }
 
+    public void ConfirmWorkerStartedWithPrompt(string? promptSha256)
+    {
+        if (!string.IsNullOrWhiteSpace(promptSha256))
+            Volatile.Write(ref _startedPromptSha256, promptSha256);
+    }
+
     /// <summary>
     /// Renew on a cadence below the TTL until <paramref name="stopRun"/> fires.
     /// Cancels <paramref name="stopRun"/> itself when the lease is lost so the
@@ -73,7 +80,8 @@ public sealed class LeaseHeartbeat
                         _lease.TaskKey, _lease.LeaseId, _lease.FencingToken, _options.RunnerId, _options.TtlSeconds,
                         _lease.AttemptId, _lease.AuthorityEpoch,
                         $"heartbeat:{_lease.AttemptId}:{Guid.NewGuid():N}",
-                        inventory);
+                        inventory,
+                        Volatile.Read(ref _startedPromptSha256));
                     resp = await _client.RenewLeaseAsync(req, shutdown);
                     if (_client.UsesDurableTaskServer && inventory is not null)
                         _inventory!.AcknowledgeReports(inventory);
