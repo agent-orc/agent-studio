@@ -9,13 +9,22 @@ services:
     build:
       context: ../../..
       dockerfile: task-server/Dockerfile
+      args:
+        VERSION: ${CONTROL_PLANE_BUILD_VERSION:?set CONTROL_PLANE_BUILD_VERSION}
+        SHA: ${CONTROL_PLANE_BUILD_SHA:-unknown}
 
   orchestrator-engine:
     build:
       context: ../../..
       dockerfile: orchestrator-engine/Dockerfile
+      args:
+        VERSION: ${CONTROL_PLANE_BUILD_VERSION:?set CONTROL_PLANE_BUILD_VERSION}
+        SHA: ${CONTROL_PLANE_BUILD_SHA:-unknown}
 
   backup:
     build:
       context: ../../..
       dockerfile: task-server/Dockerfile
+      args:
+        VERSION: ${CONTROL_PLANE_BUILD_VERSION:?set CONTROL_PLANE_BUILD_VERSION}
+        SHA: ${CONTROL_PLANE_BUILD_SHA:-unknown}

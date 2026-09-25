@@ -71,6 +71,10 @@ scripts/scenario.sh --target remote --level smoke --remote-url https://... --rem
   bind-mounted fixture run as the invoking UID/GID with a user-owned,
   mode-0600 scenario token, so cleanup does not require root or leave
   root-owned test data behind.
+  The full scenario stops `studio-bff` before releasing the fake CLI and
+  leaves it stopped while the Runner completes, the review and orchestration
+  steps settle, chat is recorded, and backup and restore finish. This proves
+  those Task Server and Runner paths do not require an attached Studio BFF.
 - **`remote`** runs only the non-destructive management-plane steps
   (bootstrap a principal, create a scenario project/task, back up, archive
   the task) against an already-deployed Task Server, for the control-plane

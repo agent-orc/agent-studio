@@ -85,7 +85,11 @@ generate_secret "$SECRETS_DIR/studio.token" "${STUDIO_AUTH_TOKEN:-}"
 generate_secret "$SECRETS_DIR/engine.token" "${ENGINE_AUTH_TOKEN:-}"
 generate_secret "$SECRETS_DIR/runner.token" "${RUNNER_AUTH_TOKEN:-}"
 if [ "${AGENT_ORCHESTRATOR_SKIP_USER_CREATE:-0}" != "1" ]; then
-    chown -R "$SERVICE_USER:$SERVICE_USER" "$SECRETS_DIR" 2>/dev/null || true
+    # File-backed Compose secrets retain host ownership. The images run as
+    # uid 10001, while the service user can read the files through its group.
+    chown -R "10001:$SERVICE_USER" "$SECRETS_DIR"
+    chmod 0750 "$SECRETS_DIR"
+    chmod 0640 "$SECRETS_DIR"/*.token
 fi
 
 log "Pulling images and starting the control plane."

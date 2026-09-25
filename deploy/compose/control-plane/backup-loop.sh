@@ -23,6 +23,7 @@ while true; do
         log "Copying $BACKUP_PATH to off-host destination $BACKUP_OFFHOST_PATH"
         cp -a "$BACKUP_PATH"/. "$BACKUP_OFFHOST_PATH"/
         log "Off-host copy complete."
+        date -u +%Y-%m-%dT%H:%M:%SZ >/tmp/backup-last-success
     else
         log "Backup failed: $output"
     fi

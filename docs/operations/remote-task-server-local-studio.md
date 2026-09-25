@@ -1,11 +1,23 @@
 # Remote Task Server with local Agent Studio
 
-Status: Phase A architecture delivered. Phase B slice B2 principal and scope
+Status: Phase A architecture delivered. The single-host B6 rehearsal ran on
+2026-09-26 on `agent-runner-01`; the production Windows cutover has not run.
+The rehearsal evidence is in task AGT-2737 under `results/`, especially
+`rehearsal-report.md`, `git-only-signed-report.json`, and
+`overlay-signed-report.json`. The [daily operator runbook](setup/single-host-task-server-operator-runbook.md)
+records the approved single-host exception and its recovery limits. Phase B
+slice B2 principal and scope
 hardening was implemented by AGT-2730 on 2026-09-07. Phase B slice B4
 (Windows fallback and switch tooling) was implemented by AGT-2735 on
 2026-09-09; see the [Windows fallback runbook](setup/windows-fallback-runbook.md).
 Deployment and migration remain gated on the other Phase B slices and the
 full release-gate rehearsal.
+
+The 2026-09-25 operator decision allows the rehearsal Task Server and Engine
+to share `agent-runner-01` and use a loopback edge. This is a rehearsal
+exception to the dedicated-VM and WireGuard design below. A host outage takes
+both execution and control planes down. The Windows connector, workspace
+repository, and live Task Server were not switched during this round.
 
 ## Purpose and scope
 
@@ -689,6 +701,14 @@ Phase B is complete only when all of the following are true:
 - the sole-writer invariant is visible in both cutover and rollback evidence;
 - the measured rollback completes in less than 15 minutes.
 
+The 2026-09-26 rehearsal answers these gates in
+`AGT-2737/results/rehearsal-report.md`. It passed the imported-data count,
+loopback binding, authentication, backup restore, and isolated switch timing
+checks. The release matrix still has open production gates, including the
+Windows disconnect, connector and Runner flip, real off-host storage,
+WireGuard-specific checks, and route-inventory drift. Therefore this page is
+marked **rehearsed, not cut over**; no production sign-off is implied.
+
 ## Related documents
 
 - [Distributed Agent Studio target architecture](../concepts/distributed-agent-studio-target-architecture.md)
@@ -697,6 +717,7 @@ Phase B is complete only when all of the following are true:
 - [Security overview](security/overview.md)
 - [Security requirements](security/requirements.md)
 - [Release, installation, update, and rollback](releases.md)
+- [Single-host daily operator runbook](setup/single-host-task-server-operator-runbook.md)
 - [Remote runner persistent connection](setup/remote-runner-persistent-connection.md)
 - [Token refresh without a tunnel](token-refresh-ohne-tunnel.md)
 - [Distributed execution connection health](haertung-verteilte-ausfuehrung/target-architecture/connection-health.md)

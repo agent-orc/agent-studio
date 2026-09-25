@@ -1418,7 +1418,10 @@ public sealed class TaskServerClient : IDisposable
                     artifact.ContentBase64,
                     sha,
                     key,
-                    authority.Lease.FencingToken),
+                    authority.Lease.FencingToken,
+                    authority.Lease.RunnerId,
+                    authority.InstanceId,
+                    authority.Lease.LeaseId),
                 ct);
             files.Add(artifact.Path);
         }

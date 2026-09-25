@@ -326,21 +326,33 @@ public sealed class ScenarioContext : IDisposable
     private async Task<string?> RunCodingAttemptAsync()
     {
         var beforeCommits = await CountCommitsAsync(_bareRepositoryPath);
+        if (IsCompose)
+            await RunAsync("docker", ComposeArguments("stop", "studio-bff"), _root);
         await File.WriteAllTextAsync(_fakeCliReleaseFile, "continue");
         await WaitForAuditCountAsync(_serverClient, "run.completed", 1, _runner!, TimeSpan.FromSeconds(30));
         await WaitForTaskStateAsync(
             _serverClient, _project.ProjectId, _task.TaskKey, "4-auto-review", _runner!, TimeSpan.FromSeconds(20));
 
-        var history = await _serverClient.GetFromJsonAsync<TaskHistoryDto>(
-            $"/api/v1/projects/{_project.ProjectId}/tasks/{_task.TaskKey}/history");
+        TaskHistoryDto? history = null;
+        await WaitForConditionAsync(
+            async () =>
+            {
+                history = await _serverClient.GetFromJsonAsync<TaskHistoryDto>(
+                    $"/api/v1/projects/{_project.ProjectId}/tasks/{_task.TaskKey}/history");
+                return history?.Artifacts.Any(artifact =>
+                    artifact.Name.Contains("scenario-run-log", StringComparison.Ordinal)) == true;
+            },
+            _runner!,
+            TimeSpan.FromSeconds(20),
+            "coding artifact appeared after run completion");
         Assert.NotNull(history);
         _codingRun = Assert.Single(history.Runs);
-        Assert.Contains(history.Artifacts, artifact => artifact.Name.Contains("scenario-run-log", StringComparison.Ordinal));
 
         var afterCommits = await CountCommitsAsync(_bareRepositoryPath);
         Assert.True(afterCommits > beforeCommits, "The coding attempt did not push a new commit to the seeded repository.");
 
-        return $"task reached 4-auto-review; {afterCommits - beforeCommits} new commit(s) pushed to run {_codingRun.RunId}";
+        return $"task reached 4-auto-review; {afterCommits - beforeCommits} new commit(s) pushed to run {_codingRun.RunId}"
+            + (IsCompose ? "; Studio BFF stopped before CLI release" : "");
     }
 
     private async Task<string?> AutoReviewAsync()

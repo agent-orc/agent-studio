@@ -4,10 +4,10 @@
 # topology test. Swap CONTROL_PLANE_CADDYFILE to Caddyfile.private-ca once an
 # operator-issued private-CA leaf is available.
 #
-# auto_https off: this edge never contacts a public ACME endpoint. admin off:
-# no local admin API inside the container.
+# tls internal uses Caddy's private CA and never contacts a public ACME
+# endpoint. Keep certificate automation enabled so the private leaf is issued.
+# admin off: no local admin API inside the container.
 {
-	auto_https off
 	admin off
 }
 

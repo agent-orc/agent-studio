@@ -16,6 +16,12 @@ runs Task Server, Orchestrator Engine, a scheduled backup sidecar, and a
 private TLS edge behind WireGuard. It never serves Angular; Robert's Studio
 stays on Windows.
 
+The operator approved a single-host **rehearsal exception** on
+`agent-runner-01` on 2026-09-25. The AGT-2737 rehearsal used loopback instead
+of WireGuard and did not change the Windows connector or live Runner. See the
+[single-host operator runbook](single-host-task-server-operator-runbook.md)
+for health, backup, and rollback operations and the shared-host limitation.
+
 ## What this card prepares vs. what stays an operator action
 
 Everything in this document runs from a checkout of this repository once the
@@ -75,12 +81,15 @@ Both paths:
    `/etc/agent-orchestrator/{docker.env,secrets/}`.
 3. Copy `deploy/compose/control-plane/` to
    `/opt/agent-orchestrator/compose/`.
-4. Generate `studio.token`, `engine.token`, and `runner.token` (mode `0600`)
+4. Generate `studio.token`, `engine.token`, and `runner.token` (mode `0640`)
    under the configured secrets directory and mount them as Docker secrets;
    the containers never receive a credential as a plain environment value
    except the Engine, which reads its secret file into `CLIENT_CREDENTIAL` at
    container start because the Engine binary only accepts that variable
    directly.
+   File-backed Compose secrets retain host ownership. The installer assigns
+   container uid `10001` and the service-user group with mode `0640`, so the
+   non-root services can read them without granting access to other users.
 5. `docker compose pull && docker compose up -d`, then block until every
    service reports `healthy` and confirm `task-server`'s own `/healthz` from
    inside its container (this does not depend on WireGuard being configured
@@ -123,6 +132,12 @@ consistent SQLite snapshot, an integrity check, an audit record, and a
 SHA-256 in the JSON result. It runs every `BACKUP_INTERVAL_SECONDS` (default
 300, matching the plan's five-minute maximum recovery point) and copies the
 verified archive to the off-host mount. Inspect its log:
+
+The backup command needs write access to the SQLite store for its audit
+record. Its health check becomes healthy only after a backup and copy
+complete; the Task Server image's HTTP health check does not apply to this
+CLI-only sidecar. The Engine explicitly permits HTTP on the private Compose
+network while bearer authentication stays enabled.
 
 ```bash
 docker compose --project-directory /opt/agent-orchestrator/compose \

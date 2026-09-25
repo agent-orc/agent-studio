@@ -1,6 +1,6 @@
 # Standalone Task Server (v1 run/review plane) - target-architecture component.
 # Build context is the repository root: docker build -f task-server/Dockerfile .
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0.301 AS build
 ARG VERSION=0.0.0-dev
 ARG SHA=unknown
 WORKDIR /src
@@ -27,7 +27,8 @@ COPY --from=build /app ./
 ENV LISTEN_URL=http://0.0.0.0:5071 \
     STORE_PATH=/var/lib/agent-orchestrator/store \
     BACKUP_PATH=/var/lib/agent-orchestrator/backup
-RUN mkdir -p /var/lib/agent-orchestrator && chown -R agentstudio:agentstudio /app /var/lib/agent-orchestrator
+RUN mkdir -p /var/lib/agent-orchestrator/store /var/lib/agent-orchestrator/backup \
+ && chown -R agentstudio:agentstudio /app /var/lib/agent-orchestrator
 VOLUME ["/var/lib/agent-orchestrator"]
 EXPOSE 5071
 USER agentstudio

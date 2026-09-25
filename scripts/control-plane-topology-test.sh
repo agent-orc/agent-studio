@@ -16,6 +16,8 @@ env_file="$work_dir/.env"
 secrets_dir="$work_dir/secrets"
 offhost_dir="$work_dir/offhost-backup"
 leaf_cert="$work_dir/leaf.pem"
+build_version="$(tr -d '\r\n' <"$repo_root/VERSION")"
+build_sha="$(git -C "$repo_root" rev-parse HEAD)"
 
 compose=(docker compose --project-name "$project_name" --project-directory "$compose_dir" \
     -f "$compose_dir/compose.yaml" -f "$compose_dir/compose.ci.yaml" --env-file "$env_file")
@@ -34,6 +36,14 @@ finish()
         "${compose[@]}" logs --no-color || true
     fi
     down
+    if [ -d "$secrets_dir" ]; then
+        docker run --rm --user 0 -v "$secrets_dir:/secrets" alpine:3.22 \
+            chown -R "$(id -u):$(id -g)" /secrets >/dev/null 2>&1 || true
+    fi
+    if [ -d "$offhost_dir" ]; then
+        docker run --rm --user 0 -v "$offhost_dir:/offhost" alpine:3.22 \
+            chown -R "$(id -u):$(id -g)" /offhost >/dev/null 2>&1 || true
+    fi
     rm -rf "$work_dir"
     exit "$status"
 }
@@ -46,9 +56,15 @@ umask 077
 openssl rand -hex 32 >"$secrets_dir/studio.token"
 openssl rand -hex 32 >"$secrets_dir/engine.token"
 openssl rand -hex 32 >"$secrets_dir/runner.token"
+docker run --rm --user 0 -v "$secrets_dir:/secrets" alpine:3.22 \
+    sh -c "chown -R 10001:$(id -g) /secrets && chmod 0750 /secrets && chmod 0640 /secrets/*.token"
+docker run --rm --user 0 -v "$offhost_dir:/offhost" alpine:3.22 \
+    chown -R 10001:10001 /offhost
 
 cat >"$env_file" <<EOF
 CONTROL_PLANE_VERSION=ci-test
+CONTROL_PLANE_BUILD_VERSION=$build_version
+CONTROL_PLANE_BUILD_SHA=$build_sha
 CONTROL_PLANE_RUNNER_ID=ci-runner
 WG_ADDRESS=127.0.0.1
 CONTROL_PLANE_DOMAIN=localhost
@@ -63,9 +79,15 @@ down
 "${compose[@]}" up --build --wait --wait-timeout 180
 
 echo "== check: no listener outside the edge's published port =="
-test -z "$("${compose[@]}" port task-server 5071 2>/dev/null || true)"
-test -z "$("${compose[@]}" port orchestrator-engine 5071 2>/dev/null || true)"
+task_server_container="$("${compose[@]}" ps -q task-server)"
+engine_container="$("${compose[@]}" ps -q orchestrator-engine)"
+task_server_binding="$(docker inspect -f '{{range $port, $bindings := .NetworkSettings.Ports}}{{if $bindings}}{{$port}}={{$bindings}}{{end}}{{end}}' "$task_server_container")"
+engine_binding="$(docker inspect -f '{{range $port, $bindings := .NetworkSettings.Ports}}{{if $bindings}}{{$port}}={{$bindings}}{{end}}{{end}}' "$engine_container")"
+echo "task-server binding: ${task_server_binding:-none}; engine binding: ${engine_binding:-none}"
+test -z "$task_server_binding"
+test -z "$engine_binding"
 edge_binding="$("${compose[@]}" port edge 443)"
+echo "edge binding: $edge_binding"
 case "$edge_binding" in
     127.0.0.1:*) ;;
     *) echo "FAIL: edge is published on $edge_binding, not 127.0.0.1" >&2; exit 1 ;;
@@ -98,6 +120,12 @@ client_id_only_status="$(curl --silent --output /dev/null --write-out '%{http_co
 test "$client_id_only_status" = "401"
 echo "OK: X-Client-Id without a bearer returned 401."
 
+invalid_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    --cacert "$leaf_cert" --resolve localhost:443:127.0.0.1 \
+    -H 'Authorization: Bearer invalid-topology-token' https://localhost/api/v1/runners)"
+test "$invalid_status" = "401"
+echo "OK: an invalid bearer returned 401."
+
 runner_token="$(cat "$secrets_dir/runner.token")"
 runner_on_management_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
     --cacert "$leaf_cert" --resolve localhost:443:127.0.0.1 \
@@ -105,6 +133,49 @@ runner_on_management_status="$(curl --silent --output /dev/null --write-out '%{h
     --data '{"mode":0,"reason":"topology test"}' https://localhost/api/v1/management/mode)"
 test "$runner_on_management_status" = "403"
 echo "OK: a Runner bearer against a management route returned 403."
+runner_on_studio_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    --cacert "$leaf_cert" --resolve localhost:443:127.0.0.1 \
+    -X POST -H "Authorization: Bearer $runner_token" -H 'Content-Type: application/json' \
+    --data '{"name":"Runner must not create a workspace"}' https://localhost/api/v1/workspaces)"
+test "$runner_on_studio_status" = "403"
+echo "OK: a Runner bearer against a Studio workspace mutation returned 403."
+
+echo "== check: engine completes post-processing without Studio =="
+studio_token="$(cat "$secrets_dir/studio.token")"
+api_base=https://localhost/api/v1
+api_curl=(curl --fail --silent --show-error --cacert "$leaf_cert" \
+    --resolve localhost:443:127.0.0.1 \
+    -H "Authorization: Bearer $studio_token" \
+    -H 'X-Task-Protocol-Version: 1' -H 'Content-Type: application/json')
+workspace_json="$("${api_curl[@]}" -X POST --data \
+    '{"name":"Detached Engine topology"}' "$api_base/workspaces")"
+workspace_id="$(jq -r '.workspaceId' <<<"$workspace_json")"
+project_json="$("${api_curl[@]}" -X POST --data \
+    "{\"workspaceId\":\"$workspace_id\",\"name\":\"Detached Engine\",\"taskKeyPrefix\":\"DET\"}" \
+    "$api_base/projects")"
+project_id="$(jq -r '.projectId' <<<"$project_json")"
+task_json="$("${api_curl[@]}" -X POST --data \
+    '{"title":"Complete with Studio detached","state":"4-auto-review"}' \
+    "$api_base/projects/$project_id/tasks")"
+task_id="$(jq -r '.taskId' <<<"$task_json")"
+"${api_curl[@]}" -X PUT --data \
+    '{"expectedVersion":null,"stages":[0,1,2,3,4],"maxReissueAttempts":0}' \
+    "$api_base/orchestration/projects/$project_id/flow-definition" >/dev/null
+run_json="$("${api_curl[@]}" -X POST --data \
+    "{\"taskId\":\"$task_id\",\"payloadJson\":\"{\\\"reviewOutcome\\\":\\\"pass\\\"}\",\"idempotencyKey\":\"detached-engine-topology\"}" \
+    "$api_base/orchestration/projects/$project_id/runs")"
+run_id="$(jq -r '.runId' <<<"$run_json")"
+deadline=$(($(date +%s) + 60))
+while [ "$(date +%s)" -le "$deadline" ]; do
+    run_json="$("${api_curl[@]}" "$api_base/orchestration/runs/$run_id")"
+    [ "$(jq -r '.status' <<<"$run_json")" = "completed" ] && break
+    sleep 2
+done
+test "$(jq -r '.status' <<<"$run_json")" = "completed"
+test "$(jq '.stageResults | length' <<<"$run_json")" -eq 5
+task_json="$("${api_curl[@]}" "$api_base/projects/$project_id/tasks/$task_id")"
+test "$(jq -r '.state' <<<"$task_json")" = "5-human-review"
+echo "OK: Engine completed $run_id through all five stages; $task_id reached 5-human-review without Studio."
 
 echo "== check: task-server stays healthy across an independent engine restart =="
 "${compose[@]}" restart orchestrator-engine
