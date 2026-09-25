@@ -1,11 +1,14 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 1,
   "id": "architecture-quality-layer",
   "title": "Architecture and quality layer",
   "summary": "Explore the Project Map, applicable guides, analysis history, and evidence-backed component grading contracts. [Curation 2026-08-18 (AGT-2671): DONE CHECK - review-requested since 2026-07-21, no newer lifecycle history entry and no runner-work task evidence for AGT-2126/2127/2128 found; no completion claim to verify. Stays in review, not closable.]",
   "entrypoint": "index.html",
+  "status": "archived",
+  "statusReason": "Historical contract sample delivered by AGT-2126; the durable contract is preserved in docs/concepts/architecture-quality-layer.md.",
+  "updatedAt": "2026-09-25T05:21:12Z",
   "pageKind": "workbench",
-  "lifecycleState": "review-requested",
+  "lifecycleState": "archived",
   "phase": "decision-ready",
   "editedBy": "Claude / AGT-2671",
   "editedAt": "2026-08-18T12:00:00Z",
@@ -21,6 +24,12 @@
       "editedBy": "Claude / AGT-2671",
       "editedAt": "2026-08-18T12:00:00Z",
       "note": "Curation sweep DONE CHECK: still under review, no evidence of a newer decision."
+    },
+    {
+      "state": "archived",
+      "editedBy": "Codex / AGT-2895",
+      "editedAt": "2026-09-25T05:21:12Z",
+      "note": "Archived as a historical contract sample; the durable contract remains in docs/concepts/architecture-quality-layer.md."
     }
   ],
   "sourceTaskKeys": [
@@ -28,13 +37,14 @@
     "AGT-2127",
     "AGT-2128"
   ],
+  "implementationTasks": [],
   "key": "AGT-W26",
   "review": {
     "verdict": "historical",
     "supersededBy": [],
-    "reviewedAt": "2026-09-13T10:20:00Z",
-    "reviewedBy": "Operator",
-    "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    "reviewedAt": "2026-09-25T05:21:12Z",
+    "reviewedBy": "AGT-2895",
+    "note": "This is an illustrative contract sample, not live product evidence; AGT-2126's durable architecture contract is preserved in docs/concepts/architecture-quality-layer.md, so the Dossier remains historical and is archived."
   },
   "reviewHistory": [
     {
@@ -43,6 +53,13 @@
       "reviewedAt": "2026-09-13T10:20:00Z",
       "reviewedBy": "Operator",
       "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    },
+    {
+      "verdict": "historical",
+      "supersededBy": [],
+      "reviewedAt": "2026-09-25T05:21:12Z",
+      "reviewedBy": "AGT-2895",
+      "note": "This is an illustrative contract sample, not live product evidence; AGT-2126's durable architecture contract is preserved in docs/concepts/architecture-quality-layer.md, so the Dossier remains historical and is archived."
     }
   ]
 }

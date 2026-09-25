@@ -181,6 +181,23 @@ svg.diagram .num { font: 700 10px var(--article-sans); fill: var(--gate-note); l
     to choose; it changes no runtime behavior and contains no pipeline implementation. Human acceptance
     of a delivered card remains outside the gate contract in every option below.
   </div>
+  <div class="box">
+    <h3>Status 2026-09-24</h3>
+    <p>The target remains open, but develop has overtaken several implementation snapshots in this
+    Dossier. Canonical Remote Review build/test commands now run on an exact Result SHA through a
+    claimed and fenced <code>ReviewAttempt</code>; integration and release gates remain in-process
+    exact-subject gates and are not independently claimable <code>GateAttempt</code>s. Preparation now
+    uses executor-owned content-addressed caches for coding, local gates, and the candidate and baseline
+    Review workspaces. Routine .NET profiles exclude <code>MachineBound</code> tests, which keep their
+    separate scheduling contract. AGT-2843 added a 24-hour Review baseline-result cache keyed by
+    repository, merge-base SHA, command, and toolchain, but it never skips the candidate run and is not
+    the per-SHA gate-verdict cache proposed in &sect;5. No Batch Gate manifest, coordinator, per-member
+    record, or batch publisher exists. Evidence: <code>docs/system/domains/pipeline.md</code>,
+    <code>docs/system/domains/review.md</code>, <code>runner/ReviewBaselineResultCache.cs</code>,
+    <code>runner/RemoteReviewWorkspace.cs</code>, <code>runner/GitWorkspace.cs</code>,
+    <code>backend/Features/Pipeline/BuildTestGateRunner.cs</code>, and
+    <code>backend/Features/Pipeline/TestSelectionPlanner.cs</code>.</p>
+  </div>
 
   <h2 id="sect2"><span class="number">&sect;2</span> What a gate is, and the two planes it runs in</h2>
   <p>A gate is deterministic verification of an exact tree: build, test, lint, and the checks that have a
@@ -386,13 +403,12 @@ svg.diagram .num { font: 700 10px var(--article-sans); fill: var(--gate-note); l
 
   <h2 id="sect4"><span class="number">&sect;4</span> Remote gate: a claimable, fenced gate step</h2>
   <p>Batching decides <i>what</i> a suite run covers. This section decides <i>who owns the run</i>. The
-  path in production today is a direct SSH subprocess: the Studio backend chooses a SHA, derives an SSH
-  alias from the configured execution runner, and waits for the exit code of a remote command that scans
-  <code>$HOME/runner-work/*/repo</code> for a matching repository. It is fast, and it is out of band. The
-  central control plane has no claim, lease, fence or durable gate attempt to show; the activity store is
-  process-local and lost on restart; and once the remote command loop starts, an SSH exit can be recorded
-  as the gate verdict instead of selecting a fallback. That is the transport boundary leaking into
-  verdict classification.</p>
+  direct SSH subprocess described by the source Dossier is no longer the canonical Remote Review
+  build/test path: that work is claimed by an Agent Host as part of a durable, fenced
+  <code>ReviewAttempt</code>. The remaining gap is narrower and still open. Integration and release
+  gates run under the integration owner's in-process exact-subject transaction, so they are not
+  independently claimable, pipeline-stage-neutral <code>GateAttempt</code>s. The contract below remains
+  the proposed replacement for that ownership gap, not a description of shipped gate-step behavior.</p>
 
   <h3>What the replacement must make true</h3>
   <table>
@@ -522,11 +538,11 @@ svg.diagram .num { font: 700 10px var(--article-sans); fill: var(--gate-note); l
   removed or explicitly retained is a separate choice, and it must not survive by accident. The teardown
   threshold is open decision <a href="#d9">D9</a>.</p>
   <div class="box warn">
-    <b>Status of this section.</b> Code inspection on 26 July 2026 confirmed that the replacement does not
-    exist, and a re-verification against <code>develop</code> on 24 August 2026 found the only
-    <code>Gate*</code> types in the backend still belonged to the unrelated build-test gate. The design
-    has never been approved in a sight review and has zero implementation. Nothing in &sect;4 describes
-    shipped behavior.
+    <b>Status of this section.</b> The dedicated <code>GateSubject</code>, <code>GateAttempt</code>,
+    <code>GateLease</code>, <code>GatePlan</code>, and <code>GateReport</code> contract is not implemented.
+    Review-plane primitives now prove the materialization, lease, fence, evidence, and cleanup patterns,
+    but they remain coupled to the Review lifecycle. The choice in D7 and the integration/release-gate
+    migration are still open.
   </div>
 
   <h2 id="sect5"><span class="number">&sect;5</span> Validation economy: what survives from async validation</h2>
@@ -540,7 +556,7 @@ svg.diagram .num { font: 700 10px var(--article-sans); fill: var(--gate-note); l
     <tbody>
       <tr><td><b>No model-based test selection</b></td><td>Explicitly rejected</td><td>It spends the expensive resource, tokens, to save the cheapest one, CPU. Recorded as rejected on 25 July 2026 and not reopened here.</td></tr>
       <tr><td><b>Per-SHA gate cache</b></td><td>Recommended, unbuilt</td><td>Bind the gate result to the tested tree SHA; an identical SHA skips the run. The gate ran about 3.65 times per task and 84% of its total time was retries, much of it on barely-changed trees. Largest lever for the smallest effort, and it pays off under every option in &sect;3 and &sect;4.</td></tr>
-      <tr><td><b>Deterministic test scoping</b></td><td>Recommended, unbuilt</td><td>Changed files map to affected test projects through a maintained folder-to-project table, new test files always run, and a change set spanning modules falls back to the full suite. Pure diff plus lookup, zero tokens. The same shape as the existing skip-if-fresh hash rule for review units.</td></tr>
+      <tr><td><b>Deterministic test scoping</b></td><td>Partly implemented</td><td><code>TestSelectionPlanner</code> now derives work-package test projects and class slices from the exact diff, preserves explicit filters or defaults to <code>Category!=MachineBound</code>, and falls back conservatively. The proposed maintained configuration table, selection digest, and staleness guard remain open.</td></tr>
       <tr><td><b>Staging lane and test-integration branch</b></td><td>Measure first</td><td>Net benefit hinges on the batch green rate. A red five-card batch can cost up to five further individual runs, which is slower than per-card testing would have been. &sect;3 answers the same question with a closed manifest and bounded halving, so this is now the same decision, taken once (<a href="#d10">D10</a>).</td></tr>
     </tbody>
   </table>
@@ -657,7 +673,7 @@ svg.diagram .num { font: 700 10px var(--article-sans); fill: var(--gate-note); l
     <a class="evidence" href="#sect10-w28"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b>Test CPU is around 0.05% of token spend</b><small>A 2000-fold ratio derived under a stated blended price assumption. Robust in direction and magnitude, not as a bill. This is why gate work is justified as throughput and never as cost.</small></span></a>
     <a class="evidence" href="#sect10-w29"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Reissue convergence, 404 mapped tasks (AGT-W29, 26 July 2026)</b><small>A negative result: no reliable convergence advantage for sharper reissue prompts. Both confidence intervals cross zero. The production default was kept. See &sect;10.</small></span></a>
     <a class="evidence" href="#sect3"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Host saturation, operator window of 11 August 2026 night</b><small>12 cores, observed load 22.7 against a 1.5-per-core admission threshold, four concurrent full suites plus active coding, about four review completions in two hours, 41 cards waiting. A real production symptom recorded by operator observation, not a controlled benchmark.</small></span></a>
-    <a class="evidence" href="#sect4"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>The remote gate replacement does not exist</b><small>Code inspection on 26 July 2026, re-verified against develop on 24 August 2026: the only Gate types in the backend belong to the unrelated build-test gate. The SSH bridge, its process-local activity store and the alias-based gate-count projection are still the production path.</small></span></a>
+    <a class="evidence" href="#sect4"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Review execution moved; the dedicated gate-step contract remains open</b><small>Develop on 24 September 2026 runs canonical Remote Review build/test commands through claimed, fenced ReviewAttempts. Integration and release gates remain local exact-subject transactions; the proposed GateSubject and GateAttempt types do not exist.</small></span></a>
     <a class="evidence" href="#sect3"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>The integration-record endpoint is not a gate authority</b><small>Added 11 August 2026. Five-class historical schema, appendable only from Human Review onward, rejects in-flight lanes, never moves a card and never mutates Git.</small></span></a>
     <a class="evidence" href="#d1"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b>About half of today's suite runs are spent on rounds that never ship</b><small>Operator reading of 18 August 2026 behind the review-first amendment. Stated as an estimate; the measurement that would confirm it is the same one D10 needs.</small></span></a>
     <a class="evidence" href="#d10"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b>Batch green rate and same-SHA re-test rate, not yet measured</b><small>Both are derivable from existing pipeline data without building anything. They decide D5, D6 and D10. No number in this Dossier should be read as if they had already been measured.</small></span></a>
