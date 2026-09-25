@@ -1,0 +1,1016 @@
+{
+  "baselineRef": "develop",
+  "baselineCommit": "50b767f014386fc0b4c00d1bb9db8c554be72d0f",
+  "taskHead": "50b767f014386fc0b4c00d1bb9db8c554be72d0f",
+  "capturedAt": "2026-09-25",
+  "sources": [
+    {
+      "id": "S01",
+      "path": "runner/RunnerOptions.cs",
+      "line": 42,
+      "symbol": "public string Role",
+      "sha256": "b86a6eb12333460297fb364d29cf5d2dcf028819625da56f80e54a84c59b0140",
+      "excerpt": "    /// daemon loops, workspace roots, credentials, and server-side claims.\n    /// </summary>\n    public string Role { get; init; } = \"coding\";\n\n    /// <summary>Runner service credential sent as Authorization on every networked-profile request.</summary>\n    public string? AuthToken { get; init; }\n\n    /// <summary>\n    /// Explicit opt-in (<c>RUNNER_ALLOW_INSECURE_HTTP=1|true</c>) that allows a"
+    },
+    {
+      "id": "S02",
+      "path": "runner/RunnerOptions.cs",
+      "line": 213,
+      "symbol": "HostCodingSlots",
+      "sha256": "b86a6eb12333460297fb364d29cf5d2dcf028819625da56f80e54a84c59b0140",
+      "excerpt": "    /// to 0.\n    /// </summary>\n    public int HostCodingSlots { get; init; }\n\n    /// <summary>Review worker slots this host offers (<c>RUNNER_HOST_REVIEW_SLOTS</c>).</summary>\n    public int HostReviewSlots { get; init; }\n\n    /// <summary>\n    /// How far above its fair share one worker may burst while the host is"
+    },
+    {
+      "id": "S03",
+      "path": "backend/Features/Tasks/LeaseEndpoints.cs",
+      "line": 55,
+      "symbol": "ProjectExecutionPolicy.IsAssignedRemote",
+      "sha256": "7afb67a57bc46ad1b41cf55786a7361b9fc33b2cd3b1eff6ed0fdaa46388ceb8",
+      "excerpt": "                {\n                    var settingsProject = settings.Get(task.ProjectName);\n                    if (!ProjectExecutionPolicy.IsAssignedRemote(\n                            settingsProject, principal.RunnerId, principal.RunnerName))\n                        return Results.Json(new RunLeaseResponse(\n                            \"ProjectDenied\", false, null,\n                            \"The Runner is not assigned to this project's execution location.\"), statusCode: StatusCodes.Status403Forbidden);\n                }\n                var project = projects.FindByStorageLocation(task.WatchPath)"
+    },
+    {
+      "id": "S04",
+      "path": "contracts/TaskServer.Contracts/ReviewContracts.cs",
+      "line": 3,
+      "symbol": "public static class ReviewCapabilities",
+      "sha256": "f6e82c4ed8ea54296f64b264bd9c56b6329effd7c3721931608270efef3c287e",
+      "excerpt": "namespace AgentStudio.TaskServer.Contracts;\n\npublic static class ReviewCapabilities\n{\n    public const string CodingExecutor = \"coding-executor\";\n    public const string ReviewExecutor = \"review-executor\";\n    public const string GitMaterialization = \"review:git\";\n    public const string SourceBundleMaterialization = \"review:source-bundle\";\n    public const string SemanticReview = \"review:semantic\";"
+    },
+    {
+      "id": "S05",
+      "path": "runner/RunnerOptions.cs",
+      "line": 474,
+      "symbol": "PollSeconds = overrides",
+      "sha256": "b86a6eb12333460297fb364d29cf5d2dcf028819625da56f80e54a84c59b0140",
+      "excerpt": "                WorkerResourceEnvelope.DefaultCpuBurst),\n            WorkerEnvelopeEnabled = OptOut(Val(\"worker-envelope\", \"RUNNER_WORKER_ENVELOPE\")),\n            PollSeconds = overrides.TryGetValue(\"poll-seconds\", out var poll) && int.TryParse(poll, out var pollV) && pollV > 0\n                ? pollV : EnvInt(\"RUNNER_POLL_SECONDS\", 5),\n            ServerRequestTimeoutSeconds = overrides.TryGetValue(\"server-request-timeout-seconds\", out var requestTimeout)\n                                                  && int.TryParse(requestTimeout, out var requestTimeoutValue)\n                                                  && requestTimeoutValue > 0\n                ? requestTimeoutValue\n                : EnvInt(\"RUNNER_SERVER_REQUEST_TIMEOUT_SECONDS\", 60),"
+    },
+    {
+      "id": "S06",
+      "path": "runner/RemoteRunnerDaemon.cs",
+      "line": 368,
+      "symbol": "var nextCapabilityAdvertisement",
+      "sha256": "d95467ccf0d2019a9947868fc695efbca8f237b707972de4c887a4837bed7a83",
+      "excerpt": "            _options.ClaimMaxLoadPerCore,\n            TimeSpan.FromSeconds(_options.LoadGateSustainedSeconds));\n        var nextCapabilityAdvertisement = DateTime.UtcNow.AddMinutes(1);\n        HostTelemetrySample? TakeTelemetry(bool force = false)\n        {\n            try\n            {\n                latestTelemetry = telemetry.SampleIfDue(\n                    active.Count,"
+    },
+    {
+      "id": "S07",
+      "path": "runner/RemoteReviewDaemon.cs",
+      "line": 518,
+      "symbol": "ReviewSlotAdmissionPolicy.Decide",
+      "sha256": "67ba6fc4dc32e99f062411d5477fa050640b4ceb4ff879e07ea6b8ec02e749f4",
+      "excerpt": "                    var admission = supersededRunning.Count > 0\n                        ? ReviewReleaseDrainPolicy.Held(supersededRunning)\n                        : ReviewSlotAdmissionPolicy.Decide(\n                            admissionTelemetry,\n                            active.Count,\n                            slotCeiling,\n                            _options.ClaimMaxLoadPerCore,\n                            // AGT-2866: admission reads the same slot budget the\n                            // per-worker cgroup is derived from, so a centrally"
+    },
+    {
+      "id": "S08",
+      "path": "runner/TaskServerConnectivityMonitor.cs",
+      "line": 128,
+      "symbol": "public static TimeSpan RetryDelay",
+      "sha256": "347211c10c28328eef74999b36474be0e44a5eeedbd9622895d730cdc16f2870",
+      "excerpt": "    }\n\n    public static TimeSpan RetryDelay(int pollSeconds, int consecutiveFailures)\n    {\n        var seconds = Math.Min(Math.Max(1, pollSeconds) * Math.Min(Math.Max(1, consecutiveFailures), 6), 60);\n        return TimeSpan.FromSeconds(Math.Max(1, seconds));\n    }\n\n    private static string Token(string value)"
+    },
+    {
+      "id": "S09",
+      "path": "backend/Features/Runner/AttemptAuthorityService.cs",
+      "line": 68,
+      "symbol": "private static readonly TimeSpan MaxTtl",
+      "sha256": "79f4e392dfe94855ba72dbcfbbe702673c9937373b9618f5ad902ca171999846",
+      "excerpt": "    private const string ArchiveFilePattern = \"attempt-authority.archive-*.json\";\n    private static readonly TimeSpan MinTtl = TimeSpan.FromSeconds(30);\n    private static readonly TimeSpan MaxTtl = TimeSpan.FromMinutes(10);\n    private static readonly TimeSpan LegacyEnvelopeTerminalizeGrace = TimeSpan.FromMinutes(15);\n    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)\n    {\n        WriteIndented = true,\n    };\n"
+    },
+    {
+      "id": "S10",
+      "path": "backend/Features/Tasks/TaskMutationService.cs",
+      "line": 89,
+      "symbol": "public bool SetJobModel",
+      "sha256": "9ea74db6e77a59c347882f87f96467566fbbe4d8be925b203c90d47c3f3b2b15",
+      "excerpt": "    private bool Updated() { _scanner.InvalidateCache(); return true; }\n\n    public bool SetJobModel(string jobId, string? model, string? watchPath = null)\n    {\n        var info = _scanner.FindJob(jobId, watchPath);\n        if (info == null) return false;\n        var previousModel = ModelMetadataRegistry.NormalizeForCli(info.CliType, info.Model);\n        var normalizedModel = ModelMetadataRegistry.NormalizeForCli(info.CliType, model);\n        TaskJsonFile.UpdateField(info.FolderPath, \"model\", normalizedModel ?? \"\", _logger);"
+    },
+    {
+      "id": "S11",
+      "path": "backend/Features/Tasks/TaskCrudEndpoints.cs",
+      "line": 957,
+      "symbol": "group.MapPut(\"/{jobId}/model\"",
+      "sha256": "81591ea6c58f38580afe070d7b83f5d7aa6346c7ce7a2660b3305afcc9ef554b",
+      "excerpt": "        });\n\n        group.MapPut(\"/{jobId}/model\", (string jobId, string? project, string? watchPath, SetJobModelRequest req, TaskMutationService mutations, AgentStudio.Registry.ProjectRegistry projects) =>\n        {\n            watchPath = ResolveWatchPath(projects, project, watchPath);\n            var success = mutations.SetJobModel(jobId, req?.Model, watchPath);\n            return success ? Results.Ok() : Results.NotFound();\n        });\n"
+    },
+    {
+      "id": "S12",
+      "path": "backend/Features/Tasks/LeaseEndpoints.cs",
+      "line": 2488,
+      "symbol": "private static RunSpecDto BuildRunSpec",
+      "sha256": "7afb67a57bc46ad1b41cf55786a7361b9fc33b2cd3b1eff6ed0fdaa46388ceb8",
+      "excerpt": "    /// </para>\n    /// </summary>\n    private static RunSpecDto BuildRunSpec(\n        TaskInfo task,\n        ProjectSettingsService settings,\n        AgentStudio.Prompts.RuntimePromptService prompts,\n        DossierMaintenanceService? dossierMaintenance,\n        QuotaAdmissionPlan? admissionPlan = null)\n    {"
+    },
+    {
+      "id": "S13",
+      "path": "backend/Features/Tasks/TaskScannerService.cs",
+      "line": 23,
+      "symbol": "class TaskScannerService",
+      "sha256": "02520c46d8d0235770eb81f80cb400281bc59938aae7bfc183213560034914cf",
+      "excerpt": "/// attachments, and <see cref=\"TaskSessionLog\"/> for session telemetry.\n/// </summary>\npublic class TaskScannerService : ITaskScanner\n{\n    private readonly IConfiguration _config;\n    private readonly ILogger<TaskScannerService> _logger;\n    private readonly SummaryGenerationService _summaryService;\n    private readonly FileGenerationIndex? _fileGenerationIndex;\n    private readonly AgentStudio.Registry.ProjectRegistry? _projectRegistry;"
+    },
+    {
+      "id": "S14",
+      "path": "backend/Features/Tasks/TaskStateMachine.cs",
+      "line": 104,
+      "symbol": "public MoveJobOutcome MoveJob",
+      "sha256": "33ea7e34f33aeaee9670188fd2b4c4ed8a9515c378def3333c25875ee258a891",
+      "excerpt": "    /// <c>lane_changed.details.causeDetail</c>.\n    /// </param>\n    public MoveJobOutcome MoveJob(\n        string jobId,\n        string targetState,\n        string? watchPath = null,\n        string? cause = null,\n        AttemptWriteReference? authorityWrite = null,\n        string? expectedSourceState = null,"
+    },
+    {
+      "id": "S15",
+      "path": "backend/Features/Supervisor/OrchestratorPrepHostedService.cs",
+      "line": 325,
+      "symbol": "private void ApplyDecision",
+      "sha256": "20f7b09f820435f808e3186681f7cd87d2aee6059fd9b0d5167c2d3d148f7d1d",
+      "excerpt": "    }\n\n    private void ApplyDecision(TaskInfo job, OrchestratorPrepRules.PrepDecision decision, int iteration)\n    {\n        switch (decision.Verdict)\n        {\n            case OrchestratorPrepRules.Verdict.Accept:\n                _states.MoveJob(\n                    job.Id, TaskStates.Ready, job.WatchPath,"
+    },
+    {
+      "id": "S16",
+      "path": "backend/Features/Tasks/LeaseEndpoints.cs",
+      "line": 647,
+      "symbol": ".Where(t => !t.Fixture && t.State == TaskStates.Ready)",
+      "sha256": "7afb67a57bc46ad1b41cf55786a7361b9fc33b2cd3b1eff6ed0fdaa46388ceb8",
+      "excerpt": "\n                var eligible = liveSnapshot\n                    .Where(t => !t.Fixture && t.State == TaskStates.Ready)\n                    .Where(t =>\n                    {\n                        var project = settings.Get(t.ProjectName);\n                        return RemoteDispatchEligibility.IsAssignedAndRoutable(\n                            t, project, req.RunnerId, req.RunnerName, waitsOn);\n                    })"
+    },
+    {
+      "id": "S17",
+      "path": "backend/Features/Runner/ReviewAttemptTaskLifecycleService.cs",
+      "line": 86,
+      "symbol": "ClaimNextReview",
+      "sha256": "4d53192bd583c428291c9e3f1f530c33c2a11c265d9327f5908687e343c0c4f1",
+      "excerpt": "    /// authority selects the next attempt.\n    /// </summary>\n    public AttemptWriteResult ClaimNextReview(\n        string executorId,\n        string hostId,\n        string instanceId,\n        int? requestedTtlSeconds)\n    {\n        lock (_gate)"
+    },
+    {
+      "id": "S18",
+      "path": "backend/Features/Tasks/TaskMutationService.cs",
+      "line": 1036,
+      "symbol": "public bool SetTaskReferences",
+      "sha256": "9ea74db6e77a59c347882f87f96467566fbbe4d8be925b203c90d47c3f3b2b15",
+      "excerpt": "    /// deliberately thin so it can also persist a programmatically-built set.\n    /// </summary>\n    public bool SetTaskReferences(string jobId, TaskReferences references, string? watchPath = null)\n    {\n        var info = _scanner.FindJob(jobId, watchPath);\n        if (info == null) return false;\n        var clean = TaskReferenceValidator.Normalize(references ?? new TaskReferences());\n        TaskJsonFile.UpdateField(info.FolderPath, \"references\", clean, _logger);\n        _logger.LogInformation("
+    },
+    {
+      "id": "S19",
+      "path": "backend/Features/Tasks/TaskMutationService.cs",
+      "line": 1191,
+      "symbol": "public bool SetJobReleased",
+      "sha256": "9ea74db6e77a59c347882f87f96467566fbbe4d8be925b203c90d47c3f3b2b15",
+      "excerpt": "    /// leave it null and the row is attributed to the system.</para>\n    /// </summary>\n    public bool SetJobReleased(string jobId, bool released, string? watchPath = null, string? actor = null)\n    {\n        var info = _scanner.FindJob(jobId, watchPath);\n        if (info == null) return false;\n        TaskJsonFile.UpdateField(info.FolderPath, \"released\", released, _logger);\n        var dependents = ReleaseGatedDependentKeys(info);\n        _timeline?.Append("
+    },
+    {
+      "id": "S20",
+      "path": "backend/Features/Tasks/TaskReferenceIndex.cs",
+      "line": 24,
+      "symbol": "class TaskReferenceIndex",
+      "sha256": "6d280477c7a1773d55faee4cb7e1b571eb65917bbbb7310e762c113e893c679c",
+      "excerpt": "/// keyless task can still depend on a keyed one.\n/// </summary>\npublic sealed class TaskReferenceIndex\n{\n    private readonly Dictionary<string, TaskInfo> _byKey;\n    private readonly Dictionary<string, IReadOnlyCollection<string>> _dependsOn;\n    private readonly Dictionary<string, List<TaskReferenceLink>> _incoming;\n    private readonly Dictionary<string, List<string>> _incomingDependsOn;\n"
+    },
+    {
+      "id": "S21",
+      "path": "backend/Features/Tasks/PickupHoldSweep.cs",
+      "line": 22,
+      "symbol": "class PickupHoldSweep",
+      "sha256": "37bd66c7d8a62396a2dc7c135a6845e90153a77d0a86583432ef8707a71e48b8",
+      "excerpt": "/// has to happen, and a sweep is not entitled to make it.</para>\n/// </summary>\npublic sealed class PickupHoldSweep\n{\n    private readonly TaskScannerService _scanner;\n    private readonly ProjectSettingsService _projectSettings;\n    private readonly ILogger<PickupHoldSweep> _logger;\n    private readonly TimeProvider _clock;\n    private readonly AttemptAuthorityService? _attemptAuthority;"
+    },
+    {
+      "id": "S22",
+      "path": "backend/Features/Tasks/LeaseEndpoints.cs",
+      "line": 599,
+      "symbol": "var waitsOn = claimSnapshot.References",
+      "sha256": "7afb67a57bc46ad1b41cf55786a7361b9fc33b2cd3b1eff6ed0fdaa46388ceb8",
+      "excerpt": "                var claimSnapshot = scanner.GetLiveSnapshotWithReferenceIndex();\n                var liveSnapshot = claimSnapshot.Live;\n                var waitsOn = claimSnapshot.References;\n\n                // Server-owned occupancy: leases this host currently holds. The\n                // daemon's own count is only a floor, so a second daemon process\n                // on the same host cannot spend the ceiling twice.\n                var hostActiveRuns = Math.Max(\n                    CountHostLeases(liveSnapshot, leases, clientId, req.RunnerId),"
+    },
+    {
+      "id": "S23",
+      "path": "backend/Features/Tasks/TaskFilesEndpoints.cs",
+      "line": 109,
+      "symbol": "group.MapPut(\"/{jobId}/files/{fileName}\"",
+      "sha256": "430e0ff71487709fe39b3ffc26e7482008a8418112f315cdad45b3ea65131eab",
+      "excerpt": "        });\n\n        group.MapPut(\"/{jobId}/files/{fileName}\", (string jobId, string fileName, string? project, string? watchPath, UpdateJobFileRequest req, TaskMutationService mutations, TaskRunnerService runner, AgentStudio.Registry.ProjectRegistry projects) =>\n        {\n            watchPath = ResolveWatchPath(projects, project, watchPath);\n            if (runner.IsJobLive(jobId, watchPath))\n                return Results.Conflict(\"Cannot edit while the CLI is running for this task \u2014 stop it first.\");\n\n            try"
+    },
+    {
+      "id": "S24",
+      "path": "backend/Features/Runner/TaskRunnerService.cs",
+      "line": 757,
+      "symbol": "private async Task RecordUserFollowUpAsync",
+      "sha256": "7082c771069aa4b7eae5648262afa0afa35b4afb9cf16c91c7629ca209c79324",
+      "excerpt": "    /// typed bus projection.\n    /// </summary>\n    private async Task RecordUserFollowUpAsync(\n        TaskInfo info, string jobId, string followupPrompt, string mode, string? watchPath, CancellationToken ct)\n    {\n        // Extend mode: persist the new prompt as its own prompt-N.md so the\n        // task description grows blog-style. The agent still receives just\n        // the new prompt (the runner handles framing); the historical files\n        // are evidence and a renderable timeline for the UI."
+    },
+    {
+      "id": "S25",
+      "path": "runner/RemoteTaskRunner.cs",
+      "line": 131,
+      "symbol": "RunPersistedAsync",
+      "sha256": "31602218e497f6259298ccb0f40ed0a7fc6d133b078412cc6931fd79b8b7ba88",
+      "excerpt": "            taskKey, lease, workspace.RepoPath, runId, leaseInstanceId,\n            projectId, repositoryUrl, defaultBranch, taskKind, runSpec);\n        return await RunPersistedAsync(\n            slot,\n            workspace,\n            shutdown,\n            reattach: false,\n            daemonShutdown);\n    }"
+    },
+    {
+      "id": "S26",
+      "path": "backend/Features/Runner/TaskRunnerService.cs",
+      "line": 910,
+      "symbol": "private ContinueJobResponse QueueFollowUp",
+      "sha256": "7082c771069aa4b7eae5648262afa0afa35b4afb9cf16c91c7629ca209c79324",
+      "excerpt": "    /// </para>\n    /// </summary>\n    private ContinueJobResponse QueueFollowUp(\n        TaskInfo info,\n        string jobId,\n        string? watchPath,\n        string mode,\n        string prompt,\n        FollowUpAdmissionDecision decision)"
+    },
+    {
+      "id": "S27",
+      "path": "backend/Features/Tasks/TaskMutationService.cs",
+      "line": 1971,
+      "symbol": "public PendingIntent? SavePendingIntent",
+      "sha256": "9ea74db6e77a59c347882f87f96467566fbbe4d8be925b203c90d47c3f3b2b15",
+      "excerpt": "    /// Latest-wins: a second save overwrites the first.\n    /// </summary>\n    public PendingIntent? SavePendingIntent(\n        string jobId,\n        string mode,\n        string prompt,\n        string reason,\n        string? activeJobId,\n        string? watchPath = null,"
+    },
+    {
+      "id": "S28",
+      "path": "backend/Features/Tasks/LeaseEndpoints.cs",
+      "line": 2499,
+      "symbol": "var pendingFallback = task.PendingIntent?.ModelFallback",
+      "sha256": "7afb67a57bc46ad1b41cf55786a7361b9fc33b2cd3b1eff6ed0fdaa46388ceb8",
+      "excerpt": "        var isEpicPlanning = TaskKinds.IsEpic(task.Kind);\n\n        var pendingFallback = task.PendingIntent?.ModelFallback;\n        var model = isEpicPlanning && !string.IsNullOrWhiteSpace(projectSettings.EpicPlanningModel)\n            ? projectSettings.EpicPlanningModel\n            : pendingFallback?.To ?? admissionPlan?.Model ?? task.Model;\n        var thinkingLevel = isEpicPlanning && projectSettings.EpicPlanningThinkingLevel is not null\n            ? projectSettings.EpicPlanningThinkingLevel\n            : pendingFallback?.ThinkingLevel ?? admissionPlan?.ThinkingLevel ?? task.ThinkingLevel;"
+    },
+    {
+      "id": "S29",
+      "path": "backend/Features/Tasks/TaskMutationService.cs",
+      "line": 2018,
+      "symbol": "pending-intent.consumed.json",
+      "sha256": "9ea74db6e77a59c347882f87f96467566fbbe4d8be925b203c90d47c3f3b2b15",
+      "excerpt": "    /// Read and consume a saved pending intent. Returns null when there is\n    /// nothing to consume. The file is renamed to\n    /// <c>pending-intent.consumed.json</c>, which stays on disk as the\n    /// operator-visible proof that a queued follow-up reached a run (paired with\n    /// a <c>follow_up_consumed</c> ledger row). If the caller's run fails to\n    /// spawn, the rollback rule is to rename it back so the next tick retries\n    /// instead of losing the user's input - see\n    /// <see cref=\"RollbackStashedPendingIntent\"/>, which only the run that\n    /// stashed the intent may call."
+    },
+    {
+      "id": "S30",
+      "path": "runner/TaskServerClient.cs",
+      "line": 174,
+      "symbol": "public async Task<string> RegisterAsync",
+      "sha256": "56372211223723b7cdfa881f057cfda96e02b9ca3ed2fb898102a9f26abbb086",
+      "excerpt": "    /// reply so a misconfigured open-auth server still gets a stable header).\n    /// </summary>\n    public async Task<string> RegisterAsync(\n        string displayName,\n        string kind,\n        CancellationToken ct,\n        IReadOnlyList<Contract.RunnerActiveAttempt>? activeAttempts = null)\n    {\n        if (_useV1 || _supportsCapabilityAdvertisement)"
+    },
+    {
+      "id": "S31",
+      "path": "runner/RunnerOptions.cs",
+      "line": 196,
+      "symbol": "HostMaxParallelism",
+      "sha256": "b86a6eb12333460297fb364d29cf5d2dcf028819625da56f80e54a84c59b0140",
+      "excerpt": "    /// the first reported value and returns the centrally managed live ceiling.\n    /// </summary>\n    public int HostMaxParallelism { get; init; }\n\n    /// <summary>\n    /// Coding worker slots this host offers, across roles\n    /// (<c>RUNNER_HOST_CODING_SLOTS</c>). Together with\n    /// <see cref=\"HostReviewSlots\"/> it is the denominator of the per-worker\n    /// resource envelope (AGT-2866): a 12-core host with 2 coding and 2 review"
+    },
+    {
+      "id": "S32",
+      "path": "backend/Features/Runner/V1ReviewPlaneEndpoints.cs",
+      "line": 1984,
+      "symbol": "public sealed class V1ReviewExecutorRegistry",
+      "sha256": "9abe5da079893ba5246d613f26f9efd1fb41f90dd66ab6d9e1237d6a0b6fe5fa",
+      "excerpt": "}\n\npublic sealed class V1ReviewExecutorRegistry\n{\n    public event Action<string, DateTime>? CapabilitySnapshotAdvertised;\n    /// <summary>Consecutive failures that turn a suspect capability into a drained one.</summary>\n    private const int CapabilityFailureThreshold = 2;\n    private const int CapabilityBaseCooldownSeconds = 120;\n    private const int DiagnosticRetention = 256;"
+    },
+    {
+      "id": "S33",
+      "path": "runner/TaskServerClient.cs",
+      "line": 718,
+      "symbol": "AdoptCentralMaxParallelism(legacy.DesiredMaxParallelism)",
+      "sha256": "56372211223723b7cdfa881f057cfda96e02b9ca3ed2fb898102a9f26abbb086",
+      "excerpt": "            // v1 plane, so a ceiling changed in Studio takes effect on the next\n            // poll without restarting the daemon.\n            AdoptCentralMaxParallelism(legacy.DesiredMaxParallelism);\n            return legacy;\n        }\n\n        var claim = await PostJsonAsync<Contract.ClaimRequest, Contract.ClaimResponse>(\n            $\"/api/v1/runners/{Uri.EscapeDataString(req.RunnerId)}/claims\",\n            new Contract.ClaimRequest("
+    },
+    {
+      "id": "S34",
+      "path": "backend/Features/Runner/RunLeaseService.cs",
+      "line": 33,
+      "symbol": "public RunLeaseResponse TryAcquire",
+      "sha256": "5741e84c486218387729f333e62de366b1cd6418166739ac9bda90c3eb5c24b2",
+      "excerpt": "    }\n\n    public RunLeaseResponse TryAcquire(RunLeaseAcquireRequest request)\n    {\n        if (Blank(request.TaskKey) || Blank(request.RunnerId))\n            return new RunLeaseResponse(\"Invalid\", false, null, \"TaskKey and RunnerId are required.\");\n\n        var result = _authority.AcquireRun(\n            request.TaskKey,"
+    },
+    {
+      "id": "S35",
+      "path": "backend/Features/Runner/AttemptAuthorityService.cs",
+      "line": 228,
+      "symbol": "public AttemptWriteResult RenewRun",
+      "sha256": "79f4e392dfe94855ba72dbcfbbe702673c9937373b9618f5ad902ca171999846",
+      "excerpt": "    }\n\n    public AttemptWriteResult RenewRun(\n        AttemptWriteReference write,\n        string executorId,\n        int? requestedTtlSeconds,\n        string? leaseId = null)\n    {\n        lock (_gate)"
+    },
+    {
+      "id": "S36",
+      "path": "runner/LeaseHeartbeat.cs",
+      "line": 43,
+      "symbol": "public bool LeaseLost",
+      "sha256": "33c0e8fa6737186a8c7a1d991dea479ac1655d966325d6853d1421d568be9b93",
+      "excerpt": "\n    /// <summary>Set when a heartbeat is rejected: the run must stop, the lease is gone.</summary>\n    public bool LeaseLost { get; private set; }\n\n    /// <summary>\n    /// Set when the server answered a renewal with an operator stop request for\n    /// this attempt (AGT-2870). Unlike <see cref=\"LeaseLost\"/> this runner still\n    /// owns the lease: it ends the worker, salvages, and hands the outcome back\n    /// itself, which is what makes Pause and Pause-and-Send work for a run the"
+    },
+    {
+      "id": "S37",
+      "path": "backend/Features/Tasks/AttemptAuthorityEndpoints.cs",
+      "line": 10,
+      "symbol": "group.MapGet(\"/tasks/{taskKey}\"",
+      "sha256": "28a983cdcf044b5e66756382a3c01a2008fcc9a3f2cae81e1d64e417141144b9",
+      "excerpt": "        var group = app.MapGroup(\"/api/attempts\");\n\n        group.MapGet(\"/tasks/{taskKey}\", (string taskKey, AttemptAuthorityService authority) =>\n            Results.Ok(authority.GetTaskProjection(taskKey, includeArchived: true)));\n\n        group.MapGet(\"/runs/{attemptId}\", (string attemptId, AttemptAuthorityService authority) =>\n            authority.GetRun(attemptId) is { } run ? Results.Ok(run) : Results.NotFound());\n\n        group.MapGet(\"/reviews/{attemptId}\", (string attemptId, AttemptAuthorityService authority) =>"
+    },
+    {
+      "id": "S38",
+      "path": "backend/Features/Tasks/TaskRunnerEndpoints.cs",
+      "line": 49,
+      "symbol": "group.MapPost(\"/{jobId}/stop\"",
+      "sha256": "3f7b98943745d8427502f9da824b9cc4abe7ffb609eb3c514c7d5fc050d3157e",
+      "excerpt": "        // this, a remote run answered 404 and the only way to stop it was to\n        // kill the process on the host by hand.\n        group.MapPost(\"/{jobId}/stop\", (\n            string jobId,\n            string? project,\n            string? watchPath,\n            string? reason,\n            TaskRunnerService runner,\n            TaskScannerService scanner,"
+    },
+    {
+      "id": "S39",
+      "path": "backend/Features/Runner/RemoteRunStopRequests.cs",
+      "line": 95,
+      "symbol": "public sealed class RemoteRunStopRequestStore",
+      "sha256": "ede30c7c3fa81aa43ec53d75a2b809523b27a1340d613c57fbf56aac39e40ab0",
+      "excerpt": "/// an unrelated later round.\n/// </summary>\npublic sealed class RemoteRunStopRequestStore\n{\n    private readonly ConcurrentDictionary<string, RemoteRunStopRequest> _requests =\n        new(StringComparer.OrdinalIgnoreCase);\n\n    private readonly Func<DateTime> _utcNow;\n"
+    },
+    {
+      "id": "S40",
+      "path": "backend/Features/Tasks/LeaseEndpoints.cs",
+      "line": 99,
+      "symbol": "var stop = stops.Peek(req.TaskKey)",
+      "sha256": "7afb67a57bc46ad1b41cf55786a7361b9fc33b2cd3b1eff6ed0fdaa46388ceb8",
+      "excerpt": "            var renewed = leases.Renew(req);\n            if (!renewed.Granted) return Results.Ok(renewed);\n            var stop = stops.Peek(req.TaskKey);\n            return Results.Ok(stop is null\n                ? renewed\n                : renewed with\n                {\n                    StopRequest = new RunStopDirectiveDto(\n                        stop.TaskKey,"
+    },
+    {
+      "id": "S41",
+      "path": "runner/LeaseHeartbeat.cs",
+      "line": 165,
+      "symbol": "private void MarkStopRequested",
+      "sha256": "33c0e8fa6737186a8c7a1d991dea479ac1655d966325d6853d1421d568be9b93",
+      "excerpt": "           && ex.StatusCode is not 408 and not 429;\n\n    private void MarkStopRequested(CancellationTokenSource stopRun, RunStopDirectiveDto directive)\n    {\n        StopRequest = directive;\n        _log(\n            $\"operator stop requested task={directive.TaskKey} reason={directive.Reason} \" +\n            $\"requestedAt={directive.RequestedAtUtc:o} by={directive.RequestedBy ?? \"unknown\"}; \" +\n            \"terminating the worker process tree and handing back\");"
+    },
+    {
+      "id": "S42",
+      "path": "runner/GitWorkspace.cs",
+      "line": 509,
+      "symbol": "TeardownToQuarantineAsync",
+      "sha256": "58e6029036e42310b573183fc6862868003d73734dc3a8122ad41ab74390cb9e",
+      "excerpt": "    /// never replace the current attempt's salvage or result identity.\n    /// </summary>\n    public async Task<WorktreeTeardownResult> TeardownToQuarantineAsync(\n        string outcome,\n        string? sourceRunAttemptId,\n        CancellationToken ct)\n    {\n        await GitMetadataGate.WaitAsync(ct);\n        try"
+    },
+    {
+      "id": "S43",
+      "path": "backend/Features/Tasks/LeaseEndpoints.cs",
+      "line": 1350,
+      "symbol": "var settled = authority.SettleRun",
+      "sha256": "7afb67a57bc46ad1b41cf55786a7361b9fc33b2cd3b1eff6ed0fdaa46388ceb8",
+      "excerpt": "                unverifiedDelivery = envelopeDecision.Reason;\n            }\n            var settled = authority.SettleRun(new SettleRunAttemptRequest\n            {\n                Write = new AttemptWriteReference(\n                    attemptId,\n                    req.FencingToken,\n                    epoch,\n                    completionKey),"
+    },
+    {
+      "id": "S44",
+      "path": "runner/RemoteReviewWorkspace.cs",
+      "line": 14,
+      "symbol": "class RemoteReviewWorkspace",
+      "sha256": "ab2d7e2b950a619f294e9342678e2b5f73e8b24ca846725a36077de258e88198",
+      "excerpt": "/// process namespaces are rooted under the attempt directory.\n/// </summary>\npublic sealed class RemoteReviewWorkspace\n{\n    private const int TestFailureParserVersion = 3;\n    internal const int ReviewMaterialMaximumFiles = 200;\n    internal const int ReviewMaterialMaximumLines = 12_000;\n    private readonly RunnerOptions _options;\n    private readonly ReviewSubjectDto _subject;"
+    },
+    {
+      "id": "S45",
+      "path": "backend/Features/Pipeline/RemoteDeliveryIntegration.cs",
+      "line": 412,
+      "symbol": "private static async Task<MergeIntoIntegrationResult> IntegrateAndRecordAsync",
+      "sha256": "0517ac0f955659ece0a42708900a91d3cb29fcf3b001e55a36a0046109686263",
+      "excerpt": "    public const string PreHumanReviewStage = \"pre-human-review\";\n\n    private static async Task<MergeIntoIntegrationResult> IntegrateAndRecordAsync(\n        RemoteDeliveryIntegrationRequest request,\n        MergeIntoDevelopRunner runner,\n        TaskScannerService scanner,\n        TaskProvenanceService provenance,\n        TimelineLog timeline)\n    {"
+    },
+    {
+      "id": "S46",
+      "path": "backend/Features/Diagnostics/LogIngestionEndpoints.cs",
+      "line": 116,
+      "symbol": "authority.ExecuteRunWrite",
+      "sha256": "046ef211f900028700fa5cdbdfd776e87649764d58b1df8dc42184a646b0dddc",
+      "excerpt": "            return null;\n        }\n        return authority.ExecuteRunWrite(\n            new AttemptWriteReference(\n                req.AttemptId, req.Fence.Value, req.AuthorityEpoch.Value, req.IdempotencyKey),\n            \"log\",\n            req.TaskKey,\n            append);\n    }"
+    },
+    {
+      "id": "S47",
+      "path": "backend/Features/Diagnostics/RunnerEventIngestionEndpoints.cs",
+      "line": 31,
+      "symbol": "app.MapPost",
+      "sha256": "aff4ba3266b78f3d686abd23a72ad905d6fb5c67e37e94e954fb3d5a1daeb491",
+      "excerpt": "    public static void MapRunnerEventIngestionEndpoints(this WebApplication app)\n    {\n        app.MapPost(\"/api/runner/events\", async (\n            RunnerEventIngestRequest request,\n            HttpContext context,\n            AccessSecurityStore security,\n            RunLeaseService leases,\n            ITaskScanner scanner,\n            RunnerEventJournal journal,"
+    },
+    {
+      "id": "S48",
+      "path": "backend/Features/Tasks/TaskReader.cs",
+      "line": 59,
+      "symbol": "RunnerEventSource.ReadRecords",
+      "sha256": "871a474e5dc49439c8d2d9bec5d71fb7b3f5a88bdc55a6f852fe964ef598ae20",
+      "excerpt": "        var cliOutputLines = CliOutputLogParser.ParseFile(TaskPaths.CliOutputLog(info.FolderPath));\n        var ledger = _timeline.ReadAll(info.FolderPath);\n        var runnerEvents = AgentStudio.Projection.RunnerEventSource.ReadRecords(info);\n        var runAttempts = _attempts.GetTaskProjection(info.TaskKey, includeArchived: true).RunAttempts;\n\n        return new TaskReadModel(\n            detail,\n            sessionEvents,\n            cliOutputLines,"
+    },
+    {
+      "id": "S49",
+      "path": "runner/DurableRunOutbox.cs",
+      "line": 36,
+      "symbol": "class DurableRunOutbox",
+      "sha256": "03a5a495faa6f89be65abbd7aa331c24dc24768c55195087e46bfee3cda3f91d",
+      "excerpt": "/// an atomic replace and are also fsynced.\n/// </summary>\npublic sealed class DurableRunOutbox\n{\n    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);\n    private static readonly ConcurrentDictionary<string, byte> ActiveRuns =\n        new(StringComparer.Ordinal);\n    private readonly object _gate = new();\n    private readonly string _directory;"
+    },
+    {
+      "id": "S50",
+      "path": "runner/TaskServerClient.cs",
+      "line": 1604,
+      "symbol": "case \"completion\"",
+      "sha256": "56372211223723b7cdfa881f057cfda96e02b9ca3ed2fb898102a9f26abbb086",
+      "excerpt": "                return;\n            }\n            case \"completion\":\n            {\n                var payload = JsonSerializer.Deserialize<DurableCompletionPayload>(item.PayloadJson, Json)\n                              ?? throw new InvalidDataException(\"Durable completion payload is empty.\");\n                await CompleteHostPostProcessingAsync(\n                    authority.TaskKey,\n                    payload.ResultEnvelopeDigest,"
+    },
+    {
+      "id": "S51",
+      "path": "backend/Features/Diagnostics/ArtifactIngestionEndpoints.cs",
+      "line": 124,
+      "symbol": "authority.ExecuteRunWrite",
+      "sha256": "5ffbc2b4f1db6255d90d20847fb60bf7bfb35f44abf73598953bb25496a47255",
+      "excerpt": "                else\n                {\n                    var accepted = authority.ExecuteRunWrite(\n                        write,\n                        \"artifact\",\n                        req.TaskKey,\n                        () => sideEffectResult = WriteArtifacts(task, req),\n                        evidenceDigest);\n                    if (accepted.Status == AttemptWriteStatus.Duplicate)"
+    },
+    {
+      "id": "S52",
+      "path": "runner/ArtifactTransferPolicy.cs",
+      "line": 26,
+      "symbol": "class ArtifactTransferPolicy",
+      "sha256": "97d20171046d1ef24babdc2730e394aa16a1a1de09bd62e6d161e4813af5dca3",
+      "excerpt": "/// trees that are never useful review evidence.\n/// </summary>\npublic static class ArtifactTransferPolicy\n{\n    private static readonly HashSet<string> ExcludedDirectories = new(\n        [\"node_modules\", \"bin\", \"obj\"],\n        StringComparer.OrdinalIgnoreCase);\n    private static readonly HashSet<string> ExcludedVideoExtensions = new(\n        [\".webm\", \".mp4\", \".mov\", \".avi\"],"
+    },
+    {
+      "id": "S53",
+      "path": "backend/Features/Review/RemoteResultFinalizationService.cs",
+      "line": 28,
+      "symbol": "class RemoteResultFinalizationService",
+      "sha256": "e8821475c77eb77c304cafad98a031aa3fd2a59a6898b29da987e86794869f12",
+      "excerpt": "/// </para>\n/// </summary>\npublic sealed class RemoteResultFinalizationService\n{\n    public const int DefaultAcknowledgementBudgetSeconds = 20;\n    public const int DefaultRetryDelaySeconds = 60;\n    public const int DefaultMaxRetries = 5;\n    private const int MaxRetryDelaySeconds = 900;\n"
+    },
+    {
+      "id": "S54",
+      "path": "backend/Features/Tasks/TaskFilesEndpoints.cs",
+      "line": 105,
+      "symbol": "scanner.ListArtifacts",
+      "sha256": "430e0ff71487709fe39b3ffc26e7482008a8418112f315cdad45b3ea65131eab",
+      "excerpt": "        {\n            watchPath = ResolveWatchPath(projects, project, watchPath);\n            var response = scanner.ListArtifacts(jobId, watchPath);\n            return response is null ? Results.NotFound() : Results.Ok(response);\n        });\n\n        group.MapPut(\"/{jobId}/files/{fileName}\", (string jobId, string fileName, string? project, string? watchPath, UpdateJobFileRequest req, TaskMutationService mutations, TaskRunnerService runner, AgentStudio.Registry.ProjectRegistry projects) =>\n        {\n            watchPath = ResolveWatchPath(projects, project, watchPath);"
+    },
+    {
+      "id": "S55",
+      "path": "backend/Features/Tasks/LeaseEndpoints.cs",
+      "line": 2282,
+      "symbol": "reviewAttemptLifecycle.CreateReviewAttemptInAutoReview",
+      "sha256": "7afb67a57bc46ad1b41cf55786a7361b9fc33b2cd3b1eff6ed0fdaa46388ceb8",
+      "excerpt": "            {\n                task = scanner.FindJob(task.Id, task.WatchPath) ?? task;\n                var review = reviewAttemptLifecycle.CreateReviewAttemptInAutoReview(task, reviewAttemptRequest);\n                if (!review.Accepted || review.ReviewAttempt is null)\n                {\n                    return Results.Conflict(new RemoteRunCompletionResponse(\n                        req.TaskKey, reportedOutcome, task.State, review.Message,\n                        RunAttemptId: attemptId,\n                        FailureClassification: review.Status.ToString()));"
+    },
+    {
+      "id": "S56",
+      "path": "backend/Features/Runner/V1ReviewPlaneEndpoints.cs",
+      "line": 586,
+      "symbol": "api.MapPost(\"/reviews/attempts/{attemptId}/report\"",
+      "sha256": "9abe5da079893ba5246d613f26f9efd1fb41f90dd66ab6d9e1237d6a0b6fe5fa",
+      "excerpt": "        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);\n\n        api.MapPost(\"/reviews/attempts/{attemptId}/report\", async (\n            HttpContext context,\n            string attemptId,\n            Contract.ReviewReportRequest request,\n            AttemptAuthorityService authority,\n            TaskScannerService scanner,\n            AgentStudio.Registry.ProjectRegistry projects,"
+    },
+    {
+      "id": "S57",
+      "path": "runner/RemoteReviewExecutor.cs",
+      "line": 514,
+      "symbol": "var request = new ReviewReportRequest",
+      "sha256": "c49fe5d91bbe364490d372b0b550a19ee9d7e68b1e75c7ac171cab34337e8111",
+      "excerpt": "                // between attempts must make the next report use its new fence.\n                var lease = _authority.Lease;\n                var request = new ReviewReportRequest(\n                    lease.ExecutorId,\n                    lease.InstanceId,\n                    lease.LeaseId,\n                    lease.Fence,\n                    $\"review-report:{attempt.AttemptId}:{lease.Fence}\",\n                    failureClassification is null ? evidence.Outcome : \"ReviewInfra\","
+    },
+    {
+      "id": "S58",
+      "path": "backend/Features/Runner/AttemptAuthorityService.cs",
+      "line": 1265,
+      "symbol": "public AttemptWriteResult SettleReview",
+      "sha256": "79f4e392dfe94855ba72dbcfbbe702673c9937373b9618f5ad902ca171999846",
+      "excerpt": "    }\n\n    public AttemptWriteResult SettleReview(SettleReviewAttemptRequest request)\n    {\n        lock (_gate)\n        {\n            var review = FindReview(request.Write.AttemptId);\n            if (review is null) return new AttemptWriteResult(AttemptWriteStatus.NotFound, request.Write.AttemptId);\n            var deliveryKey = DeliveryKey(\"settle\", request.Write.IdempotencyKey);"
+    },
+    {
+      "id": "S59",
+      "path": "backend/Features/Runner/V1ReviewPlaneEndpoints.cs",
+      "line": 920,
+      "symbol": "RecordDeliverySettlement(",
+      "sha256": "9abe5da079893ba5246d613f26f9efd1fb41f90dd66ab6d9e1237d6a0b6fe5fa",
+      "excerpt": "                    // backend finish the sequence instead of demanding a second\n                    // 45-minute review of an already passed subject.\n                    RecordDeliverySettlement(\n                        task.FolderPath,\n                        settled.ReviewAttempt,\n                        integrationRequest,\n                        integrationDecision,\n                        logger);\n                    if (integrationDecision.ShouldIntegrate)"
+    },
+    {
+      "id": "S60",
+      "path": "backend/Features/Pipeline/RemoteDeliverySettlementStore.cs",
+      "line": 102,
+      "symbol": "public static void Write",
+      "sha256": "3e10ead539e0276dab4f46a40067aaea8edac8b024504fa891bd5cdabccc33f3",
+      "excerpt": "        => Path.Combine(TaskPaths.LogsDir(taskFolder), FileName);\n\n    public static void Write(string taskFolder, RemoteDeliverySettlementRecord record)\n    {\n        ArgumentException.ThrowIfNullOrWhiteSpace(taskFolder);\n        ArgumentNullException.ThrowIfNull(record);\n\n        var path = PathFor(taskFolder);\n        Directory.CreateDirectory(Path.GetDirectoryName(path)!);"
+    },
+    {
+      "id": "S61",
+      "path": "backend/Features/Runner/AutoReviewDeliveryResumeService.cs",
+      "line": 130,
+      "symbol": "public async Task<AutoReviewResumeOutcome> ResumeAsync",
+      "sha256": "a0adcebddc46abf19a4ea3e03889555a5d89d7c46b5409f7a9f404f7211244c7",
+      "excerpt": "    /// without a single write.\n    /// </summary>\n    public async Task<AutoReviewResumeOutcome> ResumeAsync(\n        TaskInfo task,\n        string source,\n        CancellationToken ct = default)\n    {\n        ArgumentNullException.ThrowIfNull(task);\n"
+    },
+    {
+      "id": "S62",
+      "path": "backend/Features/Pipeline/RemoteDeliveryIntegration.cs",
+      "line": 203,
+      "symbol": "public Task<MergeIntoIntegrationResult> EnqueueAsync",
+      "sha256": "0517ac0f955659ece0a42708900a91d3cb29fcf3b001e55a36a0046109686263",
+      "excerpt": "            detail);\n\n    public Task<MergeIntoIntegrationResult> EnqueueAsync(\n        RemoteDeliveryIntegrationRequest request)\n    {\n        ArgumentNullException.ThrowIfNull(request);\n        var deliveryKey = DeliveryKey(request);\n        ProjectQueue projectQueue;\n        var startDrain = false;"
+    },
+    {
+      "id": "S63",
+      "path": "backend/Features/Tasks/TimelineLog.cs",
+      "line": 74,
+      "symbol": "public bool Append(string jobFolderPath, TimelineEvent evt)",
+      "sha256": "56b48091d5a1763c5c2597e4cc385c6f8722d3d51332a13862ab5668a44dfcb4",
+      "excerpt": "    /// must not drop the underlying event.\n    /// </summary>\n    public bool Append(string jobFolderPath, TimelineEvent evt)\n    {\n        if (string.IsNullOrWhiteSpace(jobFolderPath) || evt == null) return false;\n        try\n        {\n            Directory.CreateDirectory(TaskPaths.LogsDir(jobFolderPath));\n            var path = TaskPaths.TimelineLog(jobFolderPath);"
+    },
+    {
+      "id": "S64",
+      "path": "backend/Features/Pipeline/RemoteDeliveryIntegration.cs",
+      "line": 425,
+      "symbol": "TimelineEventKinds.IntegrationStarted",
+      "sha256": "0517ac0f955659ece0a42708900a91d3cb29fcf3b001e55a36a0046109686263",
+      "excerpt": "        timeline.Append(\n            request.JobFolderPath,\n            TimelineEventKinds.IntegrationStarted,\n            TimelineActors.System,\n            $\"Remote delivery integration into {request.IntegrationBranch} started before Human Review.\",\n            details: new Dictionary<string, string>\n            {\n                [\"integrationBranch\"] = request.IntegrationBranch,\n                [\"integrationStrategy\"] = request.IntegrationStrategy,"
+    },
+    {
+      "id": "S65",
+      "path": "backend/Features/Tasks/TaskReader.cs",
+      "line": 25,
+      "symbol": "class TaskReader",
+      "sha256": "871a474e5dc49439c8d2d9bec5d71fb7b3f5a88bdc55a6f852fe964ef598ae20",
+      "excerpt": "/// </para>\n/// </summary>\npublic sealed class TaskReader\n{\n    private readonly TaskScannerService _scanner;\n    private readonly TaskSessionLog _sessions;\n    private readonly TimelineLog _timeline;\n    private readonly AttemptAuthorityService _attempts;\n"
+    },
+    {
+      "id": "S66",
+      "path": "backend/Features/Tasks/TaskRunnerEndpoints.cs",
+      "line": 239,
+      "symbol": "group.MapGet(\"/{jobId}/timeline\"",
+      "sha256": "3f7b98943745d8427502f9da824b9cc4abe7ffb609eb3c514c7d5fc050d3157e",
+      "excerpt": "        // indicator and the Timeline tab. Read-only and tolerant of torn\n        // trailing lines.\n        group.MapGet(\"/{jobId}/timeline\", (string jobId, string? project, string? watchPath, TaskReader reader, AgentStudio.Registry.ProjectRegistry projects) =>\n        {\n            watchPath = ResolveWatchPath(projects, project, watchPath);\n            // T2b (ASS-1740): the same unified read model also projects the\n            // ledger, meshing each lane_changed row with its ASS-1724 anchor.\n            var model = reader.Read(jobId, watchPath);\n            if (model == null) return Results.NotFound(new { error = \"Job not found\" });"
+    },
+    {
+      "id": "S67",
+      "path": "backend/Features/Tasks/TaskLiveStatusProjection.cs",
+      "line": 14,
+      "symbol": "public sealed class TaskLiveStatusProjection",
+      "sha256": "c57f5a154fe5ebe0bf26595bf1955d3a80be2c5da761ef739bc43df9f98fcaa9",
+      "excerpt": "/// never consulted.\n/// </summary>\npublic sealed class TaskLiveStatusProjection(\n    PipelineExecutionLog pipelineLog,\n    StepPromptLog promptLog,\n    ProjectSettingsService projectSettings,\n    TaskRunnerService runners,\n    AutoReviewPostProcessingQueue reviewQueue)\n{"
+    },
+    {
+      "id": "S68",
+      "path": "backend/Features/Tasks/TaskCrudEndpoints.cs",
+      "line": 138,
+      "symbol": "group.MapGet(\"/grouped\"",
+      "sha256": "81591ea6c58f38580afe070d7b83f5d7aa6346c7ce7a2660b3305afcc9ef554b",
+      "excerpt": "        });\n\n        group.MapGet(\"/grouped\", (bool? includeFixtures, bool? includeLegacyReviewLane, HttpContext context, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, ITokenAggregator tokens, IConfiguration configuration, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, AgentStudio.Registry.ProjectRegistry projects, BoardReadSignatureSource boardSignature, ILoggerFactory loggerFactory) =>\n        {\n            using var gitTelemetry = GitProcessTelemetry.BeginRequest(\n                \"tasks/grouped\",\n                loggerFactory.CreateLogger(\"TaskListProjection\"),\n                includeNested: true);\n            var raw = ProjectAccessAuthorization.FilterTasks(context, scanner.ScanAllJobs(), projects).ToList();"
+    },
+    {
+      "id": "S69",
+      "path": "frontend/src/app/features/board/components/task-card/task-card-view-model.ts",
+      "line": 15,
+      "symbol": "export ",
+      "sha256": "eb8ace842ececd5e59dcda80438f736bbccef24549f5601c50257ddbad6f2df0",
+      "excerpt": "import { lanePresentation } from '../../../../models/lane-presentation';\n\nexport interface TaskTypeChip {\n  kind: string;\n  label: string;\n  icon: string;\n  tooltip: string;\n}\n"
+    },
+    {
+      "id": "S70",
+      "path": "backend/Features/Tasks/TaskCrudEndpoints.cs",
+      "line": 345,
+      "symbol": "group.MapGet(\"/{jobId}\"",
+      "sha256": "81591ea6c58f38580afe070d7b83f5d7aa6346c7ce7a2660b3305afcc9ef554b",
+      "excerpt": "        });\n\n        group.MapGet(\"/{jobId}\", (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, ITokenAggregator tokens, IConfiguration configuration, GitService git, TaskSessionLog sessions, BoardMergeStatusService mergeStatus, TaskIntegrationStatusService integrationStatus, TaskPublishableService publishStatus, TestRunService testRuns, AgentStudio.Review.ReviewProjectionService reviewProjection, TaskLiveStatusProjection liveStatus, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates) =>\n        {\n            watchPath = ResolveWatchPath(projects, project, watchPath);\n            var detail = scanner.GetJobDetail(jobId, watchPath);\n            if (detail is null) return Results.NotFound();\n            // ASS-1712: an in-progress per-task-worktree task's persisted commits[]\n            // chain collapses to empty/singular (per-run ranges track the shared"
+    },
+    {
+      "id": "S71",
+      "path": "backend/Features/Runner/OrchestratorLog.cs",
+      "line": 50,
+      "symbol": "public bool Append",
+      "sha256": "3bc24f62680aa4b5af72b0de3f813dcb76dac739e3e3f58371bc92df7cd797ce",
+      "excerpt": "    /// runtime decision.\n    /// </summary>\n    public bool Append(string watchPath, OrchestratorLogEntry entry)\n    {\n        if (string.IsNullOrWhiteSpace(watchPath)) return false;\n        try\n        {\n            var path = ResolvePath(watchPath);\n            var dir = Path.GetDirectoryName(path);"
+    },
+    {
+      "id": "S72",
+      "path": "backend/Features/Bus/AgentMessageBusBridge.cs",
+      "line": 305,
+      "symbol": "public Task EmitUserPromptAsync",
+      "sha256": "19b81d38551ee1a3ade69b801a40d278bc33206f5e55dd552aaa953e404ab841",
+      "excerpt": "    /// or agent reply chains back to via <c>correlationId</c>.\n    /// </summary>\n    public Task EmitUserPromptAsync(TaskInfo info, string prompt, string mode, CancellationToken ct = default)\n    {\n        if (info == null) return Task.CompletedTask;\n        var trimmed = (prompt ?? string.Empty).Replace(\"\\r\", \" \").Replace(\"\\n\", \" \").Trim();\n        var msg = NewMessage(\n            participantId: ParticipantUser,\n            role: \"actor\","
+    },
+    {
+      "id": "S73",
+      "path": "backend/Features/Runner/RunnerEndpoints.cs",
+      "line": 51,
+      "symbol": "runnerGroup.MapGet(\"/orchestrator-feed\"",
+      "sha256": "7cd53652e3b540fe4a6cc06b17ab7c371a1f629ee019ac9452c4ffab0db3ce68",
+      "excerpt": "        // path. The result is capped after the merge: a noisy project cannot\n        // force every other project out before timestamps are compared.\n        runnerGroup.MapGet(\"/orchestrator-feed\",\n            (HttpContext context, TaskScannerService scanner, OrchestratorLog log,\n                AgentStudio.Registry.ProjectRegistry projects,\n                AgentStudio.Watcher.WatcherActivityProjector? watcherActivity) =>\n            {\n                var perProject = scanner.GetWatchPaths()\n                    .Where(project => context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal human"
+    },
+    {
+      "id": "S74",
+      "path": "backend/Features/Bus/BusEndpoints.cs",
+      "line": 49,
+      "symbol": "group.MapGet(\"/{project}/messages\"",
+      "sha256": "c54ff0846044ea74845545390774d1c1c9fb80720b1cefbe907f39c4d51c1d54",
+      "excerpt": "        });\n\n        group.MapGet(\"/{project}/messages\", (\n            string project,\n            IConfiguration config,\n            AgentMessageBusStore store,\n            string? jobId,\n            string? runId,\n            string? participantId,"
+    },
+    {
+      "id": "S75",
+      "path": "backend/Features/Bus/AgentMessageBusStore.cs",
+      "line": 76,
+      "symbol": "public async Task AppendAsync",
+      "sha256": "ab696623b3ed2c9da453fb2115b1430f70441e419379be002ffb1826f28cdf13",
+      "excerpt": "    /// nothing is written.\n    /// </summary>\n    public async Task AppendAsync(string workspaceRoot, AgentMessage message, CancellationToken ct = default)\n    {\n        ArgumentException.ThrowIfNullOrWhiteSpace(workspaceRoot);\n        ArgumentNullException.ThrowIfNull(message);\n        if (!AgentMessageValidator.TryValidate(message, out var error))\n            throw new InvalidOperationException($\"AgentMessage rejected: {error}\");\n"
+    },
+    {
+      "id": "S76",
+      "path": "runner/TaskServerClient.cs",
+      "line": 697,
+      "symbol": "public async Task<RunnerClaimResponse> ClaimAsync",
+      "sha256": "56372211223723b7cdfa881f057cfda96e02b9ca3ed2fb898102a9f26abbb086",
+      "excerpt": "    }\n\n    public async Task<RunnerClaimResponse> ClaimAsync(RunnerClaimRequest req, CancellationToken ct)\n    {\n        if (!_useV1)\n        {\n            var stamped = req with\n            {\n                EffectiveMaxParallelism = req.EffectiveMaxParallelism ?? HostMaxParallelism,"
+    },
+    {
+      "id": "S77",
+      "path": "task-server/TaskServerEndpoints.cs",
+      "line": 258,
+      "symbol": "runners.MapPost(\"/{runnerId}/claims\"",
+      "sha256": "2465c93d3858f410f93db32e6519d546e1ae991e814c44282ac85bd0e5ea6be7",
+      "excerpt": "                Actor(context),\n                ct)));\n        runners.MapPost(\"/{runnerId}/claims\", async (\n            HttpContext context, string runnerId, ClaimRequest request, TaskServerStore store, CancellationToken ct) =>\n        {\n            if (!string.Equals(runnerId, request.RunnerId, StringComparison.Ordinal))\n                return Results.BadRequest(new ApiError(\"runner-id-mismatch\", \"Route and request runner ids differ.\"));\n            return await InvokeAsync(() => store.ClaimAsync(request, Actor(context), ct));\n        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim)"
+    },
+    {
+      "id": "S78",
+      "path": "task-server/TaskServerStore.cs",
+      "line": 172,
+      "symbol": "UPDATE leases",
+      "sha256": "a54a09bb714ad3e1e675342a3a7c844fd3603c3933712a1e7a76f243347e4044",
+      "excerpt": "                    (\"$now\", Iso(UtcNow)));\n                await ExecuteAsync(connection, \"\"\"\n                    UPDATE leases\n                       SET status = 'process-unknown'\n                     WHERE status = 'active';\n                    UPDATE runs\n                       SET status = 'process-unknown'\n                     WHERE status = 'running';\n                    UPDATE review_attempts"
+    },
+    {
+      "id": "S79",
+      "path": "backend/Features/Runner/RemoteReviewPlanBuilder.cs",
+      "line": 33,
+      "symbol": "public Contract.ReviewPlanDto Build",
+      "sha256": "625c334674411ebbd93297abe8b2b7d298a2d5e4f9d0444bf43b23f5198911e0",
+      "excerpt": "    }\n\n    public Contract.ReviewPlanDto Build(\n        TaskInfo? task,\n        string? repositoryPath,\n        ProjectSettings? projectSettings,\n        string? integrationRef)\n    {\n        var toolPlan = V1ReviewPlaneEndpoints.FallbackPlan("
+    },
+    {
+      "id": "S80",
+      "path": "backend/Features/Runner/V1ReviewPlaneEndpoints.cs",
+      "line": 424,
+      "symbol": "resolve each agent-aspect command",
+      "sha256": "9abe5da079893ba5246d613f26f9efd1fb41f90dd66ab6d9e1237d6a0b6fe5fa",
+      "excerpt": "                timeline,\n                loggerFactory.CreateLogger(LoggerName));\n            // AGT-2751: resolve each agent-aspect command's cli/model against\n            // the CURRENT quota at hand-out time, not whatever was true when\n            // the plan was built or frozen. This is what lets an already-open\n            // ReviewAttempt (created before a provider hit its cap) pick up an\n            // equal-strength fallback on its next claim without an operator\n            // superseding it with a rebuilt plan. Only the returned DTO\n            // changes; review.Subject.Plan (and any cached copy) is untouched,"
+    },
+    {
+      "id": "S81",
+      "path": "contracts/TaskServer.Contracts/ReviewContracts.cs",
+      "line": 75,
+      "symbol": "public sealed record ReviewPlanDto",
+      "sha256": "f6e82c4ed8ea54296f64b264bd9c56b6329effd7c3721931608270efef3c287e",
+      "excerpt": "    string BaselineMode = ReviewBaselineModes.TestFailures);\n\npublic sealed record ReviewPlanDto(\n    IReadOnlyList<ReviewCommandDto> Commands,\n    IReadOnlyList<string> RequiredAspects,\n    bool RequiresVisualReview = false,\n    bool RequireDifferentHostFailureDomain = false,\n    string? IntegrationRef = null,\n    IReadOnlyList<ReviewPreparationCommandDto>? Preparation = null,"
+    },
+    {
+      "id": "S82",
+      "path": "contracts/TaskServer.Contracts/ReviewContracts.cs",
+      "line": 60,
+      "symbol": "public sealed record ReviewCommandDto",
+      "sha256": "f6e82c4ed8ea54296f64b264bd9c56b6329effd7c3721931608270efef3c287e",
+      "excerpt": "    IReadOnlyList<ReviewDependencyScopeDto>? DependencyScopes = null);\n\npublic sealed record ReviewCommandDto(\n    string StepId,\n    string Aspect,\n    string FileName,\n    IReadOnlyList<string> Arguments,\n    bool Required = true,\n    int TimeoutSeconds = 1800,"
+    },
+    {
+      "id": "S83",
+      "path": "runner/RemoteRunnerDaemon.cs",
+      "line": 609,
+      "symbol": "_client.ClaimAsync",
+      "sha256": "d95467ccf0d2019a9947868fc695efbca8f237b707972de4c887a4837bed7a83",
+      "excerpt": "                    if (!_client.UsesHostOrchestrator)\n                    {\n                        var response = await _client.ClaimAsync(new RunnerClaimRequest(\n                            _options.RunnerId, _options.RunnerName, _options.Hostname,\n                            Environment.ProcessId, _options.BackendName, _options.TtlSeconds,\n                            latestTelemetry,\n                            AvailableSlots: 0,\n                            ActiveSlots: active.Count,\n                            IdempotencyKey: $\"load-gate:{_options.RunnerId}:{Guid.NewGuid():N}\","
+    },
+    {
+      "id": "S84",
+      "path": "backend/Features/Tasks/LeaseEndpoints.cs",
+      "line": 225,
+      "symbol": "app.MapPost(\"/api/runner/claim\"",
+      "sha256": "7afb67a57bc46ad1b41cf55786a7361b9fc33b2cd3b1eff6ed0fdaa46388ceb8",
+      "excerpt": "        // critical section for all remote contenders. The local runner reads\n        // the same resolved executionLocation and therefore never enters this race.\n        app.MapPost(\"/api/runner/claim\", async (\n            RunnerClaimRequest req,\n            TaskScannerService scanner,\n            AgentStudio.Projects.ProjectSettingsService settings,\n            AgentStudio.Registry.ProjectRegistry projects,\n            TaskTransitionService transitions,\n            RunLeaseService leases,"
+    },
+    {
+      "id": "S85",
+      "path": "backend/Features/Tasks/LeaseEndpoints.cs",
+      "line": 947,
+      "symbol": "var acquire = leases.TryAcquire",
+      "sha256": "7afb67a57bc46ad1b41cf55786a7361b9fc33b2cd3b1eff6ed0fdaa46388ceb8",
+      "excerpt": "                    ? $\"claim:{taskKey}:{req.RunnerId.Trim()}:{Guid.NewGuid():N}\"\n                    : req.IdempotencyKey.Trim();\n                var acquire = leases.TryAcquire(new RunLeaseAcquireRequest(\n                    taskKey, req.RunnerId.Trim(), req.RunnerName.Trim(), req.Hostname,\n                    req.Pid, req.BackendName, req.RequestedTtlSeconds,\n                    repository.RepositoryId,\n                    SourceRunAttemptId: recoveredSources.GetValueOrDefault(taskKey),\n                    IdempotencyKey: claimKey)\n                {"
+    },
+    {
+      "id": "S86",
+      "path": "backend/Features/Runner/RunLeaseService.cs",
+      "line": 68,
+      "symbol": "public RunLeaseResponse? TryReplayAcquire",
+      "sha256": "5741e84c486218387729f333e62de366b1cd6418166739ac9bda90c3eb5c24b2",
+      "excerpt": "    /// non-null result is authoritative and must not fall through to selection.\n    /// </summary>\n    public RunLeaseResponse? TryReplayAcquire(string runnerId, string idempotencyKey)\n    {\n        var result = _authority.ReplayRunAcquire(runnerId, idempotencyKey);\n        if (result.Status == AttemptWriteStatus.NotFound) return null;\n        return result.Status switch\n        {\n            AttemptWriteStatus.Duplicate when result.RunAttempt?.Lease is not null"
+    },
+    {
+      "id": "S87",
+      "path": "runner/GitWorkspace.cs",
+      "line": 472,
+      "symbol": "TeardownAsync",
+      "sha256": "58e6029036e42310b573183fc6862868003d73734dc3a8122ad41ab74390cb9e",
+      "excerpt": "    }\n\n    public Task<WorktreeTeardownResult> TeardownAsync(string outcome, CancellationToken ct)\n        => TeardownAsync(outcome, sourceRunAttemptId: null, ct);\n\n    public async Task<WorktreeTeardownResult> TeardownAsync(\n        string outcome,\n        string? sourceRunAttemptId,\n        CancellationToken ct)"
+    },
+    {
+      "id": "S88",
+      "path": "backend/Features/Diagnostics/ArtifactIngestionEndpoints.cs",
+      "line": 71,
+      "symbol": "app.MapPost(\"/api/runner/artifacts\"",
+      "sha256": "5ffbc2b4f1db6255d90d20847fb60bf7bfb35f44abf73598953bb25496a47255",
+      "excerpt": "        });\n\n        app.MapPost(\"/api/runner/artifacts\", async (\n            ArtifactIngestRequest req,\n            HttpContext context,\n            ITaskScanner scanner,\n            RunLeaseService leases,\n            AttemptAuthorityService authority,\n            WorkspaceArtifactCommitService artifactCommits,"
+    },
+    {
+      "id": "S89",
+      "path": "backend/Features/Pipeline/RemoteDeliveryIntegration.cs",
+      "line": 26,
+      "symbol": "public static RemoteDeliveryIntegrationDecision Decide",
+      "sha256": "0517ac0f955659ece0a42708900a91d3cb29fcf3b001e55a36a0046109686263",
+      "excerpt": "public static class RemoteDeliveryIntegrationPolicy\n{\n    public static RemoteDeliveryIntegrationDecision Decide(\n        bool hasSettledResultEnvelope,\n        string? reviewOutcome,\n        Contract.ReviewPlanDto? reviewPlan,\n        IReadOnlyList<Contract.ReviewVerdictDto> verdicts)\n    {\n        if (!hasSettledResultEnvelope)"
+    },
+    {
+      "id": "S90",
+      "path": "backend/Features/Pipeline/MergeIntoDevelopRunner.cs",
+      "line": 28,
+      "symbol": "class MergeIntoDevelopRunner",
+      "sha256": "3aa2edd6a3c234bab325b7abdb42c92e8b97ce49cd95780f4cea7c9fe16a4c49",
+      "excerpt": "/// </para>\n/// </summary>\npublic sealed class MergeIntoDevelopRunner\n{\n    private readonly GitService _git;\n    private readonly PipelineExecutionLog _pipelineLog;\n    private readonly ILogger<MergeIntoDevelopRunner> _logger;\n    private readonly IntegrationPushQueue? _pushQueue;\n    private readonly ProjectSettingsService? _projectSettings;"
+    },
+    {
+      "id": "S91",
+      "path": "backend/Features/Runner/AutoReviewDeliveryResumeService.cs",
+      "line": 211,
+      "symbol": "private async Task<AutoReviewResumeOutcome> CompleteTransitionAsync",
+      "sha256": "a0adcebddc46abf19a4ea3e03889555a5d89d7c46b5409f7a9f404f7211244c7",
+      "excerpt": "    /// the completed lane on its own schedule.\n    /// </summary>\n    private async Task<AutoReviewResumeOutcome> CompleteTransitionAsync(\n        TaskInfo task,\n        ReviewAttemptDto review,\n        AutoReviewResumeDecision decision,\n        string? integrationOutcome,\n        string? integrationDetail,\n        string source,"
+    },
+    {
+      "id": "S92",
+      "path": "backend/Features/Tasks/Acceptance/AcceptanceRailHostedService.cs",
+      "line": 30,
+      "symbol": "class AcceptanceRailHostedService",
+      "sha256": "ea9565b72411b92786c47462ded24995e3832d914715b090ebafc7b099050d50",
+      "excerpt": "/// session and makes no model calls.\n/// </summary>\npublic sealed class AcceptanceRailHostedService : BackgroundService\n{\n    private readonly TaskScannerService _scanner;\n    private readonly IntegrationGenerationReconcileSweep? _generationReconcile;\n    private readonly TaskIntegrationStatusService _integrationStatus;\n    private readonly TaskTransitionService _transitions;\n    private readonly TaskIntegrationRecoveryService _recovery;"
+    },
+    {
+      "id": "S93",
+      "path": "backend/Features/Runner/ReviewAttemptTaskLifecycleService.cs",
+      "line": 112,
+      "symbol": "CreateReviewAttemptInAutoReview",
+      "sha256": "4d53192bd583c428291c9e3f1f530c33c2a11c265d9327f5908687e343c0c4f1",
+      "excerpt": "    /// fresh attempt while the card still resides in Progress.\n    /// </summary>\n    public AttemptWriteResult CreateReviewAttemptInAutoReview(\n        TaskInfo task,\n        CreateReviewAttemptRequest request)\n    {\n        ArgumentNullException.ThrowIfNull(task);\n        ArgumentNullException.ThrowIfNull(request);\n"
+    },
+    {
+      "id": "S94",
+      "path": "backend/Features/Runner/V1ReviewPlaneEndpoints.cs",
+      "line": 319,
+      "symbol": "api.MapPost(\"/runners/{runnerId}/review-claims\"",
+      "sha256": "9abe5da079893ba5246d613f26f9efd1fb41f90dd66ab6d9e1237d6a0b6fe5fa",
+      "excerpt": "        });\n\n        api.MapPost(\"/runners/{runnerId}/review-claims\", async (\n            HttpContext context,\n            string runnerId,\n            Contract.ReviewClaimRequest request,\n            V1ReviewExecutorRegistry registry,\n            AttemptAuthorityService authority,\n            ReviewAttemptTaskLifecycleService reviewAttemptLifecycle,"
+    },
+    {
+      "id": "S95",
+      "path": "backend/Features/Runner/AttemptAuthorityService.cs",
+      "line": 878,
+      "symbol": "private void RequeueExpiredReviewLeaseLocked",
+      "sha256": "79f4e392dfe94855ba72dbcfbbe702673c9937373b9618f5ad902ca171999846",
+      "excerpt": "    /// does). Caller must hold <see cref=\"_gate\"/>.\n    /// </summary>\n    private void RequeueExpiredReviewLeaseLocked(\n        ReviewAttemptRecord expired,\n        AttemptLeaseRecord expiredLease,\n        DateTime now)\n    {\n        expired.State = AttemptLifecycleState.Failed;\n        expired.Outcome = ReviewTerminalOutcome.InfrastructureFailure;"
+    },
+    {
+      "id": "S96",
+      "path": "backend/Features/Runner/V1ReviewPlaneEndpoints.cs",
+      "line": 842,
+      "symbol": "authority.ScheduleReviewInfrastructureRetry",
+      "sha256": "9abe5da079893ba5246d613f26f9efd1fb41f90dd66ab6d9e1237d6a0b6fe5fa",
+      "excerpt": "                    ? request.FailureClassification ?? request.Outcome\n                    : $\"{request.FailureClassification ?? request.Outcome}: {request.Summary}\";\n                var schedule = authority.ScheduleReviewInfrastructureRetry(review.AttemptId, scheduleReason);\n                if (!schedule.Accepted)\n                    return AttemptError(new AttemptWriteResult(schedule.Status, schedule.AttemptId, schedule.Message));\n\n                timeline.Append(\n                    task.FolderPath,\n                    TimelineEventKinds.ReviewInfrastructureRetryScheduled,"
+    },
+    {
+      "id": "S97",
+      "path": "runner/ReviewStateStore.cs",
+      "line": 75,
+      "symbol": "public PersistedReviewSlot Save",
+      "sha256": "ca997f1b4a12c2646b9683d50aca12cd10a11d4b30f4c270c6a0bcad382daa6c",
+      "excerpt": "    }\n\n    public PersistedReviewSlot Save(PersistedReviewSlot slot)\n    {\n        ValidateClaim(slot.Claim);\n        ValidatePendingReClaim(slot);\n        slot = slot with { UpdatedAtUtc = DateTime.UtcNow };\n        var path = StatePath(slot.AttemptId);\n        var temporary = path + $\".{Environment.ProcessId}.{Guid.NewGuid():N}.tmp\";"
+    },
+    {
+      "id": "S98",
+      "path": "backend/Features/Runner/V1ReviewPlaneEndpoints.cs",
+      "line": 928,
+      "symbol": "var integrated = await remoteIntegration.EnqueueAsync",
+      "sha256": "9abe5da079893ba5246d613f26f9efd1fb41f90dd66ab6d9e1237d6a0b6fe5fa",
+      "excerpt": "                    if (integrationDecision.ShouldIntegrate)\n                    {\n                        var integrated = await remoteIntegration.EnqueueAsync(integrationRequest).ConfigureAwait(false);\n                        integrationOutcome = integrated.Outcome.ToString();\n                        integrationParkReason = integrated.AutomaticRecoveryDetail;\n                    }\n                    else\n                    {\n                        remoteIntegration.RecordGateFailure("
+    },
+    {
+      "id": "S99",
+      "path": "backend/Features/Runner/RemoteReviewEvidenceProjectionQueue.cs",
+      "line": 125,
+      "symbol": "Channel.CreateUnbounded",
+      "sha256": "194c5f3e53f9cf13a354b673d3ec2b4d53ee8a222a9e6b3a17845cc03b8bc193",
+      "excerpt": "{\n    private readonly Channel<RemoteReviewEvidenceProjectionRequest> _channel =\n        Channel.CreateUnbounded<RemoteReviewEvidenceProjectionRequest>(new UnboundedChannelOptions\n        {\n            SingleReader = true,\n            SingleWriter = false,\n        });\n\n    public RemoteReviewEvidenceProjectionTelemetry Telemetry { get; } = new();"
+    },
+    {
+      "id": "S100",
+      "path": "backend/Features/Runner/V1ReviewPlaneEndpoints.cs",
+      "line": 731,
+      "symbol": "EvidenceProjection: Contract.ReviewEvidenceProjectionStatus.Duplicate",
+      "sha256": "9abe5da079893ba5246d613f26f9efd1fb41f90dd66ab6d9e1237d6a0b6fe5fa",
+      "excerpt": "                    RetryScheduled: false,\n                    task.State,\n                    EvidenceProjection: Contract.ReviewEvidenceProjectionStatus.Duplicate));\n            }\n\n            // AGT-2819: every deterministic gate was measured on the merge base\n            // before its failure was attributed, so this report also carries the\n            // integration branch's own health. Record it and alert the operator\n            // feed on the day a gate turns red, naming the step and the commits"
+    },
+    {
+      "id": "S101",
+      "path": "runner/RemoteReviewExecutor.cs",
+      "line": 651,
+      "symbol": "Phase = \"report-accepted\"",
+      "sha256": "c49fe5d91bbe364490d372b0b550a19ee9d7e68b1e75c7ac171cab34337e8111",
+      "excerpt": "            $\"classification={acceptedReport.FailureClassification ?? \"none\"} taskState={acceptedReport.TaskState} \" +\n            $\"submissionAttempts={slot.ReportSubmissionAttempts}\");\n        slot = SaveSlot(slot with { Phase = \"report-accepted\" });\n\n        var removed = false;\n        try\n        {\n            removed = await CleanupWorkspaceAsync(slot, workspace);\n        }"
+    },
+    {
+      "id": "S102",
+      "path": "backend/Features/Runner/V1ReviewPlaneEndpoints.cs",
+      "line": 1093,
+      "symbol": "api.MapPost(\"/reviews/attempts/{attemptId}/cleanup\"",
+      "sha256": "9abe5da079893ba5246d613f26f9efd1fb41f90dd66ab6d9e1237d6a0b6fe5fa",
+      "excerpt": "        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Review);\n\n        api.MapPost(\"/reviews/attempts/{attemptId}/cleanup\", (\n            HttpContext context,\n            string attemptId,\n            Contract.ReviewCleanupRequest request,\n            AttemptAuthorityService authority) =>\n        {\n            if (!RunnerMatches(context, request.ExecutorId))"
+    },
+    {
+      "id": "S103",
+      "path": "backend/Features/Tasks/TaskRunnerEndpoints.cs",
+      "line": 111,
+      "symbol": "group.MapPost(\"/{jobId}/continue\"",
+      "sha256": "3f7b98943745d8427502f9da824b9cc4abe7ffb609eb3c514c7d5fc050d3157e",
+      "excerpt": "        });\n\n        group.MapPost(\"/{jobId}/continue\", async (string jobId, string? project, string? watchPath, ContinueJobRequest req, TaskRunnerService runner, AgentStudio.Registry.ProjectRegistry projects, CancellationToken ct) =>\n        {\n            watchPath = ResolveWatchPath(projects, project, watchPath);\n            if (string.IsNullOrWhiteSpace(req?.Prompt))\n                return Results.BadRequest(new { error = \"Prompt is required\" });\n\n            var mode = ContinueModes.Normalize(req.Mode);"
+    },
+    {
+      "id": "S104",
+      "path": "backend/Features/Runner/TaskRunnerService.cs",
+      "line": 689,
+      "symbol": "public async Task<ContinueJobResponse> ContinueJobAsync",
+      "sha256": "7082c771069aa4b7eae5648262afa0afa35b4afb9cf16c91c7629ca209c79324",
+      "excerpt": "    /// memory that wasn't already on disk.\n    /// </summary>\n    public async Task<ContinueJobResponse> ContinueJobAsync(string jobId, string followupPrompt, string? watchPath = null, string? modelOverride = null, string? cliTypeOverride = null, string? thinkingLevelOverride = null, string? mode = null, string? modeOverride = null, CancellationToken ct = default)\n    {\n        _executionAdmission?.Demand(ExecutionAdmissionPath.Continue);\n        var info = _scanner.FindJob(jobId, watchPath);\n        if (info == null) throw new TaskOperationException(\"Job not found\", 404);\n\n        // Boundary validation before any mutation (AGT-2795): a concept or"
+    },
+    {
+      "id": "S105",
+      "path": "backend/Shared/Runner/FollowUpAdmissionPolicy.cs",
+      "line": 108,
+      "symbol": "class FollowUpAdmissionPolicy",
+      "sha256": "44c8e3e02defb4cecd0abe62b979ede025b4d82744fb2b278aaf98d68310e15b",
+      "excerpt": "/// </para>\n/// </summary>\npublic static class FollowUpAdmissionPolicy\n{\n    /// <summary>\n    /// The lanes a local follow-up run may be spawned from. <c>3-progress</c> is\n    /// where a run belongs; <c>2-ready</c> is admitted because the runner's own\n    /// pickup moves it to <c>3-progress</c> before spawning.\n    ///"
+    },
+    {
+      "id": "S106",
+      "path": "backend/Features/Runner/TaskRunnerService.cs",
+      "line": 860,
+      "symbol": "Status = \"queued\"",
+      "sha256": "7082c771069aa4b7eae5648262afa0afa35b4afb9cf16c91c7629ca209c79324",
+      "excerpt": "            return new ContinueJobResponse\n            {\n                Status = \"queued\",\n                Queued = new ContinueJobQueuedInfo\n                {\n                    Reason = FollowUpQueueReasons.ProjectBusy,\n                    ActiveJobId = rej.BusyJobId,\n                    ActiveJobTitle = rej.BusyJobTitle,\n                    Position = position > 0 ? position : 1,"
+    },
+    {
+      "id": "S107",
+      "path": "backend/Features/Tasks/LeaseEndpoints.cs",
+      "line": 1860,
+      "symbol": "Once that run settles, remove both pending and consumed",
+      "sha256": "7afb67a57bc46ad1b41cf55786a7361b9fc33b2cd3b1eff6ed0fdaa46388ceb8",
+      "excerpt": "\n            // A remote claim reads the run-scoped fallback from the pending\n            // intent. Once that run settles, remove both pending and consumed\n            // forms so a later round returns to the card's own route.\n            if (activeModelFallback is not null)\n                mutations.DiscardPendingIntent(task.FolderPath);\n\n            if (claimFailure is not null)\n            {"
+    },
+    {
+      "id": "S108",
+      "path": "backend/Features/Runner/TaskRunnerService.cs",
+      "line": 745,
+      "symbol": "await runner.ContinueJobAsync",
+      "sha256": "7082c771069aa4b7eae5648262afa0afa35b4afb9cf16c91c7629ca209c79324",
+      "excerpt": "\n        var startedFrom = info.State;\n        var outcome = await runner.ContinueJobAsync(jobId, followupPrompt, normalizedMode, ct);\n        var response = ShapeOutcome(outcome, info, jobId, watchPath, normalizedMode, followupPrompt);\n        return await ConfirmStartedRunAsync(response, info, jobId, watchPath, startedFrom, ct);\n    }\n\n    /// <summary>\n    /// Writes the user's follow-up into the task's durable record before any"
+    },
+    {
+      "id": "S109",
+      "path": "runner/LeaseHeartbeat.cs",
+      "line": 122,
+      "symbol": "if (_utcNow() >= stopBefore)",
+      "sha256": "33c0e8fa6737186a8c7a1d991dea479ac1655d966325d6853d1421d568be9b93",
+      "excerpt": "                    var stopBefore = _authority?.StopBeforeUtc\n                                     ?? authorityExpiresAt - uncertaintyMargin;\n                    if (_utcNow() >= stopBefore)\n                    {\n                        _authority?.Reject(\n                            $\"local autonomy deadline exhausted at {stopBefore:o}\");\n                        MarkLeaseLost(\n                            stopRun,\n                            \"renewal safety boundary reached: task-server-unavailable; \" +"
+    },
+    {
+      "id": "S110",
+      "path": "runner/RemoteTaskRunner.cs",
+      "line": 877,
+      "symbol": "lease-loss terminal journaled",
+      "sha256": "31602218e497f6259298ccb0f40ed0a7fc6d133b078412cc6931fd79b8b7ba88",
+      "excerpt": "            }\n            _log(\n                $\"lease-loss terminal journaled task={taskKey} phase={phase}; \" +\n                \"no replacement starts from this execution path\");\n            return 3;\n        }\n        finally\n        {\n            stopRun.Cancel();"
+    },
+    {
+      "id": "S111",
+      "path": "runner/RemoteTaskRunner.cs",
+      "line": 897,
+      "symbol": "workspace.TeardownToQuarantineAsync",
+      "sha256": "31602218e497f6259298ccb0f40ed0a7fc6d133b078412cc6931fd79b8b7ba88",
+      "excerpt": "                {\n                    teardownAttempted = true;\n                    await workspace.TeardownToQuarantineAsync(\n                        outcome.Kind.ToString(),\n                        slot.RunId ?? lease.AttemptId ?? lease.LeaseId,\n                        CancellationToken.None);\n                    _log(\n                        $\"lease-loss worktree quarantined task={taskKey} \" +\n                        $\"attempt={slot.RunId ?? lease.AttemptId ?? lease.LeaseId} \" +"
+    },
+    {
+      "id": "S112",
+      "path": "backend/Features/Runner/RunLeaseService.cs",
+      "line": 83,
+      "symbol": "public RunLeaseResponse Renew",
+      "sha256": "5741e84c486218387729f333e62de366b1cd6418166739ac9bda90c3eb5c24b2",
+      "excerpt": "    }\n\n    public RunLeaseResponse Renew(RunLeaseHeartbeatRequest request)\n    {\n        var reference = ResolveReference(\n            request.TaskKey, request.AttemptId, request.FencingToken, request.AuthorityEpoch,\n            request.IdempotencyKey, \"lease-renew\");\n        if (reference is null)\n            return new RunLeaseResponse(\"NotHeld\", false, null, \"No canonical RunAttempt is held for this task.\");"
+    },
+    {
+      "id": "S113",
+      "path": "runner/CodingFinalizationReconciler.cs",
+      "line": 18,
+      "symbol": "class CodingFinalizationReconciler",
+      "sha256": "85cf8fa193a45449138a048413944e174aa8c9c20f593d99c7e2cc58b0d8d387",
+      "excerpt": "/// </para>\n/// </summary>\npublic sealed class CodingFinalizationReconciler\n{\n    private readonly RunnerOptions _options;\n    private readonly TaskServerClient _client;\n    private readonly RunnerStateStore _state;\n    private readonly Action<string> _log;\n    private readonly HashSet<string> _unreachableAnnounced = new(StringComparer.Ordinal);"
+    },
+    {
+      "id": "S114",
+      "path": "backend/Features/Tasks/LeaseEndpoints.cs",
+      "line": 587,
+      "symbol": "interrupted.Id, TaskStates.Ready",
+      "sha256": "7afb67a57bc46ad1b41cf55786a7361b9fc33b2cd3b1eff6ed0fdaa46388ceb8",
+      "excerpt": "                    }\n                    await transitions.MoveAsync(\n                        interrupted.Id, TaskStates.Ready, interrupted.WatchPath, ct,\n                        cause: $\"remote-runner-lease-recovery:{req.RunnerName.Trim()}\",\n                        authorityWrite: recoveryWrite,\n                        suppressProductExecution: true,\n                        transitionCause: LaneChangeCauses.LeaseRecovery,\n                        transitionDetail: requeueDecision.ReasonCode);\n                    if (recoveryWrite is not null)"
+    },
+    {
+      "id": "S115",
+      "path": "backend/Features/Runner/RunLeaseService.cs",
+      "line": 4,
+      "symbol": "Compatibility facade",
+      "sha256": "5741e84c486218387729f333e62de366b1cd6418166739ac9bda90c3eb5c24b2",
+      "excerpt": "\n/// <summary>\n/// Compatibility facade for the runner lease API. Canonical identity, lease,\n/// fence, epoch, heartbeat, and restart persistence are owned by\n/// <see cref=\"AttemptAuthorityService\"/>; this type preserves the established\n/// lease wire contract while callers migrate to explicit Attempt IDs. Epochs\n/// identify claim generations; an older epoch remains valid while its exact\n/// current lease drains.\n/// </summary>"
+    },
+    {
+      "id": "S116",
+      "path": "backend/Features/Pipeline/RemoteDeliverySettlementStore.cs",
+      "line": 154,
+      "symbol": "public static bool Advance",
+      "sha256": "3e10ead539e0276dab4f46a40067aaea8edac8b024504fa891bd5cdabccc33f3",
+      "excerpt": "    /// Returns false when there is no record for this folder.\n    /// </summary>\n    public static bool Advance(\n        string taskFolder,\n        RemoteDeliverySettlementStage stage,\n        string? integrationOutcome = null,\n        string? integrationDetail = null)\n    {\n        var current = Read(taskFolder);"
+    },
+    {
+      "id": "S117",
+      "path": "orchestrator-engine/EngineTaskServerClient.cs",
+      "line": 46,
+      "symbol": "public Task<OrchestrationClaimResponse> ClaimAsync",
+      "sha256": "af638ed7cc250068606efadb6baf1954db51fd8a28dacbcad0becb0ae5fa2f97",
+      "excerpt": "    }\n\n    public Task<OrchestrationClaimResponse> ClaimAsync(\n        OrchestrationClaimRequest request,\n        CancellationToken ct)\n        => PostAsync<OrchestrationClaimRequest, OrchestrationClaimResponse>(\n            \"/api/v1/orchestration/claims\",\n            request,\n            ct);"
+    },
+    {
+      "id": "S118",
+      "path": "task-server/TaskServerOrchestrationStore.cs",
+      "line": 424,
+      "symbol": "public async Task<OrchestrationRunDto> CompleteOrchestrationStageAsync",
+      "sha256": "ec9cc627321b3d80da675869015f3ac0dc5519ed635d63dc0b622b36133976dd",
+      "excerpt": "    }\n\n    public async Task<OrchestrationRunDto> CompleteOrchestrationStageAsync(\n        string runId,\n        CompleteOrchestrationStageRequest request,\n        string actorId,\n        CancellationToken ct)\n    {\n        RequireWritable();"
+    },
+    {
+      "id": "S119",
+      "path": "orchestrator-engine/OrchestratorEngineService.cs",
+      "line": 96,
+      "symbol": "private async Task ProcessClaimAsync",
+      "sha256": "e5fdf9569170e4ca488ca3f7e68b65ff7bb05be062a66161fac4e269ef1defef",
+      "excerpt": "    }\n\n    private async Task ProcessClaimAsync(\n        IOrchestrationStageHandler handler,\n        OrchestrationRunDto run,\n        OrchestrationLeaseDto lease,\n        CancellationToken ct)\n    {\n        try"
+    },
+    {
+      "id": "S120",
+      "path": "task-server/TaskServerOrchestrationStore.cs",
+      "line": 539,
+      "symbol": "UPDATE tasks",
+      "sha256": "ec9cc627321b3d80da675869015f3ac0dc5519ed635d63dc0b622b36133976dd",
+      "excerpt": "            {\n                var changed = await ExecuteAsync(connection, \"\"\"\n                    UPDATE tasks\n                       SET state = $state, version = version + 1, updated_at = $updated\n                     WHERE id = $task AND state = '4-auto-review' AND version = $task_version;\n                    \"\"\", ct, transaction,\n                    (\"$state\", decision.TaskState),\n                    (\"$updated\", Iso(now)),\n                    (\"$task_version\", currentTaskVersion),"
+    },
+    {
+      "id": "S121",
+      "path": "orchestrator-engine/OrchestratorEngineService.cs",
+      "line": 37,
+      "symbol": "Start(OrchestrationStage.ReviewDecision",
+      "sha256": "e5fdf9569170e4ca488ca3f7e68b65ff7bb05be062a66161fac4e269ef1defef",
+      "excerpt": "\n        var loops = new List<Task>();\n        Start(OrchestrationStage.ReviewDecision, _options.ReviewConcurrency);\n        Start(OrchestrationStage.Council, _options.CouncilConcurrency);\n        Start(OrchestrationStage.PostProcessing, _options.PostProcessingConcurrency);\n        Start(OrchestrationStage.GateDispatch, _options.GateDispatchConcurrency);\n        Start(OrchestrationStage.CompletionJudge, _options.CompletionJudgeConcurrency);\n        await Task.WhenAll(loops);\n        return;"
+    },
+    {
+      "id": "S122",
+      "path": "orchestrator-engine/EngineOptions.cs",
+      "line": 16,
+      "symbol": "public int PollSeconds",
+      "sha256": "61a2a7a493de28fe971b9acc3322215f6f5f832ead75bfce2f3b2d9d62e8e6f2",
+      "excerpt": "    public int GateDispatchConcurrency { get; init; } = 2;\n    public int CompletionJudgeConcurrency { get; init; } = 4;\n    public int PollSeconds { get; init; } = 2;\n    public int LeaseSeconds { get; init; } = 120;\n    public int HealthPort { get; init; } = EngineHealthProbe.DefaultPort;\n\n    public static EngineOptions FromEnvironment()\n        => Parse(Environment.GetEnvironmentVariable);\n"
+    },
+    {
+      "id": "S123",
+      "path": "orchestrator-engine/OrchestrationStageHandlers.cs",
+      "line": 149,
+      "symbol": "public sealed class PostProcessingLoop",
+      "sha256": "808dcd5ffdc7bb1280469e4ab342fd02a00a57a0767dc0384a030d71a7e72384",
+      "excerpt": "}\n\npublic sealed class PostProcessingLoop : IOrchestrationStageHandler\n{\n    public OrchestrationStage Stage => OrchestrationStage.PostProcessing;\n\n    public Task<OrchestrationStageDecision> ExecuteAsync(\n        OrchestrationRunDto run,\n        CancellationToken ct)"
+    },
+    {
+      "id": "S124",
+      "path": "orchestrator-engine/OrchestrationStageHandlers.cs",
+      "line": 168,
+      "symbol": "public sealed class GateDispatchLoop",
+      "sha256": "808dcd5ffdc7bb1280469e4ab342fd02a00a57a0767dc0384a030d71a7e72384",
+      "excerpt": "}\n\npublic sealed class GateDispatchLoop : IOrchestrationStageHandler\n{\n    public OrchestrationStage Stage => OrchestrationStage.GateDispatch;\n\n    public Task<OrchestrationStageDecision> ExecuteAsync(\n        OrchestrationRunDto run,\n        CancellationToken ct)"
+    },
+    {
+      "id": "S125",
+      "path": "orchestrator-engine/EngineTaskServerClient.cs",
+      "line": 63,
+      "symbol": "public Task<OrchestrationRunDto> ReleaseAsync",
+      "sha256": "af638ed7cc250068606efadb6baf1954db51fd8a28dacbcad0becb0ae5fa2f97",
+      "excerpt": "            ct);\n\n    public Task<OrchestrationRunDto> ReleaseAsync(\n        string runId,\n        ReleaseOrchestrationLeaseRequest request,\n        CancellationToken ct)\n        => PostAsync<ReleaseOrchestrationLeaseRequest, OrchestrationRunDto>(\n            $\"/api/v1/orchestration/runs/{Uri.EscapeDataString(runId)}/lease/release\",\n            request,"
+    },
+    {
+      "id": "S126",
+      "path": "task-server/TaskServerReviewStore.cs",
+      "line": 705,
+      "symbol": "public async Task<ReviewReportDto> ReportReviewAsync",
+      "sha256": "4021634218ea2c90b5a16ba571c03f7f2f394b2e5c60b2537e6fcc67d3dd4f57",
+      "excerpt": "    }\n\n    public async Task<ReviewReportDto> ReportReviewAsync(\n        string attemptId,\n        ReviewReportRequest request,\n        string actorId,\n        CancellationToken ct)\n    {\n        RequireWritable();"
+    }
+  ]
+}

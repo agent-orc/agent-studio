@@ -1,0 +1,30 @@
+{
+  "capturedAt": "2026-09-25T14:29:09Z",
+  "host": "agent-studio-runner",
+  "unit": "agent-runner.service",
+  "command": [
+    "journalctl",
+    "--utc",
+    "--since",
+    "2026-09-24 17:50 UTC",
+    "--until",
+    "2026-09-25 09:10 UTC",
+    "-u",
+    "agent-runner.service",
+    "--no-pager",
+    "-q",
+    "-o",
+    "short-iso-precise"
+  ],
+  "selection": "Route transition anchors, AGT-2894/2895 and AGT-2887/2889 claims, detached worker starts, lease-loss terminal and quarantine publication lines, and selected morning heartbeat errors. This is a selected extract, not complete incident telemetry.",
+  "timezone": "UTC",
+  "operatorAttribution": "Tunnel outage on 24\u201325 September; journal alone identifies Task Server route unavailability, not tunnel root cause.",
+  "deployedBuild": "Not established by this extract; distinct from pinned develop source baseline.",
+  "artifacts": [
+    {
+      "path": "assets/tunnel-outage-2026-09-24-25.log",
+      "sha256": "e30b134fe4690f72c4afa8b50d78c390bdce34a92c73fa2ef30a00566d710e89",
+      "lineCount": 49
+    }
+  ]
+}
