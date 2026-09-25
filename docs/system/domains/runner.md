@@ -64,6 +64,12 @@ state.
   identity. The connectivity capability's three-minute freshness deadline is
   the remote alarm because a broken route cannot deliver its own failure
   telemetry.
+- Provider-auth capability limits are accepted only from an explicit provider
+  refusal with a parseable reset. Signal-terminated runs and allowed quota
+  telemetry are excluded. Limited advertisements carry a scrubbed source run
+  and excerpt; expiry or a claim response's re-probe request refreshes the
+  provider status without restarting the daemon. A live same-provider run is
+  counter-evidence and makes the conflicting state claimable but degraded.
 - `backend/Features/Management/RunnerLinks/LinkSupervisor.cs`: Task Server-owned
   SSH reverse-link lifecycle, heartbeat subscription, functional route probe,
   remote listener cleanup, bounded retry ladder, silent child process and
@@ -714,6 +720,19 @@ state.
   Runner registration advertises the deployment release directory selected by
   `/opt/agent-host/current` (or `RUNNER_RELEASE_ID`) rather than the generic
   assembly package version.
+- `runner/RunnerReleaseIdentity.cs`,
+  `backend/Features/Runner/HostReleaseDrift.cs`, and
+  `backend/Features/Runner/HostReleaseDriftWatchdog.cs`: release-drift detection
+  (AGT-2826). The daemon reports release id, version, commit, and build instant
+  in registration and in every capability heartbeat; the pure policy compares
+  one host against the release this server runs; the watchdog projects the
+  verdict at `GET /api/v1/management/host-releases` for Execution Hosts and
+  raises one `host_release_drift` operator-feed alarm per host release that
+  stays more than 24 hours behind Stable. A same-instance registration may
+  retain its last reported release when the field is omitted, while a changed
+  instance clears an omitted identity to prevent rollback drift from being
+  hidden. Operator behaviour and the incident that motivated it live in
+  [docs/operations/remote-hosts.md](../../operations/remote-hosts.md).
 - Provider-auth advertisement changes are appended to the same bounded recovery
   history exposed by the management snapshot. Execution Hosts turns that data
   into per-CLI `OK`, `Retrying`, `Limited`, `Expiring`, `Unavailable`, and
@@ -723,7 +742,12 @@ state.
   Tool failures and indeterminate non-zero exits retain last-good; rate limits
   use the limited state. Two consecutive explicit failures are required before
   sign-in is blocked, and a later positive probe clears that provider circuit
-  without a runner restart.
+  without a runner restart. Provider-limit evidence is suppressed only by an
+  independently recorded termination fact. The legacy process boundary records
+  Bash's child wait status before it returns a conventional high exit code;
+  CAR does not infer a signal from an exit number. A voluntary exit 137 remains
+  eligible evidence, while recorded SIGTERM, SIGKILL, operator stop, and host
+  shutdown facts are excluded.
 - Provider HTTP 400, 403, or 404 request refusals such as
   `unsupported_parameter` are typed `ProviderRejectedRequest`. They do not
   update provider-auth capability state. A salvaged coding run continues on

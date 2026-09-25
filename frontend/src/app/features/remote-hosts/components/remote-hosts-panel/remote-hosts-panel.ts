@@ -26,6 +26,7 @@ import {
   groupPhysicalHosts,
   type PhysicalHostGroup,
 } from '../../models/physical-host-group';
+import { stableReleaseLabel } from '../../models/host-release-drift';
 import { NotificationComponent } from '../../../../components/notification/notification.component';
 import { BetterCandidateLinesComponent } from '../../../../components/better-candidate-lines/better-candidate-lines.component';
 
@@ -110,6 +111,12 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
     this.tableState.sort(this.hostGroups(), host => this.boardSlots(host)));
   readonly linkFailures = computed(() => this.hosts().filter(host =>
     !!host.runnerLink?.notificationRaisedAt && host.runnerLink.state !== 'up'));
+
+  /** Release reference and drift tally for the header (AGT-2826). */
+  readonly stableRelease = this.service.stableRelease;
+  readonly stableReleaseLabel = computed(() => stableReleaseLabel(this.stableRelease()));
+  readonly behindReleaseCount = computed(() => this.hostGroups()
+    .filter(group => group.machine.releaseDrift?.state === 'behind').length);
 
   /** Auto-review post-processing queue snapshot (AGT-2645). */
   readonly reviewQueueSnapshot = computed(() => this.reviewQueue.snapshot());

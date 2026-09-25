@@ -170,7 +170,10 @@ public class GitProjectInventoryTests : IDisposable
         {
             WriteFile(repoRoot, "history.txt", $"revision {index}");
             RunGit(repoRoot, "add", "-A");
-            RunGit(repoRoot, "commit", "-q", "-m", $"history {index}");
+            if (index == 11)
+                RunGit(repoRoot, "commit", "-q", "-m", $"history {index}", "-m", "Detailed commit body");
+            else
+                RunGit(repoRoot, "commit", "-q", "-m", $"history {index}");
         }
 
         var git = BuildGitService(repoRoot, watchPath);
@@ -185,6 +188,9 @@ public class GitProjectInventoryTests : IDisposable
         Assert.False(second.HasMore);
         Assert.Null(second.NextOffset);
         Assert.Single(first.Commits[0].ParentShas);
+        Assert.Equal("Detailed commit body", first.Commits[0].Body);
+        Assert.False(string.IsNullOrWhiteSpace(first.Commits[0].Committer));
+        Assert.NotEqual(default, first.Commits[0].CommitterDateUtc);
         Assert.Contains(first.Commits[0].Refs, reference => reference.Name == "HEAD");
         Assert.Contains(first.Commits[0].Refs, reference => reference.Name == "main");
         Assert.Empty(first.Commits.Select(commit => commit.Sha)

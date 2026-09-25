@@ -210,7 +210,8 @@ public sealed class TaskServerClient : IDisposable
                     : null,
                 BootstrapMaxParallelism: options.HostMaxParallelism,
                 ActiveAttempts: activeAttempts,
-                AttemptLeaseTtlSeconds: options.TtlSeconds);
+                AttemptLeaseTtlSeconds: options.TtlSeconds,
+                Release: RunnerReleaseIdentity.CurrentIdentity);
             try
             {
                 var registered = await SendJsonAsync<Contract.RegisterRunnerRequest, Contract.RunnerDto>(
@@ -736,7 +737,8 @@ public sealed class TaskServerClient : IDisposable
             return new RunnerClaimResponse(
                 RunnerClaimStatus.Empty,
                 Message: claim?.Message ?? "No task available.",
-                ReconciliationActions: FromContract(claim?.ReconciliationActions));
+                ReconciliationActions: FromContract(claim?.ReconciliationActions),
+                ReprobeCapabilities: claim?.ReprobeCapabilities);
 
         var legacyLease = new RunLeaseInfoDto(
             claim.Task.TaskKey,
@@ -1046,7 +1048,8 @@ public sealed class TaskServerClient : IDisposable
             180,
             generation,
             capabilities,
-            telemetry);
+            telemetry,
+            RunnerReleaseIdentity.CurrentIdentity);
         var snapshot = await SendJsonAsync<Contract.CapabilityAdvertisementRequest, Contract.RunnerCapabilitySnapshotDto>(
             HttpMethod.Put,
             $"/api/v1/runners/{Uri.EscapeDataString(options.RunnerId)}/capabilities",

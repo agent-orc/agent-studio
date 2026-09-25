@@ -51,7 +51,9 @@ public sealed record AdvertisedCapabilityDto(
     string? Signal = null,
     DateTime? ExpiresAt = null,
     DateTime? LimitedUntil = null,
-    DateTime? CredentialModifiedAt = null);
+    DateTime? CredentialModifiedAt = null,
+    string? EvidenceId = null,
+    string? EvidenceExcerpt = null);
 
 public sealed record CapabilityAdvertisementRequest(
     string RunnerId,
@@ -61,7 +63,8 @@ public sealed record CapabilityAdvertisementRequest(
     int FreshForSeconds,
     long Generation,
     IReadOnlyList<AdvertisedCapabilityDto> Capabilities,
-    HostTelemetrySnapshotDto? Telemetry = null);
+    HostTelemetrySnapshotDto? Telemetry = null,
+    RunnerReleaseIdentityDto? Release = null);
 
 public sealed record HostTelemetrySnapshotDto(
     DateTime ObservedAt,
@@ -158,7 +161,9 @@ public sealed record CapabilityHealthDto(
     string? Signal = null,
     DateTime? ExpiresAt = null,
     DateTime? LimitedUntil = null,
-    DateTime? CredentialModifiedAt = null);
+    DateTime? CredentialModifiedAt = null,
+    string? EvidenceId = null,
+    string? EvidenceExcerpt = null);
 
 /// <summary>One CLI installation observed by a runner capability probe.</summary>
 public sealed record InstalledCliDto(
@@ -226,7 +231,8 @@ public sealed record RunnerCapabilitySnapshotDto(
     DateTime? RestartedAt = null,
     int ReviewsLost = 0,
     IReadOnlyList<InstalledCliDto>? InstalledClis = null,
-    HostCliUpdateDto? CliUpdate = null);
+    HostCliUpdateDto? CliUpdate = null,
+    RunnerReleaseIdentityDto? Release = null);
 
 public static class InstalledCliProjection
 {

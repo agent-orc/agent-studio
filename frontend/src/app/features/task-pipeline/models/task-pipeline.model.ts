@@ -455,9 +455,18 @@ export interface TaskPipelineResponse {
    * from a step kind or terminal status.
    */
   resultFiles?: Record<string, string>;
+  /** Latest-first Remote Review evidence links for each aspect step. */
+  aspectEvidence?: Record<string, PipelineAspectEvidence[]>;
   /** Card-owned additions and append-only attempts from individual post-step runs. */
   onDemand?: {
     plannedStepIds: string[];
     attempts: OnDemandPostStepAttempt[];
   };
+}
+
+export interface PipelineAspectEvidence {
+  attemptId: string;
+  reportFile: string | null;
+  rawLogFile: string | null;
+  reviewGradeFile: string | null;
 }

@@ -52,7 +52,8 @@ internal sealed record DetachedJobResult(
     string StdErr,
     bool TimedOut,
     DateTime CompletedAtUtc,
-    bool LaunchFailed = false);
+    bool LaunchFailed = false,
+    int? Signal = null);
 
 internal sealed record DetachedJobProcessObservation(
     bool IsLive,
@@ -541,6 +542,7 @@ internal sealed class DurableAgentProcess
                     },
                     environment,
                     clearEnvironment: false,
+                    captureTerminationSignal: true,
                     ct: timeout.Token);
             }
             catch (OperationCanceledException) when (timeout.IsCancellationRequested)
@@ -570,7 +572,8 @@ internal sealed class DurableAgentProcess
             processResult.StdErr,
             timedOut,
             DateTime.UtcNow,
-            launchFailed);
+            launchFailed,
+            processResult.Signal);
         await WriteAtomicAsync(resultPath, JsonSerializer.Serialize(result, Json));
         return processResult.ExitCode;
     }

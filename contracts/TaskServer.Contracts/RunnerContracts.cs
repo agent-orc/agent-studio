@@ -11,7 +11,8 @@ public sealed record RegisterRunnerRequest(
     string? HostOrchestratorMaximum = null,
     int BootstrapMaxParallelism = 2,
     IReadOnlyList<RunnerActiveAttempt>? ActiveAttempts = null,
-    int AttemptLeaseTtlSeconds = 120);
+    int AttemptLeaseTtlSeconds = 120,
+    RunnerReleaseIdentityDto? Release = null);
 
 public static class RunnerAttemptKinds
 {
@@ -111,7 +112,8 @@ public sealed record ClaimResponse(
     RuntimeCapacitySettingsDto? RuntimeCapacity = null,
     ProviderModelFallback? ModelFallback = null,
     string? ContinuationBaseRef = null,
-    string? ContinuationBaseSha = null);
+    string? ContinuationBaseSha = null,
+    IReadOnlyList<string>? ReprobeCapabilities = null);
 
 /// <summary>A run-scoped sibling route selected after a provider refusal.</summary>
 public sealed record ProviderModelFallback(

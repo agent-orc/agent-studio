@@ -59,6 +59,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Runtime prompt registry, review companions, call telemetry, and costs | [contracts/runtime-prompts.md](../system/contracts/runtime-prompts.md) |
 | Workspace repository lifecycle and backlog recovery | [operations/workspace-repository-lifecycle.md](../operations/workspace-repository-lifecycle.md) |
 | Temp and cache hygiene on a runner host: the suite temp root, the review executor's per-command purge, the bounded product-owned preparation cache, and how to reset each (AGT-2858) | [operations/temp-and-cache-hygiene.md](../operations/temp-and-cache-hygiene.md) |
+| Torn NuGet preparation cache: recognition, automatic eviction, and integration replay (AGT-2901) | [operations/common-problems/torn-preparation-cache/](../operations/common-problems/torn-preparation-cache/README.md) |
 | Integration worktree: where delivery merges run, why the developer checkout is never used, and how to clean the slot up (AGT-2832) | [operations/git/integration-worktree.md](../operations/git/integration-worktree.md) |
 | Interrupted integration gate: the in-flight gate record, restart rollback-or-resume, and why `integrated` requires the pushed remote branch (AGT-2849) | [operations/git/interrupted-integration-gate.md](../operations/git/interrupted-integration-gate.md) |
 | Branch lifecycle and automatic reclamation (AGT-2793) | [concepts/task-integration-and-merge-workflow.md#branch-cleanup-agt-2009-agt-2793](../concepts/task-integration-and-merge-workflow.md#branch-cleanup-agt-2009-agt-2793) |

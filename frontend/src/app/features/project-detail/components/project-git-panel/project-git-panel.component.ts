@@ -10,8 +10,10 @@ import {
 } from '../../../git';
 import { ProjectBranchSweepComponent } from '../project-branch-sweep/project-branch-sweep.component';
 import { ProjectGitChangesComponent } from '../project-git-changes/project-git-changes.component';
+import { ProjectGitCommitDetailsComponent } from '../project-git-commit-details/project-git-commit-details.component';
 import { ProjectGitHistoryComponent } from '../project-git-history/project-git-history.component';
 import { ProjectGitTreeComponent } from '../project-git-tree/project-git-tree.component';
+import { ResizableSplitterDirective } from '../../../../components/resizable-splitter/resizable-splitter.directive';
 
 type LoadState = 'idle' | 'loading' | 'loaded' | 'error';
 
@@ -33,11 +35,17 @@ type GitSelection =
   imports: [
     ProjectBranchSweepComponent,
     ProjectGitChangesComponent,
+    ProjectGitCommitDetailsComponent,
     ProjectGitHistoryComponent,
     ProjectGitTreeComponent,
+    ResizableSplitterDirective,
   ],
   templateUrl: './project-git-panel.component.html',
   styleUrl: './project-git-panel.component.scss',
+  host: {
+    '(keydown.escape)': 'onEscape($event)',
+    '(window:hashchange)': 'selectDeepLinkedCommit()',
+  },
 })
 export class ProjectGitPanelComponent {
   private readonly projectGit = inject(ProjectGitService);
@@ -53,6 +61,8 @@ export class ProjectGitPanelComponent {
   readonly historyError = signal<string | null>(null);
   readonly selection = signal<GitSelection | null>(null);
   readonly inspectedCommit = signal<GitGraphCommit | null>(null);
+  readonly inspectedPath = signal<string | null>(null);
+  private readonly pendingSelectedSha = signal<string | null>(null);
 
   readonly tree = computed(() => buildGitTree(this.inventory()));
   readonly showEmpty = computed(() => {
@@ -76,12 +86,17 @@ export class ProjectGitPanelComponent {
     if (selection.kind === 'active') return selection.checkout.headSha;
     return selection.commit.sha;
   });
+  readonly selectedCommit = computed<GitGraphCommit | null>(() => {
+    const sha = this.selectedCommitSha();
+    return sha ? this.commits().find(commit => commit.sha === sha) ?? null : null;
+  });
 
   constructor() {
     effect(() => {
       const project = this.projectName();
       this.selection.set(null);
       this.inspectedCommit.set(null);
+      this.pendingSelectedSha.set(null);
       this.loadInventory(project);
     });
   }
@@ -92,27 +107,62 @@ export class ProjectGitPanelComponent {
 
   selectBranch(branch: GitBranchEntry): void {
     this.selection.set({ kind: 'branch', branch });
+    this.prepareExternalSelection(branch.tipSha);
   }
 
   selectWorktree(worktree: GitWorktreeEntry): void {
     this.selection.set({ kind: 'worktree', worktree });
+    this.prepareExternalSelection(worktree.headSha);
   }
 
   selectActive(checkout: GitActiveCheckout): void {
     this.selection.set({ kind: 'active', checkout });
+    this.prepareExternalSelection(checkout.headSha);
   }
 
   selectCommit(commit: GitGraphCommit): void {
+    const current = this.selection();
+    if (current?.kind === 'commit' && current.commit.sha === commit.sha) {
+      this.closeInspector();
+      return;
+    }
     this.selection.set({ kind: 'commit', commit });
+    this.inspectedCommit.set(null);
+    this.inspectedPath.set(null);
   }
 
-  inspectChanges(commit: GitGraphCommit): void {
+  onEscape(event: Event): void {
+    if (!this.selectedCommitSha()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.closeInspector();
+  }
+
+  inspectChanges(commit: GitGraphCommit, path: string | null = null): void {
     this.selection.set({ kind: 'commit', commit });
     this.inspectedCommit.set(commit);
+    this.inspectedPath.set(path);
   }
 
   closeChanges(): void {
     this.inspectedCommit.set(null);
+    this.inspectedPath.set(null);
+  }
+
+  closeInspector(): void {
+    this.selection.set(null);
+    this.closeChanges();
+  }
+
+  selectSha(sha: string): void {
+    const commit = this.commits().find(candidate => candidate.sha === sha || candidate.sha.startsWith(sha));
+    if (commit) {
+      this.pendingSelectedSha.set(null);
+      this.selectCommit(commit);
+    } else if (this.historyHasMore()) {
+      this.pendingSelectedSha.set(sha);
+      this.loadOlder();
+    }
   }
 
   loadOlder(): void {
@@ -130,6 +180,18 @@ export class ProjectGitPanelComponent {
         this.historyHasMore.set(page.hasMore);
         this.historyNextOffset.set(page.nextOffset);
         this.historyLoading.set(false);
+        const pendingSha = this.pendingSelectedSha();
+        if (pendingSha) {
+          const pendingCommit = this.commits().find(commit => commit.sha === pendingSha || commit.sha.startsWith(pendingSha));
+          if (pendingCommit) {
+            this.pendingSelectedSha.set(null);
+            this.selectCommit(pendingCommit);
+          } else if (page.hasMore) {
+            queueMicrotask(() => this.loadOlder());
+          } else {
+            this.pendingSelectedSha.set(null);
+          }
+        }
       },
       error: error => {
         this.historyError.set(this.describeError(error, 'Could not load older commits.'));
@@ -149,6 +211,7 @@ export class ProjectGitPanelComponent {
         this.historyNextOffset.set(inventory.history?.nextOffset ?? null);
         this.historyError.set(null);
         this.inventoryState.set('loaded');
+        this.selectDeepLinkedCommit();
         if (!inventory.isRepo) {
           this.inventoryError.set(inventory.error ?? 'This project has no git repository.');
         }
@@ -160,6 +223,24 @@ export class ProjectGitPanelComponent {
         this.inventoryState.set('error');
       },
     });
+  }
+
+  selectDeepLinkedCommit(): void {
+    const query = globalThis.location?.hash.split('?', 2)[1];
+    const sha = query ? new URLSearchParams(query).get('commit')?.trim() : null;
+    if (!sha || !/^[0-9a-f]{7,40}$/i.test(sha)) return;
+    const selectedSha = this.selectedCommitSha();
+    if (selectedSha === sha || selectedSha?.startsWith(sha)) return;
+    this.selectSha(sha);
+  }
+
+  private prepareExternalSelection(sha: string | null): void {
+    this.closeChanges();
+    if (!sha) return;
+    const isLoaded = this.commits().some(commit => commit.sha === sha || commit.sha.startsWith(sha));
+    if (isLoaded || !this.historyHasMore()) return;
+    this.pendingSelectedSha.set(sha);
+    this.loadOlder();
   }
 
   private describeError(error: unknown, fallback: string): string {

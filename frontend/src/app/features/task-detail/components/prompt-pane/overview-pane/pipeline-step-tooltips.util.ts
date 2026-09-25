@@ -86,6 +86,19 @@ export function buildStepStatusTooltip(
   return { title: `${label}: ${title}`, body };
 }
 
+export function buildAspectStatusTooltip(
+  label: string,
+  status: PipelineRowVm['status'],
+  verdict: string | null,
+  summary: string | null,
+): StructuredTooltip | null {
+  if (status !== 'passed' || !['concern', 'concerns'].includes((verdict ?? '').toLowerCase())) return null;
+  return {
+    title: `${label}: Passed with concerns`,
+    body: summary?.trim() || 'The review passed and recorded a non-blocking concern.',
+  };
+}
+
 /** Map a steering tone to the tooltip accent colour. */
 export function decisionTooltipSeverity(tone: SteeringInfo['tone']): TooltipSeverity {
   switch (tone) {

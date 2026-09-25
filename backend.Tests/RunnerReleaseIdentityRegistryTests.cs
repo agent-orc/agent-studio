@@ -1,0 +1,139 @@
+using AgentStudio.Runner;
+using Microsoft.Extensions.Time.Testing;
+using Xunit;
+using Contract = AgentStudio.TaskServer.Contracts;
+
+namespace AgentStudio.Tests;
+
+/// <summary>
+/// AGT-2826: the release identity reported in registration and in every
+/// capability heartbeat has to survive into the snapshot Execution Hosts reads,
+/// and an in-place host upgrade has to be visible from the heartbeat alone.
+/// </summary>
+public sealed class RunnerReleaseIdentityRegistryTests
+{
+    private static readonly DateTime HeartbeatAt = new(2026, 9, 15, 12, 0, 0, DateTimeKind.Utc);
+    private static V1ReviewExecutorRegistry Registry() => new(
+        new FakeTimeProvider(new DateTimeOffset(HeartbeatAt)));
+    private static readonly Contract.RunnerReleaseIdentityDto Old = new(
+        "agt-host-20260823T060000Z-bbbbbbb",
+        "0.2.7",
+        "bbbbbbb2222",
+        new DateTime(2026, 8, 23, 6, 0, 0, DateTimeKind.Utc));
+
+    private static readonly Contract.RunnerReleaseIdentityDto New = new(
+        "agt-host-20260911T080000Z-aaaaaaa",
+        "0.3.0",
+        "aaaaaaa1111",
+        new DateTime(2026, 9, 11, 8, 0, 0, DateTimeKind.Utc));
+
+    [Fact]
+    public void The_registered_release_identity_reaches_the_capability_snapshot()
+    {
+        var registry = Registry();
+        Register(registry, Old);
+
+        Advertise(registry, generation: 1, release: null);
+
+        Assert.Equal(Old, Assert.Single(registry.ListCapabilitySnapshots()).Release);
+    }
+
+    [Fact]
+    public void A_heartbeat_reporting_a_new_release_updates_the_snapshot()
+    {
+        var registry = Registry();
+        Register(registry, Old);
+
+        var advertised = Advertise(registry, generation: 1, release: New);
+
+        Assert.Equal(New, advertised.Release);
+        Assert.Equal(New, Assert.Single(registry.ListCapabilitySnapshots()).Release);
+    }
+
+    /// <summary>
+    /// A daemon predating the field must not blank the host's release, which
+    /// would read as "not reported" and hide a real drift.
+    /// </summary>
+    [Fact]
+    public void A_heartbeat_without_the_field_keeps_the_last_known_release()
+    {
+        var registry = Registry();
+        Register(registry, Old);
+        Advertise(registry, generation: 1, release: New);
+
+        Advertise(registry, generation: 2, release: null);
+
+        Assert.Equal(New, Assert.Single(registry.ListCapabilitySnapshots()).Release);
+    }
+
+    [Fact]
+    public void A_same_instance_registration_without_the_field_keeps_the_last_known_release()
+    {
+        var registry = Registry();
+        Register(registry, Old);
+
+        Register(registry, release: null);
+
+        Assert.Equal(Old, Assert.Single(registry.ListCapabilitySnapshots()).Release);
+    }
+
+    [Fact]
+    public void A_replacement_instance_without_the_field_clears_the_previous_release()
+    {
+        var registry = Registry();
+        Register(registry, Old);
+
+        Register(registry, release: null, instanceId: "instance-2");
+
+        Assert.Null(Assert.Single(registry.ListCapabilitySnapshots()).Release);
+    }
+
+    [Fact]
+    public void A_replacement_instance_uses_the_release_it_reports()
+    {
+        var registry = Registry();
+        Register(registry, Old);
+
+        Register(registry, New, instanceId: "instance-2");
+
+        Assert.Equal(New, Assert.Single(registry.ListCapabilitySnapshots()).Release);
+    }
+
+    [Fact]
+    public void A_host_that_never_reported_a_release_stays_null()
+    {
+        var registry = Registry();
+        Register(registry, release: null);
+
+        Advertise(registry, generation: 1, release: null);
+
+        Assert.Null(Assert.Single(registry.ListCapabilitySnapshots()).Release);
+    }
+
+    private static void Register(
+        V1ReviewExecutorRegistry registry,
+        Contract.RunnerReleaseIdentityDto? release,
+        string instanceId = "instance-1")
+        => registry.Register("runner-1", new Contract.RegisterRunnerRequest(
+            "runner-1",
+            "host-1",
+            instanceId,
+            release?.ReleaseId ?? "unknown",
+            Contract.TaskServerProtocol.Current,
+            [Contract.ReviewCapabilities.CodingExecutor],
+            Release: release));
+
+    private static Contract.RunnerCapabilitySnapshotDto Advertise(
+        V1ReviewExecutorRegistry registry,
+        long generation,
+        Contract.RunnerReleaseIdentityDto? release)
+        => registry.AdvertiseCapabilities("runner-1", new Contract.CapabilityAdvertisementRequest(
+            "runner-1",
+            "instance-1",
+            Contract.CapabilityProtocol.CurrentSchemaVersion,
+            HeartbeatAt,
+            180,
+            generation,
+            [new Contract.AdvertisedCapabilityDto(Contract.CapabilityProtocol.CodingExecutor, "executor")],
+            Release: release));
+}

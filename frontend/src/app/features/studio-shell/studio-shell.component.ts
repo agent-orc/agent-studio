@@ -63,6 +63,7 @@ import { ExplorerSectionsService } from './services/explorer-sections.service';
 import { ExplorerWorkbenchStateService } from './services/explorer-workbench-state.service';
 import { buildProjectSidebarRows, type ProjectSidebarRow } from './studio-shell.project-rows';
 import { StudioTab, studioTabKey } from './studio-shell.types';
+import { titleFromDocumentPath, truncateTabTitle } from './studio-shell.tab-labels';
 import { ALL_PROJECTS_BOARD_NAME, taskTabProjectScope } from './services/task-tab-scope';
 import { GlobalSearchComponent } from './components/global-search/global-search.component';
 import { OrchestratorFeedStore } from '../orchestrator';
@@ -1150,8 +1151,7 @@ export class StudioShellComponent {
       }
       case 'hub': {
         if (tab.section === 'wiki' && tab.wikiTarget && tab.wikiTarget.kind !== 'overview') {
-          const pathParts = tab.wikiTarget.relPath.split('/');
-          const targetLabel = pathParts[pathParts.length - 1] || tab.wikiTarget.relPath;
+          const targetLabel = tab.wikiTarget.title || titleFromDocumentPath(tab.wikiTarget.relPath);
           return `${this.projectShortLabel(tab.projectName)} · ${targetLabel}`;
         }
         const railItem = this.railItemForSection(tab.section);
@@ -1177,26 +1177,51 @@ export class StudioShellComponent {
     }
   }
 
+  /** Stable context chip shown before the tab title on the same text line. */
+  tabPrefix(tab: StudioTab): string | null {
+    switch (tab.kind) {
+      case 'task':
+        return this.findJob(tab.taskKey)?.key || this.taskIdFromKey(tab.taskKey);
+      case 'board':
+        return tab.projectName === '__all__' ? 'All' : this.projectShortLabel(tab.projectName);
+      case 'epics':
+        return tab.projectName === null ? 'All' : this.projectShortLabel(tab.projectName);
+      case 'hub':
+        return this.projectShortLabel(tab.projectName);
+      default:
+        return null;
+    }
+  }
+
+  /** Title portion after the prefix chip, without repeating project or task identity. */
+  tabTitle(tab: StudioTab): string {
+    switch (tab.kind) {
+      case 'task': {
+        const job = this.findJob(tab.taskKey);
+        return job?.title || job?.key || job?.id || this.taskIdFromKey(tab.taskKey);
+      }
+      case 'board': return 'Board';
+      case 'epics': return 'Epics';
+      case 'hub': {
+        if (tab.section === 'wiki' && tab.wikiTarget && tab.wikiTarget.kind !== 'overview') {
+          return tab.wikiTarget.title || titleFromDocumentPath(tab.wikiTarget.relPath);
+        }
+        const railItem = this.railItemForSection(tab.section);
+        return railItem.key === DEFAULT_PROJECT_RAIL_KEY ? 'Deck' : railItem.label;
+      }
+      default:
+        return this.tabLabel(tab);
+    }
+  }
+
+  tabVisibleTitle(tab: StudioTab): string { return truncateTabTitle(this.tabTitle(tab)); }
+
   /** A task key is persisted as `<watchPath>::<jobId>`. During shell restore
    * the tab can render before board data resolves, so its safe fallback must
    * be the user-facing job id rather than the filesystem-bearing key. */
   private taskIdFromKey(taskKey: string): string {
     const separator = taskKey.lastIndexOf('::');
     return separator >= 0 ? taskKey.slice(separator + 2) : taskKey;
-  }
-
-  /** Marker for the tab list — used for the small chip on the left
-   *  edge of the tab (e.g. `#90` for tasks). The hub / diff / activity
-   *  tab labels already include the kind ("· Deck" / commit SHA /
-   *  "Activity · …"), so we only render a leading num pill for
-   *  task tabs where the `#order` adds info the title doesn't repeat. */
-  tabNum(tab: StudioTab): string | null {
-    if (tab.kind === 'task') {
-      const job = this.findJob(tab.taskKey);
-      if (!job) return null;
-      return job.key || `#${job.order ?? '?'}`;
-    }
-    return null;
   }
 
   /** Leading icon for the tab strip. Deck tabs show their active section's
@@ -1265,7 +1290,7 @@ export class StudioShellComponent {
     const label = this.tabLabel(tab);
     if (tab.kind === 'hub' && tab.section === 'wiki'
       && tab.wikiTarget && tab.wikiTarget.kind !== 'overview') {
-      return `${name ?? tab.projectName}: ${tab.wikiTarget.relPath}`;
+      return `${name ?? tab.projectName}: ${this.tabTitle(tab)} (${tab.wikiTarget.relPath})`;
     }
     return name ? `${name} — ${label}` : label;
   }

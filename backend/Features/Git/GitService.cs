@@ -358,7 +358,8 @@ public sealed record GitTaskBadge(
     string TaskKey,
     string Key,
     string Title,
-    string Lane);
+    string Lane,
+    string? RunId = null);
 
 /// <summary>A ref decoration attached to one commit in the graph.</summary>
 public sealed record GitCommitRef(string Name, string Kind, bool IsRemote);
@@ -387,6 +388,9 @@ public sealed record GitGraphCommit
     public DateTime AuthorDateUtc { get; init; }
     public string Author { get; init; } = "";
     public string Subject { get; init; } = "";
+    public string Body { get; init; } = "";
+    public string Committer { get; init; } = "";
+    public DateTime CommitterDateUtc { get; init; }
     public int FilesChanged { get; init; }
     public int Added { get; init; }
     public int Removed { get; init; }
@@ -1646,7 +1650,7 @@ public class GitService
         const char US = '\x1f';
         const char RS = '\x1e';
         var format = string.Join("%x1f",
-            "%H", "%h", "%P", "%aI", "%aN", "%s", "%D");
+            "%H", "%h", "%P", "%aI", "%aN", "%s", "%D", "%b", "%cN", "%cI") + "%x00";
         var args = new List<string>
         {
             "log",
@@ -1669,22 +1673,27 @@ public class GitService
         var commits = new List<GitGraphCommit>();
         foreach (var block in output.Replace("\r\n", "\n").Split(RS))
         {
-            var lines = block.Split('\n');
-            var recordLine = lines.FirstOrDefault(line => !string.IsNullOrWhiteSpace(line));
-            if (recordLine == null) continue;
-            var parts = recordLine.Split(US);
-            if (parts.Length < 7) continue;
+            var nul = block.IndexOf('\0');
+            if (nul < 0) continue;
+            var metadata = block[..nul].TrimStart('\n', '\r');
+            var shortstatText = block[(nul + 1)..];
+            var parts = metadata.Split(US);
+            if (parts.Length < 10) continue;
             if (!DateTime.TryParse(
                     parts[3],
                     System.Globalization.CultureInfo.InvariantCulture,
                     System.Globalization.DateTimeStyles.AssumeUniversal
                     | System.Globalization.DateTimeStyles.AdjustToUniversal,
-                    out var parsedAt))
+                out var parsedAt))
                 continue;
-            var shortstat = lines
-                .SkipWhile(line => !ReferenceEquals(line, recordLine)
-                    && !string.Equals(line, recordLine, StringComparison.Ordinal))
-                .Skip(1)
+            if (!DateTime.TryParse(
+                    parts[9].Trim(),
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AssumeUniversal
+                    | System.Globalization.DateTimeStyles.AdjustToUniversal,
+                    out var committedAt))
+                committedAt = parsedAt;
+            var shortstat = shortstatText.Split('\n')
                 .FirstOrDefault(line => line.Contains(" changed", StringComparison.Ordinal));
             var (files, added, removed) = ParseShortstat(shortstat);
             commits.Add(new GitGraphCommit
@@ -1696,6 +1705,9 @@ public class GitService
                 AuthorDateUtc = DateTime.SpecifyKind(parsedAt, DateTimeKind.Utc),
                 Author = parts[4],
                 Subject = parts[5],
+                Body = parts[7].Trim(),
+                Committer = parts[8].Trim(),
+                CommitterDateUtc = DateTime.SpecifyKind(committedAt, DateTimeKind.Utc),
                 FilesChanged = files,
                 Added = added,
                 Removed = removed,

@@ -675,11 +675,12 @@ public sealed partial class TaskServerStore
                     host_orchestrator_minimum, host_orchestrator_maximum,
                     role_max_parallelism,
                     effective_max_parallelism, runtime_capacity_applied_at,
-                    runtime_capacity_applied_version)
+                    runtime_capacity_applied_version, release_identity_json)
                 VALUES (
                     $id, $name, $host, $instance, $version, $protocol,
                     $capabilities, 'active', $now, $now, $hostOrchestratorMinimum,
-                    $hostOrchestratorMaximum, $roleMaxParallelism, NULL, NULL, NULL)
+                    $hostOrchestratorMaximum, $roleMaxParallelism, NULL, NULL, NULL,
+                    $release)
                 ON CONFLICT(id) DO UPDATE SET
                     name = excluded.name,
                     host_id = excluded.host_id,
@@ -690,6 +691,17 @@ public sealed partial class TaskServerStore
                     host_orchestrator_minimum = excluded.host_orchestrator_minimum,
                     host_orchestrator_maximum = excluded.host_orchestrator_maximum,
                     role_max_parallelism = excluded.role_max_parallelism,
+                    -- Only the same daemon instance may retain its last known
+                    -- identity when the field is omitted. A replacement daemon
+                    -- must report its own identity instead of inheriting one from
+                    -- the process it replaced.
+                    release_identity_json = CASE
+                        WHEN runners.instance_id = excluded.instance_id
+                        THEN COALESCE(
+                            excluded.release_identity_json,
+                            runners.release_identity_json)
+                        ELSE excluded.release_identity_json
+                    END,
                     effective_max_parallelism = CASE
                         WHEN runners.instance_id <> excluded.instance_id
                           OR runners.host_id <> excluded.host_id
@@ -717,6 +729,7 @@ public sealed partial class TaskServerStore
                 ("$hostOrchestratorMinimum", request.HostOrchestratorMinimum),
                 ("$hostOrchestratorMaximum", request.HostOrchestratorMaximum),
                 ("$roleMaxParallelism", bootstrapMaxParallelism),
+                ("$release", request.Release is null ? null : JsonSerializer.Serialize(request.Release)),
                 ("$now", now));
             if (managesCodingCapacity)
             {
@@ -1285,7 +1298,10 @@ public sealed partial class TaskServerStore
                     "empty",
                     Message: capabilityAdmission.Message,
                     ReconciliationActions: reconciliationActions,
-                    RuntimeCapacity: runtimeCapacity);
+                    RuntimeCapacity: runtimeCapacity,
+                    ReprobeCapabilities: capabilityAdmission.Required
+                        .Where(key => key.StartsWith("provider-auth:", StringComparison.Ordinal))
+                        .ToArray());
                 return;
             }
             if (request.AvailableSlots <= 0)
@@ -3137,7 +3153,8 @@ public sealed partial class TaskServerStore
                 role_max_parallelism INTEGER,
                 effective_max_parallelism INTEGER,
                 runtime_capacity_applied_at TEXT,
-                runtime_capacity_applied_version INTEGER
+                runtime_capacity_applied_version INTEGER,
+                release_identity_json TEXT
             );
             CREATE TABLE IF NOT EXISTS runtime_capacity_settings(
                 host_id TEXT PRIMARY KEY,
@@ -3173,6 +3190,8 @@ public sealed partial class TaskServerStore
                 credential_expires_at TEXT,
                 limited_until TEXT,
                 credential_modified_at TEXT,
+                evidence_id TEXT,
+                evidence_excerpt TEXT,
                 advertised_at TEXT NOT NULL,
                 fresh_until TEXT NOT NULL,
                 generation INTEGER NOT NULL,
@@ -3600,10 +3619,13 @@ public sealed partial class TaskServerStore
         await EnsureColumnAsync(connection, "runners", "effective_max_parallelism", "INTEGER", ct);
         await EnsureColumnAsync(connection, "runners", "runtime_capacity_applied_at", "TEXT", ct);
         await EnsureColumnAsync(connection, "runners", "runtime_capacity_applied_version", "INTEGER", ct);
+        await EnsureColumnAsync(connection, "runners", "release_identity_json", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "signal", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "credential_expires_at", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "limited_until", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "credential_modified_at", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "evidence_id", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "evidence_excerpt", "TEXT", ct);
         await EnsureColumnAsync(connection, "orchestration_runs", "task_version", "INTEGER NOT NULL DEFAULT 0", ct);
         await ExecuteAsync(connection, """
             INSERT INTO runtime_capacity_settings(

@@ -7,6 +7,7 @@ import { CapabilityHealthComponent } from '../capability-health/capability-healt
 import { GitTokenCapabilityComponent } from '../git-token-capability/git-token-capability';
 import { HostWorkloadSummaryComponent } from '../host-workload-summary/host-workload-summary';
 import { HostTelemetryHistoryComponent } from '../host-telemetry-history/host-telemetry-history';
+import { HostReleaseIdentityComponent } from '../host-release-identity/host-release-identity';
 import { RemoteHostDetailSummaryComponent } from '../remote-host-detail-summary/remote-host-detail-summary';
 import {
   RemoteHostRoleRowComponent,
@@ -36,6 +37,7 @@ import {
   type RemoteHost,
 } from '../../models/remote-host.model';
 import { freshHostTelemetry, latestHostTelemetry } from '../../models/running-truth';
+import type { StableReleaseIdentity } from '../../models/host-release-drift';
 import {
   claudeSignInTarget,
   providerAuthBadgesForHost,
@@ -74,6 +76,7 @@ interface Meter {
     GitTokenCapabilityComponent,
     HostWorkloadSummaryComponent,
     HostTelemetryHistoryComponent,
+    HostReleaseIdentityComponent,
     RuntimeCapacityEditorComponent,
     RemoteHostRoleRowComponent,
     RemoteHostDetailSummaryComponent,
@@ -103,6 +106,8 @@ export class RemoteHostCardComponent {
    */
   readonly projectSlots = input<readonly HostProjectSlots[]>([]);
   readonly expanded = input(false);
+  /** The release every row is measured against; null until it is loaded. */
+  readonly stableRelease = input<StableReleaseIdentity | null>(null);
   /** Injected clock so the relative heartbeat label ticks without a per-card timer. */
   readonly now = input<number>(Date.now());
   readonly action = output<{ kind: HostActionKind; id: string }>();
@@ -233,7 +238,6 @@ export class RemoteHostCardComponent {
     return load === null || load === undefined ? null : Math.round(clampPct(load));
   });
   readonly loadLabel = computed(() => this.loadPct() === null ? null : `${this.loadPct()}%`);
-  readonly releaseLabel = computed(() => this.host().releaseId?.trim() || null);
   readonly detailId = computed(() => `remote-host-detail-${this.host().id.replace(/[^a-zA-Z0-9_-]/g, '-')}`);
   readonly healthyCapabilityCount = computed(() => {
     const health = this.host().capabilityHealth ?? [];

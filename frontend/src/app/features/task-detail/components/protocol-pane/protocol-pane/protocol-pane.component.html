@@ -272,6 +272,7 @@
                                  [provenance]="selectedPreviousResult() ? null : statusProvenance()"
                                  [copyLabel]="copyIconLabel()"
                                  (navigateMetric)="onResultMetricNavigate($event)"
+                                 (openDocument)="openAspectDocument($event)"
                                  (copyRequested)="copyProtocolMarkdown()"
                                  (moreActions)="openProtocolMenu($event)"
                                  (openSource)="openSource($event)"

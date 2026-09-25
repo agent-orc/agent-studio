@@ -538,9 +538,17 @@ builder.Services.AddSingleton<AutoReviewQueueStagnationWatchdog>();
 builder.Services.AddSingleton<AdaptiveReviewParallelismAdvisor>();
 builder.Services.AddSingleton<CodingYieldAdvisor>();
 builder.Services.AddSingleton<ReviewInfrastructureRetryScheduler>();
+// AGT-2826: the release this process runs is the reference every execution host
+// is compared against, so it is resolved once and shared by /api/system/version
+// and the host-release drift watchdog.
+builder.Services.AddSingleton(sp => BuildIdentity.Load(sp.GetRequiredService<IConfiguration>()));
+builder.Services.AddSingleton(sp => StableReleaseIdentity.FromBuildIdentity(
+    sp.GetRequiredService<BuildIdentity>()));
+builder.Services.AddSingleton<HostReleaseDriftWatchdog>();
 if (!publicDemoExecutionProfile)
 {
     builder.Services.AddHostedService(sp => sp.GetRequiredService<RemoteQueueStarvationWatchdog>());
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<HostReleaseDriftWatchdog>());
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AutoReviewQueueStagnationWatchdog>());
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AdaptiveReviewParallelismAdvisor>());
     builder.Services.AddHostedService(sp => sp.GetRequiredService<CodingYieldAdvisor>());
