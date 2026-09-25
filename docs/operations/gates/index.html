@@ -156,7 +156,7 @@ svg.diagram .num { font: 700 10px var(--article-sans); fill: var(--gate-note); l
       <li><a href="#sect6">&sect;6 Alternatives</a></li>
       <li><a href="#sect7">&sect;7 Recommendation</a></li>
       <li><a href="#sect8">&sect;8 Evidence</a></li>
-      <li><a href="#sect9">&sect;9 Open decisions</a></li>
+      <li><a href="#sect9">&sect;9 Decision record</a></li>
       <li><a href="#sect10">&sect;10 Evidence appendix: two closed measurements</a></li>
       <li><a href="#sect11">&sect;11 Consolidation record and sources</a></li>
     </ul>
@@ -405,10 +405,11 @@ svg.diagram .num { font: 700 10px var(--article-sans); fill: var(--gate-note); l
   <p>Batching decides <i>what</i> a suite run covers. This section decides <i>who owns the run</i>. The
   direct SSH subprocess described by the source Dossier is no longer the canonical Remote Review
   build/test path: that work is claimed by an Agent Host as part of a durable, fenced
-  <code>ReviewAttempt</code>. The remaining gap is narrower and still open. Integration and release
-  gates run under the integration owner's in-process exact-subject transaction, so they are not
-  independently claimable, pipeline-stage-neutral <code>GateAttempt</code>s. The contract below remains
-  the proposed replacement for that ownership gap, not a description of shipped gate-step behavior.</p>
+  <code>ReviewAttempt</code>. On 25 September 2026, a dedicated
+  <code>GateAttempt</code> pilot was added behind a default-off switch for the
+  post-build-test stage. Integration and release gates still run under the integration
+  owner's in-process exact-subject transaction. The contract below governs the new
+  pilot and any later gate migration; it does not claim that the operator canary has passed.</p>
 
   <h3>What the replacement must make true</h3>
   <table>
@@ -538,11 +539,13 @@ svg.diagram .num { font: 700 10px var(--article-sans); fill: var(--gate-note); l
   removed or explicitly retained is a separate choice, and it must not survive by accident. The teardown
   threshold is open decision <a href="#d9">D9</a>.</p>
   <div class="box warn">
-    <b>Status of this section.</b> The dedicated <code>GateSubject</code>, <code>GateAttempt</code>,
-    <code>GateLease</code>, <code>GatePlan</code>, and <code>GateReport</code> contract is not implemented.
-    Review-plane primitives now prove the materialization, lease, fence, evidence, and cleanup patterns,
-    but they remain coupled to the Review lifecycle. The choice in D7 and the integration/release-gate
-    migration are still open.
+    <b>Implementation status, 25 September 2026.</b> The dedicated
+    <code>GateSubject</code>, <code>GateAttempt</code>, <code>GateLease</code>,
+    <code>GatePlan</code>, and <code>GateReport</code> pilot is implemented behind the
+    default-off post-build-test switch. The registered-host canary, restart matrix,
+    and throughput comparison are operator-run follow-ups. The backend gate remains
+    active while the switch is off. Integration/release-gate migration and SSH bridge
+    teardown are separate work.
   </div>
 
   <h2 id="sect5"><span class="number">&sect;5</span> Validation economy: what survives from async validation</h2>
@@ -679,10 +682,11 @@ svg.diagram .num { font: 700 10px var(--article-sans); fill: var(--gate-note); l
     <a class="evidence" href="#d10"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b>Batch green rate and same-SHA re-test rate, not yet measured</b><small>Both are derivable from existing pipeline data without building anything. They decide D5, D6 and D10. No number in this Dossier should be read as if they had already been measured.</small></span></a>
   </div>
 
-  <h2 id="sect9" data-concept-section="open-decisions" data-document-section="open-decisions"><span class="number">&sect;9</span> Open decisions</h2>
-  <p>Ten choices carried forward from the three merged Dossiers. None has been decided; none of the three
-  sources ever reached an operator sight review. Recommended options are marked. Decisions D1 to D6
-  govern the batch gate, D7 to D9 the remote gate, D10 the validation economy.</p>
+  <h2 id="sect9" data-concept-section="open-decisions" data-document-section="open-decisions"><span class="number">&sect;9</span> Decision record</h2>
+  <p>Ten choices carried forward from the three merged Dossiers. The operator selected
+  recommended option A for D1 to D10 on 25 September 2026. D1 to D6 govern the batch gate,
+  D7 to D9 the remote gate, and D10 the validation economy. The option descriptions and
+  earlier evidence remain below as the decision record.</p>
 
   <h3>Batch gate</h3>
   <div class="decision" id="d1" data-decision-id="gate-ordering" data-decision-kind="single" data-decision-label="When does the full suite run?">
@@ -730,6 +734,9 @@ svg.diagram .num { font: 700 10px var(--article-sans); fill: var(--gate-note); l
   </div>
 
   <h3>Remote gate</h3>
+  <p><b>Operator decision, 25 September 2026:</b> D7, D8 and D9 take their
+    recommended option A. The first delivery keeps the remote switch off;
+    the host canary and throughput comparison precede any default change.</p>
   <div class="decision" id="d7" data-decision-id="gate-ownership-shape" data-decision-kind="single" data-decision-label="Primary shape of remote gate execution">
     <h3>D7 &middot; Primary shape of remote gate execution</h3>
     <label data-option-id="claimable-step" data-option-label="A &middot; Claimable GateAttempt in the Task Server protocol (recommended)"><input type="radio" name="gate-ownership-shape" value="claimable-step" checked><span><b>A &middot; A dedicated claimable gate step, with capability as an admission predicate and review workspace primitives reused but not the review lifecycle (recommended)</b><span class="d">Task Server owns durable gate truth, Engine owns dispatch, Agent Host executes. Share workspace materialization, containment namespace, command evidence and cleanup; keep the review attempt as the semantic review lifecycle. Start the catalogue with the post-build-test gate only.</span></span></label>

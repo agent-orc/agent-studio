@@ -8,6 +8,33 @@ namespace AgentRunner.Tests;
 public sealed class RunnerCapabilityProbeTests
 {
     [Fact]
+    public void Gate_role_advertises_dedicated_claim_and_materialization_capabilities()
+    {
+        var options = new RunnerOptions
+        {
+            ServerUrl = "http://127.0.0.1:5031",
+            RunnerId = "gate-a",
+            RunnerName = "gate-a",
+            Hostname = "host-a",
+            BackendName = "test",
+            Role = "gate",
+            WorkDir = Path.GetTempPath(),
+            BaseBranch = "main",
+            CliBin = "sh",
+            CliArgs = "",
+        };
+
+        var registered = RunnerCapabilityProbe.GateRegistrationCapabilities(options);
+        var advertised = RunnerCapabilityProbe.Advertise(options, gitPushReady: false);
+        Assert.Contains(GateCapabilities.Executor, registered);
+        Assert.Contains(advertised, item => item.Key == GateCapabilities.Executor);
+        Assert.Contains(advertised, item => item.Key == GateCapabilities.GitMaterialization);
+        Assert.Contains(advertised, item => item.Key == GateCapabilities.BundleMaterialization);
+        Assert.DoesNotContain(advertised, item => item.Key == CapabilityProtocol.ReviewExecutor);
+        Assert.DoesNotContain(advertised, item => item.Key == CapabilityProtocol.CodingExecutor);
+    }
+
+    [Fact]
     public async Task Capability_snapshot_reports_cli_version_and_resolved_install_path()
     {
         if (!OperatingSystem.IsLinux()) return;

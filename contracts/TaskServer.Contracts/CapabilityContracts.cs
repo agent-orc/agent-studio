@@ -228,7 +228,8 @@ public sealed record RunnerCapabilitySnapshotDto(
     int ReviewsLost = 0,
     IReadOnlyList<InstalledCliDto>? InstalledClis = null,
     HostCliUpdateDto? CliUpdate = null,
-    RunnerReleaseIdentityDto? Release = null);
+    RunnerReleaseIdentityDto? Release = null,
+    int ActiveGateCount = 0);
 
 public static class InstalledCliProjection
 {

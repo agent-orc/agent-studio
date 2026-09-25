@@ -422,6 +422,65 @@ public static class TaskServerEndpoints
             => await InvokeNullableAsync(() => store.GetArtifactContentAsync(runId, artifactId, ct)))
             .RequireTaskServerScope(TaskServerScopes.TasksRead);
 
+        var gates = api.MapGroup("/gates")
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
+        gates.MapPost("/subjects", async (
+            HttpContext context, CreateGateSubjectRequest request, TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.CreateGateSubjectAsync(request, Actor(context), ct), StatusCodes.Status201Created))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
+            .RequireTaskServerScope(TaskServerScopes.OrchestrationWrite);
+        gates.MapGet("/subjects/{subjectId}", async (
+            string subjectId, TaskServerStore store, CancellationToken ct)
+            => await InvokeNullableAsync(() => store.GetGateStatusAsync(subjectId, ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
+        gates.MapPost("/subjects/{subjectId}/cancel", async (
+            HttpContext context, string subjectId, TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.CancelGateSubjectAsync(subjectId, Actor(context), ct)))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
+            .RequireTaskServerScope(TaskServerScopes.OrchestrationWrite);
+        gates.MapGet("/review-sources/{reviewSubjectId}", async (
+            string reviewSubjectId, TaskServerStore store, CancellationToken ct)
+            => await InvokeNullableAsync(() => store.GetReviewSubjectAsync(reviewSubjectId, ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
+        gates.MapPost("/claims", async (
+            HttpContext context, GateClaimRequest request, TaskServerStore store, CancellationToken ct) =>
+        {
+            var principal = context.TaskServerPrincipal();
+            if (principal is { Kind: TaskServerPrincipalKinds.Runner, RunnerId: { } runnerId }
+                && runnerId != request.ExecutorId)
+                return Results.Json(new ApiError("runner-identity-mismatch", "Gate executor identity differs from its principal."),
+                    statusCode: StatusCodes.Status403Forbidden);
+            return await InvokeAsync(() => store.ClaimGateAsync(request, Actor(context), ct));
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim)
+            .RequireTaskServerScope(TaskServerScopes.ReviewsClaim);
+        gates.MapPost("/attempts/{attemptId}/renew", async (
+            string attemptId, GateRenewRequest request, TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.RenewGateAsync(attemptId, request, ct)))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue)
+            .RequireTaskServerScope(TaskServerScopes.ReviewsWrite);
+        gates.MapPost("/attempts/{attemptId}/phase", async (
+            string attemptId, GatePhaseRequest request, TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.AdvanceGateAsync(attemptId, request, ct)))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue)
+            .RequireTaskServerScope(TaskServerScopes.ReviewsWrite);
+        gates.MapPost("/attempts/{attemptId}/report", async (
+            HttpContext context, string attemptId, SubmitGateReportRequest request, TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.ReportGateAsync(attemptId, request, Actor(context), ct)))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
+            .RequireTaskServerScope(TaskServerScopes.ReviewsWrite);
+        gates.MapPost("/attempts/{attemptId}/containment", async (
+            HttpContext context, string attemptId, GateContainmentRequest request,
+            TaskServerStore store, CancellationToken ct)
+            => context.TaskServerPrincipal() is
+                { Kind: TaskServerPrincipalKinds.Runner, RunnerId: { } runnerId }
+                && runnerId != request.ExecutorId
+                    ? Results.Json(new ApiError("runner-identity-mismatch", "Containment executor identity differs from its principal."),
+                        statusCode: StatusCodes.Status403Forbidden)
+                    : await InvokeAsync(() => store.ConfirmGateContainmentAsync(
+                        attemptId, request, Actor(context), ct)))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
+            .RequireTaskServerScope(TaskServerScopes.ReviewsWrite);
+
         var reviews = api.MapGroup("/reviews")
             .RequireTaskServerScope(TaskServerScopes.ReviewsWrite);
         reviews.MapPost("/subjects", async (

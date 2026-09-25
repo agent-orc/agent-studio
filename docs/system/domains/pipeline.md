@@ -159,6 +159,23 @@ steer the pipeline in this policy version.
   rewrite in-flight work. The code-owned default definition is version zero;
   the first project override becomes version one. Successful cleanup of a
   canonical Remote Review report creates the decision run transactionally.
+- `contracts/TaskServer.Contracts/GateContracts.cs`,
+  `task-server/TaskServerGateStore.cs`, `runner/RemoteGateDaemon.cs`, and
+  `orchestrator-engine/OrchestrationStageHandlers.cs`: the dedicated claimable
+  gate pilot. The Task Server persists the immutable result subject, one live
+  attempt, a fenced lease, phase events, cleanup and the report. The Agent Host
+  gate role materializes the declared ref or digest-pinned bundle in the Review
+  workspace namespace and executes only the frozen plan. The Engine dispatches
+  the post-build-test plan through the public Task API when
+  `REMOTE_POST_BUILD_TEST_GATE_ENABLED=1`; the switch defaults off, leaving the
+  existing backend gate active. A lost lease waits for positive host cleanup
+  attestation before a higher-fence retry and otherwise ends as GateInfra.
+  `GET /api/v1/projects/{projectId}/tasks/{taskIdentity}/gates` exposes the
+  Studio read model from Task Server facts. Host snapshots and Studio client
+  summaries derive `activeGateCount` from claimed, materializing, running,
+  reporting, and cleaning Task Server attempts. The registered-host canary and
+  throughput comparison remain the operator's rollout gate; bridge teardown
+  is a separate card.
 - `backend/Features/TestRuns/`: the separate project test-run lifecycle. These
   runs belong to commits rather than cards and expose planned order, scope,
   host, state, result, duration, and derived card attachments through
