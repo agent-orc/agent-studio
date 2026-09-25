@@ -192,6 +192,31 @@ else
 fi
 REMOTE_PREFLIGHT
 
+printf '[onboarding] phase=sshd-liveness Installing SSH server client liveness policy.\n'
+"${ssh_base[@]}" -T "$host" bash -s <<'REMOTE_SSHD_LIVENESS'
+set -euo pipefail
+sshd_dropin=/etc/ssh/sshd_config.d/05-agent-runner-client-alive.conf
+sshd_tmp="$(mktemp)"
+trap 'rm -f "$sshd_tmp"' EXIT
+cat >"$sshd_tmp" <<'SSHD_CONFIG'
+# Managed by remote-runner-onboard.sh. Reap abandoned reverse-link sessions.
+ClientAliveInterval 30
+ClientAliveCountMax 3
+SSHD_CONFIG
+sudo install -d -m 0755 /etc/ssh/sshd_config.d
+sudo install -m 0644 -o root -g root "$sshd_tmp" "$sshd_dropin"
+sudo sshd -t
+effective="$(sudo sshd -T)"
+printf '%s\n' "$effective" | grep -qx 'clientaliveinterval 30'
+printf '%s\n' "$effective" | grep -qx 'clientalivecountmax 3'
+if systemctl list-unit-files ssh.service --no-legend 2>/dev/null | grep -q '^ssh.service'; then
+  sudo systemctl reload ssh.service
+else
+  sudo systemctl reload sshd.service
+fi
+printf '[remote] sshd-liveness file=%s interval=30 count=3\n' "$sshd_dropin"
+REMOTE_SSHD_LIVENESS
+
 printf '[onboarding] phase=install Installing/updating the agent host tool and agent CLIs.\n'
 if ! "${ssh_base[@]}" -T "$host" bash -s -- \
   "$package_id" "$runner_command" "$minimum_version" "$codex_cli_version" "$claude_cli_version" <<'REMOTE_INSTALL'
