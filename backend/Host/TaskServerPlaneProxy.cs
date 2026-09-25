@@ -93,11 +93,16 @@ public static class TaskServerPlaneProxy
         out Uri? baseUri)
     {
         var configured = configuration["TaskServer:BaseUrl"]?.Trim();
-        if (!Uri.TryCreate(configured, UriKind.Absolute, out var parsed)
-            || parsed.Scheme is not ("http" or "https"))
+        if (string.IsNullOrEmpty(configured))
         {
             baseUri = null;
             return false;
+        }
+        if (!Uri.TryCreate(configured, UriKind.Absolute, out var parsed)
+            || parsed.Scheme is not ("http" or "https"))
+        {
+            throw new InvalidOperationException(
+                "TaskServer:BaseUrl must be an absolute HTTP or HTTPS URL when set.");
         }
         baseUri = new Uri(parsed.ToString().TrimEnd('/') + "/", UriKind.Absolute);
         return true;

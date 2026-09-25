@@ -7,17 +7,13 @@
 # Dockerfiles and compose wiring that `docker compose --profile <name> up`
 # runs against the published images.
 #
-#   1. default:      orchestrator-api + frontend (local mode).
-#   2. distributed:  task-server + orchestrator-engine + studio-bff, with
-#                    orchestrator-api in proxy mode (TaskServer:BaseUrl set).
+#   1. default:      task-server + engine + BFF + frontend (one authority).
+#   2. compatibility: versioned proxy forwards while legacy writes fail closed.
 #   3. runner:       a containerised agent-host registers against the Task
 #                    Server and claims a seeded task through to
 #                    4-auto-review, using a fake CLI fixture.
-#   4. runner-legacy: the plain `--profile runner` path (agent-host-coding
-#                    and agent-host-review against the local OrchestratorApi,
-#                    no Task Server), bootstrapped only through
-#                    scripts/compose-runner-bootstrap.sh - the same artifacts
-#                    a first-time operator would generate.
+# The separate legacy-local runner path remains owned by the accepted option C
+# baseline and is not a service in this one-box installation check.
 #
 # Requires: docker compose v2, curl, jq, git.
 set -euo pipefail
@@ -53,12 +49,10 @@ bff_port="${COMPOSE_SMOKE_BFF_PORT:-5072}"
 compose=(docker compose --project-name "$project_name")
 fixture_dir=""
 runner_override=""
-runner_env_created=""
-runner_token_created=""
 
 down()
 {
-    "${compose[@]}" --profile dev --profile distributed --profile runner \
+    "${compose[@]}" --profile dev --profile legacy \
         down --volumes --remove-orphans >/dev/null 2>&1 || true
 }
 
@@ -73,8 +67,6 @@ finish()
     down
     [ -n "$fixture_dir" ] && rm -rf "$fixture_dir"
     [ -n "$runner_override" ] && rm -f "$runner_override"
-    [ -n "$runner_env_created" ] && rm -f "$repo_root/runner.env"
-    [ -n "$runner_token_created" ] && rm -f "$repo_root/runner.token"
     exit "$status"
 }
 
@@ -134,51 +126,93 @@ export STUDIO_BFF_PORT="$bff_port"
 export DISTRIBUTED_STUDIO_TOKEN="${DISTRIBUTED_STUDIO_TOKEN:-smoke-studio-token-0000000000000000000000}"
 export DISTRIBUTED_ENGINE_TOKEN="${DISTRIBUTED_ENGINE_TOKEN:-smoke-engine-token-0000000000000000000000}"
 export DISTRIBUTED_RUNNER_TOKEN="${DISTRIBUTED_RUNNER_TOKEN:-smoke-runner-token-0000000000000000000000}"
+export DISTRIBUTED_REVIEW_RUNNER_TOKEN="${DISTRIBUTED_REVIEW_RUNNER_TOKEN:-smoke-review-token-0000000000000000000000}"
+export STUDIO_ALLOWED_ORIGINS="http://127.0.0.1:${ui_port}"
 
 "${compose[@]}" config --quiet
 
-default_services="$("${compose[@]}" config --services)"
-test "$default_services" = "$(printf 'orchestrator-api\nfrontend')"
+default_services="$("${compose[@]}" config --services | sort)"
+test "$default_services" = "$(printf 'agent-host-distributed\nagent-host-review-distributed\nfrontend\norchestrator-engine\nstudio-bff\ntask-server')"
 
-# --- Scenario 1: default two-service path (published-image topology) -----
+# --- Scenario 1: source-built one-box authority and browser boundary -------
 echo "=== default profile ==="
-"${compose[@]}" --profile dev up --build --wait orchestrator-api-dev frontend-dev
+"${compose[@]}" --profile dev up --build --wait \
+    task-server-dev orchestrator-engine-dev studio-bff-dev frontend-dev
 
 ui_binding="$("${compose[@]}" port frontend-dev 8080)"
-api_binding="$("${compose[@]}" port orchestrator-api-dev 5031)"
 resolved_ui_port="${ui_binding##*:}"
-resolved_api_port="${api_binding##*:}"
 
 health="$(curl --fail --silent "http://127.0.0.1:${resolved_ui_port}/healthz")"
-test "$health" = '"ok"'
+grep -q '"status":"live"' <<<"$health"
 
 homepage="$(curl --fail --silent "http://127.0.0.1:${resolved_ui_port}/")"
 grep -q '<app-root' <<<"$homepage"
 
-tasks="$(curl --fail --silent "http://127.0.0.1:${resolved_ui_port}/api/tasks/grouped")"
-grep -q '"backlog"' <<<"$tasks"
+direct_protocol="$(task_server_call GET /api/v1/protocol "$DISTRIBUTED_STUDIO_TOKEN")"
+edge_protocol="$(curl --fail --silent "http://127.0.0.1:${resolved_ui_port}/api/v1/protocol")"
+test "$edge_protocol" = "$direct_protocol"
+unauthenticated_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    "http://127.0.0.1:${taskserver_port}/api/v1/workspaces")"
+test "$unauthenticated_status" = 401
 
-test "$(healthy_count)" -eq 2
+no_origin_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    -X POST -H 'Content-Type: application/json' -d '{"name":"rejected"}' \
+    "http://127.0.0.1:${resolved_ui_port}/api/v1/workspaces")"
+test "$no_origin_status" = 403
+foreign_origin_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    -X POST -H 'Origin: https://foreign.invalid' -H 'Content-Type: application/json' \
+    -d '{"name":"rejected"}' "http://127.0.0.1:${resolved_ui_port}/api/v1/workspaces")"
+test "$foreign_origin_status" = 403
+unknown_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    "http://127.0.0.1:${resolved_ui_port}/api/not-owned")"
+test "$unknown_status" = 404
+created_workspace="$(curl --fail --silent -X POST \
+    -H "Origin: http://127.0.0.1:${resolved_ui_port}" \
+    -H 'Content-Type: application/json' -d '{"name":"Browser smoke"}' \
+    "http://127.0.0.1:${resolved_ui_port}/api/v1/workspaces")"
+workspace_id="$(jq -r '.workspaceId' <<<"$created_workspace")"
+test -n "$workspace_id" && test "$workspace_id" != null
+task_server_call GET /api/v1/workspaces "$DISTRIBUTED_STUDIO_TOKEN" | jq -e --arg id "$workspace_id" \
+    '.[] | select(.workspaceId == $id)' >/dev/null
+principal_ids_before="$(task_server_call GET /api/v1/management/principals "$DISTRIBUTED_STUDIO_TOKEN" \
+    | jq -r '.[].principalId' | sort)"
+"${compose[@]}" restart task-server-dev >/dev/null
+wait_for_http "http://127.0.0.1:${taskserver_port}/readyz"
+task_server_call GET /api/v1/workspaces "$DISTRIBUTED_STUDIO_TOKEN" | jq -e --arg id "$workspace_id" \
+    '.[] | select(.workspaceId == $id)' >/dev/null
+principal_ids_after="$(task_server_call GET /api/v1/management/principals "$DISTRIBUTED_STUDIO_TOKEN" \
+    | jq -r '.[].principalId' | sort)"
+test "$principal_ids_before" = "$principal_ids_after"
+printf 'checkpoint=principal-ids-preserved\n'
 
-teardown_scenario compose dev -- orchestrator-api-dev frontend-dev
+deadline=$((SECONDS + 30))
+until [ "$(healthy_count)" -eq 4 ]; do
+    [ "$SECONDS" -lt "$deadline" ] || { echo 'one-box services did not recover health after restart' >&2; exit 1; }
+    sleep 1
+done
+
+teardown_scenario compose dev -- task-server-dev orchestrator-engine-dev studio-bff-dev frontend-dev
 
 printf '%s\n' \
     "compose-smoke=passed" \
     "scenario=default" \
-    "services=orchestrator-api,frontend" \
+    "services=task-server,orchestrator-engine,studio-bff,frontend" \
     "health=$health" \
     "browser-shell=app-root" \
-    "api-tasks-grouped=json" \
+    "browser-mutation=task-server:$workspace_id" \
+    "unknown-and-foreign-origin=closed" \
+    "direct-unauthenticated=closed" \
+    "restart=workspace-and-principals-preserved" \
     "ui-port=$resolved_ui_port" \
-    "api-port=$resolved_api_port"
+    "task-server-port=$taskserver_port"
 
-# --- Scenario 2: distributed profile, OrchestratorApi in proxy mode ------
-echo "=== distributed profile ==="
+# --- Scenario 2: compatibility proxy must not write its local store -------
+echo "=== compatibility proxy ==="
 export TASK_SERVER_BASE_URL="http://task-server-dev:5071"
-"${compose[@]}" --profile dev --profile distributed up --build --wait \
-    task-server-dev orchestrator-engine-dev studio-bff-dev orchestrator-api-dev
+"${compose[@]}" --profile dev up --build --wait \
+    task-server-dev orchestrator-api-dev
 
-test "$(healthy_count)" -eq 4   # task-server-dev, orchestrator-engine-dev, studio-bff-dev, orchestrator-api-dev
+test "$(healthy_count)" -eq 2
 
 direct_protocol="$(curl --fail --silent "http://127.0.0.1:${taskserver_port}/api/v1/protocol")"
 api_binding="$("${compose[@]}" port orchestrator-api-dev 5031)"
@@ -186,20 +220,19 @@ resolved_api_port="${api_binding##*:}"
 proxied_protocol="$(curl --fail --silent "http://127.0.0.1:${resolved_api_port}/api/v1/protocol")"
 test "$proxied_protocol" = "$direct_protocol"
 
-bff_binding="$("${compose[@]}" port studio-bff-dev 5072)"
-resolved_bff_port="${bff_binding##*:}"
-bff_health="$(curl --fail --silent "http://127.0.0.1:${resolved_bff_port}/healthz")"
-grep -q '"status":"live"' <<<"$bff_health"
+legacy_write_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    -X POST -H 'Content-Type: application/json' -d '{}' \
+    "http://127.0.0.1:${resolved_api_port}/api/projects")"
+test "$legacy_write_status" = 404
 
 printf '%s\n' \
     "compose-smoke=passed" \
-    "scenario=distributed" \
-    "services=task-server,orchestrator-engine,studio-bff,orchestrator-api(proxy)" \
+    "scenario=compatibility" \
+    "services=task-server,orchestrator-api(proxy)" \
     "protocol-proxy=matched" \
-    "bff-health=$bff_health"
+    "legacy-write=closed"
 
-teardown_scenario compose dev distributed -- \
-    task-server-dev orchestrator-engine-dev studio-bff-dev orchestrator-api-dev
+teardown_scenario compose dev -- task-server-dev orchestrator-api-dev
 unset TASK_SERVER_BASE_URL
 
 # --- Scenario 3: agent-host registers against the Task Server and --------
@@ -279,7 +312,8 @@ task="$(task_server_call POST "/api/v1/projects/$project_id/tasks" "$DISTRIBUTED
     -d '{"title":"Compose smoke task","body":"Prove agent-host claims and completes.","state":"2-ready"}')"
 task_key="$(jq -r '.taskKey' <<<"$task")"
 
-"${compose_r3[@]}" --profile dev up --build --wait agent-host-distributed-dev
+"${compose_r3[@]}" --profile dev build agent-host-distributed-dev
+"${compose_r3[@]}" --profile dev up --wait --no-deps agent-host-distributed-dev
 
 deadline=$((SECONDS + 60))
 task_state=""
@@ -293,40 +327,20 @@ until [ "$task_state" = "4-auto-review" ]; do
     [ "$task_state" = "4-auto-review" ] || sleep 2
 done
 
+"${compose_r3[@]}" --profile dev build agent-host-review-distributed-dev
+"${compose_r3[@]}" --profile dev up --wait --no-deps agent-host-review-distributed-dev
+deadline=$((SECONDS + 30))
+until task_server_call GET /api/v1/management/remote-hosts "$DISTRIBUTED_STUDIO_TOKEN" \
+    | jq -e '([.[].runnerId] | index("distributed-runner") != null and index("distributed-review-runner") != null)' >/dev/null; do
+    [ "$SECONDS" -lt "$deadline" ] || { echo 'coding and review registrations did not become visible' >&2; exit 1; }
+    sleep 1
+done
+
 printf '%s\n' \
     "compose-smoke=passed" \
     "scenario=runner" \
     "task-key=$task_key" \
-    "task-state=$task_state"
+    "task-state=$task_state" \
+    "runner-roles=coding,review"
 
-teardown_scenario compose_r3 dev -- task-server-dev agent-host-distributed-dev
-
-# --- Scenario 4: the plain `runner` profile, bootstrapped exactly the way --
-#     a first-time operator would (scripts/compose-runner-bootstrap.sh),
-#     against the local OrchestratorApi rather than a Task Server.
-echo "=== runner (agent-host <-> OrchestratorApi) profile ==="
-[ -e "$repo_root/runner.env" ] || runner_env_created=1
-[ -e "$repo_root/runner.token" ] || runner_token_created=1
-"$repo_root/scripts/compose-runner-bootstrap.sh" >/dev/null
-
-"${compose[@]}" --profile dev up --build --wait \
-    orchestrator-api-dev agent-host-coding-dev agent-host-review-dev
-
-test "$(healthy_count)" -eq 3   # orchestrator-api-dev, agent-host-coding-dev, agent-host-review-dev
-
-printf '%s\n' \
-    "compose-smoke=passed" \
-    "scenario=runner-legacy" \
-    "services=orchestrator-api,agent-host-coding,agent-host-review"
-
-teardown_scenario compose dev -- \
-    orchestrator-api-dev agent-host-coding-dev agent-host-review-dev
-
-if [ -n "$runner_env_created" ]; then
-    rm -f "$repo_root/runner.env"
-    runner_env_created=""
-fi
-if [ -n "$runner_token_created" ]; then
-    rm -f "$repo_root/runner.token"
-    runner_token_created=""
-fi
+teardown_scenario compose_r3 dev -- task-server-dev agent-host-distributed-dev agent-host-review-distributed-dev

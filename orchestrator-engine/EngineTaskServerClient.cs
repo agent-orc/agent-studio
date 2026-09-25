@@ -1,17 +1,16 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.OrchestratorEngine;
 
 public sealed class EngineTaskServerClient : IDisposable
 {
-    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
-    {
-        Converters = { new JsonStringEnumConverter() },
-    };
+    // Task Server's HTTP contract uses numeric enum values. Its persisted
+    // records have a separate string-enum serializer; do not send those names
+    // to the minimal API body binder, which rejects them before authorization.
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     private readonly HttpClient _http;
 

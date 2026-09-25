@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Create the two local files that `docker compose --profile runner` requires.
+# Create the two local files for the explicit legacy API runner pair.
 # Neither file is ever committed and neither reaches a build context.
 set -euo pipefail
 
@@ -31,7 +31,7 @@ fi
 if [ -e "$token_path" ]; then
     printf 'keep    %s (already present)\n' "$token_path"
 else
-    # The compose stack terminates the runner protocol at orchestrator-api,
+    # The legacy pair terminates the runner protocol at orchestrator-api,
     # which does not verify this bearer. It must still be a real, private,
     # non-empty value because the runner requires one for a non-loopback URL.
     if command -v openssl >/dev/null 2>&1; then
@@ -46,13 +46,13 @@ else
 fi
 
 if [ -n "$created" ]; then
-    printf '\nEdit %s before starting the runner profile:\n' "$env_path"
+    printf '\nEdit %s before starting the legacy runner services:\n' "$env_path"
     printf '  - RUNNER_GIT_REMOTE / RUNNER_GIT_PUSH_REMOTE\n'
     printf '  - CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY\n'
 fi
 
 printf '\n'
-docker compose --profile runner config --quiet
+docker compose --profile legacy config --quiet
 printf 'compose-runner-bootstrap=ok\n'
 printf 'env=%s\n' "$env_path"
 printf 'token=%s\n' "$token_path"

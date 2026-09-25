@@ -42,8 +42,8 @@ deeper release gate.
 ```bash
 scripts/scenario.sh --target inproc --level smoke   # < 3 minutes, no Docker, Windows or Linux
 scripts/scenario.sh --target inproc --level full
-scripts/scenario.sh --target compose --level smoke  # folded default-profile health check
-scripts/scenario.sh --target compose --level full   # distributed stack + fake-CLI runner
+scripts/scenario.sh --target compose --level smoke  # one-box edge and authority check
+scripts/scenario.sh --target compose --level full   # Task Server + fake-CLI runner
 scripts/scenario.sh --target remote --level smoke --remote-url https://... --remote-token ...
 ```
 
@@ -54,10 +54,10 @@ scripts/scenario.sh --target remote --level smoke --remote-url https://... --rem
   solution first (or let `scripts/scenario.sh` do it); no Docker, no network
   beyond `127.0.0.1`.
 - **`compose`** at `--level smoke` delegates to the folded
-  `scripts/compose-smoke-test.sh` check for the default `orchestrator-api` and
-  `frontend` stack. At `--level full`, it builds the `task-server`,
+  `scripts/compose-smoke-test.sh` check for the one-box Task Server, engine,
+  BFF, frontend and runner roles. At `--level full`, it builds the `task-server`,
   `studio-bff`, and `agent-host-distributed` services from the development
-  checkout with the `distributed` and `runner` profiles, applies
+  checkout, applies
   `testsupport/scenario/docker-compose.scenario.yml`, and runs the same nine
   typed steps as `inproc`. The override uses
   `testsupport/scenario/runner.Dockerfile`, which contains the fixed

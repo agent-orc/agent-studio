@@ -17,8 +17,8 @@ Targets:
            Docker required; runs on Windows and Linux in under three minutes
            at --level smoke.
   compose  Runs against the docker-compose stack. --level smoke reuses the
-           default-profile boot/health checks. --level full starts the
-           distributed Task Server and Studio BFF plus the scenario's
+           one-box boot/health checks. --level full starts the
+           Task Server and Studio BFF plus the scenario's
            fake-CLI runner image, then drives the same typed steps as inproc.
   remote   Runs only the non-destructive management-plane steps (bootstrap a
            scenario principal, create a scenario project/task, take a backup,
@@ -238,10 +238,10 @@ run_compose_full() {
     local studio_token="scenario-studio-token-000000000000000000000000"
     local engine_token="scenario-engine-token-000000000000000000000000"
     local runner_token="scenario-runner-token-000000000000000000000000"
+    local review_runner_token="scenario-review-token-000000000000000000000000"
     local compose=(
         docker compose --project-name "$project_name"
         --file "$compose_file" --file "$compose_override"
-        --profile distributed --profile runner
     )
 
     trap compose_full_on_exit EXIT
@@ -253,6 +253,7 @@ run_compose_full() {
     export DISTRIBUTED_STUDIO_TOKEN="$studio_token"
     export DISTRIBUTED_ENGINE_TOKEN="$engine_token"
     export DISTRIBUTED_RUNNER_TOKEN="$runner_token"
+    export DISTRIBUTED_REVIEW_RUNNER_TOKEN="$review_runner_token"
     export SCENARIO_BUILD_VERSION="$build_version"
     export SCENARIO_BUILD_SHA="${SCENARIO_BUILD_SHA:-scenario}"
     export SCENARIO_TASK_SERVER_IMAGE="${project_name}-task-server:local"
@@ -320,7 +321,7 @@ run_compose() {
         return
     fi
 
-    echo "scenario: running compose smoke checks (default profile: orchestrator-api + frontend)..." >&2
+    echo "scenario: running compose smoke checks (one-box Task Server authority)..." >&2
     local junit="$report_dir/scenario-compose-smoke.junit.xml"
     local markdown="$report_dir/scenario-compose-smoke.md"
     local status=0

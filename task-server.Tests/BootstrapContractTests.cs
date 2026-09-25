@@ -112,6 +112,32 @@ public sealed class BootstrapContractTests
     }
 
     [Fact]
+    public void One_box_bootstrap_requires_distinct_coding_and_review_principals()
+    {
+        using var store = new TempDirectory();
+        var values = new Dictionary<string, string?>
+        {
+            ["LISTEN_URL"] = "http://0.0.0.0:5071",
+            ["STORE_PATH"] = store.Path,
+            ["AUTH"] = "bearer",
+            ["BOOTSTRAP_RUNNER_ID"] = "coding-1",
+            ["BOOTSTRAP_RUNNER_AUTH_TOKEN"] = new string('a', 32),
+            ["BOOTSTRAP_REVIEW_RUNNER_ID"] = "review-1",
+            ["BOOTSTRAP_REVIEW_RUNNER_AUTH_TOKEN"] = new string('b', 32),
+        };
+
+        var options = TaskServerBootstrapOptions.Load(Configuration(values));
+        Assert.Equal("coding-1", options.BootstrapRunnerId);
+        Assert.Equal("review-1", options.BootstrapReviewRunnerId);
+
+        values["BOOTSTRAP_REVIEW_RUNNER_AUTH_TOKEN"] = values["BOOTSTRAP_RUNNER_AUTH_TOKEN"];
+        Assert.Throws<InvalidOperationException>(() => TaskServerBootstrapOptions.Load(Configuration(values)));
+        values["BOOTSTRAP_REVIEW_RUNNER_AUTH_TOKEN"] = new string('b', 32);
+        values["BOOTSTRAP_REVIEW_RUNNER_ID"] = "coding-1";
+        Assert.Throws<InvalidOperationException>(() => TaskServerBootstrapOptions.Load(Configuration(values)));
+    }
+
+    [Fact]
     public void Command_line_has_explicit_version_backup_inventory_and_import_modes()
     {
         var version = TaskServerCommandLine.Parse(["--version"]);

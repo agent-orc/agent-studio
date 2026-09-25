@@ -11,8 +11,6 @@ public sealed class TaskServerPlaneProxyTests
     [Theory]
     [InlineData(null, false)]
     [InlineData("", false)]
-    [InlineData("task-server", false)]
-    [InlineData("ftp://task-server.test", false)]
     [InlineData("http://task-server.test", true)]
     [InlineData("https://task-server.test/control", true)]
     public void Only_an_explicit_absolute_HTTP_or_HTTPS_URL_selects_remote_mode(
@@ -42,6 +40,22 @@ public sealed class TaskServerPlaneProxyTests
 
         Assert.False(EndpointMapping.MapsLocalV1(configuration));
         Assert.True(TaskServerPlaneProxy.IsConfigured(configuration));
+    }
+
+    [Theory]
+    [InlineData("task-server")]
+    [InlineData("ftp://task-server.test")]
+    public void Invalid_standalone_base_url_cannot_fall_back_to_local_task_store(string configured)
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TaskServer:BaseUrl"] = configured,
+            })
+            .Build();
+
+        Assert.Throws<InvalidOperationException>(() => TaskServerPlaneProxy.IsConfigured(configuration));
+        Assert.Throws<InvalidOperationException>(() => EndpointMapping.MapsLocalV1(configuration));
     }
 
     [Fact]

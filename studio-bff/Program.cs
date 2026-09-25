@@ -11,6 +11,14 @@ if (args is ["--version"] or ["-V"])
 var builder = WebApplication.CreateBuilder(args);
 var taskServerUrl = builder.Configuration["TaskServer:BaseUrl"]
     ?? throw new InvalidOperationException("TaskServer:BaseUrl is required.");
+var allowedOrigins = (builder.Configuration["Studio:AllowedOrigins"] ?? "http://127.0.0.1:4011,http://localhost:4011")
+    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+if (allowedOrigins.Length == 0 || allowedOrigins.Any(origin =>
+        !Uri.TryCreate(origin, UriKind.Absolute, out var uri)
+        || !string.Equals(uri.GetLeftPart(UriPartial.Authority), origin, StringComparison.Ordinal)
+        || (uri.Scheme != Uri.UriSchemeHttps &&
+            !(uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback))))
+    throw new InvalidOperationException("Studio:AllowedOrigins must contain exact HTTPS origins or local HTTP origins.");
 builder.Services.AddHttpClient("task-server", client =>
 {
     client.BaseAddress = new Uri(taskServerUrl);
@@ -42,6 +50,24 @@ builder.Services.AddHttpClient("task-server", client =>
 
 var app = builder.Build();
 app.MapGet("/healthz", () => Results.Ok(new { status = "live", role = "studio-bff" }));
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments("/api/v1")
+        || context.Request.Path.StartsWithSegments("/hubs"))
+    {
+        var origin = context.Request.Headers.Origin.ToString();
+        if ((!string.IsNullOrEmpty(origin) && !allowedOrigins.Contains(origin, StringComparer.Ordinal))
+            || (HttpMethods.IsPost(context.Request.Method) || HttpMethods.IsPut(context.Request.Method)
+                || HttpMethods.IsPatch(context.Request.Method) || HttpMethods.IsDelete(context.Request.Method))
+                && string.IsNullOrEmpty(origin))
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            await context.Response.WriteAsJsonAsync(new { code = "studio-origin-rejected" });
+            return;
+        }
+    }
+    await next(context);
+});
 RequestDelegate proxyToTaskServer = async context =>
 {
     var client = context.RequestServices.GetRequiredService<IHttpClientFactory>().CreateClient("task-server");
