@@ -4,6 +4,7 @@ using System.Threading.Channels;
 using AgentStudio.Areas;
 using AgentStudio.Prompts;
 using AgentStudio.Projects;
+using AgentStudio.Runner;
 
 namespace AgentStudio.Tags;
 
@@ -120,7 +121,7 @@ public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAuto
     TagGoldenSetEvaluator goldenSets, ProjectSettingsService settings, TaskScannerService scanner,
     TaskMutationService mutations, WorkbenchTagService dossierTags, ProjectDocsService docs,
     AreaRegistryService areaRegistry,
-    TimelineLog timeline, IConfiguration configuration)
+    TimelineLog timeline, OrchestratorLog activity, IConfiguration configuration)
 {
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _gates = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, TagGoldenSetReport> _goldenReports = new(StringComparer.OrdinalIgnoreCase);
@@ -192,6 +193,7 @@ public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAuto
             var counts = new Dictionary<string, int>(StringComparer.Ordinal);
             var low = new List<AutoTagResult>();
             var areas = areaRegistry.List(project).Select(a => a.Id).ToHashSet(StringComparer.Ordinal);
+            var watchPath = apply ? scanner.GetWatchPaths().Single(p => p.Name == project).Path : null;
             foreach (var existing in eligible)
                 foreach (var area in existing.Tags.Where(areas.Contains))
                     counts[area] = counts.GetValueOrDefault(area) + 1;
@@ -257,6 +259,15 @@ public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAuto
                     if (!write.Success) throw new InvalidOperationException(write.Error);
                 }
                 Save(project, prior.Values.OrderBy(x => x.Kind).ThenBy(x => x.Id).ToList());
+                activity.Append(watchPath!, new OrchestratorLogEntry
+                {
+                    Kind = accepted ? OrchestratorLogKinds.Action : OrchestratorLogKinds.Observation,
+                    Topic = AutoTagClassifier.StepId,
+                    Summary = accepted
+                        ? $"Auto-tagged {item.Kind} {item.Id}: {string.Join(", ", prediction.Tags)}"
+                        : $"Tags proposed for {item.Kind} {item.Id}: {string.Join(", ", prediction.Tags)}",
+                    JobId = item.Kind == "card" ? item.Id : null,
+                });
             }
             var report = new AutoTagReport(project, apply, eligible.Count,
                 eligible.Count(i => i.Tags.Length > 0), candidates.Count, counts, low, golden, results);
@@ -344,7 +355,7 @@ public sealed class AutoTagBackfillQueue(AutoTaggingService service, IConfigurat
 
 /// <summary>Creation detector. First start records the existing inventory; later scans classify new active items.</summary>
 public sealed class AutoTagCreationWorker(AutoTaggingService service, ITagMaintenanceWorkspace workspace,
-    IConfiguration configuration, ILogger<AutoTagCreationWorker> logger) : BackgroundService
+    TaskScannerService scanner, IConfiguration configuration, ILogger<AutoTagCreationWorker> logger) : BackgroundService
 {
     private readonly SemaphoreSlim _wake = new(0, 1);
     public void Wake()
@@ -366,7 +377,12 @@ public sealed class AutoTagCreationWorker(AutoTaggingService service, ITagMainte
                     var root = configuration["TaskRepository"];
                     if (string.IsNullOrWhiteSpace(root)) continue;
                     var path = Path.Combine(root, "auto-tag", TagMaintenancePolicy.Fingerprint(project) + ".observed.json");
-                    var items = workspace.CaptureForClassification(project).Items.Where(i => i.Project == project && i.Active).ToList();
+                    var nonArchivedCards = scanner.ScanAllJobsWithArchive()
+                        .Where(task => task.ProjectName == project && AutoTaggingPolicy.EligibleCard(task))
+                        .Select(task => task.Id).ToHashSet(StringComparer.Ordinal);
+                    var items = workspace.CaptureForClassification(project).Items
+                        .Where(item => item.Project == project && (item.Kind == "card"
+                            ? nonArchivedCards.Contains(item.Id) : item.Active)).ToList();
                     var now = items.Select(i => i.Kind + ":" + i.Id).ToHashSet(StringComparer.Ordinal);
                     if (!File.Exists(path))
                     {

@@ -69,6 +69,7 @@ public sealed class TagMaintenanceWorkspace(TaskScannerService scanner, TaskMuta
                         ?? throw new InvalidOperationException($"Wiki content unavailable: {name}/{path}.");
                     items.Add(new(name, "wiki", path, node.Title, ProjectDocsService.FrontmatterTags(file.Content),
                         name == project ? file.Content : "", !path.StartsWith("archive/", StringComparison.Ordinal)
+                            && !string.Equals(node.Classification?.Status, "archived", StringComparison.OrdinalIgnoreCase)
                             && (path.EndsWith(".md", StringComparison.OrdinalIgnoreCase)
                                 || path.EndsWith(".html", StringComparison.OrdinalIgnoreCase)
                                 || path.EndsWith(".htm", StringComparison.OrdinalIgnoreCase)),
