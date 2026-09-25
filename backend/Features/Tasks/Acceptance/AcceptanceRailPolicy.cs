@@ -24,6 +24,7 @@ public static class AcceptanceRailDefaults
     public const int InfrastructureBackoffCeilingSeconds = 1800;
 
     public const string OperatorHoldTag = "orchestrator-hold";
+    public const string BounceConfigurationSection = "IntegrationBounceRail";
 }
 
 public sealed record AcceptanceRailOptions(
@@ -49,7 +50,7 @@ public sealed record AcceptanceRailOptions(
             TimeSpan.FromSeconds(Math.Clamp(
                 section.GetValue<int?>("IntervalSeconds") ?? AcceptanceRailDefaults.IntervalSeconds,
                 30,
-                60 * 60)),
+                300)),
             Math.Clamp(
                 section.GetValue<int?>("MaxRequeues") ?? AcceptanceRailDefaults.MaxRequeues,
                 1,
@@ -143,6 +144,8 @@ public static class AcceptanceRailPolicy
 
         if (failure?.RebaseRecoveryAvailable == true)
         {
+            if (IsHeld(task, options.HoldList))
+                return Ignore("operator-hold");
             return Math.Max(0, conflictRequeues) < options.MaxRequeues
                 ? new AcceptanceRailDecision(
                     AcceptanceRailAction.Requeue,

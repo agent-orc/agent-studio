@@ -2101,6 +2101,15 @@ public class TaskMutationService
         }
     }
 
+    public bool SetRecoveryThinkingLevel(string jobId, string level, string? watchPath = null)
+    {
+        var info = _scanner.FindJob(jobId, watchPath);
+        if (info is null || info.ModelExplicit || info.ThinkingLevelExplicit) return false;
+        var written = TaskJsonFile.UpdateField(info.FolderPath, "thinkingLevel", level, _logger);
+        if (written) _scanner.InvalidateCache();
+        return written;
+    }
+
     public bool AppendContinuationNote(string jobId, string followupPrompt, string? watchPath = null)
     {
         if (string.IsNullOrWhiteSpace(followupPrompt)) return false;
