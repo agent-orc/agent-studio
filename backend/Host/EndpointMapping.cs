@@ -109,6 +109,7 @@ public static class EndpointMapping
         app.MapTagEndpoints();
         app.MapAreaEndpoints();
         app.MapTagMaintenanceEndpoints();
+        app.MapAutoTaggingEndpoints();
         app.MapProjectChatEndpoints();
         app.MapConceptDocsEndpoints();
         app.MapGlobalSearchEndpoints();

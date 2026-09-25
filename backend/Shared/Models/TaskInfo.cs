@@ -336,6 +336,8 @@ public record TaskInfo
     /// <c>"tags"</c>; absent or null on disk means an empty list.
     /// </summary>
     public List<string> Tags { get; init; } = [];
+    /// <summary>Auto-tag classification state: tagged or tags-proposed.</summary>
+    public string? TaggingStatus { get; init; }
 
     /// <summary>
     /// F34: structured cross-references to other tasks, keyed by F33 stable
