@@ -1,505 +1,346 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Remote Gate Target Architecture | Concept Dossier</title>
-<style>
-  :root {
-    color-scheme: light;
-    --bg: #ffffff; --bg-soft: #f6f6f7; --bg-elv: #ffffff;
-    --ink-1: #3c3c43; --ink-2: #67676c; --ink-3: #929295;
-    --line: #e2e2e3; --border: #c2c2c4;
-    --blue: #3b82f6; --blue-ink: #2f6fd6; --blue-soft: #e7f0fe;
-    --blue-bd: rgba(59,130,246,.42); --blue-glow: rgba(59,130,246,.20);
-    --teal: #14a37f; --teal-ink: #0f8e6e; --teal-soft: #e6f6f1;
-    --teal-bd: rgba(20,163,127,.42); --teal-glow: rgba(20,163,127,.18);
-    --coral: #e5484d; --coral-soft: #fcebec; --amber: #9a6b00;
-    --amber-soft: #f8f0dd; --shadow: 0 10px 28px rgba(0,0,0,.07);
-    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) {
-      color-scheme: dark;
-      --bg: #1b1b1f; --bg-soft: #202127; --bg-elv: #202127;
-      --ink-1: #dfdfd6; --ink-2: #a8a8ae; --ink-3: #77777e;
-      --line: #2e2e32; --border: #3c3f44;
-      --blue: #4c8dff; --blue-ink: #a8b1ff; --blue-soft: #1c2740;
-      --blue-bd: rgba(90,150,255,.50); --blue-glow: rgba(76,141,255,.30);
-      --teal: #34d3a6; --teal-ink: #4fe0b6; --teal-soft: #16302a;
-      --teal-bd: rgba(52,211,166,.48); --teal-glow: rgba(52,211,166,.24);
-      --coral: #f06a6f; --coral-soft: #382326; --amber: #e0b455;
-      --amber-soft: #332d1c; --shadow: 0 12px 30px rgba(0,0,0,.32);
+<!doctype html>
+<html lang="en" data-document-pattern="concept"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Remote integration authority | AGT-W18</title>
+<style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #7c7a74;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
     }
-  }
-  :root[data-theme="dark"] {
-    color-scheme: dark;
-    --bg: #1b1b1f; --bg-soft: #202127; --bg-elv: #202127;
-    --ink-1: #dfdfd6; --ink-2: #a8a8ae; --ink-3: #77777e;
-    --line: #2e2e32; --border: #3c3f44;
-    --blue: #4c8dff; --blue-ink: #a8b1ff; --blue-soft: #1c2740;
-    --blue-bd: rgba(90,150,255,.50); --blue-glow: rgba(76,141,255,.30);
-    --teal: #34d3a6; --teal-ink: #4fe0b6; --teal-soft: #16302a;
-    --teal-bd: rgba(52,211,166,.48); --teal-glow: rgba(52,211,166,.24);
-    --coral: #f06a6f; --coral-soft: #382326; --amber: #e0b455;
-    --amber-soft: #332d1c; --shadow: 0 12px 30px rgba(0,0,0,.32);
-  }
-  * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
-  body { margin: 0; background: var(--bg); color: var(--ink-1); font: 15.5px/1.65 var(--font-sans); }
-  main { width: min(1120px, calc(100% - 40px)); margin: 0 auto; padding: 42px 0 88px; }
-  a { color: var(--blue-ink); text-underline-offset: 3px; }
-  p, li { max-width: 78ch; }
-  code { padding: .12em .38em; border-radius: 5px; background: var(--bg-soft); font: .88em/1.45 var(--font-mono); }
-  h1 { max-width: 900px; margin: 14px 0 14px; font-size: clamp(2.25rem, 5vw, 4.2rem); line-height: 1.02; letter-spacing: -.045em; }
-  h2 { margin: 0 0 10px; font-size: clamp(1.55rem, 3vw, 2.3rem); line-height: 1.12; letter-spacing: -.025em; }
-  h3 { margin: 0 0 7px; font-size: 1.02rem; }
-  h4 { margin: 0 0 5px; font-size: .9rem; }
-  ul, ol { padding-left: 1.25rem; }
-  li + li { margin-top: 7px; }
-  header.page { position: relative; padding-bottom: 30px; border-bottom: 1px solid var(--line); }
-  .kicker { display: inline-flex; align-items: center; gap: 8px; margin: 0;
-    border: 1px solid var(--blue-bd); border-radius: 99px; background: var(--blue-soft);
-    padding: 7px 13px; color: var(--blue-ink); font: 600 .72rem/1 var(--font-mono);
-    letter-spacing: .12em; text-transform: uppercase; }
-  .kicker::before { width: 7px; height: 7px; border-radius: 50%; background: var(--blue); content: ""; }
-  .lede { max-width: 74ch; margin: 0; color: var(--ink-2); font-size: 1.12rem; }
-  .meta { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 22px; }
-  .meta span, .pill { display: inline-flex; align-items: center; border: 1px solid var(--line);
-    border-radius: 99px; background: var(--bg-elv); padding: 5px 10px;
-    color: var(--ink-2); font: 600 .72rem/1.25 var(--font-mono); }
-  .theme-toggle { position: absolute; top: 2px; right: 0; border: 1px solid var(--line);
-    border-radius: 8px; background: var(--bg-elv); padding: 7px 10px; color: var(--ink-2);
-    cursor: pointer; font: 600 .72rem/1 var(--font-mono); }
-  nav.contents { margin: 24px 0 0; border: 1px solid var(--line); border-radius: 12px;
-    background: var(--bg-soft); padding: 14px 17px; }
-  nav.contents ul { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 0; padding: 0; list-style: none; }
-  nav.contents li { margin: 0; }
-  nav.contents a { color: var(--ink-2); font-size: .86rem; text-decoration: none; }
-  section { margin-top: 58px; scroll-margin-top: 18px; }
-  .sec-no { display: inline-flex; align-items: center; gap: 8px; margin: 0 0 11px;
-    color: var(--coral); font: 700 .72rem/1 var(--font-mono);
-    letter-spacing: .11em; text-transform: uppercase; }
-  .sec-no::before { width: 14px; height: 2px; background: currentColor; content: ""; }
-  .callout { margin: 22px 0; border: 1px solid var(--blue-bd); border-radius: 12px;
-    background: var(--blue-soft); padding: 18px 20px; }
-  .callout p:last-child { margin-bottom: 0; }
-  .callout.warn { border-color: color-mix(in srgb, var(--amber) 36%, var(--line)); background: var(--amber-soft); }
-  .callout strong { color: var(--ink-1); }
-  .cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
-  .card { border: 1px solid var(--line); border-radius: 12px; background: var(--bg-elv); padding: 17px; box-shadow: var(--shadow); }
-  .card p { margin: 0; color: var(--ink-2); font-size: .91rem; }
-  .card .tag { display: inline-block; margin-bottom: 10px; border-radius: 5px; background: var(--bg-soft);
-    padding: 3px 7px; color: var(--ink-3); font: 700 .66rem/1 var(--font-mono); text-transform: uppercase; }
-  .facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 18px; }
-  .fact { border: 1px solid var(--line); border-radius: 10px; background: var(--bg-soft); padding: 14px; }
-  .fact b { display: block; margin-bottom: 4px; font: 700 .76rem/1.3 var(--font-mono); color: var(--ink-1); }
-  .fact span { color: var(--ink-2); font-size: .84rem; }
-  .table-wrap { overflow-x: auto; margin: 19px 0; }
-  table { width: 100%; min-width: 860px; border-collapse: collapse; font-size: .87rem; }
-  th, td { border-bottom: 1px solid var(--line); padding: 10px 11px; text-align: left; vertical-align: top; }
-  th { background: var(--bg-soft); color: var(--ink-3); font: 700 .67rem/1.3 var(--font-mono); letter-spacing: .06em; text-transform: uppercase; }
-  td:first-child { color: var(--ink-1); font-weight: 700; }
-  .score { white-space: nowrap; }
-  .yes { color: var(--teal-ink); } .partial { color: var(--amber); } .no { color: var(--coral); }
-  figure { margin: 25px 0; }
-  .diagram-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 13px; background: var(--bg-soft); }
-  .diagram { position: relative; min-width: 930px; height: 330px; }
-  .diagram svg { position: absolute; inset: 0; width: 100%; height: 100%; }
-  .diagram .rails use, .diagram .rails path { fill: none; stroke: var(--line); stroke-width: 2; }
-  .diagram .flow { fill: none; stroke-width: 2.5; stroke-linecap: round; stroke-dasharray: 7 12; animation: dash 1.6s linear infinite; }
-  .diagram .flow.control { stroke: var(--blue); } .diagram .flow.execution { stroke: var(--teal); }
-  .node { position: absolute; display: grid; align-content: center; min-height: 82px;
-    border: 1px solid var(--border); border-radius: 11px; background: var(--bg-elv);
-    padding: 12px 14px; box-shadow: var(--shadow); }
-  .node.control { border-color: var(--blue-bd); background: var(--blue-soft); }
-  .node.execution { border-color: var(--teal-bd); background: var(--teal-soft); }
-  .node.risk { border-color: color-mix(in srgb, var(--amber) 40%, var(--line)); background: var(--amber-soft); }
-  .node b { font: 700 .78rem/1.25 var(--font-mono); letter-spacing: .04em; text-transform: uppercase; }
-  .node span { margin-top: 5px; color: var(--ink-2); font-size: .78rem; line-height: 1.35; }
-  .wire-label { position: absolute; border-radius: 5px; background: var(--bg-soft);
-    padding: 2px 6px; color: var(--ink-3); font: 600 .64rem/1.3 var(--font-mono); }
-  figcaption { margin-top: 9px; color: var(--ink-2); font-size: .82rem; }
-  .option { margin-top: 18px; border: 1px solid var(--line); border-radius: 13px; background: var(--bg-elv); padding: 20px; }
-  .option-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
-  .option-head p { margin: 4px 0 0; color: var(--ink-2); }
-  .option-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; margin-top: 16px; }
-  .option-grid div { border-radius: 9px; background: var(--bg-soft); padding: 12px; }
-  .option-grid b { display: block; margin-bottom: 4px; font: 700 .68rem/1.25 var(--font-mono); text-transform: uppercase; color: var(--ink-3); }
-  .option-grid span { color: var(--ink-2); font-size: .84rem; }
-  .recommended { border-color: var(--teal-bd); background: color-mix(in srgb, var(--teal-soft) 42%, var(--bg-elv)); }
-  .decision-grid { display: grid; grid-template-columns: 1.15fr .85fr; gap: 14px; margin-top: 20px; }
-  .decision-grid > div { border: 1px solid var(--line); border-radius: 12px; background: var(--bg-elv); padding: 18px; }
-  .state-list { display: flex; flex-wrap: wrap; gap: 7px; padding: 0; list-style: none; }
-  .state-list li { margin: 0; border: 1px solid var(--line); border-radius: 99px; background: var(--bg-soft);
-    padding: 5px 9px; font: 600 .7rem/1 var(--font-mono); }
-  .chain { height: 240px; }
-  .chain .node { min-height: 76px; width: 220px; top: 72px; }
-  .chain .n1 { left: 34px; } .chain .n2 { left: 355px; } .chain .n3 { left: 676px; }
-  .footer-note { margin-top: 48px; border-top: 1px solid var(--line); padding-top: 18px; color: var(--ink-3); font-size: .78rem; }
-  @keyframes dash { to { stroke-dashoffset: -38; } }
-  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .diagram .flow { animation: none; } }
-  @media (max-width: 880px) {
-    main { width: min(100% - 24px, 1120px); padding-top: 24px; }
-    .theme-toggle { position: static; margin-top: 16px; }
-    .cards, .facts, .option-grid, .decision-grid { grid-template-columns: 1fr; }
-    h1 { font-size: 2.5rem; }
-  }
-</style>
-</head>
-<body>
-<main>
-<header class="page">
-  <p class="kicker">Concept Dossier · Remote gates</p>
-  <h1>Replace the SSH bridge with a first-class remote gate step</h1>
-  <p class="lede">Decision target for Robert's sight review: preserve the 2:11 remote path, but move ownership, scheduling, evidence, timeout, and recovery into the Tranche 0 control-plane contract. This page compares the three realistic shapes and recommends one bounded protocol addition.</p>
-  <div class="meta">
-    <span>Source · AGT-2369</span>
-    <span>As of · 2026-07-26</span>
-    <span>Gate · sight review, no merge gate</span>
-    <span>Product path · unchanged</span>
-  </div>
-  <button class="theme-toggle" type="button" id="theme-toggle" aria-label="Toggle light and dark theme">theme</button>
-</header>
-<div class="callout warn">
-  <p><strong>Status 2026-09-25:</strong> AGT-W59 owns the gate-only contract below. AGT-2881 later proposed the operator-directed target in which the remote host gates, merges and pushes while local Studio only observes, but its D1 to D14 extension remains on salvage commit <code>24b3a7f53</code> and is not part of <code>develop</code>. Delivery-chain decisions D7 to D14 are preserved in <a href="../delivery-chain/index.html#remote-integration-authority">AGT-W57 &sect;6</a>; gate decisions D1 to D6 remain in <a href="../gates/index.html">AGT-W59</a>.</p>
-</div>
-<!-- xref:operational-resilience -->
-<p style="margin:18px 0 0;padding:9px 14px;border:1px solid;border-color:color-mix(in srgb,currentColor 22%,transparent);border-radius:8px;font:14px/1.5 system-ui,'Segoe UI',sans-serif;opacity:.9"><b>See also:</b> <a href="../operational-resilience/index.html" style="color:inherit">Operational resilience</a> &mdash; the cross-cutting dossier on how a self-running fleet fails and how each class is hardened.</p>
 
-<nav class="contents" aria-label="Contents">
-  <ul>
-    <li><a href="#decision">Decision</a></li>
-    <li><a href="#current">Current bridge</a></li>
-    <li><a href="#requirements">Target requirements</a></li>
-    <li><a href="#alternatives">Options</a></li>
-    <li><a href="#comparison">Trade-offs</a></li>
-    <li><a href="#recommendation">Recommendation</a></li>
-    <li><a href="#contract">Target contract</a></li>
-    <li><a href="#follow-up">Follow-up chain</a></li>
-    <li><a href="#open-decisions">Sight-review decisions</a></li>
-  </ul>
-</nav>
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
 
-<section id="decision">
-  <p class="sec-no">Decision in one paragraph</p>
-  <h2>Choose claimable gate steps, with capabilities inside the claim</h2>
-  <div class="callout">
-    <p><strong>Recommendation:</strong> add a dedicated, narrowly scoped <code>gate-step</code> claim to the Task Server protocol. The Task Server persists immutable gate subjects, attempts, leases, fences, state transitions, and reports. The Orchestrator Engine dispatches the gate stage but owns no durable gate state. An Agent Host with matching gate and toolchain capabilities claims the attempt, materializes the exact subject, executes the typed plan, and reports a fenced result.</p>
-    <p><strong>Do not</strong> make “host capability” a stand-alone execution model: capability is an eligibility predicate, not a work item. Reuse the Review Plane's exact-subject and isolation implementation, but do not hide deterministic gates inside the review lifecycle. This preserves clear gate identity and matches the Tranche 0 actor split.</p>
-  </div>
-  <p>In the target, “local fallback” means another registered Agent Host that is eligible to claim the same immutable gate attempt. It never means silently returning to an in-process build on the Task Server or Studio backend. If no eligible executor remains after the infrastructure retry budget, the central state is <code>GateInfra</code>, not a fabricated product failure.</p>
-</section>
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main,
+    .article {
+      width: min(70ch, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 0 0 80px;
+    }
+    header.page {
+      margin-bottom: 12px;
+      padding: 48px 0 28px;
+      border-bottom: 1px solid var(--article-line);
+    }
+    h1,
+    h2,
+    h3,
+    h4,
+    .kicker,
+    .meta,
+    .number,
+    nav,
+    table,
+    figcaption,
+    .box,
+    .callout,
+    .evidence-figure,
+    .variant-grid,
+    .evidence-list {
+      font-family: var(--article-sans);
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      margin: 56px 0 10px;
+      font-size: 1.55rem;
+      line-height: 1.25;
+    }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker,
+    .number {
+      margin: 0 0 12px;
+      color: var(--article-faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code {
+      padding: 0.08em 0.34em;
+      border-radius: 4px;
+      background: var(--article-surface-strong);
+      font: 0.84em/1.5 var(--article-mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    pre code { padding: 0; background: transparent; }
+    ul,
+    ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+    th,
+    td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box,
+    .callout {
+      margin: 24px 0;
+      padding: 18px 22px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+    .box.accent,
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .box.good,
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .box.warn,
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .box.bad,
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    figure { margin: 30px 0; }
+    figure > img,
+    figure > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .evidence-figure { margin-top: 38px; margin-bottom: 38px; }
+    .evidence-captures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+      gap: 12px;
+    }
+    .evidence-capture {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    .evidence-capture > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .capture-theme,
+    .figure-annotation {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--article-line);
+      border-radius: 999px;
+      background: var(--article-surface);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      line-height: 1.35;
+    }
+    .capture-theme {
+      top: 10px;
+      left: 10px;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+    .figure-annotation {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(28ch, calc(100% - 24px));
+      padding: 5px 10px;
+      border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line));
+      background: var(--article-link-soft);
+      color: var(--article-link);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .figure-claim { display: block; color: var(--article-ink); font-size: 0.84rem; }
+    .figure-as-of {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 14px;
+      margin-top: 6px;
+      color: var(--article-faint);
+      font-size: 0.72rem;
+    }
+    .breakout,
+    .media-breakout {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .variant-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0; }
+    .variant {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    .variant h3 { margin: 0 0 8px; }
+    .variant img,
+    .variant svg { display: block; width: 100%; height: auto; margin-top: 12px; }
+    [data-document-pattern="ui"] .variant-grid {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    [data-document-pattern="ui"] .mockup { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--article-line);
+      border-radius: 9px;
+      background: var(--article-surface);
+      color: var(--article-ink);
+      text-decoration: none;
+    }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .dim { color: var(--article-muted); }
 
-<section id="current" data-concept-section="evidence">
-  <p class="sec-no">§1 · Evidence</p>
-  <h2>The current bridge is fast, but out of band</h2>
-  <p>The existing <a href="../remote-gate-cleanup/index.html">remote-gate cleanup Dossier</a> correctly defines the ordering constraint: replacement first, teardown second. Code inspection on 2026-07-26 confirms that the replacement does not exist.</p>
+    @media (max-width: 760px) {
+      main,
+      .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout,
+      .media-breakout,
+      [data-document-pattern="ui"] .variant-grid,
+      [data-document-pattern="ui"] .mockup { width: calc(100vw - 20px); }
+      [data-document-pattern="ui"] .variant-grid { grid-template-columns: 1fr; }
+      .evidence { grid-template-columns: 1fr; }
+      .evidence-captures { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
 
-  <figure>
-    <div class="diagram-scroll">
-      <div class="diagram" role="img" aria-label="Current SSH gate bridge. The backend calls a remote host over SSH, which scans repositories, creates a disposable worktree and reports only an exit code. Infrastructure failure falls back to an in-process local gate.">
-        <svg viewBox="0 0 930 330" preserveAspectRatio="none" aria-hidden="true">
-          <defs>
-            <path id="cur1" d="M218 110 C280 110 300 110 360 110"/>
-            <path id="cur2" d="M570 110 C625 110 645 110 702 110"/>
-            <path id="cur3" d="M462 155 C462 208 300 216 248 244"/>
-          </defs>
-          <g class="rails"><use href="#cur1"/><use href="#cur2"/><use href="#cur3"/></g>
-          <use class="flow execution" href="#cur1"/>
-          <use class="flow execution" href="#cur2"/>
-          <use class="flow control" href="#cur3"/>
-        </svg>
-        <div class="node control" style="left:34px;top:68px;width:184px">
-          <b>Studio backend</b><span><code>ReviewDecisionOrchestrator</code><br>chooses SHA and SSH alias</span>
-        </div>
-        <div class="node risk" style="left:360px;top:68px;width:210px">
-          <b>BuildTestGateRunner</b><span>process-local queue · direct SSH<br>waits for exit and output</span>
-        </div>
-        <div class="node execution" style="left:702px;top:68px;width:194px">
-          <b>Remote host</b><span>scan repos · fetch · disposable worktree · verify</span>
-        </div>
-        <div class="node control" style="left:136px;top:230px;width:224px">
-          <b>Local fallback</b><span>machine lock · local exact-SHA worktree · verify</span>
-        </div>
-        <span class="wire-label" style="left:259px;top:92px">ssh command</span>
-        <span class="wire-label" style="left:611px;top:92px">exit/output</span>
-        <span class="wire-label" style="left:342px;top:198px">infra only</span>
-      </div>
-    </div>
-    <figcaption>Current topology. A direct SSH subprocess connects two otherwise separate execution models. The central control plane has no claim, lease, fence, or durable gate attempt to show.</figcaption>
-  </figure>
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+  </style>
+</head><body><main class="article"><header class="page"><p class="kicker">AGT-W18 · Integration scope extension · AGT-2881</p><h1>Remote integration authority</h1><p class="lede">The remote host gates, merges and pushes. The local Studio observes and submits operator requests.</p><div class="meta"><span><b>Updated</b> 25 September 2026</span><span><b>Status</b> Decided, sight review pending</span><span><b>Phase</b> Concept</span></div></header>
+<nav><a href="#current">Evidence</a> · <a href="#alternatives">Alternatives</a> · <a href="#recommendation">Recommendation</a> · <a href="#open-decisions">Decision record</a> · <a href="#follow-up">Rollout</a> · <a href="#implementation">Implementation cards</a></nav>
+<section id="decision"><h2>Operator direction</h2><div class="callout" data-tone="accent"><p lang="de">“Das Zielbild sollte sein, dass der Remote-Host auch merged. Der lokale Studio soll nur schauen.”</p><p>Operator, 18 September 2026, AGT-2839, quoted verbatim from this task. English: the target is that the remote host also merges; the local Studio only watches.</p></div><p><b>Decision record, 25 September 2026.</b> The operator adopted the recommended options D1-D14 for implementation-card creation. The 18 September sentence remains the original operator direction; the technical options are adopted by the later continuous-session instruction. Human sight review of this updated document has not been claimed. Phase B and other historical decisions remain dependency context.</p><p>The previous AGT-W18 scope delegated verification only and left merge/push authority with Studio. Its metadata records consolidation into <a href="../gates/index.html">AGT-W59, Gates</a> on 14 September (AGT-2801). This requested extension preserves that history and records the adopted integration choices; it does not revoke the consolidation decision.</p><p><b>Publication boundary.</b> This task limits repository changes to one Dossier directory. The existing directory and entrypoint are retained. The extracted-page extension and living knowledge log are supplied as <a href="remote-gate.md">a staged architecture page in this directory</a>; the stable <a href="../../concepts/platform-architecture/remote-gate.md">canonical remote-gate.md URL</a> is unchanged and still contains the older gate-only account. Publishing that update and reconciling AGT-W59/navigation require a separately scoped change. No second Dossier is created.</p></section>
+<section id="current" data-concept-section="evidence"><h2>Evidence</h2><p>Repository inspection on 18 September 2026 used local <code>develop</code> at <code>704ed89b87d03e9a85e22019fc12b9b5da196e68</code>. On 25 September 2026, the worktree HEAD and local <code>develop</code> both resolve to <code>09e189092396700adf0cbafbb38e6ad5b89a818d</code>; the cited source symbols were rechecked against that snapshot. These are local develop snapshots, not live fetches or proof of the installed Windows binary. Source facts below are distinct from operator-reported observations. No visible product-surface claim or screenshot is made.</p><table><thead><tr><th>Current fact and qualification</th><th>File and symbol</th></tr></thead><tbody>
+<tr><td>The Studio backend owns merge, pre-develop gate and deferred push. It serialises integration; it does not yet use the proposed IntegrationAttempt transaction. Direct merge, mechanical merge and guarded rebase are GitService operations. Windows placement is the reference-installation observation, not a hardcoded OS restriction.</td><td><a href="../../../backend/Features/Pipeline/MergeIntoDevelopRunner.cs"><code>backend/Features/Pipeline/MergeIntoDevelopRunner.cs</code></a>, <code>RunAsync; MergeIntoIntegrationGatedAsync; PushIntegrationBranchAsync</code></td></tr>
+<tr><td>Direct and remote delivery merge paths share mechanical integration helpers; a replay may replace delivery SHAs and needs attribution.</td><td><a href="../../../backend/Features/Git/GitService.cs"><code>backend/Features/Git/GitService.cs</code></a>, <code>MergeBranchIntoIntegration; MergeRemoteDeliveryIntoIntegration; TryMechanicalMerge; TryMechanicalRebase</code></td></tr>
+<tr><td>Remote deliveries queue one at a time per project; gate execution also has a process-wide semaphore and machine gate lock.</td><td><a href="../../../backend/Features/Pipeline/RemoteDeliveryIntegration.cs"><code>backend/Features/Pipeline/RemoteDeliveryIntegration.cs</code></a>, <code>RemoteDeliveryIntegrationCoordinator.EnqueueAsync</code></td></tr>
+<tr><td>Exact gate workspaces are rooted at Path.GetTempPath()/agentstudio-review-gates, hence %TEMP% on Windows. They do not require testing in the live checkout.</td><td><a href="../../../backend/Features/Pipeline/BuildTestGateRunner.cs"><code>backend/Features/Pipeline/BuildTestGateRunner.cs</code></a>, <code>RunAsync; ProcessGate; ReviewWorkspaceRoot</code></td></tr>
+<tr><td>AGT-2854 uses work-package tests for frontend/managed diffs, build-only for neither; missing diff is conservative. AGT-2839 reuse reduces this to compile-only, not zero local work.</td><td><a href="../../../backend/Features/Pipeline/PreDevelopBuildGate.cs"><code>backend/Features/Pipeline/PreDevelopBuildGate.cs</code></a>, <code>ResolveTestLevel; LevelFor; RunAsync</code></td></tr>
+<tr><td>Reuse requires passed review and build/test gate, integration ref and pre-tip equality, delivery inclusion, no replay/conflict resolution and matching tested/merged tree; missing proof runs the gate.</td><td><a href="../../../backend/Features/Pipeline/IntegrationGateReusePolicy.cs"><code>backend/Features/Pipeline/IntegrationGateReusePolicy.cs</code></a>, <code>Decide</code></td></tr>
+<tr><td>Review materialises ExpectedResultSha and checks that HEAD before commands. It captures integration tip before verification. It does not universally construct a merged candidate; it executes the frozen plan, so a passed review is not proof that every possible suite ran.</td><td><a href="../../../runner/RemoteReviewWorkspace.cs"><code>runner/RemoteReviewWorkspace.cs</code></a>, <code>PrepareAsync; MaterializeGitAsync; ExecutePlanAsync</code></td></tr>
+<tr><td>Fresh-merge red gates reset the local branch to the recorded pre-tip and release no push. AlreadyMerged recovery does not rewrite existing history; reset failure needs repair.</td><td><a href="../../../backend/Features/Pipeline/MergeIntoDevelopRunner.cs"><code>backend/Features/Pipeline/MergeIntoDevelopRunner.cs</code></a>, <code>RunAsync; MergeIntoIntegrationGatedAsync; PushIntegrationBranchAsync</code></td></tr>
+<tr><td>Push work is queued in memory and redriven by a restart backstop. This is not an atomic durable merge/gate/push transaction.</td><td><a href="../../../backend/Features/Pipeline/IntegrationPushQueue.cs"><code>backend/Features/Pipeline/IntegrationPushQueue.cs</code></a>, <code>IntegrationPushQueue</code>; <a href="../../../backend/Features/Pipeline/IntegrationPushBackstopHostedService.cs"><code>backend/Features/Pipeline/IntegrationPushBackstopHostedService.cs</code></a>, <code>RunOnceAsync</code></td></tr>
+<tr><td>The existing integration lease uses an in-memory _slots dictionary. It is not the proposed durable project-wide publication fence.</td><td><a href="../../../backend/Features/Runner/IntegrationLeaseService.cs"><code>backend/Features/Runner/IntegrationLeaseService.cs</code></a>, <code>TryAcquire; _slots</code></td></tr>
+<tr><td>The automatic agent round is specifically bounded to AgentRoundRequired attribution ambiguity. The current default is two rounds per immutable delivery chain; a universal automatic conflict-recovery loop is not established by this symbol.</td><td><a href="../../../backend/Features/Pipeline/IntegrationAgentRoundService.cs"><code>backend/Features/Pipeline/IntegrationAgentRoundService.cs</code></a>, <code>RemoteIntegrationContinuationPolicy.Decide; MaxAutomaticAgentRounds; TryStartAsync</code></td></tr>
+<tr><td>Accepted integration deliberately uses CancellationToken.None and exposes a busy gate. A claim that every graceful restart necessarily kills it is too broad; hard process loss remains a distinct failure.</td><td><a href="../../../backend/Features/Pipeline/AcceptedIntegrationWorker.cs"><code>backend/Features/Pipeline/AcceptedIntegrationWorker.cs</code></a>, <code>CancellationToken.None at integration calls</code>; <a href="../../../backend/Features/Pipeline/MergeIntoDevelopRunner.cs"><code>backend/Features/Pipeline/MergeIntoDevelopRunner.cs</code></a>, <code>IsMergeGateBusy</code></td></tr>
+<tr><td>The promotion script pins a develop candidate, gates it, and publishes main and a release tag atomically without force. The operator reports that this train runs on Linux; the script alone does not prove deployment location.</td><td><a href="../../../scripts/release/promote-develop-to-main.sh"><code>scripts/release/promote-develop-to-main.sh</code></a>, <code>script entrypoint; atomic push</code>; <a href="../../../scripts/release/promotion-full-gate.sh"><code>scripts/release/promotion-full-gate.sh</code></a>, <code>script entrypoint</code></td></tr>
+</tbody></table><p><b>Historical correction.</b> The August dossier and extracted page describe <code>RemoteSshHost</code>, <code>ResolveRemoteGateSshHost</code> and <code>RemoteGateActivityStore</code>. A scoped symbol search in backend, runner, orchestrator-engine and task-server finds none at this develop snapshot. <code>BuildTestGateRunner.RunAsync</code> is the current gate entrypoint cited above. AGT-2262 is described as parked in the task context; its live queue state was not independently queried. Re-audit residual work instead of treating the old teardown list as existing code.</p>
+<h3>Reference installation observations</h3><p>Provenance: operator log for 17-18 September, supplied in AGT-2881. Raw runtime logs were not supplied or independently reproduced. These observations are deployment evidence, not code-derived timing guarantees.</p><ul>
+<li>A serial Windows gate took about 40 minutes per card; on 18 September eight reviewed cards waited while the 12-core Linux host had capacity.</li>
+<li>AGT-2826, AGT-2839 and AGT-2869 were rolled back after exceeding wall-clock budgets by 0.01-1.2%, with no failing test, while the working operator's workstation reached 100% CPU (AGT-2872).</li>
+<li>Windows-only failures appeared in GateFlakyRerunBehaviorTests and SetupContractTests at this gate. The source locations are <a href="../../../backend.Tests/GateFlakyRerunTests.cs"><code>GateFlakyRerunBehaviorTests</code></a> and <a href="../../../setup.Tests/SetupContractTests.cs"><code>SetupContractTests</code></a>. Those classes prove test ownership, not an exhaustive Windows execution inventory. “Only Windows coverage” is an installation observation and selection/reuse can still omit tests.</li>
+<li>The operator reports gate interruption with Stable updates/backend restarts and a 17-second task-list API response during a gate. No trace was supplied to distinguish hard termination from graceful drain.</li>
+<li>Almost every passed review on 18 September reportedly first encountered a moved-develop merge conflict after a 45-90 minute review, followed by recovery and another review. Counts and a denominator remain unmeasured.</li></ul>
+<p>Inference: moving work removes workstation CPU contention and process coupling, but cannot promise a numeric speedup or eliminate semantic conflicts. Measure remote queue time, execution time and review-to-publication delay during canary.</p>
+<p>Dependency evidence: <a href="../remote-task-server-local-studio.md">Remote Task Server with local Studio</a> records the Docker runtime direction dated 6 September and the workstation-sleep dependency; <a href="../runner-link/index.html">Runner link incident account</a> describes sleep/tunnel outages; <a href="../tunnel-keeper-diagnosis.md">tunnel keeper diagnosis</a> provides the underlying outage account. AGT-2737 is the cutover dependency supplied by the operator. <a href="../setup/docker-compose-connector-gap.md">AGT-2736 connector gap</a> records the still-open deployment choice. Moving the executor alone leaves an outage if authority still lives on the sleeping workstation.</p></section>
+<section id="alternatives" data-concept-section="alternatives"><h2>Alternatives</h2><div class="variant-grid"><article class="variant"><h3>Gate-only offload</h3><p>Preserve the original W18 boundary: host verification, Studio merge and push. Smaller migration, but local checkout, publication authority and restart coupling remain. This is an intermediate stage only under the operator direction.</p></article><article class="variant"><h3>Remote integration attempt</h3><p>Separate IntegrationAttempt owns a candidate and publication transaction, consuming Review and Gate receipts. Clear authority and restart reconciliation at the cost of a new claim contract. Recommended.</p></article><article class="variant"><h3>Expanded gate attempt</h3><p>One GateAttempt means gate, merge and push. Fewer top-level kinds, but standalone verification, Windows execution and publication privileges become different modes of the same object. Viable only with explicit phase/permission separation; not the recommended default.</p></article></div><p id="comparison">Each D1-D14 row below names the alternative, recommendation and consequences. These are bounded product contracts, not an invitation to add a workflow engine or agent-managed Git.</p></section>
+<section id="recommendation" data-concept-section="recommendation"><h2>Recommendation</h2><p>Make the remote plane own candidate construction, verification, ref publication and recovery. Task Server stores the authority; the integration executor performs the Git work under it. Studio is an observer and request client.</p>
+<figure class="media-breakout"><svg viewBox="0 0 1040 500" role="img" aria-labelledby="target-title target-desc" xmlns="http://www.w3.org/2000/svg"><title id="target-title">Proposed remote integration authority</title><desc id="target-desc">Studio sends requests to Task Server and reads evidence. Task Server leases Review, Integration and optional Windows executors. Only Integration holds project ref-mutation authority to publish protected refs.</desc><defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 Z" fill="var(--article-muted)"/></marker></defs><g fill="var(--article-surface)" stroke="var(--article-line)"><rect x="30" y="40" width="245" height="100" rx="10"/><rect x="350" y="30" width="340" height="120" rx="10"/><rect x="30" y="245" width="260" height="110" rx="10"/><rect x="360" y="230" width="330" height="145" rx="10"/><rect x="770" y="245" width="240" height="110" rx="10"/><rect x="365" y="425" width="320" height="55" rx="10"/></g><g stroke="var(--article-muted)" fill="none" stroke-width="2" marker-end="url(#arrow)"><path d="M275 87 H350" marker-start="url(#arrow)"/><path d="M425 150 L160 245"/><path d="M525 150 V230"/><path d="M620 150 L875 245"/><path d="M290 300 H360"/><path d="M770 300 H690"/><path d="M525 375 V425"/></g><g fill="var(--article-ink)" font-family="var(--article-sans)" font-size="17" text-anchor="middle"><text x="152" y="77">Local Studio</text><text x="152" y="108" font-size="14">Observer · operator requests</text><text x="520" y="65">Task Server authority</text><text x="520" y="94" font-size="14">Durable attempts · leases · fences · epochs</text><text x="520" y="125" font-size="14">Engine dispatch · evidence and ref projection</text><text x="160" y="278">Review executor</text><text x="160" y="308" font-size="14">Immutable candidate verification</text><text x="160" y="332" font-size="14">Receipt; no publication authority</text><text x="525" y="265">Integration executor</text><text x="525" y="296" font-size="14">Candidate · gate receipt · merge · push</text><text x="525" y="324" font-size="14">Project ref-mutation lease</text><text x="525" y="352" font-size="14">Fenced publication and reconciliation</text><text x="890" y="278">Windows executor</text><text x="890" y="308" font-size="14">os:windows · GateAttempt</text><text x="890" y="332" font-size="14">Optional by project policy</text><text x="525" y="459">Protected develop / main / release refs</text><text x="532" y="193" font-size="14">Claims and reports</text></g></svg><figcaption><b>Proposed target, 18 September 2026.</b> Architecture diagram, not a product screenshot. Windows execution is optional across projects; under recommended D10 it is required for this product's Windows-sensitive policy. Gate or review receipts do not carry publication authority.</figcaption></figure>
+<h3 id="requirements">Authority composition</h3><p>The <a href="../../concepts/platform-architecture/fencing-leases-and-authority.md">fence/lease/epoch contract</a> supplies the vocabulary, not automatic Git enforcement. Each write carries attempt ID, lease ID, owner/instance, fence, the attempt's own authority epoch and operation-scoped idempotency key. Epoch rotation soft-drains live attempts; it does not invalidate an older still-current attempt merely because the global epoch increased. Takeover invalidates the previous holder and increments the durable fence.</p><p>The project ref-mutation lease is a separate authority from a GateLease or ReviewLease. The <a href="../../concepts/platform-architecture/batch-gate.md">Batch Gate coordinator lease</a> owns manifest membership and construction. Acquisition order is coordinator/attempt authority first, project ref-mutation lease second, with release in reverse order; no holder waits for a coordinator while holding the publication lease. Acquire publication authority only for final base/generation revalidation and publish/reconcile, not for a long suite. A moved base discards publication eligibility and rebuilds remotely.</p><p>One common publisher enforces a non-force expected-old-to-exact-new update, with all enabled writers routed through it. Protected canonical refs and attempt-scoped publication credentials or a fenced Git receive gateway must prevent an expired executor from pushing outside the Task Server. A fence checked only on an HTTP report is insufficient. The publication boundary must validate the current grant and expected ref at the ref transaction; a check-then-unrestricted-Git-push design is rejected. If the Git host cannot enforce that contract, cutover waits for an exclusive publication gateway.</p><p>Operator merge, release-commit and promotion requests use the same authority queue. The already remote promotion train becomes a client of this authority, not another independent lease owner. It retains its pinned candidate and atomic main/tag update. Batch and train may prepare concurrently but may not publish concurrently. Studio cannot create a release commit directly on main/develop. Unmanaged external writers require branch protection or an explicit audited emergency authority transfer.</p></section>
+<section id="contract"><h2>Integration contract</h2><p>Proposed immutable IntegrationSubject: project/repository identity, target ref, expected base SHA, result ref/SHA, run and delivery generation, review identity, ordered parents, candidate SHA/tree, policy/plan/profile digest and optional batch membership digest. An attempt records host, owner, lease/fence/epoch, verification receipts, publication intent, command evidence, retry counts and cleanup. A changed base or result produces a new subject; retries cannot silently change one.</p><pre><code>queued → claimed → materialising → candidate-ready
+       → verifying (or verified receipt reuse) → ready-to-publish
+       → publishing → reconciling → integrated
 
-  <div class="facts">
-    <div class="fact"><b>Subject</b><span>The backend supplies a full SHA. The host scans <code>$HOME/runner-work/*/repo</code>, fetches, then verifies the materialized HEAD.</span></div>
-    <div class="fact"><b>Timeout</b><span>Queue, infrastructure, and command budgets exist, but ownership stays inside one backend call and SSH process.</span></div>
-    <div class="fact"><b>Fallback</b><span>Queue, discovery, worktree, and exception paths return <code>null</code> and activate the local gate. Once command execution starts, a nonzero SSH process becomes a remote verdict; only typed infrastructure results enter the caller's retry loop.</span></div>
-    <div class="fact"><b>Visibility</b><span><code>RemoteGateActivityStore</code> is process-local, starts late, has hard-coded capacity, and is lost on restart.</span></div>
-  </div>
-
-  <div class="callout warn">
-    <p><strong>The backend currently guesses host work.</strong> It derives an SSH alias from the configured execution runner, strips an instance suffix, and correlates the alias with a process-local activity dictionary. That is useful display telemetry, but it is not authority. A backend restart erases active entries, and discovery/materialization time is not represented centrally. The transport boundary also leaks into verdict classification: after the remote command loop starts, an SSH exit can be recorded as the gate result instead of selecting the local fallback.</p>
-  </div>
-</section>
-
-<section id="requirements">
-  <p class="sec-no">§2 · Target requirements</p>
-  <h2>What the replacement must make true</h2>
-  <div class="cards">
-    <article class="card"><span class="tag">R1 · identity</span><h3>One immutable subject</h3><p>Repository identity, expected result SHA, durable ref or source bundle, plan digest, and pipeline-definition version are fixed before dispatch.</p></article>
-    <article class="card"><span class="tag">R2 · authority</span><h3>One fenced attempt owner</h3><p>Every execution has a lease, fence, idempotency key, and explicit attempt number. A late report cannot overwrite a newer attempt.</p></article>
-    <article class="card"><span class="tag">R3 · materialization</span><h3>No directory guessing</h3><p>The claim names the repository and durable source. The executor fetches that source, verifies the SHA, then creates a disposable workspace.</p></article>
-    <article class="card"><span class="tag">R4 · outcomes</span><h3>Product and infrastructure stay separate</h3><p>Test failures are product outcomes. Missing source, tool failure, timeout, lost lease, and cleanup failure are typed infrastructure outcomes.</p></article>
-    <article class="card"><span class="tag">R5 · visibility</span><h3>State is central and replayable</h3><p>Queue, claim, host, materialization, command, cleanup, retry, and terminal facts are Task Server data, not backend inference.</p></article>
-    <article class="card"><span class="tag">R6 · bounded scope</span><h3>No general workflow engine</h3><p>The protocol accepts catalogued deterministic gate/post-step plans with bounded commands, evidence, time, and resources. It does not accept arbitrary fan-out.</p></article>
-  </div>
-</section>
-
-<section id="alternatives" data-concept-section="alternatives">
-  <p class="sec-no">§3 · Alternatives</p>
-  <h2>Three credible shapes</h2>
-
-  <article class="option recommended">
-    <div class="option-head">
-      <div><h3>A · Claimable remote gate steps</h3><p>A first-class GateSubject/GateAttempt lifecycle in the Task Server protocol, claimed by an eligible Agent Host.</p></div>
-      <span class="pill yes">recommended</span>
-    </div>
-    <div class="option-grid">
-      <div><b>Subject SHA</b><span>Engine creates an immutable subject from repository ID, expected SHA, verified result ref or source bundle, policy hash, and typed plan. Host fetches the declared source, verifies SHA and HEAD, then opens a disposable workspace.</span></div>
-      <div><b>Timeout and fallback</b><span>Server queue deadline plus lease TTL; host-side command and cleanup deadlines. Infrastructure outcome schedules a new fenced attempt on another eligible host. Product failure is terminal. A registered local Agent Host may be fallback.</span></div>
-      <div><b>Central state</b><span>Task Server stores queued, claimed, materializing, running, reporting, cleaning, retrying, and terminal events with host, lease, fence, evidence digest, and timestamps.</span></div>
-      <div><b>Tranche 0 fit</b><span>Exact fit: Task Server owns durable gate truth, Engine owns dispatch/decision, Agent Host executes. Existing <code>GateDispatch</code> becomes real orchestration instead of inspecting prefilled payload status.</span></div>
-    </div>
-  </article>
-
-  <article class="option">
-    <div class="option-head">
-      <div><h3>B · Run gates in the Review Plane</h3><p>Represent build/test gates as commands or aspects inside the existing ReviewSubject/ReviewAttempt contract.</p></div>
-      <span class="pill partial">credible, coupled</span>
-    </div>
-    <div class="option-grid">
-      <div><b>Subject SHA</b><span>Already strong: ReviewSubject carries repository identity, expected Result SHA, result ref or source-bundle identity, policy hash, and plan. Review Executor verifies the exact snapshot.</span></div>
-      <div><b>Timeout and fallback</b><span>Existing review lease, renew, fenced report, cleanup, and infrastructure retry are reusable. Fallback remains another Review Executor; the server checkout is not used.</span></div>
-      <div><b>Central state</b><span>ReviewAttempt is durable and visible, but an individual gate is only a command/aspect inside one review report unless the contract grows gate-level state.</span></div>
-      <div><b>Tranche 0 fit</b><span>Authority is central, but deterministic gate lifecycle becomes coupled to review identity, review capacity, same/different-host policy, and review outcome semantics. Gates outside Auto Review fit poorly.</span></div>
-    </div>
-  </article>
-
-  <article class="option">
-    <div class="option-head">
-      <div><h3>C · Gate-capable host with central dispatch</h3><p>The host advertises <code>executor:gate</code> and toolchain capabilities; a central component chooses it.</p></div>
-      <span class="pill no">incomplete alone</span>
-    </div>
-    <div class="option-grid">
-      <div><b>Subject SHA</b><span>A dispatch envelope still has to name repository, exact SHA, durable source, and plan. Without a claim object, direct calls recreate the SSH bridge with a different transport.</span></div>
-      <div><b>Timeout and fallback</b><span>Central dispatch can choose another capable host, but needs a durable attempt, deadline, lease, fence, and idempotent report to do so safely.</span></div>
-      <div><b>Central state</b><span>Capability health says what a host may do, not what work it owns now. It cannot by itself represent queue position, attempt state, subject, evidence, or terminal outcome.</span></div>
-      <div><b>Tranche 0 fit</b><span>Useful as admission and placement inside option A. As a complete architecture it leaves gate ownership ambiguous; once made safe, it converges on claimable steps.</span></div>
-    </div>
-  </article>
-</section>
-
-<section id="comparison">
-  <p class="sec-no">§4 · Trade-off table</p>
-  <h2>Option comparison</h2>
-  <div class="table-wrap">
-    <table>
-      <thead>
-        <tr><th>Criterion</th><th>A · Claimable step</th><th>B · Review Plane</th><th>C · Capability only</th></tr>
-      </thead>
-      <tbody>
-        <tr><td>Exact-SHA materialization</td><td class="yes">Explicit subject contract; reusable review materializer</td><td class="yes">Already implemented for ReviewSubject</td><td class="partial">Must be added to a dispatch envelope</td></tr>
-        <tr><td>Durable queue/attempt state</td><td class="yes">First-class GateAttempt</td><td class="partial">Durable ReviewAttempt, gate nested within it</td><td class="no">Capability does not model work</td></tr>
-        <tr><td>Lease, fence, stale-write rejection</td><td class="yes">Purpose-built, same proven semantics</td><td class="yes">Already present</td><td class="no">Missing unless option becomes A</td></tr>
-        <tr><td>Gate-level evidence and status</td><td class="yes">Native and independently queryable</td><td class="partial">Requires per-command projection or contract growth</td><td class="no">No attempt record</td></tr>
-        <tr><td>Works before/after review</td><td class="yes">Pipeline-stage neutral</td><td class="no">Review lifecycle coupling</td><td class="partial">Dispatch-specific</td></tr>
-        <tr><td>Reuse of existing code</td><td class="partial">Reuse workspace, evidence, capability, lease patterns</td><td class="yes">Highest initial reuse</td><td class="partial">Reuses capability admission only</td></tr>
-        <tr><td>Resource governance</td><td class="yes">Dedicated gate pool and capability-based slots</td><td class="partial">Competes with Review pool unless subdivided</td><td class="partial">Advertises supply but not ownership</td></tr>
-        <tr><td>Tranche 0 ownership clarity</td><td class="yes">Task Server truth, Engine dispatch, Host execution</td><td class="partial">Central truth, but gate and review ownership blur</td><td class="no">Dispatch authority remains underspecified</td></tr>
-        <tr><td>Protocol cost</td><td class="partial">New bounded subject/attempt/report API</td><td class="yes">Smallest delta for review-only gates</td><td class="partial">Small initially, larger when safety gaps are closed</td></tr>
-        <tr><td>Long-term boundary</td><td class="yes">Clear and extensible to catalogued deterministic post-steps</td><td class="partial">Good only while every gate is review-shaped</td><td class="no">A placement feature, not a boundary</td></tr>
-      </tbody>
-    </table>
-  </div>
-  <p class="score"><strong>Bottom line:</strong> A has the larger explicit protocol slice, but it is the only option whose cost buys a stable ownership boundary instead of lifecycle coupling or hidden missing machinery.</p>
-</section>
-
-<section id="recommendation" data-concept-section="recommendation">
-  <p class="sec-no">§5 · Recommendation</p>
-  <h2>A bounded GateAttempt contract, not a new host orchestrator</h2>
-  <p>The old AGT-2229 label suggested a separate “orchestrator instance” on the remote host. The target actor model no longer needs that actor. The Agent Host already owns host-side execution; the Orchestrator Engine already owns gate dispatch; the Task Server already owns durable truth. Adding another orchestrator would duplicate responsibility and complicate recovery.</p>
-
-  <figure>
-    <div class="diagram-scroll">
-      <div class="diagram" role="img" aria-label="Recommended remote gate topology. Orchestrator Engine creates gate work through the Task API. Task Server persists the subject, attempt, lease and report. An eligible Agent Host claims and executes the exact subject. Studio reads central state.">
-        <svg viewBox="0 0 930 330" preserveAspectRatio="none" aria-hidden="true">
-          <defs>
-            <path id="tar1" d="M240 102 C288 102 310 102 355 102"/>
-            <path id="tar2" d="M575 102 C620 102 648 102 695 102"/>
-            <path id="tar3" d="M465 148 C465 192 465 210 465 238"/>
-          </defs>
-          <g class="rails"><use href="#tar1"/><use href="#tar2"/><use href="#tar3"/></g>
-          <use class="flow control" href="#tar1"/>
-          <use class="flow execution" href="#tar2"/>
-          <use class="flow control" href="#tar3"/>
-        </svg>
-        <div class="node control" style="left:34px;top:59px;width:206px">
-          <b>Orchestrator Engine</b><span>creates subject · dispatches stage · consumes terminal outcome</span>
-        </div>
-        <div class="node control" style="left:355px;top:48px;width:220px;min-height:106px">
-          <b>Task Server</b><span>GateSubject · GateAttempt<br>lease/fence · events · report<br>single durable truth</span>
-        </div>
-        <div class="node execution" style="left:695px;top:59px;width:200px">
-          <b>Agent Host</b><span>capability claim · exact-SHA workspace · typed plan · cleanup</span>
-        </div>
-        <div class="node control" style="left:365px;top:238px;width:200px">
-          <b>Agent Studio</b><span>reads central status and evidence; never infers active gate work</span>
-        </div>
-        <span class="wire-label" style="left:273px;top:82px">Task API</span>
-        <span class="wire-label" style="left:605px;top:82px">claim · renew · report</span>
-        <span class="wire-label" style="left:481px;top:190px">read model</span>
-      </div>
-    </div>
-    <figcaption>Recommended topology. Blue is authority/control; teal is execution. No SSH control edge and no new supervising actor are introduced.</figcaption>
-  </figure>
-
-  <div class="decision-grid">
-    <div>
-      <h3>Adopt together</h3>
-      <ul>
-        <li><strong>Claim kind:</strong> <code>gate-step</code>, separate from coding RunAttempt and ReviewAttempt, but using their lease/fence/idempotency conventions.</li>
-        <li><strong>Capability admission:</strong> <code>executor:gate</code> plus repository, Git fetch, disk, and required toolchain capabilities. Capability health can drain only affected gate claims.</li>
-        <li><strong>Implementation reuse:</strong> extract or share Review Workspace materialization, containment namespace, command evidence, environment proof, and cleanup primitives.</li>
-        <li><strong>Bounded catalog:</strong> start with <code>post-build-test-gate</code>. Permit additional deterministic tool/post-steps only through a versioned plan schema and catalogue, not arbitrary workflow fan-out.</li>
-      </ul>
-    </div>
-    <div>
-      <h3>Keep separate</h3>
-      <ul>
-        <li>ReviewAttempt remains the semantic/visual review lifecycle.</li>
-        <li>GateAttempt remains deterministic verification with its own product and infrastructure taxonomy.</li>
-        <li>Engine stages decide what should run; hosts never decide pipeline outcomes.</li>
-        <li>Task Server persists facts; it never checks out a repository or launches a build.</li>
-      </ul>
-    </div>
-  </div>
-</section>
-
-<section id="contract">
-  <p class="sec-no">§6 · Proposed contract</p>
-  <h2>Subject, attempt, executor, and report</h2>
-  <div class="table-wrap">
-    <table>
-      <thead><tr><th>Object</th><th>Required facts</th><th>Owner</th><th>Invariant</th></tr></thead>
-      <tbody>
-        <tr><td>GateSubject</td><td><code>subjectId</code>, task/source run, repository ID and URL, expected SHA, result ref or source-bundle ID+digest, plan/policy hash, pipeline definition version, test-selection audit digest</td><td>Task Server</td><td>Immutable after creation; idempotent creation from source run + gate ID + plan hash</td></tr>
-        <tr><td>GateAttempt</td><td>attempt number, state, executor/host, failure classification, outcome, created/claimed/reported/cleaned timestamps</td><td>Task Server</td><td>At most one live fenced attempt per subject and gate policy</td></tr>
-        <tr><td>GateLease</td><td>lease ID, attempt ID, executor/instance/host, fence, authority epoch, acquired/expires, resource namespace</td><td>Task Server</td><td>Renew/report/cleanup must match executor, instance, lease, fence, and epoch</td></tr>
-        <tr><td>GatePlan</td><td>catalogue gate ID, typed commands/argv, working subdirectory, command and overall deadlines, required capabilities, output limits, cleanup policy</td><td>Engine creates; Task Server freezes</td><td>Versioned and bounded; executor cannot add work</td></tr>
-        <tr><td>GateReport</td><td>outcome, typed classification, tested SHA and tree, dirty-before/after, command evidence, environment/toolchain identity, output/artifact digests, cleanup status</td><td>Agent Host reports; Task Server validates</td><td>Tested SHA must equal expected SHA; stale or duplicate-conflicting reports are rejected</td></tr>
-      </tbody>
-    </table>
-  </div>
-
-  <h3>Central state machine</h3>
-  <ul class="state-list" aria-label="Proposed gate states">
-    <li>queued</li><li>claimed</li><li>materializing</li><li>running</li><li>reporting</li><li>cleaning</li><li>passed</li><li>product-failed</li><li>infra-retry</li><li>infra-failed</li><li>timed-out</li><li>cancelled</li>
-  </ul>
-  <p>Studio derives queue age, active host, attempt count, phase, deadline, outcome, and evidence availability from these durable facts. The current “GATE count” becomes the sum of visible claimed/running/cleaning attempts for that host, rather than a hard-coded process-local capacity snapshot.</p>
-
-  <h3>Materialization sequence</h3>
-  <ol>
-    <li>The Engine resolves the authoritative result SHA and creates the immutable GateSubject through the Task API.</li>
-    <li>The Task Server admits a claim only when the host has fresh matching capabilities and an available gate slot.</li>
-    <li>The Agent Host fetches the declared result ref. If unavailable, it may fetch the declared source bundle whose digest is pinned by the subject. It never scans unrelated host repositories by glob.</li>
-    <li>The host verifies repository identity and object type, creates a fence-specific disposable workspace, checks <code>HEAD == expectedSha</code>, and records tree/dirty proof.</li>
-    <li>The host executes the frozen plan under per-command and overall deadlines, records bounded evidence, cleans the workspace, and submits a fenced report.</li>
-    <li>The Task Server validates the report. The Engine consumes the terminal outcome and applies pipeline policy.</li>
-  </ol>
-
-  <h3>Timeout and fallback policy</h3>
-  <div class="cards">
-    <article class="card"><span class="tag">Queue</span><h3>No executor before deadline</h3><p>Remain centrally queued until the dispatch deadline. Then classify <code>NoEligibleGateExecutor</code>. Do not launch on the Task Server checkout.</p></article>
-    <article class="card"><span class="tag">Lease</span><h3>Heartbeat or host lost</h3><p>Expire the attempt, raise the fence, and retry the same immutable subject on an eligible host after positive no-overlap/containment evidence.</p></article>
-    <article class="card"><span class="tag">Command</span><h3>Build/test deadline</h3><p>Kill the process tree inside the attempt namespace. Classify timeout as infrastructure unless the command contract explicitly defines a product timeout.</p></article>
-    <article class="card"><span class="tag">Product</span><h3>Tests fail normally</h3><p>Report <code>ProductFailure</code>. Do not try another host merely to seek a green result; pipeline reissue policy handles the finding.</p></article>
-    <article class="card"><span class="tag">Fallback</span><h3>Preferred host unavailable</h3><p>Retry another capable host. A workstation is eligible only when it runs a registered Agent Host gate executor with the same contract.</p></article>
-    <article class="card"><span class="tag">Budget spent</span><h3>No trustworthy result</h3><p>Terminalize as <code>GateInfra</code> with all attempts visible. Escalation or pause follows policy; never relabel it as a task-quality failure.</p></article>
-  </div>
-</section>
-
-<section id="follow-up">
-  <p class="sec-no">§7 · Follow-up chain</p>
-  <h2>Move the gates, prove parity, then remove the bridge</h2>
-  <figure>
-    <div class="diagram-scroll">
-      <div class="diagram chain" role="img" aria-label="Follow-up chain: sight-review decision, implementation card to move gates, then existing AGT-2262 tears down the SSH bridge.">
-        <svg viewBox="0 0 930 240" preserveAspectRatio="none" aria-hidden="true">
-          <defs>
-            <path id="ch1" d="M254 110 C295 110 315 110 355 110"/>
-            <path id="ch2" d="M575 110 C615 110 636 110 676 110"/>
-          </defs>
-          <g class="rails"><use href="#ch1"/><use href="#ch2"/></g>
-          <use class="flow control" href="#ch1"/><use class="flow execution" href="#ch2"/>
-        </svg>
-        <div class="node control n1"><b>1 · Sight review</b><span>Robert selects the target shape and fallback policy</span></div>
-        <div class="node execution n2"><b>2 · Implementation card</b><span>Gate contract + host executor + central view; migrate build/test gate and prove parity</span></div>
-        <div class="node risk n3"><b>3 · AGT-2262</b><span>Remove SSH bridge wholesale only after cutover acceptance</span></div>
-      </div>
-    </div>
-    <figcaption>The middle item is the only new implementation card proposed by this Dossier. AGT-2262 already exists and must remain parked until the acceptance conditions below are met.</figcaption>
-  </figure>
-
-  <h3>Implementation-card acceptance source</h3>
-  <ul>
-    <li>Task Server persists GateSubject, GateAttempt, GateLease, events, report, cleanup, and typed retry/outcome state across restarts.</li>
-    <li>Agent Host claims only with fresh gate/repository/toolchain capabilities and materializes the declared exact SHA without directory scanning.</li>
-    <li>Orchestrator Engine dispatches and consumes the gate through the public Task API; it owns no durable attempt state.</li>
-    <li>Product failure, queue timeout, execution timeout, lost lease, missing snapshot, tool failure, and cleanup failure have distinct tested classifications.</li>
-    <li>Stale-fence reports and cleanup messages are rejected; an infrastructure retry preserves the immutable subject and raises the fence.</li>
-    <li>Studio reads queue, active host/phase, retry history, tested SHA, and terminal evidence from Task Server facts. The backend no longer guesses remote gate load.</li>
-    <li>The migrated build/test gate meets or improves the current remote throughput envelope and never runs in the Task Server checkout.</li>
-    <li>A bounded canary proves remote pass, product failure, host loss, Task Server restart, Engine restart, no eligible host, and cleanup failure before the bridge is disabled.</li>
-  </ul>
-
-  <h3>AGT-2262 teardown entry condition</h3>
-  <p>Only after the new path is the default and the canary/restart matrix is green: remove <code>RemoteSshHost</code>, <code>ResolveRemoteGateSshHost</code>, the complete SSH bridge region in <code>BuildTestGateRunner</code>, its process-local remote gate semaphore and scripts, <code>RemoteGateActivityStore</code>, and the backend alias-based gate-count projection. Remove obsolete SSH/config documentation in the same teardown. The local in-process compatibility path is removed or explicitly retained by a separate decision; it must not survive accidentally as a silent target fallback.</p>
-</section>
-
-<section id="open-decisions" data-concept-section="open-decisions">
-  <p class="sec-no">§8 · Open decisions</p>
-  <h2>What Robert should decide at sight review</h2>
-  <div class="table-wrap">
-    <table>
-      <thead><tr><th>Decision</th><th>Recommended choice</th><th>Alternative and consequence</th></tr></thead>
-      <tbody>
-        <tr><td>D1 · Primary shape</td><td>Dedicated claimable GateAttempt in the Task Server protocol</td><td>Review Plane is faster for review-only scope but couples deterministic gates to review lifecycle and capacity.</td></tr>
-        <tr><td>D2 · Capability role</td><td>Use <code>executor:gate</code> and toolchain capabilities as admission inside the gate claim</td><td>Capability-only dispatch lacks work identity and converges back to GateAttempt once made restart-safe.</td></tr>
-        <tr><td>D3 · Fallback</td><td>Other eligible Agent Host, optionally including a registered workstation host; fail as GateInfra when the retry budget is spent</td><td>In-process backend fallback keeps two execution models and preserves the coupling this concept is meant to remove.</td></tr>
-        <tr><td>D4 · Reuse boundary</td><td>Share Review Workspace primitives, not ReviewAttempt lifecycle</td><td>Embedding gates as review aspects gives maximum initial reuse but obscures individual gate state and non-review placement.</td></tr>
-        <tr><td>D5 · Initial scope</td><td>Build the bounded gate-step core and migrate <code>post-build-test-gate</code> first</td><td>A generic arbitrary post-step runner risks creating the general workflow engine excluded by product boundaries.</td></tr>
-        <tr><td>D6 · Teardown threshold</td><td>Default-on cutover plus restart/failure canary and throughput parity before AGT-2262</td><td>Immediate teardown trades a known fast bridge for an unproven path and reopens the 15–27 minute bottleneck.</td></tr>
-      </tbody>
-    </table>
-  </div>
-  <div class="callout">
-    <p><strong>Decision-ready default:</strong> approve D1–D6 as recommended. That creates one implementation card for the GateAttempt path. Keep AGT-2262 parked behind it. No product code changes are part of this concept card.</p>
-  </div>
-</section>
-
-<p class="footer-note">Sources inspected: <code>BuildTestGateRunner.cs</code>, <code>ReviewDecisionOrchestrator.cs</code>, <code>RemoteGateActivityStore.cs</code>, Task Server runner/review/capability/orchestration contracts, Remote Review Executor, Orchestrator Engine GateDispatch, pipeline and task domain maps, and the distributed-execution Tranche 0 target architecture. This Dossier recommends a target; it does not change runtime behavior.</p>
-</main>
-<script>
-  (() => {
-    const root = document.documentElement;
-    const button = document.getElementById("theme-toggle");
-    button.addEventListener("click", () => {
-      const dark = root.dataset.theme === "dark" ||
-        (!root.dataset.theme && window.matchMedia("(prefers-color-scheme: dark)").matches);
-      root.dataset.theme = dark ? "light" : "dark";
-    });
-  })();
-</script>
-</body>
-</html>
+Before publication: conflict | product-failed | infra-retry
+                    infra-failed | timed-out | cancelled | superseded
+After ambiguous publication: reconciliation-required (blocks another writer)
+Cleanup: separate durable obligation, including after integrated</code></pre><p>Claim/renew/report validation is server-owned. No host with an expired lease starts another command or publication. Infrastructure retry is bounded, uses a higher fence after containment, and preserves subject identity. Product failure is not retried for green. A cleanup failure retains evidence and a cleanup obligation without turning a known published result back into failure. Stop before publication cancels; stop during an ambiguous push waits for reconciliation and cannot promise that nothing landed.</p><h3>Publication recovery</h3><ol><li>Persist an intent before any push: attempt/fence/epoch, operation key, expected old SHA, exact new candidate SHA, gate receipt digests and complete target-ref set. The host journals delivery before sending; the server durably records it.</li><li>Revalidate current generations, receipts, policy, ref tip and publication lease. The canonical update only fast-forwards to the exact tested candidate. Never create an untested merge commit after verification.</li><li>After push, query authoritative Git refs and persist the publication receipt before reporting completion. Duplicate identical reports return the stored result; the same key with a different digest is a conflict.</li><li>If push succeeded but acknowledgement/report was lost, the new holder reconciles the old intent before new publication. Exact candidate at the remote ref proves success; if a later approved tip descends from it, verify the candidate's ancestry and the publication chain. For atomic main/tag publication verify both refs and the tag object. A ref still at expected old allows a re-authorised retry of that exact intent; a diverged or partially updated ref set requires an authority incident. Never blindly merge again or force-reset the remote branch.</li><li>A published candidate is not rolled back by local reset. Subsequent defect correction is a new reviewed revert/fix through the same integration contract. Before publication a red gate simply abandons the disposable candidate; develop/main never moved.</li></ol>
+<h3>Verification identity</h3><p>AGT-2839's current tip/tree checks remain necessary but are not the entire target receipt. Require repository and integration-ref identity, exact pre-tip, current delivery/run/review generation, delivery containment and attribution, candidate SHA and ordered parents, tested tree, clean-before/after proof, passed mandatory commands and matching policy/toolchain/environment digests. A waived, partial, resumed-without-proof or baseline-defect-adjusted review cannot masquerade as a complete green gate; explicit policy must account for every required command. Required platform checks remain separate.</p><p>The adopted materialisation constructs the final merge object before Review and retains that immutable object through publication. The integration executor then validates/fetches it and publishes by fast-forward; “merge and push” does not mean generating a fresh untested commit after the review. If only tree equivalence is available, conservatively perform remote verification, including commit-sensitive build inputs. If the integration tip moves, construct a new candidate, invalidate reuse and re-verify on the host. New semantic conflict resolution or changed delivery requires new review; mechanical moved-base verification follows the approved review policy.</p><h3>Windows coverage</h3><p>Adopted D10 selects an independent Windows host with a blocking Windows-sensitive suite on the same candidate, with explicit OS and toolchain in the receipt. Include path/case and separator assumptions, drive/temp semantics, file sharing/locking, process/shell behavior and Windows installer/setup contracts. These are plausible defect classes covered by platform-sensitive tests, not a claim that each named incident had every cause. Unknown dependency impact selects the conservative Windows suite.</p><p>Scheduled verification is a lower-cost fallback proposal only if the operator explicitly accepts defects reaching develop: it would catch these classes at the next scheduled run plus execution time, record the exact failing develop SHA, raise a branch defect and gate release. Promotion-only Windows runs delay the same defects until release, increase diagnosis distance and can stop the train. Neither alternative protects each card before integration. The adopted Windows host costs provisioning, license where applicable, patching, caches, reserved slots and extra latency; measure these rather than quoting an invented price. It may be a VM, but it must not depend on the operator workstation.</p><h3>Conflict recovery</h3><p>Use the <a href="../../concepts/platform-architecture/rebase-merge-and-integration-invariants.md">existing merge and attribution invariants</a> remotely. Abort conflicting temporary Git operations cleanly; preserve base/result/candidate SHAs, conflicting paths, operation kind, host, attempt/fence, typed failure and recovery count. AGT-2875 should consume that durable conflict record. Do not report gate timeout as merge conflict.</p><p>The Engine requests a recovery RunAttempt through the Task Server, bounded to one automatic round per operator epoch under adopted D11. This changes the current two-round, delivery-chain-scoped attribution policy and therefore needs explicit migration and tests. The coding agent resolves content in the delivery worktree; platform steps own Git. New result evidence returns to Review. Repeated conflict escalates visibly, not to an unbounded loop. Co-location and prompt publication shorten transfer and queue delay, but do not remove the 45-90 minute review window or stop develop advancing. Immutable candidate checks remain mandatory; Batch Gate can reduce repeated reconstruction later.</p><h3>Observer contract</h3><p>Studio shows queued/active/terminal attempts, phase and host, lease ownership, conflict paths, verified candidate, canonical remote refs, policy and receipts, retries and cleanup obligations from Task Server projections. These are proposed data requirements, not claims about the current UI. Actions carry authenticated operator identity, request key and expected generation; server responses and durable events drive the displayed result. Acceptance remains distinct from integration and does not bypass a red gate.</p><p>No lease renewal, candidate retention, review handoff, conflict recovery, publication credential, evidence upload, retry, release or reconciliation may require Studio to remain running. Loss of the remote Task Server still pauses new authority-dependent mutations safely. AGT-2737 must move authority off the workstation; merely connecting a host executor to the sleeping local backend fails the target.</p></section>
+<section id="open-decisions" data-concept-section="open-decisions"><h2>Decision record</h2><p>D1-D6 retain their identifiers and topics. D3 and D5 are narrowed or extended to compose with the operator's integration direction. The recommended option in every row was adopted on 25 September 2026 for the eight implementation cards. This records a technical choice, not a claim that human sight review is complete.</p><div class="media-breakout"><table><thead><tr><th>Decision</th><th>Recommendation</th><th>Options</th><th>Consequences</th></tr></thead><tbody><tr id="d1"><td><b>D1 · Primary shape</b><br>Adopted: recommended option</td><td>Dedicated GateAttempt for deterministic verification, composed under D8.</td><td>ReviewAttempt-only verification reduces initial implementation but binds independent gates to review lifecycle; capability-only dispatch has no durable work identity.</td><td>Retain GateSubject, GatePlan, GateReport and GateLease; no general workflow engine.</td></tr><tr id="d2"><td><b>D2 · Capability role</b><br>Adopted: recommended option</td><td>Capabilities are admission predicates inside claims. Require executor:integration or executor:gate, repository access, pinned tools, disk and an available slot.</td><td>Central host-name dispatch is simpler but cannot prove readiness or failover eligibility.</td><td>Fresh advertisements and bounded queue deadlines are necessary; a capability is never an attempt.</td></tr><tr id="d3"><td><b>D3 · Fallback</b><br>Adopted: recommended option</td><td>Retry another eligible remote host with a higher attempt fence after containment; pause when the bounded infrastructure budget is exhausted.</td><td>The original D3 allowed a registered workstation host. Retain that only as an explicit pre-cutover rollback option, never the target fallback.</td><td>The observer workstation is not a hidden executor. No eligible host means a visible infrastructure pause, not a local subprocess.</td></tr><tr id="d4"><td><b>D4 · Reuse boundary</b><br>Adopted: recommended option</td><td>Share materialisation, evidence and containment primitives with Review; keep attempt lifecycles separate.</td><td>Put all gates inside ReviewAttempt, with fewer initial contracts but coupled capacity and ambiguous non-review gate outcomes.</td><td>D9 adds verification-receipt reuse without granting review executors publication credentials.</td></tr><tr id="d5"><td><b>D5 · Initial scope</b><br>Adopted: recommended option</td><td>Preserve the bounded gate-step core and post-build-test-gate migration as the first verification slice; require remote integration before declaring the target delivered.</td><td>Stop after gate-only offload, leaving workstation merge and push; or build a generic post-step engine.</td><td>The old gate-only milestone becomes intermediate. D7-D14 are part of target acceptance.</td></tr><tr id="d6"><td><b>D6 · Teardown threshold</b><br>Adopted: recommended option</td><td>Default-on cutover, restart/failure canary and measured parity precede removal of remaining legacy paths.</td><td>Delete compatibility early and accept an unproven recovery path.</td><td>AGT-2262 remains a dependency/acceptance audit, not permission to recreate already absent SSH code. D13 supplies the integration canary.</td></tr><tr id="d7"><td><b>D7 · Authority</b><br>Adopted: recommended option</td><td>One remote integration executor per project holds a durable project ref-mutation lease for final publication. The Task Server owns admission and authority.</td><td>Independent leases for direct merge, Batch Gate and promotion allow overlapping writers; a Studio writer conflicts with the operator target.</td><td>Serialise develop, main, release refs and operator publication requests in one project namespace. Review and candidate preparation remain parallel; no canonical ref is changed during preparation.</td></tr><tr id="d8"><td><b>D8 · Attempt shape</b><br>Adopted: recommended option</td><td>Add IntegrationAttempt alongside RunAttempt, ReviewAttempt and proposed GateAttempt. IntegrationAttempt owns candidate construction, verification references and publication.</td><td>Widen GateAttempt to gate + merge + push. This is smaller initially but mixes verification-only Windows steps with credentialed publication and makes review reuse awkward.</td><td>One durable integration transaction, optionally referencing child GateAttempts. A gate pass cannot itself advance a branch. See the state and recovery contract.</td></tr><tr id="d9"><td><b>D9 · Review materialisation</b><br>Adopted: recommended option</td><td>Build one immutable merge candidate on the remote plane and let Review verify it. Publish that same object when its verification receipt satisfies the integration policy.</td><td>Retain delivery-only Review and always build/test a second candidate; or reuse any passed review, which lacks subject proof.</td><td>The source currently verifies ExpectedResultSha, not a universal merged candidate. This needs an explicit contract change. Tip/tree equality alone cannot excuse missing command, platform or generation proof.</td></tr><tr id="d10"><td><b>D10 · Windows coverage</b><br>Adopted: recommended option</td><td>Use a dedicated Windows runner host with os:windows and executor:gate for a required Windows-sensitive gate step on the same candidate.</td><td>Scheduled develop verification reports branch defects after integration, with detection delayed by schedule plus runtime. Windows only in promotion defers discovery until release and can block an entire wave.</td><td>Pay for an always-available Windows VM/host, SDK maintenance and a bounded per-candidate queue. Keep Windows tests off the workstation; Linux reuse never satisfies an outstanding Windows requirement.</td></tr><tr id="d11"><td><b>D11 · Conflict recovery</b><br>Adopted: recommended option</td><td>Run direct/mechanical merge and guarded rebase in the remote integration executor; request one bounded recovery RunAttempt for a semantic conflict or attribution ambiguity.</td><td>Keep recovery session-owned, which depends on the workstation, or allow the integration executor to invent conflict resolution, which bypasses review.</td><td>The Engine schedules recovery through Task Server authority; the agent edits the delivery worktree, platform Git publishes its result, and the changed delivery is reviewed again. AGT-2875 supplies the conflict-reporting boundary.</td></tr><tr id="d12"><td><b>D12 · Studio observer</b><br>Adopted: recommended option</td><td>Studio reads attempts, evidence and refs from the Task Server. Accept, continue, stop and release are authenticated, idempotent requests to that authority.</td><td>Leave a checkout or a local background coordinator required for publication. That contradicts the operator target even if tests run remotely.</td><td>No integration checkout or push credentials on Studio. Task Server, Engine, credentials, artifacts, Git reachability and recovery must remain available while the workstation sleeps or is off.</td></tr><tr id="d13"><td><b>D13 · Migration</b><br>Adopted: recommended option</td><td>Use the adopted contract decisions, shadow one project for N=20 consecutive comparable cards, then perform a fenced remote-authority cutover.</td><td>Big-bang migration is quicker but offers no measured parity; indefinite dual writers cannot provide a safe fallback.</td><td>N=20 is the adopted minimum, not statistically complete proof. Inject failures separately, then canary with the workstation off. Fallback is an explicit drained authority transfer, never an automatic local retry.</td></tr><tr id="d14"><td><b>D14 · Transitional work</b><br>Adopted: recommended option</td><td>Keep delivered safety fixes. Finish only bounded correctness/availability work needed before remote cutover; stop expanding workstation-specific optimisation after cutover acceptance.</td><td>Cancel all local work immediately, leaving the current system exposed; or continue optimising a path the target removes.</td><td>AGT-2839, AGT-2872, AGT-2824 and AGT-2854 are transitional in placement, with portable identity, classification and test-selection rules retained. See the per-card disposition below.</td></tr></tbody></table></div></section>
+<section id="follow-up"><h2>Rollout</h2><ol><li><b>Decision and inventory.</b> Apply adopted D1-D14, including Windows policy, Git enforcement boundary and N=20. Audit AGT-2262 residuals and all canonical writers. Preserve the W59 history. Implementation cards may be created from the adopted record; this concept performs no product implementation.</li><li><b>Remote authority prerequisite.</b> Coordinate AGT-2737 with the Phase B remote Docker Task Server: frozen import, backup/restore and single-writer cutover evidence must exist before production integration authority moves. AGT-2736's Docker-deployable Studio choice is not a prerequisite for protocol/shadow work, but any observer route that relies on its unresolved connector choice must be resolved or explicitly scoped before full workstation-off acceptance.</li><li><b>Protocol and executor.</b> Deliver D1-D6 gate substrate and D7-D9 integration authority, candidate and reconciliation. Add Windows verification and move enabled operator/release/promotion publishers under one authority. Batch Gate is not required for the first project, but its coordinator must delegate publication to this same contract whenever enabled.</li><li><b>Shadow canary.</b> One project, N=20 consecutive comparable cards. Local integration is the only canonical writer. Host permissions allow only <code>refs/heads/agent-studio/integration-shadow/&lt;project&gt;/&lt;attempt&gt;</code>. Pin identical pre-tip, delivery, policy and environment requirements for both paths. Record tree, ordered parents/attribution, command coverage, verdict/classification and intended remote SHA. Commit timestamps can change SHA; compare tree and parent semantics, record the difference, and never describe a different SHA as exact-object reuse. A moved base makes a pair incomparable and it does not count toward N. Every unexplained discrepancy stops the canary.</li><li><b>Failure matrix and performance.</b> Inject pass, product red, Windows-only red, no eligible host, moved base, mechanical conflict, semantic recovery, duplicate/conflicting report, lease expiry, stale writer, host loss, Task Server/Engine restart, push success with lost report, cleanup failure and stop during push. Require zero unauthorised ref writes and complete evidence for every terminal result. Compare queue and execution time separately against matched local runs; acceptance is no p95 regression in end-to-end latency, with lower workstation load. Twenty cards alone cannot establish tail reliability.</li><li><b>Authority cutover.</b> Drain local integration and queued pushes. Reconcile ambiguous intents, freeze new local mutations, record remote refs, revoke local canonical-ref credentials, transfer authority durably, then enable one remote canary project. Confirm by attempted stale-writer rejection. Run for 12 hours with Studio shut down, including review, conflict recovery and publication; expand only after evidence review.</li><li><b>Fallback.</b> Before transfer, disable shadow freely. After transfer prefer pause or another remote host. Emergency rollback to the old Studio is a time-bounded, explicit operator migration rollback: drain/contain remote publishers, reconcile Git and intent state, revoke their grants, advance authority fencing and transfer credentials before re-enabling the old path. Never run both; no remote history reset. This temporarily suspends observer-only operation and must be recorded.</li><li><b>Retirement.</b> After default-on parity and rollback rehearsal, delete the local BuildTestGateRunner integration execution path, local merge/push routing, %TEMP% gate workspace lifecycle and workstation-derived integration budgets. Do not blindly delete shared verification planners, receipts or promotion policy. Complete only actual remaining AGT-2262 SSH cleanup; keep historical evidence. Remove stale local configuration/docs in the implementation scope, then publish the staged extracted page.</li></ol>
+<h3>Transitional cards</h3><table><thead><tr><th>Card</th><th>Disposition recommendation</th></tr></thead><tbody><tr><td>AGT-2839 review reuse</td><td>Keep the delivered identity checks and finish any correctness gap while the local path is live. Carry them into D9; retire local compile-only execution after cutover. It is a bridge, not completion of the target.</td></tr><tr><td>AGT-2872 budget re-run</td><td>Finish bounded infrastructure classification/retry protection if needed before cutover. No retry-for-green or threshold tuning tied to workstation contention. Preserve portable timeout evidence remotely; retire the workstation-specific budget policy.</td></tr><tr><td>AGT-2824 local-gate optimisation</td><td>Transitional. Finish a bounded safety/correctness fix needed by the active gate; defer performance-only expansion unless required for near-term operability. The supplied task names no precise scope and the inspected sources establish no card-specific contract, so implementation must read that card before deciding which work satisfies this condition. Do not invent a shipped status or cancel it here.</td></tr><tr><td>AGT-2854 work-package selection</td><td>Keep the delivered selection correctness and finish coverage fixes. Reuse the selector in remote gate policy where appropriate; it does not establish universal Windows coverage and cannot replace the D10 platform requirement.</td></tr></tbody></table><p>No queue state, card release or cancellation is changed by this Dossier. Recommendation: continue needed bridge safety work until measured remote cutover; avoid new local-only architecture investment.</p></section>
+<section id="knowledge"><h2>Living knowledge</h2><ul><li><b>18 August 2026, AGT-2671:</b> the gate-only architecture was extracted into the canonical remote-gate.md. D1-D6 were open.</li><li><b>14 September 2026, AGT-2801:</b> descriptor history records consolidation into AGT-W59.</li><li><b>18 September 2026, AGT-2881:</b> operator direction extends ownership through merge and push. Develop inspection corrects the old SSH account, delivery-versus-merge-candidate assumption, compile-only reuse, and restart absolutes. D7-D14 proposed; no technical approval or product implementation at that date.</li><li><b>25 September 2026, AGT-2881 continuation:</b> the operator adopted the recommended D1-D14 options and requested eight implementation-ready cards in the Dossier. No product implementation or human sight review is claimed. The staged extracted page records the same extension and preserves the canonical publication destination.</li></ul></section>
+<section id="implementation" data-document-section="implementation"><h2>Implementation cards</h2><p>Eight adopted implementation slices, in delivery order. None is created, queued or released by AGT-2881. Full prompts, task types, bounded acceptance and dependencies are in <a href="workbench.json">workbench.json</a>. The current promoter reads title, prompt and acceptance scope; its descriptor model does not read the extra dependency and task-type fields, so a creation workflow must preserve those fields when applying the cards.</p><ol><li><b>Persist integration authority and fenced publication</b><p>Implement adopted D7-D8: durable IntegrationSubject/IntegrationAttempt, per-project ref-mutation lease and operation-scoped idempotency.</p></li><li><b>Execute remote integration candidates and reconcile publication</b><p>Implement the approved IntegrationAttempt state machine in a remote executor: exact source fetch, mechanical merge/rebase, clean candidate retention, gate dispatch, non-force publication and durable intent/outbox reconciliation.</p></li><li><b>Share exact candidate verification between Review and Integration</b><p>Extend the review subject/receipt contract to bind repository, result generation, integration pre-tip, candidate SHA, tested tree, ordered parents, plan/profile and environment digests and complete required command outcomes.</p></li><li><b>Provide a Windows gate executor and coverage policy</b><p>Provision and integrate a first-class os:windows gate capability with bounded slots and durable reports against the exact candidate.</p></li><li><b>Move integration recovery and operator requests to the remote authority</b><p>Implement D11-D12 requests and durable recovery scheduling with AGT-2875 conflict evidence: base/result/candidate SHAs, path list, operation, typed reason, attempt and recovery count.</p></li><li><b>Unify promotion and Batch Gate publication authority</b><p>Adapt operator merges, release commits and the existing promotion train to D7 project publication authority.</p></li><li><b>Run remote integration shadow and cutover acceptance</b><p>After adopted D1-D14 and AGT-2737 authority readiness, compare N=20 consecutive cards for one project on a credential-restricted shadow ref against local integration.</p></li><li><b>Retire local integration execution and reconcile architecture pages</b><p>After remote default acceptance, remove the local BuildTestGateRunner integration path, percent-TEMP gate workspaces, local integration budgets and local merge/push ownership.</p></li></ol></section></main></body></html>
