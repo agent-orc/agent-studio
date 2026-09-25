@@ -2665,6 +2665,13 @@
             automatic salvage path before the slot is released.
           </td>
         </tr>
+        <tr id="case-agt-2931-approval-only-needs-input">
+          <td>2026-09-25</td>
+          <td><code>AGT-2931</code><br><span class="small">approval-only NeedsInput</span></td>
+          <td>Nine concept and implementation runs on agent-runner-01 requested sight review, decision acceptance, or scope approval. Concept cards had delivered Dossiers; some implementation cards stopped before changing files. They reached <span class="lane">5e-escalated</span> and needed operator continuations.</td>
+          <td>Concept framing instructed agents to stop for post-delivery choices. Promoted cards omitted the Dossier option list, and remote outcome classification treated approval-only <code>NeedsInput</code> as a blocker.</td>
+          <td><span class="pill ok">fixed in dev</span> Concept and coding framing now places approvals after delivery; promoted prompts carry recommended or recorded options. The remote classifier logs and reclassifies approval-only <code>NeedsInput</code> as <code>Done</code> with <code>review-requested</code>, reaching <span class="lane">4-auto-review</span> before the concept sight-review step or normal review. Missing facts remain <code>NeedsInput</code>.</td>
+        </tr>
       </tbody>
     </table>
 

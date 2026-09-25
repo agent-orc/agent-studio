@@ -1052,6 +1052,9 @@ public class TaskScannerService : ITaskScanner
             {
                 RepoRelativePath = publication.RepoRelativeEntrypoint,
                 Title = review.Descriptor.Title,
+                Decisions = AgentStudio.Pipeline.ConceptDecisionAssumptions.Read(
+                    Path.Combine(repositoryRoot, publication.RepoRelativeDirectory, "index.html"),
+                    Path.Combine(repositoryRoot, publication.RepoRelativeDirectory, "workbench.json")),
             },
             Items = review.Descriptor.ImplementationTasks,
             WatchPath = info.WatchPath,
