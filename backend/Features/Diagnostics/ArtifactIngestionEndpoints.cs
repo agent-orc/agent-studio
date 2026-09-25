@@ -18,6 +18,56 @@ public static class ArtifactIngestionEndpoints
 
     public static void MapArtifactIngestionEndpoints(this WebApplication app)
     {
+        app.MapGet("/api/runner/artifacts/limits", (
+            string taskKey,
+            ITaskScanner scanner,
+            AgentStudio.Projects.ProjectSettingsService settings,
+            ArtifactRequestLimits requestLimits) =>
+        {
+            var task = ResolveTask(scanner, taskKey);
+            if (task is null) return Results.NotFound();
+            return Results.Ok(ArtifactTransferPolicy.Resolve(
+                requestLimits.MaxRequestBodyBytes,
+                settings.Get(task.ProjectName).ResultArtifactMaxFileBytes,
+                settings.Get(task.ProjectName).ResultArtifactMaxTotalBytes));
+        });
+
+        app.MapPost("/api/runner/artifacts/outcome", (
+            ArtifactTransferReportRequest req,
+            HttpContext context,
+            ITaskScanner scanner,
+            RunLeaseService leases,
+            AgentStudio.Tasks.TimelineLog timeline) =>
+        {
+            if (!RunnerLeaseAuthorization.IsCurrent(
+                    context, leases, req.TaskKey, req.RunnerId, req.LeaseId, req.FencingToken))
+                return Results.Conflict(new { error = "stale-runner-lease" });
+            var task = ResolveTask(scanner, req.TaskKey);
+            if (task is null) return Results.NotFound(new { error = "task-not-found" });
+            if (!string.Equals(req.Status, "partial", StringComparison.OrdinalIgnoreCase)
+                || req.Issues is null || req.Issues.Count == 0)
+                return Results.BadRequest(new { error = "partial-artifact-issues-required" });
+
+            var issue = req.Issues[0];
+            var summary = ArtifactTransferPolicy.BoardFact(issue);
+            timeline.Append(
+                task.FolderPath,
+                TimelineEventKinds.ResultArtifactsPartial,
+                TimelineActors.System,
+                summary,
+                req.AttemptId,
+                details: new Dictionary<string, string>
+                {
+                    ["artifactStatus"] = "partial",
+                    ["typedOutcome"] = issue.Outcome,
+                    ["path"] = issue.Path,
+                    ["sizeBytes"] = issue.SizeBytes.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["reason"] = issue.Reason,
+                    ["notTransferredCount"] = req.Issues.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                });
+            return Results.Accepted(value: new { status = "partial", fact = summary });
+        });
+
         app.MapPost("/api/runner/artifacts", async (
             ArtifactIngestRequest req,
             HttpContext context,
@@ -237,6 +287,44 @@ public static class ArtifactIngestionEndpoints
             || string.Equals(t.Id, taskKey, StringComparison.OrdinalIgnoreCase)
             || string.Equals(t.Key, taskKey, StringComparison.OrdinalIgnoreCase));
     }
+}
+
+public sealed record ArtifactRequestLimits(long MaxRequestBodyBytes);
+
+public static class ArtifactTransferPolicy
+{
+    public const long DefaultMaxFileBytes = 20L * 1024 * 1024;
+    public const long DefaultMaxTotalBytes = 100L * 1024 * 1024;
+    private const long JsonEnvelopeReserveBytes = 64L * 1024;
+
+    public static ArtifactTransferLimitsResponse Resolve(
+        long maxRequestBodyBytes,
+        long? projectMaxFileBytes,
+        long? projectMaxTotalBytes)
+    {
+        var requestBudget = Math.Max(1, maxRequestBodyBytes);
+        // Base64 expands by 4/3. Reserve bounded JSON and path metadata before
+        // advertising a raw-byte ceiling to the runner.
+        var requestSafeRawBytes = Math.Max(
+            1,
+            (requestBudget - Math.Min(JsonEnvelopeReserveBytes, requestBudget / 4)) / 4 * 3);
+        var configuredFileBytes = projectMaxFileBytes is > 0
+            ? projectMaxFileBytes.Value
+            : DefaultMaxFileBytes;
+        var maxTotalBytes = projectMaxTotalBytes is > 0
+            ? projectMaxTotalBytes.Value
+            : DefaultMaxTotalBytes;
+        var maxFileBytes = Math.Min(Math.Min(configuredFileBytes, requestSafeRawBytes), maxTotalBytes);
+        return new ArtifactTransferLimitsResponse(requestBudget, maxFileBytes, maxTotalBytes);
+    }
+
+    public static string BoardFact(ArtifactTransferIssue issue)
+        => $"result artifact {Path.GetFileName(issue.Path)} {Megabytes(issue.SizeBytes)} MB "
+           + $"{issue.Reason}; not transferred";
+
+    private static string Megabytes(long bytes)
+        => Math.Round(bytes / 1024d / 1024d, 1, MidpointRounding.AwayFromZero)
+            .ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
 }
 
 internal sealed class ArtifactIngestException : Exception

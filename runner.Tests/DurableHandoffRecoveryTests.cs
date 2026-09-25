@@ -485,6 +485,13 @@ public sealed class DurableHandoffRecoveryTests : IDisposable
                     null,
                     DateTime.UtcNow));
             }
+            if (path.EndsWith("/artifact-limits", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK, new ArtifactTransferLimitsResponse(
+                    25L * 1024 * 1024,
+                    18L * 1024 * 1024,
+                    100L * 1024 * 1024));
+            }
             if (path.EndsWith("/artifacts", StringComparison.Ordinal))
             {
                 ArtifactCalls++;

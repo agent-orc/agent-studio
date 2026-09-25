@@ -12,8 +12,8 @@ using AgentStudio.TaskServer.Contracts;
 /// Runs exactly one task end-to-end on the remote host (RM-5 MVP). The lifecycle:
 /// acquire the fenced lease, start heartbeating, prepare the git working tree,
 /// spawn the agent CLI with the fetched prompt, ship its output to the server,
-/// upload the results/ evidence, post a fenced runner completion so the result
-/// enters the normal review pipeline, and always release the lease. Before removing
+/// publish the Git result and fenced completion, upload bounded results/ evidence,
+/// and always release the lease. Before removing
 /// a worktree it salvages changes to a generation-scoped ref on origin.
 /// </summary>
 public sealed class RemoteTaskRunner
@@ -242,23 +242,31 @@ public sealed class RemoteTaskRunner
     }
 
     /// <summary>
-    /// Ship whatever evidence the stopped run already wrote. The stop path has
-    /// no retry budget to spend on an upload, so a failure is logged and the
-    /// completion proceeds without an artifact manifest.
+    /// Inventory whatever evidence the stopped run already wrote without
+    /// allowing result-file I/O to block the code handoff. The empty manifest
+    /// remains a valid immutable-envelope identity; the inventory failure is
+    /// reported after delivery as a partial artifact outcome.
     /// </summary>
-    private async Task<DurableArtifactManifest?> UploadResultsSafeAsync(
+    private async Task<ArtifactTransferPlan> PrepareResultsSafeAsync(
         string taskKey,
-        RunLeaseInfoDto lease,
+        ArtifactTransferLimitsResponse limits,
         DurableRunOutbox? outbox)
     {
         try
         {
-            return await UploadResultsAsync(taskKey, lease, outbox, CancellationToken.None);
+            return await PrepareResultsAsync(taskKey, limits, outbox, CancellationToken.None);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _log($"operator-stop results upload failed: {ex.Message}");
-            return null;
+            var issue = new ArtifactTransferIssue(
+                "results/",
+                0,
+                $"result inventory failed ({OneLine(ex.Message)})",
+                ArtifactTransferOutcomes.TransferFailed);
+            var manifest = BuildArtifactManifest([]);
+            outbox?.Enqueue("artifact-manifest", manifest.Json);
+            _log($"result artifact inventory failed task={taskKey}; delivery will continue: {OneLine(ex.Message)}");
+            return new ArtifactTransferPlan(limits, [], [issue], manifest);
         }
     }
 
@@ -413,6 +421,11 @@ public sealed class RemoteTaskRunner
             outbox,
             authority);
         var shipperTask = shipper.RunAsync(TimeSpan.FromSeconds(5), stopRun.Token);
+        var artifactLimits = await _client.GetArtifactTransferLimitsAsync(taskKey, stopRun.Token);
+        _log(
+            $"result-artifact-budget task={taskKey} "
+            + $"fileBytes={artifactLimits.MaxFileBytes} totalBytes={artifactLimits.MaxTotalBytes} "
+            + $"requestBytes={artifactLimits.MaxRequestBodyBytes}");
 
         var outcome = new RunOutcome(RunOutcomeKind.Unknown, "Runner ended before a terminal outcome was recorded.");
         var outcomeDecision = ExecutionOutcomeAdapter.Classify(new ExecutionRawFacts(
@@ -424,7 +437,6 @@ public sealed class RemoteTaskRunner
         var sourceMutated = false;
         var handedBack = false;
         var teardownAttempted = false;
-        var resultTransferAcknowledged = false;
         var releaseOnly = false;
         var daemonHandedOff = false;
         var lostWorker = LostWorkerHandoff.None;
@@ -435,6 +447,7 @@ public sealed class RemoteTaskRunner
         var finalizationRetries = slot.Finalization?.Attempts ?? 0;
         var securedTeardown = slot.Finalization?.Teardown;
         DurableArtifactManifest? artifactManifest = null;
+        ArtifactTransferPlan? artifactPlan = null;
         if (finalizationRetries > 0)
         {
             // "retry=N" counts the finalization attempts that already failed,
@@ -465,6 +478,7 @@ public sealed class RemoteTaskRunner
                     workspace,
                     shipper,
                     outbox,
+                    artifactLimits,
                     stopRun,
                     shutdown,
                     daemonShutdown,
@@ -478,12 +492,8 @@ public sealed class RemoteTaskRunner
                 outcome,
                 lease.AttemptId ?? lease.LeaseId,
                 workspace.WorkBranch);
-            artifactManifest = await UploadResultsAsync(
-                taskKey,
-                lease,
-                outbox,
-                stopRun.Token);
-            resultTransferAcknowledged = true;
+            artifactPlan = await PrepareResultsSafeAsync(taskKey, artifactLimits, outbox);
+            artifactManifest = artifactPlan.Manifest;
 
             if (heartbeat.LeaseLost)
             {
@@ -662,6 +672,7 @@ public sealed class RemoteTaskRunner
                 + (finalizationRetries > 0
                     ? $"; finalizationRetries={finalizationRetries}"
                     : string.Empty));
+            await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper);
             return outcome.Kind is RunOutcomeKind.Done or RunOutcomeKind.NoOp ? 0 : 1;
         }
         catch (DetachedWorkerLostException ex)
@@ -798,7 +809,8 @@ public sealed class RemoteTaskRunner
                 ? WorktreeTeardownResult.NoWork
                 : await SecureStoppedWorktreeAsync(slot, workspace);
             outcomeDecision = WithDurableOutput(outcomeDecision, stopTeardown);
-            artifactManifest = await UploadResultsSafeAsync(taskKey, lease, outbox);
+            artifactPlan = await PrepareResultsSafeAsync(taskKey, artifactLimits, outbox);
+            artifactManifest = artifactPlan?.Manifest;
             await CompleteAsync(
                 taskKey,
                 lease,
@@ -813,6 +825,7 @@ public sealed class RemoteTaskRunner
                 sourceMutated,
                 CancellationToken.None);
             handedBack = true;
+            await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper);
             _log($"task '{taskKey}' handed back after an operator stop: {outcome.Kind}");
             return 0;
         }
@@ -906,59 +919,62 @@ public sealed class RemoteTaskRunner
                 && !teardownAttempted
                 && Directory.Exists(workspace.RepoPath))
             {
-                if (!resultTransferAcknowledged)
+                try
                 {
-                    _log(
-                        $"result transfer was not acknowledged; retaining worktree before teardown " +
-                        $"task={taskKey} path={workspace.RepoPath}");
+                    // Every failed legacy handoff still crosses the same
+                    // generation-scoped salvage boundary as a normal delivery.
+                    // An artifact fault must never leave the only code copy as
+                    // uncommitted files in a retained checkout.
+                    teardownAttempted = true;
+                    var teardown = epicPlanning
+                        ? WorktreeTeardownResult.NoWork
+                        : await workspace.TeardownAsync(
+                            outcome.Kind.ToString(),
+                            lease.AttemptId,
+                            CancellationToken.None);
+                    if (epicPlanning)
+                        sourceMutated = await workspace.TeardownReadOnlyAsync(CancellationToken.None);
+                    // A checkout is always secured before release, but a fault
+                    // before the worker produced a result is still the legacy
+                    // release path rather than an invented completion. Once a
+                    // manifest exists, delivery had begun and the secured ref
+                    // must be reported even if a later handoff step failed.
+                    if (!handedBack
+                        && !heartbeat.LeaseLost
+                        && !releaseOnly
+                        && artifactManifest is not null)
+                    {
+                        outcomeDecision = WithDurableOutput(outcomeDecision, teardown);
+                        await CompleteOrReconcileAsync(
+                            taskKey,
+                            lease,
+                            outcome,
+                            outcomeDecision,
+                            teardown,
+                            workspace.RepositoryUrl,
+                            workspace.BaseSha,
+                            workspace.IntegrationBranchRef,
+                            artifactManifest?.Digest,
+                            outputLines,
+                            sourceMutated,
+                            CancellationToken.None);
+                        handedBack = true;
+                    }
                 }
-                else
+                catch (WorktreeSalvageException ex)
                 {
-                    try
+                    // Even a lost lease cannot hide an unsecured host-local
+                    // checkout. The gate is safety evidence, not an ownership
+                    // claim over the run's successful outcome.
+                    if (!handedBack)
                     {
-                        teardownAttempted = true;
-                        var teardown = epicPlanning
-                            ? WorktreeTeardownResult.NoWork
-                            : await workspace.TeardownAsync(
-                                outcome.Kind.ToString(),
-                                lease.AttemptId,
-                                CancellationToken.None);
-                        if (epicPlanning)
-                            sourceMutated = await workspace.TeardownReadOnlyAsync(CancellationToken.None);
-                        if (!handedBack && !heartbeat.LeaseLost && !releaseOnly)
-                        {
-                            outcomeDecision = WithDurableOutput(outcomeDecision, teardown);
-                            await CompleteOrReconcileAsync(
-                                taskKey,
-                                lease,
-                                outcome,
-                                outcomeDecision,
-                                teardown,
-                                workspace.RepositoryUrl,
-                                workspace.BaseSha,
-                                workspace.IntegrationBranchRef,
-                                artifactManifest?.Digest,
-                                outputLines,
-                                sourceMutated,
-                                CancellationToken.None);
-                            handedBack = true;
-                        }
+                        await ReportUnsecuredWorktreeAsync(taskKey, lease, ex);
+                        handedBack = true;
                     }
-                    catch (WorktreeSalvageException ex)
-                    {
-                        // Even a lost lease cannot hide an unsecured host-local
-                        // checkout. The gate is safety evidence, not an ownership
-                        // claim over the run's successful outcome.
-                        if (!handedBack)
-                        {
-                            await ReportUnsecuredWorktreeAsync(taskKey, lease, ex);
-                            handedBack = true;
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _log($"task worktree teardown failed; worktree retained at {workspace.RepoPath}: {ex.Message}");
-                    }
+                }
+                catch (Exception ex)
+                {
+                    _log($"task worktree teardown failed; worktree retained at {workspace.RepoPath}: {ex.Message}");
                 }
             }
 
@@ -982,7 +998,8 @@ public sealed class RemoteTaskRunner
 
     private async Task<RemoteExecutionResult> ExecuteAsync(
         PersistedRunnerSlot slot, GitWorkspace workspace, LogShipper shipper,
-        DurableRunOutbox? outbox, CancellationTokenSource stopRun,
+        DurableRunOutbox? outbox, ArtifactTransferLimitsResponse artifactLimits,
+        CancellationTokenSource stopRun,
         CancellationToken shutdown, CancellationToken daemonShutdown, bool epicPlanning)
     {
         var taskKey = slot.TaskKey;
@@ -1094,7 +1111,11 @@ public sealed class RemoteTaskRunner
         {
             var taskPrompt = await _client.ReadTaskFileAsync(taskKey, "prompt.md", shutdown)
                              ?? throw new InvalidOperationException($"Task '{taskKey}' has no prompt.md to run.");
-            prompt = RemoteRunPrompt.Build(taskPrompt, runSpec?.ModeFraming, ResultsDir(taskKey));
+            prompt = RemoteRunPrompt.Build(
+                taskPrompt,
+                runSpec?.ModeFraming,
+                ResultsDir(taskKey),
+                artifactLimits);
             shipper.Add("system", string.IsNullOrWhiteSpace(runSpec?.ModeFraming)
                 ? "[runner] results-dir context + remote-completion-protocol appended to task prompt"
                 : "[runner] server-composed mode framing + results-dir context + remote-completion-protocol appended to task prompt");
@@ -1567,76 +1588,197 @@ public sealed class RemoteTaskRunner
                 provider.FailureMessage ?? typed.Detail ?? typed.Outcome.ToString()),
         };
 
-    private async Task<DurableArtifactManifest> UploadResultsAsync(
+    private async Task<ArtifactTransferPlan> PrepareResultsAsync(
         string taskKey,
-        RunLeaseInfoDto lease,
+        ArtifactTransferLimitsResponse limits,
         DurableRunOutbox? outbox,
         CancellationToken ct)
     {
         var resultsDir = ResultsDir(taskKey);
-        var manifest = new List<ArtifactManifestEntry>();
-        var files = Directory.Exists(resultsDir)
-            ? Directory.EnumerateFiles(
-                resultsDir,
-                "*",
-                SearchOption.AllDirectories).ToList()
-            : [];
-
-        var uploads = new List<RunnerArtifactUpload>();
-        foreach (var file in files)
+        var observed = ObserveResultFiles(resultsDir);
+        var (selected, skipped) = ArtifactTransferPolicy.Select(resultsDir, observed, limits);
+        if (skipped.Count > 0)
         {
-            var rel = "results/" + Path.GetRelativePath(resultsDir, file).Replace('\\', '/');
-            var bytes = await File.ReadAllBytesAsync(file, ct);
-            var sha = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
-            manifest.Add(new ArtifactManifestEntry(rel, sha, bytes.LongLength));
-            var content = Convert.ToBase64String(bytes);
-            if (outbox is not null)
-            {
-                outbox.Enqueue(
-                    "artifact",
-                    JsonSerializer.Serialize(
-                        new DurableArtifactPayload(
-                            rel,
-                            TaskServerClient.MediaTypeForPath(rel),
-                            content,
-                            sha),
-                        new JsonSerializerOptions(JsonSerializerDefaults.Web)));
-            }
-            else
-            {
-                uploads.Add(new RunnerArtifactUpload(rel, content));
-            }
+            UpdateDeliverablesArtifactPolicy(resultsDir, skipped, limits);
+            observed = ObserveResultFiles(resultsDir);
+            (selected, skipped) = ArtifactTransferPolicy.Select(resultsDir, observed, limits);
         }
 
+        var manifest = new List<ArtifactManifestEntry>();
+        var prepared = new List<ArtifactTransferCandidate>();
+        foreach (var file in selected)
+        {
+            var bytes = await File.ReadAllBytesAsync(file.FullPath, ct);
+            var sha = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+            manifest.Add(new ArtifactManifestEntry(file.RelativePath, sha, bytes.LongLength));
+            prepared.Add(file with { SizeBytes = bytes.LongLength, Sha256 = sha });
+        }
         var artifactManifest = BuildArtifactManifest(manifest);
         if (outbox is not null)
         {
             outbox.Enqueue("artifact-manifest", artifactManifest.Json);
             _log(
-                $"durably journaled {manifest.Count} artifact(s) for fenced outbox replay");
+                $"durably journaled artifact manifest files={manifest.Count} skipped={skipped.Count}");
         }
-        else
+        return new ArtifactTransferPlan(limits, prepared, skipped, artifactManifest);
+    }
+
+    private async Task TransferResultsSafeAsync(
+        string taskKey,
+        RunLeaseInfoDto lease,
+        ArtifactTransferPlan? plan,
+        LogShipper shipper)
+    {
+        if (plan is null) return;
+        var issues = plan.Skipped.ToList();
+        var uploaded = 0;
+        foreach (var file in plan.Files)
         {
-            var digestInput = string.Join("\n", uploads.OrderBy(x => x.Path, StringComparer.Ordinal)
-                .Select(x => $"{x.Path}:{WireDigest.Hash(x.ContentBase64)}"));
-            var resp = await _client.UploadArtifactsAsync(new ArtifactIngestRequest(
+            try
+            {
+                var bytes = await File.ReadAllBytesAsync(file.FullPath, CancellationToken.None);
+                var sha = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+                if (bytes.LongLength != file.SizeBytes
+                    || !string.Equals(sha, file.Sha256, StringComparison.OrdinalIgnoreCase))
+                {
+                    var changed = new ArtifactTransferIssue(
+                        file.RelativePath,
+                        bytes.LongLength,
+                        "changed after artifact manifest preparation; skipped to preserve manifest integrity",
+                        ArtifactTransferOutcomes.TransferFailed);
+                    issues.Add(changed);
+                    _log(
+                        $"artifact-transfer outcome=ArtifactTransferFailed task={taskKey} "
+                        + ArtifactFact(changed));
+                    continue;
+                }
+                var upload = new RunnerArtifactUpload(file.RelativePath, Convert.ToBase64String(bytes));
+                var response = await _client.UploadArtifactsAsync(new ArtifactIngestRequest(
+                    taskKey,
+                    [upload],
+                    RunnerId: lease.RunnerId,
+                    LeaseId: lease.LeaseId,
+                    FencingToken: lease.FencingToken,
+                    AttemptId: lease.AttemptId,
+                    Fence: lease.FencingToken,
+                    AuthorityEpoch: lease.AuthorityEpoch,
+                    IdempotencyKey: $"artifact:{lease.AttemptId}:{file.RelativePath}:{WireDigest.Hash(upload.ContentBase64)}"),
+                    CancellationToken.None);
+                ValidateArtifactAcknowledgement(taskKey, [upload], response);
+                uploaded++;
+            }
+            catch (TaskServerException ex) when (ArtifactTransferPolicy.IsCapacityRejection(ex))
+            {
+                var reason = ex.StatusCode == 413
+                    ? $"exceeded the {ArtifactTransferPolicy.FormatMb(plan.Limits.MaxRequestBodyBytes)} MB upload limit"
+                    : "was refused because artifact storage is full (HTTP 507)";
+                var issue = new ArtifactTransferIssue(
+                    file.RelativePath,
+                    file.SizeBytes,
+                    reason,
+                    ArtifactTransferOutcomes.ArtifactTooLarge);
+                issues.Add(issue);
+                var fact = ArtifactFact(issue);
+                _log($"artifact-transfer outcome=ArtifactTooLarge task={taskKey} {fact}");
+                shipper.Add("system", $"[runner] {fact}");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                var issue = new ArtifactTransferIssue(
+                    file.RelativePath,
+                    file.SizeBytes,
+                    $"upload failed ({OneLine(ex.Message)})",
+                    ArtifactTransferOutcomes.TransferFailed);
+                issues.Add(issue);
+                _log($"artifact-transfer outcome=ArtifactTransferFailed task={taskKey} {ArtifactFact(issue)}");
+            }
+        }
+
+        try
+        {
+            await _client.UploadArtifactsAsync(new ArtifactIngestRequest(
                 taskKey,
-                uploads,
+                [],
                 RunnerId: lease.RunnerId,
                 LeaseId: lease.LeaseId,
                 FencingToken: lease.FencingToken,
                 AttemptId: lease.AttemptId,
                 Fence: lease.FencingToken,
                 AuthorityEpoch: lease.AuthorityEpoch,
-                IdempotencyKey: $"artifacts:{lease.AttemptId}:{WireDigest.Hash(digestInput)}",
-                FinalizeResult: true), ct);
-            ValidateArtifactAcknowledgement(taskKey, uploads, resp);
-            _log(
-                $"uploaded {resp!.Uploaded} artifact(s); commit {resp.CommitStatus ?? "n/a"}; " +
-                $"result-document={resp.ResultDocumentStatus ?? "not-reported"}");
+                IdempotencyKey: $"artifact-finalize:{lease.AttemptId}:{plan.Manifest.Digest}",
+                FinalizeResult: true), CancellationToken.None);
         }
-        return artifactManifest;
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log($"artifact result-document finalization was non-fatal task={taskKey}: {OneLine(ex.Message)}");
+        }
+
+        if (issues.Count > 0)
+        {
+            try
+            {
+                await shipper.FlushAsync(CancellationToken.None);
+                await _client.ReportArtifactTransferAsync(new ArtifactTransferReportRequest(
+                    taskKey,
+                    "partial",
+                    issues,
+                    lease.RunnerId,
+                    lease.LeaseId,
+                    lease.FencingToken,
+                    lease.AttemptId), CancellationToken.None);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log($"artifact partial-outcome report was non-fatal task={taskKey}: {OneLine(ex.Message)}");
+            }
+        }
+        _log($"artifact-transfer task={taskKey} artifacts={(issues.Count == 0 ? "complete" : "partial")} uploaded={uploaded} notTransferred={issues.Count}");
     }
+
+    internal static List<(string FullPath, string RelativePath, long SizeBytes)> ObserveResultFiles(
+        string resultsDirectory)
+        => !Directory.Exists(resultsDirectory)
+            ? []
+            : Directory.EnumerateFiles(resultsDirectory, "*", SearchOption.AllDirectories)
+                .Select(path =>
+                {
+                    var info = new FileInfo(path);
+                    return (path, Path.GetRelativePath(resultsDirectory, path).Replace('\\', '/'), info.Length);
+                })
+                .ToList();
+
+    internal static void UpdateDeliverablesArtifactPolicy(
+        string resultsDirectory,
+        IReadOnlyList<ArtifactTransferIssue> issues,
+        ArtifactTransferLimitsResponse limits)
+    {
+        Directory.CreateDirectory(resultsDirectory);
+        var path = Path.Combine(resultsDirectory, "deliverables.md");
+        var existing = File.Exists(path) ? File.ReadAllText(path) : "# Deliverables\n";
+        const string start = "<!-- artifact-transfer-policy:start -->";
+        const string end = "<!-- artifact-transfer-policy:end -->";
+        var section = new StringBuilder()
+            .AppendLine(start)
+            .AppendLine()
+            .AppendLine("## Artifact transfer")
+            .AppendLine()
+            .AppendLine("- Status: `partial`")
+            .AppendLine($"- Per-file budget: {ArtifactTransferPolicy.FormatMb(limits.MaxFileBytes)} MB")
+            .AppendLine($"- Total budget: {ArtifactTransferPolicy.FormatMb(limits.MaxTotalBytes)} MB")
+            .AppendLine("- Not transferred:");
+        foreach (var issue in issues)
+            section.AppendLine($"  - `{issue.Path}` ({ArtifactTransferPolicy.FormatMb(issue.SizeBytes)} MB): {issue.Reason}.");
+        section.AppendLine().AppendLine(end);
+        var pattern = Regex.Escape(start) + ".*?" + Regex.Escape(end);
+        var updated = Regex.IsMatch(existing, pattern, RegexOptions.Singleline)
+            ? Regex.Replace(existing, pattern, section.ToString().TrimEnd(), RegexOptions.Singleline)
+            : existing.TrimEnd() + Environment.NewLine + Environment.NewLine + section;
+        File.WriteAllText(path, updated.TrimEnd() + Environment.NewLine);
+    }
+
+    private static string ArtifactFact(ArtifactTransferIssue issue)
+        => $"result artifact {Path.GetFileName(issue.Path)} "
+           + $"{ArtifactTransferPolicy.FormatMb(issue.SizeBytes)} MB {issue.Reason}; not transferred";
 
     internal static void ValidateArtifactAcknowledgement(
         string taskKey,

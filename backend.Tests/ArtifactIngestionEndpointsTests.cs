@@ -14,6 +14,33 @@ public sealed class ArtifactIngestionEndpointsTests : IDisposable
     }
 
     [Fact]
+    public void Advertised_limit_accounts_for_base64_without_raising_global_body_cap()
+    {
+        var policy = ArtifactTransferPolicy.Resolve(
+            25L * 1024 * 1024,
+            projectMaxFileBytes: 20L * 1024 * 1024,
+            projectMaxTotalBytes: null);
+
+        Assert.Equal(25L * 1024 * 1024, policy.MaxRequestBodyBytes);
+        Assert.True(policy.MaxFileBytes < 20L * 1024 * 1024);
+        Assert.True((policy.MaxFileBytes * 4 / 3) < policy.MaxRequestBodyBytes);
+        Assert.Equal(100L * 1024 * 1024, policy.MaxTotalBytes);
+    }
+
+    [Fact]
+    public void Partial_artifact_board_fact_names_file_size_limit_and_non_transfer()
+    {
+        var fact = ArtifactTransferPolicy.BoardFact(new ArtifactTransferIssue(
+            "results/playwright/archive/trace.zip",
+            18L * 1024 * 1024,
+            "exceeded the 25 MB upload limit"));
+
+        Assert.Equal(
+            "result artifact trace.zip 18 MB exceeded the 25 MB upload limit; not transferred",
+            fact);
+    }
+
+    [Fact]
     public void NormalizeResultsPath_AddsResultsPrefix()
     {
         Assert.Equal(
