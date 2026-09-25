@@ -162,6 +162,10 @@ test.describe('Card mode badge (planning / research / concept recognizable on th
     const tagged = cardByTitle(page, RESEARCH_TASK.title).getByTestId('task-card-tagging-status');
     await expect(proposal).toHaveText('Tags proposed');
     await expect(tagged).toHaveText('Auto-tagged');
+    // The broad board fixture can open an unrelated error dialog while its
+    // placeholder API responses settle; keep the marker capture unobscured.
+    if (await page.getByTestId('error-dialog').isVisible())
+      await page.getByTestId('error-dialog-close').click();
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
       await expect(proposal).toBeVisible();

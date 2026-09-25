@@ -40,8 +40,10 @@ dry run and `apply=true` for writes. `GET .../backfill-jobs/{id}` exposes the
 job status; interrupted jobs resume after restart, and `GET .../report`
 returns the last report. A direct `POST .../backfill` also returns the report
 synchronously for a bounded inspection. Reports include area counts,
-low-confidence items, and tier precision and recall against the proposed golden set. The
-per-project workspace setting `AutoTag` is true by default; the
+low-confidence items, and tier precision and recall against the proposed
+golden set. The step writes project activity-feed lines for applied tags and
+proposals on all three item kinds, plus card timeline lines. The per-project
+workspace setting `AutoTag` is true by default; the
 `PUT /api/projects/{project}/auto-tag` endpoint changes it. The active v1
 project definition has no `tagging.autoTag` key.
 

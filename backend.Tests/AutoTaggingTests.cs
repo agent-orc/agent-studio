@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AgentStudio.Tags;
+using AgentStudio.Areas;
 using AgentStudio.Shared;
 using Xunit;
 
@@ -59,11 +60,43 @@ public sealed class AutoTaggingTests
         Assert.Equal(20, items.Count(i => i.GetProperty("kind").GetString() == "dossier"));
         Assert.Contains(items, i => i.GetProperty("state").GetString() == "7-archive");
         Assert.Contains(items, i => i.GetProperty("state").GetString() == "6-completed");
+        var areaIds = AreaTaxonomy.ProductDefaults.Select(area => area.Id).ToHashSet(StringComparer.Ordinal);
+        var allowed = areaIds.Concat(AreaTaxonomy.QualityFacets.Select(facet => facet.Id))
+            .Concat(AreaTaxonomy.DocumentFacets.Select(facet => facet.Id))
+            .ToHashSet(StringComparer.Ordinal);
         Assert.All(items, i =>
         {
-            Assert.NotEmpty(i.GetProperty("tags").EnumerateArray());
+            var tags = i.GetProperty("tags").EnumerateArray().Select(tag => tag.GetString()!).ToArray();
+            Assert.NotEmpty(tags);
+            Assert.All(tags, tag => Assert.Contains(tag, allowed));
+            Assert.Contains(tags, areaIds.Contains);
             Assert.False(string.IsNullOrWhiteSpace(i.GetProperty("rationale").GetString()));
             Assert.False(string.IsNullOrWhiteSpace(i.GetProperty("text").GetString()));
         });
+        Assert.Equal(["execution-and-runner"], items[0].GetProperty("tags").EnumerateArray()
+            .Select(tag => tag.GetString()).ToArray());
+        Assert.Equal(["dossiers-and-documentation", "architecture"], items[30].GetProperty("tags")
+            .EnumerateArray().Select(tag => tag.GetString()).ToArray());
+        Assert.Equal(["dossiers-and-documentation", "decision"], items[79].GetProperty("tags")
+            .EnumerateArray().Select(tag => tag.GetString()).ToArray());
+    }
+
+    [Fact]
+    public void GoldenSetScoreCountsMultiLabelPrecisionAndRecall()
+    {
+        TagGoldenSetItem[] expected =
+        [
+            new() { Kind = "card", Id = "a", Tags = ["gates-and-review", "testing"] },
+            new() { Kind = "dossier", Id = "b", Tags = ["dossiers-and-documentation"] },
+        ];
+        TagClassificationPrediction[] actual =
+        [
+            new() { Kind = "card", Id = "a", Tags = ["gates-and-review", "reliability"], Confidence = 0.9 },
+            new() { Kind = "dossier", Id = "b", Tags = ["dossiers-and-documentation"], Confidence = 0.8 },
+        ];
+        var score = TagGoldenSetEvaluator.Score(1, "sonnet", "low", expected, actual);
+        Assert.Equal(2.0 / 3.0, score.Precision);
+        Assert.Equal(2.0 / 3.0, score.Recall);
+        Assert.Equal(0.85, score.MeanConfidence, precision: 10);
     }
 }

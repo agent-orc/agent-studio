@@ -171,14 +171,15 @@ partial failure. The alternative `keep` choice records rejection without any
 registry, glossary, or subject write. Area ids and platform provenance tags are
 never eligible for retirement or merge.
 
-When an operator-approved golden-set file is present, the same run also records
-micro precision and recall per classification tier. The file is accepted only
-with approval metadata and at least 60 cards plus 20 Dossiers. Tier 1 uses the
-Sonnet-class route at low thinking. Precision below 0.9 automatically evaluates
-and selects tier 2 on the Sonnet-class route at high thinking. Missing,
-unapproved, undersized, malformed, or out-of-registry data produces an explicit
-report status instead of a metric claim. The repository does not ship an
-agent-authored golden set as ground truth.
+When a valid golden-set file is present, the run records micro precision and
+recall per classification tier. The repository's Agent Studio set contains 60
+cards and 20 Dossiers and is marked `proposed`, with no approver. Its metrics
+are explicitly labelled as agreement with a proposed reference, pending the
+operator decision. An approved set requires `approvedBy` and `approvedAt`.
+Tier 1 uses the Sonnet-class route at low thinking. Precision below 0.9
+automatically evaluates and selects tier 2 at high thinking. Missing,
+undersized, malformed, or out-of-registry data produces an explicit report
+status instead of a metric claim.
 
 ### Filesystem and report contract
 
@@ -202,18 +203,19 @@ preimages verified immediately before application.
 Each run's `goldenSet` object contains `status`, `metrics`, `path`, `message`,
 `cardCount`, `dossierCount`, `selectedTier`, and `tiers[]`. Each tier row contains
 `tier`, `model`, `thinkingLevel`, `items`, `precision`, `recall`, and
-`meanConfidence`. Without an operator-approved file, the report says
-`metrics: "unavailable (no approved golden set)"`, leaves `tiers` empty, and
-does not emit precision or recall numbers.
+`meanConfidence`. A valid proposed file reports `evaluated-proposed` and
+`available (proposed reference)`; no file leaves `tiers` empty and emits no
+precision or recall numbers.
 
-The evaluation harness reads
+The evaluation harness reads the proposed Agent Studio set at
+`docs/quality/tagging-golden-set/items.json` when present, and otherwise reads
 `<TaskRepository>/tag-golden-sets/<sha256(project)>.json` by default. Its schema
-is `approvedBy` (non-empty string), `approvedAt` (timestamp), and `items[]`.
+has `status`, nullable `approvedBy` and `approvedAt`, and `items[]`.
 Each item has `kind` (`card` or `dossier`), `id`, `title`, `text`, and a non-empty
 `tags[]` drawn from the effective closed registry. `(kind, id)` pairs are
 unique. A usable file contains at least 60 cards and 20 Dossiers. Invalid,
-unapproved, undersized, or out-of-registry input is reported as unavailable or
-invalid and never treated as ground truth.
+undersized, or out-of-registry input is reported as invalid. Proposed input is
+measured but is never represented as operator-approved ground truth.
 
 ### Configuration
 
@@ -223,10 +225,10 @@ invalid and never treated as ground truth.
 | `TagMaintenance:Projects:<project>:Enabled` | `true` | Enables the hosted sweep for one exact project name. `false` skips that project; the explicit run API remains available. |
 | `TagMaintenance:IntervalHours` | `168` | Cadence after the most recent successful (`reported`) run. Values are clamped to 1 through 8760 hours. |
 | `TagMaintenance:RetryDelayMinutes` | `60` | Delay after the most recent failed attempt since the last success. Values are clamped to 1 through 1440 minutes. Cancellation creates no run and does not alter due time. |
-| `TagMaintenance:GoldenSetPath` | `<TaskRepository>/tag-golden-sets/<sha256(project)>.json` | Optional golden-set path override. Every `{project}` token is replaced with the exact project name, then the result is resolved to an absolute path. |
+| `TagMaintenance:GoldenSetPath` | Agent Studio: shipped proposed set; other projects: `<TaskRepository>/tag-golden-sets/<sha256(project)>.json` | Optional golden-set path override. Every `{project}` token is replaced with the exact project name, then the result is resolved to an absolute path. |
 
-`TaskRepository` is the required workspace root for both report and default
-golden-set paths. The hosted worker checks eligibility every 15 minutes; that
+`TaskRepository` is the required workspace root for reports and per-project
+golden-set paths outside the shipped Agent Studio proposal. The hosted worker checks eligibility every 15 minutes; that
 poll interval is fixed and is not a `TagMaintenance` configuration key.
 
 ## Tests
