@@ -632,6 +632,17 @@ public sealed partial class TaskServerStore
         }
 
         var steps = await ReadPostStepsAsync(connection, transaction, runId, ct);
+        SessionContinuationLedgerEntry? previousSession = null;
+        var previousJson = Convert.ToString(await ScalarAsync(connection, """
+            SELECT payload_json FROM events
+             WHERE task_id = $task AND kind = 'session.continuation'
+             ORDER BY rowid DESC LIMIT 1;
+            """, ct, transaction, ("$task", task.TaskId)), CultureInfo.InvariantCulture);
+        if (!string.IsNullOrWhiteSpace(previousJson))
+        {
+            try { previousSession = JsonSerializer.Deserialize<SessionContinuationLedgerEntry>(previousJson); }
+            catch (JsonException) { /* Corrupt evidence never authorizes a resume. */ }
+        }
         return new WorkPermitAcceptanceDto(
             status,
             permitId,
@@ -639,7 +650,8 @@ public sealed partial class TaskServerStore
             task,
             lease,
             lease.ExpiresAt,
-            steps);
+            steps,
+            PreviousSession: previousSession);
     }
 
     private static async Task<PostStepPlanDto> ReadPostStepAsync(

@@ -293,6 +293,15 @@ state.
   worktree teardown. An incomplete or absent acknowledgement retains the
   worktree. A genuine summary failure is allowed through so the marked
   `TaskTransitionService` scaffold remains the honest terminal backstop.
+  Integration recovery carries a compact mechanical delta on the claim. The
+  runner resumes one prior clean-context session only when task, provider,
+  host-bound clean home, repository, worktree, branch and delivery ref/SHA
+  agree with the task's durable continuation ledger. The ledger records each
+  fenced generation's input and captured session IDs, decision, typed reason,
+  token total and duration. A resumed round stops at 300 seconds or the
+  1,211,213-token observation threshold. Semantic conflicts and invalid
+  sessions return to Ready for a policy-qualified fresh claim. The original
+  task prompt is never resent on the resume path.
 - `runner/ReviewStateStore.cs`, `runner/ReviewSlotReconciler.cs`,
   `runner/DurableReviewProcess.cs`, `runner/RemoteReviewDaemon.cs`, and
   `runner/RemoteReviewExecutor.cs`: durable

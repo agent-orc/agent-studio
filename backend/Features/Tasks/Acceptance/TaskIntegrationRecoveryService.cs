@@ -1,3 +1,6 @@
+using AgentStudio.Runner;
+using AgentStudio.TaskServer.Contracts;
+
 namespace AgentStudio.Tasks;
 
 public sealed record TaskIntegrationRecoveryResult(
@@ -110,6 +113,15 @@ public sealed class TaskIntegrationRecoveryService
             return Failed(
                 "The recovery prompt was persisted, but the task could not be queued in Ready.");
         }
+
+        var conflict = status.Failure?.ConflictReport;
+        SessionContinuationLedgerStore.SaveDelta(queued.FolderPath, new MechanicalRoundDelta(
+            conflict?.IntegrationTipSha ?? string.Empty,
+            subject.ResultRef,
+            subject.ResultSha,
+            conflict?.ConflictedFiles ?? [],
+            prompt,
+            "Verify the updated delivery with the relevant focused checks, then run the required deterministic delivery gate."));
 
         var details = new Dictionary<string, string>
         {

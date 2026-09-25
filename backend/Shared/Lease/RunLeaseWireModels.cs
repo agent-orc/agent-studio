@@ -226,7 +226,10 @@ public sealed record RunnerClaimResponse(
     // continuation round prepares its worktree on the rescued commit instead of
     // on the integration branch.
     string? ContinuationBaseRef = null,
-    string? ContinuationBaseSha = null);
+    string? ContinuationBaseSha = null,
+    AgentStudio.TaskServer.Contracts.SessionContinuationLedgerEntry? PreviousSession = null,
+    AgentStudio.TaskServer.Contracts.MechanicalRoundDelta? MechanicalDelta = null,
+    string? FreshRunReason = null);
 
 /// <summary>Fenced request for the server-rendered Epic decomposition prompt.</summary>
 public sealed record RemoteEpicPlanningPromptRequest(
@@ -288,7 +291,8 @@ public sealed record RemoteRunCompletionRequest(
     string? ImmutableResultRef = null,
     string? ArtifactManifestDigest = null,
     string? IntegrationBranch = null,
-    string? NeedsInputMessage = null);
+    string? NeedsInputMessage = null,
+    AgentStudio.TaskServer.Contracts.SessionContinuationLedgerEntry? SessionContinuation = null);
 
 public sealed record RemoteRunCompletionResponse(
     string TaskKey,

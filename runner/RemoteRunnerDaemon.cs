@@ -709,7 +709,9 @@ public sealed class RemoteRunnerDaemon
                                     permitClaim.RunSpec,
                                     shutdown,
                                     permitClaim.ContinuationBaseRef,
-                                    permitClaim.ContinuationBaseSha))));
+                                    permitClaim.ContinuationBaseSha,
+                                    permitClaim.PreviousSession,
+                                    permitClaim.MechanicalDelta))));
                         idleWatchdog.RecordActiveSlots(active.Count);
                         continue;
                     }
@@ -791,7 +793,10 @@ public sealed class RemoteRunnerDaemon
                             claim.RunSpec,
                             shutdown,
                             claim.ContinuationBaseRef,
-                            claim.ContinuationBaseSha)));
+                            claim.ContinuationBaseSha,
+                            claim.PreviousSession,
+                            claim.MechanicalDelta,
+                            claim.FreshRunReason)));
                     idleWatchdog.RecordActiveSlots(active.Count);
                 }
 

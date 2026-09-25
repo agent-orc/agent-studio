@@ -4,7 +4,7 @@ using System.Text.RegularExpressions;
 namespace AgentRunner;
 
 /// <summary>The terminal outcome an agent signs its run off with.</summary>
-public enum RunOutcomeKind { Done, Blocked, NeedsInput, NoOp, Unknown, EnvironmentFailure, Stopped }
+public enum RunOutcomeKind { Done, Blocked, NeedsInput, NoOp, Unknown, EnvironmentFailure, Stopped, MechanicalFallback }
 
 public sealed record RunOutcome(RunOutcomeKind Kind, string? Reason, string? NeedsInputMessage = null)
 {

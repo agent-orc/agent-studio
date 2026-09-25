@@ -13,6 +13,38 @@ namespace TaskServer.Tests;
 public sealed class TaskServerStoreTests
 {
     [Fact]
+    public async Task Completed_session_evidence_survives_restart_and_reaches_the_next_claim()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        var run = claim.Run!;
+        var lease = claim.Lease!;
+        var evidence = new SessionContinuationLedgerEntry(
+            run.RunId, task.TaskKey, "codex", "https://example.test/repo.git",
+            "/work/task", "runner/task", "refs/heads/result", new string('a', 40),
+            "host|/clean/task", null, "session-1", "fresh-run", null, false, 0,
+            100, 20, 0, 120, 45, DateTime.UtcNow);
+        await store.CompleteRunAsync(run.RunId, new CompleteRunRequest(
+            "runner-a", "instance-a", lease.LeaseId, lease.Fence,
+            ExecutionOutcomeKind.LaunchFailure.ToString(),
+            IdempotencyKey: "completion-session-ledger", Sequence: 1,
+            SessionContinuation: evidence), "test", default);
+        var current = await store.GetTaskAsync(project.ProjectId, task.TaskKey, default);
+        await store.UpdateTaskAsync(project.ProjectId, task.TaskKey,
+            new UpdateTaskRequest(null, null, "2-ready", current!.Version), "test", default);
+
+        var restarted = Store(temp.Path);
+        await restarted.InitializeAsync();
+        var next = await restarted.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal("session-1", next.PreviousSession?.CapturedSessionId);
+        Assert.Equal(120, next.PreviousSession?.TotalTokens);
+    }
+
+    [Fact]
     public async Task Releasing_a_dead_runner_attempt_returns_its_progress_task_to_ready()
     {
         using var temp = new TempDirectory();

@@ -1365,6 +1365,17 @@ public sealed partial class TaskServerStore
 
             var providerContinuation = await ReadProviderFallbackForClaimAsync(
                 connection, transaction, task, ct);
+            SessionContinuationLedgerEntry? previousSession = null;
+            var priorSessionJson = Convert.ToString(await ScalarAsync(connection, """
+                SELECT payload_json FROM events
+                 WHERE task_id = $task AND kind = 'session.continuation'
+                 ORDER BY rowid DESC LIMIT 1;
+                """, ct, transaction, ("$task", task.TaskId)), CultureInfo.InvariantCulture);
+            if (!string.IsNullOrWhiteSpace(priorSessionJson))
+            {
+                try { previousSession = JsonSerializer.Deserialize<SessionContinuationLedgerEntry>(priorSessionJson); }
+                catch (JsonException) { /* Corrupt evidence never authorizes a resume. */ }
+            }
 
             var fence = Convert.ToInt64(await ScalarAsync(connection,
                 "SELECT last_fence FROM fence_counters WHERE task_id = $task;", ct, transaction, ("$task", task.TaskId))
@@ -1424,7 +1435,8 @@ public sealed partial class TaskServerStore
                 RuntimeCapacity: runtimeCapacity,
                 ModelFallback: providerContinuation?.Fallback,
                 ContinuationBaseRef: providerContinuation?.BaseRef,
-                ContinuationBaseSha: providerContinuation?.BaseSha);
+                ContinuationBaseSha: providerContinuation?.BaseSha,
+                PreviousSession: previousSession);
         }, ct);
         return response!;
     }
@@ -1669,6 +1681,10 @@ public sealed partial class TaskServerStore
     public async Task<RunDto> CompleteRunAsync(string runId, CompleteRunRequest request, string actorId, CancellationToken ct)
     {
         RequireWritable();
+        if (request.SessionContinuation is { } session
+            && !string.Equals(session.AttemptId, runId, StringComparison.Ordinal))
+            throw new TaskServerConflictException(
+                "session-attempt-mismatch", "Session evidence does not match the fenced run.");
         if (request.NeedsInputMessage is not null
             && Encoding.UTF8.GetByteCount(request.NeedsInputMessage) > 16 * 1024)
             throw new ArgumentException("NeedsInputMessage exceeds the 16 KiB completion-envelope limit.");
@@ -1854,6 +1870,10 @@ public sealed partial class TaskServerStore
                 ("$repositoryUrl", resultHandoff?.Envelope.RepositoryUrl),
                 ("$resultRef", resultHandoff?.Envelope.ImmutableRemoteRef),
                 ("$bundleSha", resultHandoff?.Envelope.SourceBundleDigest));
+            if (request.SessionContinuation is { } completedSession)
+                await AppendLifecycleEventAsync(
+                    connection, transaction, runId, lease.TaskId, request.Fence,
+                    "session.continuation", completedSession, ct);
             await ResolveCanarySuccessAsync(
                 connection,
                 transaction,

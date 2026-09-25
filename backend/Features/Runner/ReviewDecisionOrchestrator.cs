@@ -5664,6 +5664,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
         var moved = MoveReissueToReadyTop(current, entry, BuildTestGateReopenCause);
         if (moved == null) return;
+        if (SessionContinuationLedgerStore.Latest(moved.FolderPath)?.MechanicalResumesUsed >= 1)
+            SessionContinuationLedgerStore.SaveFreshReason(
+                moved.FolderPath, "failed-deterministic-gate");
 
         if (councilReaction is not null)
         {

@@ -117,7 +117,7 @@ public sealed class RemoteTokenReceiptService
             return new RemoteTokenReceiptResult(false, entries.Count, "The token receipt could not be persisted.");
         }
 
-        return new RemoteTokenReceiptResult(true, entries.Count, null);
+        return new RemoteTokenReceiptResult(true, entries.Count, null, summary.TotalTokens);
     }
 
     private static int SafeInt(long value)
@@ -127,4 +127,4 @@ public sealed class RemoteTokenReceiptService
     }
 }
 
-public sealed record RemoteTokenReceiptResult(bool Persisted, int Calls, string? Warning);
+public sealed record RemoteTokenReceiptResult(bool Persisted, int Calls, string? Warning, long? TotalTokens = null);
