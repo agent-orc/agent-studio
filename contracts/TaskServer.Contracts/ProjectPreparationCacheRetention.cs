@@ -258,6 +258,13 @@ public static class ProjectPreparationCacheSweep
         }
     }
 
+    /// <summary>
+    /// Atomically takes one known-bad published entry out of circulation. The
+    /// rename happens before deletion, so a concurrent lookup sees either the
+    /// complete old entry or a cache miss, never a half-deleted tree.
+    /// </summary>
+    public static bool EvictEntry(string entryPath) => TryRemove(entryPath);
+
     /// <summary>Total bytes of a directory tree; unreadable parts count as zero.</summary>
     public static long Measure(string path)
     {
