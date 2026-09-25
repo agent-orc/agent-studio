@@ -55,7 +55,7 @@ jobs:
       - name: Set up .NET 10
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '10.0.301'
 
       - name: Set up Node 22
         uses: actions/setup-node@v4
@@ -237,6 +237,12 @@ jobs:
           echo "image size report (v$VERSION):"
           docker image ls --format '{{.Repository}}:{{.Tag}} {{.Size}}' \
             | grep "ghcr.io/agent-orc/" | grep ":v$VERSION"
+
+      - name: Smoke published one-box images
+        env:
+          COMPOSE_SMOKE_MODE: images
+          AGENT_STUDIO_VERSION: ${{ needs.version.outputs.version }}
+        run: scripts/compose-smoke-test.sh
 
       - name: Upload Linux release artifacts
         uses: actions/upload-artifact@v4

@@ -1,0 +1,5 @@
+{$STUDIO_EDGE_HOSTNAME:localhost} {
+    tls internal
+    encode zstd gzip
+    reverse_proxy web:8080
+}
