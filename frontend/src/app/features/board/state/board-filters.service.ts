@@ -4,7 +4,7 @@ import { TaskService } from '../../../services/task.service';
 import { ClientService } from '../../../services/client.service';
 import { TagRegistryStore } from '../../../services/tag-registry.store';
 import { projectIdentity } from '../../../services/project-identity.util';
-import { kvValueOf, withKvSegment } from '../../../services/url-hash.util';
+import { kvValueOf, routeSegmentOf, withKvSegment } from '../../../services/url-hash.util';
 
 /**
  * Cycle 9 board feature service: free-text search query, four faceted
@@ -39,6 +39,7 @@ export interface ActiveFilterPill {
 
 @Injectable({ providedIn: 'root' })
 export class BoardFiltersService {
+  private previousRoute = typeof window === 'undefined' ? null : routeSegmentOf(window.location.hash);
   private readonly jobService = inject(TaskService);
   private readonly clientService = inject(ClientService);
   private readonly tagRegistryStore = inject(TagRegistryStore);
@@ -417,6 +418,12 @@ export class BoardFiltersService {
     this.writeFilterHash();
   }
 
+  setTagSelection(ids: ReadonlySet<string>): void {
+    this.activeTagFilter.set(new Set(ids));
+    localStorage.setItem('sharedTagFilters', JSON.stringify([...ids]));
+    this.writeFilterHash();
+  }
+
   toggleProject(name: string): void {
     const current = new Set(this.activeProjects());
     if (current.has(name)) current.delete(name); else current.add(name);
@@ -553,6 +560,19 @@ export class BoardFiltersService {
 
   private readFilterHash(): void {
     const hash = window.location.hash || '';
+    const route = routeSegmentOf(hash);
+    const fromBoard = this.previousRoute === '/board' || this.previousRoute?.startsWith('/projects/') && this.previousRoute.endsWith('/board');
+    this.previousRoute = route;
+    // Area and facet choices belong to the whole work surface. Route changes
+    // without a filter segment keep them; an unfiltered board-to-board URL
+    // remains authoritative for clearing an explicit board filter.
+    if (kvValueOf(hash, 'filters') == null && kvValueOf(hash, 'filter') == null
+        && (!fromBoard || route !== '/board')) {
+      this.activeTagFilter.set(new Set(safeParseStringArray(localStorage.getItem('sharedTagFilters'))));
+      return;
+    }
+    if (route === '/board' && fromBoard && kvValueOf(hash, 'filters') == null)
+      localStorage.removeItem('sharedTagFilters');
     // The route is authoritative. A board URL without a filters= segment is
     // the unfiltered board, so a hash navigation must not leave the previous
     // in-memory facets stuck on screen. Project-scoped board tabs restore
