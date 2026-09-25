@@ -5,10 +5,13 @@ public static class TaskServerPrincipalKinds
     public const string Studio = "studio";
     public const string Engine = "engine";
     public const string Runner = "runner";
+    public const string Operations = "operations";
 }
 
 public static class TaskServerScopes
 {
+    public const string OperationsIssue = "operations:issue";
+    public const string OperationsInspect = "operations:inspect";
     public const string TasksRead = "tasks:read";
     public const string TasksWrite = "tasks:write";
     public const string RunsClaim = "runs:claim";

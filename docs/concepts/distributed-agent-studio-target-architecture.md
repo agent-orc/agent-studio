@@ -1,7 +1,7 @@
 # Distributed Agent Studio target architecture
 
-Status: canonical target picture, 2026-07-13. This page defines the intended
-separation of Agent Studio, the Task Server, and Agent Runner. It is a product
+Status: canonical target picture, amended by ADR-0075 on 2026-09-25. This page defines the intended
+separation of Agent Studio, Task Server, Agent Runner, and Operations Server. It is a product
 and architecture target, not a claim that every boundary already ships.
 
 This page is the coordinating source for the implementation tasks listed in
@@ -11,7 +11,7 @@ security, or workspace-organization decisions here.
 
 ## 1. Decision summary
 
-Agent Studio for Software is one product made from three independently
+Agent Studio for Software is one product made from four independently
 deployable runtime components:
 
 1. **Agent Studio** is the replaceable human surface. It is primarily the
@@ -24,8 +24,21 @@ deployable runtime components:
    checkouts, coding-agent processes, tool processes, containment, and bounded
    delivery of typed events and artifacts to the Task Server.
 
-Shared contracts and orchestration libraries are important modules, but they
-are not a fourth runtime product.
+4. **Operations Server** brokers bounded executable host and developer-seat
+   operations through outbound Operations Agents. It accepts service principals,
+   not browser sessions. Task Server remains the authority for task-linked permits
+   and all orchestration sessions. Studio edges hold independent upstream credentials.
+
+Shared contracts and orchestration libraries remain modules, not runtime roles.
+[ADR-0075](../system/architecture/decisions/adr-archive.md#adr-0075---operations-server-brokers-host-execution-beside-task-server-authority-2026-09-25)
+amends the original three-component decision. The selected standard is one-box
+Docker after full route and security parity. The initial service and read-only
+agent do not yet establish that parity. See the
+[Operations contract and remaining gates](../system/contracts/operations-backchannel.md).
+
+The task/run topology below remains valid. The additional operations path is
+`frontend backend -> Operations Server <- outbound Operations Agent`, with
+Task Server permit introspection on admission, dispatch, renewal and results.
 
 The release-defining scenario is:
 
@@ -112,6 +125,7 @@ carries task authority, events, evidence metadata, and commands.
 | **Agent Studio** | Human interaction, board and project views, task authoring, orchestration observation, admin UI, explicit operator commands, local UI preferences | Durable task state, lease authority, CLI process handles, hidden filesystem writes, long-running service liveness |
 | **Task Server** | Canonical resources and IDs, Task API, orchestration state machine, scheduling/admission, users and authorization, service identities, durable leases/fences, event and artifact ingestion, audit, backup/restore metadata, management API | Coding-agent processes, host toolchains, repository worktrees, Angular component state |
 | **Agent Runner** | Host registration, capability probes, project workspaces, CodingAgentRunner integration, process containment, execution of an admitted run plan, typed output, artifact upload, bounded local spool | Global task namespace, user passwords, arbitrary lane changes, autonomous claims, policy changes, release authority |
+| **Operations Server** | Versioned catalogue, scoped commands, bounded attempts, agent capabilities and operational evidence | Task mutation, workspace identity, orchestration sessions, permit minting, browser cookies, native execution |
 | **Shared contracts** | Versioned resource DTOs, event envelopes, command/result schemas, compatibility rules, deterministic policy primitives | Network hosting, persistence technology, UI projections, OS process ownership |
 
 ### Where orchestration runs
