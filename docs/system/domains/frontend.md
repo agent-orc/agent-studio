@@ -257,6 +257,14 @@ without a parallel surface.
   and regeneration command live in
   [architecture/project-map.md](../architecture/project-map.md); each regeneration
   also writes a dated JSON envelope under `architecture/project-map-history/`.
+  The Git rail is a read-only, three-pane browser. The refs and stale-branch
+  sweep share a resizable left column, the commit graph owns the central scroll
+  viewport, and commit selection opens a resizable right inspector before a
+  file selection reuses the existing diff view. Both split widths are local
+  browser preferences. A `?commit=<sha>` suffix on the Git rail route restores
+  the selected commit and scrolls its graph row into view. Graph commits include
+  body, committer identity/time, and an attributed run id when task metadata
+  carries one; no details action mutates the repository.
   The former Runtime Prompts placeholder rail is intentionally removed. The Wiki / Docs rail
   (`project-detail/components/project-wiki-section/`) renders the physical
   `docs/` folder tree from the project's checkout or configured
