@@ -819,6 +819,25 @@ public class TaskRunnerPlanTests
         Assert.Contains("continue exactly here", trigger.TriggerSource, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Queued_operator_intent_uses_saved_caller_and_reason_on_local_pickup()
+    {
+        var intent = new PendingIntent
+        {
+            SavedReason = FollowUpQueueReasons.ProjectBusy,
+            Prompt = "Fix the test",
+            TriggeredBy = "operator desktop-client",
+            TriggerReason = "Address the review comment.",
+        };
+
+        var trigger = ProjectRunner.TriggerForPendingIntent(intent, "task-owner");
+
+        Assert.Equal(RunTriggers.OperatorContinue, trigger.Trigger);
+        Assert.Equal("operator desktop-client", trigger.TriggeredBy);
+        Assert.Equal("Address the review comment.", trigger.TriggerReason);
+        Assert.Contains("Fix the test", trigger.TriggerSource, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData(RunIssueKind.WatchdogTimeout, RunTriggers.TimeoutContinuation, "watchdog")]
     [InlineData(RunIssueKind.InfraCrash, RunTriggers.RecoveryAfterCrash, "pipeline")]

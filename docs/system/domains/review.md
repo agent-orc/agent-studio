@@ -9,6 +9,23 @@ Status: System-of-record map for Remote Review material, semantic verdicts, and 
 and Remote Review. A blocking verdict keeps the review-finding route. A real,
 actionable `concerns` verdict gets one automatic coding round by default; the
 project setting `maxReviewConcernRounds` sets the bound and `0` disables it.
+Set these project controls with `PUT /api/projects/{projectName}/review-follow-up`.
+The JSON body uses `maxConcernRounds` (integer, default `1`, clamped to `0..10`),
+`scopedReviewAfterFinding` (boolean, default `true`), and
+`scopedReviewMaximumDeltaFiles` (integer, default `20`, clamped to `0..1000`).
+Omitted fields use those defaults. Each `PUT` writes all three settings, so
+omitting a field resets that setting to its default. The endpoint returns the
+updated project settings, where the concern limit is named
+`maxReviewConcernRounds`; an unknown project returns `404`. For example:
+
+```json
+{
+  "maxConcernRounds": 1,
+  "scopedReviewAfterFinding": true,
+  "scopedReviewMaximumDeltaFiles": 20
+}
+```
+
 `review-concern-round.json` is the single per-card review-driven round ledger.
 It records both concern and blocking-finding context, while only concern rounds
 consume the configured concern budget. The UI reports `concern round 1 of 1

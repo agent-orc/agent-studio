@@ -1543,7 +1543,7 @@ public class ProjectRunner
         var actor = trigger switch
         {
             RunTriggers.TimeoutContinuation => "watchdog",
-            RunTriggers.OperatorContinue => $"operator {ownerClientId ?? "local-default"}",
+            RunTriggers.OperatorContinue => intent.TriggeredBy ?? $"operator {ownerClientId ?? "local-default"}",
             _ => "pipeline",
         };
         var sentence = trigger switch
@@ -1552,7 +1552,7 @@ public class ProjectRunner
             RunTriggers.TimeoutContinuation => "The watchdog queued a bounded continuation after a timed-out run.",
             RunTriggers.Replan => "The pipeline queued the orchestrator's answer to an agent planning question.",
             RunTriggers.RecoveryAfterCrash => $"The pipeline queued recovery after {reason}.",
-            _ => "An operator continuation was queued while the task could not start immediately.",
+            _ => intent.TriggerReason ?? "An operator continuation was queued while the task could not start immediately.",
         };
         return new RunTriggerMetadata(
             trigger,

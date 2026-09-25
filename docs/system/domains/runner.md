@@ -164,8 +164,11 @@ state.
   `integration-recovery`, `gate-failure`, `timeout-continuation`,
   `recovery-after-crash`, `restart`, `replan`, and `dependency-release`.
   `/continue` accepts an optional reason and records the authenticated user or
-  client id. Remote claims record `runner <id>` unless a durable pipeline cause
-  such as a review concern owns the pickup. Legacy rows have null provenance;
+  client id. A queued continuation saves its actor and reason in
+  `pending-intent.json` across both admission queueing and a busy runner slot;
+  local pickup and remote claim use those saved values. Other remote claims
+  record `runner <id>` unless a durable pipeline cause such as a review concern
+  owns the pickup. Legacy rows have null provenance;
   readers show `not recorded` and never guess from `kind`.
 - `backend/Services/Runner/OrchestratorChatLog.cs`: typed orchestrator messages
   written into `logs/cli-output.log`.

@@ -2786,7 +2786,7 @@ public static class LeaseEndpoints
             pipelineTriggered
                 ? trigger == RunTriggers.TimeoutContinuation ? "watchdog" : "pipeline"
                 : trigger == RunTriggers.OperatorContinue
-                    ? $"operator {ownerClientId ?? "local-default"}"
+                    ? pendingIntent?.TriggeredBy ?? $"operator {ownerClientId ?? "local-default"}"
                     : $"runner {runnerId}",
             trigger switch
             {
@@ -2795,7 +2795,7 @@ public static class LeaseEndpoints
                 RunTriggers.IntegrationRecovery => $"Integration recovery was queued after {pendingReason}.",
                 RunTriggers.TimeoutContinuation => "The watchdog queued a bounded continuation after a timed-out run.",
                 RunTriggers.Replan => "The pipeline queued the orchestrator's answer to an agent planning question.",
-                RunTriggers.OperatorContinue => "An operator continuation was queued before the remote claim.",
+                RunTriggers.OperatorContinue => pendingIntent?.TriggerReason ?? "An operator continuation was queued before the remote claim.",
                 RunTriggers.Initial => "Remote runner claimed the initial task run.",
                 _ => "A dependency release made the task eligible for a remote run.",
             },
