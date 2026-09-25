@@ -73,6 +73,20 @@ public sealed class ModelMigrationCatalogRegistryTests
         Assert.Null(registry.FindMigration(ModelIds.Gpt54Mini));
     }
 
+    [Theory]
+    [InlineData(ModelIds.ClaudeOpus5, ModelIds.ClaudeOpus55)]
+    [InlineData(ModelIds.Gpt56Sol, ModelIds.Gpt6Sol)]
+    [InlineData(ModelIds.Gpt56Luna, ModelIds.Gpt6Luna)]
+    public void New_generations_are_proposed_but_never_auto_applied(string oldId, string newId)
+    {
+        var registry = BuildEmbedded();
+        var proposal = registry.FindMigration(oldId);
+        Assert.NotNull(proposal);
+        Assert.Equal(newId, proposal.To);
+        Assert.False(proposal.SafeAuto);
+        Assert.Null(ModelMigrationPolicy.DecideAutoMigration(false, oldId, true, registry));
+    }
+
     [Fact]
     public void FindMigration_UnknownModel_ReturnsNull()
     {
