@@ -12,6 +12,32 @@ release yet.
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-09-26
+
+Throughput release from the 25 September operations day: 51 commits on develop
+since 0.9.1, all merged through the work-package gates.
+
+### Added
+
+- Project Git view: resizable columns, a sweep bar inside its panel, a scrolling commit graph and commit details on the side (AGT-2886).
+- Pipeline aspect steps show an honest concerns status, direct report access, parsed verdict markers and readable tables (AGT-2888).
+- Oversized result artifacts no longer cost the delivery: code is delivered first, the artifact upload is bounded and a 413 is typed (AGT-2890).
+- Execution Hosts shows and alarms when a runner host release lags the Stable release (AGT-2826).
+- Deterministic test scoping: a diff-to-project mapping filters the gate suite without spending tokens (AGT-2924).
+- Runner: a provider marked limited says why, until when and how to clear it; an operator-terminated CLI is reported as such (AGT-2873).
+
+### Changed
+
+- A card may only report delivered with proof: an integrated delivery or a named deliverable without code (AGT-2817).
+- The six merged Dossiers are recorded as superseded and the rolling log as historical; they move to History (AGT-2922).
+- New Dossiers on develop: Decision cards (AGT-2795), the Task Server as the bus between the engine and the daemons (AGT-2905), the deployment story from one box to many runners (AGT-2906), immediate task switching with a bounded core (AGT-2910), the header as a responsive usage cockpit (AGT-2913), the remote host integrates and the local Studio observes (AGT-2881), Dossier review round 2 for the active workbenches (AGT-2899).
+
+### Fixed
+
+- Merge gate: a torn preparation cache (missing .nupkg in the cache run directory) is classified as a gate environment failure and retried, not as a code failure (AGT-2901).
+- LinkSupervisor: a dead client session that still holds the remote listener no longer makes the cleanup probe time out; the stale session is fenced and replaced (AGT-2911).
+- integration/retry accepts a passed delivery whose review attempt passed on the delivery SHA (AGT-2914).
+
 ## [0.9.1] - 2026-09-25
 
 Hotfix release. Since 0.9.0 every work-package merge gate on a Windows operator
