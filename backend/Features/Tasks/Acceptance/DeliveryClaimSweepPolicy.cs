@@ -155,18 +155,16 @@ public static class DeliveryClaimSweepPolicy
             AppendIntegrationRecord: containedExists && !facts.HasIntegrationRecord,
             ClearPendingSupersession: stalePlaceholder);
 
-        var cardClass = ClassifyCard(facts, expectations, attributed.Count, effective.Count, findings);
+        var cardClass = ClassifyCard(facts, expectations, findings);
         return new DeliveryClaimAssessment(cardClass, findings, repairs);
     }
 
     private static string ClassifyCard(
         DeliveryClaimCardFacts facts,
         IReadOnlyList<DeliveryClaimCommitFact> expectations,
-        int attributedCount,
-        int effectiveCount,
         List<string> findings)
     {
-        if (attributedCount > 0 && effectiveCount == 0)
+        if (findings.Contains(DeliveryClaimFindings.SupersededOnlyDelivery))
             return DeliveryClaimClasses.SupersededOnlyDelivery;
 
         if (expectations.Count == 0)

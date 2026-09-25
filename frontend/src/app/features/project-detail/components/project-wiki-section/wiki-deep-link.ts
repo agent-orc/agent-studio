@@ -17,8 +17,8 @@ import { routeSegmentOf } from '../../../../services/url-hash.util';
  * the component and its specs can build and parse the exact same strings.
  */
 export type WikiDeepLinkTarget =
-  | { kind: 'page'; relPath: string }
-  | { kind: 'folder'; relPath: string }
+  | { kind: 'page'; relPath: string; title?: string }
+  | { kind: 'folder'; relPath: string; title?: string }
   | { kind: 'overview' };
 
 export { toProjectSlug };

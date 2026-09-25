@@ -315,6 +315,10 @@ export interface RemoteRunnerLinkHealth {
   childPid: number | null;
   notificationRaisedAt: string | null;
   unreachableSince?: string | null;
+  blockedBy?: 'remote-listener-held' | null;
+  remoteListenerPid?: number | null;
+  remoteListenerAgeSeconds?: number | null;
+  transport?: 'no-route' | null;
 }
 
 /** One retired identity considered by a purge sweep. Mirrors the backend's `PurgeRetiredClientCandidate`. */

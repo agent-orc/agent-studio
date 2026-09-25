@@ -737,7 +737,8 @@ public sealed class TaskServerClient : IDisposable
             return new RunnerClaimResponse(
                 RunnerClaimStatus.Empty,
                 Message: claim?.Message ?? "No task available.",
-                ReconciliationActions: FromContract(claim?.ReconciliationActions));
+                ReconciliationActions: FromContract(claim?.ReconciliationActions),
+                ReprobeCapabilities: claim?.ReprobeCapabilities);
 
         var legacyLease = new RunLeaseInfoDto(
             claim.Task.TaskKey,

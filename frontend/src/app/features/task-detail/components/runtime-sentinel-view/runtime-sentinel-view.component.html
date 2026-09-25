@@ -1,0 +1,22 @@
+@for (aspect of sentinels().aspects; track $index) {
+  <section class="runtime-verdict" [attr.data-status]="aspect.status" data-testid="activity-aspect-verdict">
+    <span class="runtime-verdict__pill">{{ aspect.status }}</span>
+    <span class="runtime-verdict__content">
+      <strong>{{ aspect.summary || 'No summary supplied.' }}</strong>
+      @if (aspect.evidenceChecked.length > 0) {
+        <span>Evidence: {{ aspect.evidenceChecked.join(', ') }}</span>
+      }
+      @if (aspect.missing) {
+        <span>Missing: {{ aspect.missing }}</span>
+      }
+      @if (aspect.detail.length > 0) {
+        <span>Detail: {{ aspect.detail.join('; ') }}</span>
+      }
+    </span>
+  </section>
+}
+@for (terminal of sentinels().terminals; track $index) {
+  <span class="runtime-terminal" [attr.data-kind]="terminal.kind" data-testid="activity-terminal-sentinel">
+    {{ terminalLabel(terminal) }}@if (terminal.detail) { · {{ terminal.detail }} }
+  </span>
+}

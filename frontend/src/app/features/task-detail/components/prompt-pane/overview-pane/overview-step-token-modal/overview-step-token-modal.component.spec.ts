@@ -42,6 +42,8 @@ function row(overrides: Partial<PipelineRowVm> = {}): PipelineRowVm {
     thinkingLevelOverride: null,
     verdict: null,
     concernTooltip: null,
+    aspectSummary: null,
+    aspectEvidence: [],
     explanation: { title: 'Agent execution', body: 'The agent run.' },
     durationMs: 12_000,
     startedAt: '2026-09-14T08:00:00Z',

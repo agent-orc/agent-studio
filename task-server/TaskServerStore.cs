@@ -1298,7 +1298,10 @@ public sealed partial class TaskServerStore
                     "empty",
                     Message: capabilityAdmission.Message,
                     ReconciliationActions: reconciliationActions,
-                    RuntimeCapacity: runtimeCapacity);
+                    RuntimeCapacity: runtimeCapacity,
+                    ReprobeCapabilities: capabilityAdmission.Required
+                        .Where(key => key.StartsWith("provider-auth:", StringComparison.Ordinal))
+                        .ToArray());
                 return;
             }
             if (request.AvailableSlots <= 0)
@@ -3187,6 +3190,8 @@ public sealed partial class TaskServerStore
                 credential_expires_at TEXT,
                 limited_until TEXT,
                 credential_modified_at TEXT,
+                evidence_id TEXT,
+                evidence_excerpt TEXT,
                 advertised_at TEXT NOT NULL,
                 fresh_until TEXT NOT NULL,
                 generation INTEGER NOT NULL,
@@ -3619,6 +3624,8 @@ public sealed partial class TaskServerStore
         await EnsureColumnAsync(connection, "runner_capabilities", "credential_expires_at", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "limited_until", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "credential_modified_at", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "evidence_id", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "evidence_excerpt", "TEXT", ct);
         await EnsureColumnAsync(connection, "orchestration_runs", "task_version", "INTEGER NOT NULL DEFAULT 0", ct);
         await ExecuteAsync(connection, """
             INSERT INTO runtime_capacity_settings(

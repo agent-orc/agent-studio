@@ -293,6 +293,7 @@ public sealed class ManagementApiTests : IDisposable
                  {
                      "kind", "state", "since", "lastHeartbeatAt", "lastProbe", "lastError",
                      "attempt", "nextRetryAt", "childPid", "unreachableSince",
+                     "blockedBy", "remoteListenerPid", "remoteListenerAgeSeconds", "transport",
                  })
             Assert.True(link.TryGetProperty(property, out _), $"Link resource is missing '{property}'.");
 
@@ -323,6 +324,35 @@ public sealed class ManagementApiTests : IDisposable
         Assert.True(RunnerLinkPolicy.Decide("connecting", false, false, false, true, false).Recover);
         Assert.True(RunnerLinkPolicy.Decide("reconnecting", false, false, false, true, true).Start);
         Assert.Equal(RunnerLinkStates.Paused, RunnerLinkPolicy.Decide("up", true, true, true, false, false).State);
+    }
+
+    [Fact]
+    public void RunnerLinkCleanupCommand_IsBoundedAndRestrictsOwner()
+    {
+        var options = new RunnerLinkOptions("host", "ssh-reverse", "runner", 15031, 5031, [], 90,
+            [5, 10, 30, 60, 120], "ssh", _root);
+        var arguments = LinkSupervisor.CleanupCommand(options);
+        Assert.Contains("BatchMode=yes", arguments);
+        Assert.Contains("ConnectTimeout=5", arguments);
+        var remote = arguments[^1];
+        Assert.StartsWith("timeout 4s sh -c ", remote);
+        Assert.Contains("ss -H -ltnp", remote);
+        Assert.Contains("endpoint=127.0.0.1:$port", remote);
+        Assert.Contains("[ \"$owner_uid\" = \"$self_uid\" ]", remote);
+        Assert.Contains("[ \"$command\" = sshd ]", remote);
+        Assert.Contains("kill -KILL", remote);
+    }
+
+    [Theory]
+    [InlineData(0, "Remote listener cleanup succeeded.")]
+    [InlineData(1, "Remote listener remains held.")]
+    [InlineData(124, "Cleanup command timed out: timeout 4s")]
+    [InlineData(255, "Cleanup SSH transport failed (exit 255)")]
+    public void RunnerLinkCleanup_ClassifiesExitCodes(int exit, string expected)
+    {
+        var detail = RunnerLinkPolicy.ProbeDetail(exit, "listener-cleanup", "timeout 4s sh -c 'inspect'", "", "");
+        Assert.Contains(expected, detail);
+        Assert.Equal("no-route", RunnerLinkPolicy.Transport(255, "ssh: No route to host"));
     }
 
     [Fact]
@@ -372,9 +402,13 @@ public sealed class ManagementApiTests : IDisposable
         Assert.Null(recovered.NextRetryAt);
 
         var killedForward = launcher.Forward!;
+        killedForward.StandardError = "ssh: connect to host runner port 22: No route to host";
         killedForward.Exit(255);
         await supervisor.TickAsync("agent-runner-01");
-        Assert.Equal(RunnerLinkStates.Reconnecting, Assert.Single(supervisor.Snapshot()).State);
+        var noRoute = Assert.Single(supervisor.Snapshot());
+        Assert.Equal(RunnerLinkStates.Reconnecting, noRoute.State);
+        Assert.Equal("no-route", noRoute.Transport);
+        Assert.Contains("transport: no-route", noRoute.LastError);
         await supervisor.TickAsync("agent-runner-01");
         Assert.Equal(RunnerLinkStates.Connecting, Assert.Single(supervisor.Snapshot()).State);
         Assert.NotSame(killedForward, launcher.Forward);
@@ -419,6 +453,35 @@ public sealed class ManagementApiTests : IDisposable
         Assert.Contains("before a heartbeat", forwardFailure.LastError);
         Assert.Equal(1, forwardFailure.Attempt);
         Assert.Contains("\"topic\":\"link_reconnect_failed\"", ReadWorkspaceBus());
+    }
+
+    [Fact]
+    public async Task LinkSupervisor_ReportsHeldListenerOnceAndRecoversAfterRelease()
+    {
+        var launcher = new FakeLinkProcessLauncher();
+        launcher.BoundedExitCodes.Enqueue(1);
+        launcher.BoundedStdout.Enqueue("LISTENER pid=4321 ageSeconds=2643 owner=sshd uid=1000");
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var factory = BuildFactory(runnerLinks: true, launcher: launcher, timeProvider: time);
+        var supervisor = factory.Services.GetRequiredService<LinkSupervisor>();
+
+        await supervisor.ReconnectAsync("agent-runner-01", "test", CancellationToken.None);
+        var blocked = Assert.Single(supervisor.Snapshot());
+        Assert.Equal("remote-listener-held", blocked.BlockedBy);
+        Assert.Equal(4321, blocked.RemoteListenerPid);
+        Assert.Equal(2643, blocked.RemoteListenerAgeSeconds);
+        Assert.Equal(120, (blocked.NextRetryAt!.Value - time.GetUtcNow().UtcDateTime).TotalSeconds);
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(ReadWorkspaceBus(),
+            "\\\"topic\\\":\\\"link_remote_listener_held\\\""));
+
+        time.Advance(TimeSpan.FromSeconds(120));
+        await supervisor.TickAsync("agent-runner-01");
+        Assert.Null(Assert.Single(supervisor.Snapshot()).BlockedBy);
+        await supervisor.TickAsync("agent-runner-01");
+        var connecting = Assert.Single(supervisor.Snapshot());
+        Assert.Equal(RunnerLinkStates.Connecting, connecting.State);
+        Assert.Null(connecting.BlockedBy);
+        Assert.Null(connecting.RemoteListenerPid);
     }
 
     [Fact]
@@ -776,6 +839,10 @@ public sealed class ManagementApiTests : IDisposable
             ["RunnerLinks:0:ExtraForwards:0"] = "5031:127.0.0.1:5031",
             ["RunnerLinks:0:ExtraForwards:1"] = "4011:localhost:4011",
             ["RunnerLinks:0:BackoffSeconds:0"] = "5",
+            ["RunnerLinks:0:BackoffSeconds:1"] = "10",
+            ["RunnerLinks:0:BackoffSeconds:2"] = "30",
+            ["RunnerLinks:0:BackoffSeconds:3"] = "60",
+            ["RunnerLinks:0:BackoffSeconds:4"] = "120",
         }));
         builder.ConfigureTestServices(services =>
         {
@@ -836,6 +903,7 @@ public sealed class ManagementApiTests : IDisposable
         public List<SshCommand> Commands { get; } = [];
         public FakeLinkProcess? Forward { get; private set; }
         public Queue<int> BoundedExitCodes { get; } = [];
+        public Queue<string> BoundedStdout { get; } = [];
         public int? ForwardExitCodeOnStart { get; init; }
 
         public IRunnerLinkProcess Start(SshCommand command)
@@ -847,7 +915,11 @@ public sealed class ManagementApiTests : IDisposable
                 Forward = process;
                 if (ForwardExitCodeOnStart is { } code) process.Exit(code);
             }
-            else process.Exit(BoundedExitCodes.TryDequeue(out var code) ? code : 0);
+            else
+            {
+                process.StandardOutput = BoundedStdout.TryDequeue(out var stdout) ? stdout : "";
+                process.Exit(BoundedExitCodes.TryDequeue(out var code) ? code : 0);
+            }
             return process;
         }
 
@@ -860,6 +932,8 @@ public sealed class ManagementApiTests : IDisposable
         public int Pid { get; } = pid;
         public bool HasExited { get; private set; } = !longRunning;
         public int? ExitCode { get; private set; } = longRunning ? null : 0;
+        public string StandardOutput { get; set; } = "";
+        public string StandardError { get; set; } = "";
         public bool Terminated { get; private set; }
 
         public void Exit(int code)

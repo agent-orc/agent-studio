@@ -1,0 +1,1326 @@
+{
+  "startedAt": "2026-09-25T14:16:18.816Z",
+  "origin": "http://127.0.0.1:4011",
+  "browserVersion": "147.0.7727.15",
+  "browserHost": "Linux runner over forwarded connection to Windows Stable",
+  "samples": [],
+  "errors": [],
+  "captures": [
+    {
+      "filename": "stable-recovery-dialog-light--real.png",
+      "theme": "light",
+      "at": "2026-09-25T14:17:53.207Z",
+      "url": "http://127.0.0.1:4011/?perf=1&task=AGT-2910#/tasks/AGT-2910?view=overview%3Aactivity",
+      "viewport": {
+        "width": 1600,
+        "height": 1000
+      },
+      "deviceScaleFactor": 1
+    },
+    {
+      "filename": "stable-recovery-dialog-dark--real.png",
+      "theme": "dark",
+      "at": "2026-09-25T14:17:53.374Z",
+      "url": "http://127.0.0.1:4011/?perf=1&task=AGT-2910#/tasks/AGT-2910?view=overview%3Aactivity",
+      "viewport": {
+        "width": 1600,
+        "height": 1000
+      },
+      "deviceScaleFactor": 1
+    }
+  ],
+  "requestEvents": [
+    {
+      "path": "/api/environment",
+      "startedAt": "2026-09-25T14:17:26.728Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": null,
+      "timing": {
+        "startTime": 1790345846717.345,
+        "domainLookupStart": -1,
+        "domainLookupEnd": -1,
+        "connectStart": -1,
+        "secureConnectionStart": -1,
+        "connectEnd": -1,
+        "requestStart": 4811.184,
+        "responseStart": 4924.164,
+        "responseEnd": 4954.127
+      }
+    },
+    {
+      "path": "/api/v1/management/remote-hosts",
+      "startedAt": "2026-09-25T14:17:31.674Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": null,
+      "timing": {
+        "startTime": 1790345851651.803,
+        "domainLookupStart": -1,
+        "domainLookupEnd": -1,
+        "connectStart": -1,
+        "secureConnectionStart": -1,
+        "connectEnd": -1,
+        "requestStart": 0.117,
+        "responseStart": 209.238,
+        "responseEnd": 210.238
+      }
+    },
+    {
+      "path": "/api/auth/status",
+      "startedAt": "2026-09-25T14:17:31.674Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": null,
+      "timing": {
+        "startTime": 1790345851666.981,
+        "domainLookupStart": -1,
+        "domainLookupEnd": -1,
+        "connectStart": -1,
+        "secureConnectionStart": -1,
+        "connectEnd": -1,
+        "requestStart": 0.115,
+        "responseStart": 193.599,
+        "responseEnd": 194.583
+      }
+    },
+    {
+      "path": "/api/runner/orchestrator-feed",
+      "startedAt": "2026-09-25T14:17:31.892Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": null,
+      "timing": {
+        "startTime": 1790345851863.726,
+        "domainLookupStart": -1,
+        "domainLookupEnd": -1,
+        "connectStart": -1,
+        "secureConnectionStart": -1,
+        "connectEnd": -1,
+        "requestStart": 0.151,
+        "responseStart": 152.194,
+        "responseEnd": 324.463
+      }
+    },
+    {
+      "path": "/api/tags",
+      "startedAt": "2026-09-25T14:17:31.893Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": null,
+      "timing": {
+        "startTime": 1790345851864.833,
+        "domainLookupStart": -1,
+        "domainLookupEnd": -1,
+        "connectStart": -1,
+        "secureConnectionStart": -1,
+        "connectEnd": -1,
+        "requestStart": 0.131,
+        "responseStart": 67.435,
+        "responseEnd": 68.456
+      }
+    },
+    {
+      "path": "/api/cli/claude/models",
+      "startedAt": "2026-09-25T14:17:31.893Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": null,
+      "timing": {
+        "startTime": 1790345851866.018,
+        "domainLookupStart": -1,
+        "domainLookupEnd": -1,
+        "connectStart": -1,
+        "secureConnectionStart": -1,
+        "connectEnd": -1,
+        "requestStart": 0.127,
+        "responseStart": 4832.433,
+        "responseEnd": 4833.381
+      }
+    },
+    {
+      "path": "/api/cli/codex/models",
+      "startedAt": "2026-09-25T14:17:31.893Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": null,
+      "timing": {
+        "startTime": 1790345851866.677,
+        "domainLookupStart": 0.073,
+        "domainLookupEnd": 0.107,
+        "connectStart": 0.107,
+        "secureConnectionStart": -1,
+        "connectEnd": 0.191,
+        "requestStart": 0.238,
+        "responseStart": 2313.651,
+        "responseEnd": 2314.512
+      }
+    },
+    {
+      "path": "/api/cli/gemini/models",
+      "startedAt": "2026-09-25T14:17:31.893Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": null,
+      "timing": {
+        "startTime": 1790345851867.314,
+        "domainLookupStart": 0.079,
+        "domainLookupEnd": 0.114,
+        "connectStart": 0.114,
+        "secureConnectionStart": -1,
+        "connectEnd": 0.208,
+        "requestStart": 0.256,
+        "responseStart": 2247.969,
+        "responseEnd": 2248.858
+      }
+    },
+    {
+      "path": "/api/tasks/grouped",
+      "startedAt": "2026-09-25T14:17:31.893Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": "task-op;dur=12193.013",
+      "timing": {
+        "startTime": 1790345851868.787,
+        "domainLookupStart": 0.089,
+        "domainLookupEnd": 0.126,
+        "connectStart": 0.126,
+        "secureConnectionStart": -1,
+        "connectEnd": 0.242,
+        "requestStart": 0.296,
+        "responseStart": 14417.723,
+        "responseEnd": 15425.511
+      }
+    },
+    {
+      "path": "/api/runner/status",
+      "startedAt": "2026-09-25T14:17:31.893Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": null,
+      "timing": {
+        "startTime": 1790345851869.652,
+        "domainLookupStart": 63.155,
+        "domainLookupEnd": 63.19,
+        "connectStart": 63.19,
+        "secureConnectionStart": -1,
+        "connectEnd": 63.417,
+        "requestStart": 63.491,
+        "responseStart": 2711.727,
+        "responseEnd": 2712.597
+      }
+    },
+    {
+      "path": "/api/projects/settings",
+      "startedAt": "2026-09-25T14:17:31.894Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": null,
+      "timing": {
+        "startTime": 1790345851870.497,
+        "domainLookupStart": 317.095,
+        "domainLookupEnd": 317.133,
+        "connectStart": 317.133,
+        "secureConnectionStart": -1,
+        "connectEnd": 317.504,
+        "requestStart": 317.558,
+        "responseStart": 2571.211,
+        "responseEnd": 2710.97
+      }
+    },
+    {
+      "path": "/api/workspaces",
+      "startedAt": "2026-09-25T14:17:31.895Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": null,
+      "timing": {
+        "startTime": 1790345851874.105,
+        "domainLookupStart": 2306.514,
+        "domainLookupEnd": 2306.539,
+        "connectStart": 2306.539,
+        "secureConnectionStart": -1,
+        "connectEnd": 2306.686,
+        "requestStart": 2306.736,
+        "responseStart": 4497.533,
+        "responseEnd": 4498.521
+      }
+    },
+    {
+      "path": "/api/watch-paths",
+      "startedAt": "2026-09-25T14:17:31.895Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": null,
+      "timing": {
+        "startTime": 1790345851874.737,
+        "domainLookupStart": 2706.202,
+        "domainLookupEnd": 2706.236,
+        "connectStart": 2706.236,
+        "secureConnectionStart": -1,
+        "connectEnd": 2706.808,
+        "requestStart": 2707.042,
+        "responseStart": 5218.083,
+        "responseEnd": 5221.763
+      }
+    },
+    {
+      "path": "/api/environment",
+      "startedAt": "2026-09-25T14:17:31.895Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": null,
+      "timing": {
+        "startTime": 1790345851875.285,
+        "domainLookupStart": 2706.354,
+        "domainLookupEnd": 2706.372,
+        "connectStart": 2706.372,
+        "secureConnectionStart": -1,
+        "connectEnd": 2706.485,
+        "requestStart": 2706.58,
+        "responseStart": 5219.059,
+        "responseEnd": 5222.561
+      }
+    },
+    {
+      "path": "/api/clients/",
+      "startedAt": "2026-09-25T14:17:31.895Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": null,
+      "timing": {
+        "startTime": 1790345851875.742,
+        "domainLookupStart": 4445.768,
+        "domainLookupEnd": 4445.794,
+        "connectStart": 4445.794,
+        "secureConnectionStart": -1,
+        "connectEnd": 4445.993,
+        "requestStart": 4446.057,
+        "responseStart": 6636.409,
+        "responseEnd": 6639.918
+      }
+    },
+    {
+      "path": "/api/tasks/AGT-2910",
+      "startedAt": "2026-09-25T14:17:31.895Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": "task-op;dur=1339.107",
+      "timing": {
+        "startTime": 1790345851876.887,
+        "domainLookupStart": 4495.193,
+        "domainLookupEnd": 4495.218,
+        "connectStart": 4495.218,
+        "secureConnectionStart": -1,
+        "connectEnd": 4495.378,
+        "requestStart": 4495.428,
+        "responseStart": 8024.812,
+        "responseEnd": 8085.163
+      }
+    },
+    {
+      "path": "/api/environment",
+      "startedAt": "2026-09-25T14:17:31.895Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": null,
+      "timing": {
+        "startTime": 1790345851880.198,
+        "domainLookupStart": 12381.996,
+        "domainLookupEnd": 12382.03,
+        "connectStart": 12382.03,
+        "secureConnectionStart": -1,
+        "connectEnd": 12382.273,
+        "requestStart": 12382.353,
+        "responseStart": 15414.113,
+        "responseEnd": 15416.577
+      }
+    },
+    {
+      "path": "/api/clients",
+      "startedAt": "2026-09-25T14:17:32.023Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": null,
+      "timing": {
+        "startTime": 1790345851908.803,
+        "domainLookupStart": 4789.994,
+        "domainLookupEnd": 4790.027,
+        "connectStart": 4790.027,
+        "secureConnectionStart": -1,
+        "connectEnd": 4790.236,
+        "requestStart": 4790.311,
+        "responseStart": 7043.05,
+        "responseEnd": 7044.331
+      }
+    },
+    {
+      "path": "/api/runner/auto-review-queue",
+      "startedAt": "2026-09-25T14:17:32.024Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": null,
+      "timing": {
+        "startTime": 1790345851909.379,
+        "domainLookupStart": 5186.289,
+        "domainLookupEnd": 5186.4,
+        "connectStart": 5186.4,
+        "secureConnectionStart": -1,
+        "connectEnd": 5187.283,
+        "requestStart": 5188.953,
+        "responseStart": 9767.971,
+        "responseEnd": 9769.03
+      }
+    },
+    {
+      "path": "/api/clients/local-default/defaults",
+      "startedAt": "2026-09-25T14:17:32.024Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": null,
+      "timing": {
+        "startTime": 1790345851910.1892,
+        "domainLookupStart": 5186.821,
+        "domainLookupEnd": 5186.928,
+        "connectStart": 5186.928,
+        "secureConnectionStart": -1,
+        "connectEnd": 5187.806,
+        "requestStart": 5188.48,
+        "responseStart": 7480.674,
+        "responseEnd": 7482.956
+      }
+    },
+    {
+      "path": "/api/orchestrator/sessions",
+      "startedAt": "2026-09-25T14:17:32.025Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": null,
+      "timing": {
+        "startTime": 1790345851911.24,
+        "domainLookupStart": 6603.755,
+        "domainLookupEnd": 6603.84,
+        "connectStart": 6603.84,
+        "secureConnectionStart": -1,
+        "connectEnd": 6604.503,
+        "requestStart": 6604.684,
+        "responseStart": 10311.513,
+        "responseEnd": 10312.383
+      }
+    },
+    {
+      "path": "/api/crash-recovery/pending",
+      "startedAt": "2026-09-25T14:17:32.025Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": null,
+      "timing": {
+        "startTime": 1790345851913.4731,
+        "domainLookupStart": 7039.042,
+        "domainLookupEnd": 7039.08,
+        "connectStart": 7039.08,
+        "secureConnectionStart": -1,
+        "connectEnd": 7039.326,
+        "requestStart": 7039.406,
+        "responseStart": 10318.845,
+        "responseEnd": 10319.906
+      }
+    },
+    {
+      "path": "/api/workspaces",
+      "startedAt": "2026-09-25T14:17:32.025Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": null,
+      "timing": {
+        "startTime": 1790345851915.009,
+        "domainLookupStart": 10387.783,
+        "domainLookupEnd": 10387.81,
+        "connectStart": 10387.81,
+        "secureConnectionStart": -1,
+        "connectEnd": 10387.977,
+        "requestStart": 10388.024,
+        "responseStart": 12784.823,
+        "responseEnd": 12786.03
+      }
+    },
+    {
+      "path": "/api/projects",
+      "startedAt": "2026-09-25T14:17:32.026Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": null,
+      "timing": {
+        "startTime": 1790345851915.5322,
+        "domainLookupStart": 7476.824,
+        "domainLookupEnd": 7476.924,
+        "connectStart": 7476.924,
+        "secureConnectionStart": -1,
+        "connectEnd": 7477.595,
+        "requestStart": 7477.863,
+        "responseStart": 10318.963,
+        "responseEnd": 10319.965
+      }
+    },
+    {
+      "path": "/api/cli/quota",
+      "startedAt": "2026-09-25T14:17:32.026Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": null,
+      "timing": {
+        "startTime": 1790345851935.118,
+        "domainLookupStart": 8026.175,
+        "domainLookupEnd": 8026.279,
+        "connectStart": 8026.279,
+        "secureConnectionStart": -1,
+        "connectEnd": 8026.929,
+        "requestStart": 8027.187,
+        "responseStart": 10367.329,
+        "responseEnd": 10368.331
+      }
+    },
+    {
+      "path": "/api/cli/quota",
+      "startedAt": "2026-09-25T14:17:32.026Z",
+      "method": "GET"
+    },
+    {
+      "path": "/api/runner/queue-starvation",
+      "startedAt": "2026-09-25T14:17:32.026Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": null,
+      "timing": {
+        "startTime": 1790345851944.998,
+        "domainLookupStart": 9732.782,
+        "domainLookupEnd": 9732.809,
+        "connectStart": 9732.809,
+        "secureConnectionStart": -1,
+        "connectEnd": 9733.024,
+        "requestStart": 9733.086,
+        "responseStart": 12316.635,
+        "responseEnd": 12317.936
+      }
+    },
+    {
+      "path": "/api/pipeline/accepted-integration-alert",
+      "startedAt": "2026-09-25T14:17:32.026Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": null,
+      "timing": {
+        "startTime": 1790345851945.678,
+        "domainLookupStart": 10277.4,
+        "domainLookupEnd": 10277.427,
+        "connectStart": 10277.427,
+        "secureConnectionStart": -1,
+        "connectEnd": 10277.576,
+        "requestStart": 10277.624,
+        "responseStart": 12585.043,
+        "responseEnd": 12586.04
+      }
+    },
+    {
+      "path": "/api/v1/management/links",
+      "startedAt": "2026-09-25T14:17:32.066Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": null,
+      "timing": {
+        "startTime": 1790345852065.315,
+        "domainLookupStart": 10167.339,
+        "domainLookupEnd": 10167.378,
+        "connectStart": 10167.378,
+        "secureConnectionStart": -1,
+        "connectEnd": 10167.624,
+        "requestStart": 10167.713,
+        "responseStart": 12466.16,
+        "responseEnd": 12467.747
+      }
+    },
+    {
+      "path": "/api/runner/status",
+      "startedAt": "2026-09-25T14:17:34.586Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": null,
+      "timing": {
+        "startTime": 1790345854585.873,
+        "domainLookupStart": 7649.038,
+        "domainLookupEnd": 7649.064,
+        "connectStart": 7649.064,
+        "secureConnectionStart": -1,
+        "connectEnd": 7649.219,
+        "requestStart": 7649.263,
+        "responseStart": 10116.535,
+        "responseEnd": 10118.383
+      }
+    },
+    {
+      "path": "/api/workspaces",
+      "startedAt": "2026-09-25T14:17:35.667Z",
+      "method": "GET"
+    },
+    {
+      "path": "/api/projects",
+      "startedAt": "2026-09-25T14:17:35.667Z",
+      "method": "GET"
+    },
+    {
+      "path": "/api/cli/quota",
+      "startedAt": "2026-09-25T14:17:38.683Z",
+      "method": "GET"
+    },
+    {
+      "path": "/api/workspaces",
+      "startedAt": "2026-09-25T14:17:38.683Z",
+      "method": "GET"
+    },
+    {
+      "path": "/api/projects",
+      "startedAt": "2026-09-25T14:17:38.684Z",
+      "method": "GET"
+    },
+    {
+      "path": "/api/cli/quota",
+      "startedAt": "2026-09-25T14:17:38.684Z",
+      "method": "GET"
+    },
+    {
+      "path": "/api/clients/local-default/telemetry",
+      "startedAt": "2026-09-25T14:17:38.960Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": null,
+      "timing": {
+        "startTime": 1790345858956.7358,
+        "domainLookupStart": 5574.411,
+        "domainLookupEnd": 5574.447,
+        "connectStart": 5574.447,
+        "secureConnectionStart": -1,
+        "connectEnd": 5575.439,
+        "requestStart": 5575.82,
+        "responseStart": 8337.849,
+        "responseEnd": 8340.475
+      }
+    },
+    {
+      "path": "/api/clients/agent-runner-01/telemetry",
+      "startedAt": "2026-09-25T14:17:38.960Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": null,
+      "timing": {
+        "startTime": 1790345858957.265,
+        "domainLookupStart": 5574.986,
+        "domainLookupEnd": 5575.021,
+        "connectStart": 5575.021,
+        "secureConnectionStart": -1,
+        "connectEnd": 5575.218,
+        "requestStart": 5575.364,
+        "responseStart": 8342.086,
+        "responseEnd": 8365.427
+      }
+    },
+    {
+      "path": "/api/v1/management/remote-hosts",
+      "startedAt": "2026-09-25T14:17:38.961Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": null,
+      "timing": {
+        "startTime": 1790345858958.1458,
+        "domainLookupStart": 5742.264,
+        "domainLookupEnd": 5742.301,
+        "connectStart": 5742.301,
+        "secureConnectionStart": -1,
+        "connectEnd": 5742.53,
+        "requestStart": 5742.599,
+        "responseStart": 8424.221,
+        "responseEnd": 8425.152
+      }
+    },
+    {
+      "path": "/api/v1/management/links",
+      "startedAt": "2026-09-25T14:17:38.961Z",
+      "method": "GET"
+    },
+    {
+      "path": "/api/v1/management/provider-refusals",
+      "startedAt": "2026-09-25T14:17:38.961Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": null,
+      "timing": {
+        "startTime": 1790345858959.4478,
+        "domainLookupStart": 5744.128,
+        "domainLookupEnd": 5744.156,
+        "connectStart": 5744.156,
+        "secureConnectionStart": -1,
+        "connectEnd": 5744.314,
+        "requestStart": 5744.374,
+        "responseStart": 8582.042,
+        "responseEnd": 8583.037
+      }
+    },
+    {
+      "path": "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/provenance",
+      "startedAt": "2026-09-25T14:17:40.191Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": "task-op;dur=230.253",
+      "timing": {
+        "startTime": 1790345860089.5579,
+        "domainLookupStart": 7204.269,
+        "domainLookupEnd": 7204.301,
+        "connectStart": 7204.301,
+        "secureConnectionStart": -1,
+        "connectEnd": 7205.313,
+        "requestStart": 7207.215,
+        "responseStart": 9911.087,
+        "responseEnd": 9913.2
+      }
+    },
+    {
+      "path": "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/code-review/list",
+      "startedAt": "2026-09-25T14:17:40.191Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": "task-op;dur=0.865",
+      "timing": {
+        "startTime": 1790345860091.28,
+        "domainLookupStart": 7205.04,
+        "domainLookupEnd": 7205.073,
+        "connectStart": 7205.073,
+        "secureConnectionStart": -1,
+        "connectEnd": 7205.246,
+        "requestStart": 7205.53,
+        "responseStart": 9502.054,
+        "responseEnd": 9504.145
+      }
+    },
+    {
+      "path": "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/output",
+      "startedAt": "2026-09-25T14:17:40.191Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": "task-op;dur=14.199",
+      "timing": {
+        "startTime": 1790345860091.9219,
+        "domainLookupStart": 7204.756,
+        "domainLookupEnd": 7204.77,
+        "connectStart": 7204.77,
+        "secureConnectionStart": -1,
+        "connectEnd": 7204.879,
+        "requestStart": 7205.048,
+        "responseStart": 9510.638,
+        "responseEnd": 9910.172
+      }
+    },
+    {
+      "path": "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/session-events",
+      "startedAt": "2026-09-25T14:17:40.192Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": "task-op;dur=4.333",
+      "timing": {
+        "startTime": 1790345860093.4329,
+        "domainLookupStart": 7228.73,
+        "domainLookupEnd": 7228.763,
+        "connectStart": 7228.763,
+        "secureConnectionStart": -1,
+        "connectEnd": 7228.944,
+        "requestStart": 7228.989,
+        "responseStart": 9508.074,
+        "responseEnd": 9509.441
+      }
+    },
+    {
+      "path": "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/runs",
+      "startedAt": "2026-09-25T14:17:40.192Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": "task-op;dur=1771.28",
+      "timing": {
+        "startTime": 1790345860094.825,
+        "domainLookupStart": 7287.993,
+        "domainLookupEnd": 7288.024,
+        "connectStart": 7288.024,
+        "secureConnectionStart": -1,
+        "connectEnd": 7288.198,
+        "requestStart": 7288.261,
+        "responseStart": 11238.716,
+        "responseEnd": 11239.901
+      }
+    },
+    {
+      "path": "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/timeline",
+      "startedAt": "2026-09-25T14:17:40.192Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": "task-op;dur=1440.813",
+      "timing": {
+        "startTime": 1790345860096.8909,
+        "domainLookupStart": 7445.01,
+        "domainLookupEnd": 7445.034,
+        "connectStart": 7445.034,
+        "secureConnectionStart": -1,
+        "connectEnd": 7445.243,
+        "requestStart": 7445.312,
+        "responseStart": 11503.627,
+        "responseEnd": 11504.878
+      }
+    },
+    {
+      "path": "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/agent-work-summary",
+      "startedAt": "2026-09-25T14:17:40.192Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": "task-op;dur=4.76",
+      "timing": {
+        "startTime": 1790345860099.4438,
+        "domainLookupStart": 9494.241,
+        "domainLookupEnd": 9494.265,
+        "connectStart": 9494.265,
+        "secureConnectionStart": -1,
+        "connectEnd": 9494.462,
+        "requestStart": 9494.521,
+        "responseStart": 11688.86,
+        "responseEnd": 11691.235
+      }
+    },
+    {
+      "path": "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/plan",
+      "startedAt": "2026-09-25T14:17:40.192Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": "task-op;dur=0.558",
+      "timing": {
+        "startTime": 1790345860101.757,
+        "domainLookupStart": 9500.29,
+        "domainLookupEnd": 9500.333,
+        "connectStart": 9500.333,
+        "secureConnectionStart": -1,
+        "connectEnd": 9500.601,
+        "requestStart": 9500.684,
+        "responseStart": 11711.745,
+        "responseEnd": 11713.322
+      }
+    },
+    {
+      "path": "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/pipeline",
+      "startedAt": "2026-09-25T14:17:40.192Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": "task-op;dur=6.314",
+      "timing": {
+        "startTime": 1790345860104.943,
+        "domainLookupStart": 9896.115,
+        "domainLookupEnd": 9896.147,
+        "connectStart": 9896.147,
+        "secureConnectionStart": -1,
+        "connectEnd": 9896.925,
+        "requestStart": 9897.015,
+        "responseStart": 12263.718,
+        "responseEnd": 12266.866
+      }
+    },
+    {
+      "path": "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/screenshots",
+      "startedAt": "2026-09-25T14:17:40.192Z",
+      "method": "GET",
+      "status": 200,
+      "serverTiming": "task-op;dur=0.342",
+      "timing": {
+        "startTime": 1790345860105.393,
+        "domainLookupStart": 9896.184,
+        "domainLookupEnd": 9896.213,
+        "connectStart": 9896.213,
+        "secureConnectionStart": -1,
+        "connectEnd": 9896.436,
+        "requestStart": 9896.615,
+        "responseStart": 12229.446,
+        "responseEnd": 12231.624
+      }
+    },
+    {
+      "path": "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/artifacts",
+      "startedAt": "2026-09-25T14:17:40.192Z",
+      "method": "GET"
+    },
+    {
+      "path": "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/output",
+      "startedAt": "2026-09-25T14:17:40.195Z",
+      "method": "GET"
+    },
+    {
+      "path": "/api/git/hygiene",
+      "startedAt": "2026-09-25T14:17:40.195Z",
+      "method": "GET"
+    },
+    {
+      "path": "/api/cli/model-migrations",
+      "startedAt": "2026-09-25T14:17:40.195Z",
+      "method": "GET"
+    },
+    {
+      "path": "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/step-prompts",
+      "startedAt": "2026-09-25T14:17:40.195Z",
+      "method": "GET"
+    },
+    {
+      "path": "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/regression-radar",
+      "startedAt": "2026-09-25T14:17:40.201Z",
+      "method": "GET"
+    },
+    {
+      "path": "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/dependents",
+      "startedAt": "2026-09-25T14:17:40.201Z",
+      "method": "GET"
+    },
+    {
+      "path": "/api/projects/Agent%20Studio/workbenches",
+      "startedAt": "2026-09-25T14:17:40.201Z",
+      "method": "GET"
+    },
+    {
+      "path": "/api/runner/orchestrator-feed",
+      "startedAt": "2026-09-25T14:17:41.863Z",
+      "method": "GET"
+    },
+    {
+      "path": "/api/orchestrator/sessions",
+      "startedAt": "2026-09-25T14:17:43.911Z",
+      "method": "GET"
+    },
+    {
+      "path": "/api/runner/status",
+      "startedAt": "2026-09-25T14:17:44.736Z",
+      "method": "GET"
+    },
+    {
+      "path": "/api/runner/queue-starvation",
+      "startedAt": "2026-09-25T14:17:46.946Z",
+      "method": "GET"
+    },
+    {
+      "path": "/api/pipeline/accepted-integration-alert",
+      "startedAt": "2026-09-25T14:17:46.946Z",
+      "method": "GET"
+    },
+    {
+      "path": "/api/tasks/grouped",
+      "startedAt": "2026-09-25T14:17:47.318Z",
+      "method": "GET"
+    },
+    {
+      "path": "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/plan",
+      "startedAt": "2026-09-25T14:17:47.331Z",
+      "method": "GET"
+    },
+    {
+      "path": "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/session-events",
+      "startedAt": "2026-09-25T14:17:50.262Z",
+      "method": "GET"
+    },
+    {
+      "path": "/api/workbenches",
+      "startedAt": "2026-09-25T14:17:50.319Z",
+      "method": "GET"
+    },
+    {
+      "path": "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/step-prompts",
+      "startedAt": "2026-09-25T14:17:51.380Z",
+      "method": "GET"
+    },
+    {
+      "path": "/api/runner/orchestrator-feed",
+      "startedAt": "2026-09-25T14:17:51.864Z",
+      "method": "GET"
+    }
+  ],
+  "readyAt": "2026-09-25T14:17:53.055Z",
+  "blocker": "shared-crash-recovery-decision",
+  "failure": "Crash recovery overlay blocks real navigation; no shared recovery action was taken",
+  "finishedAt": "2026-09-25T14:17:53.382Z",
+  "pending": [
+    "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/artifacts",
+    "/api/git/hygiene",
+    "/api/cli/model-migrations",
+    "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/step-prompts",
+    "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/regression-radar",
+    "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/dependents",
+    "/api/projects/Agent%20Studio/workbenches",
+    "/api/runner/orchestrator-feed",
+    "/api/orchestrator/sessions",
+    "/api/runner/queue-starvation",
+    "/api/pipeline/accepted-integration-alert",
+    "/chunk-BHQMUIWS.js",
+    "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/session-events",
+    "/api/workbenches"
+  ],
+  "bootstrapRequests": [
+    {
+      "path": "/api/environment",
+      "durationMs": 4953.900000572205,
+      "transferBytes": 433,
+      "decodedBytes": 133,
+      "serverTiming": []
+    },
+    {
+      "path": "/api/v1/management/remote-hosts",
+      "durationMs": 209.89999961853027,
+      "transferBytes": 23747,
+      "decodedBytes": 23447,
+      "serverTiming": []
+    },
+    {
+      "path": "/api/auth/status",
+      "durationMs": 194.39999961853027,
+      "transferBytes": 396,
+      "decodedBytes": 96,
+      "serverTiming": []
+    },
+    {
+      "path": "/api/runner/orchestrator-feed",
+      "durationMs": 324.30000019073486,
+      "transferBytes": 281345,
+      "decodedBytes": 281045,
+      "serverTiming": []
+    },
+    {
+      "path": "/api/tags",
+      "durationMs": 68.30000019073486,
+      "transferBytes": 6427,
+      "decodedBytes": 6127,
+      "serverTiming": []
+    },
+    {
+      "path": "/api/cli/claude/models",
+      "durationMs": 4833.199999809265,
+      "transferBytes": 3214,
+      "decodedBytes": 2914,
+      "serverTiming": []
+    },
+    {
+      "path": "/api/cli/codex/models",
+      "durationMs": 2314.300000190735,
+      "transferBytes": 3418,
+      "decodedBytes": 3118,
+      "serverTiming": []
+    },
+    {
+      "path": "/api/cli/gemini/models",
+      "durationMs": 2248.5999994277954,
+      "transferBytes": 991,
+      "decodedBytes": 691,
+      "serverTiming": []
+    },
+    {
+      "path": "/api/tasks/grouped",
+      "durationMs": 15425.300000190735,
+      "transferBytes": 2575316,
+      "decodedBytes": 2575016,
+      "serverTiming": [
+        {
+          "name": "task-op",
+          "duration": 12193.013
+        }
+      ]
+    },
+    {
+      "path": "/api/runner/status",
+      "durationMs": 2712.4000005722046,
+      "transferBytes": 8929,
+      "decodedBytes": 8629,
+      "serverTiming": []
+    },
+    {
+      "path": "/api/projects/settings",
+      "durationMs": 2710.800000190735,
+      "transferBytes": 237776,
+      "decodedBytes": 237476,
+      "serverTiming": []
+    },
+    {
+      "path": "/api/workspaces",
+      "durationMs": 4498.300000190735,
+      "transferBytes": 15789,
+      "decodedBytes": 15489,
+      "serverTiming": []
+    },
+    {
+      "path": "/api/watch-paths",
+      "durationMs": 5221.5,
+      "transferBytes": 3456,
+      "decodedBytes": 3156,
+      "serverTiming": []
+    },
+    {
+      "path": "/api/environment",
+      "durationMs": 5222.39999961853,
+      "transferBytes": 433,
+      "decodedBytes": 133,
+      "serverTiming": []
+    },
+    {
+      "path": "/api/clients/",
+      "durationMs": 6639.799999237061,
+      "transferBytes": 33008,
+      "decodedBytes": 32708,
+      "serverTiming": []
+    },
+    {
+      "path": "/api/tasks/AGT-2910",
+      "durationMs": 8085,
+      "transferBytes": 15459,
+      "decodedBytes": 15159,
+      "serverTiming": [
+        {
+          "name": "task-op",
+          "duration": 1339.107
+        }
+      ]
+    },
+    {
+      "path": "/api/environment",
+      "durationMs": 15416.400000572205,
+      "transferBytes": 433,
+      "decodedBytes": 133,
+      "serverTiming": []
+    },
+    {
+      "path": "/api/clients",
+      "durationMs": 7044.099999427795,
+      "transferBytes": 33008,
+      "decodedBytes": 32708,
+      "serverTiming": []
+    },
+    {
+      "path": "/api/runner/auto-review-queue",
+      "durationMs": 9768.79999923706,
+      "transferBytes": 573,
+      "decodedBytes": 273,
+      "serverTiming": []
+    },
+    {
+      "path": "/api/clients/local-default/defaults",
+      "durationMs": 7482.699999809265,
+      "transferBytes": 408,
+      "decodedBytes": 108,
+      "serverTiming": []
+    },
+    {
+      "path": "/api/orchestrator/sessions",
+      "durationMs": 10312.099999427795,
+      "transferBytes": 8963,
+      "decodedBytes": 8663,
+      "serverTiming": []
+    },
+    {
+      "path": "/api/crash-recovery/pending",
+      "durationMs": 10319.60000038147,
+      "transferBytes": 1046,
+      "decodedBytes": 746,
+      "serverTiming": []
+    },
+    {
+      "path": "/api/workspaces",
+      "durationMs": 12785.800000190735,
+      "transferBytes": 15789,
+      "decodedBytes": 15489,
+      "serverTiming": []
+    },
+    {
+      "path": "/api/projects",
+      "durationMs": 10319.699999809265,
+      "transferBytes": 15342,
+      "decodedBytes": 15042,
+      "serverTiming": []
+    },
+    {
+      "path": "/api/cli/quota",
+      "durationMs": 10368.099999427795,
+      "transferBytes": 5358,
+      "decodedBytes": 5058,
+      "serverTiming": []
+    },
+    {
+      "path": "/api/runner/queue-starvation",
+      "durationMs": 12317.699999809265,
+      "transferBytes": 6209,
+      "decodedBytes": 5909,
+      "serverTiming": []
+    },
+    {
+      "path": "/api/pipeline/accepted-integration-alert",
+      "durationMs": 12585.800000190735,
+      "transferBytes": 5885,
+      "decodedBytes": 5585,
+      "serverTiming": []
+    },
+    {
+      "path": "/api/v1/management/links",
+      "durationMs": 12467.5,
+      "transferBytes": 750,
+      "decodedBytes": 450,
+      "serverTiming": []
+    },
+    {
+      "path": "/api/runner/status",
+      "durationMs": 10118,
+      "transferBytes": 8929,
+      "decodedBytes": 8629,
+      "serverTiming": []
+    },
+    {
+      "path": "/api/clients/local-default/telemetry",
+      "durationMs": 8340.10000038147,
+      "transferBytes": 368,
+      "decodedBytes": 68,
+      "serverTiming": []
+    },
+    {
+      "path": "/api/clients/agent-runner-01/telemetry",
+      "durationMs": 8365.099999427795,
+      "transferBytes": 68598,
+      "decodedBytes": 68298,
+      "serverTiming": []
+    },
+    {
+      "path": "/api/v1/management/remote-hosts",
+      "durationMs": 8424.800000190735,
+      "transferBytes": 23709,
+      "decodedBytes": 23409,
+      "serverTiming": []
+    },
+    {
+      "path": "/api/v1/management/provider-refusals",
+      "durationMs": 8582.800000190735,
+      "transferBytes": 302,
+      "decodedBytes": 2,
+      "serverTiming": []
+    },
+    {
+      "path": "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/provenance",
+      "durationMs": 9912.699999809265,
+      "transferBytes": 1101,
+      "decodedBytes": 801,
+      "serverTiming": [
+        {
+          "name": "task-op",
+          "duration": 230.253
+        }
+      ]
+    },
+    {
+      "path": "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/code-review/list",
+      "durationMs": 9503.699999809265,
+      "transferBytes": 314,
+      "decodedBytes": 14,
+      "serverTiming": [
+        {
+          "name": "task-op",
+          "duration": 0.865
+        }
+      ]
+    },
+    {
+      "path": "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/output",
+      "durationMs": 9909.60000038147,
+      "transferBytes": 839567,
+      "decodedBytes": 839267,
+      "serverTiming": [
+        {
+          "name": "task-op",
+          "duration": 14.199
+        }
+      ]
+    },
+    {
+      "path": "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/session-events",
+      "durationMs": 9509,
+      "transferBytes": 1564,
+      "decodedBytes": 1264,
+      "serverTiming": [
+        {
+          "name": "task-op",
+          "duration": 4.333
+        }
+      ]
+    },
+    {
+      "path": "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/runs",
+      "durationMs": 11239.39999961853,
+      "transferBytes": 2324,
+      "decodedBytes": 2024,
+      "serverTiming": [
+        {
+          "name": "task-op",
+          "duration": 1771.28
+        }
+      ]
+    },
+    {
+      "path": "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/timeline",
+      "durationMs": 11504.5,
+      "transferBytes": 2428,
+      "decodedBytes": 2128,
+      "serverTiming": [
+        {
+          "name": "task-op",
+          "duration": 1440.813
+        }
+      ]
+    },
+    {
+      "path": "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/agent-work-summary",
+      "durationMs": 11690.699999809265,
+      "transferBytes": 471,
+      "decodedBytes": 171,
+      "serverTiming": [
+        {
+          "name": "task-op",
+          "duration": 4.76
+        }
+      ]
+    },
+    {
+      "path": "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/plan",
+      "durationMs": 11712.699999809265,
+      "transferBytes": 432,
+      "decodedBytes": 132,
+      "serverTiming": [
+        {
+          "name": "task-op",
+          "duration": 0.558
+        }
+      ]
+    },
+    {
+      "path": "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/pipeline",
+      "durationMs": 12266.099999427795,
+      "transferBytes": 12258,
+      "decodedBytes": 11958,
+      "serverTiming": [
+        {
+          "name": "task-op",
+          "duration": 6.314
+        }
+      ]
+    },
+    {
+      "path": "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/screenshots",
+      "durationMs": 12231.099999427795,
+      "transferBytes": 474,
+      "decodedBytes": 174,
+      "serverTiming": [
+        {
+          "name": "task-op",
+          "duration": 0.342
+        }
+      ]
+    }
+  ]
+}

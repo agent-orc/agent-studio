@@ -472,7 +472,8 @@ public sealed class RemoteTaskRunner
                     shipper,
                     outbox,
                     stopRun.Token,
-                    daemonShutdown)
+                    daemonShutdown,
+                    operatorStopRequested: () => heartbeat.StopRequest is not null)
                 : await ExecuteAsync(
                     slot,
                     workspace,
@@ -482,7 +483,8 @@ public sealed class RemoteTaskRunner
                     stopRun,
                     shutdown,
                     daemonShutdown,
-                    epicPlanning);
+                    epicPlanning,
+                    operatorStopRequested: () => heartbeat.StopRequest is not null);
             outcome = execution.Outcome;
             outcomeDecision = execution.Decision;
             outputLines = execution.OutputLines;
@@ -1000,7 +1002,8 @@ public sealed class RemoteTaskRunner
         PersistedRunnerSlot slot, GitWorkspace workspace, LogShipper shipper,
         DurableRunOutbox? outbox, ArtifactTransferLimitsResponse artifactLimits,
         CancellationTokenSource stopRun,
-        CancellationToken shutdown, CancellationToken daemonShutdown, bool epicPlanning)
+        CancellationToken shutdown, CancellationToken daemonShutdown, bool epicPlanning,
+        Func<bool> operatorStopRequested)
     {
         var taskKey = slot.TaskKey;
         var lease = slot.Lease;
@@ -1194,7 +1197,8 @@ public sealed class RemoteTaskRunner
             shipper,
             outbox,
             stopRun.Token,
-            daemonShutdown);
+            daemonShutdown,
+            operatorStopRequested: operatorStopRequested);
         // Only a terminal result proves that no command of this run will read the
         // per-run cache folders again. A daemon shutdown leaves the detached
         // worker running, so its folder stays and is reclaimed by age instead:
@@ -1210,9 +1214,13 @@ public sealed class RemoteTaskRunner
         DurableRunOutbox? outbox,
         CancellationToken stopRun,
         CancellationToken daemonShutdown = default,
-        int sameSessionResumeAttempts = 0)
+        int sameSessionResumeAttempts = 0,
+        Func<bool>? operatorStopRequested = null)
     {
         var process = DurableAgentProcess.Attach(slot);
+        var activeInvocation = AgentCliProcess.Resolve(_options, slot.RunSpec);
+        ProviderAuthProbe.Shared.RecordRunStarted(activeInvocation.FileName);
+        var providerRunRecorded = true;
         var sequence = slot.LastOutputSequence;
         using var waitStop = CancellationTokenSource.CreateLinkedTokenSource(
             stopRun,
@@ -1244,18 +1252,32 @@ public sealed class RemoteTaskRunner
                         FinalizationStage = FinalizationRetryPolicy.ResultReadyStage,
                         LastOutputSequence = sequence,
                     });
+                    ProviderAuthProbe.Shared.RecordRunCompleted(activeInvocation.FileName);
+                    providerRunRecorded = false;
                     ReportWorkerEnvelope(slot, shipper);
-                    var processResult = new ProcessResult(result.ExitCode, result.StdOut, result.StdErr);
+                    var processResult = ProcessResultFrom(result);
                     var invocation = AgentCliProcess.Resolve(_options, slot.RunSpec);
+                    var classified = result.TimedOut
+                        ? ClassifyTimedOutResult(slot.Lease, workspace, result, sameSessionResumeAttempts)
+                        : ClassifyProcessResult(
+                            slot.Lease,
+                            workspace,
+                            processResult,
+                            result.LaunchFailed,
+                            sameSessionResumeAttempts,
+                            invocation);
                     var providerAccess = ProviderAccessClassifier.Classify(
                         processResult.ExitCode,
                         processResult.StdOut,
                         processResult.StdErr);
-                    var providerAuth = providerAccess.Kind == ProviderAccessEvidenceKind.RequestRejected
-                        ? null
-                        : ProviderAuthProbe.Shared.RecordProcessResult(
-                            invocation.FileName,
-                            processResult);
+                    var providerAuth = RecordProviderProcessResult(
+                        ProviderAuthProbe.Shared,
+                        invocation.FileName,
+                        processResult,
+                        classified.Decision.RawFacts,
+                        evidenceId: slot.RunId ?? slot.AttemptId,
+                        stopDirectiveRecorded: operatorStopRequested?.Invoke() == true,
+                        daemonShutdownRecorded: daemonShutdown.IsCancellationRequested);
                     if (providerAccess.Kind == ProviderAccessEvidenceKind.AuthenticationFailure)
                     {
                         var provider = invocation.CliType;
@@ -1282,7 +1304,8 @@ public sealed class RemoteTaskRunner
                             "system",
                             $"[runner] capability-failure capability={CapabilityProtocol.ProviderAuthentication(provider)} classification=ProviderUnauthorized");
                     }
-                    else if (providerAccess.Kind == ProviderAccessEvidenceKind.RateLimited)
+                    else if (providerAccess.Kind == ProviderAccessEvidenceKind.RateLimited
+                             && providerAuth.Status == ProviderAuthProbe.Limited)
                     {
                         shipper.Add(
                             "system",
@@ -1304,15 +1327,6 @@ public sealed class RemoteTaskRunner
                             "system",
                             $"[runner] provider rejected model request provider={invocation.CliType}; provider-auth capability unchanged");
                     }
-                    var classified = result.TimedOut
-                        ? ClassifyTimedOutResult(slot.Lease, workspace, result, sameSessionResumeAttempts)
-                        : ClassifyProcessResult(
-                            slot.Lease,
-                            workspace,
-                            processResult,
-                            result.LaunchFailed,
-                            sameSessionResumeAttempts,
-                            invocation);
                     if (classified.Decision.RecoveryAction == ExecutionRecoveryAction.ResumeSameSession
                         && sameSessionResumeAttempts < ExecutionOutcomeAdapter.MaxSameSessionResumeAttempts)
                     {
@@ -1373,7 +1387,8 @@ public sealed class RemoteTaskRunner
                             outbox,
                             stopRun,
                             daemonShutdown,
-                            sameSessionResumeAttempts + 1);
+                            sameSessionResumeAttempts + 1,
+                            operatorStopRequested);
                     }
 
                     shipper.Add(
@@ -1411,6 +1426,11 @@ public sealed class RemoteTaskRunner
                 _log,
                 CancellationToken.None);
             throw;
+        }
+        finally
+        {
+            if (providerRunRecorded)
+                ProviderAuthProbe.Shared.RecordRunCompleted(activeInvocation.FileName);
         }
     }
 
@@ -1541,15 +1561,12 @@ public sealed class RemoteTaskRunner
             : string.IsNullOrWhiteSpace(provider.SessionId)
                 ? ExecutionSessionState.Unsupported
                 : ExecutionSessionState.Active;
-        var factsAfterExit = Facts(
+        var factsAfterExit = BuildProcessFacts(
             lease,
             workspace,
+            result,
             ProviderTerminalEvent: provider.TerminalEvent,
             FinalAssistantOutput: provider.FinalAssistantOutput,
-            StdOut: result.StdOut,
-            StdErr: result.StdErr,
-            ExitCode: result.ExitCode,
-            Signal: SignalFromExitCode(result.ExitCode),
             LaunchFailed: launchFailed,
             SessionState: sessionState,
             SessionId: provider.SessionId,
@@ -2288,10 +2305,60 @@ public sealed class RemoteTaskRunner
         });
     }
 
-    private static int? SignalFromExitCode(int exitCode)
-        => !OperatingSystem.IsWindows() && exitCode is >= 129 and <= 255
-            ? exitCode - 128
-            : null;
+    /// <summary>
+    /// Applies a completed run to the host-wide provider status without losing
+    /// the termination facts already recorded by outcome classification. A
+    /// provider-looking message from an operator stop, host shutdown, or
+    /// signal-terminated process is run evidence, not provider-limit evidence.
+    /// </summary>
+    internal static ProviderAuthStatus RecordProviderProcessResult(
+        ProviderAuthProbe providerAuth,
+        string cliBinary,
+        ProcessResult result,
+        ExecutionRawFacts facts,
+        string? evidenceId = null,
+        bool stopDirectiveRecorded = false,
+        bool daemonShutdownRecorded = false)
+        => providerAuth.RecordProcessResult(
+            cliBinary,
+            result,
+            evidenceId,
+            operatorStopped: facts.OperatorCancelled || stopDirectiveRecorded,
+            signal: facts.Signal,
+            hostShutdown: facts.HostShutdown || daemonShutdownRecorded);
+
+    internal static ProcessResult ProcessResultFrom(DetachedJobResult result)
+        => new(result.ExitCode, result.StdOut, result.StdErr, result.Signal);
+
+    internal static ExecutionRawFacts BuildProcessFacts(
+        RunLeaseInfoDto lease,
+        GitWorkspace workspace,
+        ProcessResult result,
+        string? ProviderTerminalEvent = null,
+        string? FinalAssistantOutput = null,
+        bool LaunchFailed = false,
+        ExecutionSessionState SessionState = ExecutionSessionState.Unsupported,
+        string? SessionId = null,
+        int SameSessionResumeAttempts = 0,
+        string? EffectiveCliType = null,
+        string? EffectiveModel = null,
+        string? EffectiveThinkingLevel = null)
+        => Facts(
+            lease,
+            workspace,
+            ProviderTerminalEvent,
+            FinalAssistantOutput,
+            result.StdOut,
+            result.StdErr,
+            result.ExitCode,
+            result.Signal,
+            LaunchFailed: LaunchFailed,
+            SessionState: SessionState,
+            SessionId: SessionId,
+            SameSessionResumeAttempts: SameSessionResumeAttempts,
+            EffectiveCliType: EffectiveCliType,
+            EffectiveModel: EffectiveModel,
+            EffectiveThinkingLevel: EffectiveThinkingLevel);
 
     private static ExecutionRawFacts Facts(
         RunLeaseInfoDto lease,

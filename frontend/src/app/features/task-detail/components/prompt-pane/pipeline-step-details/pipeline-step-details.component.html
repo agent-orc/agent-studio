@@ -20,6 +20,21 @@
               (closeRequest)="close()"
               (backdropClick)="close()">
     <div class="step-details__body">
+      @if (resultFile() || aspectEvidence().length > 0) {
+        <nav class="step-details__links"
+             aria-label="Aspect evidence"
+             data-testid="overview-pipeline-step-evidence-links">
+          @if (resultFile(); as report) {
+            <button type="button" (click)="documentRequested.emit(report)">Report</button>
+          }
+          @if (aspectEvidence()[0]?.rawLogFile; as rawLog) {
+            <button type="button" (click)="documentRequested.emit(rawLog)">Raw log</button>
+          }
+          @if (aspectEvidence()[0]?.reviewGradeFile; as grade) {
+            <button type="button" (click)="documentRequested.emit(grade)">Review grade</button>
+          }
+        </nav>
+      }
       <section class="step-details__section" data-testid="overview-pipeline-step-docs">
         <h3 class="step-details__heading">
           <app-studio-icon name="book" [size]="14" />
@@ -69,6 +84,23 @@
             {{ concernTitle() || 'Concerns' }}
           </h3>
           <p>{{ concern }}</p>
+        </section>
+      }
+
+      @if (aspectEvidence().length > 1) {
+        <section class="step-details__section" data-testid="overview-pipeline-step-earlier-attempts">
+          <h3 class="step-details__heading">Earlier review attempts</h3>
+          @for (attempt of aspectEvidence().slice(1); track attempt.attemptId) {
+            <div class="step-details__attempt">
+              <span>{{ attempt.attemptId }}</span>
+              @if (attempt.rawLogFile) {
+                <button type="button" (click)="documentRequested.emit(attempt.rawLogFile)">Raw log</button>
+              }
+              @if (attempt.reviewGradeFile) {
+                <button type="button" (click)="documentRequested.emit(attempt.reviewGradeFile)">Review grade</button>
+              }
+            </div>
+          }
         </section>
       }
     </div>
