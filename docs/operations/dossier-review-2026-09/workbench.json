@@ -4,8 +4,9 @@
   "title": "Relevance review of all Agent Studio Dossiers",
   "summary": "A repository-wide classification of every pre-existing Agent Studio Dossier as current, partially superseded, superseded, or historical, with replacement chains, contradictions, and proposed review metadata.",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "archived",
   "phase": "decision-ready",
+  "statusReason": "AGT-2785 applied the matrix, and AGT-W55 turned it into the September consolidation decisions; this Dossier remains a dated first-round review record.",
   "updatedAt": "2026-09-12T00:00:00Z",
   "sourceTaskKeys": [
     "AGT-2785"
@@ -16,5 +17,21 @@
       "promptMarkdown": "Implement the operator-approved verdict matrix in docs/operations/dossier-review-2026-09/index.html. For every reviewed Dossier, call PUT /api/projects/{projectName}/workbenches/{id}/review with verdict, supersededBy, reviewedBy=AGT-2785, and the row reasoning as note. Let the server assign reviewedAt and preserve its history and commit behavior. If the metadata endpoint is not integrated, add the same review block directly to each workbench.json using the contract documented in docs/operations/README.md. Do not change the verdict matrix or archive content without an explicit operator revision. Verify all 52 pre-existing descriptors, report the applied counts, and list every changed workbench.json path."
     }
   ],
-  "key": "AGT-W53"
+  "key": "AGT-W53",
+  "review": {
+    "verdict": "historical",
+    "supersededBy": [],
+    "reviewedAt": "2026-09-25T05:38:16Z",
+    "reviewedBy": "AGT-2898",
+    "note": "The 13 September matrix is a dated review snapshot: AGT-2785 applied it and AGT-W55 plus AGT-2798 through AGT-2802 subsequently consolidated the catalogue it described."
+  },
+  "reviewHistory": [
+    {
+      "verdict": "historical",
+      "supersededBy": [],
+      "reviewedAt": "2026-09-25T05:38:16Z",
+      "reviewedBy": "AGT-2898",
+      "note": "The 13 September matrix is a dated review snapshot: AGT-2785 applied it and AGT-W55 plus AGT-2798 through AGT-2802 subsequently consolidated the catalogue it described."
+    }
+  ]
 }

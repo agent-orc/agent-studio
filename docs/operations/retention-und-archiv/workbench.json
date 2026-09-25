@@ -4,11 +4,11 @@
   "title": "Aufbewahrung und Archiv",
   "summary": "Retention- und Archivmodell fuer Task-Daten: vier Datenklassen (Autoritaet, Evidenz, schwere Arbeitsdaten, Laufzeit), Regelmodell mit Standardwerten (10 MiB je Datei, 64 MiB je Task, 50 MiB Ablehnung, schwere Daten 30 Tage und ganze Tasks 180 Tage nach Terminal ins kalte Archiv, Human-Review nie), kaltes Archiv ausserhalb von Repository und Hot-Store mit Manifest, Stub und Restore, Task-Server als Eigentuemer der Schnittstelle (/api/v1/management/retention, Zeitplan, CLI), Admin-UI mit Vorschau und Verlauf. Messung 06.09.: 2.264 Tasks, 7,6 GB Arbeitsbaum, 28,7 GB Historie in elf Tagen, davon 95 % cli-output.log-Zwischenstaende. Entscheidungen E1-E10 vom Orchestrator getroffen; Umsetzung in R1-R4 (AGT-2743..2746). Nachtrag 06.09. 23:00 (§12, E11/E12): Verduennung grosser Blobs in vier Altersstufen mit inhaltsbezogenem Auszug statt Einmalverschiebung; Vollsicherung als Feature (Sicherungssatz im Dateisystem mit Inventar-Hash, Auswertungsexport als JSONL, 7/4/12-Verduennung der Saetze, extern und per S3 sicherbar).",
   "entrypoint": "index.html",
-  "status": "active",
+  "status": "archived",
   "phase": "decision-ready",
   "updatedAt": "2026-09-06T21:05:00Z",
   "editedBy": "Orchestrator (Claude) im Auftrag von Robert, 06.09.2026",
-  "statusReason": "Entscheidungen getroffen (Freigabe Robert 06.09.: autonom auswerten und umsetzen); Umsetzungskarten R1-R4 in Ready; loest AGT-W11 (log-retention) und den Entwurf workspace-repo-nachhaltigkeit ab.",
+  "statusReason": "Delivered by AGT-2743 through AGT-2746; all four retention cards are archived and their implementation is present on develop.",
   "sourceTaskKeys": [],
   "relatedTaskKeys": [
     "AGT-2743",
@@ -21,11 +21,11 @@
   ],
   "key": "AGT-W46",
   "review": {
-    "verdict": "current",
+    "verdict": "historical",
     "supersededBy": [],
-    "reviewedAt": "2026-09-13T10:20:00Z",
-    "reviewedBy": "Operator",
-    "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    "reviewedAt": "2026-09-25T05:38:16Z",
+    "reviewedBy": "AGT-2898",
+    "note": "R1 through R4 are delivered by AGT-2743 through AGT-2746 and archived on the board; develop contains the retention engine, Task Server API and scheduler, admin UI, S3 target, integrity checks, and operator documentation."
   },
   "reviewHistory": [
     {
@@ -34,6 +34,13 @@
       "reviewedAt": "2026-09-13T10:20:00Z",
       "reviewedBy": "Operator",
       "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    },
+    {
+      "verdict": "historical",
+      "supersededBy": [],
+      "reviewedAt": "2026-09-25T05:38:16Z",
+      "reviewedBy": "AGT-2898",
+      "note": "R1 through R4 are delivered by AGT-2743 through AGT-2746 and archived on the board; develop contains the retention engine, Task Server API and scheduler, admin UI, S3 target, integrity checks, and operator documentation."
     }
   ]
 }
