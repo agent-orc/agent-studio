@@ -112,16 +112,18 @@ public sealed class IntakeRunner
     public static string ParticipantIntakeFor(string project) => $"{IntakeParticipantPrefix}{project}";
 
     /// <summary>
-    /// Select repository-wide constraints that should be foregrounded for this
-    /// task before the coding CLI sees the prompt. Deterministic V1 keeps the
-    /// contract testable and cheap; the manifest's selector/version fields let a
-    /// later model-assisted selector land without changing the audit artifact.
+    /// Select project-owned constraints that should be foregrounded before the
+    /// coding CLI sees the prompt. Production callers pass the resolved
+    /// repository root; a null root is retained only for pure selector tests.
     /// </summary>
     public static IntakeEnrichmentManifest BuildEnrichmentManifest(
         TaskInfo target,
         string? promptMarkdown,
         IReadOnlyList<ProjectStyleGuide>? applicableGuides = null,
-        string? styleGuideSnapshotId = null)
+        string? styleGuideSnapshotId = null,
+        string? repositoryRoot = null,
+        bool agentStudioCatalogue = false,
+        IReadOnlyCollection<string>? explicitlyDeclaredBlockIds = null)
     {
         var areas = DetectTaskAreas(target, promptMarkdown);
         var areaSet = new HashSet<string>(areas, StringComparer.OrdinalIgnoreCase);
@@ -166,13 +168,91 @@ public sealed class IntakeRunner
                 candidates.Add(CloneConstraint(rule.Constraint));
         }
 
-        return ApplyEnrichmentBudget(areas, candidates, styleGuideSnapshotId);
+        if (repositoryRoot is null)
+            return ApplyEnrichmentBudget(areas, candidates, styleGuideSnapshotId);
+
+        // The built-in rule catalogue belongs to Agent Studio. Other projects
+        // may use their own repository guides and root instructions only.
+        if (!agentStudioCatalogue)
+        {
+            var rootInstructions = candidates.First(rule => rule.Id == "repo-instructions-source");
+            var hasIndex = !string.IsNullOrWhiteSpace(repositoryRoot)
+                           && MissingSource("docs/start/README.md", repositoryRoot) is null;
+            candidates.Remove(rootInstructions);
+            candidates.Add(rootInstructions with
+            {
+                Title = hasIndex ? rootInstructions.Title : "Use repository instructions",
+                Source = hasIndex ? "AGENTS.md; docs/start/README.md" : "AGENTS.md",
+                Text = hasIndex
+                    ? "Follow the active AGENTS.md rules for this repository. When project documentation is needed, start at docs/start/README.md."
+                    : "Follow the active AGENTS.md rules for this repository."
+            });
+        }
+
+        var eligible = new List<IntakeConstraintSelection>();
+        var rejected = new List<IntakeConstraintOmission>();
+        foreach (var candidate in candidates)
+        {
+            var missing = MissingSource(candidate.Source, repositoryRoot);
+            var studioRule = !candidate.Id.StartsWith("style-guide:", StringComparison.Ordinal)
+                             && candidate.Id != "repo-instructions-source";
+            var explicitlyDeclared = explicitlyDeclaredBlockIds?.Contains(candidate.Id, StringComparer.Ordinal) == true;
+            if (missing is null && (!studioRule || agentStudioCatalogue || explicitlyDeclared))
+            {
+                eligible.Add(explicitlyDeclared
+                    ? candidate with { SourceVerification = "pipeline-explicit" }
+                    : candidate);
+                continue;
+            }
+            rejected.Add(new IntakeConstraintOmission
+            {
+                Id = candidate.Id,
+                Title = candidate.Title,
+                Source = candidate.Source,
+                Reason = missing is null ? "project-catalogue-mismatch" : "source-missing",
+                MissingPath = missing,
+                EstimatedCharacters = RenderConstraintMarkdown(candidate).Length,
+                EstimatedTokens = EstimateTokens(RenderConstraintMarkdown(candidate).Length)
+            });
+        }
+        return ApplyEnrichmentBudget(areas, eligible, styleGuideSnapshotId, rejected)
+            with { SourceRejections = rejected };
+    }
+
+    private static string? MissingSource(string source, string repositoryRoot)
+    {
+        foreach (var citation in source.Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            var relative = citation.Split('#', 2)[0].Trim().Replace('\\', '/');
+            if (relative == "existing C# project conventions")
+                continue;
+            if (string.IsNullOrWhiteSpace(repositoryRoot) || Path.IsPathRooted(relative)
+                || relative.Split('/').Any(part => part is "." or ".."))
+                return relative;
+            var path = Path.Combine(repositoryRoot, relative.Replace('/', Path.DirectorySeparatorChar));
+            if (!File.Exists(path)) return relative;
+            var current = repositoryRoot;
+            foreach (var part in relative.Split('/'))
+            {
+                current = Path.Combine(current, part);
+                try
+                {
+                    if (File.GetAttributes(current).HasFlag(FileAttributes.ReparsePoint)) return relative;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    return relative;
+                }
+            }
+        }
+        return null;
     }
 
     private static IntakeEnrichmentManifest ApplyEnrichmentBudget(
         IReadOnlyList<string> areas,
         IReadOnlyList<IntakeConstraintSelection> candidates,
-        string? styleGuideSnapshotId)
+        string? styleGuideSnapshotId,
+        IReadOnlyList<IntakeConstraintOmission>? rejectedSources = null)
     {
         var ordered = candidates
             .OrderBy(candidate => candidate.Mandatory ? 0 : 1)
@@ -185,7 +265,7 @@ public sealed class IntakeRunner
                 .Where(candidate => !candidate.Mandatory)
                 .Take(MaxOptionalEnrichmentBlocks))
             .ToList();
-        var omitted = new List<IntakeConstraintOmission>();
+        var omitted = rejectedSources?.ToList() ?? [];
         foreach (var candidate in ordered.Where(candidate =>
                      !candidate.Mandatory && !selected.Contains(candidate)))
         {
@@ -303,10 +383,10 @@ public sealed class IntakeRunner
             sb.AppendLine();
             sb.AppendLine("### Omitted relevant constraints");
             sb.AppendLine();
-            sb.AppendLine("These constraints matched the task but were not injected because the hard context budget was exhausted:");
+            sb.AppendLine("These constraints matched the task but were not injected because their sources were unavailable, their catalogue did not belong to this project, or the context budget was exhausted:");
             foreach (var omission in manifest.Omissions)
             {
-                sb.AppendLine($"- `{omission.Id}`: {omission.Reason} (~{omission.EstimatedCharacters} characters)");
+                sb.AppendLine($"- `{omission.Id}`: {omission.Reason}{(omission.MissingPath is null ? "" : $" ({omission.MissingPath})")} (~{omission.EstimatedCharacters} characters)");
             }
             if (manifest.AdditionalOmissionCount > 0)
                 sb.AppendLine($"- `{manifest.AdditionalOmissionCount}` additional omission(s) are summarized by count.");
@@ -483,7 +563,9 @@ public sealed class IntakeRunner
             info,
             prompt,
             styleGuideCatalogue?.Guides,
-            styleGuideCatalogue?.SnapshotId);
+            styleGuideCatalogue?.Guides.Count > 0 ? styleGuideCatalogue.SnapshotId : null,
+            _styleGuides?.GetRepositoryRoot(info.ProjectName) ?? string.Empty,
+            string.Equals(styleGuideCatalogue?.ProjectKey, "PROJ-002", StringComparison.OrdinalIgnoreCase));
         WriteEnrichedContextArtifact(info, enrichment);
         // Surface the context-load result in the run log: the manifest already
         // lands in lifecycle.json, but a structured line lets operators watching
@@ -724,6 +806,9 @@ public sealed class IntakeRunner
             },
             areas => areas.Contains("delegation"))
     ];
+
+    public static bool IsBuiltInConstraintId(string id) =>
+        ConstraintRules.Any(rule => string.Equals(rule.Constraint.Id, id, StringComparison.Ordinal));
 
     private static IntakeConstraintSelection CloneConstraint(IntakeConstraintSelection c)
         => c with { Areas = c.Areas.ToList() };

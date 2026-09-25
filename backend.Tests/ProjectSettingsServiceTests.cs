@@ -567,6 +567,23 @@ public sealed class ProjectSettingsServiceTests : IDisposable
     }
 
     [Fact]
+    public void PromptEnrichmentBlockDeclaration_PersistsForTheProject()
+    {
+        var svc = Build();
+        svc.SetPipelineStep("runbook", PipelineTypes.Task,
+            PipelineCatalogue.PromptEnrichmentStepId,
+            new PipelineStepSetting
+            {
+                EnrichmentBlockIds = ["task-state-api-first", "task-state-api-first"]
+            });
+
+        var reloaded = Build().Get("runbook");
+        Assert.Equal(["task-state-api-first"],
+            PipelineTypeSettings.ForType(reloaded, PipelineTypes.Task)!.PipelineSteps!
+                [PipelineCatalogue.PromptEnrichmentStepId].EnrichmentBlockIds);
+    }
+
+    [Fact]
     public void Get_MigratesLegacyFlatPipelineConfigToThreeCodingTypesOnly()
     {
         File.WriteAllText(StorePath(), """
