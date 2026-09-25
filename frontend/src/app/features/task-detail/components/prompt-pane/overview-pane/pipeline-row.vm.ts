@@ -7,6 +7,7 @@
 import type { CliType } from '../../../../../models/task.model';
 import type {
   PipelinePricingGap,
+  PipelineAspectEvidence,
   PipelineStepConfig,
   PipelineStepStatus,
   StepKind,
@@ -80,6 +81,10 @@ export interface PipelineRowVm {
    * verdict never grows a misleading tooltip.
    */
   concernTooltip: StructuredTooltip | null;
+  /** One-line conclusion for every completed aspect, including clean passes. */
+  aspectSummary: string | null;
+  /** Latest-first report, raw-log, and grade links for Remote Review attempts. */
+  aspectEvidence: PipelineAspectEvidence[];
   /**
    * Always-present "what does this step do" tooltip shown on hovering the
    * step name. Keyed by step id with a per-kind fallback so a future

@@ -420,10 +420,10 @@ describe('ProjectWikiSectionComponent', () => {
     fixture.detectChanges();
 
     expect(targets).toEqual([
-      { target: { kind: 'page', relPath: 'concepts/overview.md' }, reuse: 'replace-current' },
-      { target: { kind: 'page', relPath: 'concepts/overview.md' }, reuse: 'new' },
-      { target: { kind: 'page', relPath: 'concepts/overview.md' }, reuse: 'new' },
-      { target: { kind: 'page', relPath: 'concepts/overview.md' }, reuse: 'new' },
+      { target: { kind: 'page', relPath: 'concepts/overview.md', title: 'Concept overview' }, reuse: 'replace-current' },
+      { target: { kind: 'page', relPath: 'concepts/overview.md', title: 'Concept overview' }, reuse: 'new' },
+      { target: { kind: 'page', relPath: 'concepts/overview.md', title: 'Concept overview' }, reuse: 'new' },
+      { target: { kind: 'page', relPath: 'concepts/overview.md', title: 'Concept overview' }, reuse: 'new' },
     ]);
     expect(fixture.componentInstance.openedRel()).toBeNull();
     http.verify();

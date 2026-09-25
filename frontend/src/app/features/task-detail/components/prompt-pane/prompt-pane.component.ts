@@ -155,7 +155,8 @@ export class PromptPaneComponent {
    * reload restore the requested tab after the task has mounted.
    */
   readonly activeTab = signal<PromptPaneTabId>('overview');
-  readonly docFocusRequest = signal<{ kind: TaskArtifactKind; requestId: number } | null>(null);
+  readonly docFocusRequest = signal<{ kind?: TaskArtifactKind; fileName?: string; requestId: number } | null>(null);
+  private documentRequestId = 0;
 
   /** Resets the active tab to Overview whenever the underlying task changes,
    *  so navigating between tasks always lands on Overview. Within the same
@@ -195,7 +196,7 @@ export class PromptPaneComponent {
     if (!requested) return;
     this.onPromptTabChange(requested);
     const anchor = this.layout.requestedPromptAnchor();
-    if (anchor) this.docFocusRequest.set(anchor as { kind: TaskArtifactKind; requestId: number });
+    if (anchor) this.docFocusRequest.set(anchor as { kind?: TaskArtifactKind; fileName?: string; requestId: number });
     this.layout.requestedPromptTab.set(null);
     this.layout.requestedPromptAnchor.set(null);
   });
@@ -206,6 +207,12 @@ export class PromptPaneComponent {
       this.setTab(id);
       this.focusTabSurface();
     }
+  }
+
+  openDocument(fileName: string): void {
+    this.setTab('description');
+    this.docFocusRequest.set({ fileName, requestId: ++this.documentRequestId });
+    this.focusTabSurface();
   }
 
   focusTabSurface(): void {

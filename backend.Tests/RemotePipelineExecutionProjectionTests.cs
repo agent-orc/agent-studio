@@ -7,6 +7,66 @@ namespace AgentStudio.Tests;
 public sealed class RemotePipelineExecutionProjectionTests
 {
     [Fact]
+    public void Project_LegacyRemoteFailedConcern_RepairsReadModelWithoutMigration()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "remote-concern-projection-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            File.WriteAllText(Path.Combine(folder, "remote-review-grade-review_agt2794.md"), """
+                ---
+                attemptId: "review_agt2794"
+                receivedAt: 2026-09-18T08:20:00Z
+                outcome: "Pass"
+                ---
+
+                **Outcome:** Pass
+
+                ## Aspect verdicts
+
+                | Aspect | Status | Classification | Evidence checked | Missing | Summary |
+                | --- | --- | --- | --- | --- | --- |
+                | [code-quality](aspect-code-quality.md) | concerns | RemoteAspectVerdict | diff | none | Clean diff with one dead no-op assertion. |
+                """);
+            var pipeline = PipelineCatalogue.Standard;
+            var local = new PipelineExecutionRecord
+            {
+                PipelineId = pipeline.Id,
+                PipelineVersion = pipeline.Version,
+                JobId = "AGT-2794",
+                StartedAt = Utc(8, 0),
+                Steps = pipeline.AllSteps.Select(step => new PipelineStepExecution
+                {
+                    StepId = step.Id,
+                    Kind = step.Kind,
+                    Status = step.Id == "aspect-code-quality"
+                        ? PipelineStepStatus.Failed
+                        : PipelineStepStatus.Pending,
+                    ExecutionLocation = step.Id == "aspect-code-quality" ? "remote" : null,
+                    ExecutionAttemptId = step.Id == "aspect-code-quality" ? "review_agt2794" : null,
+                }).ToList(),
+            };
+            var projected = RemotePipelineExecutionProjection.Project(
+                local,
+                pipeline,
+                new TaskInfo { Id = "AGT-2794", FolderPath = folder, CreatedAt = Utc(8, 0), State = TaskStates.HumanReview },
+                [new SessionEvent { Ts = Utc(8, 0), Kind = "start", Cli = "remote-runner" }],
+                [new TimelineEvent { Ts = Utc(8, 10), Kind = TimelineEventKinds.AgentRunFinished, Summary = "remote run", Details = new Dictionary<string, string> { ["cli"] = "remote-runner" } }],
+                null);
+
+            var aspect = Step(projected.Execution!, "aspect-code-quality");
+            Assert.Equal(PipelineStepStatus.Passed, aspect.Status);
+            Assert.Equal("concerns", aspect.Verdict);
+            Assert.Equal("Clean diff with one dead no-op assertion.", aspect.VerdictSummary);
+            Assert.Equal(PipelineStepStatus.Failed, Step(local, "aspect-code-quality").Status);
+        }
+        finally
+        {
+            Directory.Delete(folder, true);
+        }
+    }
+
+    [Fact]
     public void Project_RemoteLifecycle_MapsCoreReviewSkipsAndLedgerWithoutWritingParallelState()
     {
         var folder = Path.Combine(
