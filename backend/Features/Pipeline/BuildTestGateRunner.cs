@@ -55,13 +55,17 @@ public sealed record BuildTestGateRequest(
     public string? RequiredTestLevel { get; init; }
     public TestExecutionPolicy? TestExecution { get; init; }
     public string? JobFolderPath { get; init; }
+    /// <summary>Version of the pipeline definition that selected this gate.</summary>
+    public int PipelineDefinitionVersion { get; init; } = PipelineCatalogue.Standard.Version;
+    /// <summary>Optional executor-supplied identity; otherwise the local binaries are fingerprinted.</summary>
+    public string? ToolchainIdentity { get; init; }
 
     /// <summary>
     /// AGT-2843: where the caller's resolved <c>timeout</c> (the gate-run
     /// budget passed to <see cref="IBuildTestGateRunner.RunAsync"/>) came from
     /// - e.g. an explicit override, a configured key, a project override, or
     /// the <see cref="GateRunBudgetPolicy"/> default - surfaced on
-    /// <c>build_test_gate_started</c> so an operator can see why a gate has
+    /// <c>build_test_gate_requested</c> so an operator can see why a gate has
     /// the budget it has. Purely diagnostic.
     /// </summary>
     public string? TimeoutBudgetSource { get; init; }
@@ -162,6 +166,12 @@ public sealed record BuildTestGateResult(
     bool RanBackendBuild,
     bool RanFrontendBuild)
 {
+    public GateVerdictSource VerdictSource { get; init; } = GateVerdictSource.Executed;
+    public string? GateProfileDigest { get; init; }
+    public int? PipelineDefinitionVersion { get; init; }
+    public string? ToolchainIdentity { get; init; }
+    /// <summary>Evidence created by the original execution, also on a cache hit.</summary>
+    public string? OriginEvidencePath { get; init; }
     public string? GateRunId { get; init; }
     public DateTimeOffset? GateStartedAtUtc { get; init; }
     public DateTimeOffset? GateCompletedAtUtc { get; init; }
@@ -262,6 +272,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
     /// temporary directory.
     /// </summary>
     private readonly string _preparationCacheRoot = PreparationCacheRoot;
+    private readonly GateResultCache _verdictCache;
 
     private static readonly Regex SafeSha = new(
         "^[0-9a-fA-F]{40,64}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -300,6 +311,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         _testSelectionAdvisor = testSelectionAdvisor;
         _health = health;
         _machineGateMode = BuildTestMachineGateMode.Shared;
+        _verdictCache = new GateResultCache();
     }
 
     internal BuildTestGateRunner(
@@ -313,6 +325,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         if (resourceFactory is not null) _resourceFactory = resourceFactory;
         if (!string.IsNullOrWhiteSpace(preparationCacheRoot))
             _preparationCacheRoot = preparationCacheRoot;
+        if (!string.IsNullOrWhiteSpace(preparationCacheRoot))
+            _verdictCache = new GateResultCache(Path.Combine(preparationCacheRoot, "gate-results"));
     }
 
     public async Task<BuildTestGateResult> RunAsync(
@@ -337,6 +351,12 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
             return Skipped("no code diff");
 
         var repositoryPath = Path.GetFullPath(request.RepositoryPath);
+        var cacheProject = request.Project ?? repositoryPath;
+        using var verdictLease = request.RequireExactSubject && SafeSha.IsMatch(request.ExpectedSha ?? "")
+            ? await _verdictCache.AcquireAsync(cacheProject, ct).ConfigureAwait(false)
+            : null;
+        string? toolchainIdentity = request.ToolchainIdentity;
+        string? profileDigest = null;
         var gateRunId = Guid.NewGuid().ToString("N");
         var startedAt = DateTimeOffset.UtcNow;
         var infrastructureTimeout = request.InfrastructureTimeout > TimeSpan.Zero
@@ -345,7 +365,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         var queueWaitTimeout = ResolveQueueWaitTimeout(
             request.QueueWaitTimeout, timeout, infrastructureTimeout);
         _logger.LogInformation(
-            "build_test_gate_started gate_run_id={GateRunId} gate_id={GateId} started_at_utc={StartedAtUtc:o} repository={Repository} expected_sha={ExpectedSha} attempt_chain_id={AttemptChainId} executor={Executor} budget_limit_ms={BudgetLimitMs} budget_source={BudgetSource}",
+            "build_test_gate_requested request_id={GateRunId} gate_id={GateId} requested_at_utc={StartedAtUtc:o} repository={Repository} expected_sha={ExpectedSha} attempt_chain_id={AttemptChainId} executor={Executor} budget_limit_ms={BudgetLimitMs} budget_source={BudgetSource}",
             gateRunId, request.GateId, startedAt, repositoryPath,
             request.ExpectedSha ?? "missing", request.AttemptChainId ?? "missing", request.Executor,
             (long)timeout.TotalMilliseconds, request.TimeoutBudgetSource ?? "unspecified");
@@ -442,6 +462,54 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 testedSha = await ReadHeadShaAsync(repositoryPath, infrastructureTimeout, ct).ConfigureAwait(false);
             }
 
+            // A hit must bypass project preparation as well as verification.
+            // The SHA fixes repository-owned command definitions. If a selection
+            // adviser can change the command set, defer lookup until its actual
+            // post-preparation plan is known below.
+            if (completed is null && request.RequireExactSubject
+                && SafeSha.IsMatch(testedSha ?? "")
+                && string.Equals(request.ExpectedSha, testedSha, StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    var preflightPlan = VerifyCommandPlanner.Plan(workspace!, profile);
+                    if (!preflightPlan.IsEmpty)
+                    {
+                        var preflight = TestSelectionPlanner.Plan(
+                            workspace!, preflightPlan, changedFiles, request.TestExecution,
+                            request.Lane, request.RequiredTestLevel);
+                        var adviserMayChangeSelection = _testSelectionAdvisor is not null
+                            && preflight.Audit.Level == TestExecutionLevels.WorkPackage
+                            && preflight.Audit.Candidates.Count > 0;
+                        var preflightCommands = preflight.Commands
+                            .Where(command => ShouldRunForChange(command, changedFiles)).ToList();
+                        if (!adviserMayChangeSelection && preflightCommands.Count > 0)
+                        {
+                            toolchainIdentity ??= GateResultCache.LocalToolchainIdentity(preflightCommands);
+                            profileDigest = GateResultCache.ProfileDigest(
+                                request, profile, mode, changedFiles, preflightCommands, toolchainIdentity);
+                            var cached = _verdictCache.TryRead(cacheProject, testedSha!, profileDigest);
+                            if (cached is not null)
+                                completed = cached with
+                                {
+                                    VerdictSource = GateVerdictSource.CacheHit,
+                                    GateProfileDigest = profileDigest,
+                                    ToolchainIdentity = toolchainIdentity,
+                                };
+                        }
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogDebug(ex, "Gate cache preflight unavailable for {Repository}; running gate", repositoryPath);
+                }
+                if (completed is null)
+                {
+                    toolchainIdentity = request.ToolchainIdentity;
+                    profileDigest = null;
+                }
+            }
+
             if (completed is null)
             {
                 var preparationManifestPath = PreparationManifestPath(
@@ -505,10 +573,41 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                         }
                     }
                     var commands = staged.Commands.Where(c => ShouldRunForChange(c, changedFiles)).ToList();
+                    // The digest covers the resolved command plan as well as the
+                    // inputs that selected it. A different selection never borrows
+                    // a verdict merely because the tree SHA is unchanged.
+                    if (request.RequireExactSubject && SafeSha.IsMatch(testedSha ?? "")
+                        && string.Equals(request.ExpectedSha, testedSha, StringComparison.OrdinalIgnoreCase)
+                        && commands.Count > 0)
+                    {
+                        try
+                        {
+                            toolchainIdentity ??= GateResultCache.LocalToolchainIdentity(commands);
+                            profileDigest = GateResultCache.ProfileDigest(
+                                request, profile, mode, changedFiles, commands, toolchainIdentity);
+                            var cached = _verdictCache.TryRead(cacheProject, testedSha!, profileDigest);
+                            if (cached is not null)
+                            {
+                                completed = cached with
+                                {
+                                    VerdictSource = GateVerdictSource.CacheHit,
+                                    GateProfileDigest = profileDigest,
+                                    ToolchainIdentity = toolchainIdentity,
+                                };
+                            }
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        {
+                            profileDigest = null;
+                            _logger.LogWarning(ex,
+                                "Gate cache identity unavailable for {Repository}; running verification",
+                                repositoryPath);
+                        }
+                    }
                     IReadOnlyList<GatePreparationCommand> preparation = projectPreparation?.Configured == true
                         ? []
                         : GatePreparationPlanner.Plan(workspace!, profile, commands);
-                    completed = commands.Count == 0
+                    completed ??= commands.Count == 0
                         ? Skipped($"no verify commands apply to the changed files ({plan.Source}); level={staged.Audit.Level}")
                             with
                         {
@@ -518,14 +617,17 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                             workspace!, preparation, commands, plan.Source, mode, timeout,
                             [], projectPreparation, ct)
                             .ConfigureAwait(false);
-                    var completedAudit = CompleteAudit(staged.Audit, commands, completed.Processes);
-                    completed = completed with
+                    if (completed.VerdictSource != GateVerdictSource.CacheHit)
                     {
-                        TestSelection = completedAudit,
-                        Reason = CoverageReason(completed.Reason, completedAudit),
-                        PreparationManifest = projectPreparation?.Manifest,
-                        ProjectDefinitionIssues = projectPreparation?.DefinitionIssues ?? [],
-                    };
+                        var completedAudit = CompleteAudit(staged.Audit, commands, completed.Processes);
+                        completed = completed with
+                        {
+                            TestSelection = completedAudit,
+                            Reason = CoverageReason(completed.Reason, completedAudit),
+                            PreparationManifest = projectPreparation?.Manifest,
+                            ProjectDefinitionIssues = projectPreparation?.DefinitionIssues ?? [],
+                        };
+                    }
                 }
             }
 
@@ -558,24 +660,29 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
 
             completed = completed with
             {
-                GateRunId = gateRunId,
+                GateRunId = completed.VerdictSource == GateVerdictSource.CacheHit ? completed.GateRunId : gateRunId,
                 GateId = request.GateId,
-                GateStartedAtUtc = startedAt,
-                GateCompletedAtUtc = DateTimeOffset.UtcNow,
+                GateStartedAtUtc = completed.VerdictSource == GateVerdictSource.CacheHit ? completed.GateStartedAtUtc : startedAt,
+                GateCompletedAtUtc = completed.VerdictSource == GateVerdictSource.CacheHit ? completed.GateCompletedAtUtc : DateTimeOffset.UtcNow,
                 GateQueueWaitMs = machineLease?.QueueWaitMs ?? fallbackQueueWaitMs,
                 GateCollisionDetected = machineLease?.CollisionDetected ?? fallbackCollision,
                 SelfHealed = selfHealed,
                 Repository = repositoryPath,
                 ExpectedSha = request.ExpectedSha,
                 TestedSha = testedSha,
-                AttemptChainId = request.AttemptChainId,
-                Executor = request.Executor,
-                Workspace = workspace,
+                AttemptChainId = completed.VerdictSource == GateVerdictSource.CacheHit ? completed.AttemptChainId : request.AttemptChainId,
+                Executor = completed.VerdictSource == GateVerdictSource.CacheHit ? completed.Executor : request.Executor,
+                Workspace = completed.VerdictSource == GateVerdictSource.CacheHit ? completed.Workspace : workspace,
+                GateProfileDigest = profileDigest,
+                PipelineDefinitionVersion = request.PipelineDefinitionVersion,
+                ToolchainIdentity = toolchainIdentity,
                 PreparationManifest = completed.PreparationManifest ?? projectPreparation?.Manifest,
                 ProjectDefinitionIssues = completed.ProjectDefinitionIssues.Count > 0
                     ? completed.ProjectDefinitionIssues
                     : projectPreparation?.DefinitionIssues ?? [],
             };
+            if (profileDigest is not null && completed.VerdictSource == GateVerdictSource.Executed)
+                completed = _verdictCache.Record(cacheProject, testedSha!, profileDigest, completed);
             return completed;
         }
         finally
@@ -589,13 +696,20 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
             // last command, on every exit path - keeps the published immutable
             // entries as the only long-lived cache state.
             ProjectPreparationExecutor.ReleaseRunRoot(projectPreparation);
-            var completedAt = completed?.GateCompletedAtUtc ?? DateTimeOffset.UtcNow;
-            _logger.LogInformation(
-                "build_test_gate_completed gate_run_id={GateRunId} gate_id={GateId} completed_at_utc={CompletedAtUtc:o} repository={Repository} expected_sha={ExpectedSha} tested_sha={TestedSha} attempt_chain_id={AttemptChainId} executor={Executor} workspace={Workspace} verdict={Verdict} exit={ExitCode} signal={Signal} failure_kind={FailureKind} failure_fingerprint={FailureFingerprint} violated_budget={ViolatedBudget} budget_limit_ms={BudgetLimitMs} budget_consumed_ms={BudgetConsumedMs} collision={CollisionDetected} queue_wait_ms={QueueWaitMs} self_healed={SelfHealed} dependency_cache={DependencyCacheDecision}",
-                gateRunId, request.GateId, completedAt, repositoryPath,
+            var resolvedAt = DateTimeOffset.UtcNow;
+            if (completed?.VerdictSource == GateVerdictSource.CacheHit)
+                _logger.LogInformation(
+                    "build_test_gate_cache_hit request_id={RequestId} original_run_id={OriginalRunId} resolved_at_utc={ResolvedAtUtc:o} original_completed_at_utc={OriginalCompletedAtUtc:o} repository={Repository} tested_sha={TestedSha} profile_digest={ProfileDigest} original_evidence_path={OriginalEvidencePath} verdict={Verdict}",
+                    gateRunId, completed.GateRunId, resolvedAt, completed.GateCompletedAtUtc,
+                    repositoryPath, completed.TestedSha, completed.GateProfileDigest,
+                    completed.OriginEvidencePath, completed.Verdict);
+            else _logger.LogInformation(
+                "build_test_gate_completed gate_run_id={GateRunId} gate_id={GateId} completed_at_utc={CompletedAtUtc:o} repository={Repository} expected_sha={ExpectedSha} tested_sha={TestedSha} attempt_chain_id={AttemptChainId} executor={Executor} workspace={Workspace} verdict={Verdict} verdict_source={VerdictSource} exit={ExitCode} signal={Signal} failure_kind={FailureKind} failure_fingerprint={FailureFingerprint} violated_budget={ViolatedBudget} budget_limit_ms={BudgetLimitMs} budget_consumed_ms={BudgetConsumedMs} collision={CollisionDetected} queue_wait_ms={QueueWaitMs} self_healed={SelfHealed} dependency_cache={DependencyCacheDecision}",
+                gateRunId, request.GateId, completed?.GateCompletedAtUtc ?? resolvedAt, repositoryPath,
                 request.ExpectedSha ?? "missing", completed?.TestedSha ?? testedSha ?? "missing",
                 request.AttemptChainId ?? "missing", request.Executor,
                 completed?.Workspace ?? workspace ?? "missing", completed?.Verdict.ToString() ?? "interrupted",
+                completed?.VerdictSource.ToString() ?? "interrupted",
                 completed?.ExitCode?.ToString() ?? "n/a", completed?.TerminationSignal ?? "n/a",
                 completed?.FailureKind.ToString() ?? BuildTestGateFailureKind.Cancellation.ToString(),
                 completed?.FailureFingerprint ?? "none",
@@ -614,7 +728,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                     request.Project!,
                     request.WatchPath!,
                     request.JobId!,
-                    completedAt.UtcDateTime,
+                    resolvedAt.UtcDateTime,
                     completed?.FailureFingerprint));
             }
         }
