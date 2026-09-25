@@ -1580,11 +1580,15 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
             reportPrefix = "agentstudio-gate-" + Guid.NewGuid().ToString("N");
             executableCommand += $" --logger \"trx;LogFilePrefix={reportPrefix}\" --logger \"console;verbosity=normal\" --results-directory \"{reportDirectory.Replace('\\', '/')}\"";
         }
-        var (fileName, args) = shell == VerifyCommandShell.Bash
+        // Windows: cmd.exe /c cannot carry the composed command intact (the
+        // backslash-escaped inner quotes of the appended `--logger "trx;..."`
+        // and `--logger "console;verbosity=normal"` arguments reach dotnet as
+        // literal characters and MSBuild fails with MSB4177/MSB1006, AGT-2912),
+        // so platform commands run through Git Bash there, exactly like
+        // explicit build-profile commands already do.
+        var (fileName, args) = shell == VerifyCommandShell.Bash || OperatingSystem.IsWindows()
             ? (BashExecutable.Path, (IReadOnlyList<string>)["-lc", executableCommand])
-            : OperatingSystem.IsWindows()
-                ? ("cmd.exe", (IReadOnlyList<string>)["/c", executableCommand])
-                : ("/bin/sh", (IReadOnlyList<string>)["-c", executableCommand]);
+            : ("/bin/sh", (IReadOnlyList<string>)["-c", executableCommand]);
         return RunProcessAsync(
             workingDirectory, command, fileName, args,
             budget, elapsedBefore, output, ct, phase, projectPreparation, reportDirectory, reportPrefix);
