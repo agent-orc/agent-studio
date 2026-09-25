@@ -541,6 +541,7 @@ public sealed class WorkbenchCatalogueService
                     Key = key,
                     Pattern = ArticlePatterns.Normalize(OptionalString(obj, "pattern")),
                     Tags = ReadTags(obj),
+                    TaggingStatus = OptionalString(obj, "taggingStatus"),
                     DescriptorSourceTaskKeys = StringArray(obj, "sourceTaskKeys"),
                     RelatedTaskKeys = StringArray(obj, "relatedTaskKeys"),
                     LifecycleState = lifecycleState ?? LifecycleFromStatus(status, phase),
@@ -1257,6 +1258,7 @@ public record WorkbenchListItem(string Id, string Title, string Summary, string 
     /// <see cref="WorkbenchTagService"/>, which refuses unknown ids.
     /// </summary>
     public string[] Tags { get; init; } = [];
+    public string? TaggingStatus { get; init; }
     [System.Text.Json.Serialization.JsonIgnore]
     public string[] DescriptorSourceTaskKeys { get; init; } = [];
     public string[] RelatedTaskKeys { get; init; } = [];

@@ -12,9 +12,11 @@ owns a glossary: the ubiquitous language an agent must use for that area. A
 - **facet tags** name a cross-cutting aspect (a quality domain such as
   `testing`, or a document kind such as `decision`).
 
-Auto-tagging is delivered separately by AGT-2804. Tag maintenance reviews the
-resulting vocabulary and usage, but changes it only after an operator approves
-the exact proposal.
+AGT-2804 adds the creation-time `auto-tag` classifier and the dry-run/apply
+backfill. The [proposed reference set](../../quality/tagging-golden-set/index.html)
+contains 60 cards, 20 Dossiers, and glossary proposals awaiting operator
+approval. Tag maintenance reviews the resulting vocabulary and usage, but
+changes it only after an operator approves the exact proposal.
 
 ## Ownership
 
@@ -30,6 +32,7 @@ the exact proposal.
 | Periodic usage review and durable per-project reports | `backend/Features/Tags/Maintenance/TagMaintenanceService.cs` |
 | Proposal validation and exact before/after plans | `backend/Features/Tags/Maintenance/TagMaintenancePolicy.cs` (pure) |
 | Card, Dossier, wiki, registry, and glossary reads and writes | `backend/Features/Tags/Maintenance/TagMaintenanceWorkspace.cs` |
+| Creation classification, confidence policy, proposals, and backfill | `backend/Features/Tags/AutoTaggingService.cs` |
 
 ## The ten product areas
 
@@ -60,6 +63,15 @@ facets, as the v2 plan records.
 
 ## Project additions
 
+### Auto-tag opt-out
+
+Every project starts with `AutoTag = true` in the workspace project settings.
+`PUT /api/projects/{project}/auto-tag` accepts `{"enabled":false}` to opt out
+of creation classification. The current v1 `.agent-studio/project.yml` reader
+is closed, so the opt-out is not a key there. The project-definition v2 plan
+records `tagging.autoTag` as moved to this workspace setting. An explicit
+backfill request remains available when automatic creation tagging is off.
+
 A project may add areas and re-label an inherited one. The active
 `.agent-studio/project.yml` (v1) is closed for new fields and the v2 plan lists
 `project.areas` as a later extension request, so project additions are stored
@@ -85,7 +97,7 @@ the write path lives in one place and the wiki-path guard covers it.
 |---|---|
 | Card | `task.json` → `tags[]` |
 | Dossier | `workbench.json` → `tags[]`, projected onto the catalogue item |
-| Wiki article | YAML front matter `tags: [a, b]` or a block list |
+| Wiki article | YAML front matter `tags: [a, b]` or a block list; HTML pages use `<meta name="agent-studio-tags" content="a, b">` in `<head>` |
 | Dossier entry page in the wiki tree | the Dossier descriptor's `tags[]` |
 
 ## API

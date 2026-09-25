@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "tagging-golden-set-approval",
+  "title": "Approve or amend the auto-tagging reference set",
+  "summary": "One operator decision for AGT-2804: approve or amend the proposed 60-card, 20-Dossier tagging golden set and ten area glossaries. The reference set is measured but explicitly unapproved; its assignments and per-item rationales are linked from this Dossier.",
+  "entrypoint": "index.html",
+  "status": "decision-pending",
+  "phase": "decision-ready",
+  "updatedAt": "2026-09-25T09:35:00Z",
+  "sourceTaskKeys": ["AGT-2804"],
+  "relatedTaskKeys": ["AGT-2797", "AGT-2803", "AGT-2804"],
+  "tags": ["dossiers-and-documentation", "decision"],
+  "implementationTasks": []
+}

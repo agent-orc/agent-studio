@@ -85,7 +85,7 @@ public class ProjectDocsService
     // neighboring page changes. One entry carries both the display title and
     // the article front-matter tags (AGT-2803), so a warm page costs no read
     // for either.
-    private readonly ConcurrentDictionary<string, (long Mtime, long Size, string? Title, string[] Tags)> _titleCache =
+    private readonly ConcurrentDictionary<string, (long Mtime, long Size, string? Title, string[] Tags, string? TaggingStatus)> _titleCache =
         new(StringComparer.OrdinalIgnoreCase);
 
     public ProjectDocsService(
@@ -1552,7 +1552,7 @@ public class ProjectDocsService
         DirectoryInfo dir,
         string docsRoot,
         IReadOnlyDictionary<string, WikiTreeMetadata> metadataByRelPath,
-        ConcurrentDictionary<string, (long Mtime, long Size, string? Title, string[] Tags)> titleCache,
+        ConcurrentDictionary<string, (long Mtime, long Size, string? Title, string[] Tags, string? TaggingStatus)> titleCache,
         IReadOnlyDictionary<string, IReadOnlyList<string>> folderOrderByParent,
         IReadOnlyDictionary<string, IReadOnlyList<string>> fileOrderByParent,
         IReadOnlyDictionary<string, string[]> registeredWorkbenchTags)
@@ -1602,7 +1602,8 @@ public class ProjectDocsService
                     isWorkbenchEntry ? "workbench" : null),
                 // A Dossier entry page is tagged by its descriptor, an article
                 // by its own front matter; both reach the tree the same way.
-                isWorkbenchEntry ? descriptorTags! : facts.Tags));
+                isWorkbenchEntry ? descriptorTags! : facts.Tags,
+                isWorkbenchEntry ? null : facts.TaggingStatus));
         }
 
         var dirRel = Path.GetRelativePath(docsRoot, dir.FullName).Replace('\\', '/');
@@ -1621,18 +1622,18 @@ public class ProjectDocsService
     /// which is where each file-read is recorded against the ambient telemetry
     /// scope, so the rollup's file count reflects only genuine disk work.
     /// </summary>
-    private static (string? Title, string[] Tags) ResolveDocFactsCached(
-        ConcurrentDictionary<string, (long Mtime, long Size, string? Title, string[] Tags)> cache,
+    private static (string? Title, string[] Tags, string? TaggingStatus) ResolveDocFactsCached(
+        ConcurrentDictionary<string, (long Mtime, long Size, string? Title, string[] Tags, string? TaggingStatus)> cache,
         FileInfo file, string ext)
     {
         var mtime = file.LastWriteTimeUtc.Ticks;
         var size = file.Length;
         if (cache.TryGetValue(file.FullName, out var e) && e.Mtime == mtime && e.Size == size)
-            return (e.Title, e.Tags);
+            return (e.Title, e.Tags, e.TaggingStatus);
         var title = ExtractDocTitle(file.FullName, ext);
-        var tags = ExtractDocTags(file.FullName, ext);
-        cache[file.FullName] = (mtime, size, title, tags);
-        return (title, tags);
+        var facts = ExtractDocTagFacts(file.FullName, ext);
+        cache[file.FullName] = (mtime, size, title, facts.Tags, facts.TaggingStatus);
+        return (title, facts.Tags, facts.TaggingStatus);
     }
 
     /// <summary>
@@ -1641,22 +1642,43 @@ public class ProjectDocsService
     /// do not match the stable tag grammar are dropped rather than surfaced, so
     /// a hand-edited page cannot inject arbitrary strings into the filter.
     /// </summary>
-    private static string[] ExtractDocTags(string path, string extension)
+    private static (string[] Tags, string? TaggingStatus) ExtractDocTagFacts(string path, string extension)
     {
-        if (!extension.Equals(".md", StringComparison.OrdinalIgnoreCase)) return [];
+        if (!extension.Equals(".md", StringComparison.OrdinalIgnoreCase)
+            && !extension.Equals(".html", StringComparison.OrdinalIgnoreCase)
+            && !extension.Equals(".htm", StringComparison.OrdinalIgnoreCase)) return ([], null);
         GitProcessTelemetry.RecordFileRead();
         try
         {
             using var reader = new StreamReader(path);
             var head = new char[4096];
             var read = reader.ReadBlock(head, 0, head.Length);
-            return FrontmatterTags(new string(head, 0, read));
+            var text = new string(head, 0, read);
+            return (FrontmatterTags(text), ReadTaggingStatus(text));
         }
         catch (Exception __ex)
         {
             SilentCatch.Note(__ex, "ProjectDocsService: unreadable article front matter; the page carries no tags.");
-            return [];
+            return ([], null);
         }
+    }
+
+    internal static string? ReadTaggingStatus(string text)
+    {
+        var html = Regex.Match(text,
+            "<meta\\s+name=[\"']agent-studio-tagging-status[\"']\\s+content=[\"'](?<status>[^\"']*)[\"']\\s*/?>",
+            RegexOptions.IgnoreCase);
+        var status = html.Success ? html.Groups["status"].Value : null;
+        if (status == null)
+        {
+            var frontmatter = WikiFrontmatterRegex.Match(text);
+            if (frontmatter.Success)
+            {
+                var line = Regex.Match(frontmatter.Groups["body"].Value, @"(?im)^taggingStatus:\s*(?<status>[^\r\n]+)");
+                if (line.Success) status = line.Groups["status"].Value.Trim();
+            }
+        }
+        return status is "tagged" or "tags-proposed" ? status : null;
     }
 
     /// <summary>
@@ -1666,6 +1688,12 @@ public class ProjectDocsService
     /// </summary>
     internal static string[] FrontmatterTags(string text)
     {
+        var htmlTags = Regex.Match(text,
+            "<meta\\s+name=[\"']agent-studio-tags[\"']\\s+content=[\"'](?<tags>[^\"']*)[\"']\\s*/?>",
+            RegexOptions.IgnoreCase);
+        if (htmlTags.Success)
+            return [.. htmlTags.Groups["tags"].Value.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                .Where(AgentStudio.Areas.AreaTaxonomy.IsValidId).Distinct(StringComparer.Ordinal)];
         var frontmatter = WikiFrontmatterRegex.Match(text);
         if (!frontmatter.Success) return [];
         var lines = frontmatter.Groups["body"].Value.Replace("\r\n", "\n").Split('\n');
@@ -3401,7 +3429,8 @@ public record WikiTreeNode(
     WikiClassification? Classification = null,
     // Page nodes only (AGT-2803): area and facet tag ids, read from the
     // article's front matter or, for a Dossier entry page, from its descriptor.
-    string[]? Tags = null);
+    string[]? Tags = null,
+    string? TaggingStatus = null);
 
 /// <summary>
 /// Prunes a wiki tree to the pages that satisfy an area / tag filter. A folder

@@ -46,8 +46,8 @@ function makeTask(id: string, title: string, order: number, mode: string | undef
 
 // Titles are crafted so none is a substring of another - Playwright `hasText`
 // does substring matching.
-const PLANNING_TASK = makeTask('mode-A-planning', 'Mode badge planning alpha', 1, 'planning');
-const RESEARCH_TASK = makeTask('mode-B-research', 'Mode badge research bravo', 2, 'research');
+const PLANNING_TASK = { ...makeTask('mode-A-planning', 'Mode badge planning alpha', 1, 'planning'), taggingStatus: 'tags-proposed' };
+const RESEARCH_TASK = { ...makeTask('mode-B-research', 'Mode badge research bravo', 2, 'research'), taggingStatus: 'tagged' };
 const CONCEPT_TASK = makeTask('mode-C-concept', 'Mode badge concept charlie', 3, 'concept');
 const CODING_TASK = makeTask('mode-D-coding', 'Mode badge coding delta', 4, 'coding');
 
@@ -156,6 +156,20 @@ function cardByTitle(page: Page, title: string) {
 }
 
 test.describe('Card mode badge (planning / research / concept recognizable on the board)', () => {
+  test('auto-tag markers distinguish a proposal from applied tags in both themes', async ({ page }) => {
+    await gotoBoard(page);
+    const proposal = cardByTitle(page, PLANNING_TASK.title).getByTestId('task-card-tagging-status');
+    const tagged = cardByTitle(page, RESEARCH_TASK.title).getByTestId('task-card-tagging-status');
+    await expect(proposal).toHaveText('Tags proposed');
+    await expect(tagged).toHaveText('Auto-tagged');
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await expect(proposal).toBeVisible();
+      await expect(tagged).toBeVisible();
+      const path = `${process.env.JOB_RESULTS_DIR ?? 'test-results'}/auto-tag-card-${theme}.png`;
+      await cardByTitle(page, PLANNING_TASK.title).screenshot({ path });
+    }
+  });
   test('planning card shows a planning mode pill that names the mode', async ({ page }) => {
     await gotoBoard(page);
 

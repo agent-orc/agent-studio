@@ -2,6 +2,8 @@ namespace AgentStudio.Shared;
 
 public record ProjectSettings
 {
+    /// <summary>Default-on creation classification. Stored here until project definition v2 accepts tagging.autoTag.</summary>
+    public bool AutoTag { get; init; } = true;
     /// <summary>
     /// Per publish-target automation ladder. Keys are derived target ids
     /// (<c>package:npm</c>, <c>package:nuget</c>, <c>website</c>); values are
