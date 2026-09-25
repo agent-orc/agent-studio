@@ -12,9 +12,9 @@
   "review": {
     "verdict": "current",
     "supersededBy": [],
-    "reviewedAt": "2026-09-13T10:20:00Z",
-    "reviewedBy": "Operator",
-    "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    "reviewedAt": "2026-09-25T05:38:16Z",
+    "reviewedBy": "AGT-2898",
+    "note": "The audit remains the open cross-organization finding set; AGT-2669 closed the public-demo write boundary and replay-scope gap, while F1 and the Quality Studio and website findings remain open or require verification in their owning repositories."
   },
   "reviewHistory": [
     {
@@ -23,6 +23,13 @@
       "reviewedAt": "2026-09-13T10:20:00Z",
       "reviewedBy": "Operator",
       "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    },
+    {
+      "verdict": "current",
+      "supersededBy": [],
+      "reviewedAt": "2026-09-25T05:38:16Z",
+      "reviewedBy": "AGT-2898",
+      "note": "The audit remains the open cross-organization finding set; AGT-2669 closed the public-demo write boundary and replay-scope gap, while F1 and the Quality Studio and website findings remain open or require verification in their owning repositories."
     }
   ]
 }

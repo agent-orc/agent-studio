@@ -19,9 +19,9 @@
   "review": {
     "verdict": "current",
     "supersededBy": [],
-    "reviewedAt": "2026-09-14T00:00:00Z",
-    "reviewedBy": "AGT-2798",
-    "note": "Rewritten to the September topology per AGT-W55 §2 and the operator's answer to D1 (2026-09-13). The previous 2026-07-28 version is the superseded material; this descriptor now records the rewrite as current and W14 stays the single entry point. AGT-W6, AGT-W8, AGT-W22 and AGT-W25 are recorded as superseded by AGT-W14 and absorbed as history sections in §6."
+    "reviewedAt": "2026-09-25T05:38:16Z",
+    "reviewedBy": "AGT-2898",
+    "note": "The September topology and linked-decision model still match develop; the current-Dossier map now includes the cluster's current W41 and W56 entries, while other missing and dangling entries are recorded for their owning review clusters."
   },
   "reviewHistory": [
     {
@@ -40,6 +40,13 @@
       "reviewedAt": "2026-09-14T00:00:00Z",
       "reviewedBy": "AGT-2798",
       "note": "Rewritten to the September topology per AGT-W55 §2 and the operator's answer to D1 (2026-09-13). The previous 2026-07-28 version is the superseded material; this descriptor now records the rewrite as current and W14 stays the single entry point. AGT-W6, AGT-W8, AGT-W22 and AGT-W25 are recorded as superseded by AGT-W14 and absorbed as history sections in §6."
+    },
+    {
+      "verdict": "current",
+      "supersededBy": [],
+      "reviewedAt": "2026-09-25T05:38:16Z",
+      "reviewedBy": "AGT-2898",
+      "note": "The September topology and linked-decision model still match develop; the current-Dossier map now includes the cluster's current W41 and W56 entries, while other missing and dangling entries are recorded for their owning review clusters."
     }
   ],
   "implementationTasks": [
