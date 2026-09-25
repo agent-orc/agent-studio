@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "app-survey",
+  "title": "App survey: visual findings, 2026-07-11",
+  "summary": "Dated visual survey of 137 real Stable captures, with per-image findings across product surfaces and themes.",
+  "entrypoint": "index.html",
+  "status": "archived",
+  "statusReason": "AGT-2073 delivered the 2026-07-11 application survey; its original report remains the dated evidence artefact.",
+  "phase": "decision-ready",
+  "updatedAt": "2026-09-25T10:19:01Z",
+  "sourceTaskKeys": [],
+  "implementationTasks": [],
+  "review": {
+    "verdict": "historical",
+    "supersededBy": [],
+    "reviewedAt": "2026-09-25T10:19:01Z",
+    "reviewedBy": "AGT-2899",
+    "note": "AGT-2073 delivered this fixed 11 July visual survey as a 137-capture evidence report; it does not describe the current product state or an open Dossier decision."
+  },
+  "reviewHistory": [
+    {
+      "verdict": "historical",
+      "supersededBy": [],
+      "reviewedAt": "2026-09-25T10:19:01Z",
+      "reviewedBy": "AGT-2899",
+      "note": "AGT-2073 delivered this fixed 11 July visual survey as a 137-capture evidence report; it does not describe the current product state or an open Dossier decision."
+    }
+  ]
+}
