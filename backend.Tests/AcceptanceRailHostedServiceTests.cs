@@ -114,6 +114,215 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
                      && entry.Details?.GetValueOrDefault("source")
                          == TaskIntegrationRecoveryService.AcceptanceRailSource
                      && entry.Details?.GetValueOrDefault("retryNumber") == "1");
+        var obligationPath = Assert.Single(Directory.GetFiles(
+            Path.Combine(queued.FolderPath, "logs", "integration-bounce"), "*.json"));
+        var obligation = IntegrationBounceObligationStore.Read(obligationPath)!;
+        Assert.Equal("queued", obligation.State);
+        Assert.Equal("run-conflict", obligation.RunAttemptId);
+        Assert.Equal(deliverySha, obligation.ResultSha);
+        Assert.Equal("merge-conflict", obligation.FailureCode);
+        Assert.Equal("merge-origin-into-delivery", obligation.MechanicalRoute);
+        Assert.NotEmpty(obligation.IdempotencyKey);
+        Assert.NotEmpty(obligation.PolicyVersion!);
+
+        await stack.Rail.RunOnceAsync();
+        await Build().Rail.RunOnceAsync(); // A backend restart has no live studio session.
+        Assert.Single(Directory.GetFiles(
+            Path.Combine(queued.FolderPath, "logs", "integration-bounce"), "*.json"));
+        Assert.Single(stack.Timeline.ReadAll(queued.FolderPath),
+            entry => entry.Kind == TimelineEventKinds.IntegrationRecoveryQueued);
+    }
+
+    [Fact]
+    public async Task SeventeenReviewedConflicts_DrainAfterRestartWithoutStudioSession()
+    {
+        var first = Build(shadowOnly: true);
+        for (var index = 0; index < 17; index++)
+        {
+            var id = $"session-loss-{index}";
+            SeedTask(first, id, CreateUnintegratedDelivery(id), conflict: true);
+        }
+        var shadow = await first.Rail.RunOnceAsync();
+        Assert.Equal(17, shadow.BounceShadowed);
+        Assert.Equal(0, shadow.Requeued);
+        var shadowMetrics = IntegrationBounceObligationStore.Measure(
+            first.Scanner.ScanAllAutomationJobs(), shadow.BounceFalseEligibility);
+        Assert.Equal(17, shadowMetrics.Eligible);
+        Assert.Equal(0, shadowMetrics.Queued);
+
+        var restarted = Build();
+        var drained = await restarted.Rail.RunOnceAsync();
+        Assert.Equal(17, drained.Requeued);
+        Assert.Equal(0, drained.Failed);
+        var metrics = IntegrationBounceObligationStore.Measure(
+            restarted.Scanner.ScanAllAutomationJobs(), drained.BounceFalseEligibility);
+        Assert.Equal(17, metrics.Queued);
+        Assert.NotNull(metrics.MeanClaimLatencyMilliseconds);
+        foreach (var index in Enumerable.Range(0, 17))
+        {
+            var task = restarted.Scanner.FindJob($"session-loss-{index}", _watchPath)!;
+            Assert.Equal(TaskStates.Ready, task.State);
+            Assert.Single(Directory.GetFiles(
+                Path.Combine(task.FolderPath, "logs", "integration-bounce"), "*.json"));
+        }
+    }
+
+    [Fact]
+    public async Task SameOperatorReviewEpoch_ReturnsRepeatToOperator()
+    {
+        var stack = Build();
+        var sha = CreateUnintegratedDelivery("repeat-epoch");
+        var folder = SeedTask(stack, "repeat-epoch", sha, conflict: true);
+        stack.Timeline.Append(folder, TimelineEventKinds.IntegrationRecoveryQueued,
+            TimelineActors.System, "Earlier automatic bounce.",
+            details: new Dictionary<string, string>
+            {
+                ["automatic"] = "true",
+                ["attemptEpoch"] = "0",
+                [IntegrationRecoveryBudget.DeliveryChainIdKey] = "previous-delivery",
+            });
+
+        var snapshot = await stack.Rail.RunOnceAsync();
+        Assert.Equal(1, snapshot.BounceDeferred);
+        Assert.Equal(TaskStates.HumanReview,
+            stack.Scanner.FindJob("repeat-epoch", _watchPath)!.State);
+        var path = Assert.Single(Directory.GetFiles(
+            Path.Combine(folder, "logs", "integration-bounce"), "*.json"));
+        Assert.Equal("guardian-required", IntegrationBounceObligationStore.Read(path)!.RouteDecision);
+        Assert.Equal(1, IntegrationBounceObligationStore.Measure(
+            stack.Scanner.ScanAllAutomationJobs(), snapshot.BounceFalseEligibility).Repeats);
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public async Task BounceKillSwitch_LeavesTypedObligationForOperator(
+        bool globallyEnabled, bool projectEnabled)
+    {
+        var stack = Build(bounceEnabled: globallyEnabled,
+            projectBounceEnabled: projectEnabled);
+        var id = $"disabled-{globallyEnabled}-{projectEnabled}";
+        var folder = SeedTask(stack, id, CreateUnintegratedDelivery(id), conflict: true);
+
+        var snapshot = await stack.Rail.RunOnceAsync();
+
+        Assert.Equal(1, snapshot.BounceDeferred);
+        Assert.Equal(0, snapshot.Requeued);
+        Assert.Equal(TaskStates.HumanReview, stack.Scanner.FindJob(id, _watchPath)!.State);
+        var path = Assert.Single(Directory.GetFiles(
+            Path.Combine(folder, "logs", "integration-bounce"), "*.json"));
+        var obligation = IntegrationBounceObligationStore.Read(path)!;
+        Assert.Equal("operator-disabled", obligation.RouteDecision);
+        Assert.Equal("merge-conflict", obligation.FailureCode);
+    }
+
+    [Fact]
+    public void ManualBounce_ProjectsOneMatchingObligation()
+    {
+        var stack = Build(shadowOnly: true);
+        var id = "manual-bounce";
+        SeedTask(stack, id, CreateUnintegratedDelivery(id), conflict: true);
+        var job = stack.Scanner.FindJob(id, _watchPath)!;
+        var status = stack.Integration.BuildLookup([job])[job.TaskKey];
+
+        var queued = stack.Recovery.Queue(job, status,
+            AcceptedIntegrationFailureCodes.MergeConflict,
+            TaskIntegrationRecoveryService.OperatorSource);
+
+        Assert.True(queued.Queued, queued.Error);
+        var ready = stack.Scanner.FindJob(id, _watchPath)!;
+        var path = Assert.Single(Directory.GetFiles(
+            Path.Combine(ready.FolderPath, "logs", "integration-bounce"), "*.json"));
+        var obligation = IntegrationBounceObligationStore.Read(path)!;
+        Assert.Equal("manual-queued", obligation.State);
+        Assert.Equal("operator", obligation.RouteDecision);
+        Assert.Equal(1, IntegrationBounceObligationStore.Measure(
+            stack.Scanner.ScanAllAutomationJobs(), 0).ManualInterventions);
+    }
+
+    [Fact]
+    public async Task StaleAttempt_DoesNotCreateAnEligibleBounce()
+    {
+        var stack = Build();
+        var sha = CreateUnintegratedDelivery("stale-attempt");
+        var folder = SeedTask(stack, "stale-attempt", sha, conflict: true);
+        var path = ReviewSubjectStore.PathFor(folder);
+        File.WriteAllText(path, File.ReadAllText(path).Replace(
+            "run-stale-attempt", "", StringComparison.Ordinal));
+
+        var snapshot = await stack.Rail.RunOnceAsync();
+        Assert.Equal(1, snapshot.BounceFalseEligibility);
+        Assert.Equal(0, snapshot.Requeued);
+        Assert.Equal(TaskStates.HumanReview,
+            stack.Scanner.FindJob("stale-attempt", _watchPath)!.State);
+        Assert.False(Directory.Exists(Path.Combine(folder, "logs", "integration-bounce")));
+    }
+
+    [Fact]
+    public async Task RestartRepairsReceiptAfterReadyPromotion()
+    {
+        var stack = Build();
+        var sha = CreateUnintegratedDelivery("partial-receipt");
+        SeedTask(stack, "partial-receipt", sha, conflict: true);
+        Assert.Equal(1, (await stack.Rail.RunOnceAsync()).Requeued);
+        var ready = stack.Scanner.FindJob("partial-receipt", _watchPath)!;
+        var path = Assert.Single(Directory.GetFiles(
+            Path.Combine(ready.FolderPath, "logs", "integration-bounce"), "*.json"));
+        var queued = IntegrationBounceObligationStore.Read(path)!;
+        IntegrationBounceObligationStore.Update(ready.FolderPath,
+            queued with { State = "proposed", ClaimedAtUtc = null });
+
+        await Build().Rail.RunOnceAsync();
+
+        Assert.Equal("queued", IntegrationBounceObligationStore.Read(path)!.State);
+        Assert.Single(stack.Timeline.ReadAll(ready.FolderPath),
+            entry => entry.Kind == TimelineEventKinds.IntegrationRecoveryQueued);
+    }
+
+    [Fact]
+    public async Task DuplicateConcurrentTicks_QueueOneBounce()
+    {
+        var stack = Build();
+        var id = "duplicate-tick";
+        SeedTask(stack, id, CreateUnintegratedDelivery(id), conflict: true);
+
+        await Task.WhenAll(stack.Rail.RunOnceAsync(), stack.Rail.RunOnceAsync());
+
+        var ready = stack.Scanner.FindJob(id, _watchPath)!;
+        Assert.Equal(TaskStates.Ready, ready.State);
+        Assert.Single(Directory.GetFiles(
+            Path.Combine(ready.FolderPath, "logs", "integration-bounce"), "*.json"));
+        Assert.Single(stack.Timeline.ReadAll(ready.FolderPath),
+            entry => entry.Kind == TimelineEventKinds.IntegrationRecoveryQueued);
+    }
+
+    [Theory]
+    [InlineData(false, false, "low")]
+    [InlineData(true, false, "xhigh")]
+    [InlineData(false, true, "xhigh")]
+    public async Task BounceRoute_RespectsPolicyFloorAndOperatorPin(
+        bool critical, bool pinned, string expectedLevel)
+    {
+        var stack = Build();
+        var id = $"route-{critical}-{pinned}";
+        var folder = SeedTask(stack, id, CreateUnintegratedDelivery(id), conflict: true);
+        TaskJsonFile.UpdateField(folder, "model", "gpt-5.6-sol", NullLogger.Instance);
+        TaskJsonFile.UpdateField(folder, "thinkingLevel", "xhigh", NullLogger.Instance);
+        TaskJsonFile.UpdateField(folder, "modelExplicit", pinned, NullLogger.Instance);
+        TaskJsonFile.UpdateField(folder, "thinkingLevelExplicit", pinned, NullLogger.Instance);
+        if (critical)
+            File.AppendAllText(Path.Combine(folder, "prompt.md"), "Security boundary and stale-write rejection.\n");
+        stack.Scanner.InvalidateCache();
+
+        Assert.Equal(1, (await stack.Rail.RunOnceAsync()).Requeued);
+        var ready = stack.Scanner.FindJob(id, _watchPath)!;
+        Assert.Equal(expectedLevel, ready.ThinkingLevel);
+        var path = Assert.Single(Directory.GetFiles(
+            Path.Combine(ready.FolderPath, "logs", "integration-bounce"), "*.json"));
+        var receipt = IntegrationBounceObligationStore.Read(path)!;
+        Assert.Equal($"gpt-5.6-sol/{expectedLevel}", receipt.SelectedRoute);
+        Assert.Equal(pinned, receipt.OperatorPinPresent);
+        Assert.NotEmpty(receipt.PolicyVersion!);
     }
 
     [Fact]
@@ -390,7 +599,10 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
 
     private Stack Build(
         int maxRequeues = AcceptanceRailDefaults.MaxRequeues,
-        int maxInfrastructureRequeues = AcceptanceRailDefaults.MaxInfrastructureRequeues)
+        int maxInfrastructureRequeues = AcceptanceRailDefaults.MaxInfrastructureRequeues,
+        bool shadowOnly = false,
+        bool bounceEnabled = true,
+        bool projectBounceEnabled = true)
     {
         var logs = new List<string>();
         var values = new Dictionary<string, string?>
@@ -401,6 +613,9 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
             ["WatchPaths:0:RepositoryPath"] = _repo,
             ["TaskRepository"] = _root,
             ["AcceptanceRail:Enabled"] = "true",
+            ["IntegrationBounceRail:ShadowOnly"] = shadowOnly.ToString(),
+            ["IntegrationBounceRail:Enabled"] = bounceEnabled.ToString(),
+            ["IntegrationBounceRail:Projects:Fixture:Enabled"] = projectBounceEnabled.ToString(),
             ["AcceptanceRail:IntervalSeconds"] = "180",
             ["AcceptanceRail:MaxRequeues"] = maxRequeues.ToString(
                 System.Globalization.CultureInfo.InvariantCulture),
@@ -468,7 +683,7 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
             configuration,
             new CollectingLogger<AcceptanceRailHostedService>(logs),
             new IntegrationGenerationReconcileSweep(mutations));
-        return new Stack(scanner, timeline, pipeline, rail, logs);
+        return new Stack(scanner, timeline, pipeline, integration, recovery, rail, logs);
     }
 
     private string SeedTask(
@@ -488,7 +703,7 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
         var task = new
         {
             id,
-            key = "AGT-9001",
+            key = "AGT-" + id,
             title = id,
             state,
             order = 1,
@@ -512,7 +727,7 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
         {
             ReviewSubjectStore.Write(folder, new ReviewSubjectRecord
             {
-                TaskKey = "AGT-9001",
+                TaskKey = "AGT-" + id,
                 RunAttemptId = "run-" + id,
                 Project = Project,
                 Repository = _repo,
@@ -614,6 +829,8 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
         TaskScannerService Scanner,
         TimelineLog Timeline,
         PipelineExecutionLog Pipeline,
+        TaskIntegrationStatusService Integration,
+        TaskIntegrationRecoveryService Recovery,
         AcceptanceRailHostedService Rail,
         List<string> Logs);
 

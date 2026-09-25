@@ -25,6 +25,7 @@ public sealed class TaskIntegrationRecoveryService
     private readonly TaskMutationService _mutations;
     private readonly TaskStateMachine _states;
     private readonly TimelineLog _timeline;
+    private readonly ModelRoutingPolicyRegistry _routing = new();
     private readonly ILogger<TaskIntegrationRecoveryService> _logger;
 
     public TaskIntegrationRecoveryService(
@@ -54,6 +55,16 @@ public sealed class TaskIntegrationRecoveryService
             return Failed("The accepted task has no fenced remote delivery ref to recover.");
         }
 
+        IntegrationBounceObligation? operatorObligation = null;
+        if (source == OperatorSource)
+        {
+            var rounds = IntegrationRecoveryBudget.Count(_timeline.ReadAll(job.FolderPath), subject).Used;
+            operatorObligation = IntegrationBounceObligationStore.Ensure(job.FolderPath,
+                IntegrationBounceObligationStore.Project(job, subject, status,
+                    OperatorReviewRequeueService.ReadEpoch(job.FolderPath), rounds,
+                    "none", "operator", status.Failure?.Reason));
+        }
+
         var integrationBranch = status.IntegrationBranch;
         var prompt = BuildPrompt(job, subject, integrationBranch, status.Failure?.ConflictReport);
         var savedReason = source == AcceptanceRailSource && retryNumber is not null
@@ -76,10 +87,13 @@ public sealed class TaskIntegrationRecoveryService
                 watchPath: job.WatchPath);
             if (intent is null)
                 return Failed("The integration recovery steer intent could not be persisted.");
-
-            if (!_mutations.AppendContinuationNote(job.Id, prompt, job.WatchPath))
-                return Failed("The integration recovery steer could not be appended to the task prompt.");
         }
+
+        var promptPath = Path.Combine(job.FolderPath, "prompt.md");
+        if ((!File.Exists(promptPath)
+             || !File.ReadAllText(promptPath).Contains(prompt, StringComparison.Ordinal))
+            && !_mutations.AppendContinuationNote(job.Id, prompt, job.WatchPath))
+            return Failed("The integration recovery steer could not be appended to the task prompt.");
 
         var current = _scanner.FindJob(job.Id, job.WatchPath);
         if (current is null)
@@ -145,6 +159,19 @@ public sealed class TaskIntegrationRecoveryService
             retryNumber,
             position);
 
+        if (operatorObligation is not null)
+            IntegrationBounceObligationStore.Update(queued.FolderPath,
+                operatorObligation with
+                {
+                    State = "manual-queued",
+                    ClaimedAtUtc = DateTimeOffset.UtcNow,
+                    PreviousRoute = $"{job.Model ?? "default"}/{job.ThinkingLevel ?? "default"}",
+                    SelectedRoute = $"{job.Model ?? "default"}/{job.ThinkingLevel ?? "default"}",
+                    RouteReason = "operator recovery action",
+                    PolicyVersion = _routing.Policy.Version,
+                    OperatorPinPresent = job.ModelExplicit || job.ThinkingLevelExplicit,
+                });
+
         return new TaskIntegrationRecoveryResult(
             true,
             Position: position,
@@ -152,6 +179,35 @@ public sealed class TaskIntegrationRecoveryService
             ResultSha: subject.ResultSha,
             IntegrationBranch: integrationBranch,
             RetryNumber: retryNumber);
+    }
+
+    public (string Previous, string Selected, string Reason, string PolicyVersion, bool Pinned)
+        SelectRecoveryRoute(TaskInfo job)
+    {
+        var previous = $"{job.Model ?? "default"}/{job.ThinkingLevel ?? "default"}";
+        var pinned = job.ModelExplicit || job.ThinkingLevelExplicit;
+        var policyVersion = _routing.Policy.Version;
+        var prompt = File.Exists(Path.Combine(job.FolderPath, "prompt.md"))
+            ? File.ReadAllText(Path.Combine(job.FolderPath, "prompt.md"))
+            : string.Empty;
+        var floor = _routing.CorrectnessFloor(job.TaskType, job.Title, prompt);
+        if (pinned || string.IsNullOrWhiteSpace(job.Model))
+            return (previous, previous, pinned ? "operator pin retained" : "no concrete model route", policyVersion, pinned);
+
+        var candidate = "low";
+        var lowTier = _routing.Policy.Tiers.Single(tier => tier.Id == "sonnet-low");
+        var knownLowRoute = string.Equals(job.Model, lowTier.Model, StringComparison.OrdinalIgnoreCase)
+            || lowTier.VendorOverrides.Values.Any(route => string.Equals(
+                job.Model, route.Model, StringComparison.OrdinalIgnoreCase));
+        if (!knownLowRoute)
+            return (previous, previous, "model has no policy low route", policyVersion, false);
+        if (!_routing.RouteMeetsFloor(job.Model, candidate, floor))
+            return (previous, previous, $"policy floor {floor?.Id ?? "none"} retained", policyVersion, false);
+        if (string.Equals(job.ThinkingLevel, candidate, StringComparison.OrdinalIgnoreCase))
+            return (previous, previous, "already at safe thinking level", policyVersion, false);
+        if (!_mutations.SetRecoveryThinkingLevel(job.Id, candidate, job.WatchPath))
+            return (previous, previous, "route update deferred", policyVersion, false);
+        return (previous, $"{job.Model}/{candidate}", "mechanical recovery within policy floor", policyVersion, false);
     }
 
     internal static string BuildPrompt(
