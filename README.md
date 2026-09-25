@@ -36,26 +36,30 @@
 ```bash
 git clone https://github.com/agent-orc/agent-studio.git
 cd agent-studio
-docker compose up --wait
+scripts/compose-distributed-bootstrap.sh
+docker compose --profile dev up --build --wait \
+  task-server-dev orchestrator-engine-dev studio-bff-dev \
+  frontend-dev agent-host-distributed-dev agent-host-review-distributed-dev
 ```
 
-Open [http://localhost:4011](http://localhost:4011). Docker Compose is the
-primary new-user installation path. It pulls pinned, non-root
-[release container images](./docs/operations/setup/task-server.md#container-images)
-per service, so it requires at least 8 GB of free disk space but no host .NET
-or Node.js install, local settings file, maintainer switch, or neighbouring
-repository. See the
+Open [http://127.0.0.1:4011](http://127.0.0.1:4011). Docker Compose starts
+Task Server, engine, browser edge and coding/review runner roles on one box.
+The current one-box code needs a compatible published image set; until that
+release is available, use the source-built path in the
+[setup guide](./docs/operations/setup/getting-started.md). It needs at least
+8 GB of free disk space but no host .NET or Node.js install. The bootstrap
+creates local credential files; configure
+provider authentication and Git access before coding or review. See the
 [setup guide](./docs/operations/setup/getting-started.md) for prerequisites,
 persistence, and troubleshooting. As an alternative for Linux x64 release
 installs with no source checkout and no .NET prerequisite, the guided
 [`agent-orchestrator-setup`](https://github.com/agent-orc/agent-studio/releases/latest/download/agent-orchestrator-setup)
 executable offers an isolated Docker demo, a native single-machine install, and
 a guided [multi-machine](./docs/operations/setup/multi-machine.md) join flow.
-To add execution capacity after the Studio is running, follow the
-[Agent Host guide](./docs/operations/setup/linux-runner-host.md), or stay in
-Docker with `docker compose --profile runner up --wait` after
-`scripts/compose-runner-bootstrap.sh` (see
-[getting started, §5](./docs/operations/setup/getting-started.md#5-add-execution-capacity)).
+To add execution capacity against the same authority, follow the
+[Agent Host guide](./docs/operations/setup/linux-runner-host.md). The
+[one-box guide](./docs/operations/setup/getting-started.md) records the current
+route and acceptance limits.
 Source contributors use the separate
 [contributor setup](./docs/operations/setup/contributor-setup.md).
 

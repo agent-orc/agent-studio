@@ -1111,6 +1111,23 @@ var includeExceptionDetails = SecurityProfiles.IsLocal(app.Configuration)
 
 app.UseForwardedHeaders();
 app.UseRouting();
+// An explicitly selected standalone Task Server owns all task data. Legacy
+// /api handlers still use TaskRepository; do not let compatibility traffic
+// create a second authority while their route migration is unfinished.
+if (TaskServerPlaneProxy.IsConfigured(app.Configuration))
+{
+    app.Use(async (context, next) =>
+    {
+        if (context.Request.Path.StartsWithSegments("/api")
+            && !context.Request.Path.StartsWithSegments("/api/v1"))
+        {
+            context.Response.StatusCode = StatusCodes.Status404NotFound;
+            await context.Response.WriteAsJsonAsync(new { code = "route-not-on-task-server" });
+            return;
+        }
+        await next(context);
+    });
+}
 if (networkedSecurityProfile || publicDemoExecutionProfile) app.UseHsts();
 app.UseRateLimiter();
 app.UsePublicDemoExecutionLock();

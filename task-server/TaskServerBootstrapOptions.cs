@@ -17,6 +17,8 @@ public sealed class TaskServerBootstrapOptions
         string? engineAuthenticationToken,
         string? bootstrapRunnerId,
         string? bootstrapRunnerAuthenticationToken,
+        string? bootstrapReviewRunnerId,
+        string? bootstrapReviewRunnerAuthenticationToken,
         string? legacyRunnerAuthenticationToken,
         bool usesLegacyRoleAuthentication)
     {
@@ -29,6 +31,8 @@ public sealed class TaskServerBootstrapOptions
         EngineAuthenticationToken = engineAuthenticationToken;
         BootstrapRunnerId = bootstrapRunnerId;
         BootstrapRunnerAuthenticationToken = bootstrapRunnerAuthenticationToken;
+        BootstrapReviewRunnerId = bootstrapReviewRunnerId;
+        BootstrapReviewRunnerAuthenticationToken = bootstrapReviewRunnerAuthenticationToken;
         LegacyRunnerAuthenticationToken = legacyRunnerAuthenticationToken;
         UsesLegacyRoleAuthentication = usesLegacyRoleAuthentication;
     }
@@ -42,6 +46,8 @@ public sealed class TaskServerBootstrapOptions
     public string? EngineAuthenticationToken { get; }
     public string? BootstrapRunnerId { get; }
     public string? BootstrapRunnerAuthenticationToken { get; }
+    public string? BootstrapReviewRunnerId { get; }
+    public string? BootstrapReviewRunnerAuthenticationToken { get; }
     public string? LegacyRunnerAuthenticationToken { get; }
     public bool UsesSharedBearerAuthentication =>
         string.Equals(AuthenticationMode, BearerAuthentication, StringComparison.Ordinal);
@@ -107,6 +113,21 @@ public sealed class TaskServerBootstrapOptions
         if ((bootstrapRunnerId is null) != (bootstrapRunnerToken is null))
             throw new InvalidOperationException(
                 "BOOTSTRAP_RUNNER_ID and BOOTSTRAP_RUNNER_AUTH_TOKEN(_FILE) must be configured together.");
+        var bootstrapReviewRunnerId = FirstOrNull(configuration["BOOTSTRAP_REVIEW_RUNNER_ID"]);
+        var bootstrapReviewRunnerToken = ReadCredential(
+            configuration,
+            "BOOTSTRAP_REVIEW_RUNNER_AUTH_TOKEN",
+            $"{TaskServerOptions.SectionName}:BootstrapReviewRunnerAuthToken",
+            "BOOTSTRAP_REVIEW_RUNNER_AUTH_TOKEN_FILE",
+            $"{TaskServerOptions.SectionName}:BootstrapReviewRunnerAuthTokenFile");
+        if ((bootstrapReviewRunnerId is null) != (bootstrapReviewRunnerToken is null))
+            throw new InvalidOperationException(
+                "BOOTSTRAP_REVIEW_RUNNER_ID and BOOTSTRAP_REVIEW_RUNNER_AUTH_TOKEN(_FILE) must be configured together.");
+        if (bootstrapReviewRunnerId is not null && bootstrapReviewRunnerId == bootstrapRunnerId)
+            throw new InvalidOperationException("Coding and review runner ids must be distinct.");
+        if (bootstrapReviewRunnerToken is not null
+            && string.Equals(bootstrapReviewRunnerToken, bootstrapRunnerToken, StringComparison.Ordinal))
+            throw new InvalidOperationException("Coding and review runner credentials must be distinct.");
 
         studioToken ??= token;
         if (usesLegacyRoleAuthentication)
@@ -116,7 +137,7 @@ public sealed class TaskServerBootstrapOptions
             ? FirstOrNull(configuration[$"{TaskServerOptions.SectionName}:RunnerBearerToken"])
             : null;
 
-        foreach (var configuredToken in new[] { token, studioToken, engineToken, bootstrapRunnerToken, legacyRunnerToken })
+        foreach (var configuredToken in new[] { token, studioToken, engineToken, bootstrapRunnerToken, bootstrapReviewRunnerToken, legacyRunnerToken })
             if (configuredToken is not null && configuredToken.Length < 32)
                 throw new InvalidOperationException(
                     "Configured bearer credentials must contain at least 32 characters.");
@@ -127,7 +148,8 @@ public sealed class TaskServerBootstrapOptions
             && !usesLegacyRoleAuthentication
             && (studioToken is not null
                 || engineToken is not null
-                || bootstrapRunnerToken is not null))
+                || bootstrapRunnerToken is not null
+                || bootstrapReviewRunnerToken is not null))
             throw new InvalidOperationException(
                 "Principal bootstrap credentials are invalid when AUTH=none.");
         if (usesLegacyRoleAuthentication
@@ -165,6 +187,8 @@ public sealed class TaskServerBootstrapOptions
             engineToken,
             bootstrapRunnerId,
             bootstrapRunnerToken,
+            bootstrapReviewRunnerId,
+            bootstrapReviewRunnerToken,
             legacyRunnerToken,
             usesLegacyRoleAuthentication);
     }

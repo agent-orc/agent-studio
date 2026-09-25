@@ -24,5 +24,8 @@ artifacts
 docs/**
 !docs/app/
 !docs/app/**
+# OrchestratorApi embeds the reviewed route inventory as a compiled resource.
+!docs/studio-route-ownership/
+!docs/studio-route-ownership/routes.json
 **/*.log
 **/cli-output.log

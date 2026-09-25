@@ -37,6 +37,11 @@ services:
         uid: "10001"
         gid: "10001"
         mode: 0400
+      - source: review_runner_token
+        target: /run/secrets/review_runner_token
+        uid: "10001"
+        gid: "10001"
+        mode: 0400
 
   studio-bff:
     image: "${SCENARIO_STUDIO_BFF_IMAGE:?set SCENARIO_STUDIO_BFF_IMAGE}"

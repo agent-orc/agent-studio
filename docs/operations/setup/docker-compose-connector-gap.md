@@ -1,6 +1,11 @@
 # Gap: the Connector (D4b) cannot be the root compose's Studio backend
 
-Status: open, needs a decision. Written while working AGT-2736 ("Agent Studio
+Status: D2 decided on 26 September 2026. The operator accepted option C as a
+limited baseline and kept the Connector's loopback contract. I01 now puts the
+Task Server behind a BFF/web edge, with versioned route ownership and explicit
+legacy route failures. Full Angular route parity remains a later gate. This
+note records the original gap rather than replacing the decision Dossier.
+Written while working AGT-2736 ("Agent Studio
 Docker-deployable: one compose file runs the complete product from published
 images"). Not itself a decision dossier; it exists so the next card does not
 re-derive this from scratch.

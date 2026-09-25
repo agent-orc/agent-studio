@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Mint the three bearer credentials `docker compose --profile distributed`
-# needs (DISTRIBUTED_STUDIO_TOKEN, DISTRIBUTED_ENGINE_TOKEN,
-# DISTRIBUTED_RUNNER_TOKEN) into .env, so a first run needs no manual token
+# Mint four distinct bearer credentials for the one-box installation into
+# .env, so a first run needs no manual token
 # generation or copying. Never overwrites a value that is already set.
 set -euo pipefail
 
@@ -55,8 +54,20 @@ upsert_if_empty() {
 upsert_if_empty DISTRIBUTED_STUDIO_TOKEN
 upsert_if_empty DISTRIBUTED_ENGINE_TOKEN
 upsert_if_empty DISTRIBUTED_RUNNER_TOKEN
+upsert_if_empty DISTRIBUTED_REVIEW_RUNNER_TOKEN
+
+# Both role daemons read this host-owned provider/repository configuration.
+# Credentials come from the operator's provider and cannot be minted here.
+if [ ! -e "$repo_root/runner.env" ]; then
+    cp -- "$repo_root/runner.env.template" "$repo_root/runner.env"
+    chmod 600 -- "$repo_root/runner.env"
+    printf 'created %s from runner.env.template\n' "$repo_root/runner.env"
+fi
 
 printf '\n'
-docker compose --profile distributed config --quiet
+docker compose config --quiet
 printf 'compose-distributed-bootstrap=ok\n'
 printf 'env=%s\n' "$env_path"
+if grep -q '^AGENT_STUDIO_IMAGE_TAG=unpublished$' "$env_path"; then
+    printf 'image-set=unpublished; use the source-built command in docs/operations/setup/getting-started.md until a compatible release is verified\n'
+fi
