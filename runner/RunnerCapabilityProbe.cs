@@ -18,9 +18,12 @@ internal static class RunnerCapabilityProbe
         var list = new List<AdvertisedCapabilityDto>
         {
             Capability(
-                options.Role == "review"
-                    ? CapabilityProtocol.ReviewExecutor
-                    : CapabilityProtocol.CodingExecutor,
+                options.Role switch
+                {
+                    "review" => CapabilityProtocol.ReviewExecutor,
+                    "gate" => CapabilityProtocol.GateExecutor,
+                    _ => CapabilityProtocol.CodingExecutor,
+                },
                 "executor",
                 typeof(RunnerCapabilityProbe).Assembly.GetName().Version?.ToString(),
                 options.Role),
@@ -78,7 +81,7 @@ internal static class RunnerCapabilityProbe
                     options.ExecEngine));
             }
         }
-        else
+        else if (options.Role == "review")
         {
             AddCodingCliCapabilities(
                 list,
@@ -90,6 +93,14 @@ internal static class RunnerCapabilityProbe
             list.Add(Capability(ReviewCapabilities.SourceBundleMaterialization, "review", null, "artifact"));
             list.Add(Capability(ReviewCapabilities.BaselineComparison, "review", null, "merge-base"));
             list.Add(Capability(ReviewCapabilities.DependencyPreparation, "review", null, "build-profile"));
+        }
+        else if (options.Role == "gate")
+        {
+            if (OnPath("git"))
+            {
+                list.Add(Capability(CapabilityProtocol.GateGit, "gate", ToolVersion("git"), "git"));
+                list.Add(Capability(CapabilityProtocol.GateSourceBundle, "gate", ToolVersion("git"), "artifact"));
+            }
         }
         AddToolchain(list, CapabilityProtocol.DotNet, "dotnet");
         AddToolchain(list, CapabilityProtocol.Node, "node");
@@ -142,6 +153,21 @@ internal static class RunnerCapabilityProbe
             ReviewCapabilities.SemanticReview,
             ReviewCapabilities.BaselineComparison,
             ReviewCapabilities.DependencyPreparation,
+        }
+        .Concat(options.RequiredCapabilities)
+        .Distinct(StringComparer.Ordinal)
+        .ToArray();
+
+    public static IReadOnlyList<string> GateRegistrationCapabilities(RunnerOptions options)
+        => new[]
+        {
+            "gate-executor",
+            CapabilityProtocol.GateExecutor,
+            CapabilityProtocol.GateGit,
+            CapabilityProtocol.GitFetch,
+            CapabilityProtocol.RepositoryAccess,
+            CapabilityProtocol.Disk,
+            CapabilityProtocol.TaskServerConnectivity,
         }
         .Concat(options.RequiredCapabilities)
         .Distinct(StringComparer.Ordinal)

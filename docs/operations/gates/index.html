@@ -538,11 +538,11 @@ svg.diagram .num { font: 700 10px var(--article-sans); fill: var(--gate-note); l
   removed or explicitly retained is a separate choice, and it must not survive by accident. The teardown
   threshold is open decision <a href="#d9">D9</a>.</p>
   <div class="box warn">
-    <b>Status of this section.</b> The dedicated <code>GateSubject</code>, <code>GateAttempt</code>,
-    <code>GateLease</code>, <code>GatePlan</code>, and <code>GateReport</code> contract is not implemented.
-    Review-plane primitives now prove the materialization, lease, fence, evidence, and cleanup patterns,
-    but they remain coupled to the Review lifecycle. The choice in D7 and the integration/release-gate
-    migration are still open.
+    <b>Status of this section.</b> On 25 September 2026 the operator selected D7, D8 and D9 option A.
+    A default-off dedicated <code>GateSubject</code>, <code>GateAttempt</code>, <code>GateLease</code>,
+    <code>GatePlan</code>, and <code>GateReport</code> protocol is under implementation.
+    The post-build-test cutover, bounded canary, restart matrix and throughput parity remain open.
+    Integration and release gate migration belongs to later slices.
   </div>
 
   <h2 id="sect5"><span class="number">&sect;5</span> Validation economy: what survives from async validation</h2>
@@ -849,6 +849,11 @@ svg.diagram .num { font: 700 10px var(--article-sans); fill: var(--gate-note); l
     &sect;7 and become cards only once the operator records selections in &sect;9.</p>
     <ol class="implementation-log">
 <!-- agent-studio:implementation-log:start -->
+      <li><b>2026-09-25, AGT-2925.</b> The operator selected option A for D7, D8 and D9.
+      The first default-off claimable gate slice adds separate Task Server gate authority,
+      Agent Host execution and Engine dispatch. The SSH bridge teardown remains parked.
+      The bounded production canary, restart matrix and throughput parity are still required
+      before this remote path can become the default or AGT-2262 can proceed.</li>
 <!-- agent-studio:implementation-log:end -->
     </ol>
   </section>

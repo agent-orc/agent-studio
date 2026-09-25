@@ -22,6 +22,7 @@ if (args is ["--help"] or ["-h"])
           COUNCIL_CONCURRENCY
           POST_PROCESSING_CONCURRENCY
           GATE_DISPATCH_CONCURRENCY
+          ENGINE_REMOTE_GATE_ENABLED (default off)
           COMPLETION_JUDGE_CONCURRENCY
           POLL_SECONDS
           LEASE_SECONDS

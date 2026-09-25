@@ -125,6 +125,15 @@ public sealed class OrchestratorEngineService : BackgroundService
         {
             throw;
         }
+        catch (GatePendingException)
+        {
+            await _client.ReleaseAsync(
+                run.RunId,
+                new ReleaseOrchestrationLeaseRequest(
+                    _options.ClientId, _instanceId, lease.LeaseId, lease.Fence,
+                    "gate-pending"), ct);
+            await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, _options.PollSeconds)), ct);
+        }
         catch (Exception exception)
         {
             _logger.LogWarning(

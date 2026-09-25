@@ -163,6 +163,14 @@ try
         Log("review daemon stopped");
         return 0;
     }
+    if (options.Role == "gate")
+    {
+        if (!daemonMode)
+            throw new ArgumentException("Remote Gate Executor runs as a polling service.");
+        await new RemoteGateDaemon(options, client, Log).RunAsync(shutdown.Token);
+        Log("gate daemon stopped");
+        return 0;
+    }
     if (daemonMode)
     {
         await new RemoteRunnerDaemon(options, client, Log).RunAsync(shutdown.Token);
@@ -233,7 +241,7 @@ static void PrintUsage()
           --server <url>          Task Server base URL       (RUNNER_SERVER_URL)
           --runner-id <id>        Stable runner identity     (RUNNER_ID)
           --runner-name <name>    Board-facing runner name   (RUNNER_NAME)
-          --role <coding|review>  Separate service role      (RUNNER_ROLE)
+          --role <coding|review|gate>  Separate service role (RUNNER_ROLE)
           --client-id <id>        Attribution label only     (RUNNER_CLIENT_ID)
           --git-remote <url>      Startup probe/one-shot URL  (RUNNER_GIT_REMOTE)
           --git-push-remote <url> Probe/one-shot push URL     (RUNNER_GIT_PUSH_REMOTE)

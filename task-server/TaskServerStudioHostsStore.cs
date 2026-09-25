@@ -94,6 +94,18 @@ public sealed partial class TaskServerStore
         var snapshots = await ListRunnerCapabilitySnapshotsAsync(ct);
         await using var connection = await OpenReadyAsync(ct);
         var lifecycleByHost = await ReadAllStudioHostLifecycleAsync(connection, ct);
+        var gateCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+        await using (var command = Command(connection, """
+            SELECT host_id, COUNT(*) FROM gate_attempts
+             WHERE host_id IS NOT NULL
+               AND state IN ('claimed', 'materializing', 'running', 'reporting', 'cleaning')
+             GROUP BY host_id;
+            """))
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+        {
+            while (await reader.ReadAsync(ct))
+                gateCounts[reader.GetString(0)] = reader.GetInt32(1);
+        }
 
         var result = new List<StudioClientSummaryDto>();
         foreach (var group in snapshots.GroupBy(item => item.HostId, StringComparer.Ordinal)
@@ -113,7 +125,8 @@ public sealed partial class TaskServerStore
                 latest.LastSeenAt,
                 lifecycle?.RetiredAt,
                 lifecycle?.RetiredReason,
-                lifecycle?.PermanentlyDeletedAt));
+                lifecycle?.PermanentlyDeletedAt,
+                gateCounts.GetValueOrDefault(group.Key)));
         }
         return result;
     }

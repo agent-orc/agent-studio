@@ -69,6 +69,25 @@ public sealed class EngineTaskServerClient : IDisposable
             request,
             ct);
 
+    public Task<ReviewSubjectDto> GetReviewSubjectAsync(string subjectId, CancellationToken ct)
+        => GetAsync<ReviewSubjectDto>($"/api/v1/reviews/subjects/{Uri.EscapeDataString(subjectId)}", ct);
+
+    public Task<GateSubject> CreateGateSubjectAsync(CreateGateSubjectRequest request, CancellationToken ct)
+        => PostAsync<CreateGateSubjectRequest, GateSubject>("/api/v1/gates/subjects", request, ct);
+
+    public Task<GateStatusView> GetGateStatusAsync(string subjectId, CancellationToken ct)
+        => GetAsync<GateStatusView>($"/api/v1/gates/subjects/{Uri.EscapeDataString(subjectId)}", ct);
+
+    private async Task<T> GetAsync<T>(string path, CancellationToken ct)
+    {
+        using var response = await _http.GetAsync(path, ct);
+        var content = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            throw new EngineTaskServerException((int)response.StatusCode, content);
+        return JsonSerializer.Deserialize<T>(content, Json)
+               ?? throw new EngineTaskServerException((int)response.StatusCode, "Task Server returned an empty response.");
+    }
+
     private static HttpClient CreateHttpClient(EngineOptions options)
     {
         var client = new HttpClient

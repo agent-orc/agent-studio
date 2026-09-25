@@ -33,6 +33,9 @@ public sealed class EngineContractTests
         Assert.Equal(5, options.PostProcessingConcurrency);
         Assert.Equal(3, options.GateDispatchConcurrency);
         Assert.Equal(2, options.CompletionJudgeConcurrency);
+        Assert.False(options.RemoteGateEnabled);
+        values["ENGINE_REMOTE_GATE_ENABLED"] = "1";
+        Assert.True(EngineOptions.Parse(key => values.GetValueOrDefault(key)).RemoteGateEnabled);
     }
 
     [Fact]

@@ -34,6 +34,17 @@ state.
 
 ## Key Code
 
+- `runner/RemoteGateDaemon.cs` is the gate-role Agent Host loop. A separate
+  `RUNNER_ROLE=gate` service registers a gate executor, probes its configured
+  `RUNNER_GIT_REMOTE`, advertises fresh repository and toolchain capabilities,
+  and claims one gate slot. It uses `RemoteReviewWorkspace` for exact-ref or
+  digest-pinned bundle materialization, namespace containment and cleanup,
+  then runs only the frozen gate commands. Reports are queued under
+  `RUNNER_STATE_DIR/gate-reports/` before HTTP submission so a Task Server
+  restart can be retried. An expired lease fences the report; the server
+  classifies the missing result as infrastructure failure. No gate command
+  runs inside the Task Server or Studio backend.
+
 - `runner/ArtifactTransferPolicy.cs`, `runner/RemoteTaskRunner.cs`,
   `backend/Features/Diagnostics/ArtifactIngestionEndpoints.cs`, and
   `task-server/TaskServerEndpoints.cs`: post-delivery

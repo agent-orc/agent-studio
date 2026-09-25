@@ -6,6 +6,10 @@ public static class CapabilityProtocol
 
     public const string CodingExecutor = "executor:coding";
     public const string ReviewExecutor = "executor:review";
+    public const string GateExecutor = "executor:gate";
+    public const string GateGit = "gate:git";
+    public const string GateSourceBundle = "gate:source-bundle";
+    public static string GateRepository(string repositoryId) => $"gate:repository:{repositoryId}";
     public const string GitFetch = "git:fetch";
     public const string GitPush = "git:push";
     public const string GitWorkflowPush = "git:workflow-push";

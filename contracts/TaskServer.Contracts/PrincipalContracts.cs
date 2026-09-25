@@ -15,6 +15,9 @@ public static class TaskServerScopes
     public const string RunsWrite = "runs:write";
     public const string ReviewsClaim = "reviews:claim";
     public const string ReviewsWrite = "reviews:write";
+    public const string GatesDispatch = "gates:dispatch";
+    public const string GatesClaim = "gates:claim";
+    public const string GatesWrite = "gates:write";
     public const string OrchestrationClaim = "orchestration:claim";
     public const string OrchestrationWrite = "orchestration:write";
     public const string Management = "management";

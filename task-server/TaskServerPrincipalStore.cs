@@ -22,6 +22,7 @@ public sealed partial class TaskServerStore
             [TaskServerPrincipalKinds.Engine] = new HashSet<string>(
                 [
                     TaskServerScopes.TasksRead,
+                    TaskServerScopes.GatesDispatch,
                     TaskServerScopes.OrchestrationClaim,
                     TaskServerScopes.OrchestrationWrite,
                     TaskServerScopes.EventsSubscribe,
@@ -34,6 +35,8 @@ public sealed partial class TaskServerStore
                     TaskServerScopes.RunsWrite,
                     TaskServerScopes.ReviewsClaim,
                     TaskServerScopes.ReviewsWrite,
+                    TaskServerScopes.GatesClaim,
+                    TaskServerScopes.GatesWrite,
                     TaskServerScopes.EventsWrite,
                 ],
                 StringComparer.Ordinal),

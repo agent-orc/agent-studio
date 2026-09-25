@@ -64,6 +64,7 @@ builder.Services.AddSingleton<StudioChatAttachmentStore>();
 builder.Services.AddSingleton<StudioLifecycleCoordinator>();
 builder.Services.AddStudioP2Services();
 builder.Services.AddHostedService<TaskServerInvariantReconciliationService>();
+builder.Services.AddHostedService<GateDeadlineHostedService>();
 builder.Services.AddHostedService<ResultRefGcHostedService>();
 builder.Services.AddHostedService<RetentionSchedulerHostedService>();
 

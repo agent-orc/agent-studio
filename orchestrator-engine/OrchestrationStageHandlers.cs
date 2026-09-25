@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
 using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.OrchestratorEngine;
@@ -167,14 +169,27 @@ public sealed class PostProcessingLoop : IOrchestrationStageHandler
 
 public sealed class GateDispatchLoop : IOrchestrationStageHandler
 {
+    private readonly EngineOptions? _options;
+    private readonly EngineTaskServerClient? _client;
+
+    public GateDispatchLoop() { }
+
+    public GateDispatchLoop(EngineOptions options, EngineTaskServerClient client)
+    {
+        _options = options;
+        _client = client;
+    }
+
     public OrchestrationStage Stage => OrchestrationStage.GateDispatch;
 
-    public Task<OrchestrationStageDecision> ExecuteAsync(
+    public async Task<OrchestrationStageDecision> ExecuteAsync(
         OrchestrationRunDto run,
         CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         using var payload = JsonDocument.Parse(run.PayloadJson);
+        if (_options?.RemoteGateEnabled == true)
+            return await DispatchRemoteAsync(run, payload.RootElement, ct);
         var failed = 0;
         if (payload.RootElement.TryGetProperty("gates", out var gates)
             && gates.ValueKind == JsonValueKind.Array)
@@ -187,16 +202,88 @@ public sealed class GateDispatchLoop : IOrchestrationStageHandler
         var action = failed > 0
             ? OrchestrationAction.Reissue
             : OrchestrationAction.Continue;
-        return Task.FromResult(new OrchestrationStageDecision(
+        return new OrchestrationStageDecision(
             action,
             JsonSerializer.Serialize(new
             {
                 component = nameof(GateDispatchLoop),
                 failed,
                 decision = action.ToString(),
-            })));
+            }));
     }
+
+    private async Task<OrchestrationStageDecision> DispatchRemoteAsync(
+        OrchestrationRunDto run, JsonElement payload, CancellationToken ct)
+    {
+        var reviewSubjectId = payload.TryGetProperty("reviewSubjectId", out var id)
+            ? id.GetString() : null;
+        if (string.IsNullOrWhiteSpace(reviewSubjectId))
+            return new OrchestrationStageDecision(OrchestrationAction.Escalate,
+                "{\"classification\":\"MissingGateSubject\"}");
+        var review = await _client!.GetReviewSubjectAsync(reviewSubjectId, ct);
+        var commands = review.Plan.Commands
+            .Where(command => command.ExecutionKind == ReviewCommandKinds.Tool
+                && command.Aspect == "build-tests")
+            .Select(command => new GateCommand(command.StepId, command.FileName,
+                command.Arguments, "", command.TimeoutSeconds))
+            .ToArray();
+        if (commands.Length == 0)
+            return new OrchestrationStageDecision(OrchestrationAction.Escalate,
+                "{\"classification\":\"NoCataloguedBuildTestCommands\"}");
+        var required = commands.SelectMany(command =>
+            command.Arguments.Concat([command.FileName]))
+            .SelectMany(arg => arg.Contains("dotnet", StringComparison.OrdinalIgnoreCase)
+                ? [CapabilityProtocol.DotNet]
+                : arg.Contains("npm", StringComparison.OrdinalIgnoreCase)
+                    || arg.Contains("node", StringComparison.OrdinalIgnoreCase)
+                    ? [CapabilityProtocol.Node]
+                    : Array.Empty<string>())
+            .Distinct(StringComparer.Ordinal).ToArray();
+        var plan = new GatePlan("post-build-test-gate", 1, commands, "",
+            Math.Min(14400, commands.Sum(command => command.DeadlineSeconds) + 300),
+            required, 500_000, "always");
+        var planHash = Digest(JsonSerializer.Serialize(plan, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        var auditDigest = Digest(JsonSerializer.Serialize(new
+        {
+            review.Plan.Commands,
+            review.Plan.BuildProfileFingerprint,
+        }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        var subject = await _client.CreateGateSubjectAsync(new CreateGateSubjectRequest(
+            review.TaskId, review.SourceRunId, review.RepositoryId,
+            review.RepositoryUrl, review.ExpectedResultSha,
+            review.ResultRef, review.SourceBundleArtifactId, review.SourceBundleSha256,
+            planHash, review.ReviewPolicyHash,
+            checked((int)run.DefinitionVersion), auditDigest, plan,
+            DateTime.UtcNow.AddMinutes(15)), ct);
+        var status = await _client.GetGateStatusAsync(subject.SubjectId, ct);
+        var latest = status.Attempts.Last().Attempt;
+        if (!GateStates.IsTerminal(latest.State))
+            throw new GatePendingException(subject.SubjectId, latest.State);
+        var action = latest.State switch
+        {
+            GateStates.Passed => OrchestrationAction.Continue,
+            GateStates.ProductFailed => OrchestrationAction.Reissue,
+            _ => OrchestrationAction.Escalate,
+        };
+        return new OrchestrationStageDecision(action,
+            JsonSerializer.Serialize(new
+            {
+                component = nameof(GateDispatchLoop),
+                gateSubjectId = subject.SubjectId,
+                state = latest.State,
+                outcome = latest.Outcome,
+                classification = latest.FailureClassification,
+                testedSha = status.TestedSha,
+                decision = action.ToString(),
+            }));
+    }
+
+    private static string Digest(string value)
+        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 }
+
+public sealed class GatePendingException(string subjectId, string phase)
+    : Exception($"Gate {subjectId} is {phase}.");
 
 public sealed class CompletionJudgeLoop : IOrchestrationStageHandler
 {

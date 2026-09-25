@@ -12,6 +12,7 @@ public sealed class EngineOptions
     public int CouncilConcurrency { get; init; } = 4;
     public int PostProcessingConcurrency { get; init; } = 3;
     public int GateDispatchConcurrency { get; init; } = 2;
+    public bool RemoteGateEnabled { get; init; }
     public int CompletionJudgeConcurrency { get; init; } = 4;
     public int PollSeconds { get; init; } = 2;
     public int LeaseSeconds { get; init; } = 120;
@@ -55,6 +56,7 @@ public sealed class EngineOptions
             CouncilConcurrency = Cap(value, "COUNCIL_CONCURRENCY", 4),
             PostProcessingConcurrency = Cap(value, "POST_PROCESSING_CONCURRENCY", 3),
             GateDispatchConcurrency = Cap(value, "GATE_DISPATCH_CONCURRENCY", 2),
+            RemoteGateEnabled = OptIn(value("ENGINE_REMOTE_GATE_ENABLED")),
             CompletionJudgeConcurrency = Cap(value, "COMPLETION_JUDGE_CONCURRENCY", 4),
             PollSeconds = Number(value, "POLL_SECONDS", 2, 1, 60),
             LeaseSeconds = Number(value, "LEASE_SECONDS", 120, 30, 600),

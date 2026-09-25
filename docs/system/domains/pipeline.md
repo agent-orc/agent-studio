@@ -29,6 +29,17 @@ pipeline view.
 
 ## Key Code
 
+- `contracts/TaskServer.Contracts/GateContracts.cs`,
+  `task-server/TaskServerGateStore.cs`, and
+  `orchestrator-engine/OrchestrationStageHandlers.cs`: the separately fenced
+  gate subject, attempt, lease, plan, report and default-off Engine dispatch
+  path. `ENGINE_REMOTE_GATE_ENABLED=1` opts the Engine gate-dispatch stage
+  into `post-build-test-gate` remote execution. The Engine constructs the plan
+  from the immutable Review tool commands and polls the Task Server for a
+  terminal result. The Task Server stores every phase, retry and report in
+  SQLite and executes no gate command. The existing local gate remains the
+  current path while the remote canary and throughput comparison are open.
+
 - [Model Routing Policy](./model-routing-policy.md) is the canonical model and
   thinking-level selection policy, including weighted criteria, correctness
   floors, benchmark confidence, quota handling, and reissue promotion.

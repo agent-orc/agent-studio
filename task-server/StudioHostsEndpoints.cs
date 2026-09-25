@@ -20,6 +20,11 @@ internal static class StudioHostsEndpoints
         clients.MapGet("", async (TaskServerStore store, CancellationToken ct)
             => await TaskServerEndpoints.InvokeAsync(() => store.ListStudioClientsAsync(ct)));
 
+        app.MapGet("/api/v1/studio/gates", async (
+            int? limit, TaskServerStore store, CancellationToken ct)
+            => await TaskServerEndpoints.InvokeAsync(() => store.ListGateStatusesAsync(limit ?? 100, ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
+
         clients.MapGet("/{clientId}/defaults", async (
             string clientId, TaskServerStore store, CancellationToken ct)
             => await TaskServerEndpoints.InvokeNullableAsync(() => store.GetStudioHostDefaultsAsync(clientId, ct)));

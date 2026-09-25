@@ -159,7 +159,7 @@ public sealed class TaskServerClient : IDisposable
         _supportsHostOrchestrator =
             _options?.Role != "review"
             && serverCapabilities.Contains("host-orchestrator", StringComparer.Ordinal);
-        _useV1 = _options?.Role == "review"
+        _useV1 = _options?.Role is "review" or "gate"
             ? serverCapabilities.Contains("review-plane", StringComparer.Ordinal)
             : serverCapabilities.Contains("coding-plane", StringComparer.Ordinal);
     }
@@ -181,8 +181,10 @@ public sealed class TaskServerClient : IDisposable
         {
             var options = _options ?? throw new InvalidOperationException("Runner options are unavailable for v1 registration.");
             var runnerId = options.RunnerId;
-            string[] capabilities = options.Role == "review"
-                ? [.. RunnerCapabilityProbe.ReviewRegistrationCapabilities(options)]
+            string[] capabilities = options.Role is "review" or "gate"
+                ? options.Role == "gate"
+                    ? [.. RunnerCapabilityProbe.GateRegistrationCapabilities(options)]
+                    : [.. RunnerCapabilityProbe.ReviewRegistrationCapabilities(options)]
                 : [
                     Contract.ReviewCapabilities.CodingExecutor,
                     "claim",
@@ -871,6 +873,31 @@ public sealed class TaskServerClient : IDisposable
                    ct)
                 ?? new Contract.ReviewClaimResponse("empty", Message: "Empty review claim response.");
     }
+
+    public Task<Contract.GateClaimResponse> ClaimGateAsync(Contract.GateClaimRequest request, CancellationToken ct)
+        => RequiredGateAsync<Contract.GateClaimRequest, Contract.GateClaimResponse>(
+            $"/api/v1/runners/{Uri.EscapeDataString(request.ExecutorId)}/gate-claims", request, ct);
+
+    public Task<Contract.GateLease> RenewGateAsync(string attemptId, Contract.GateRenewRequest request, CancellationToken ct)
+        => RequiredGateAsync<Contract.GateRenewRequest, Contract.GateLease>(
+            $"/api/v1/gates/attempts/{Uri.EscapeDataString(attemptId)}/lease/renew", request, ct);
+
+    public Task<Contract.GateAttempt> AdvanceGatePhaseAsync(string attemptId, Contract.GatePhaseRequest request, CancellationToken ct)
+        => RequiredGateAsync<Contract.GatePhaseRequest, Contract.GateAttempt>(
+            $"/api/v1/gates/attempts/{Uri.EscapeDataString(attemptId)}/phase", request, ct);
+
+    public Task<Contract.GateAttemptView> ReportGateAsync(string attemptId, Contract.SubmitGateReportRequest request, CancellationToken ct)
+        => RequiredGateAsync<Contract.SubmitGateReportRequest, Contract.GateAttemptView>(
+            $"/api/v1/gates/attempts/{Uri.EscapeDataString(attemptId)}/report", request, ct);
+
+    public Task<Contract.GateStatusView> RecoverGateAsync(string attemptId, Contract.GateContainmentReceipt receipt, CancellationToken ct)
+        => RequiredGateAsync<Contract.GateContainmentReceipt, Contract.GateStatusView>(
+            $"/api/v1/gates/attempts/{Uri.EscapeDataString(attemptId)}/recover", receipt, ct);
+
+    private async Task<TResponse> RequiredGateAsync<TRequest, TResponse>(string path, TRequest request, CancellationToken ct)
+        where TResponse : class
+        => await PostJsonAsync<TRequest, TResponse>(path, request, ct)
+           ?? throw new TaskServerException(502, "Task Server returned an empty gate response.");
 
     public async Task<Contract.ReviewLeaseDto> RenewReviewLeaseAsync(
         string attemptId,
