@@ -13,6 +13,25 @@ namespace AgentRunner;
 /// </summary>
 public static class RemoteRunPrompt
 {
+    public static string BuildMechanicalDelta(
+        MechanicalResumeCandidateDto candidate,
+        string? currentBaseSha,
+        string resultsDirectory)
+    {
+        var paths = candidate.ConflictPaths.Count == 0
+            ? "none reported"
+            : string.Join(", ", candidate.ConflictPaths.Take(20));
+        return $"Continue the existing coding session for {candidate.TaskKey}. This is the single bounded integration-recovery round.\n" +
+               $"Current integration base: {candidate.IntegrationBranch} at {currentBaseSha ?? "unknown"}.\n" +
+               $"Prior fenced delivery: {candidate.ResultSha}. Conflict paths: {paths}.\n" +
+               $"New steer: {candidate.Steer}\n" +
+               $"Verification plan: {candidate.VerificationPlan}\n" +
+               "Keep the existing delivery work and resolve only this integration delta. " +
+               "If the conflict is semantic, stop and report a blocker for a fresh policy-qualified attempt. " +
+               $"Write review evidence into {resultsDirectory}.\n" +
+               CompletionProtocol + "\n";
+    }
+
     public const string ModelRoutingPolicyInstruction =
         "Consult `docs/system/domains/model-routing-policy.md` as the authoritative source whenever " +
         "you select, recommend, override, or explain a model and thinking level. Never let quota or " +

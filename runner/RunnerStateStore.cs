@@ -46,7 +46,8 @@ public sealed record PersistedRunnerSlot(
     // only create Finalization retry state after this marker is persisted.
     // Optional so startup reconciliation can adopt slots written by an older
     // runner exactly as it did before this guard existed.
-    string? FinalizationStage = null);
+    string? FinalizationStage = null,
+    MechanicalRoundReceiptDto? MechanicalRound = null);
 
 /// <summary>Atomic JSON persistence under RUNNER_STATE_DIR.</summary>
 public sealed class RunnerStateStore

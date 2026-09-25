@@ -169,6 +169,20 @@ state.
   and thinking level on the session event; remote claims also persist their
   fenced Attempt id. Every new `RunRecord` carries those values independently
   of optional CLI init frames or token summaries.
+- `backend/Features/Tasks/LeaseEndpoints.cs`,
+  `backend/Features/Runner/MechanicalRoundLedger.cs`,
+  `runner/MechanicalResumePolicy.cs`, and `runner/RemoteTaskRunner.cs`: D7
+  rebase-only continuation. A typed `source-needs-rebase` steer offers the
+  previous fenced coding session to the next claim. The runner checks task,
+  provider, marker-validated clean context, repository, exact worktree path,
+  branch and delivered SHA before sending a compact delta. One resumed round
+  has a 300-second limit and an observed-token ceiling of 1,211,213. Fresh
+  decisions and fallback reasons, session IDs, model route and token usage are
+  durable on the RunAttempt and in the task's
+  `logs/mechanical-round-ledger.jsonl`. The v1 Task Server records the same
+  receipt as a fenced `coding.session.receipt` task event. Use
+  `tools/mechanical-resume-pilot.py` to compare eligible rounds with the
+  dated AGT-W57 estimate; no quota saving is assumed before a live cohort.
 - `backend/Services/Runner/OrchestratorChatLog.cs`: typed orchestrator messages
   written into `logs/cli-output.log`.
 - `backend/Features/Tasks/CliOutputLogFile.cs` and

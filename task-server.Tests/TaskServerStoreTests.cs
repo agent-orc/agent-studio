@@ -1311,7 +1311,14 @@ public sealed class TaskServerStoreTests
             "provider capability is unavailable",
             IdempotencyKey: $"completion:{run.RunId}:typed-outcome",
             Sequence: 1,
-            OutcomeDecision: decision);
+            OutcomeDecision: decision,
+            CodingSession: new CodingSessionReceiptDto(
+                null, "11111111-2222-3333-4444-555555555555", "fresh", "no-candidate",
+                "codex", task.TaskKey, project.ProjectId, "https://example.test/repo.git",
+                "/worktree", "runner/host/task", null,
+                100, 10, 70, 12.5,
+                null, null, null, null,
+                null, null, "gpt-5.6-sol", "xhigh", "card-route", "v1", false, false));
 
         var completed = await store.CompleteRunAsync(run.RunId, request, "runner-a", default);
         var replay = await store.CompleteRunAsync(run.RunId, request, "runner-a", default);
@@ -1329,6 +1336,18 @@ public sealed class TaskServerStoreTests
         Assert.Equal(completed, replay);
         Assert.Equal("completion-conflict", conflictingReplay.Code);
         var firstEvents = await store.ListEventsAsync(run.RunId, 0, default);
+        var session = Assert.Single(firstEvents, item => item.Kind == "coding.session.receipt");
+        using (var sessionPayload = JsonDocument.Parse(session.PayloadJson))
+            Assert.Equal(100, sessionPayload.RootElement.GetProperty("inputTokens").GetInt64());
+        var changedSession = await Assert.ThrowsAsync<TaskServerConflictException>(() => store.CompleteRunAsync(
+            run.RunId,
+            request with { CodingSession = request.CodingSession with { InputTokens = 101 } },
+            "runner-a",
+            default));
+        Assert.Equal("completion-conflict", changedSession.Code);
+        var omittedSession = await Assert.ThrowsAsync<TaskServerConflictException>(() => store.CompleteRunAsync(
+            run.RunId, request with { CodingSession = null }, "runner-a", default));
+        Assert.Equal("completion-conflict", omittedSession.Code);
         var classified = Assert.Single(firstEvents, item => item.Kind == "execution.outcome.classified");
         using (var payload = JsonDocument.Parse(classified.PayloadJson))
         {

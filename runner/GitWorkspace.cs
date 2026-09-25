@@ -106,6 +106,7 @@ public sealed class GitWorkspace
     public string? BaseSha => _startedHead ?? _restoredBaseSha;
     public string IntegrationBranchRef =>
         $"refs/heads/{ToBranchName(_preparedIntegrationBranch ?? _baseBranch)}";
+    public string? IntegrationTipSha { get; private set; }
     public SalvageReconciliationResult? PickupReconciliation => _pickupReconciliation;
 
     public async Task<string> PrepareAsync(CancellationToken ct)
@@ -176,6 +177,7 @@ public sealed class GitWorkspace
                 branch = requestedBase;
             }
             _preparedIntegrationBranch = requestedBase;
+            IntegrationTipSha = await FetchRemoteBranchHeadAsync(requestedBase, ct);
             if (branch != requested && branch != _workBranch)
                 _log($"branch '{requested}' not found on origin; falling back to base branch '{branch}'");
 

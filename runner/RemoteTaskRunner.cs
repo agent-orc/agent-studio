@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AgentStudio.CliHosting;
 using AgentStudio.TaskServer.Contracts;
 
 /// <summary>
@@ -19,6 +20,24 @@ using AgentStudio.TaskServer.Contracts;
 public sealed class RemoteTaskRunner
 {
     internal const int MaxEnvironmentPreparationAttempts = 3;
+
+    internal static bool HasLocalSession(string provider, string taskKey, string sessionId)
+    {
+        if (!Guid.TryParse(sessionId, out _)) return false;
+        try
+        {
+            return TaskCleanContextStore.TryGetExistingHome(provider, taskKey, out var home)
+                   && home is not null
+                   && Directory.EnumerateFiles(home, $"*{sessionId}*", SearchOption.AllDirectories).Any();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    private static long? AddUsage(long? prior, long? current)
+        => prior.HasValue || current.HasValue ? (prior ?? 0) + (current ?? 0) : null;
 
     private readonly RunnerOptions _options;
     private readonly TaskServerClient _client;
@@ -628,7 +647,8 @@ public sealed class RemoteTaskRunner
                     teardown,
                     workspace.BaseSha,
                     envelopeDigest,
-                    _options.Hostname);
+                    _options.Hostname,
+                    _state.LoadAll().FirstOrDefault(item => item.Lease.LeaseId == lease.LeaseId)?.MechanicalRound);
                 if (durableCompletion.GateItems is { Count: > 0 })
                 {
                     _log(
@@ -1109,16 +1129,67 @@ public sealed class RemoteTaskRunner
         }
         else
         {
-            var taskPrompt = await _client.ReadTaskFileAsync(taskKey, "prompt.md", shutdown)
-                             ?? throw new InvalidOperationException($"Task '{taskKey}' has no prompt.md to run.");
-            prompt = RemoteRunPrompt.Build(
-                taskPrompt,
-                runSpec?.ModeFraming,
-                ResultsDir(taskKey),
-                artifactLimits);
-            shipper.Add("system", string.IsNullOrWhiteSpace(runSpec?.ModeFraming)
-                ? "[runner] results-dir context + remote-completion-protocol appended to task prompt"
-                : "[runner] server-composed mode framing + results-dir context + remote-completion-protocol appended to task prompt");
+            var candidate = runSpec?.MechanicalResume;
+            var effectiveCli = AgentCliProcess.Resolve(_options, runSpec).CliType;
+            var sessionExists = candidate is not null
+                                && HasLocalSession(effectiveCli, taskKey, candidate.SessionId);
+            var resume = MechanicalResumePolicy.Decide(
+                candidate, taskKey, effectiveCli, runSpec?.ContextMode,
+                slot.ProjectId, workspace.RepositoryUrl, workspace.RepoPath,
+                workspace.WorkBranch, workspace.BaseSha, DateTime.UtcNow, sessionExists);
+            if (resume.Resume && candidate!.Steer.Length > 4096)
+                resume = new MechanicalResumeDecision(false, "steer-too-large");
+            if (resume.Resume && _options.ExecEngine != RunnerOptions.ExecEngineCar
+                && string.IsNullOrWhiteSpace(_options.CliResumeArgs))
+                resume = new MechanicalResumeDecision(false, "resume-transport-unavailable");
+            if (resume.Resume)
+            {
+                prompt = RemoteRunPrompt.BuildMechanicalDelta(
+                    candidate!, workspace.IntegrationTipSha, ResultsDir(taskKey));
+                shipper.Add("system", $"[runner] mechanical-resume decision=resumed sourceAttempt={candidate!.AttemptId} session={candidate.SessionId} base={workspace.IntegrationTipSha ?? "unknown"}");
+            }
+            else
+            {
+                if (runSpec?.MechanicalRebaseRequested == true)
+                {
+                    runSpec = runSpec with
+                    {
+                        Model = runSpec.MechanicalFreshModel ?? candidate?.FreshModel ?? runSpec.Model,
+                        ThinkingLevel = runSpec.MechanicalFreshThinkingLevel
+                                        ?? candidate?.FreshThinkingLevel ?? runSpec.ThinkingLevel,
+                    };
+                    shipper.Add("system", $"[runner] mechanical-fresh-route model={runSpec.Model ?? "default"} thinking={runSpec.ThinkingLevel ?? "default"} reason={runSpec.MechanicalRouteReason ?? candidate?.RouteReason ?? "card-route"} policy={runSpec.MechanicalPolicyVersion ?? candidate?.PolicyVersion ?? "unknown"}");
+                }
+                var taskPrompt = await _client.ReadTaskFileAsync(taskKey, "prompt.md", shutdown)
+                                 ?? throw new InvalidOperationException($"Task '{taskKey}' has no prompt.md to run.");
+                prompt = RemoteRunPrompt.Build(
+                    taskPrompt, runSpec?.ModeFraming, ResultsDir(taskKey), artifactLimits);
+                shipper.Add("system", $"[runner] mechanical-resume decision=fresh reason={resume.Reason}; full task context composed");
+            }
+            slot = _state.Save(slot with
+            {
+                MechanicalRound = new MechanicalRoundReceiptDto(
+                    candidate?.SessionId,
+                    null,
+                    resume.Resume ? "resumed" : "fresh",
+                    resume.Resume ? null : resume.Reason,
+                    effectiveCli,
+                    taskKey,
+                    slot.ProjectId ?? string.Empty,
+                    workspace.RepositoryUrl ?? string.Empty,
+                    workspace.RepoPath,
+                    workspace.WorkBranch,
+                    workspace.BaseSha,
+                    null, null, null, null,
+                    PriorModel: candidate?.PriorModel,
+                    PriorThinkingLevel: candidate?.PriorThinkingLevel,
+                    SelectedModel: runSpec?.Model,
+                    SelectedThinkingLevel: runSpec?.ThinkingLevel,
+                    RouteReason: resume.Resume ? "same-session-lineage-matched" : runSpec?.MechanicalRouteReason ?? candidate?.RouteReason ?? "card-route",
+                    PolicyVersion: runSpec?.MechanicalPolicyVersion ?? candidate?.PolicyVersion,
+                    OperatorPinned: (runSpec?.MechanicalRouteReason ?? candidate?.RouteReason) == "operator-pin",
+                    MechanicalRebaseRequested: runSpec?.MechanicalRebaseRequested == true)
+            });
         }
 
         // T0b proof line: which CLI, model and reasoning level this run actually
@@ -1165,6 +1236,11 @@ public sealed class RemoteTaskRunner
         {
             process = DurableAgentProcess.Start(
                 _options, slot.WorkerDirectory, workspace.RepoPath, prompt, resultsDir,
+                argsOverride: slot.MechanicalRound is { ResumeDecision: "resumed", InputSessionId: { } mechanicalSession }
+                              && _options.ExecEngine != RunnerOptions.ExecEngineCar
+                    ? AgentCliProcess.SplitArgs(_options.CliResumeArgs!
+                        .Replace("{sessionId}", mechanicalSession, StringComparison.Ordinal))
+                    : null,
                 runSpec: runSpec,
                 runId: slot.AttemptId,
                 cleanContextKey: taskKey,
@@ -1173,7 +1249,11 @@ public sealed class RemoteTaskRunner
                 // `--no-restore` build resolves against a package folder the
                 // prepare restore never wrote to (TE-52).
                 environment: projectPreparation.Environment,
-                log: _log);
+                log: _log,
+                timeoutSeconds: slot.MechanicalRound?.ResumeDecision == "resumed"
+                    ? MechanicalResumePolicy.DurationCeilingSeconds : null,
+                resumeSessionId: slot.MechanicalRound?.ResumeDecision == "resumed"
+                    ? slot.MechanicalRound.InputSessionId : null);
         }
         catch (Exception ex)
         {
@@ -1244,6 +1324,26 @@ public sealed class RemoteTaskRunner
                         FinalizationStage = FinalizationRetryPolicy.ResultReadyStage,
                         LastOutputSequence = sequence,
                     });
+                    if (slot.MechanicalRound is { } round)
+                    {
+                        slot = _state.Save(slot with
+                        {
+                            MechanicalRound = round with
+                            {
+                                CapturedSessionId = result.CapturedSessionId,
+                                InputTokens = round.ResumeDecision == "fallback-fresh"
+                                    ? AddUsage(round.ResumeInputTokens, result.InputTokens) : result.InputTokens,
+                                OutputTokens = round.ResumeDecision == "fallback-fresh"
+                                    ? AddUsage(round.ResumeOutputTokens, result.OutputTokens) : result.OutputTokens,
+                                CacheReadTokens = round.ResumeDecision == "fallback-fresh"
+                                    ? AddUsage(round.ResumeCacheReadTokens, result.CacheReadTokens) : result.CacheReadTokens,
+                                DurationSeconds = slot.ProcessStartedAtUtc is { } started
+                                    ? Math.Max(0, (result.CompletedAtUtc - started).TotalSeconds)
+                                      + (round.ResumeDecision == "fallback-fresh" ? round.ResumeDurationSeconds ?? 0 : 0)
+                                    : round.ResumeDurationSeconds,
+                            }
+                        });
+                    }
                     ReportWorkerEnvelope(slot, shipper);
                     var processResult = new ProcessResult(result.ExitCode, result.StdOut, result.StdErr);
                     var invocation = AgentCliProcess.Resolve(_options, slot.RunSpec);
@@ -1313,6 +1413,75 @@ public sealed class RemoteTaskRunner
                             result.LaunchFailed,
                             sameSessionResumeAttempts,
                             invocation);
+                    if (slot.MechanicalRound is { ResumeDecision: "resumed" } resumedRound
+                        && (classified.Outcome.Kind is not (RunOutcomeKind.Done or RunOutcomeKind.NoOp)
+                            || result.TotalTokens is { } total && total > MechanicalResumePolicy.TokenCeiling))
+                    {
+                        var reason = result.StdErr.Contains("token ceiling", StringComparison.OrdinalIgnoreCase)
+                                     || result.TotalTokens > MechanicalResumePolicy.TokenCeiling
+                            ? "token-ceiling"
+                            : result.TimedOut ? "duration-ceiling"
+                            : result.StdErr.Contains("session", StringComparison.OrdinalIgnoreCase)
+                              || result.StdErr.Contains("conversation", StringComparison.OrdinalIgnoreCase)
+                                ? "missing-session"
+                                : classified.Outcome.Kind == RunOutcomeKind.Blocked
+                                    ? "semantic-conflict"
+                                    : "failed-deterministic-gate";
+                        shipper.Add("system", $"[runner] mechanical-resume fallback=fresh reason={reason}; route={invocation.CliType}/{invocation.Model ?? "default"}/{invocation.ThinkingLevel ?? "default"}");
+                        var authored = await _client.ReadTaskFileAsync(slot.TaskKey, "prompt.md", stopRun)
+                                       ?? throw new InvalidOperationException($"Task '{slot.TaskKey}' has no prompt.md for fresh fallback.");
+                        var fallbackCandidate = slot.RunSpec?.MechanicalResume;
+                        var freshRunSpec = slot.RunSpec is null ? null : slot.RunSpec with
+                        {
+                            Model = slot.RunSpec.MechanicalFreshModel ?? fallbackCandidate?.FreshModel ?? slot.RunSpec.Model,
+                            ThinkingLevel = slot.RunSpec.MechanicalFreshThinkingLevel
+                                            ?? fallbackCandidate?.FreshThinkingLevel ?? slot.RunSpec.ThinkingLevel,
+                        };
+                        shipper.Add("system", $"[runner] mechanical-fresh-route model={freshRunSpec?.Model ?? "default"} thinking={freshRunSpec?.ThinkingLevel ?? "default"} reason={freshRunSpec?.MechanicalRouteReason ?? fallbackCandidate?.RouteReason ?? "card-route"} policy={freshRunSpec?.MechanicalPolicyVersion ?? fallbackCandidate?.PolicyVersion ?? "unknown"}");
+                        var freshPrompt = RemoteRunPrompt.Build(
+                            authored, freshRunSpec?.ModeFraming, ResultsDir(slot.TaskKey));
+                        var freshSlot = _state.Save(slot with
+                        {
+                            WorkerDirectory = Path.Combine(slot.WorkerDirectory, "fallback-fresh"),
+                            ProcessId = null,
+                            ProcessStartedAtUtc = null,
+                            LastOutputSequence = 0,
+                            Phase = "launching",
+                            RunSpec = freshRunSpec,
+                            MechanicalRound = resumedRound with
+                            {
+                                ResumeDecision = "fallback-fresh",
+                                RejectionReason = reason,
+                                ResumeInputTokens = resumedRound.InputTokens,
+                                ResumeOutputTokens = resumedRound.OutputTokens,
+                                ResumeCacheReadTokens = resumedRound.CacheReadTokens,
+                                ResumeDurationSeconds = resumedRound.DurationSeconds,
+                                SelectedModel = freshRunSpec?.Model,
+                                SelectedThinkingLevel = freshRunSpec?.ThinkingLevel,
+                                RouteReason = freshRunSpec?.MechanicalRouteReason ?? fallbackCandidate?.RouteReason ?? "card-route",
+                                PolicyVersion = freshRunSpec?.MechanicalPolicyVersion ?? fallbackCandidate?.PolicyVersion,
+                                OperatorPinned = (freshRunSpec?.MechanicalRouteReason ?? fallbackCandidate?.RouteReason) == "operator-pin",
+                            },
+                        });
+                        var fresh = DurableAgentProcess.Start(
+                            _options, freshSlot.WorkerDirectory, workspace.RepoPath,
+                            freshPrompt, ResultsDir(slot.TaskKey),
+                            runSpec: freshRunSpec,
+                            runId: freshSlot.AttemptId,
+                            cleanContextKey: freshSlot.TaskKey,
+                            environment: DurableAgentProcess.TryReadEnvironment(slot.WorkerDirectory),
+                            log: _log);
+                        freshSlot = _state.Save(freshSlot with
+                        {
+                            ProcessId = fresh.ProcessId,
+                            ProcessStartedAtUtc = fresh.ProcessStartedAtUtc,
+                            Phase = "running",
+                        });
+                        _inventory.AttachProcess(freshSlot.RunId ?? freshSlot.AttemptId, fresh.ProcessId);
+                        return await AwaitDetachedAsync(
+                            freshSlot, workspace, shipper, outbox, stopRun, daemonShutdown,
+                            sameSessionResumeAttempts: ExecutionOutcomeAdapter.MaxSameSessionResumeAttempts);
+                    }
                     if (classified.Decision.RecoveryAction == ExecutionRecoveryAction.ResumeSameSession
                         && sameSessionResumeAttempts < ExecutionOutcomeAdapter.MaxSameSessionResumeAttempts)
                     {
@@ -1939,7 +2108,10 @@ public sealed class RemoteTaskRunner
             ArtifactManifestDigest: envelopeManifestDigest,
             IntegrationBranch: integrationBranch,
             NeedsInputMessage: outcome.NeedsInputMessage,
-            GateItems: gateItems), ct);
+            GateItems: gateItems,
+            MechanicalRound: _state.LoadAll()
+                .FirstOrDefault(item => string.Equals(item.Lease.LeaseId, lease.LeaseId, StringComparison.Ordinal))
+                ?.MechanicalRound), ct);
         _log($"remote-runner-completion recorded: outcome {resp?.Outcome}, state {resp?.TargetState}, result-envelope {(envelopeResultRef is null ? "absent" : "attached")}");
     }
 
@@ -2020,7 +2192,8 @@ public sealed class RemoteTaskRunner
         WorktreeTeardownResult teardown,
         string? baseSha,
         string? envelopeDigest,
-        string host)
+        string host,
+        MechanicalRoundReceiptDto? mechanicalRound = null)
     {
         var incident = MissingSentinelIncidentFor(
             outcome, outcomeDecision, teardown, baseSha, host);
@@ -2032,7 +2205,8 @@ public sealed class RemoteTaskRunner
             outcome.NeedsInputMessage,
             teardown.Branch,
             teardown.CommitSha,
-            incident is null ? null : [incident.GateItem]);
+            incident is null ? null : [incident.GateItem],
+            mechanicalRound);
     }
 
     /// <summary>

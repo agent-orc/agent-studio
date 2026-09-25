@@ -73,7 +73,8 @@ public sealed record RunAttemptDto(
     string? TerminalReason,
     IReadOnlyList<string> EvidenceDigests,
     AgentStudio.TaskServer.Contracts.ImmutableResultEnvelope? ResultEnvelope = null,
-    string? ResultEnvelopeDigest = null);
+    string? ResultEnvelopeDigest = null,
+    MechanicalRoundReceiptDto? MechanicalRound = null);
 
 public sealed record ReviewAttemptDto(
     string AttemptId,
@@ -178,6 +179,7 @@ public sealed record SettleRunAttemptRequest
     public bool RequireResultSha { get; init; } = true;
     public AgentStudio.TaskServer.Contracts.ImmutableResultEnvelope? ResultEnvelope { get; init; }
     public string? ResultEnvelopeDigest { get; init; }
+    public MechanicalRoundReceiptDto? MechanicalRound { get; init; }
 }
 
 public sealed record SettleReviewAttemptRequest(

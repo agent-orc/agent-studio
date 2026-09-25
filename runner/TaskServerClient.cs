@@ -1514,6 +1514,20 @@ public sealed class TaskServerClient : IDisposable
         }
     }
 
+    private static Contract.CodingSessionReceiptDto? ToContract(MechanicalRoundReceiptDto? receipt)
+        => receipt is null ? null : new Contract.CodingSessionReceiptDto(
+            receipt.InputSessionId, receipt.CapturedSessionId, receipt.ResumeDecision,
+            receipt.RejectionReason, receipt.Provider, receipt.CleanContextKey,
+            receipt.RepositoryId, receipt.RepositoryUrl, receipt.WorktreePath,
+            receipt.Branch, receipt.BaseSha, receipt.InputTokens,
+            receipt.OutputTokens, receipt.CacheReadTokens, receipt.DurationSeconds,
+            receipt.ResumeInputTokens, receipt.ResumeOutputTokens,
+            receipt.ResumeCacheReadTokens, receipt.ResumeDurationSeconds,
+            receipt.PriorModel, receipt.PriorThinkingLevel,
+            receipt.SelectedModel, receipt.SelectedThinkingLevel,
+            receipt.RouteReason, receipt.PolicyVersion, receipt.OperatorPinned,
+            receipt.MechanicalRebaseRequested);
+
     public async Task<RemoteRunCompletionResponse?> CompleteRunAsync(RemoteRunCompletionRequest req, CancellationToken ct)
     {
         if (!_useV1) return await PostJsonAsync<RemoteRunCompletionRequest, RemoteRunCompletionResponse>("/api/runner/completion", req, ct);
@@ -1535,7 +1549,8 @@ public sealed class TaskServerClient : IDisposable
                 SalvageCommitSha: req.SalvageRecoveryCommitSha ?? req.SalvageCommitSha,
                 // AGT-2820: gate items are not legacy-only. A completion that
                 // names an incident must name it on both planes.
-                GateItems: req.GateItems),
+                GateItems: req.GateItems,
+                CodingSession: ToContract(req.MechanicalRound)),
             ct);
         return new RemoteRunCompletionResponse(req.TaskKey, typedOutcome, "4-auto-review");
     }
@@ -1624,7 +1639,8 @@ public sealed class TaskServerClient : IDisposable
                         payload.NeedsInputMessage,
                         payload.SalvageBranch,
                         payload.SalvageCommitSha,
-                        payload.GateItems),
+                        payload.GateItems,
+                        ToContract(payload.MechanicalRound)),
                     ct);
                 return;
             }

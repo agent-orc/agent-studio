@@ -1687,6 +1687,13 @@ public sealed partial class TaskServerStore
             if (prior is not null)
             {
                 ValidateCompletionReplay(prior, request);
+                var existingSession = await ReadEventByIdempotencyKeyAsync(
+                    connection, transaction, $"coding-session:{runId}", ct);
+                var expectedSession = request.CodingSession is null
+                    ? null : JsonSerializer.Serialize(request.CodingSession, OutcomeJson);
+                if (!string.Equals(existingSession?.PayloadJson, expectedSession, StringComparison.Ordinal))
+                    throw new TaskServerConflictException(
+                        "completion-conflict", "The completed run has different coding session evidence.");
                 if (outcomePayload is not null)
                 {
                     var priorOutcome = await ReadEventByIdempotencyKeyAsync(
@@ -1784,6 +1791,24 @@ public sealed partial class TaskServerStore
                     ("$fence", request.Fence), ("$occurred", Iso(now)));
                 var persisted = await ReadEventByIdempotencyKeyAsync(connection, transaction, outcomeKey, ct);
                 ValidateEventReplay(persisted, runId, lease.TaskId, eventRequest);
+            }
+            if (request.CodingSession is not null)
+            {
+                var sessionKey = $"coding-session:{runId}";
+                var sessionPayload = JsonSerializer.Serialize(request.CodingSession, OutcomeJson);
+                await ExecuteAsync(connection, """
+                    INSERT INTO events(event_id, run_id, task_id, kind, payload_json, idempotency_key, fence, occurred_at)
+                    VALUES ($event, $run, $task, 'coding.session.receipt', $payload, $key, $fence, $occurred)
+                    ON CONFLICT(idempotency_key) DO NOTHING;
+                    """, ct, transaction,
+                    ("$event", DeterministicId("evt", sessionKey)), ("$run", runId),
+                    ("$task", lease.TaskId), ("$payload", sessionPayload),
+                    ("$key", sessionKey), ("$fence", request.Fence), ("$occurred", Iso(now)));
+                var persistedSession = await ReadEventByIdempotencyKeyAsync(
+                    connection, transaction, sessionKey, ct);
+                if (!string.Equals(persistedSession?.PayloadJson, sessionPayload, StringComparison.Ordinal))
+                    throw new TaskServerConflictException(
+                        "completion-conflict", "The coding session receipt changed within the fenced run.");
             }
             providerRecovery = await PlanProviderRejectionAsync(
                 connection, transaction, lease.TaskId, request, ct);

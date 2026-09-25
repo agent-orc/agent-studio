@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentRunner;
 
@@ -42,7 +43,8 @@ internal sealed record DetachedJobSpec(
     // NUGET_PACKAGES / NPM_CONFIG_CACHE / PLAYWRIGHT_BROWSERS_PATH locations
     // repository preparation restored into. Additive like the blocks above; a
     // pre-TE-52 spec.json deserialises with null and simply binds nothing.
-    IReadOnlyDictionary<string, string>? Environment = null);
+    IReadOnlyDictionary<string, string>? Environment = null,
+    long? TokenCeiling = null);
 
 internal sealed record DetachedJobLogLine(long Sequence, DateTime Timestamp, string Stream, string Text);
 
@@ -52,7 +54,12 @@ internal sealed record DetachedJobResult(
     string StdErr,
     bool TimedOut,
     DateTime CompletedAtUtc,
-    bool LaunchFailed = false);
+    bool LaunchFailed = false,
+    string? CapturedSessionId = null,
+    long? InputTokens = null,
+    long? OutputTokens = null,
+    long? CacheReadTokens = null,
+    long? TotalTokens = null);
 
 internal sealed record DetachedJobProcessObservation(
     bool IsLive,
@@ -102,7 +109,8 @@ internal sealed class DurableAgentProcess
         string? resumeSessionId = null,
         string? cleanContextKey = null,
         IReadOnlyDictionary<string, string>? environment = null,
-        Action<string>? log = null)
+        Action<string>? log = null,
+        int? timeoutSeconds = null)
     {
         Directory.CreateDirectory(workerDirectory);
         var specPath = Path.Combine(workerDirectory, "spec.json");
@@ -116,7 +124,8 @@ internal sealed class DurableAgentProcess
             runId,
             resumeSessionId,
             cleanContextKey,
-            environment);
+            environment,
+            timeoutSeconds);
         File.WriteAllText(specPath, JsonSerializer.Serialize(spec, Json));
 
         var executable = Environment.ProcessPath
@@ -193,7 +202,8 @@ internal sealed class DurableAgentProcess
         string? runId = null,
         string? resumeSessionId = null,
         string? cleanContextKey = null,
-        IReadOnlyDictionary<string, string>? environment = null)
+        IReadOnlyDictionary<string, string>? environment = null,
+        int? timeoutSeconds = null)
     {
         // One resolution truth for both engines: which CLI runs (card wish vs.
         // host binaries, foreign-CLI fallback drops the model pins) comes from
@@ -207,7 +217,7 @@ internal sealed class DurableAgentProcess
             Path.GetFullPath(repoPath),
             prompt,
             Path.GetFullPath(resultsDirectory),
-            options.RunTimeoutSeconds,
+            timeoutSeconds ?? options.RunTimeoutSeconds,
             invocation.CliType,
             invocation.Model,
             invocation.ThinkingLevel,
@@ -217,7 +227,8 @@ internal sealed class DurableAgentProcess
             RunId: runId,
             ResumeSessionId: resumeSessionId,
             CleanContextKey: cleanContextKey,
-            Environment: environment);
+            Environment: environment,
+            TokenCeiling: resumeSessionId is null ? null : MechanicalResumePolicy.TokenCeiling);
     }
 
     /// <summary>
@@ -458,6 +469,8 @@ internal sealed class DurableAgentProcess
         Directory.CreateDirectory(spec.ResultsDirectory);
         long sequence = 0;
         var logGate = new object();
+        var streamedUsage = new MechanicalTokenUsage();
+        string? capturedSessionId = null;
         using var logStream = new FileStream(
             logPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
         using var logWriter = new StreamWriter(logStream) { AutoFlush = true };
@@ -466,7 +479,15 @@ internal sealed class DurableAgentProcess
         {
             var entry = new DetachedJobLogLine(Interlocked.Increment(ref sequence), DateTime.UtcNow, stream, text);
             var json = JsonSerializer.Serialize(entry, Json);
-            lock (logGate) logWriter.WriteLine(json);
+            lock (logGate)
+            {
+                if (stream == "stdout")
+                {
+                    streamedUsage.Observe(text);
+                    capturedSessionId ??= ProviderOutputEvidenceExtractor.Extract(text).SessionId;
+                }
+                logWriter.WriteLine(json);
+            }
         }
 
         ProcessResult processResult;
@@ -503,6 +524,8 @@ internal sealed class DurableAgentProcess
                     Append("system", novelty.ToMarker());
             }
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(spec.TimeoutSeconds));
+            var tokenMeter = new MechanicalTokenUsage();
+            var tokenCeilingReached = false;
             try
             {
                 var environment = new Dictionary<string, string?>
@@ -523,6 +546,16 @@ internal sealed class DurableAgentProcess
                     line =>
                     {
                         Append("stdout", line);
+                        if (spec.TokenCeiling is { } ceiling)
+                        {
+                            tokenMeter.Observe(line);
+                            if (!tokenCeilingReached && tokenMeter.Snapshot().Total is { } used && used >= ceiling)
+                            {
+                                tokenCeilingReached = true;
+                                Append("system", $"[runner] mechanical token ceiling reached tokens={used} ceiling={ceiling}");
+                                timeout.Cancel();
+                            }
+                        }
                         ObserveUnclassifiedFrame(line);
                         trace.WriteFromRawLine(
                             spec.CliType,
@@ -546,8 +579,11 @@ internal sealed class DurableAgentProcess
             catch (OperationCanceledException) when (timeout.IsCancellationRequested)
             {
                 timedOut = true;
-                Append("system", $"[runner] run exceeded {spec.TimeoutSeconds}s timeout");
-                processResult = new ProcessResult(124, string.Empty, "Runner timeout");
+                Append("system", tokenCeilingReached
+                    ? "[runner] mechanical token ceiling stopped the run"
+                    : $"[runner] run exceeded {spec.TimeoutSeconds}s timeout");
+                processResult = new ProcessResult(124, string.Empty,
+                    tokenCeilingReached ? "Mechanical token ceiling" : "Runner timeout");
             }
             catch (Exception ex)
             {
@@ -564,13 +600,19 @@ internal sealed class DurableAgentProcess
         if (shutdownBuildServers)
             WorkerBuildServerHygiene.ShutdownBuildServers(message => Append("system", message));
 
+        var tokens = streamedUsage.Snapshot();
         var result = new DetachedJobResult(
             processResult.ExitCode,
             processResult.StdOut,
             processResult.StdErr,
             timedOut,
             DateTime.UtcNow,
-            launchFailed);
+            launchFailed,
+            capturedSessionId,
+            tokens.Input,
+            tokens.Output,
+            tokens.CacheRead,
+            tokens.Total);
         await WriteAtomicAsync(resultPath, JsonSerializer.Serialize(result, Json));
         return processResult.ExitCode;
     }

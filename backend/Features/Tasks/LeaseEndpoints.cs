@@ -245,6 +245,9 @@ public static class LeaseEndpoints
             CliQuotaWaitPolicyService quotaWaitPolicy,
             QuotaAdmissionService quotaAdmission,
             QuotaAdmissionRecorder quotaAdmissionRecorder,
+            AttemptAuthorityService attemptAuthority,
+            PipelineExecutionLog pipelineExecution,
+            ModelRoutingPolicyRegistry modelRouting,
             CancellationToken ct) =>
         {
             var logger = loggerFactory.CreateLogger("AgentStudio.Tasks.RemoteRunnerClaim");
@@ -509,8 +512,15 @@ public static class LeaseEndpoints
                                     settings,
                                     prompts,
                                     dossierMaintenance,
-                                    ReadPersistedQuotaPlan(replayedTask)),
-                                replayedTask))));
+                                    ReadPersistedQuotaPlan(replayedTask),
+                                    modelRouting),
+                                replayedTask) with
+                            {
+                                MechanicalResume = BuildMechanicalResumeCandidate(
+                                    replayedTask, attemptAuthority, pipelineExecution,
+                                    BuildRunSpec(replayedTask, settings, prompts,
+                                        dossierMaintenance, ReadPersistedQuotaPlan(replayedTask), modelRouting))
+                            })));
                     }
                 }
 
@@ -908,7 +918,12 @@ public static class LeaseEndpoints
 
                 var taskKey = candidate.Key ?? candidate.TaskKey;
                 if (string.IsNullOrWhiteSpace(taskKey)) taskKey = candidate.Id;
-                var runSpec = BuildRunSpec(candidate, settings, prompts, dossierMaintenance, candidateQuotaPlan);
+                var runSpec = BuildRunSpec(candidate, settings, prompts, dossierMaintenance, candidateQuotaPlan, modelRouting);
+                runSpec = runSpec with
+                {
+                    MechanicalResume = BuildMechanicalResumeCandidate(
+                        candidate, attemptAuthority, pipelineExecution, runSpec)
+                };
                 PromptEnrichmentPreparation? enrichmentPreparation = null;
                 try
                 {
@@ -1363,6 +1378,7 @@ public static class LeaseEndpoints
                 RequireResultSha = !isEpicPlanning && outcome is ("done" or "noop"),
                 ResultEnvelope = resultEnvelope,
                 ResultEnvelopeDigest = resultEnvelopeDigest,
+                MechanicalRound = req.MechanicalRound,
             });
             if (!settled.Accepted)
             {
@@ -1375,6 +1391,7 @@ public static class LeaseEndpoints
                     : Results.Conflict(response);
             }
             var settledRun = settled.RunAttempt ?? authority.GetRun(attemptId);
+            MechanicalRoundLedger.Append(task.FolderPath, attemptId, outcome, resultSha, req.MechanicalRound);
             var terminalAt = settledRun?.TerminalAt ?? DateTime.UtcNow;
             var terminalResult = settledRun?.TerminalOutcome ?? outcome;
             if (!sessions.CloseSessionEvent(task.Id, new RunSessionCloseout
@@ -1383,6 +1400,8 @@ public static class LeaseEndpoints
                     FinishedAt = terminalAt,
                     Result = terminalResult,
                     Status = RunCloseoutPolicy.StatusFor(terminalResult, recordedStatus: null),
+                    CapturedSessionId = req.MechanicalRound?.CapturedSessionId,
+                    InputSessionId = req.MechanicalRound?.InputSessionId,
                     ExitCode = req.ExitCode
                 }, task.WatchPath))
             {
@@ -2490,7 +2509,8 @@ public static class LeaseEndpoints
         ProjectSettingsService settings,
         AgentStudio.Prompts.RuntimePromptService prompts,
         DossierMaintenanceService? dossierMaintenance,
-        QuotaAdmissionPlan? admissionPlan = null)
+        QuotaAdmissionPlan? admissionPlan,
+        ModelRoutingPolicyRegistry routingPolicy)
     {
         var cliType = CliTypes.Normalize(admissionPlan?.CliType ?? task.CliType);
         var projectSettings = settings.Get(task.ProjectName);
@@ -2516,6 +2536,10 @@ public static class LeaseEndpoints
             : ModelMetadataRegistry.ResolveThinkingLevel(cliType, model, thinkingLevel);
 
         var modeFraming = BuildModeFraming(task, prompts, dossierMaintenance);
+        var mechanicalRebase = IsRebaseOnlyIntent(task.PendingIntent?.SavedReason);
+        (string Model, string ThinkingLevel, string Reason)? freshRoute = mechanicalRebase
+            ? MechanicalFreshRoute(task, cliType, model, thinkingLevel, routingPolicy)
+            : null;
 
         return new RunSpecDto(
             cliType,
@@ -2523,7 +2547,77 @@ public static class LeaseEndpoints
             thinkingLevel,
             settings.ResolveCliMode(task.ProjectName, cliType).Mode,
             settings.ResolveContextMode(task.ProjectName, cliType, task.ContextMode).Mode,
-            modeFraming);
+            modeFraming,
+            MechanicalRebaseRequested: mechanicalRebase,
+            MechanicalFreshModel: freshRoute?.Model,
+            MechanicalFreshThinkingLevel: freshRoute?.ThinkingLevel,
+            MechanicalRouteReason: freshRoute?.Reason,
+            MechanicalPolicyVersion: mechanicalRebase ? routingPolicy.Policy.Version : null);
+    }
+
+    internal static (string Model, string ThinkingLevel, string Reason) MechanicalFreshRoute(
+        TaskInfo task, string cliType, string? model, string? thinkingLevel,
+        ModelRoutingPolicyRegistry policy)
+    {
+        var floor = policy.Policy.Tiers.Single(tier => tier.Id == "sol-xhigh");
+        var vendorRoute = CliTypes.Normalize(cliType) == CliTypes.Claude
+                          && floor.VendorOverrides.TryGetValue("anthropic", out var overrideRoute)
+            ? overrideRoute
+            : new ModelRoutingVendorOverride { Model = floor.Model, ThinkingLevel = floor.ThinkingLevel };
+        var pinned = task.ModelExplicit && !string.IsNullOrWhiteSpace(model);
+        return pinned
+            ? (model!, thinkingLevel ?? vendorRoute.ThinkingLevel, "operator-pin")
+            : (vendorRoute.Model, vendorRoute.ThinkingLevel, "semantic-conflict-floor:sol-xhigh");
+    }
+
+    internal static bool IsRebaseOnlyIntent(string? reason)
+        => string.Equals(reason, AcceptedIntegrationFailureCodes.SourceNeedsRebase, StringComparison.Ordinal)
+           || reason?.StartsWith(
+               $"{TaskIntegrationRecoveryService.AcceptanceRailSource}:{AcceptedIntegrationFailureCodes.SourceNeedsRebase}:retry-",
+               StringComparison.Ordinal) == true;
+
+    private static MechanicalResumeCandidateDto? BuildMechanicalResumeCandidate(
+        TaskInfo task,
+        AttemptAuthorityService authority,
+        PipelineExecutionLog pipelineExecution,
+        RunSpecDto runSpec)
+    {
+        // Only a typed rebase-only recovery is eligible. Merge conflicts and
+        // attribution ambiguity need a fresh, policy-qualified semantic round.
+        if (!IsRebaseOnlyIntent(task.PendingIntent?.SavedReason)) return null;
+        var subject = ReviewSubjectStore.Read(task.FolderPath);
+        if (subject is null) return null;
+        var previous = authority.GetRun(subject.RunAttemptId);
+        var receipt = previous?.MechanicalRound;
+        if (receipt is null) return null;
+        var branch = TaskIntegrationBranch.NormalizeRef(subject.IntegrationBranch)
+                     ?? "refs/heads/develop";
+        var conflicts = pipelineExecution.Read(task.FolderPath)?.Steps
+            .LastOrDefault(step => step.StepId == PipelineCatalogue.MergeIntoDevelopStepId)
+            ?.ConflictReport?.ConflictedFiles ?? [];
+        return new MechanicalResumeCandidateDto(
+            task.Key ?? task.TaskKey ?? task.Id,
+            previous!.AttemptId,
+            receipt.CapturedSessionId ?? string.Empty,
+            receipt.Provider,
+            receipt.CleanContextKey,
+            receipt.RepositoryId,
+            receipt.RepositoryUrl,
+            receipt.WorktreePath,
+            receipt.Branch,
+            subject.ResultSha,
+            branch,
+            conflicts,
+            task.PendingIntent!.Prompt,
+            "Resolve only the branch divergence, then run the targeted checks and deterministic delivery gate.",
+            previous.TerminalAt ?? DateTime.MinValue,
+            receipt.ResumeDecision,
+            runSpec.MechanicalFreshModel ?? runSpec.Model ?? string.Empty,
+            runSpec.MechanicalFreshThinkingLevel ?? runSpec.ThinkingLevel ?? string.Empty,
+            runSpec.MechanicalRouteReason ?? "card-route",
+            runSpec.MechanicalPolicyVersion ?? string.Empty,
+            receipt.SelectedModel,
+            receipt.SelectedThinkingLevel);
     }
 
     internal static string? BuildModeFraming(

@@ -20,6 +20,7 @@ tools/*
 # pre-flight before the backend boots. Tracked so stable picks it up via
 # update-stable.sh; everything else under tools/ stays local.
 !tools/check-cli-shims.sh
+!tools/mechanical-resume-pilot.py
 # Whitelisted: the ATB0001 silent-catch Roslyn analyzer. The backend csproj
 # references it as an Analyzer ProjectReference, so it must be tracked or the
 # build breaks on a fresh checkout.

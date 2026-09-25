@@ -105,6 +105,8 @@ internal static class CarWorkerExecution
         var stderr = new BoundedOutputBuffer(256 * 1024);
         var finished = new TaskCompletionSource<CliRunInfo>(TaskCreationOptions.RunContinuationsAsynchronously);
         var processStarted = 0;
+        var tokenMeter = new MechanicalTokenUsage();
+        var tokenCeilingReached = 0;
 
         void OnOutput(string id, CarOutputLine line)
         {
@@ -112,6 +114,16 @@ internal static class CarWorkerExecution
             if (line.Stream == "stdout") stdout.Append(line.Text);
             else if (line.Stream == "stderr") stderr.Append(line.Text);
             append(line.Stream, line.Text);
+            if (line.Stream == "stdout" && spec.TokenCeiling is { } ceiling)
+            {
+                tokenMeter.Observe(line.Text);
+                if (tokenMeter.Snapshot().Total is { } used && used >= ceiling
+                    && Interlocked.Exchange(ref tokenCeilingReached, 1) == 0)
+                {
+                    append("system", $"[runner] mechanical token ceiling reached tokens={used} ceiling={ceiling}");
+                    driver.Stop(runId, RunStopReason.Watchdog);
+                }
+            }
             if (line.Stream == "stdout"
                 && protocolNovelty.TryObserveFrame(line.Text, out var novelty))
                 append("system", novelty.ToMarker());
@@ -212,6 +224,8 @@ internal static class CarWorkerExecution
             }
 
             var info = await finished.Task;
+            if (Volatile.Read(ref tokenCeilingReached) != 0)
+                return (new ProcessResult(124, stdout.ToString(), "Mechanical token ceiling"), true, false);
             var exitCode = info.ExitCode ?? 125;
             return (
                 new ProcessResult(exitCode, stdout.ToString(), stderr.ToString()),

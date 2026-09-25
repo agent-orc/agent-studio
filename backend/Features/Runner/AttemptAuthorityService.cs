@@ -429,6 +429,7 @@ public sealed class AttemptAuthorityService
             run.TerminalOutcome = normalizedOutcome;
             run.TerminalReason = NormalizeNull(request.Reason);
             run.ResultSha = NormalizeNull(request.ResultSha)?.ToLowerInvariant();
+            run.MechanicalRound = request.MechanicalRound;
             if (run.State == AttemptLifecycleState.Completed
                 && CurrentReview(run.TaskKey) is { } olderReview
                 && !Terminal(olderReview.State)
@@ -2455,7 +2456,8 @@ public sealed class AttemptAuthorityService
         TerminalReason: run.TerminalReason,
         EvidenceDigests: run.EvidenceDigests,
         ResultEnvelope: run.ResultEnvelope,
-        ResultEnvelopeDigest: run.ResultEnvelopeDigest);
+        ResultEnvelopeDigest: run.ResultEnvelopeDigest,
+        MechanicalRound: run.MechanicalRound);
     private static ReviewAttemptDto ToDto(ReviewAttemptRecord review) => new(
         AttemptId: review.AttemptId,
         TaskKey: review.TaskKey,
@@ -2573,6 +2575,7 @@ public sealed class AttemptAuthorityService
         public List<string> EvidenceDigests { get; set; } = [];
         public AgentStudio.TaskServer.Contracts.ImmutableResultEnvelope? ResultEnvelope { get; set; }
         public string? ResultEnvelopeDigest { get; set; }
+        public AgentStudio.Shared.MechanicalRoundReceiptDto? MechanicalRound { get; set; }
         public HashSet<string> IdempotencyKeys { get; set; } = [];
     }
 

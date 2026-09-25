@@ -261,7 +261,66 @@ public sealed record RunSpecDto(
     string? ContextMode = null,
     // Server-composed mode framing and prompt enrichment. Keeping both in one
     // field gives daemon claims and persisted slots one deterministic seam.
-    string? ModeFraming = null);
+    string? ModeFraming = null,
+    MechanicalResumeCandidateDto? MechanicalResume = null,
+    bool MechanicalRebaseRequested = false,
+    string? MechanicalFreshModel = null,
+    string? MechanicalFreshThinkingLevel = null,
+    string? MechanicalRouteReason = null,
+    string? MechanicalPolicyVersion = null);
+
+public sealed record MechanicalResumeCandidateDto(
+    string TaskKey,
+    string AttemptId,
+    string SessionId,
+    string Provider,
+    string CleanContextKey,
+    string RepositoryId,
+    string RepositoryUrl,
+    string WorktreePath,
+    string Branch,
+    string ResultSha,
+    string IntegrationBranch,
+    IReadOnlyList<string> ConflictPaths,
+    string Steer,
+    string VerificationPlan,
+    DateTime CapturedAtUtc,
+    string PriorResumeDecision,
+    string FreshModel,
+    string FreshThinkingLevel,
+    string RouteReason,
+    string PolicyVersion,
+    string? PriorModel,
+    string? PriorThinkingLevel);
+
+public sealed record MechanicalRoundReceiptDto(
+    string? InputSessionId,
+    string? CapturedSessionId,
+    string ResumeDecision,
+    string? RejectionReason,
+    string Provider,
+    string CleanContextKey,
+    string RepositoryId,
+    string RepositoryUrl,
+    string WorktreePath,
+    string Branch,
+    string? BaseSha,
+    long? InputTokens,
+    long? OutputTokens,
+    long? CacheReadTokens,
+    double? DurationSeconds,
+    long? ResumeInputTokens = null,
+    long? ResumeOutputTokens = null,
+    long? ResumeCacheReadTokens = null,
+    double? ResumeDurationSeconds = null,
+    string? PriorModel = null,
+    string? PriorThinkingLevel = null,
+    string? SelectedModel = null,
+    string? SelectedThinkingLevel = null,
+    string? RouteReason = null,
+    string? PolicyVersion = null,
+    bool OperatorPinned = false,
+    bool MechanicalRebaseRequested = false);
 
 public sealed record RunnerClaimResponse(
     RunnerClaimStatus Status,
@@ -421,7 +480,8 @@ public sealed record RemoteRunCompletionRequest(
     string? ImmutableResultRef = null,
     string? ArtifactManifestDigest = null,
     string? IntegrationBranch = null,
-    string? NeedsInputMessage = null);
+    string? NeedsInputMessage = null,
+    MechanicalRoundReceiptDto? MechanicalRound = null);
 
 public sealed record RemoteRunCompletionResponse(
     string TaskKey,

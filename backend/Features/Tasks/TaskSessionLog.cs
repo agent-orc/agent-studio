@@ -17,6 +17,8 @@ public sealed record RunSessionCloseout
     public string? Status { get; init; }
     public int? ExitCode { get; init; }
     public double? DurationSeconds { get; init; }
+    public string? CapturedSessionId { get; init; }
+    public string? InputSessionId { get; init; }
 }
 
 /// <summary>
@@ -189,7 +191,9 @@ public class TaskSessionLog
                     Result = closeout.Result ?? evt.Result,
                     Status = closeout.Status ?? evt.Status,
                     ExitCode = closeout.ExitCode ?? evt.ExitCode,
-                    DurationSeconds = duration ?? evt.DurationSeconds
+                    DurationSeconds = duration ?? evt.DurationSeconds,
+                    CapturedSessionId = closeout.CapturedSessionId ?? evt.CapturedSessionId,
+                    InputSessionId = closeout.InputSessionId ?? evt.InputSessionId
                 };
             });
     }

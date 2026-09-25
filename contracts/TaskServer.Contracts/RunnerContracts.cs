@@ -248,4 +248,35 @@ public sealed record CompleteRunRequest(
     // dropped them, so a missing-terminal-sentinel incident reported through
     // the outbox reached the card as prose only. Additive and optional: an
     // older runner omits the field and the server records no gate item.
-    IReadOnlyList<string>? GateItems = null);
+    IReadOnlyList<string>? GateItems = null,
+    CodingSessionReceiptDto? CodingSession = null);
+
+/// <summary>Fenced, per-generation coding session and usage fact kept on the task event ledger.</summary>
+public sealed record CodingSessionReceiptDto(
+    string? InputSessionId,
+    string? CapturedSessionId,
+    string ResumeDecision,
+    string? RejectionReason,
+    string Provider,
+    string CleanContextKey,
+    string RepositoryId,
+    string RepositoryUrl,
+    string WorktreePath,
+    string Branch,
+    string? BaseSha,
+    long? InputTokens,
+    long? OutputTokens,
+    long? CacheReadTokens,
+    double? DurationSeconds,
+    long? ResumeInputTokens,
+    long? ResumeOutputTokens,
+    long? ResumeCacheReadTokens,
+    double? ResumeDurationSeconds,
+    string? PriorModel,
+    string? PriorThinkingLevel,
+    string? SelectedModel,
+    string? SelectedThinkingLevel,
+    string? RouteReason,
+    string? PolicyVersion,
+    bool OperatorPinned,
+    bool MechanicalRebaseRequested);
