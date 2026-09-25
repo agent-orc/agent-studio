@@ -156,7 +156,7 @@ svg.diagram .num { font: 700 10px var(--article-sans); fill: var(--gate-note); l
       <li><a href="#sect6">&sect;6 Alternatives</a></li>
       <li><a href="#sect7">&sect;7 Recommendation</a></li>
       <li><a href="#sect8">&sect;8 Evidence</a></li>
-      <li><a href="#sect9">&sect;9 Open decisions</a></li>
+      <li><a href="#sect9">&sect;9 Operator decisions</a></li>
       <li><a href="#sect10">&sect;10 Evidence appendix: two closed measurements</a></li>
       <li><a href="#sect11">&sect;11 Consolidation record and sources</a></li>
     </ul>
@@ -679,94 +679,102 @@ svg.diagram .num { font: 700 10px var(--article-sans); fill: var(--gate-note); l
     <a class="evidence" href="#d10"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b>Batch green rate and same-SHA re-test rate, not yet measured</b><small>Both are derivable from existing pipeline data without building anything. They decide D5, D6 and D10. No number in this Dossier should be read as if they had already been measured.</small></span></a>
   </div>
 
-  <h2 id="sect9" data-concept-section="open-decisions" data-document-section="open-decisions"><span class="number">&sect;9</span> Open decisions</h2>
-  <p>Ten choices carried forward from the three merged Dossiers. None has been decided; none of the three
-  sources ever reached an operator sight review. Recommended options are marked. Decisions D1 to D6
-  govern the batch gate, D7 to D9 the remote gate, D10 the validation economy.</p>
+  <h2 id="sect9" data-concept-section="open-decisions" data-document-section="open-decisions"><span class="number">&sect;9</span> Operator decisions</h2>
+  <p>The operator decided D1 to D10 on 2026-09-25, adopting option A in each case. Decisions D1 to D6
+  govern the batch gate, D7 to D9 the remote gate, and D10 the validation economy.</p>
 
   <h3>Batch gate</h3>
-  <div class="decision" id="d1" data-decision-id="gate-ordering" data-decision-kind="single" data-decision-label="When does the full suite run?">
+  <div class="decision" id="d1" data-decision-id="gate-ordering" data-decision-kind="single" data-decision-label="When does the full suite run?" data-decision-status="decided" data-selected-option-id="review-first-final">
     <h3>D1 &middot; When does the full suite run?</h3>
     <label data-option-id="review-first-final" data-option-label="A &middot; Review-first, final gate only (recommended)"><input type="radio" name="gate-ordering" value="review-first-final" checked><span><b>A &middot; Model review and cheap deterministic checks every round; the full suite only as the final gate, once per batch (recommended)</b><span class="d">The operator amendment of 18 August 2026. Removes the suite runs spent on rounds that die at review or on a conflict before any batching effect is counted. Requires a trustworthy &ldquo;no further round expected&rdquo; signal.</span></span></label>
     <label data-option-id="per-round" data-option-label="B &middot; Full suite every round"><input type="radio" name="gate-ordering" value="per-round"><span><b>B &middot; Keep the full suite on every round, batched</b><span class="d">Earliest deterministic feedback, and no new signal to get right; keeps paying for suite runs on rounds that were never going to ship.</span></span></label>
     <label data-option-id="per-round-scoped" data-option-label="C &middot; Scoped suite per round, full suite at the end"><input type="radio" name="gate-ordering" value="per-round-scoped"><span><b>C &middot; Deterministically scoped suite every round, full suite once at the end</b><span class="d">Middle path; its value depends entirely on the folder-to-test-project map staying current, which is the upkeep risk named in &sect;5.</span></span></label>
     <div data-comment="Note for implementation (optional)"><textarea placeholder="Note for implementation (optional)"></textarea></div>
+  <p><b>Decision, 2026-09-25, operator: A.</b> Model review and cheap checks run each round; the full suite runs once as the final batch gate.</p>
   </div>
 
-  <div class="decision" id="d2" data-decision-id="batch-strategy" data-decision-kind="single" data-decision-label="Primary throughput strategy">
+  <div class="decision" id="d2" data-decision-id="batch-strategy" data-decision-kind="single" data-decision-label="Primary throughput strategy" data-decision-status="decided" data-selected-option-id="batch-primary">
     <h3>D2 &middot; Primary throughput strategy</h3>
     <label data-option-id="batch-primary" data-option-label="A &middot; Batch gate as primary, gate host as scale-out (recommended)"><input type="radio" name="batch-strategy" value="batch-primary" checked><span><b>A &middot; Batch gate is the primary control; a separate gate host is the measured scale-out; risk-scaled exemptions only for audited no-code classes (recommended)</b><span class="d">Addresses the observed concurrency directly while keeping one complete suite. A and C compose cleanly: one dedicated host runs one batch gate at a time.</span></span></label>
     <label data-option-id="risk-only" data-option-label="B &middot; Risk classification only"><input type="radio" name="batch-strategy" value="risk-only"><span><b>B &middot; Risk-scaled per-task gates only</b><span class="d">Smallest change, but classification becomes correctness-sensitive for mixed changes, and code cards still create concurrent suites. Not sufficient as the only guard for code-bearing changes.</span></span></label>
     <label data-option-id="host-only" data-option-label="C &middot; Provision a gate host instead"><input type="radio" name="batch-strategy" value="host-only"><span><b>C &middot; Provision a separate gate host instead of batching</b><span class="d">Preserves simple per-card attribution and needs no manifest authority, at the cost of a host plus provisioning, toolchain drift and capacity governance; several expensive suites can still run at once.</span></span></label>
     <div data-comment="Note for implementation (optional)"><textarea placeholder="Note for implementation (optional)"></textarea></div>
+  <p><b>Decision, 2026-09-25, operator: A.</b> Batch gate is primary, host scale-out is measured, and exemptions require audited no-code classes.</p>
   </div>
 
-  <div class="decision" id="d3" data-decision-id="evidence-contract" data-decision-kind="single" data-decision-label="Batch gate evidence contract">
+  <div class="decision" id="d3" data-decision-id="evidence-contract" data-decision-kind="single" data-decision-label="Batch gate evidence contract" data-decision-status="decided" data-selected-option-id="native-record">
     <h3>D3 &middot; Batch gate evidence contract</h3>
     <label data-option-id="native-record" data-option-label="A &middot; Native per-member batch-gate record (recommended)"><input type="radio" name="evidence-contract" value="native-record" checked><span><b>A &middot; Add a native append-only per-member batch-gate record; the integration-record endpoint keeps only its bookkeeping role (recommended)</b><span class="d">The existing endpoint cannot honestly express gate authority: it rejects in-flight lanes and appends only historical classifications. Without a native record there is no way to mark a member gate-passed truthfully.</span></span></label>
     <label data-option-id="reuse-endpoint" data-option-label="B &middot; Reuse the existing endpoint"><input type="radio" name="evidence-contract" value="reuse-endpoint"><span><b>B &middot; Stretch the existing integration-record endpoint to carry gate authority</b><span class="d">No new contract, but it would make a bookkeeping row look like a gate verdict. That is the failure AGT-2543 was opened to close; declining A means not piloting at all.</span></span></label>
     <div data-comment="Note for implementation (optional)"><textarea placeholder="Note for implementation (optional)"></textarea></div>
+  <p><b>Decision, 2026-09-25, operator: A.</b> An append-only member record owns gate evidence; the integration endpoint keeps bookkeeping only.</p>
   </div>
 
-  <div class="decision" id="d4" data-decision-id="publication-authority" data-decision-kind="single" data-decision-label="Publication authority">
+  <div class="decision" id="d4" data-decision-id="publication-authority" data-decision-kind="single" data-decision-label="Publication authority" data-decision-status="decided" data-selected-option-id="shared-lease">
     <h3>D4 &middot; Publication authority</h3>
     <label data-option-id="shared-lease" data-option-label="A &middot; One shared fenced ref-mutation lease (recommended)"><input type="radio" name="publication-authority" value="shared-lease" checked><span><b>A &middot; One shared fenced ref-mutation lease for batch publication, direct integration, auto-main advancement and the promotion train (recommended)</b><span class="d">The publish phases of the batch gate and the candidate-SHA train cannot overlap. Acquire the lease only for final revalidation and publication so a long suite does not block read-only preparation.</span></span></label>
     <label data-option-id="no-batch-mutation" data-option-label="B &middot; The batch publisher never mutates canonical refs"><input type="radio" name="publication-authority" value="no-batch-mutation"><span><b>B &middot; The batch publisher may not mutate canonical refs at all; an existing publisher performs the fast-forward</b><span class="d">Keeps ref authority in one place, at the cost of a hand-off between the component holding the tested candidate and the one allowed to publish it, with a new window for the pre-tip to move.</span></span></label>
     <div data-comment="Note for implementation (optional)"><textarea placeholder="Note for implementation (optional)"></textarea></div>
+  <p><b>Decision, 2026-09-25, operator: A.</b> One fenced ref-mutation lease governs every canonical publication path.</p>
   </div>
 
-  <div class="decision" id="d5" data-decision-id="red-path-budget" data-decision-kind="single" data-decision-label="Red-path diagnostic budget">
+  <div class="decision" id="d5" data-decision-id="red-path-budget" data-decision-kind="single" data-decision-label="Red-path diagnostic budget" data-decision-status="decided" data-selected-option-id="log2-with-fallback">
     <h3>D5 &middot; Red-path diagnostic budget</h3>
     <label data-option-id="log2-with-fallback" data-option-label="A &middot; ceil(log2 n) per cycle with cohort fallback (recommended)"><input type="radio" name="red-path-budget" value="log2-with-fallback" checked><span><b>A &middot; Cap each isolation cycle at ceil(log2 n) diagnostic runs, with an explicit unresolved-cohort fallback (recommended)</b><span class="d">Bounded behavior without pretending multi-offender or interaction-only failures are logarithmic. An unresolved cohort goes to per-task gates and stays visible; it is never reported as a batch success.</span></span></label>
     <label data-option-id="smaller-batches" data-option-label="B &middot; Smaller maximum batch instead"><input type="radio" name="red-path-budget" value="smaller-batches"><span><b>B &middot; Cap the maximum batch size low enough that isolation is cheap, or keep per-task gates</b><span class="d">Simpler to reason about and needs no halving machinery, at the cost of most of the amortization that motivates batching.</span></span></label>
     <div data-comment="Note for implementation (optional)"><textarea placeholder="Note for implementation (optional)"></textarea></div>
+  <p><b>Decision, 2026-09-25, operator: A.</b> Each isolation cycle is capped at ceil(log2 n) diagnostic runs with an unresolved-cohort fallback.</p>
   </div>
 
-  <div class="decision" id="d6" data-decision-id="pilot-thresholds" data-decision-kind="single" data-decision-label="Pilot thresholds">
+  <div class="decision" id="d6" data-decision-id="pilot-thresholds" data-decision-kind="single" data-decision-label="Pilot thresholds" data-decision-status="decided" data-selected-option-id="proposed-thresholds">
     <h3>D6 &middot; Pilot thresholds</h3>
     <label data-option-id="proposed-thresholds" data-option-label="A &middot; Size 4, max 8, 15-minute age, pressure close at 2, documentation-only first (recommended)"><input type="radio" name="pilot-thresholds" value="proposed-thresholds" checked><span><b>A &middot; Close at 4 eligible members, hard maximum 8; close when the oldest member has waited 15 minutes; close at 2 when the review queue is at least 12 or the load gate throttles; documentation-only deliveries first (recommended)</b><span class="d">Deliberately small and configurable. Any trigger closes the manifest, and a closed manifest never absorbs new members. A lone member uses the per-task gate after the deadline.</span></span></label>
     <label data-option-id="other-thresholds" data-option-label="B &middot; Record different values before implementation"><input type="radio" name="pilot-thresholds" value="other-thresholds"><span><b>B &middot; Record alternative values now</b><span class="d">Valid, and the point of recording them before the pilot is that success cannot be redefined after the results are in. Use the comment field.</span></span></label>
     <div data-comment="Alternative thresholds (optional)"><textarea placeholder="Alternative thresholds (optional)"></textarea></div>
+  <p><b>Decision, 2026-09-25, operator: A.</b> Close at four, maximum eight, 15 minutes or pressure at two; pilot documentation-only deliveries first.</p>
   </div>
 
   <h3>Remote gate</h3>
-  <div class="decision" id="d7" data-decision-id="gate-ownership-shape" data-decision-kind="single" data-decision-label="Primary shape of remote gate execution">
+  <div class="decision" id="d7" data-decision-id="gate-ownership-shape" data-decision-kind="single" data-decision-label="Primary shape of remote gate execution" data-decision-status="decided" data-selected-option-id="claimable-step">
     <h3>D7 &middot; Primary shape of remote gate execution</h3>
     <label data-option-id="claimable-step" data-option-label="A &middot; Claimable GateAttempt in the Task Server protocol (recommended)"><input type="radio" name="gate-ownership-shape" value="claimable-step" checked><span><b>A &middot; A dedicated claimable gate step, with capability as an admission predicate and review workspace primitives reused but not the review lifecycle (recommended)</b><span class="d">Task Server owns durable gate truth, Engine owns dispatch, Agent Host executes. Share workspace materialization, containment namespace, command evidence and cleanup; keep the review attempt as the semantic review lifecycle. Start the catalogue with the post-build-test gate only.</span></span></label>
     <label data-option-id="review-plane" data-option-label="B &middot; Gates as aspects inside the Review Plane"><input type="radio" name="gate-ownership-shape" value="review-plane"><span><b>B &middot; Represent gates as commands or aspects inside the existing review subject and attempt</b><span class="d">Highest initial reuse and the smallest protocol delta while every gate is review-shaped; couples deterministic gate lifecycle to review identity, review capacity and review outcome semantics, and obscures individual gate state.</span></span></label>
     <label data-option-id="capability-only" data-option-label="C &middot; Capability-only dispatch"><input type="radio" name="gate-ownership-shape" value="capability-only"><span><b>C &middot; Advertise gate and toolchain capabilities and let a central component call the host directly</b><span class="d">Small initially, but capability says what a host may do, not what work it owns now. Without a claim object this recreates the SSH bridge over a different transport, and once made restart-safe it converges on A.</span></span></label>
     <div data-comment="Note for implementation (optional)"><textarea placeholder="Note for implementation (optional)"></textarea></div>
+  <p><b>Decision, 2026-09-25, operator: A.</b> A dedicated claimable gate step reuses workspace primitives while retaining its own lifecycle.</p>
   </div>
 
-  <div class="decision" id="d8" data-decision-id="gate-fallback" data-decision-kind="single" data-decision-label="Fallback and failure floor">
+  <div class="decision" id="d8" data-decision-id="gate-fallback" data-decision-kind="single" data-decision-label="Fallback and failure floor" data-decision-status="decided" data-selected-option-id="eligible-host-failclosed">
     <h3>D8 &middot; Fallback and failure floor</h3>
     <label data-option-id="eligible-host-failclosed" data-option-label="A &middot; Another eligible Agent Host, then fail closed as GateInfra (recommended)"><input type="radio" name="gate-fallback" value="eligible-host-failclosed" checked><span><b>A &middot; Fall back only to another eligible Agent Host, optionally a registered workstation; terminalize as GateInfra when the retry budget is spent (recommended)</b><span class="d">Keeps one execution model. No trustworthy result is an infrastructure terminal with every attempt visible, never a fabricated product failure and never a pass.</span></span></label>
     <label data-option-id="in-process-fallback" data-option-label="B &middot; Keep the in-process backend fallback"><input type="radio" name="gate-fallback" value="in-process-fallback"><span><b>B &middot; Retain the in-process build on the Task Server or Studio backend as a fallback</b><span class="d">Highest availability of a green result, at the price of keeping two execution models and the exact coupling this design removes. If retained it must be an explicit, visible decision, not a silent default.</span></span></label>
     <div data-comment="Note for implementation (optional)"><textarea placeholder="Note for implementation (optional)"></textarea></div>
+  <p><b>Decision, 2026-09-25, operator: A.</b> Retry only on an eligible Agent Host and terminalize as GateInfra when exhausted.</p>
   </div>
 
-  <div class="decision" id="d9" data-decision-id="teardown-threshold" data-decision-kind="single" data-decision-label="SSH bridge teardown threshold">
+  <div class="decision" id="d9" data-decision-id="teardown-threshold" data-decision-kind="single" data-decision-label="SSH bridge teardown threshold" data-decision-status="decided" data-selected-option-id="cutover-plus-canary">
     <h3>D9 &middot; SSH bridge teardown threshold (AGT-2262)</h3>
     <label data-option-id="cutover-plus-canary" data-option-label="A &middot; Default-on cutover plus a green restart and failure canary (recommended)"><input type="radio" name="teardown-threshold" value="cutover-plus-canary" checked><span><b>A &middot; Tear down only after the new path is the default and the canary and restart matrix is green, with throughput parity shown (recommended)</b><span class="d">The canary must cover remote pass, product failure, host loss, Task Server restart, Engine restart, no eligible host and cleanup failure. AGT-2262 stays parked until then.</span></span></label>
     <label data-option-id="immediate" data-option-label="B &middot; Tear down as soon as the new path works once"><input type="radio" name="teardown-threshold" value="immediate"><span><b>B &middot; Remove the bridge as soon as the replacement passes a first run</b><span class="d">Removes the two-path burden earliest; trades a known fast bridge for an unproven path and risks reopening the 15 to 27 minute bottleneck it was built to close.</span></span></label>
     <div data-comment="Note for implementation (optional)"><textarea placeholder="Note for implementation (optional)"></textarea></div>
+  <p><b>Decision, 2026-09-25, operator: A.</b> Remove the SSH bridge only after default cutover and a green canary and restart matrix.</p>
   </div>
 
   <h3>Validation economy</h3>
-  <div class="decision" id="d10" data-decision-id="staging-lane" data-decision-kind="single" data-decision-label="Staging lane and test-integration branch">
+  <div class="decision" id="d10" data-decision-id="staging-lane" data-decision-kind="single" data-decision-label="Staging lane and test-integration branch" data-decision-status="decided" data-selected-option-id="measure-first">
     <h3>D10 &middot; Staging lane and test-integration branch</h3>
     <label data-option-id="measure-first" data-option-label="A &middot; Measure the batch green rate first (recommended)"><input type="radio" name="staging-lane" value="measure-first" checked><span><b>A &middot; Estimate the batch green rate and the same-SHA re-test rate from existing pipeline data before committing to a staging lane (recommended)</b><span class="d">Both quantities are derivable today without building anything, and both decide whether D2's pilot and a test-integration branch pay off at all. A frequently red batch loses to per-card testing.</span></span></label>
     <label data-option-id="build-now" data-option-label="B &middot; Build the staging lane with the pilot"><input type="radio" name="staging-lane" value="build-now"><span><b>B &middot; Build the staging lane and test-integration branch as part of the batch gate pilot</b><span class="d">One delivery instead of two, and the pilot would produce the green-rate number as a side effect; spends the build before the number that justifies it exists.</span></span></label>
     <label data-option-id="cache-only" data-option-label="C &middot; Per-SHA cache and scoping only"><input type="radio" name="staging-lane" value="cache-only"><span><b>C &middot; Build only the per-SHA gate cache and deterministic scoping; drop the lane permanently</b><span class="d">Takes the largest lever for the smallest effort and closes the question. Gives up the concurrency relief that the 11 August host evidence asked for.</span></span></label>
     <div data-comment="Note for implementation (optional)"><textarea placeholder="Note for implementation (optional)"></textarea></div>
+  <p><b>Decision, 2026-09-25, operator: A.</b> Measure batch green rate and same-SHA re-test rate before deciding on a staging lane.</p>
   </div>
 
   <div class="box">
-    <b>Decision-ready default.</b> Approving D1 to D10 as recommended produces four implementation slices:
+    <b>Recorded decision.</b> The selected options define four implementation slices:
     the per-SHA gate cache, deterministic test scoping, the claimable gate step with its migration and
     canary, and the batch gate pilot. They are listed in <code>workbench.json</code> as separate
-    <code>implementationTasks</code> entries rather than one open-ended card. No card is created until an
-    operator confirms through the normal task mutation path.
+    <code>implementationTasks</code> entries rather than one open-ended card. Card creation remains a separate task mutation.
   </div>
 
   <section class="appendix">

@@ -115,7 +115,7 @@
   <a href="#s3">&sect;3 Alternatives</a>
   <a href="#s4">&sect;4 Recommendation</a>
   <a href="#s5">&sect;5 Evidence</a>
-  <a href="#s6">&sect;6 Open decisions</a>
+  <a href="#s6">&sect;6 Operator decisions</a>
   <a href="#s7">&sect;7 Consolidation record</a>
   <a href="#s8">&sect; Sources</a>
 </nav>
@@ -365,66 +365,73 @@
 </section>
 
 <section id="s6" data-concept-section="open-decisions" data-document-section="open-decisions">
-<h2><span class="no">&sect;6</span> Open decisions</h2>
+<h2><span class="no">&sect;6</span> Operator decisions</h2>
 
-<p>Seven choices are still open on this chain. Each one arrived here unsettled from its source Dossier and each is stated with the options as they stand today.</p>
+<p>The operator decided D1 to D7 on 2026-09-25, adopting option A in each case. The selected options and their implementation constraints are recorded below.</p>
 
-<div class="decision" data-decision-id="first-bounce-owner" data-decision-kind="single" data-decision-label="Owner of the first bounce">
+<div class="decision" data-decision-id="first-bounce-owner" data-decision-kind="single" data-decision-label="Owner of the first bounce" data-decision-status="decided" data-selected-option-id="platform-rule">
   <h3>D1 &middot; Who owns the first recoverable <code>conflict-skipped</code> bounce?</h3>
-  <label data-option-id="platform-rule" data-option-label="A &middot; Deterministic backend rule, one round per operator review epoch (recommendation)"><input type="radio" name="first-bounce-owner" value="platform-rule"><span><b>A &middot; Deterministic backend rule</b><span class="d">One automatic round per operator review epoch, built on the existing recovery, supersession, requeue and timeline services. Restart replays the idempotent obligation, so the queue no longer depends on a session being alive. It does not resolve content, edit Git, waive a gate or requeue a card on hold.</span></span></label>
+  <label data-option-id="platform-rule" data-option-label="A &middot; Deterministic backend rule, one round per operator review epoch (recommendation)"><input type="radio" name="first-bounce-owner" value="platform-rule" checked><span><b>A &middot; Deterministic backend rule</b><span class="d">One automatic round per operator review epoch, built on the existing recovery, supersession, requeue and timeline services. Restart replays the idempotent obligation, so the queue no longer depends on a session being alive. It does not resolve content, edit Git, waive a gate or requeue a card on hold.</span></span></label>
   <label data-option-id="session" data-option-label="B &middot; Keep the session orchestrator as owner"><input type="radio" name="first-bounce-owner" value="session"><span><b>B &middot; Session orchestrator keeps it</b><span class="d">Adaptable and available today, but session availability is queue availability. On one night seventeen eligible cards accumulated because the session stopped.</span></span></label>
   <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+  <p><b>Decision, 2026-09-25, operator: A.</b> A deterministic backend rule owns one idempotent round per operator review epoch.</p>
 </div>
 
-<div class="decision" data-decision-id="guardian-trigger" data-decision-kind="single" data-decision-label="Guardian escalation trigger">
+<div class="decision" data-decision-id="guardian-trigger" data-decision-kind="single" data-decision-label="Guardian escalation trigger" data-decision-status="decided" data-selected-option-id="on-repeat">
   <h3>D2 &middot; When does a strong guardian analyse instead of retrying?</h3>
-  <label data-option-id="on-repeat" data-option-label="A &middot; On repetition, semantic conflict or contradictory evidence (recommendation)"><input type="radio" name="guardian-trigger" value="on-repeat"><span><b>A &middot; On repeat and on genuine ambiguity</b><span class="d">One strong call per evidence fingerprint, one targeted retry only if pure policy permits it, then human review. The model authors the diagnosis and the proposed steer, never the lane change or the Git mutation.</span></span></label>
+  <label data-option-id="on-repeat" data-option-label="A &middot; On repetition, semantic conflict or contradictory evidence (recommendation)"><input type="radio" name="guardian-trigger" value="on-repeat" checked><span><b>A &middot; On repeat and on genuine ambiguity</b><span class="d">One strong call per evidence fingerprint, one targeted retry only if pure policy permits it, then human review. The model authors the diagnosis and the proposed steer, never the lane change or the Git mutation.</span></span></label>
   <label data-option-id="straight-to-human" data-option-label="B &middot; Route repeats straight to human review"><input type="radio" name="guardian-trigger" value="straight-to-human"><span><b>B &middot; Straight to human review on repeat</b><span class="d">Cheaper and simpler; the human receives no prepared evidence pack and the generic template is simply not repeated.</span></span></label>
   <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+  <p><b>Decision, 2026-09-25, operator: A.</b> A strong guardian handles repeats or genuine ambiguity and only authors diagnosis and steer.</p>
 </div>
 
-<div class="decision" data-decision-id="batch-member-assembly" data-decision-kind="single" data-decision-label="Batch member assembly shape">
+<div class="decision" data-decision-id="batch-member-assembly" data-decision-kind="single" data-decision-label="Batch member assembly shape" data-decision-status="decided" data-selected-option-id="shadow-compare">
   <h3>D3 &middot; How does a batch candidate assemble its members?</h3>
   <p class="muted">The batch gate itself is decided in the Gates Dossier. Only the assembly shape belongs here, because it is the one place where batching touches delivery attribution.</p>
-  <label data-option-id="shadow-compare" data-option-label="A &middot; Shadow-compare replay against prebuilt member merges before fixing one (recommendation)"><input type="radio" name="batch-member-assembly" value="shadow-compare"><span><b>A &middot; Measure both shapes in shadow mode first</b><span class="d">Mapped rebase replay gives a compact candidate but spends attribution complexity on every member; prebuilt no-fast-forward member merges preserve the original SHAs and make acceptance simpler at the cost of a more branched candidate.</span></span></label>
+  <label data-option-id="shadow-compare" data-option-label="A &middot; Shadow-compare replay against prebuilt member merges before fixing one (recommendation)"><input type="radio" name="batch-member-assembly" value="shadow-compare" checked><span><b>A &middot; Measure both shapes in shadow mode first</b><span class="d">Mapped rebase replay gives a compact candidate but spends attribution complexity on every member; prebuilt no-fast-forward member merges preserve the original SHAs and make acceptance simpler at the cost of a more branched candidate.</span></span></label>
   <label data-option-id="fix-replay" data-option-label="B &middot; Fix rebase replay now and treat its replacement map as a launch-blocking evidence contract"><input type="radio" name="batch-member-assembly" value="fix-replay"><span><b>B &middot; Fix replay now</b><span class="d">No shadow phase, but the per-member original-to-replacement map becomes a launch blocker that the batch evidence contract must own completely.</span></span></label>
   <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+  <p><b>Decision, 2026-09-25, operator: A.</b> Shadow measurement compares mapped replay with member merges before fixing the assembly shape.</p>
 </div>
 
-<div class="decision" data-decision-id="flaky-policy" data-decision-kind="single" data-decision-label="Flaky test policy">
+<div class="decision" data-decision-id="flaky-policy" data-decision-kind="single" data-decision-label="Flaky test policy" data-decision-status="decided" data-selected-option-id="quarantine">
   <h3>D4 &middot; How are flaky tests handled?</h3>
-  <label data-option-id="quarantine" data-option-label="A &middot; Quarantine with an expiry date and a card (recommendation)"><input type="radio" name="flaky-policy" value="quarantine"><span><b>A &middot; Quarantine with expiry and a card</b><span class="d">They stop blocking deliveries but do not disappear: after the expiry they are armed again or the card has resolved them. Five known-flaky tests produced 344 individual failure mentions in one month.</span></span></label>
+  <label data-option-id="quarantine" data-option-label="A &middot; Quarantine with an expiry date and a card (recommendation)"><input type="radio" name="flaky-policy" value="quarantine" checked><span><b>A &middot; Quarantine with expiry and a card</b><span class="d">They stop blocking deliveries but do not disappear: after the expiry they are armed again or the card has resolved them. Five known-flaky tests produced 344 individual failure mentions in one month.</span></span></label>
   <label data-option-id="remove" data-option-label="B &middot; Remove them"><input type="radio" name="flaky-policy" value="remove"><span><b>B &middot; Remove them</b><span class="d">Fast, and it loses the coverage they were written for.</span></span></label>
   <label data-option-id="keep-armed" data-option-label="C &middot; Keep them armed and let the clean repeat run decide per case"><input type="radio" name="flaky-policy" value="keep-armed"><span><b>C &middot; Keep them armed</b><span class="d">The diagnosis contract's second run decides case by case; correct, and it pays gate time on every occurrence.</span></span></label>
   <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+  <p><b>Decision, 2026-09-25, operator: A.</b> Quarantine has an expiry date and a card, so flaky coverage remains accountable.</p>
 </div>
 
-<div class="decision" data-decision-id="integrated-only-review" data-decision-kind="single" data-decision-label="Integrated-only human review">
+<div class="decision" data-decision-id="integrated-only-review" data-decision-kind="single" data-decision-label="Integrated-only human review" data-decision-status="decided" data-selected-option-id="integrated-only">
   <h3>D5 &middot; May an integrable but not yet integrated delivery enter human review?</h3>
-  <label data-option-id="integrated-only" data-option-label="A &middot; No, the card stays in auto-review until integrated (recommendation)"><input type="radio" name="integrated-only-review" value="integrated-only"><span><b>A &middot; Integrated-only human review</b><span class="d">The card stays in <code>4-auto-review</code> in an integration phase; on <code>integrated</code> it advances, on conflict, gate failure or unrecoverable error it escalates with a category and a recovery action. Accept then confirms an already integrated state instead of triggering the merge, and archive becomes fail-closed with a privileged, audited per-card override. A workspace-wide switch is acceptable for the migration, never a silent per-card exception.</span></span></label>
+  <label data-option-id="integrated-only" data-option-label="A &middot; No, the card stays in auto-review until integrated (recommendation)"><input type="radio" name="integrated-only-review" value="integrated-only" checked><span><b>A &middot; Integrated-only human review</b><span class="d">The card stays in <code>4-auto-review</code> in an integration phase; on <code>integrated</code> it advances, on conflict, gate failure or unrecoverable error it escalates with a category and a recovery action. Accept then confirms an already integrated state instead of triggering the merge, and archive becomes fail-closed with a privileged, audited per-card override. A workspace-wide switch is acceptable for the migration, never a silent per-card exception.</span></span></label>
   <label data-option-id="badge-and-block" data-option-label="B &middot; Review allowed, accept blocked by a hard badge"><input type="radio" name="integrated-only-review" value="badge-and-block"><span><b>B &middot; Review allowed, accept blocked</b><span class="d">Less process rework, but human review stays semantically mixed and full of technically unfinished deliveries.</span></span></label>
   <label data-option-id="warn-after-accept" data-option-label="C &middot; Today's behaviour: warn after accept"><input type="radio" name="integrated-only-review" value="warn-after-accept"><span><b>C &middot; Keep today's behaviour</b><span class="d">Accept first, then a pending tag, a background merge and a backstop. "Delivered" and archive remain reachable before the delivery is proven; that is the documented loss risk.</span></span></label>
   <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+  <p><b>Decision, 2026-09-25, operator: A.</b> Human review starts after integration; acceptance confirms it and archive requires an audited override.</p>
 </div>
 
-<div class="decision" data-decision-id="pull-request-projects" data-decision-kind="single" data-decision-label="Pull-request projects under integrated-only review">
+<div class="decision" data-decision-id="pull-request-projects" data-decision-kind="single" data-decision-label="Pull-request projects under integrated-only review" data-decision-status="decided" data-selected-option-id="pr-surface">
   <h3>D6 &middot; How do pull-request projects fit an integrated-only review?</h3>
-  <label data-option-id="pr-surface" data-option-label="A &middot; Pull-request approval is a separate decision surface before human review (recommendation)"><input type="radio" name="pull-request-projects" value="pr-surface"><span><b>A &middot; Separate decision surface</b><span class="d">Approval happens on the pull request; human review begins after the merge. The integration strategy stays a project setting while lane semantics stay global.</span></span></label>
+  <label data-option-id="pr-surface" data-option-label="A &middot; Pull-request approval is a separate decision surface before human review (recommendation)"><input type="radio" name="pull-request-projects" value="pr-surface" checked><span><b>A &middot; Separate decision surface</b><span class="d">Approval happens on the pull request; human review begins after the merge. The integration strategy stays a project setting while lane semantics stay global.</span></span></label>
   <label data-option-id="pr-as-gate" data-option-label="B &middot; Human review becomes the merge gate for pull-request projects"><input type="radio" name="pull-request-projects" value="pr-as-gate"><span><b>B &middot; Human review becomes the merge gate</b><span class="d">No new surface, at the price of one lane meaning two different things depending on the project.</span></span></label>
   <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+  <p><b>Decision, 2026-09-25, operator: A.</b> Pull request approval is separate, and human review starts after the merge.</p>
 </div>
 
-<div class="decision" data-decision-id="mechanical-round-execution" data-decision-kind="single" data-decision-label="Execution of a mechanical rebase round">
+<div class="decision" data-decision-id="mechanical-round-execution" data-decision-kind="single" data-decision-label="Execution of a mechanical rebase round" data-decision-status="decided" data-selected-option-id="resume-session">
   <h3>D7 &middot; How is a mechanical rebase round executed?</h3>
-  <label data-option-id="resume-session" data-option-label="A &middot; Pilot session continuation with a token ceiling (recommendation)"><input type="radio" name="mechanical-round-execution" value="resume-session"><span><b>A &middot; Resume the prior session, bounded</b><span class="d">Resume only when task key, provider, repository, worktree path and branch lineage still match; pass a compact delta of base SHA, conflict paths, steer and verification plan rather than the original prompt; cap the round at 1.211 million tokens; any mismatch is a typed fresh-run decision. Estimated 17.6 to 19.8 quota points per week on the measured workload.</span></span></label>
+  <label data-option-id="resume-session" data-option-label="A &middot; Pilot session continuation with a token ceiling (recommendation)"><input type="radio" name="mechanical-round-execution" value="resume-session" checked><span><b>A &middot; Resume the prior session, bounded</b><span class="d">Resume only when task key, provider, repository, worktree path and branch lineage still match; pass a compact delta of base SHA, conflict paths, steer and verification plan rather than the original prompt; cap the round at 1.211 million tokens; any mismatch is a typed fresh-run decision. Estimated 17.6 to 19.8 quota points per week on the measured workload.</span></span></label>
   <label data-option-id="platform-rebase" data-option-label="B &middot; Platform-owned clean rebase with no model at all"><input type="radio" name="mechanical-round-execution" value="platform-rebase"><span><b>B &middot; Platform-owned rebase, no model</b><span class="d">A cleanly provable rebase needs no agent; only semantic conflicts route back to a policy-qualified model. Upper bound of 22 points, overlapping with A. The two savings must not be added.</span></span></label>
   <label data-option-id="cold-rounds" data-option-label="C &middot; Keep cold rounds"><input type="radio" name="mechanical-round-execution" value="cold-rounds"><span><b>C &middot; Keep cold rounds</b><span class="d">No new machinery, and the measured shape stands: a mechanical continuation costs 3.9% more tokens and 26.1% more time than the original work.</span></span></label>
   <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+  <p><b>Decision, 2026-09-25, operator: A.</b> Resume is bounded by lineage checks, a compact delta and token cap, with a typed fresh-run fallback.</p>
 </div>
 
 <h3 id="remote-integration-authority">Remote integration authority carried from AGT-W18 and AGT-2881</h3>
 <div class="box">
-<p><b>Operator direction, 18 September 2026:</b> the remote host integrates, including gate, merge and push; the local Studio observes and submits authenticated requests. This direction is retained even though the AGT-2881 extension exists only on its salvage ref and is not part of <code>develop</code>. AGT-W59 continues to own the remote-gate mechanics and its open D1 to D6. The delivery-chain questions below remain unapproved.</p>
+<p><b>Operator direction, 18 September 2026:</b> the remote host integrates, including gate, merge and push; the local Studio observes and submits authenticated requests. This direction is retained even though the AGT-2881 extension exists only on its salvage ref and is not part of <code>develop</code>. AGT-W59 owns the remote-gate mechanics; its D1 to D10 were decided by the operator on 2026-09-25. The delivery-chain questions below remain separate from those gate decisions.</p>
 </div>
 <div class="tablewrap">
 <table>
@@ -460,18 +467,18 @@
 <tr><td>&sect;4 delivery reconciliation, &sect;5 integration choices, &sect;6 decision table</td><td>&sect;2</td><td>Rebase on a fresh fence, merge first at integration, squash rejected, exact-SHA promotion</td></tr>
 <tr><td>&sect;7 batch gate interaction</td><td>&sect;6 D3</td><td>The member assembly question only; the batch gate itself moves to the Gates Dossier</td></tr>
 <tr><td>&sect;8 bounce steering today, &sect;9 automation scenarios, &sect;10 route policy, &sect;11 migration slices</td><td>&sect;4, &sect;6 D1 and D2, route box</td><td>Deterministic rail versus session, guardian escalation tier, floor-aware routing; the slice plan moves into the implementation card</td></tr>
-<tr><td>&sect;12 operator choices</td><td>&sect;6 D1, D2, D3</td><td>The three unsettled questions with their current options</td></tr>
+<tr><td>&sect;12 operator choices</td><td>&sect;6 D1, D2, D3</td><td>The three questions and the options chosen by the operator</td></tr>
 <tr><td rowspan="4">AGT-W50 delivery chain robustness</td><td>&sect;1 findings in numbers</td><td>&sect;5 E1</td><td>The full measurement table for 08-13 to 09-12</td></tr>
 <tr><td>&sect;2 five patterns, &sect;3 why the previous fixes are not enough</td><td>&sect;1 figure, &sect;3</td><td>M1 to M5 as the chips in Fig. 1 and as the rows of the alternatives table</td></tr>
 <tr><td>&sect;4 directions, &sect;5 assessment, &sect;6 recommendation and order</td><td>&sect;3, &sect;4</td><td>Diagnosis contract, cause breaker, isolation, lifecycle ownership, throughput, and the wave order</td></tr>
-<tr><td>&sect;7 measures, &sect;8 decisions, &sect;9 card cut</td><td>&sect;2, &sect;6 D4, implementation</td><td>The confirmed four measures, the open flaky policy, the wave-one slices</td></tr>
+<tr><td>&sect;7 measures, &sect;8 decisions, &sect;9 card cut</td><td>&sect;2, &sect;6 D4, implementation</td><td>The confirmed four measures, the decided flaky policy, the wave-one slices</td></tr>
 <tr><td>AGT-W42 operational resilience</td><td>&sect;1 control loop, &sect;2 to &sect;12 the eleven classes, &sect;13 overview</td><td>&sect;1, &sect;5 E4</td><td>The control-plane and substrate bands of Fig. 1 and the eleven classes as one table of cause and hardening</td></tr>
 <tr><td rowspan="2">AGT-W23 unverified deliveries</td><td>&sect;1 sequence, &sect;2 breaks, &sect;3 salvage mechanics</td><td>&sect;5 E3</td><td>The incident reconstruction, the concealment by telemetry, and the fence push as the mechanism that worked</td></tr>
 <tr><td>&sect;4 immediate measures, &sect;5 hardening, &sect;6 criteria</td><td>&sect;2, &sect;5 E3</td><td>AGT-2543, AGT-2544 and AGT-2545 as the invariants that close each break</td></tr>
 <tr><td rowspan="2">AGT-W44 token and retry tax</td><td>&sect;01 accounting boundary, &sect;02 split, &sect;03 unit economics</td><td>&sect;5 E2</td><td>The 27-point split, the unit medians and the cold-round shape, as dated evidence of that window</td></tr>
-<tr><td>&sect;05 session continuation, &sect;07 savings table</td><td>&sect;6 D7</td><td>Resume conditions, the token ceiling and the counterfactual range as an open option</td></tr>
+<tr><td>&sect;05 session continuation, &sect;07 savings table</td><td>&sect;6 D7</td><td>Resume conditions, the token ceiling and the counterfactual range as the chosen option</td></tr>
 <tr><td rowspan="2">AGT-W3 board status model</td><td>&sect;4 lane inventory, &sect;5 transition map, &sect;7 field findings</td><td>&sect;5 E6</td><td>The twelve lane values, any-to-any reachability, accept before integration, archive without a guard</td></tr>
-<tr><td>&sect;9 alternatives, &sect;10 target rules, &sect;17 E1 to E4 and E3 on pull requests</td><td>&sect;2, &sect;6 D5 and D6</td><td>Target-branch presence as the truth rule (decided) and the review, accept, archive and pull-request guards (open)</td></tr>
+<tr><td>&sect;9 alternatives, &sect;10 target rules, &sect;17 E1 to E4 and E3 on pull requests</td><td>&sect;2, &sect;6 D5 and D6</td><td>Target-branch presence as the truth rule (decided) and the review, accept, archive and pull-request guards (decided)</td></tr>
 <tr><td>AGT-W39 live improvement log</td><td>Rolling entries 08-18 to 08-28</td><td>&sect;5 E5</td><td>Eight recurring shapes, the second-sighting discipline, and the measured lane-transition and cycle-time figures</td></tr>
 </tbody>
 </table>
