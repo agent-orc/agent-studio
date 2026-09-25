@@ -257,6 +257,11 @@ export class DetailHeaderComponent {
     const p = this.triagePrimary();
     return !!p && this.GIT_DEPENDENT_PRIMARY_IDS.has(p.id) && this.gitInfoLoading();
   });
+  readonly primaryBlockedByIntegration = computed(() => {
+    if (this.triagePrimary()?.id !== 'mark-done') return false;
+    const status = this.info().integration?.status;
+    return status !== 'integrated' && status !== 'not-applicable';
+  });
 
   /** Remaining lane actions + always-on Edit/Delete fallbacks. */
   readonly triageOverflow = computed<TriageButton[]>(() =>
@@ -337,7 +342,7 @@ export class DetailHeaderComponent {
     if (!p) return;
     // Hold git-dependent primaries until the branch/merge status has loaded, so
     // Enter / click cannot trigger an acceptance while the label is still a guess.
-    if (this.primaryAwaitingGit()) return;
+    if (this.primaryAwaitingGit() || this.primaryBlockedByIntegration()) return;
     this.emitTriage(p);
   }
 

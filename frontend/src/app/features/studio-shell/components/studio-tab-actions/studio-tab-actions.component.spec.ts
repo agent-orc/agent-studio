@@ -60,6 +60,7 @@ const NO_TRIAGE: StudioTabTriage = {
   primaryLabel: '',
   primaryTooltip: '',
   awaitingGit: false,
+  blockedByIntegration: false,
   actingId: null,
   menuItems: [],
 };

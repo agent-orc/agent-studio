@@ -976,6 +976,15 @@ public static class V1ReviewPlaneEndpoints
                         taskState = racedTask.State;
                         RecordPostAcceptanceReportIfTerminal(timeline, racedTask, attemptId, request, evidenceFile);
                     }
+                    else if (moved.Status == MoveJobStatus.IntegrationFailed)
+                    {
+                        // The review verdict is durable. Integration is a
+                        // separate phase in Auto Review, including PR approval
+                        // and a pushed merge that has not appeared on the
+                        // target ref yet. The reconciler advances or escalates.
+                        taskState = TaskStates.AutoReview;
+                        EnqueueEvidenceProjection();
+                    }
                     else if (moved.Status != MoveJobStatus.Success)
                     {
                         // The lane write failed, not the task-folder location -

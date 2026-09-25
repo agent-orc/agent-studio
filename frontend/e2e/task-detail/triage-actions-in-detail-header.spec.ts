@@ -38,6 +38,8 @@ async function plantHumanReviewJobs(wp: WatchPath, count: number): Promise<{ id:
       title,
       watchPath: wp.path,
       targetState: '2-ready',
+      mode: 'concept',
+      requiresIntegration: false,
     });
     // Wait for the new slug to be readable; 200 ms × 25 caps at 5 s.
     for (let attempt = 0; attempt < 25; attempt++) {
@@ -48,6 +50,10 @@ async function plantHumanReviewJobs(wp: WatchPath, count: number): Promise<{ id:
         await new Promise(r => setTimeout(r, 200));
       }
     }
+    await api(`/api/tasks/${encodeURIComponent(created.id)}/concept-dossier?watchPath=${encodeURIComponent(wp.path)}`, {
+      method: 'POST',
+      body: JSON.stringify({ noDossierNeeded: true, reason: 'Code-free end-to-end fixture.' }),
+    });
     await moveJob(created.id, wp.path, '5-human-review');
     jobs.push({ id: created.id, title });
   }
@@ -62,6 +68,8 @@ async function plantReadyJob(wp: WatchPath): Promise<{ id: string; title: string
     title,
     watchPath: wp.path,
     targetState: '2-ready',
+    mode: 'concept',
+    requiresIntegration: false,
   });
   for (let attempt = 0; attempt < 25; attempt++) {
     try {
@@ -71,6 +79,10 @@ async function plantReadyJob(wp: WatchPath): Promise<{ id: string; title: string
       await new Promise(r => setTimeout(r, 200));
     }
   }
+  await api(`/api/tasks/${encodeURIComponent(created.id)}/concept-dossier?watchPath=${encodeURIComponent(wp.path)}`, {
+    method: 'POST',
+    body: JSON.stringify({ noDossierNeeded: true, reason: 'Code-free end-to-end fixture.' }),
+  });
   return { id: created.id, title };
 }
 
@@ -110,7 +122,7 @@ async function openJobInDetail(page: Page, id: string, watchPath: string) {
  * studio slim tab-bar header); the spec resolves the user-visible one.
  */
 test.describe('Triage actions in detail header', () => {
-  test('primary "Merge into Develop" lives top-right and moves the job out of the lane', async ({ page }) => {
+  test('code-free review card accepts a named deliverable', async ({ page }) => {
     const wp = await getFirstWatchPath();
     const jobs = await plantHumanReviewJobs(wp, 1);
     try {
@@ -121,22 +133,11 @@ test.describe('Triage actions in detail header', () => {
       const primary = page.getByTestId('studio-triage-action-mark-done');
       await expect(primary).toBeVisible({ timeout: 10_000 });
 
-      const beforeUrl = page.url();
+      await expect(primary).toBeEnabled();
+      await expect(primary).toContainText('Accept');
       await primary.click();
-
-      await expect.poll(
-        async () => (await getJob(jobs[0].id, wp.path)).state,
-        { timeout: 10_000 }
-      ).toBe('6-completed');
-
-      // Panel either auto-advanced (URL changed) or closed because the
-      // lane was cleared. Either is a valid outcome.
-      await expect.poll(async () => {
-        const url = page.url();
-        if (url !== beforeUrl) return 'advanced';
-        const visible = await cluster.isVisible().catch(() => false);
-        return visible ? 'still-open' : 'closed';
-      }, { timeout: 5_000 }).not.toBe('still-open');
+      await expect.poll(async () => (await getJob(jobs[0].id, wp.path)).state,
+        { timeout: 10_000 }).toBe('6-completed');
     } finally {
       for (const j of jobs) await deleteJob(j.id, wp.path).catch(() => {});
     }

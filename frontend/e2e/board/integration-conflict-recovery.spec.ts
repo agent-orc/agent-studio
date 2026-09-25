@@ -1,9 +1,12 @@
 import { test, expect } from '../fixtures/dev-backend';
 import type { Page, Route } from '@playwright/test';
 import { setTheme } from '../helpers/theme';
+import { mkdirSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 const PROJECT = 'Integration recovery';
 const WATCH_PATH = '/fixtures/integration-recovery';
+test.setTimeout(240_000);
 
 function task(queued: boolean) {
   return {
@@ -77,6 +80,25 @@ function noTaskBranchTask() {
   };
 }
 
+function codeFreeTask() {
+  return {
+    ...task(false),
+    id: 'code-free-delivery',
+    taskKey: `${WATCH_PATH}::code-free-delivery`,
+    key: 'AGT-3000',
+    title: 'Code-free delivery',
+    state: '6-completed',
+    folderPath: `${WATCH_PATH}/6-completed/code-free-delivery`,
+    commit: null,
+    integration: {
+      status: 'not-applicable',
+      sha: null,
+      integrationBranch: 'develop',
+      detail: 'The delivery contract expects no repository change.',
+    },
+  };
+}
+
 function json(route: Route, body: unknown) {
   return route.fulfill({
     status: 200,
@@ -119,11 +141,11 @@ async function installRoutes(
         autoReview: [],
         humanReview: [missingBranch],
         escalated: [],
-        completed: queued() ? [] : [current],
+        completed: queued() ? [codeFreeTask()] : [current, codeFreeTask()],
         archive: [],
       });
     }
-    if (/\/api\/tasks(\?|$)/.test(url)) return json(route, [current, missingBranch]);
+    if (/\/api\/tasks(\?|$)/.test(url)) return json(route, [current, missingBranch, codeFreeTask()]);
     if (url.includes('/api/watch-paths')) {
       return json(route, [{ name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH }]);
     }
@@ -161,7 +183,6 @@ async function installRoutes(
 }
 
 test('conflict card queues the focused rebase steer round', async ({ page, devBackend }, testInfo) => {
-  test.setTimeout(120_000);
   void devBackend;
   await page.addInitScript(() => {
     localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
@@ -195,9 +216,13 @@ test('conflict card queues the focused rebase steer round', async ({ page, devBa
   await expect(missingBranch.getByTestId('integration-status-badge'))
     .toHaveAttribute('data-integration-failure-code', 'no-task-branch');
   await expect(missingBranch.getByTestId('task-card-integration-recovery')).toHaveCount(0);
+  const codeFree = page.locator('[data-testid="task-card"]', { hasText: 'Code-free delivery' });
+  await expect(codeFree.getByTestId('integration-status-badge')).toContainText('No integration needed');
 
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
+    const evidenceDir = resolve(process.env.JOB_RESULTS_DIR ?? '../results/AGT-2920');
+    mkdirSync(evidenceDir, { recursive: true });
     const path = testInfo.outputPath(`integration-conflict-recovery--${theme}--mocked.png`);
     await card.screenshot({ path });
     await testInfo.attach(`integration-conflict-recovery--${theme}--mocked.png`, {
@@ -208,6 +233,13 @@ test('conflict card queues the focused rebase steer round', async ({ page, devBa
     await missingBranch.screenshot({ path: missingBranchPath });
     await testInfo.attach(`integration-no-task-branch--${theme}--mocked.png`, {
       path: missingBranchPath,
+      contentType: 'image/png',
+    });
+    const codeFreePath = testInfo.outputPath(`integration-code-free--${theme}--mocked.png`);
+    await codeFree.screenshot({ path: codeFreePath });
+    await codeFree.screenshot({ path: resolve(evidenceDir, `integration-code-free-${theme}.png`) });
+    await testInfo.attach(`integration-code-free--${theme}--mocked.png`, {
+      path: codeFreePath,
       contentType: 'image/png',
     });
   }

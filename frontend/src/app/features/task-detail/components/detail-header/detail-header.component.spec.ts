@@ -86,7 +86,13 @@ describe('DetailHeaderComponent (smoke)', () => {
       ],
     }).compileComponents();
     const fixture = TestBed.createComponent(DetailHeaderComponent);
-    fixture.componentRef.setInput('info', taskInfo);
+    fixture.componentRef.setInput('info', {
+      ...taskInfo,
+      integration: {
+        status: 'integrated', deliveryRef: null, sha: null,
+        integrationBranch: 'develop', detail: null,
+      },
+    });
 
     try { fixture.detectChanges(); } catch (e) {
       // Render needs more setup than the generic generator provides.
@@ -152,7 +158,13 @@ describe('DetailHeaderComponent (smoke)', () => {
       ],
     }).compileComponents();
     const fixture = TestBed.createComponent(DetailHeaderComponent);
-    fixture.componentRef.setInput('info', taskInfo);
+    fixture.componentRef.setInput('info', {
+      ...taskInfo,
+      integration: {
+        status: 'integrated', deliveryRef: null, sha: null,
+        integrationBranch: 'develop', detail: null,
+      },
+    });
     return fixture;
   }
 
@@ -199,6 +211,22 @@ describe('DetailHeaderComponent (smoke)', () => {
     expect(btn!.disabled).toBe(false);
     expect(btn!.getAttribute('data-git-loading')).toBeNull();
     expect(fixture.nativeElement.textContent).toContain('Accept');
+  });
+
+  it('keeps a pending delivery disabled after git status loads', async () => {
+    const fixture = await mountHeader();
+    fixture.componentRef.setInput('info', {
+      ...taskInfo,
+      integration: {
+        status: 'pending', deliveryRef: 'task/ASS-871', sha: null,
+        integrationBranch: 'develop', detail: 'Awaiting publication',
+      },
+    });
+    fixture.componentRef.setInput('gitInfoLoading', false);
+    fixture.detectChanges();
+    expect(fixture.componentInstance.primaryBlockedByIntegration()).toBe(true);
+    const button: HTMLButtonElement = fixture.nativeElement.querySelector('[data-testid="triage-action-mark-done"]');
+    expect(button.disabled).toBe(true);
   });
 
   it('never gates a non-git primary (Ready "Run now") on git loading', async () => {

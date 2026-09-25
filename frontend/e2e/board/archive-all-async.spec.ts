@@ -61,7 +61,9 @@ test.describe('Async archive all', () => {
             id,
             title: `Async archive card ${id}`,
             watchPath: watchPath.path,
-            targetState: '6-completed',
+            targetState: '2-ready',
+            mode: 'concept',
+            requiresIntegration: false,
             fixture: false,
             agent: 'codex',
             cliType: 'codex',
@@ -70,6 +72,13 @@ test.describe('Async archive all', () => {
             modelExplicit: true,
             thinkingLevelExplicit: true,
           }),
+        });
+        await api(`/api/tasks/${encodeURIComponent(id)}/concept-dossier?watchPath=${encodeURIComponent(watchPath.path)}`, {
+          method: 'POST',
+          body: JSON.stringify({ noDossierNeeded: true, reason: 'Code-free archive sweep fixture.' }),
+        });
+        await api(`/api/tasks/${encodeURIComponent(id)}/move?watchPath=${encodeURIComponent(watchPath.path)}`, {
+          method: 'POST', body: JSON.stringify({ targetState: '6-completed' }),
         });
       }
     };

@@ -614,6 +614,7 @@ export interface TaskMergeSignal {
  */
 export type IntegrationStatusValue =
   | 'integrated'
+  | 'not-applicable'
   | 'merged-locally'
   | 'partial'
   | 'pending'
@@ -645,7 +646,7 @@ export function isMergedIntegrationStatus(status: string | null | undefined): bo
  * not in an accepted lane.
  */
 export interface TaskIntegrationStatus {
-  /** integrated | merged-locally | partial | pending | conflict-skipped | no-branch. */
+  /** integrated | not-applicable | merged-locally | partial | pending | conflict-skipped | no-branch. */
   status: IntegrationStatusValue;
   /** Actual delivery ref from card truth; null only when no ref is evidenced. */
   deliveryRef: string | null;
@@ -653,6 +654,7 @@ export interface TaskIntegrationStatus {
   sha: string | null;
   /** Integration branch the verdict was computed against (usually "develop"). */
   integrationBranch: string;
+  targetRefFingerprint?: string | null;
   /** Membership evidence or the reason it is not integrated. Tooltip + audit only. */
   detail: string | null;
   /** Typed current failure from the durable accepted-integration pipeline step. */

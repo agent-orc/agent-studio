@@ -13,7 +13,6 @@
 import { TaskState } from '../../../models/task.model';
 import type { TaskDeliveryClaimAnswer, TaskInfo } from '../../../models/task.model';
 import type { LandedState } from '../../../features/git';
-import { isMergedIntegrationStatus } from '../../../features/git';
 import { LANE_PRESENTATIONS, laneName } from '../../../models/lane-presentation';
 
 export type TriageActionIntent =
@@ -104,10 +103,7 @@ export const LANE_ACTIONS: Record<string, TriageButton[]> = {
     { id: 'reissue',      label: 'Reissue (→ Progress)',          variant: 'secondary', intent: { kind: 'move', targetState: TaskState.Progress } },
   ],
   [TaskState.HumanReview]: [
-    // "Merge into Develop" is the operator acceptance signal: it accepts the
-    // task into 6-completed (the "Delivered" lane), which is the trigger the
-    // deferred Merge-into-Develop post-step hooks into.
-    { id: 'mark-done',          label: 'Merge into Develop',                        variant: 'primary',   intent: { kind: 'move', targetState: TaskState.Completed } },
+    { id: 'mark-done',          label: 'Accept',                                    variant: 'primary',   intent: { kind: 'move', targetState: TaskState.Completed } },
     { id: 'send-back-to-ready', label: 'Send back to Ready (re-do)',                variant: 'secondary', intent: { kind: 'move', targetState: TaskState.Ready } },
     SEND_TO_BACKLOG,
   ],
@@ -198,9 +194,10 @@ export function archiveIntegrationVerdict(info: TaskInfo): ArchiveIntegrationVer
     // AGT-2849: an unpublished merge is still a merge, so the archive guard
     // has its answer here instead of falling through to `unknown` and asking
     // the server for a containment answer that says the same thing.
-    case 'integrated':
-    case 'merged-locally': return 'integrated';
-    case 'no-branch': return 'nothing-to-integrate';
+    case 'integrated': return 'integrated';
+    case 'not-applicable': return 'nothing-to-integrate';
+    case 'merged-locally':
+    case 'no-branch': return 'not-integrated';
     case 'pending':
     case 'partial':
     case 'conflict-skipped': return 'not-integrated';
@@ -216,7 +213,7 @@ export function deliveryClaimVerdict(
   answer: Pick<TaskDeliveryClaimAnswer, 'integrated' | 'containmentStatus'>,
 ): ArchiveIntegrationVerdict {
   if (answer.integrated) return 'integrated';
-  if (answer.containmentStatus === 'no-branch') return 'nothing-to-integrate';
+  if (answer.containmentStatus === 'not-applicable') return 'nothing-to-integrate';
   return answer.containmentStatus === 'unknown' ? 'unknown' : 'not-integrated';
 }
 
@@ -244,15 +241,9 @@ export function primaryActionFor(state: string): TriageButton | null {
 }
 
 /**
- * State-dependent presentation for the `5-human-review` acceptance primary
- * (`mark-done`, labelled "Merge into Develop"). The button literally offers a
- * merge, but a parallel-worktree run is auto-integrated into develop *before*
- * it lands in human-review (ADR-0052), so by the time the operator sees the
- * card the work has often already merged. Offering "Merge into Develop" then
- * lies. When the work has already landed, the header shows a read-only landed
- * status and relabels the button to a plain "Accept" - accepting the
- * already-merged work into Delivered, not triggering a merge. When nothing has
- * landed yet, the offer stays "Merge into Develop".
+ * State-dependent presentation for the `5-human-review` acceptance primary.
+ * Acceptance confirms the result already present on the target branch. A
+ * pending delivery is labelled "Await integration" and held by the header.
  */
 export interface MergeAcceptView {
   /** True once the work is on develop (or further); drives status + relabel. */
@@ -288,18 +279,19 @@ export function mergeAcceptViewFor(
   // results-only, or no-op outcome, even when its base is in the git graph.
   const hasTaskCommits = (info.commits?.length ?? 0) > 0 || !!info.commit;
   const mergeSha = shortMergeSha(info.integration?.sha);
-  // AGT-2849: merged-locally is landed for this view. Offering "Merge into
-  // Develop" for a delivery that is already merged would invite a second merge
-  // of work that only needs its push, which the push backstop owns.
-  const landed = isMergedIntegrationStatus(info.integration?.status);
+  // Only the published target branch proves that acceptance can proceed.
+  const landed = info.integration?.status === 'integrated';
 
   if (!hasTaskCommits) {
     return {
-      landed: false,
+      landed,
       landedState: 'on-branch-only',
-      acceptLabel: 'Accept',
+      acceptLabel: landed || info.integration?.status === 'not-applicable'
+        ? 'Accept' : 'Await integration',
       statusLabel: null,
-      statusTooltip: 'This task has no code changes to merge. Accept moves the card to Delivered.',
+      statusTooltip: info.integration?.status === 'not-applicable'
+        ? 'This delivery needs no integration. Accept moves the card to Delivered.'
+        : null,
     };
   }
 
@@ -307,7 +299,7 @@ export function mergeAcceptViewFor(
     return {
       landed: false,
       landedState: 'on-branch-only',
-      acceptLabel: 'Merge into Develop',
+      acceptLabel: 'Await integration',
       statusLabel: null,
       statusTooltip: null,
     };

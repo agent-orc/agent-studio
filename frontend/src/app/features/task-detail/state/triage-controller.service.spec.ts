@@ -277,7 +277,7 @@ describe('TriageController · planning accept spawn-contract guard', () => {
       mode: 'coding',
     }) as unknown as TaskInfo;
 
-  const makeCompletedJob = (status: 'integrated' | 'pending' | 'no-branch' | null): TaskInfo =>
+  const makeCompletedJob = (status: 'integrated' | 'not-applicable' | 'pending' | 'no-branch' | null): TaskInfo =>
     ({
       id: 'done-a',
       taskKey: `${wp}::done-a`,
@@ -387,26 +387,23 @@ describe('TriageController · planning accept spawn-contract guard', () => {
 
     expect(confirmSpy).toHaveBeenCalledTimes(1);
     const options = confirmSpy.mock.calls[0][0];
-    expect(options.confirmLabel).toBe('Archive anyway');
+    expect(options.confirmLabel).toBe('Keep in Delivered');
     expect(String(options.message)).toContain('task/triage-fixture');
     expect(String(options.message)).toContain('develop');
-    expect(String(options.message)).toContain('keeps the task and all of its evidence');
+    expect(String(options.message)).toContain('written override');
     // "pending" is only honest when something is genuinely waiting.
     expect(String(options.message)).not.toContain('status: pending');
     expect(jobService.moveJob).not.toHaveBeenCalled();
   });
 
-  it('records the archive reason on the move when the operator closes anyway', async () => {
+  it('keeps a blocked delivery in Completed even when the notice is acknowledged', async () => {
     const job = makeCompletedJob('pending');
     vi.spyOn(confirmDialog, 'confirm').mockResolvedValue(true);
 
     ctrl.move(job, { targetState: '7-archive', actionId: 'archive' });
     await flush();
 
-    const call = (jobService.moveJob as unknown as { mock: { calls: unknown[][] } }).mock.calls[0];
-    expect(call[0]).toBe('done-a');
-    expect(call[1]).toBe('7-archive');
-    expect(String(call[4])).toContain('task/triage-fixture');
+    expect(jobService.moveJob).not.toHaveBeenCalled();
   });
 
   /**
@@ -439,7 +436,7 @@ describe('TriageController · planning accept spawn-contract guard', () => {
   });
 
   it('does not dialog when the card has nothing to integrate', async () => {
-    const job = makeCompletedJob('no-branch');
+    const job = makeCompletedJob('not-applicable');
     const confirmSpy = vi.spyOn(confirmDialog, 'confirm').mockResolvedValue(true);
 
     ctrl.move(job, { targetState: '7-archive', actionId: 'archive' });
@@ -447,5 +444,13 @@ describe('TriageController · planning accept spawn-contract guard', () => {
 
     expect(confirmSpy).not.toHaveBeenCalled();
     expect(jobService.moveJob).toHaveBeenCalled();
+  });
+
+  it('blocks a required code delivery with no branch', async () => {
+    const job = makeCompletedJob('no-branch');
+    vi.spyOn(confirmDialog, 'confirm').mockResolvedValue(true);
+    ctrl.move(job, { targetState: '7-archive', actionId: 'archive' });
+    await flush();
+    expect(jobService.moveJob).not.toHaveBeenCalled();
   });
 });

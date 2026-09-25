@@ -109,6 +109,17 @@ public sealed class AcceptanceRailHostedService : BackgroundService
             try
             {
                 statusByKey.TryGetValue(job.TaskKey, out var status);
+                if (_configuration.GetValue("DeliveryChain:Guarded", true)
+                    && job.State == TaskStates.HumanReview
+                    && AcceptanceIntegrationPolicy.IsIntegrationRequired(job)
+                    && status?.Status != IntegrationStatuses.Integrated)
+                {
+                    // The delivery reconciler returns this legacy or newly
+                    // stale card to the integration phase. It is not an
+                    // operator review decision for the rail to consume.
+                    held++;
+                    continue;
+                }
                 if (status is not null && _generationReconcile?.Reconcile(job, status) == false)
                 {
                     _logger.LogWarning("integration-generation-reconcile write failed for {TaskKey}", job.TaskKey);
@@ -153,7 +164,13 @@ public sealed class AcceptanceRailHostedService : BackgroundService
                 switch (decision.Action)
                 {
                     case AcceptanceRailAction.Accept:
-                        if (await AcceptAsync(job, ct)) accepted++;
+                        // In the guarded chain acceptance binds a human
+                        // judgement to the already integrated result. The
+                        // rail may diagnose and recover, but cannot supply
+                        // that judgement on the operator's behalf.
+                        if (_configuration.GetValue("DeliveryChain:Guarded", true))
+                            held++;
+                        else if (await AcceptAsync(job, ct)) accepted++;
                         else { failed++; RememberRefusal(job, fingerprint); }
                         break;
                     case AcceptanceRailAction.Requeue:

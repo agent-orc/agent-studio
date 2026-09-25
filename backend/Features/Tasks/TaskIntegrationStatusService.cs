@@ -143,7 +143,7 @@ public sealed class TaskIntegrationStatusService
             // depend on the rest of the batch: the board (many cards) saw the
             // ancestor set a neighbouring card had seeded and read "integrated",
             // while acceptance (one card) found none and read "pending".
-            var primaryKey = groups.Count == 0 ? ResolvePrimaryRepoKey(job) : null;
+            var primaryKey = ResolvePrimaryRepoKey(job);
             work[job] = new CardIntegrationWork(groups, primaryKey);
             foreach (var group in groups)
                 if (group.Key is not null) repoKeys.Add(group.Key);
@@ -171,7 +171,24 @@ public sealed class TaskIntegrationStatusService
 
         foreach (var (job, card) in work)
         {
-            result[job.TaskKey] = ClassifyRepositories(job, card, reaches);
+            var classified = !AcceptanceIntegrationPolicy.IsIntegrationRequired(job)
+                ? new TaskIntegrationStatus
+                {
+                    Status = IntegrationStatuses.NotApplicable,
+                    IntegrationBranch = ConfiguredIntegrationBranch(job),
+                    Detail = "The delivery contract expects no repository change.",
+                }
+                : ClassifyRepositories(job, card, reaches);
+            var fingerprint = string.Join("|", card.Groups.Select(group => group.Key)
+                .Append(card.PrimaryKey)
+                .Where(key => key is not null)
+                .Distinct()
+                .OrderBy(key => key!.Root, StringComparer.Ordinal)
+                .ThenBy(key => key!.Branch, StringComparer.Ordinal)
+                .Select(key => reaches.TryGetValue(key!, out var reach)
+                    ? $"{key!.Root}:{key.Branch}:{reach.PublishedHead ?? "missing"}"
+                    : $"{key!.Root}:{key.Branch}:unavailable"));
+            result[job.TaskKey] = classified with { TargetRefFingerprint = fingerprint };
         }
 
         return result;
@@ -190,7 +207,7 @@ public sealed class TaskIntegrationStatusService
     {
         try
         {
-            var subject = ReviewSubjectStore.Read(job.FolderPath);
+            var subject = CurrentReviewSubject(job);
             if (subject is null || !ReviewSubjectStore.IsValidResultSha(subject.ResultSha))
                 return false;
 
@@ -292,6 +309,24 @@ public sealed class TaskIntegrationStatusService
     {
         var groups = card.Groups;
         var primaryBranch = ConfiguredIntegrationBranch(job);
+        var subject = CurrentReviewSubject(job);
+        // The immutable result of the current epoch is the first proof. A
+        // failed merge attempt cannot override reachability on the published
+        // target ref; an older attributed commit cannot prove this epoch.
+        if (subject is not null && ReviewSubjectStore.IsValidResultSha(subject.ResultSha)
+            && groups.Count <= 1)
+        {
+            var subjectKey = ResolvePrimaryRepoKey(job);
+            if (subjectKey is not null && reaches.TryGetValue(subjectKey, out var subjectReach))
+            {
+                if (AncestorSetContains(subjectReach.PublishedAncestors, subject.ResultSha))
+                    return Integrated(Short(subject.ResultSha), subjectReach.IntegrationBranch,
+                        DeliveryRefFor(job), "current-result-ancestor");
+                if (AncestorSetContains(subjectReach.DevelopAncestors, subject.ResultSha))
+                    return MergedLocally(subjectReach.IntegrationBranch, DeliveryRefFor(job),
+                        "current result is present locally", [Short(subject.ResultSha)]);
+            }
+        }
         if (groups.Count == 0)
         {
             return card.PrimaryKey is not null
@@ -316,8 +351,9 @@ public sealed class TaskIntegrationStatusService
                 commits,
                 sha => reach is not null && AncestorSetContains(reach.DevelopAncestors, sha),
                 sha => reach is not null && AncestorSetContains(reach.ReleaseAncestors, sha),
-                sha => reach is not null && group.Key is not null
-                    && IsIntegratedByContent(group.Key.Root, reach, sha)).ToList();
+                // Content equivalence alone has no durable source-to-result
+                // mapping and cannot establish which delivery was integrated.
+                sha => false).ToList();
             var current = memberships.Where(commit => commit.IntegrationRule
                 is not (CommitIntegrationRules.Superseded or CommitIntegrationRules.LifecycleMarker)).ToList();
             superseded.AddRange(memberships.Where(commit => commit.IntegrationRule == CommitIntegrationRules.Superseded));
@@ -436,9 +472,36 @@ public sealed class TaskIntegrationStatusService
             : new RepoBranchKey(root, ConfiguredIntegrationBranch(job));
     }
 
+    internal static ReviewSubjectRecord? CurrentReviewSubject(TaskInfo job)
+    {
+        var subject = ReviewSubjectStore.Read(job.FolderPath);
+        if (subject is null) return null;
+        var attributed = AttributedCommitRecords(job, includeSuperseded: true);
+        var latestGeneration = attributed.Where(commit => commit.DeliveryGeneration.HasValue)
+            .Select(commit => commit.DeliveryGeneration!.Value)
+            .DefaultIfEmpty(0).Max();
+        if (latestGeneration == 0) return subject;
+        var matching = attributed.Where(commit =>
+            string.Equals(commit.RunAttemptId, subject.RunAttemptId, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(commit.ResultSha, subject.ResultSha, StringComparison.OrdinalIgnoreCase)).ToArray();
+        // A retained earlier envelope is history once a newer attributed
+        // generation exists. It cannot prove the current delivery.
+        return matching.Length > 0 && matching.All(commit =>
+            (commit.DeliveryGeneration ?? 0) < latestGeneration) ? null : subject;
+    }
+
     private List<RepositoryCommitGroup> BuildRepositoryGroups(TaskInfo job)
     {
         var commits = AttributedCommitRecords(job, includeSuperseded: true);
+        var subject = CurrentReviewSubject(job);
+        if (subject is not null && !string.IsNullOrWhiteSpace(subject.RunAttemptId))
+        {
+            var epochCommits = commits.Where(commit =>
+                string.Equals(commit.RunAttemptId, subject.RunAttemptId, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(commit.ResultSha, subject.ResultSha, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (epochCommits.Count > 0) commits = epochCommits;
+        }
         if (commits.Count == 0) return [];
 
         var primaryRoot = _git.ResolveRepoRootForWatchPath(job.WatchPath);
