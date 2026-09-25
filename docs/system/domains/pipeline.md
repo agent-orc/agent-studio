@@ -897,13 +897,14 @@ Human Review remains the quality decision after the code is already integrated.
 
 The named deviations are narrow. Local worktree coding integrates during local
 finalization before its Auto Review gate, but still before Human Review.
-Planning, research, concept, Epic, and other no-code/no-branch deliveries do not
-integrate. Remote Review infrastructure failures remain in Auto Review while
-their retry budget is available. A failed product/build gate, merge conflict,
-lineage failure, push failure, or configured `pull-request` integration strategy
-may enter or remain in Human Review with a visible failed/non-integrated verdict;
-acceptance cannot repair it. All currently configured direct-merge Remote coding
-projects use the canonical order without a project-name exception.
+Planning, research, concept, Epic, and other deliveries without repository
+changes have `not-applicable` integration status. Actual repository changes
+always require integration, regardless of card title or configured class.
+Remote Review infrastructure failures remain in Auto Review while their retry
+budget is available. A failed gate, conflict, or unrecoverable integration error
+escalates with a category and recovery action. Pull-request approval is an
+external decision before Human Review; the card remains in Auto Review until
+the merge reaches the target branch.
 
 Result finalization is a distinct post-core gate on both execution paths. The
 local application retries only `SummaryGenerationService`; the V1 Task Server
@@ -1400,8 +1401,8 @@ whose `task.integration` said `integrated`. Two defects met.
   a quiet log is visible as a decision rather than as an absence. The ledger is
   in memory: a backend restart is itself a new fact and costs exactly one
   re-evaluation per card.
-- **Leaving Human Review.** An integrated coding delivery in `5-human-review`
-  is accepted by the rail without an orchestrator session. A card the project
+- **Leaving Human Review.** In the guarded chain the rail diagnoses and
+  recovers but does not supply the human acceptance judgement. A card the project
   policy holds (`AcceptanceRail:HoldList`, the `orchestrator-hold` tag, an
   operator-decision blocker) stays in Human Review with its integration proof
   on the card and produces no warning, however often the rail sweeps.

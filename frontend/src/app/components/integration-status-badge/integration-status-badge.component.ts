@@ -91,6 +91,7 @@ export class IntegrationStatusBadgeComponent {
     }
     switch (value.status) {
       case 'integrated': return value.sha ? `merged @${value.sha}` : 'merged';
+      case 'not-applicable': return 'No integration needed';
       case 'merged-locally': return 'merged locally, not pushed';
       case 'partial': return 'teilweise integriert';
       case 'pending': return 'NICHT integriert';
@@ -137,6 +138,8 @@ export class IntegrationStatusBadgeComponent {
           return value.sha
             ? `Integrated into ${branch} (${value.sha})`
             : `Integrated into ${branch}`;
+        case 'not-applicable':
+          return 'This delivery has no repository change to integrate';
         case 'merged-locally':
           return `Merged into ${branch} locally, but not reachable from origin/${branch} yet`;
         case 'partial':
@@ -177,6 +180,7 @@ export class IntegrationStatusBadgeComponent {
     const branch = value.integrationBranch || 'develop';
     switch (value.status) {
       case 'integrated': return `Integrated into ${branch}`;
+      case 'not-applicable': return 'No integration needed';
       case 'merged-locally': return `Merged into ${branch} locally but not pushed to origin/${branch}`;
       case 'partial': return `Partially integrated into ${branch}`;
       case 'pending': return `Not integrated into ${branch}`;

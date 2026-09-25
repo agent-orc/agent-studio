@@ -122,7 +122,7 @@ describe('needsPlanningAcceptWarning — AGT-2069 spawn-contract accept guard', 
 
 describe('archive guard: containment decides, an absent record is a question', () => {
   type Status =
-    'integrated' | 'merged-locally' | 'partial' | 'pending' | 'conflict-skipped' | 'no-branch';
+    'integrated' | 'not-applicable' | 'merged-locally' | 'partial' | 'pending' | 'conflict-skipped' | 'no-branch';
   const completed = (status: Status | null): TaskInfo =>
     reviewJob(null, {
       state: TaskState.Completed,
@@ -152,7 +152,8 @@ describe('archive guard: containment decides, an absent record is a question', (
 
   it('reads integrated work and a card with nothing to integrate as non-findings', () => {
     expect(archiveIntegrationVerdict(completed('integrated'))).toBe('integrated');
-    expect(archiveIntegrationVerdict(completed('no-branch'))).toBe('nothing-to-integrate');
+    expect(archiveIntegrationVerdict(completed('not-applicable'))).toBe('nothing-to-integrate');
+    expect(archiveIntegrationVerdict(completed('no-branch'))).toBe('not-integrated');
   });
 
   /**
@@ -161,8 +162,8 @@ describe('archive guard: containment decides, an absent record is a question', (
    * dialog to the server for a containment answer that says the same thing,
    * and reading it as `not-integrated` would accuse a finished delivery.
    */
-  it('reads a merged but unpublished delivery as integrated', () => {
-    expect(archiveIntegrationVerdict(completed('merged-locally'))).toBe('integrated');
+  it('blocks archive while the merged delivery has not been published', () => {
+    expect(archiveIntegrationVerdict(completed('merged-locally'))).toBe('not-integrated');
   });
 
   it('reads the same verdict from the per-card containment answer', () => {
@@ -171,6 +172,8 @@ describe('archive guard: containment decides, an absent record is a question', (
     expect(deliveryClaimVerdict({ integrated: false, containmentStatus: 'pending' }))
       .toBe('not-integrated');
     expect(deliveryClaimVerdict({ integrated: false, containmentStatus: 'no-branch' }))
+      .toBe('not-integrated');
+    expect(deliveryClaimVerdict({ integrated: false, containmentStatus: 'not-applicable' }))
       .toBe('nothing-to-integrate');
     expect(deliveryClaimVerdict({ integrated: false, containmentStatus: 'unknown' }))
       .toBe('unknown');
@@ -200,11 +203,11 @@ describe('primaryActionFor — Enter-bound primary per source lane', () => {
     expect(primary!.intent).toEqual({ kind: 'move', targetState: '7-archive' });
   });
 
-  it('labels the Review lane primary "Merge into Develop" (→ 6-completed acceptance signal)', () => {
+  it('labels the Review lane primary Accept (→ 6-completed)', () => {
     const primary = primaryActionFor('5-human-review');
     expect(primary).not.toBeNull();
     expect(primary!.id).toBe('mark-done');
-    expect(primary!.label).toBe('Merge into Develop');
+    expect(primary!.label).toBe('Accept');
     expect(primary!.intent).toEqual({ kind: 'move', targetState: '6-completed' });
   });
 
@@ -266,17 +269,24 @@ describe('overflowActionsFor — Move to Completed / Move to Archive', () => {
 });
 
 describe('mergeAcceptViewFor — state-dependent Human Review acceptance primary', () => {
-  it('keeps the "Merge into Develop" offer when nothing has landed yet', () => {
+  it('waits for integration when nothing has landed yet', () => {
     const view = mergeAcceptViewFor(reviewJob(mergedProvenance(null)));
     expect(view.landed).toBe(false);
-    expect(view.acceptLabel).toBe('Merge into Develop');
+    expect(view.acceptLabel).toBe('Await integration');
     expect(view.statusLabel).toBeNull();
     expect(view.landedState).toBe('on-branch-only');
   });
 
-  it('uses Accept when there is no attributed task commit to merge', () => {
+  it('waits for a delivery verdict when no attributed commit is present', () => {
     const view = mergeAcceptViewFor(reviewJob(mergedProvenance(null), { commit: null, commits: [] }));
     expect(view.landed).toBe(false);
+    expect(view.acceptLabel).toBe('Await integration');
+  });
+
+  it('allows a code-free delivery with a not-applicable verdict', () => {
+    const view = mergeAcceptViewFor(reviewJob(mergedProvenance(null), {
+      commit: null, commits: [], integration: integrated({ status: 'not-applicable' }),
+    }));
     expect(view.acceptLabel).toBe('Accept');
   });
 
@@ -288,12 +298,7 @@ describe('mergeAcceptViewFor — state-dependent Human Review acceptance primary
     expect(view.acceptLabel).toBe('Accept');
   });
 
-  /**
-   * AGT-2849: the merge landed and only its push to origin is outstanding, so
-   * the primary action must not offer to merge again. The merged-locally badge
-   * is where the card reports the missing push.
-   */
-  it('uses Accept when the merge landed but has not been pushed yet', () => {
+  it('waits for publication when the merge landed only locally', () => {
     const view = mergeAcceptViewFor(reviewJob(mergedProvenance(null), {
       integration: integrated({
         status: 'merged-locally',
@@ -301,15 +306,15 @@ describe('mergeAcceptViewFor — state-dependent Human Review acceptance primary
         detail: 'merged-locally-not-pushed',
       }),
     }));
-    expect(view.landed).toBe(true);
-    expect(view.acceptLabel).toBe('Accept');
-    expect(view.landedState).toBe('merged-to-develop');
+    expect(view.landed).toBe(false);
+    expect(view.acceptLabel).toBe('Await integration');
+    expect(view.landedState).toBe('on-branch-only');
   });
 
   it('does not treat a recorded merge attempt as target-branch proof', () => {
     const view = mergeAcceptViewFor(reviewJob(mergedProvenance('ddddddd9abc')));
     expect(view.landed).toBe(false);
-    expect(view.acceptLabel).toBe('Merge into Develop');
+    expect(view.acceptLabel).toBe('Await integration');
   });
 
   it('uses canonical membership evidence in the status label', () => {
@@ -337,7 +342,7 @@ describe('mergeAcceptViewFor — state-dependent Human Review acceptance primary
   it('does not land purely on the live hint when canonical status is absent', () => {
     const view = mergeAcceptViewFor(reviewJob(mergedProvenance(null)), 'merged-to-develop');
     expect(view.landed).toBe(false);
-    expect(view.acceptLabel).toBe('Merge into Develop');
+    expect(view.acceptLabel).toBe('Await integration');
   });
 
   it('never lets a stale on-branch-only hint mask canonical membership', () => {
@@ -352,12 +357,12 @@ describe('mergeAcceptViewFor — state-dependent Human Review acceptance primary
   it('ignores a blank/whitespace merge commit string', () => {
     const view = mergeAcceptViewFor(reviewJob(mergedProvenance('   ')));
     expect(view.landed).toBe(false);
-    expect(view.acceptLabel).toBe('Merge into Develop');
+    expect(view.acceptLabel).toBe('Await integration');
   });
 
   it('stays an offer for a legacy card with no provenance at all', () => {
     const view = mergeAcceptViewFor(reviewJob(null));
     expect(view.landed).toBe(false);
-    expect(view.acceptLabel).toBe('Merge into Develop');
+    expect(view.acceptLabel).toBe('Await integration');
   });
 });

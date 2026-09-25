@@ -437,6 +437,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
                         ["WatchPaths:0:Path"] = _watchPath,
                         ["WatchPaths:0:RootPath"] = _repo,
                         ["WatchPaths:0:RepositoryPath"] = _repo,
+                        ["DeliveryChain:Guarded"] = "false",
                     });
                 });
                 builder.ConfigureTestServices(services =>
@@ -743,6 +744,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
                         ["WatchPaths:0:Path"] = _watchPath,
                         ["WatchPaths:0:RootPath"] = _repo,
                         ["WatchPaths:0:RepositoryPath"] = _repo,
+                        ["DeliveryChain:Guarded"] = "false",
                     });
                 });
                 builder.ConfigureTestServices(services =>
@@ -1840,6 +1842,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
                 ["WatchPaths:0:RootPath"] = _repo,
                 ["WatchPaths:0:RepositoryPath"] = _repo,
                 ["TaskRepository"] = _tempDir,
+                ["DeliveryChain:Guarded"] = "false",
             })
             .Build();
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
@@ -1970,7 +1973,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             integrationStatus: integration,
             timeline: timeline,
             pipelineLog: pipeline,
-            attemptAuthority: authority);
+            attemptAuthority: authority,
+            configuration: config);
         return new Deps(
             scanner,
             states,

@@ -99,16 +99,17 @@ export class DeliveryClaimPanelComponent {
     const answer = this.answer();
     if (answer) {
       if (answer.integrated) return 'integrated';
-      if (answer.containmentStatus === 'no-branch') return 'nothing-to-integrate';
+      if (answer.containmentStatus === 'not-applicable') return 'nothing-to-integrate';
       return answer.containmentStatus === 'unknown' ? 'unknown' : 'not-integrated';
     }
     switch (this.job().integration?.status) {
       // AGT-2849: the delivery is in the integration branch graph either way.
       // The panel reports containment, and the badge carries the unpublished
       // half of the answer.
-      case 'integrated':
-      case 'merged-locally': return 'integrated';
-      case 'no-branch': return 'nothing-to-integrate';
+      case 'integrated': return 'integrated';
+      case 'not-applicable': return 'nothing-to-integrate';
+      case 'merged-locally':
+      case 'no-branch': return 'not-integrated';
       case 'pending':
       case 'partial':
       case 'conflict-skipped': return 'not-integrated';
