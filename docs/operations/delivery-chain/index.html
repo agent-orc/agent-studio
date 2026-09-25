@@ -120,6 +120,14 @@
   <a href="#s8">&sect; Sources</a>
 </nav>
 
+<section id="status-2026-09-24">
+<h2><span class="no">Status</span> 24 September 2026</h2>
+<p>This review keeps the delivery-chain recommendation current and records four changes since consolidation. AGT-2373 produced a completed cleanup result, but that result is not on <code>develop</code>: <code>runner/AgentCliProcess.cs</code>, <code>backend/Features/Cli/Execution/ChildHandle.cs</code>, and the <code>RUNNER_EXEC_ENGINE=legacy</code> switch remain, so AGT-W7 stays active. AGT-2754 and AGT-2755 through AGT-2758 delivered the Connector and all P0 to P3 route bundles, so AGT-W47 is now history behind AGT-W49. AGT-2763 delivered LinkSupervisor, while AGT-2764 is blocked because Stable exposes no configured <code>RunnerLinks</code> resource and the required seven-day adoption soak has not started. No dedicated Operations Server implementation is present on <code>develop</code>, so AGT-W49 remains a current decision surface.</p>
+<div class="box warn">
+<p><b>Remote integration authority is still open.</b> AGT-2881 recorded the operator direction of 18 September: the remote host integrates, while the local Studio observes and submits operator requests. Its result ref was not integrated into <code>develop</code> as of this review, so this section preserves the direction and the open handoff without claiming implementation. The gate-only D1 to D6 material remains in AGT-W59, Gates, section 9 as D7 to D9. The integration extension's D7 to D14 is carried below.</p>
+</div>
+</section>
+
 <section id="s1">
 <h2><span class="no">&sect;1</span> The chain and where it breaks</h2>
 
@@ -367,7 +375,26 @@
 <section id="s6" data-concept-section="open-decisions" data-document-section="open-decisions">
 <h2><span class="no">&sect;6</span> Open decisions</h2>
 
-<p>Seven choices are still open on this chain. Each one arrived here unsettled from its source Dossier and each is stated with the options as they stand today.</p>
+<p>Seven primary choices are still open on this chain. Each one arrived here unsettled from its original consolidation source and is stated with the options as they stand today. The later remote-integration handoff is recorded first because it adds dependencies without renumbering these decisions.</p>
+
+<h3 id="remote-integration-handoff">Remote integration authority handoff</h3>
+<p>The following open content is preserved from AGT-W18's AGT-2881 extension. These items are not additional decisions made by this review. They define how the delivery chain would satisfy the operator direction that remote authority performs integration and publication while Studio remains an observer.</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Source item</th><th>Open choice preserved here</th><th>Dependency</th></tr></thead>
+<tbody>
+<tr><td>W18 D7</td><td>Give one remote integration executor per project a durable ref-mutation lease, with Task Server owning admission and authority.</td><td>Coordinate with AGT-W49's service boundary.</td></tr>
+<tr><td>W18 D8</td><td>Use a separate <code>IntegrationAttempt</code>, or widen <code>GateAttempt</code> to include merge and push.</td><td>Gate-only ownership remains in AGT-W59.</td></tr>
+<tr><td>W18 D9</td><td>Construct and review one immutable merge candidate, then publish that exact object, or retain delivery-only review and verify a second candidate.</td><td>Extends this Dossier's exact-SHA proof boundary.</td></tr>
+<tr><td>W18 D10</td><td>Require a dedicated Windows gate executor for the same candidate, or accept later detection through scheduled or promotion-only coverage.</td><td>Project platform policy and executor capacity.</td></tr>
+<tr><td>W18 D11</td><td>Run mechanical integration remotely and request one bounded recovery <code>RunAttempt</code> for semantic conflicts or attribution ambiguity.</td><td>Composes with D1 and D7 below.</td></tr>
+<tr><td>W18 D12</td><td>Make Studio a projection and idempotent request client with no integration checkout or push credential.</td><td>Requires remote Task Server authority and AGT-W49's browser edge.</td></tr>
+<tr><td>W18 D13</td><td>Shadow one project for a proposed twenty comparable cards, inject the recovery matrix, then transfer authority with the workstation off.</td><td>AGT-2737 cutover evidence.</td></tr>
+<tr><td>W18 D14</td><td>Keep portable safety fixes, finish only bounded work needed before cutover, and stop expanding workstation-specific optimization after acceptance.</td><td>Disposition of AGT-2839, AGT-2872, AGT-2824 and AGT-2854.</td></tr>
+</tbody>
+</table>
+</div>
+<p><b>Runner-link handoff.</b> AGT-W43 D2 still asks when Phase B starts, and D3 still asks whether the SSH forward remains a manual emergency path. Its concrete open delivery is AGT-2764: configure the Stable link resource, prove adoption and one manual keeper stop, collect a seven-day window including sleep and resume, then disable but do not delete the scheduled keeper and date the runbook. AGT-W49 section 8 owns the target placement; this Dossier owns the delivery dependency and recovery consequence.</p>
 
 <div class="decision" data-decision-id="first-bounce-owner" data-decision-kind="single" data-decision-label="Owner of the first bounce">
   <h3>D1 &middot; Who owns the first recoverable <code>conflict-skipped</code> bounce?</h3>

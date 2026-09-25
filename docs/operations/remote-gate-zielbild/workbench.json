@@ -22,13 +22,14 @@
   ],
   "key": "AGT-W18",
   "review": {
-    "verdict": "superseded",
+    "verdict": "partially-superseded",
     "supersededBy": [
-      "AGT-W59"
+      "AGT-W59",
+      "AGT-W57"
     ],
-    "reviewedAt": "2026-09-14T00:00:00Z",
-    "reviewedBy": "AGT-2801",
-    "note": "Consolidated into the Gates theme Dossier docs/operations/gates (AGT-W59) on 2026-09-14 per AGT-W55 D1 and D2; content preserved there, this Dossier stays readable as History."
+    "reviewedAt": "2026-09-24T17:58:30Z",
+    "reviewedBy": "AGT-2894",
+    "note": "AGT-W59 absorbs the gate-only contract, while AGT-2881's open remote-integration extension and the operator direction that the remote host integrates while Studio observes are carried into AGT-W57 section 6."
   },
   "reviewHistory": [
     {
@@ -46,6 +47,16 @@
       "reviewedAt": "2026-09-14T00:00:00Z",
       "reviewedBy": "AGT-2801",
       "note": "Consolidated into the Gates theme Dossier docs/operations/gates (AGT-W59) on 2026-09-14 per AGT-W55 D1 and D2; content preserved there, this Dossier stays readable as History."
+    },
+    {
+      "verdict": "partially-superseded",
+      "supersededBy": [
+        "AGT-W59",
+        "AGT-W57"
+      ],
+      "reviewedAt": "2026-09-24T17:58:30Z",
+      "reviewedBy": "AGT-2894",
+      "note": "AGT-W59 absorbs the gate-only contract, while AGT-2881's open remote-integration extension and the operator direction that the remote host integrates while Studio observes are carried into AGT-W57 section 6."
     }
   ]
 }

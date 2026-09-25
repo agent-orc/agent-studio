@@ -4,7 +4,7 @@
   "title": "Studio route ownership and local connector",
   "summary": "Route-counted ownership for the Angular Studio, a constrained local connector, and the remote Task Server, including the D4b migration estimate and Robert's decision gate.",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "archived",
   "phase": "decision-ready",
   "updatedAt": "2026-09-07T05:00:00Z",
   "sourceTaskKeys": [
@@ -33,15 +33,15 @@
     }
   ],
   "key": "AGT-W47",
-  "statusReason": "Entscheidung 07.09. durch den Orchestrator unter Roberts Autonomie-Freigabe: Connector-Profil des OrchestratorApi, 95-Routen-Dev-Seat-Allowlist, nativer Windows-Connector bei Docker-Task-Server, Reihenfolge P0-P3, 88 Tage Baseline (71-115). Promotion zu fuenf Implementierungskarten.",
+  "statusReason": "Archived after AGT-2754 and AGT-2755 through AGT-2758 delivered the Connector and every P0-P3 route bundle; AGT-W49 owns the remaining Operations Server target decisions.",
   "review": {
-    "verdict": "partially-superseded",
+    "verdict": "superseded",
     "supersededBy": [
       "AGT-W49"
     ],
-    "reviewedAt": "2026-09-13T10:20:00Z",
-    "reviewedBy": "Operator",
-    "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    "reviewedAt": "2026-09-24T17:58:30Z",
+    "reviewedBy": "AGT-2894",
+    "note": "AGT-2754 and AGT-2755 through AGT-2758 delivered the Connector and all P0-P3 route bundles, while AGT-W49 now owns the remaining executable-operations destination and deployment choices."
   },
   "reviewHistory": [
     {
@@ -52,6 +52,15 @@
       "reviewedAt": "2026-09-13T10:20:00Z",
       "reviewedBy": "Operator",
       "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    },
+    {
+      "verdict": "superseded",
+      "supersededBy": [
+        "AGT-W49"
+      ],
+      "reviewedAt": "2026-09-24T17:58:30Z",
+      "reviewedBy": "AGT-2894",
+      "note": "AGT-2754 and AGT-2755 through AGT-2758 delivered the Connector and all P0-P3 route bundles, while AGT-W49 now owns the remaining executable-operations destination and deployment choices."
     }
   ]
 }

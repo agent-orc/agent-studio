@@ -6,7 +6,7 @@
   "entrypoint": "index.html",
   "status": "active",
   "phase": "testing",
-  "statusReason": "D1 decided 2026-09-09: Option B, LinkSupervisor inside the Task Server process, silent by contract. S2 = AGT-2763 (Ready), S3 = AGT-2764 (preparation, depends on AGT-2763). D2 and D3 remain as recommended.",
+  "statusReason": "D1 was delivered by AGT-2763; AGT-2764 remains blocked because Stable has no configured RunnerLinks resource and the required seven-day adoption soak has not started. D2 and D3 remain open and are carried by AGT-W49 and AGT-W57 section 6.",
   "updatedAt": "2026-09-09T16:30:00Z",
   "sourceTaskKeys": [],
   "relatedTaskKeys": [
@@ -21,11 +21,12 @@
   "review": {
     "verdict": "partially-superseded",
     "supersededBy": [
-      "AGT-W49"
+      "AGT-W49",
+      "AGT-W57"
     ],
-    "reviewedAt": "2026-09-13T10:20:00Z",
-    "reviewedBy": "Operator",
-    "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    "reviewedAt": "2026-09-24T17:58:30Z",
+    "reviewedBy": "AGT-2894",
+    "note": "AGT-2763 delivered LinkSupervisor, but AGT-2764 is blocked before the adoption soak; AGT-W49 owns the target operations boundary and AGT-W57 section 6 preserves the open migration dependency."
   },
   "reviewHistory": [
     {
@@ -36,6 +37,16 @@
       "reviewedAt": "2026-09-13T10:20:00Z",
       "reviewedBy": "Operator",
       "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    },
+    {
+      "verdict": "partially-superseded",
+      "supersededBy": [
+        "AGT-W49",
+        "AGT-W57"
+      ],
+      "reviewedAt": "2026-09-24T17:58:30Z",
+      "reviewedBy": "AGT-2894",
+      "note": "AGT-2763 delivered LinkSupervisor, but AGT-2764 is blocked before the adoption soak; AGT-W49 owns the target operations boundary and AGT-W57 section 6 preserves the open migration dependency."
     }
   ]
 }

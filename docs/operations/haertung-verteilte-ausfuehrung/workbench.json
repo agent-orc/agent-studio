@@ -5,6 +5,7 @@
   "summary": "Ergebniszuordnung zwischen Runner- und Task-Branches, Result-SHA-Vertrag, Fencing und hermetische Gates mit kanonischer Historie. Nachtrag 11.08. (§9): ausführlicher Lease-Lebenszyklus von Claim über Heartbeat/Renew bis Release/Expire, pro Task monotoner Fence mit realem Standby-Zombie-Writer-Fall, globale Authority Epoch als Soft-Drain-Generation bei Recovery, klare Abgrenzung zum Idempotency Key sowie drei theme-fähige Inline-SVG-Sequenzdiagramme und stabile Ziele für das Timeline-Glossar AGT-2631. [Curation 2026-08-17: stays active. AGT-2373 (duplicate CLI invocation paths, ADR and docs) is still in lane 2-ready, so the acquire-to-lane window from section 4 is not closed and this Dossier cannot move to History. The durable section 9 material, the lease lifecycle, fencing tokens, authority epoch and the single-writer write gate, is now written up as architecture documentation in docs/concepts/platform-architecture/fencing-leases-and-authority.md.]",
   "entrypoint": "index.html",
   "status": "active",
+  "statusReason": "Durable lease and fencing knowledge is canonical elsewhere, but AGT-2373's completed result is not on develop and the legacy CLI path remains; AGT-W57 carries the other open delivery-chain choices.",
   "phase": "decision-ready",
   "updatedAt": "2026-08-17T00:00:00Z",
   "sourceTaskKeys": [
@@ -37,11 +38,12 @@
     "verdict": "partially-superseded",
     "supersededBy": [
       "AGT-W49",
-      "AGT-W51"
+      "AGT-W51",
+      "AGT-W57"
     ],
-    "reviewedAt": "2026-09-13T10:20:00Z",
-    "reviewedBy": "Operator",
-    "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    "reviewedAt": "2026-09-24T17:58:30Z",
+    "reviewedBy": "AGT-2894",
+    "note": "Durable lease and fencing knowledge is canonical elsewhere and AGT-W57 carries the other open choices, but AGT-2373's cleanup result is not on develop and the legacy CLI path remains."
   },
   "reviewHistory": [
     {
@@ -53,6 +55,17 @@
       "reviewedAt": "2026-09-13T10:20:00Z",
       "reviewedBy": "Operator",
       "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    },
+    {
+      "verdict": "partially-superseded",
+      "supersededBy": [
+        "AGT-W49",
+        "AGT-W51",
+        "AGT-W57"
+      ],
+      "reviewedAt": "2026-09-24T17:58:30Z",
+      "reviewedBy": "AGT-2894",
+      "note": "Durable lease and fencing knowledge is canonical elsewhere and AGT-W57 carries the other open choices, but AGT-2373's cleanup result is not on develop and the legacy CLI path remains."
     }
   ]
 }

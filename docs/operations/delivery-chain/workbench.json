@@ -2,6 +2,22 @@
   "schemaVersion": 1,
   "id": "delivery-chain",
   "key": "AGT-W57",
+  "review": {
+    "verdict": "current",
+    "supersededBy": [],
+    "reviewedAt": "2026-09-24T17:58:30Z",
+    "reviewedBy": "AGT-2894",
+    "note": "The consolidated delivery-chain decisions and seven original open choices remain current, with the 24 September status handoff adding the still-open remote-integration, runner-link, and Operations Server dependencies."
+  },
+  "reviewHistory": [
+    {
+      "verdict": "current",
+      "supersededBy": [],
+      "reviewedAt": "2026-09-24T17:58:30Z",
+      "reviewedBy": "AGT-2894",
+      "note": "The consolidated delivery-chain decisions and seven original open choices remain current, with the 24 September status handoff adding the still-open remote-integration, runner-link, and Operations Server dependencies."
+    }
+  ],
   "title": "Delivery chain: integration, recovery, robustness",
   "summary": "Theme Dossier for the path from an agent's last commit to a published release. It carries the settled Git policy per stage (renew identity on a fresh fenced recovery round, preserve delivery SHAs at canonical integration with merge first, publish only the exact gated candidate to main), the board status contract that policy depends on (integration truth derived from target-branch presence, 'completed' as an evidence-bearing statement), the five structural patterns behind the incidents of 2026-08-13 to 2026-09-12, the eleven failure classes from live operation, the measured retry tax of 2026-08-11 and 2026-08-12 (11.1 percent useful first-run coding, 88.9 percent retry tax), and the recurring failure shapes synthesised from the rolling supervision log. Recommends the wave order diagnosis contract and cause breaker first, then isolation per AGT-W51, then lifecycle ownership and executable healings. Seven open decisions: first-bounce ownership, guardian trigger, batch member assembly, flaky policy, integrated-only human review, pull-request projects, and how a mechanical rebase round is executed. Consolidates AGT-W3, W23, W37, W42, W44, W50 and synthesises AGT-W39.",
   "entrypoint": "index.html",
