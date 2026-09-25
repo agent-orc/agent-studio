@@ -46,7 +46,27 @@ public sealed class ReviewSubjectStoreTests : IDisposable
         Assert.Null(error);
     }
 
-    private (AttemptAuthorityService Authority, ReviewSubjectRecord Subject) CompletedSubject(string taskKey)
+    [Fact]
+    public void ValidateCurrentAttempt_ChangedImmutableResultRef_IsRejected()
+    {
+        var folder = Path.Combine(_root, "5-human-review", "changed-ref");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "task.json"), """{"key":"TE-38"}""");
+        var (authority, subject) = CompletedSubject(
+            "TE-38", "refs/agent-studio/results/original");
+
+        var valid = ReviewSubjectStore.TryValidateCurrentAttempt(
+            folder,
+            subject with { ImmutableResultRef = "refs/agent-studio/results/changed" },
+            authority,
+            out var error);
+
+        Assert.False(valid);
+        Assert.Contains("result ref", error, StringComparison.Ordinal);
+    }
+
+    private (AttemptAuthorityService Authority, ReviewSubjectRecord Subject) CompletedSubject(
+        string taskKey, string? immutableRef = null)
     {
         Directory.CreateDirectory(_root);
         var configuration = new ConfigurationBuilder()
@@ -67,6 +87,9 @@ public sealed class ReviewSubjectStoreTests : IDisposable
             60,
             "claim").RunAttempt!;
         var sha = new string('a', 40);
+        var envelope = immutableRef is null ? null : new AgentStudio.TaskServer.Contracts.ImmutableResultEnvelope(
+            run.RepositoryId, run.AttemptId, new string('0', 40), sha,
+            immutableRef, null, new string('1', 64));
         var settled = authority.SettleRun(new SettleRunAttemptRequest
         {
             Write = new AttemptWriteReference(
@@ -76,6 +99,10 @@ public sealed class ReviewSubjectStoreTests : IDisposable
                 "settle"),
             Outcome = "done",
             ResultSha = sha,
+            ResultEnvelope = envelope,
+            ResultEnvelopeDigest = envelope is null
+                ? null
+                : AgentStudio.TaskServer.Contracts.ResultEnvelopeDigest.Compute(envelope),
         });
         Assert.True(settled.Accepted);
 
@@ -84,6 +111,7 @@ public sealed class ReviewSubjectStoreTests : IDisposable
             TaskKey = taskKey,
             RunAttemptId = run.AttemptId,
             ResultSha = sha,
+            ImmutableResultRef = immutableRef,
             AttemptChainId = run.Lease!.LeaseId,
         });
     }
