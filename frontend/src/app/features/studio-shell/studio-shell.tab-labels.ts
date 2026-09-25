@@ -5,6 +5,28 @@
  */
 import type { StudioTab } from './studio-shell.types';
 
+/** Keep compact tab titles readable by cutting at a word boundary. */
+export function truncateTabTitle(title: string, maxCharacters = 38): string {
+  const normalized = title.trim().replace(/\s+/g, ' ');
+  if (normalized.length <= maxCharacters) return normalized;
+  const candidate = normalized.slice(0, Math.max(1, maxCharacters - 1));
+  const boundary = candidate.lastIndexOf(' ');
+  const visible = boundary >= Math.floor(maxCharacters * 0.55)
+    ? candidate.slice(0, boundary)
+    : candidate;
+  return `${visible.trimEnd()}…`;
+}
+
+/** Human-readable fallback used only while document metadata is unavailable. */
+export function titleFromDocumentPath(path: string): string {
+  const filename = path.split('/').pop() || path;
+  const stem = filename.replace(/\.(?:md|html?|json)$/i, '');
+  return stem
+    .replace(/^\d+[._-]+/, '')
+    .replace(/[-_]+/g, ' ')
+    .replace(/\b\w/g, character => character.toUpperCase());
+}
+
 export interface CompactTabLabelInputs {
   /** The tab's full strip label (`tabLabel`). */
   fullLabel: string;
