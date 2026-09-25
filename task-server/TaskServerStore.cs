@@ -29,7 +29,7 @@ public sealed partial class TaskServerStore
     // per-host model minimum alerts.
     // The migration block is idempotent; the number guards downgrades from
     // binaries that do not know this state.
-    public const int CurrentSchemaVersion = 19;
+    public const int CurrentSchemaVersion = 20;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -3662,6 +3662,7 @@ public sealed partial class TaskServerStore
             ON CONFLICT(version) DO NOTHING;
             """, ct, ("$version", CurrentSchemaVersion), ("$now", Iso(UtcNow)));
         await ApplyReviewMigrationAsync(connection, ct);
+        await ApplyFailureFingerprintMigrationAsync(connection, ct);
         // Studio route-ownership P1 "task detail and hosts" bundle
         // (docs/studio-route-ownership/index.html): each group below owns a
         // disjoint set of new tables and touches no other group's schema.
