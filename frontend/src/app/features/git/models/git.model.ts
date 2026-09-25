@@ -50,6 +50,7 @@ export interface GitTaskBadge {
   key: string;
   title: string;
   lane: string;
+  runId?: string | null;
 }
 
 /**
@@ -120,6 +121,9 @@ export interface GitDeploymentMarker {
 }
 
 export interface GitGraphCommit extends GitCommitEntry {
+  body?: string;
+  committer?: string;
+  committerDateUtc?: string;
   parentShas: string[];
   refs: GitCommitRef[];
   tasks: GitTaskBadge[];

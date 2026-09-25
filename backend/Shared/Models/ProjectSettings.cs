@@ -3,6 +3,19 @@ namespace AgentStudio.Shared;
 public record ProjectSettings
 {
     /// <summary>
+    /// Maximum raw bytes retained for one remote-run result artifact. The
+    /// server further clamps this against its advertised request-body budget so
+    /// base64 encoding can never turn an allowed file into an oversized POST.
+    /// </summary>
+    public long? ResultArtifactMaxFileBytes { get; init; }
+
+    /// <summary>
+    /// Maximum raw bytes retained across one remote coding run's result files.
+    /// Null uses the product default.
+    /// </summary>
+    public long? ResultArtifactMaxTotalBytes { get; init; }
+
+    /// <summary>
     /// Per publish-target automation ladder. Keys are derived target ids
     /// (<c>package:npm</c>, <c>package:nuget</c>, <c>website</c>); values are
     /// <c>manual</c>, <c>suggest</c>, or <c>auto</c>. Missing entries resolve to

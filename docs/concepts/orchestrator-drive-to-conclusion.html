@@ -2640,6 +2640,31 @@
              Run history names the refusal and continuation, and Execution Hosts counts refusals per model per UTC day.
            </td>
          </tr>
+        <tr id="case-agt-2884-oversized-result-artifact">
+          <td>2026-09-18</td>
+          <td><code>AGT-2884</code><br><span class="small">oversized Playwright trace blocked code delivery</span></td>
+          <td>
+            The coding CLI completed successfully after 30 minutes, but an 18 MB Playwright <code>trace.zip</code>
+            expanded beyond the Task Server's 25 MB request-body cap when embedded as base64. The artifact POST returned
+            HTTP 413 before the runner committed or pushed the twelve changed files. The card returned to
+            <span class="lane">2-ready</span> without a board message, while the only useful work remained uncommitted in
+            a retained worktree until an operator published a salvage ref manually.
+          </td>
+          <td>
+            Legacy finalization ordered the aggregate artifact upload before Git security and fenced completion, and
+            treated every artifact HTTP failure as a slot failure. It neither learned the server limit nor bounded
+            individual files, so re-running the card would repeat the same payload and the same 413.
+          </td>
+          <td>
+            <span class="pill ok">fixed in dev</span> Git result or salvage publication and the completion report now
+            precede artifact transport. The server advertises a base64-safe request limit plus project file and total
+            budgets; the runner filters dependency/build trees, uploads one file per request, documents skipped evidence
+            in <code>results/deliverables.md</code>, and reports HTTP 413/507 as non-fatal
+            <code>ArtifactTooLarge</code> with <code>artifacts: partial</code> and one timeline fact. The global 25 MB
+            denial-of-service bound remains unchanged. Any earlier failed handoff still uses the generation-scoped
+            automatic salvage path before the slot is released.
+          </td>
+        </tr>
       </tbody>
     </table>
 

@@ -1,6 +1,6 @@
 # Frontend Domain Map
 
-Version: 2026-09-11
+Version: 2026-09-19
 Status: System-of-record map for frontend changes.
 
 Use this when a change touches Angular code, visual design, task-detail,
@@ -135,6 +135,14 @@ the bounded stack with the current target; transient viewer modes remain local
 component state. On hydration, an explicit stable route still wins over the
 persisted active target and reconciles the matching document history entry.
 
+The tab strip keeps project or task identity in a compact prefix chip and the
+title on the same line. Wiki targets carry the catalogue title derived from
+front matter or the first H1, with a humanized path only as a loading fallback.
+Long visible titles are shortened at a word boundary while the full title and
+path remain in the tooltip. Tabs have a legible minimum width and horizontal
+overflow instead of shrinking below that width; active styling and close-button
+alignment are stable in both themes.
+
 The workspace Activity Feed is the embedded `#/feed` main view and is opened
 by the Activity icon. Its 500-event backend snapshot is rendered through a
 bounded, variable-height history window based on the Activity scroll fix, so
@@ -257,6 +265,14 @@ without a parallel surface.
   and regeneration command live in
   [architecture/project-map.md](../architecture/project-map.md); each regeneration
   also writes a dated JSON envelope under `architecture/project-map-history/`.
+  The Git rail is a read-only, three-pane browser. The refs and stale-branch
+  sweep share a resizable left column, the commit graph owns the central scroll
+  viewport, and commit selection opens a resizable right inspector before a
+  file selection reuses the existing diff view. Both split widths are local
+  browser preferences. A `?commit=<sha>` suffix on the Git rail route restores
+  the selected commit and scrolls its graph row into view. Graph commits include
+  body, committer identity/time, and an attributed run id when task metadata
+  carries one; no details action mutates the repository.
   The former Runtime Prompts placeholder rail is intentionally removed. The Wiki / Docs rail
   (`project-detail/components/project-wiki-section/`) renders the physical
   `docs/` folder tree from the project's checkout or configured

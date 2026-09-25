@@ -1205,6 +1205,54 @@ public sealed class TaskServerStoreTests
     }
 
     [Fact]
+    public async Task Exact_run_authority_can_upload_artifacts_after_completion()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        await SeedReadyTaskAsync(store);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        var run = claim.Run!;
+        var lease = claim.Lease!;
+        await store.CompleteRunAsync(
+            run.RunId,
+            new CompleteRunRequest(
+                "runner-a",
+                "instance-a",
+                lease.LeaseId,
+                lease.Fence,
+                ExecutionOutcomeKind.LaunchFailure.ToString(),
+                "code delivery report precedes optional evidence",
+                IdempotencyKey: "completion-before-artifact",
+                Sequence: 1),
+            "runner-a",
+            default);
+
+        var bytes = Encoding.UTF8.GetBytes("bounded evidence");
+        var sha = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+        var artifact = await store.IngestArtifactAsync(
+            run.RunId,
+            new ArtifactIngestRequest(
+                "artifact-after-completion",
+                "results/proof.txt",
+                "text/plain",
+                Convert.ToBase64String(bytes),
+                sha,
+                "artifact-after-completion",
+                lease.Fence,
+                "runner-a",
+                "instance-a",
+                lease.LeaseId,
+                Sequence: 2),
+            "runner-a",
+            default);
+
+        Assert.Equal("results/proof.txt", artifact.Name);
+        Assert.Equal(bytes.LongLength, artifact.SizeBytes);
+    }
+
+    [Fact]
     public async Task Typed_outcome_completion_is_fenced_idempotent_and_survives_restart_with_raw_facts()
     {
         using var temp = new TempDirectory();

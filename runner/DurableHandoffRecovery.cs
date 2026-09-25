@@ -90,12 +90,12 @@ public sealed class DurableHandoffRecovery
             fencingToken: outbox.Authority.Fence);
 
         var finalItem = outbox.Items.LastOrDefault(item => item.Kind == "final-result");
+        var manifest = LatestManifest(outbox);
         ImmutableResultEnvelope envelope;
         WorktreeTeardownResult secured;
         if (finalItem is null)
         {
-            var manifest = LatestManifest(outbox)
-                           ?? await JournalArtifactsAsync(outbox, ct);
+            manifest ??= await JournalArtifactsAsync(outbox, ct);
             outbox.RecordHandoffState("transferring");
             await ReportSafeAsync(outbox, ct);
             secured = await workspace.SecureForHandoffAsync(
@@ -135,6 +135,11 @@ public sealed class DurableHandoffRecovery
         }
         else
         {
+            if (manifest is null)
+            {
+                throw new InvalidDataException(
+                    $"Run '{outbox.Authority.RunId}' has no durable artifact manifest.");
+            }
             envelope = JsonSerializer.Deserialize<ImmutableResultEnvelope>(
                            finalItem.PayloadJson,
                            Json)
@@ -197,6 +202,16 @@ public sealed class DurableHandoffRecovery
         }
         outbox.RecordHandoffState("completed", envelopeDigest);
         await ReportSafeAsync(outbox, ct);
+        try
+        {
+            await TransferArtifactsAfterDeliveryAsync(outbox, manifest, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log(
+                $"artifact-transfer recovery remained non-fatal run={outbox.Authority.RunId} "
+                + $"artifacts=partial error={ex.Message}");
+        }
         _log($"outbox recovery completed run={outbox.Authority.RunId} task={outbox.Authority.TaskKey} resultSha={envelope.ResultSha}");
     }
 
@@ -209,32 +224,151 @@ public sealed class DurableHandoffRecovery
             "tasks",
             GitWorkspace.SafeSegment(outbox.Authority.TaskKey),
             "results");
-        var entries = new List<ArtifactManifestEntry>();
-        if (Directory.Exists(results))
+        var limits = await _client.GetArtifactTransferLimitsAsync(outbox.Authority.TaskKey, ct);
+        var observed = RemoteTaskRunner.ObserveResultFiles(results);
+        var (selected, skipped) = ArtifactTransferPolicy.Select(results, observed, limits);
+        if (skipped.Count > 0)
         {
-            foreach (var path in Directory.EnumerateFiles(
-                         results,
-                         "*",
-                         SearchOption.AllDirectories))
-            {
-                var bytes = await File.ReadAllBytesAsync(path, ct);
-                var relative = "results/" + Path.GetRelativePath(results, path).Replace('\\', '/');
-                var sha = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
-                entries.Add(new ArtifactManifestEntry(relative, sha, bytes.LongLength));
-                outbox.Enqueue(
-                    "artifact",
-                    JsonSerializer.Serialize(
-                        new DurableArtifactPayload(
-                            relative,
-                            TaskServerClient.MediaTypeForPath(relative),
-                            Convert.ToBase64String(bytes),
-                            sha),
-                        Json));
-            }
+            RemoteTaskRunner.UpdateDeliverablesArtifactPolicy(results, skipped, limits);
+            observed = RemoteTaskRunner.ObserveResultFiles(results);
+            (selected, skipped) = ArtifactTransferPolicy.Select(results, observed, limits);
+        }
+        var entries = new List<ArtifactManifestEntry>();
+        foreach (var file in selected)
+        {
+            var bytes = await File.ReadAllBytesAsync(file.FullPath, ct);
+            var sha = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+            entries.Add(new ArtifactManifestEntry(file.RelativePath, sha, bytes.LongLength));
         }
         var manifest = RemoteTaskRunner.BuildArtifactManifest(entries);
         outbox.Enqueue("artifact-manifest", manifest.Json);
         return manifest;
+    }
+
+    private async Task TransferArtifactsAfterDeliveryAsync(
+        DurableRunOutbox outbox,
+        DurableArtifactManifest manifest,
+        CancellationToken ct)
+    {
+        var results = Path.Combine(
+            _options.WorkDir,
+            "tasks",
+            GitWorkspace.SafeSegment(outbox.Authority.TaskKey),
+            "results");
+        var limits = await _client.GetArtifactTransferLimitsAsync(outbox.Authority.TaskKey, ct);
+        var (files, initialSkipped) = ArtifactTransferPolicy.Select(
+            results,
+            RemoteTaskRunner.ObserveResultFiles(results),
+            limits);
+        var issues = initialSkipped.ToList();
+        var expected = JsonSerializer.Deserialize<ArtifactManifestEntry[]>(manifest.Json, Json)
+                       ?? throw new InvalidDataException(
+                           $"Run '{outbox.Authority.RunId}' has an empty artifact manifest.");
+        var expectedByPath = expected.ToDictionary(
+            entry => entry.Path,
+            StringComparer.Ordinal);
+        var acknowledgedPaths = outbox.Items
+            .Where(item => item.Kind == "artifact"
+                           && item.Sequence <= outbox.LastAcknowledgedSequence)
+            .Select(item => JsonSerializer.Deserialize<DurableArtifactPayload>(item.PayloadJson, Json)?.Name)
+            .OfType<string>()
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .ToHashSet(StringComparer.Ordinal);
+        var observedPaths = files.Select(file => file.RelativePath)
+            .Concat(initialSkipped.Select(issue => issue.Path))
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var missing in expected.Where(entry =>
+                     !observedPaths.Contains(entry.Path)
+                     && !acknowledgedPaths.Contains(entry.Path)))
+        {
+            issues.Add(new ArtifactTransferIssue(
+                missing.Path,
+                missing.SizeBytes,
+                "was unavailable after artifact manifest preparation",
+                ArtifactTransferOutcomes.TransferFailed));
+        }
+        foreach (var file in files)
+        {
+            if (acknowledgedPaths.Contains(file.RelativePath)) continue;
+            try
+            {
+                var bytes = await File.ReadAllBytesAsync(file.FullPath, ct);
+                var sha = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+                if (!expectedByPath.TryGetValue(file.RelativePath, out var entry)
+                    || entry.SizeBytes != bytes.LongLength
+                    || !string.Equals(entry.Sha256, sha, StringComparison.OrdinalIgnoreCase))
+                {
+                    issues.Add(new ArtifactTransferIssue(
+                        file.RelativePath,
+                        bytes.LongLength,
+                        expectedByPath.ContainsKey(file.RelativePath)
+                            ? "changed after artifact manifest preparation; skipped to preserve manifest integrity"
+                            : "was created after artifact manifest preparation; skipped to preserve manifest integrity",
+                        ArtifactTransferOutcomes.TransferFailed));
+                    continue;
+                }
+                var upload = new RunnerArtifactUpload(file.RelativePath, Convert.ToBase64String(bytes));
+                RemoteTaskRunner.ValidateArtifactAcknowledgement(
+                    outbox.Authority.TaskKey,
+                    [upload],
+                    await _client.UploadArtifactsAsync(new ArtifactIngestRequest(
+                        outbox.Authority.TaskKey,
+                        [upload],
+                        outbox.Authority.RunnerId,
+                        outbox.Authority.LeaseId,
+                        outbox.Authority.Fence,
+                        outbox.Authority.RunId,
+                        outbox.Authority.Fence,
+                        IdempotencyKey: $"artifact:{outbox.Authority.RunId}:{file.RelativePath}:{WireDigest.Hash(upload.ContentBase64)}"),
+                        ct));
+            }
+            catch (TaskServerException ex) when (ArtifactTransferPolicy.IsCapacityRejection(ex))
+            {
+                issues.Add(new ArtifactTransferIssue(
+                    file.RelativePath,
+                    file.SizeBytes,
+                    ex.StatusCode == 413
+                        ? $"exceeded the {ArtifactTransferPolicy.FormatMb(limits.MaxRequestBodyBytes)} MB upload limit"
+                        : "was refused because artifact storage is full (HTTP 507)"));
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                issues.Add(new ArtifactTransferIssue(
+                    file.RelativePath,
+                    file.SizeBytes,
+                    $"upload failed ({ex.Message})",
+                    ArtifactTransferOutcomes.TransferFailed));
+            }
+        }
+        try
+        {
+            await _client.UploadArtifactsAsync(new ArtifactIngestRequest(
+                outbox.Authority.TaskKey,
+                [],
+                outbox.Authority.RunnerId,
+                outbox.Authority.LeaseId,
+                outbox.Authority.Fence,
+                outbox.Authority.RunId,
+                outbox.Authority.Fence,
+                IdempotencyKey: $"artifact-finalize:{outbox.Authority.RunId}",
+                FinalizeResult: true), ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log($"artifact finalization recovery was non-fatal run={outbox.Authority.RunId}: {ex.Message}");
+        }
+        if (issues.Count == 0) return;
+        await _client.ReportArtifactTransferAsync(new ArtifactTransferReportRequest(
+            outbox.Authority.TaskKey,
+            "partial",
+            issues,
+            outbox.Authority.RunnerId,
+            outbox.Authority.LeaseId,
+            outbox.Authority.Fence,
+            outbox.Authority.RunId), ct);
+        _log(
+            $"artifact-transfer recovery run={outbox.Authority.RunId} artifacts=partial "
+            + $"notTransferred={issues.Count}");
     }
 
     private static T? Latest<T>(DurableRunOutbox outbox, string kind)

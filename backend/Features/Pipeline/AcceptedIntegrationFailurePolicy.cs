@@ -190,6 +190,14 @@ public static class AcceptedIntegrationFailurePolicy
                 FirstNonBlank(reason, verdictSummary, "Integration failed without a diagnostic."),
                 RebaseRecoveryAvailable: false),
         };
+        if (code == AcceptedIntegrationFailureCodes.GateEnvironmentFailure
+            && BuildTestGateRunner.IsPreparationCacheNuGetFailure(reason ?? verdictSummary))
+        {
+            classified = new RunFailureVerdict(
+                RunFailureClass.Infrastructure,
+                RunFailureSignatures.GatePreparationCacheTorn,
+                "The gate's private NuGet preparation cache was torn before verification completed.");
+        }
         return failure with
         {
             FailureClass = classified.Class,

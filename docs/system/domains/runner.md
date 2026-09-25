@@ -1,6 +1,6 @@
 # Runner Domain Map
 
-Version: 2026-09-18
+Version: 2026-09-19
 Status: System-of-record map for runner-side changes.
 
 Use this when a change touches task pickup, active execution, post-run outcome
@@ -34,6 +34,18 @@ state.
 
 ## Key Code
 
+- `runner/ArtifactTransferPolicy.cs`, `runner/RemoteTaskRunner.cs`,
+  `backend/Features/Diagnostics/ArtifactIngestionEndpoints.cs`, and
+  `task-server/TaskServerEndpoints.cs`: post-delivery
+  result evidence transport. Git result or salvage publication and fenced
+  completion happen first. The server advertises its base64-safe request
+  budget plus project file and total caps; the runner selects bounded files,
+  excludes Playwright traces, videos, dependency trees, and build output,
+  then uploads one manifest-bound file per request. Deterministic skips are
+  written to `results/deliverables.md` before the manifest is created. A later
+  HTTP 413/507 never rewrites a manifested file; it is recorded as the
+  non-fatal `ArtifactTooLarge` / `artifacts: partial` board fact instead. The
+  Task Server's global request-body denial-of-service bound is not raised.
 - `backend/Services/TaskRunnerService.cs`: project runner ownership and public
   start, stop, continue, and mode surface.
 - `runner/FinalizationRetryPolicy.cs`, `runner/CodingFinalizationReconciler.cs`,
@@ -702,6 +714,19 @@ state.
   Runner registration advertises the deployment release directory selected by
   `/opt/agent-host/current` (or `RUNNER_RELEASE_ID`) rather than the generic
   assembly package version.
+- `runner/RunnerReleaseIdentity.cs`,
+  `backend/Features/Runner/HostReleaseDrift.cs`, and
+  `backend/Features/Runner/HostReleaseDriftWatchdog.cs`: release-drift detection
+  (AGT-2826). The daemon reports release id, version, commit, and build instant
+  in registration and in every capability heartbeat; the pure policy compares
+  one host against the release this server runs; the watchdog projects the
+  verdict at `GET /api/v1/management/host-releases` for Execution Hosts and
+  raises one `host_release_drift` operator-feed alarm per host release that
+  stays more than 24 hours behind Stable. A same-instance registration may
+  retain its last reported release when the field is omitted, while a changed
+  instance clears an omitted identity to prevent rollback drift from being
+  hidden. Operator behaviour and the incident that motivated it live in
+  [docs/operations/remote-hosts.md](../../operations/remote-hosts.md).
 - Provider-auth advertisement changes are appended to the same bounded recovery
   history exposed by the management snapshot. Execution Hosts turns that data
   into per-CLI `OK`, `Retrying`, `Limited`, `Expiring`, `Unavailable`, and

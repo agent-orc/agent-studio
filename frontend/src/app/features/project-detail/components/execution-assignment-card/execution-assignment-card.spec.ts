@@ -147,6 +147,9 @@ describe('ExecutionAssignmentCardComponent', () => {
     clients.forEach(request => request.flush([]));
     http.expectOne('/api/v1/management/remote-hosts').flush([]);
     http.expectOne('/api/v1/management/links').flush([]);
+    http.expectOne('/api/v1/management/host-releases').flush({
+      observedAt: '2026-09-15T12:00:00Z', stable: { version: '0.3.0' }, behindCount: 0, hosts: [],
+    });
     http.expectOne('/api/v1/management/provider-refusals?days=14').flush([{
       day: '2026-09-18', model: 'gpt-6-astra', count: 1,
       refusals: ['unsupported_parameter access_programs.cyber'],

@@ -1,0 +1,29 @@
+@if (row().aspectSummary) {
+  <span class="aspect-result__summary"
+        data-testid="overview-pipeline-step-summary"
+        [cacTooltip]="row().aspectSummary">{{ row().aspectSummary }}</span>
+}
+@if (reportFile(); as report) {
+  <button type="button" class="aspect-result__link" data-testid="overview-pipeline-step-report"
+          (click)="documentRequested.emit(report)">Report</button>
+  @if (row().aspectEvidence.length > 0) {
+    <details class="aspect-result__evidence">
+      <summary aria-label="More aspect evidence" title="Raw log, review grade, and earlier attempts">⋯</summary>
+      <div class="aspect-result__evidence-menu">
+        @for (attempt of row().aspectEvidence; track attempt.attemptId; let first = $first) {
+          <span class="aspect-result__attempt">{{ first ? 'Latest' : attempt.attemptId }}</span>
+          @if (attempt.rawLogFile; as rawLog) {
+            <button type="button" class="aspect-result__link"
+                    [attr.data-testid]="first ? 'overview-pipeline-step-raw-log' : null"
+                    (click)="documentRequested.emit(rawLog)">Raw log</button>
+          }
+          @if (attempt.reviewGradeFile; as grade) {
+            <button type="button" class="aspect-result__link"
+                    [attr.data-testid]="first ? 'overview-pipeline-step-review-grade' : null"
+                    (click)="documentRequested.emit(grade)">Review grade</button>
+          }
+        }
+      </div>
+    </details>
+  }
+}

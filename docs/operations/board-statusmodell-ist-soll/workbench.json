@@ -27,9 +27,9 @@
     "supersededBy": [
       "AGT-W57"
     ],
-    "reviewedAt": "2026-09-14T18:43:49Z",
+    "reviewedAt": "2026-09-25T12:37:33Z",
     "reviewedBy": "Operator",
-    "note": "Consolidated into AGT-W57 Delivery chain: integration, recovery, robustness (AGT-2799), per AGT-W55 section 3 and operator decisions D1 and D2 of 2026-09-13. No separate archive artefact: the durable knowledge lives in the theme Dossier."
+    "note": "Operator review: AGT-W3 is consolidated into AGT-W57 Delivery chain Dossier; section 7 maps its durable knowledge. No archive artefact is needed."
   },
   "reviewHistory": [
     {
@@ -49,6 +49,15 @@
       "reviewedAt": "2026-09-14T18:43:49Z",
       "reviewedBy": "Operator",
       "note": "Consolidated into AGT-W57 Delivery chain: integration, recovery, robustness (AGT-2799), per AGT-W55 section 3 and operator decisions D1 and D2 of 2026-09-13. No separate archive artefact: the durable knowledge lives in the theme Dossier."
+    },
+    {
+      "verdict": "superseded",
+      "supersededBy": [
+        "AGT-W57"
+      ],
+      "reviewedAt": "2026-09-25T12:37:33Z",
+      "reviewedBy": "Operator",
+      "note": "Operator review: AGT-W3 is consolidated into AGT-W57 Delivery chain Dossier; section 7 maps its durable knowledge. No archive artefact is needed."
     }
   ]
 }

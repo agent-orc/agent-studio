@@ -2,6 +2,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Runner;
 
@@ -122,14 +123,6 @@ public sealed record AspectDocument(
 /// </summary>
 public static class AspectVerdictParsing
 {
-    // Sentinel regex. `.+?` is lazy + Singleline so the match accepts a
-    // summary that wraps across lines or contains a single `]` (e.g.
-    // `summary=Found [[issue]] in fooBar`); the `\]\]` anchor still
-    // requires the doubled-bracket terminator.
-    private static readonly Regex VerdictRegex = new(
-        @"\[\[ASPECT_VERDICT:\s*(?<body>.+?)\s*\]\]",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
-
     // Tolerant fallback: a model that drops the sentinel sometimes still
     // says "Status: concerns" on its own line. We accept that as a
     // legitimate verdict (no summary captured — caller fills the gap)
@@ -157,18 +150,13 @@ public static class AspectVerdictParsing
         var cleaned = StripWrappers(output);
 
         // Preferred path: the canonical [[ASPECT_VERDICT: ...]] sentinel.
-        var matches = VerdictRegex.Matches(cleaned);
-        if (matches.Count > 0)
+        var marker = AspectVerdictMarkerParser.ParseLast(cleaned);
+        if (marker != null)
         {
-            var last = matches[^1];
-            var fields = ParseFields(last.Groups["body"].Value);
-            if (fields != null)
-            {
-                var statusRaw = fields.GetValueOrDefault("status")?.Trim().ToLowerInvariant();
-                var summary = fields.GetValueOrDefault("summary")?.Trim() ?? string.Empty;
-                var status = TokenToStatus(statusRaw);
-                if (status != null) return (status.Value, summary);
-            }
+            var statusRaw = marker.Status.Trim().ToLowerInvariant();
+            var summary = marker.Summary.Trim();
+            var status = TokenToStatus(statusRaw);
+            if (status != null) return (status.Value, summary);
         }
 
         // Tolerant fallback: scan for a "Status: <pass|concerns|block>"
@@ -371,23 +359,6 @@ public static class AspectVerdictParsing
             "block" => AspectStatus.Block,
             _ => null,
         };
-    }
-
-    private static Dictionary<string, string>? ParseFields(string body)
-    {
-        var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var part in body.Split(';'))
-        {
-            var trimmed = part.Trim();
-            if (trimmed.Length == 0) continue;
-            var eq = trimmed.IndexOf('=');
-            if (eq <= 0) continue;
-            var key = trimmed[..eq].Trim();
-            var value = trimmed[(eq + 1)..].Trim();
-            if (key.Length == 0) continue;
-            dict[key] = value;
-        }
-        return dict.Count == 0 ? null : dict;
     }
 
     private static string EscapeYaml(string s)

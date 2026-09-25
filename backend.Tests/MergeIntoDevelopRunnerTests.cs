@@ -1798,8 +1798,7 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
     [Fact]
     public async Task RunAsync_DevelopTarget_GateEnvironmentFailure_RollsBackButIsNeverAGateFailed()
     {
-        // CAC-18: a toolchain/bundler crash before test discovery (e.g. vite's
-        // case-insensitive-FS probe) rolls back the unverified merge the same
+        // A torn preparation cache before test discovery rolls back the unverified merge the same
         // as any other red gate, but it must never be classified GateFailed -
         // that outcome is what makes the card ConflictSkipped and spends a
         // rebase-recovery steer round, neither of which fixes a gate
@@ -1814,12 +1813,18 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
 
         var (git, log, settings) = BuildWithSettings(repo);
         settings.SetBuildProfile("Fixture", new BuildProfile { BuildCmds = ["cd ."] });
+        var output = @"C:\Program Files\dotnet\sdk\10.0.301\NuGet.targets(198,5): error : " +
+                     @"Could not find file 'C:\Temp\agentstudio-preparation-cache\.runs\run-1\nuget\" +
+                     @"example.package\1.0.0\example.package.1.0.0.nupkg'.";
         var gateRunner = new CapturingBuildTestGateRunner(new BuildTestGateResult(
-            BuildTestGateVerdict.Fail, 1, 20,
-            "at testCaseInsensitiveFS (/repo/node_modules/vite/dist/node/chunks/config.js:1911:42)",
-            "npm test exit 1", true, false)
+            BuildTestGateVerdict.Fail, 1, 20, output,
+            "dotnet build exit 1", true, false)
         {
-            FailureKind = BuildTestGateFailureKind.Environment,
+            FailureKind = BuildTestGateRunner.ClassifyFailure(new BuildTestGateProcessEvidence
+            {
+                ExitCode = 1,
+                StandardError = output,
+            }),
         });
         var queue = new IntegrationPushQueue();
         var jobFolder = BeginRun(log, repo, jobId: "62");
@@ -1843,6 +1848,7 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         Assert.NotNull(step);
         Assert.Equal(PipelineStepStatus.Failed, step!.Status);
         Assert.Equal("gate-environment-failure", step.Verdict);
+        Assert.Equal(AcceptedIntegrationFailureCodes.GateEnvironmentFailure, step.FailureCode);
         Assert.Contains("GateEnvironment:", step.Reason);
     }
 

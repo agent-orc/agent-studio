@@ -101,6 +101,11 @@ public sealed record ArtifactDto(
     string? SourcePath = null,
     bool PointerOnly = false);
 
+public sealed record ArtifactTransferLimitsResponse(
+    long MaxRequestBodyBytes,
+    long MaxFileBytes,
+    long MaxTotalBytes);
+
 /// <summary>
 /// One immutable identity needed to reconstruct a coding result. Git submodules
 /// use the path and commit SHA. LFS objects use the repository path and object

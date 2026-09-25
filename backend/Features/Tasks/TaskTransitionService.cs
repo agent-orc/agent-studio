@@ -264,17 +264,21 @@ public sealed class TaskTransitionService
         // refused when none holds; automated paths record the claim they can
         // prove and never block on it.
         CompletionContractDecision? completionContract = null;
+        TaskIntegrationStatus? completionIntegrationStatus = null;
         if (targetState == TaskStates.Completed
             && fromState != TaskStates.Completed
             && !suppressProductExecution)
         {
+            completionIntegrationStatus = _integrationStatus?.BuildLookup([info])
+                .GetValueOrDefault(info.TaskKey);
             completionContract = DecideCompletionContract(
                 info,
                 settings,
                 integrationRequired,
                 operatorOverride,
                 reason,
-                cause);
+                cause,
+                completionIntegrationStatus);
             // The refusal stops a person, never an automated path. Pipeline
             // completions that already decided integration pass
             // suppressIntegrationTrigger and are recorded, not gated - the
@@ -512,7 +516,11 @@ public sealed class TaskTransitionService
             // it after the move keeps the claim with the folder's new location
             // and can never undo the transition.
             if (completionContract?.Claim is not null)
-                RecordCompletionClaim(jobId, watchPath, completionContract.Claim);
+                RecordCompletionClaim(
+                    jobId,
+                    watchPath,
+                    completionContract.Claim,
+                    completionIntegrationStatus);
 
             // ASS-1724: the ONE commit-provenance recording hook. Anchor the
             // task/<id> tip + integration head at this lane crossing so the board
@@ -1196,9 +1204,9 @@ public sealed class TaskTransitionService
         bool integrationRequired,
         bool operatorOverride,
         string? reason,
-        string? actor)
+        string? actor,
+        TaskIntegrationStatus? status)
     {
-        var status = _integrationStatus?.BuildLookup([info]).GetValueOrDefault(info.TaskKey);
         var attributed = info.Commits ?? [];
         var deliverable = NamedDeliverableReader.Read(info);
         var facts = new CompletionContractFacts(
@@ -1222,7 +1230,11 @@ public sealed class TaskTransitionService
     /// commits should no longer carry. Best-effort: the move has already
     /// landed and is never undone from here.
     /// </summary>
-    private void RecordCompletionClaim(string jobId, string? watchPath, TaskCompletionClaim claim)
+    private void RecordCompletionClaim(
+        string jobId,
+        string? watchPath,
+        TaskCompletionClaim claim,
+        TaskIntegrationStatus? integrationStatus)
     {
         var moved = _scanner.FindJob(jobId, watchPath);
         if (moved is null) return;
@@ -1239,7 +1251,7 @@ public sealed class TaskTransitionService
         }
 
         if (stamped.Basis != CompletionClaimBases.IntegratedDelivery) return;
-        ResolveContainedSupersessionPlaceholders(moved);
+        ResolveContainedSupersessionPlaceholders(moved, integrationStatus);
     }
 
     /// <summary>
@@ -1249,9 +1261,10 @@ public sealed class TaskTransitionService
     /// no replacement is coming, so the placeholder is cleared here as well as
     /// on the reconciliation pass. A named successor is never touched.
     /// </summary>
-    private void ResolveContainedSupersessionPlaceholders(TaskInfo task)
+    private void ResolveContainedSupersessionPlaceholders(
+        TaskInfo task,
+        TaskIntegrationStatus? status)
     {
-        var status = _integrationStatus?.BuildLookup([task]).GetValueOrDefault(task.TaskKey);
         if (status is null) return;
         var contained = status.Repositories
             .SelectMany(repository => repository.Commits)

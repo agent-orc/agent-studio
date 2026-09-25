@@ -2,12 +2,12 @@
   "schemaVersion": 1,
   "id": "gates",
   "title": "Gates: batch gate and remote gate",
-  "summary": "Theme Dossier for deterministic validation, consolidating AGT-W36 batch gate, AGT-W18 remote gate target architecture and AGT-W2 async validation into one current record. Section 3 keeps the batch gate in full: closed manifest and typed eligibility, mechanical replay with conflict ejection and a cascade guard, one full suite on an exact combined candidate, fenced fast-forward publication, per-member gate and integration evidence under the AGT-2543 honest-completion invariant, red classification with bounded halving and its honest-bounds table, two-level fencing and a shared ref-mutation lease with the candidate-SHA promotion train, and the operator's review-first amendment of 2026-08-18. Section 4 keeps the remote gate target: requirements R1 to R6, the GateSubject, GateAttempt, GateLease, GatePlan and GateReport contract, the central state machine, the materialization sequence, the fail-closed timeout and fallback policy with no in-process backend fallback, and the open migration behind AGT-2262. Section 5 keeps the async-validation principles that survived measurement: model-based test selection rejected, per-SHA gate cache and deterministic diff-to-project scoping recommended, staging lane measure-first. Section 10 is an evidence appendix with the AGT-W28 847-task pipeline time economy baseline and the AGT-W29 reissue-convergence negative result in one paragraph each. Ten open decisions D1 to D10 as inline decision blocks; four implementation slices. Sources recorded as superseded by this key; AGT-W28, AGT-W29 and AGT-W30 remain historical.",
+  "summary": "Theme Dossier for deterministic validation, consolidating AGT-W36 batch gate, AGT-W18 remote gate target architecture and AGT-W2 async validation into one current record. Section 3 keeps the batch gate in full: closed manifest and typed eligibility, mechanical replay with conflict ejection and a cascade guard, one full suite on an exact combined candidate, fenced fast-forward publication, per-member gate and integration evidence under the AGT-2543 honest-completion invariant, red classification with bounded halving and its honest-bounds table, two-level fencing and a shared ref-mutation lease with the candidate-SHA promotion train, and the operator's review-first amendment of 2026-08-18. Section 4 keeps the remote gate target: requirements R1 to R6, the GateSubject, GateAttempt, GateLease, GatePlan and GateReport contract, the central state machine, the materialization sequence, the fail-closed timeout and fallback policy with no in-process backend fallback, and the open migration behind AGT-2262. Section 5 keeps the async-validation principles that survived measurement: model-based test selection rejected, per-SHA gate cache and deterministic diff-to-project scoping recommended, staging lane measure-first. Section 10 is an evidence appendix with the AGT-W28 847-task pipeline time economy baseline and the AGT-W29 reissue-convergence negative result in one paragraph each. 10 operator decisions recorded on 2026-09-25; option A selected for each. Sources recorded as superseded by this key; AGT-W28, AGT-W29 and AGT-W30 remain historical.",
   "entrypoint": "index.html",
   "status": "decision-pending",
   "phase": "decision-ready",
   "pattern": "concept",
-  "updatedAt": "2026-09-25T05:21:12Z",
+  "updatedAt": "2026-09-25T12:40:00Z",
   "sourceTaskKeys": [
     "AGT-2801"
   ],
@@ -52,5 +52,102 @@
       "reviewedBy": "AGT-2895",
       "note": "The consolidated Gates decision record remains current; develop implements preparation caching, MachineBound profiles, ReviewAttempt execution, and AGT-2843 baseline reuse, while the Batch Gate, independent GateAttempt, and per-SHA gate-verdict cache remain open."
     }
-  ]
+  ],
+  "decision": {
+    "outcome": "record-only",
+    "action": "recorded",
+    "state": "succeeded",
+    "decidedBy": "Operator",
+    "decidedAt": "2026-09-25T10:56:00Z",
+    "responses": [
+      {
+        "decisionId": "gate-ordering",
+        "kind": "single",
+        "selectedOptionIds": [
+          "review-first-final"
+        ],
+        "comment": "Model review and cheap checks run each round; the full suite runs once as the final batch gate."
+      },
+      {
+        "decisionId": "batch-strategy",
+        "kind": "single",
+        "selectedOptionIds": [
+          "batch-primary"
+        ],
+        "comment": "Batch gate is primary, host scale-out is measured, and exemptions require audited no-code classes."
+      },
+      {
+        "decisionId": "evidence-contract",
+        "kind": "single",
+        "selectedOptionIds": [
+          "native-record"
+        ],
+        "comment": "An append-only member record owns gate evidence; the integration endpoint keeps bookkeeping only."
+      },
+      {
+        "decisionId": "publication-authority",
+        "kind": "single",
+        "selectedOptionIds": [
+          "shared-lease"
+        ],
+        "comment": "One fenced ref-mutation lease governs every canonical publication path."
+      },
+      {
+        "decisionId": "red-path-budget",
+        "kind": "single",
+        "selectedOptionIds": [
+          "log2-with-fallback"
+        ],
+        "comment": "Each isolation cycle is capped at ceil(log2 n) diagnostic runs with an unresolved-cohort fallback."
+      },
+      {
+        "decisionId": "pilot-thresholds",
+        "kind": "single",
+        "selectedOptionIds": [
+          "proposed-thresholds"
+        ],
+        "comment": "Close at four, maximum eight, 15 minutes or pressure at two; pilot documentation-only deliveries first."
+      },
+      {
+        "decisionId": "gate-ownership-shape",
+        "kind": "single",
+        "selectedOptionIds": [
+          "claimable-step"
+        ],
+        "comment": "A dedicated claimable gate step reuses workspace primitives while retaining its own lifecycle."
+      },
+      {
+        "decisionId": "gate-fallback",
+        "kind": "single",
+        "selectedOptionIds": [
+          "eligible-host-failclosed"
+        ],
+        "comment": "Retry only on an eligible Agent Host and terminalize as GateInfra when exhausted."
+      },
+      {
+        "decisionId": "teardown-threshold",
+        "kind": "single",
+        "selectedOptionIds": [
+          "cutover-plus-canary"
+        ],
+        "comment": "Remove the SSH bridge only after default cutover and a green canary and restart matrix."
+      },
+      {
+        "decisionId": "staging-lane",
+        "kind": "single",
+        "selectedOptionIds": [
+          "measure-first"
+        ],
+        "comment": "Measure batch green rate and same-SHA re-test rate before deciding on a staging lane."
+      }
+    ],
+    "operationId": "operator-20260925-gates",
+    "sourceFingerprint": "ecfc5262ccb3a182f9028f8866eaf957c14acec15fe567f32242ddfeec177265",
+    "sourceEntryFingerprint": "ecfc5262ccb3a182f9028f8866eaf957c14acec15fe567f32242ddfeec177265",
+    "preparedAt": "2026-09-25T12:40:00Z",
+    "preparedBy": "Operator",
+    "confirmedAt": "2026-09-25T12:40:00Z",
+    "confirmedBy": "Operator",
+    "spawnedTaskKeys": []
+  }
 }

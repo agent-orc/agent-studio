@@ -9,6 +9,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 using Contract = AgentStudio.TaskServer.Contracts;
@@ -18,6 +19,7 @@ namespace AgentStudio.Tests;
 [Collection(WebApplicationFactorySerialCollection.Name)]
 public sealed class ManagementApiTests : IDisposable
 {
+    private static readonly DateTimeOffset HostReleaseNow = new(2026, 9, 15, 12, 0, 0, TimeSpan.Zero);
     private readonly string _root = CreateServerDataDirectory();
     private readonly string _backups;
     private readonly string _logs;
@@ -59,6 +61,110 @@ public sealed class ManagementApiTests : IDisposable
         Assert.Equal(2, audit.Length);
         Assert.Contains("\"outcome\":\"started\"", audit[0]);
         Assert.Contains("\"outcome\":\"completed\"", audit[1]);
+    }
+
+    /// <summary>
+    /// AGT-2826: Execution Hosts reads one authoritative comparison, so the
+    /// route has to name the Stable release and carry a verdict per role.
+    /// </summary>
+    [Fact]
+    public async Task HostReleases_ReportsEveryRoleAgainstTheStableRelease()
+    {
+        await using var factory = BuildFactory(
+            stableRelease: new StableReleaseIdentity(
+                "0.3.0", "aaaaaaa1111", new DateTime(2026, 9, 11, 8, 0, 0, DateTimeKind.Utc)),
+            timeProvider: new FakeTimeProvider(HostReleaseNow));
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var registry = factory.Services.GetRequiredService<V1ReviewExecutorRegistry>();
+        const string runnerId = "agent-runner-release-drift";
+        const string instanceId = "agent-runner-host:2826";
+        var release = new Contract.RunnerReleaseIdentityDto(
+            "agt-host-20260823T060000Z-bbbbbbb",
+            "0.2.7",
+            "bbbbbbb2222",
+            new DateTime(2026, 8, 23, 6, 0, 0, DateTimeKind.Utc));
+        registry.Register(
+            runnerId,
+            new Contract.RegisterRunnerRequest(
+                "Agent Runner Drift",
+                "agent-runner-host",
+                instanceId,
+                release.ReleaseId,
+                Contract.TaskServerProtocol.Current,
+                [Contract.ReviewCapabilities.CodingExecutor],
+                Release: release));
+        registry.AdvertiseCapabilities(
+            runnerId,
+            new Contract.CapabilityAdvertisementRequest(
+                runnerId,
+                instanceId,
+                Contract.CapabilityProtocol.CurrentSchemaVersion,
+                HostReleaseNow.UtcDateTime,
+                180,
+                1,
+                [new Contract.AdvertisedCapabilityDto(
+                    Contract.CapabilityProtocol.CodingExecutor,
+                    "executor")],
+                Release: release));
+
+        using var response = await client.GetAsync("/api/v1/management/host-releases");
+
+        response.EnsureSuccessStatusCode();
+        Assert.Contains("no-store", response.Headers.CacheControl?.ToString() ?? string.Empty);
+        var snapshot = await response.Content.ReadFromJsonAsync<HostReleaseDriftSnapshot>();
+        Assert.Equal("0.3.0", snapshot!.Stable.Version);
+        Assert.Equal(HostReleaseNow.UtcDateTime, snapshot.ObservedAt);
+        var entry = Assert.Single(snapshot.Hosts, host => host.RunnerId == runnerId);
+        Assert.Equal("coding", entry.Role);
+        Assert.Equal(release.ReleaseId, entry.Release!.ReleaseId);
+        Assert.Equal("0.2.7", entry.Release.Version);
+        Assert.Equal(HostReleaseDriftStates.Behind, entry.State);
+        Assert.Equal(458d, entry.BehindByHours);
+    }
+
+    [Fact]
+    public async Task HostReleases_LegacyStableIdentityUsesVersionWithoutInventingAnAge()
+    {
+        await using var factory = BuildFactory(
+            stableRelease: new StableReleaseIdentity("0.3.0", null, null),
+            timeProvider: new FakeTimeProvider(HostReleaseNow));
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var registry = factory.Services.GetRequiredService<V1ReviewExecutorRegistry>();
+        var release = new Contract.RunnerReleaseIdentityDto(
+            "agt-host-local", "0.2.7", null, null);
+        registry.Register(
+            "agent-runner-legacy",
+            new Contract.RegisterRunnerRequest(
+                "Legacy Runner",
+                "agent-runner-host",
+                "agent-runner-host:legacy",
+                release.ReleaseId,
+                Contract.TaskServerProtocol.Current,
+                [Contract.ReviewCapabilities.CodingExecutor],
+                Release: release));
+        registry.AdvertiseCapabilities(
+            "agent-runner-legacy",
+            new Contract.CapabilityAdvertisementRequest(
+                "agent-runner-legacy",
+                "agent-runner-host:legacy",
+                Contract.CapabilityProtocol.CurrentSchemaVersion,
+                HostReleaseNow.UtcDateTime,
+                180,
+                1,
+                [new Contract.AdvertisedCapabilityDto(
+                    Contract.CapabilityProtocol.CodingExecutor,
+                    "executor")],
+                Release: release));
+
+        var snapshot = await client.GetFromJsonAsync<HostReleaseDriftSnapshot>(
+            "/api/v1/management/host-releases");
+
+        var entry = Assert.Single(snapshot!.Hosts, host => host.RunnerId == "agent-runner-legacy");
+        Assert.Equal(HostReleaseDriftStates.Behind, entry.State);
+        Assert.Null(entry.BehindByHours);
+        Assert.Equal(0d, entry.BehindForHours);
     }
 
     [Fact]
@@ -644,7 +750,9 @@ public sealed class ManagementApiTests : IDisposable
         string environment = "Test",
         IProviderAuthProvisioner? provisioner = null,
         bool runnerLinks = false,
-        IRunnerLinkProcessLauncher? launcher = null) =>
+        IRunnerLinkProcessLauncher? launcher = null,
+        StableReleaseIdentity? stableRelease = null,
+        TimeProvider? timeProvider = null) =>
         new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
     {
         builder.UseEnvironment(environment);
@@ -672,6 +780,18 @@ public sealed class ManagementApiTests : IDisposable
         builder.ConfigureTestServices(services =>
         {
             services.RemoveAll<IHostedService>();
+            if (stableRelease is not null)
+            {
+                services.RemoveAll<BuildIdentity>();
+                services.AddSingleton(BuildIdentityFixture(stableRelease));
+                services.RemoveAll<StableReleaseIdentity>();
+                services.AddSingleton(stableRelease);
+            }
+            if (timeProvider is not null)
+            {
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton(timeProvider);
+            }
             if (provisioner is not null)
             {
                 services.RemoveAll<IProviderAuthProvisioner>();
@@ -684,6 +804,23 @@ public sealed class ManagementApiTests : IDisposable
             }
         });
     });
+
+    private static BuildIdentity BuildIdentityFixture(StableReleaseIdentity stable) => new(
+        1,
+        "Agent Studio",
+        stable.BuiltAt is null ? "untagged" : $"v{stable.Version}",
+        stable.Version,
+        stable.Commit ?? "unknown",
+        stable.BuiltAt is null,
+        stable.BuiltAt,
+        stable.BuiltAt is null ? "unverified" : "sha256-stable",
+        new ReleaseArtifactIdentity(
+            "CodingAgentRunner", stable.Version, stable.BuiltAt is null ? "untagged" : $"v{stable.Version}",
+            stable.Commit ?? "unknown", stable.BuiltAt is null ? "unverified" : "sha256-runner"),
+        new ReleaseArtifactIdentity(
+            "coding-agent-chat", stable.Version, stable.BuiltAt is null ? "untagged" : $"v{stable.Version}",
+            stable.Commit ?? "unknown", stable.BuiltAt is null ? "unverified" : "sha256-chat"),
+        Legacy: stable.BuiltAt is null);
 
     private string ReadWorkspaceBus()
     {

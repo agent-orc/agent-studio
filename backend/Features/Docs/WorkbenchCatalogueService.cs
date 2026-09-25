@@ -932,7 +932,7 @@ public sealed class WorkbenchCatalogueService
             throw new InvalidDataException("decision must be an object or null.");
 
         var outcome = RequiredString(value, "outcome");
-        if (outcome is not ("feature-spawn" or "archive" or "rework"))
+        if (outcome is not ("feature-spawn" or "archive" or "rework" or "record-only"))
             throw new InvalidDataException($"Unsupported decision outcome '{outcome}'.");
         var state = RequiredString(value, "state");
         if (state is not ("pending" or "failed" or "succeeded"))
@@ -958,8 +958,13 @@ public sealed class WorkbenchCatalogueService
         if (sourceEntryFingerprint != null
             && (sourceEntryFingerprint.Length != 64 || !sourceEntryFingerprint.All(Uri.IsHexDigit)))
             throw new InvalidDataException("decision sourceEntryFingerprint is malformed.");
-        var action = OptionalString(value, "action")
-            ?? (outcome == "feature-spawn" ? "created-card" : outcome == "rework" ? "rework-requested" : "archived");
+        var action = OptionalString(value, "action") ?? (outcome switch
+        {
+            "feature-spawn" => "created-card",
+            "rework" => "rework-requested",
+            "record-only" => "recorded",
+            _ => "archived",
+        });
         var cliType = OptionalString(value, "cliType");
         var model = OptionalString(value, "model");
         var thinkingLevel = OptionalString(value, "thinkingLevel");
@@ -1031,6 +1036,9 @@ public sealed class WorkbenchCatalogueService
             if (state != "pending")
                 throw new InvalidDataException("Rework requests stay pending until a new revision lands.");
         }
+        if (outcome == "record-only" && (value.TryGetProperty("taskDraft", out _)
+            || spawned.Length != 0))
+            throw new InvalidDataException("Record-only decisions cannot carry a task draft or spawned tasks.");
         if (state == "failed" && (confirmedAt == null || string.IsNullOrWhiteSpace(failure)))
             throw new InvalidDataException("Failed decision needs confirmation provenance and failure.");
         if (state == "succeeded")
@@ -1043,12 +1051,17 @@ public sealed class WorkbenchCatalogueService
             // (AGT-2375). The receipt records the decision, not the card.
             if (outcome == "archive" && spawned.Length != 0)
                 throw new InvalidDataException("Archive decisions cannot carry spawned task receipts.");
-            var lifecycleMatches = outcome == "archive"
-                ? lifecycleState == "done"
-                : lifecycleState is "decided" or "documented";
+            var lifecycleMatches = outcome switch
+            {
+                "archive" => lifecycleState == "done",
+                "record-only" => lifecycleState is "in-progress" or "review-requested",
+                _ => lifecycleState is "decided" or "documented",
+            };
             if (lifecycleState != null && !lifecycleMatches)
                 throw new InvalidDataException(outcome == "archive"
                     ? "Succeeded archive decision requires lifecycleState 'done'."
+                    : outcome == "record-only"
+                    ? "Record-only decision must preserve a current lifecycleState."
                     : "Succeeded feature decision requires lifecycleState 'decided' or 'documented'.");
         }
         else if (lifecycleState is "decided" or "documented" or "done")
@@ -1057,6 +1070,10 @@ public sealed class WorkbenchCatalogueService
         }
         if (state != "succeeded" && (decidedAt != null || spawned.Length != 0))
             throw new InvalidDataException("Unsettled decisions cannot carry a settled receipt.");
+
+        // Operator choices may be recorded before the Dossier's promotion decision.
+        // Keep that receipt durable without consuming the promotion gate.
+        if (outcome == "record-only") return null;
 
         return new WorkbenchDecisionProjection(
             outcome, state, operationId, sourceRevision, sourceFingerprint,

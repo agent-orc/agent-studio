@@ -35,16 +35,18 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
     options.ForwardLimit = 1;
 });
+var publicDemoBodyCap = SecurityProfiles.IsPublicDemo(builder.Configuration);
+var maxRequestBodyBytes = builder.Configuration.GetValue<long>(
+    publicDemoBodyCap ? "Security:PublicDemoMaxRequestBodyBytes" : "Security:MaxRequestBodyBytes",
+    publicDemoBodyCap ? 16 * 1024 : 25 * 1024 * 1024);
+builder.Services.AddSingleton(new AgentStudio.Diagnostics.ArtifactRequestLimits(maxRequestBodyBytes));
 builder.WebHost.ConfigureKestrel(options =>
 {
     // A public-demo visitor never has a legitimate reason to send a large
     // body - every mutation is denied at the edge before it would be read.
     // The tighter default only bounds the cost of an oversized request
     // reaching Kestrel in the first place; it is not the mutation boundary.
-    var publicDemoBodyCap = SecurityProfiles.IsPublicDemo(builder.Configuration);
-    options.Limits.MaxRequestBodySize = builder.Configuration.GetValue<long>(
-        publicDemoBodyCap ? "Security:PublicDemoMaxRequestBodyBytes" : "Security:MaxRequestBodyBytes",
-        publicDemoBodyCap ? 16 * 1024 : 25 * 1024 * 1024);
+    options.Limits.MaxRequestBodySize = maxRequestBodyBytes;
     options.Limits.RequestHeadersTimeout = TimeSpan.FromSeconds(15);
 });
 
@@ -533,9 +535,17 @@ builder.Services.AddSingleton<AutoReviewQueueStagnationWatchdog>();
 builder.Services.AddSingleton<AdaptiveReviewParallelismAdvisor>();
 builder.Services.AddSingleton<CodingYieldAdvisor>();
 builder.Services.AddSingleton<ReviewInfrastructureRetryScheduler>();
+// AGT-2826: the release this process runs is the reference every execution host
+// is compared against, so it is resolved once and shared by /api/system/version
+// and the host-release drift watchdog.
+builder.Services.AddSingleton(sp => BuildIdentity.Load(sp.GetRequiredService<IConfiguration>()));
+builder.Services.AddSingleton(sp => StableReleaseIdentity.FromBuildIdentity(
+    sp.GetRequiredService<BuildIdentity>()));
+builder.Services.AddSingleton<HostReleaseDriftWatchdog>();
 if (!publicDemoExecutionProfile)
 {
     builder.Services.AddHostedService(sp => sp.GetRequiredService<RemoteQueueStarvationWatchdog>());
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<HostReleaseDriftWatchdog>());
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AutoReviewQueueStagnationWatchdog>());
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AdaptiveReviewParallelismAdvisor>());
     builder.Services.AddHostedService(sp => sp.GetRequiredService<CodingYieldAdvisor>());

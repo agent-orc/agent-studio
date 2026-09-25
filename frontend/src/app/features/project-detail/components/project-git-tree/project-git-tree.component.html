@@ -14,7 +14,7 @@
                     [attr.aria-current]="selectedId() === node.id ? 'true' : null"
                     (click)="activeSelected.emit(node.checkout)">
               <span class="tree__dot" [attr.data-location]="node.checkout.location" aria-hidden="true"></span>
-              <span class="tree__name mono">{{ node.checkout.branch || 'detached checkout' }}</span>
+              <span class="tree__name mono" [title]="node.checkout.branch || 'detached checkout'">{{ compactRef(node.checkout.branch || 'detached checkout') }}</span>
               <span class="tree__meta">{{ node.checkout.location }} · {{ node.checkout.runner }}</span>
             </button>
             <button type="button" class="tree__task" (click)="openTask($event, node.checkout.task)"
@@ -25,7 +25,7 @@
                     [attr.aria-current]="selectedId() === node.id ? 'true' : null"
                     (click)="worktreeSelected.emit(node.worktree)">
               <span class="tree__type">{{ node.worktree.isPrimary ? 'main' : 'wt' }}</span>
-              <span class="tree__name mono">{{ node.worktree.path }}</span>
+              <span class="tree__name mono" [title]="node.worktree.path">{{ compactRef(node.worktree.path) }}</span>
               <span class="tree__meta mono">{{ node.worktree.branch || 'detached' }}</span>
             </button>
             @if (node.worktree.task; as task) {
@@ -38,7 +38,7 @@
                     [attr.aria-current]="selectedId() === node.id ? 'true' : null"
                     (click)="branchSelected.emit(node.branch)">
               <span class="tree__type" [attr.data-category]="node.branch.category">{{ categoryLabel(node.branch) }}</span>
-              <span class="tree__name mono">{{ node.branch.name }}</span>
+              <span class="tree__name mono" [title]="node.branch.name">{{ compactRef(node.branch.name) }}</span>
               @if (node.branch.isCurrent) { <span class="tree__head">HEAD</span> }
               @if (node.branch.isLocal === false) {
                 <span class="tree__remote">origin only</span>

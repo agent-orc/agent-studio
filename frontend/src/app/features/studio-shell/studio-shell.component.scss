@@ -1515,6 +1515,8 @@
     overflow-y: hidden;
     flex: 1;
     min-width: 0;
+    scrollbar-width: thin;
+    overscroll-behavior-x: contain;
   }
 
   &__actions {
@@ -1854,18 +1856,27 @@
 .studio-tab {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 10px;
+  gap: var(--studio-spacing-1);
+  padding: 0 var(--studio-spacing-2);
   height: 100%;
+  min-width: 156px;
+  box-sizing: border-box;
+  flex: 0 0 auto;
   border-right: 1px solid var(--studio-border);
   font-size: 12px;
+  line-height: 1.2;
   color: var(--studio-fg-dim);
   background: var(--studio-bg-tab-inactive);
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
-  max-width: 280px;
+  max-width: 320px;
   position: relative;
+
+  &[data-tab-kind='task'],
+  &[data-tab-kind='hub'] {
+    min-width: 220px;
+  }
 
   &:hover {
     color: var(--studio-fg);
@@ -1874,9 +1885,7 @@
   &--active {
     background: var(--studio-bg-tab-active);
     color: var(--studio-fg-strong);
-    border-top: 1px solid var(--studio-accent);
-    border-bottom: 1px solid var(--studio-bg-tab-active);
-    margin-top: -1px;
+    box-shadow: inset 0 -2px 0 var(--studio-accent), inset 0 1px 0 var(--studio-border-strong);
   }
 
   // While being dragged, fade the source row so the user can read the
@@ -1917,14 +1926,21 @@
     box-shadow: 0 0 0 1px var(--studio-tab-dot-ring);
   }
 
+  &__prefix,
   &__num {
     display: inline-flex;
     align-items: center;
     align-self: center;
     font-family: var(--font-mono);
     font-size: 10px;
-    line-height: 1;
-    color: var(--studio-fg-muted);
+    line-height: 16px;
+    height: 18px;
+    padding: 0 var(--studio-spacing-1);
+    border: 1px solid var(--studio-border-strong);
+    border-radius: var(--studio-radius-sm);
+    color: var(--studio-fg);
+    background: var(--studio-bg-elevated);
+    flex: 0 0 auto;
   }
 
   // Angular component hosts participate in the flex row themselves. Making
@@ -1939,7 +1955,8 @@
   }
 
   &__title {
-    flex: 1;
+    flex: 1 1 auto;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
   }
@@ -1953,6 +1970,7 @@
     color: var(--studio-fg-muted);
     font-size: 14px;
     line-height: 1;
+    flex: 0 0 16px;
 
     &:hover {
       background: var(--studio-bg-hover);

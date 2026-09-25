@@ -263,6 +263,7 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
             set -eu
             mkdir -p "$NUGET_PACKAGES/xunit.analyzers/1.4.0"
             printf nupkg > "$NUGET_PACKAGES/xunit.analyzers/1.4.0/xunit.analyzers.nupkg"
+            printf metadata > "$NUGET_PACKAGES/xunit.analyzers/1.4.0/.nupkg.metadata"
             """);
         RunGit("add", "packages.lock.json", ".agent-studio");
         RunGit("commit", "-q", "-m", "chore: repository preparation contract");

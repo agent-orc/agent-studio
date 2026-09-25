@@ -28,8 +28,9 @@ import { ConversationHistoryWindow } from './activity-log-windowing';
 
 import { StickToBottomDirective, TooltipDirective } from 'coding-agent-chat/shared';
 import { MenuComponent, MenuItem, MenuItemClickEvent } from '../../../../components/menu';
+import { parseRuntimeSentinels } from '../runtime-sentinel.parser';
+import { RuntimeSentinelViewComponent } from '../runtime-sentinel-view/runtime-sentinel-view.component';
 type ViewMode = 'conversation' | 'trace';
-
 /**
  * Activity Log view. The component runs in one of two modes:
  *
@@ -50,7 +51,7 @@ type ViewMode = 'conversation' | 'trace';
 @Component({
   selector: 'app-activity-log-view',
   standalone: true,
-  imports: [MarkdownViewComponent, StickToBottomDirective, TooltipDirective, MenuComponent],
+  imports: [MarkdownViewComponent, StickToBottomDirective, TooltipDirective, MenuComponent, RuntimeSentinelViewComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './activity-log-view.html',
   styleUrl: './activity-log-view.scss'
@@ -417,6 +418,7 @@ export class ActivityLogViewComponent implements OnDestroy {
     if (turn.kind === 'tools') {
       return {
         turn,
+        sentinels: parseRuntimeSentinels(''),
         bodyHtml: null,
         toolChips: buildToolChips(turn),
         toolDuration: formatBurstDuration(turn.toolSummary?.durationMs ?? 0),
@@ -429,6 +431,7 @@ export class ActivityLogViewComponent implements OnDestroy {
       if (steer) {
         return {
           turn,
+          sentinels: parseRuntimeSentinels(''),
           bodyHtml: null,
           toolChips: [],
           toolDuration: '',
@@ -442,10 +445,24 @@ export class ActivityLogViewComponent implements OnDestroy {
     // orchestrator-non-steer turns remain plain escaped text via the
     // inline [innerHTML] binding.
     if (turn.kind === 'agent') {
-      return { turn, bodyHtml: null, toolChips: [], toolDuration: '', toolBins: [] };
+      return {
+        turn: { ...turn, text: parseRuntimeSentinels(turn.text).text },
+        sentinels: parseRuntimeSentinels(turn.text),
+        bodyHtml: null,
+        toolChips: [],
+        toolDuration: '',
+        toolBins: [],
+      };
     }
     const html = this.sanitizer.bypassSecurityTrustHtml(escapeForPlain(turn.text));
-    return { turn, bodyHtml: html, toolChips: [], toolDuration: '', toolBins: [] };
+    return {
+      turn,
+      sentinels: parseRuntimeSentinels(''),
+      bodyHtml: html,
+      toolChips: [],
+      toolDuration: '',
+      toolBins: [],
+    };
   }
 
   /**

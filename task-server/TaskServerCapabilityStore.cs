@@ -164,12 +164,20 @@ public sealed partial class TaskServerStore
                     ("$payload", JsonSerializer.Serialize(request.Telemetry)),
                     ("$observed", Iso(request.Telemetry.ObservedAt.ToUniversalTime())));
             }
+            // The heartbeat re-declares the release identity so an in-place
+            // upgrade is visible without waiting for the next registration.
             await ExecuteAsync(
                 connection,
-                "UPDATE runners SET last_seen_at = $now WHERE id = $runner;",
+                """
+                UPDATE runners
+                   SET last_seen_at = $now,
+                       release_identity_json = COALESCE($release, release_identity_json)
+                 WHERE id = $runner;
+                """,
                 ct,
                 transaction,
                 ("$now", now),
+                ("$release", request.Release is null ? null : JsonSerializer.Serialize(request.Release)),
                 ("$runner", request.RunnerId));
             await AuditAsync(
                 connection,
@@ -363,7 +371,7 @@ public sealed partial class TaskServerStore
             SELECT id, name, host_id, instance_id, runner_version, protocol_version,
                    status, registered_at, last_seen_at, effective_max_parallelism,
                    runtime_capacity_applied_at, runtime_capacity_applied_version,
-                   role_max_parallelism
+                   role_max_parallelism, release_identity_json
               FROM runners
              ORDER BY host_id, name, id;
             """))
@@ -383,7 +391,8 @@ public sealed partial class TaskServerStore
                     reader.IsDBNull(9) ? null : reader.GetInt32(9),
                     reader.IsDBNull(10) ? null : Parse(reader.GetString(10)),
                     reader.IsDBNull(11) ? null : reader.GetInt64(11),
-                    reader.IsDBNull(12) ? null : reader.GetInt32(12)));
+                    reader.IsDBNull(12) ? null : reader.GetInt32(12),
+                    ReadReleaseIdentity(reader, 13)));
         }
 
         var result = new List<RunnerCapabilitySnapshotDto>();
@@ -497,7 +506,8 @@ public sealed partial class TaskServerStore
                     capabilities,
                     _options.CodexCliTargetVersion,
                     _options.ClaudeCliTargetVersion),
-                CliUpdate: await ReadHostCliUpdateAsync(connection, null, runner.HostId, ct)));
+                CliUpdate: await ReadHostCliUpdateAsync(connection, null, runner.HostId, ct),
+                Release: runner.Release));
         }
         return result;
     }
@@ -809,7 +819,8 @@ public sealed partial class TaskServerStore
             SELECT id, name, host_id, instance_id, runner_version, protocol_version,
                    status, registered_at, last_seen_at,
                    effective_max_parallelism, runtime_capacity_applied_at,
-                   runtime_capacity_applied_version, role_max_parallelism
+                   runtime_capacity_applied_version, role_max_parallelism,
+                   release_identity_json
               FROM runners WHERE id = $runner;
             """, transaction, ("$runner", runnerId));
         await using var reader = await command.ExecuteReaderAsync(ct);
@@ -828,7 +839,8 @@ public sealed partial class TaskServerStore
             reader.IsDBNull(9) ? null : reader.GetInt32(9),
             reader.IsDBNull(10) ? null : Parse(reader.GetString(10)),
             reader.IsDBNull(11) ? null : reader.GetInt64(11),
-            reader.IsDBNull(12) ? null : reader.GetInt32(12));
+            reader.IsDBNull(12) ? null : reader.GetInt32(12),
+            ReadReleaseIdentity(reader, 13));
         if (!string.Equals(runner.InstanceId, instanceId, StringComparison.Ordinal))
             throw new TaskServerConflictException(
                 "runner-instance-mismatch",
@@ -975,7 +987,25 @@ public sealed partial class TaskServerStore
         int? EffectiveMaxParallelism = null,
         DateTime? RuntimeCapacityAppliedAt = null,
         long? RuntimeCapacityAppliedVersion = null,
-        int? RoleMaxParallelism = null);
+        int? RoleMaxParallelism = null,
+        RunnerReleaseIdentityDto? Release = null);
+
+    /// <summary>
+    /// A release identity persisted by an incompatible build must not take the
+    /// whole host listing down; an unreadable payload reads as "not reported".
+    /// </summary>
+    private static RunnerReleaseIdentityDto? ReadReleaseIdentity(SqliteDataReader reader, int ordinal)
+    {
+        if (reader.IsDBNull(ordinal)) return null;
+        try
+        {
+            return JsonSerializer.Deserialize<RunnerReleaseIdentityDto>(reader.GetString(ordinal));
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
 
     private sealed record CapabilityRow(
         string Key,
