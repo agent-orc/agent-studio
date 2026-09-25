@@ -80,6 +80,8 @@ export interface PipelineRowVm {
    * verdict never grows a misleading tooltip.
    */
   concernTooltip: StructuredTooltip | null;
+  /** Relationship between this aspect and a review-driven coding round. */
+  reviewRoundStatus?: string | null;
   /**
    * Always-present "what does this step do" tooltip shown on hovering the
    * step name. Keyed by step id with a per-kind fallback so a future

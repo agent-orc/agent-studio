@@ -67,6 +67,9 @@ public sealed class FollowUpAdmissionServiceTests : IDisposable
         Assert.Equal(ContinueModes.Steer, intent!.Mode);
         Assert.Contains("direct merge", intent.Prompt, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(FollowUpQueueReasons.LaneNotRunnable, intent.SavedReason);
+        Assert.Equal("operator local-default", intent.TriggerMetadata?.TriggeredBy);
+        Assert.Equal("Operator requested: Please use a direct merge, not a squash.",
+            intent.TriggerMetadata?.TriggerReason);
 
         // Top of Ready: strictly ahead of the card that was already queued.
         harness.Scanner.InvalidateCache();
@@ -85,7 +88,8 @@ public sealed class FollowUpAdmissionServiceTests : IDisposable
         harness.Settings.SetExecutionRunner(ProjectName, "agent-runner-01", remoteExecutionEnabled: true);
 
         var response = await harness.Service.ContinueJobAsync(
-            "remote-card", "Keep the cardinality one-to-one.", _watchPath, mode: ContinueModes.Steer);
+            "remote-card", "Keep the cardinality one-to-one.", _watchPath,
+            mode: ContinueModes.Steer, reason: "Fix the cardinality classification.", triggeredBy: "desktop-client");
 
         Assert.Equal("queued", response.Status);
         Assert.Equal(FollowUpQueueReasons.RemoteExecution, response.Queued!.Reason);
@@ -95,6 +99,19 @@ public sealed class FollowUpAdmissionServiceTests : IDisposable
         var intent = ReadIntent(readyFolder);
         Assert.NotNull(intent);
         Assert.Equal(FollowUpQueueReasons.RemoteExecution, intent!.SavedReason);
+        Assert.Equal(RunTriggers.OperatorContinue, intent.TriggerMetadata?.Trigger);
+        Assert.Equal("operator desktop-client", intent.TriggerMetadata?.TriggeredBy);
+        Assert.Equal("Fix the cardinality classification.", intent.TriggerMetadata?.TriggerReason);
+        Assert.Equal("Keep the cardinality one-to-one.", intent.TriggerMetadata?.TriggerSource);
+        var remoteTrigger = LeaseEndpoints.BuildRemoteClaimTrigger(
+            "different-owner", intent, 1, null, "runner-1", "run-2");
+        Assert.Equal(intent.TriggerMetadata, remoteTrigger);
+        Assert.Equal(intent.TriggerMetadata, ProjectRunner.TriggerForPendingIntent(intent, "different-owner"));
+        var stillOpenReview = new ReviewConcernRoundLedger(
+            1, 1, "review_01", ["code-quality"], DateTime.UtcNow,
+            RoundKind: RunTriggers.ReviewConcern);
+        Assert.Equal(intent.TriggerMetadata, LeaseEndpoints.BuildRemoteClaimTrigger(
+            "different-owner", intent, 1, stillOpenReview, "runner-1", "run-2"));
 
         // The remote runner reads prompt.md when it claims the card, so the
         // follow-up has to be in there too.
@@ -137,10 +154,15 @@ public sealed class FollowUpAdmissionServiceTests : IDisposable
             Path.Combine(_watchPath, TaskStates.Progress, "slot-hog"),
             followup: null, mode: null);
 
-        var response = await harness.Service.ContinueJobAsync("runnable", "Carry on.", _watchPath);
+        var response = await harness.Service.ContinueJobAsync(
+            "runnable", "Carry on.", _watchPath,
+            reason: "Recheck the dependency edge.", triggeredBy: "web-client");
 
         Assert.Equal("queued", response.Status);
         Assert.Equal(FollowUpQueueReasons.ProjectBusy, response.Queued!.Reason);
+        var queued = ReadIntent(Path.Combine(_watchPath, TaskStates.Ready, "runnable"));
+        Assert.Equal("operator web-client", queued?.TriggerMetadata?.TriggeredBy);
+        Assert.Equal("Recheck the dependency edge.", queued?.TriggerMetadata?.TriggerReason);
     }
 
     [Fact]
@@ -152,7 +174,11 @@ public sealed class FollowUpAdmissionServiceTests : IDisposable
         var runner = ResolveRunner(harness.Service);
         var progressFolder = Path.Combine(_watchPath, TaskStates.Progress, slug);
 
-        ClaimRun(runner, slug, progressFolder, "Do NOT squash the commits.", ContinueModes.Steer);
+        var originalTrigger = new RunTriggerMetadata(
+            RunTriggers.OperatorContinue, "operator desktop-client",
+            "Preserve the direct merge.", "Do NOT squash the commits.");
+        ClaimRun(runner, slug, progressFolder, "Do NOT squash the commits.",
+            ContinueModes.Steer, originalTrigger);
 
         // The exact call the lane watchdog makes when it finds the active job
         // outside 3-progress.
@@ -164,6 +190,7 @@ public sealed class FollowUpAdmissionServiceTests : IDisposable
         Assert.NotNull(intent);
         Assert.Equal(ContinueModes.Steer, intent!.Mode);
         Assert.Contains("squash", intent.Prompt, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(originalTrigger, intent.TriggerMetadata);
         Assert.True(FollowUpQueueReasons.IsRunStopped(intent.SavedReason), intent.SavedReason);
         Assert.Contains("moved out of 3-progress", intent.SavedReason, StringComparison.Ordinal);
         Assert.Contains(TimelineEventKinds.FollowUpPreserved, ReadTimelineKinds(progressFolder));
@@ -296,7 +323,9 @@ public sealed class FollowUpAdmissionServiceTests : IDisposable
     /// claimed slot carrying the user's prompt and mode. Mirrors what
     /// <c>RunCliAsync</c> registers just before it spawns the CLI.
     /// </summary>
-    private static ActiveRun ClaimRun(ProjectRunner runner, string jobId, string jobFolder, string? followup, string? mode)
+    private static ActiveRun ClaimRun(
+        ProjectRunner runner, string jobId, string jobFolder, string? followup, string? mode,
+        RunTriggerMetadata? triggerMetadata = null)
     {
         var field = typeof(ProjectRunner).GetField(
             "_activeRuns", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
@@ -309,6 +338,10 @@ public sealed class FollowUpAdmissionServiceTests : IDisposable
             Intent = RunIntent.UserContinue,
             Followup = followup,
             FollowupMode = mode,
+            Plan = triggerMetadata is null ? null : RunPlanner.PlanRun(
+                RunIntent.UserContinue, TaskStates.Progress, null, CliTypes.Claude,
+                _ => false, jobId, Path.Combine(jobFolder, "prompt.md"), jobFolder,
+                followup, continueMode: mode, triggerMetadata: triggerMetadata),
         };
         Assert.True(runs.TryClaim(run));
         return run;

@@ -1806,6 +1806,7 @@ export class TaskService {
     thinkingLevel?: string,
     mode?: ContinueMode,
     modeOverride?: string,
+    reason?: string,
   ) {
     const body: {
       prompt: string;
@@ -1814,12 +1815,14 @@ export class TaskService {
       thinkingLevel?: string;
       mode?: ContinueMode;
       modeOverride?: string;
+      reason?: string;
     } = { prompt };
     if (model) body.model = model;
     if (cliType) body.cliType = cliType;
     if (thinkingLevel) body.thinkingLevel = thinkingLevel;
     if (mode) body.mode = mode;
     if (modeOverride) body.modeOverride = modeOverride;
+    if (reason) body.reason = reason;
     return this.http.post<ContinueTaskResponse>(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/continue`,
       body,
@@ -2358,6 +2361,18 @@ export class TaskService {
     }>(
       `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/integration-gate-review-reuse`,
       { enabled },
+    );
+  }
+
+  setProjectReviewFollowUp(
+    projectName: string,
+    maxConcernRounds: number,
+    scopedReviewAfterFinding: boolean,
+    scopedReviewMaximumDeltaFiles: number,
+  ) {
+    return this.http.put(
+      `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/review-follow-up`,
+      { maxConcernRounds, scopedReviewAfterFinding, scopedReviewMaximumDeltaFiles },
     );
   }
 

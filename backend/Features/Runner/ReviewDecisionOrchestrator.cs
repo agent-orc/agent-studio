@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Runner;
 
@@ -217,6 +218,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     // their existing constructor; production DI always supplies it.
     private readonly HumanReviewEscalation? _humanReviewEscalation;
     private readonly FailureInterventionService? _failureInterventions;
+    private readonly TaskMutationService? _taskMutations;
 
     /// <summary>
     /// Stable prefix on the <c>Reason</c> field of every
@@ -270,7 +272,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         DossierMaintenanceService? dossierMaintenance = null,
         AgentStudio.Pipeline.IQualityAnalysisStepRunner? qualityAnalysisRunner = null,
         FailureInterventionService? failureInterventions = null,
-        TaskIntegrationStatusService? integrationStatus = null)
+        TaskIntegrationStatusService? integrationStatus = null,
+        TaskMutationService? taskMutations = null)
     {
         _scanner = scanner;
         _taskAccess = taskAccess;
@@ -279,6 +282,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _aspectRunner = aspectRunner;
         _statusSnapshot = statusSnapshot;
         _configuration = configuration;
+        _taskMutations = taskMutations;
         _logger = logger;
         _usage = usage;
         _oneShotRegistry = oneShotRegistry;
@@ -1387,7 +1391,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 current.Key ?? current.Id);
         }
 
-        var settings = PipelineTypeSettings.ForTask(_projectSettings?.Get(entry.Name), current);
+        var projectSettings = _projectSettings?.Get(entry.Name);
+        var settings = PipelineTypeSettings.ForTask(projectSettings, current);
         _pipelineLog?.EnsureRun(
             current.FolderPath,
             ProjectPipelineOrder.Apply(PipelineCatalogue.Concept, settings),
@@ -2380,6 +2385,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var enabledAspects = aspects
             .Where(id => PipelineStepConfigResolver.ShouldRun(settings, $"aspect-{id}", conditionContext))
             .ToList();
+        var scopedReview = PlanLocalScopedReview(current, entry, enabledAspects, projectSettings);
+        enabledAspects = scopedReview.RunAspects.ToList();
         var economyRecommendations = new Dictionary<string, PipelineStepEconomyRecommendation>(StringComparer.OrdinalIgnoreCase);
         if (_pipelineStepEconomy is not null)
         {
@@ -2416,11 +2423,54 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         Func<string, string?>? promptForAspect = settings is null
             ? null
             : aspectId => PipelineStepConfigResolver.ResolvePrompt(settings, $"aspect-{aspectId}");
+        var configuredPromptForAspect = promptForAspect;
+        if (scopedReview.PreviousByAspect.Count > 0)
+        {
+            promptForAspect = aspectId =>
+            {
+                var configuredPrompt = configuredPromptForAspect?.Invoke(aspectId);
+                if (!scopedReview.RerunFindingAspects.Contains(aspectId)
+                    || !scopedReview.PreviousByAspect.TryGetValue(aspectId, out var previous)
+                    || !AspectRunnerService.Catalogue.TryGetValue(aspectId, out var definition))
+                    return configuredPrompt;
+                var model = modelForAspect?.Invoke(aspectId) ?? aspectModel;
+                var basePrompt = _aspectRunner.BuildAspectPrompt(
+                    definition,
+                    inputs,
+                    model,
+                    configuredPrompt,
+                    $"aspect-{aspectId}");
+                return basePrompt
+                       + $"\n\n## Previous finding to verify\n\nThis aspect raised the previous finding below in review {scopedReview.ReviewAttemptId}. Verify that it is fixed and that the fix introduced no new issue.\n\n- Previous status: {previous.Status}\n- Previous summary: {previous.Summary}\n- Previous evidence: {previous.EvidenceChecked ?? "not recorded"}\n- Previous finding: {previous.Missing ?? "not recorded"}";
+            };
+        }
 
         _statusSnapshot.SetCurrentStep(
             entry.Name, current.Id, AutoReviewActivitySteps.Aspects);
         var report = await _aspectRunner.RunAsync(inputs, enabledAspects, cliBinary, aspectModel, perAspectTimeout, ct,
             modelForAspect, thinkingLevelForAspect, promptForAspect, cliForAspect);
+        if (scopedReview.CarriedVerdicts.Count > 0)
+        {
+            var merged = report.Verdicts.Concat(scopedReview.CarriedVerdicts).ToArray();
+            report = AspectRunReport.From(merged);
+            RecordLocalCarriedAspects(current.FolderPath, scopedReview);
+        }
+
+        if (ReviewConcernRoundStore.Read(current.FolderPath) is { StillOpen: true } usedConcernRound)
+        {
+            var stillOpenAspects = report.Verdicts
+                .Where(verdict => verdict.Status != AspectStatus.Pass)
+                .Select(verdict => verdict.Aspect)
+                .ToArray();
+            var fixRun = _sessions?.ReadSessionEvents(current.Id, entry.Path).Count
+                         ?? usedConcernRound.Used + 1;
+            ReviewConcernRoundStore.MarkReviewed(current.FolderPath, fixRun, stillOpenAspects.Length > 0);
+            _pipelineLog?.AnnotateReviewRound(
+                current.FolderPath,
+                usedConcernRound.AspectIds,
+                fixRun,
+                stillOpenAspects);
+        }
 
         // Grade the settled change set before any aspect-infrastructure
         // short-circuit. The grade supplies council findings; a dead aspect
@@ -2610,6 +2660,34 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         if (solutionQualityGate.IsBlocking)
         {
             await HandleSolutionQualityGateAsync(workspace, entry, pending, current, report, solutionQualityGate, ct);
+            return;
+        }
+
+        var concernRound = ReviewFollowUpPolicy.Decide(
+            report.Verdicts.Select(verdict => new ReviewFollowUpFinding(
+                verdict.Aspect,
+                AspectVerdictParsing.StatusToken(verdict.Status),
+                verdict.Summary,
+                Finding: LocalAspectFinding(verdict),
+                Classification: verdict.ConcernTagId,
+                InfrastructureFailure: verdict.IsInfraFailure,
+                ReportBody: verdict.Body)),
+            ReviewConcernRoundStore.Read(current.FolderPath)?.Used ?? 0,
+            ConfiguredMaxConcernRounds(entry.Name));
+        if (concernRound.Action == ReviewFollowUpAction.ReviewConcernRound)
+        {
+            await ReissueOnConcernAsync(workspace, entry, current, report, concernRound, ct);
+            return;
+        }
+        if (concernRound.Action == ReviewFollowUpAction.RetryAspect)
+        {
+            // AspectRunnerService has already retried every missing or malformed
+            // verdict once. The shared policy action therefore means that the
+            // bounded aspect retry was exhausted. Surface it as review
+            // infrastructure instead of accepting it as a product concern.
+            var exhausted = MarkRetryAspectAsInfrastructure(report, concernRound);
+            await HandleAspectInfraCrashAsync(
+                workspace, entry, pending, current, exhausted, councilReaction: null, ct);
             return;
         }
 
@@ -2871,7 +2949,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         RepeatedAspectBlockDiagnosis? repeatedBlock,
         CancellationToken ct)
     {
+        var attempt = _pipelineLog?.Read(current.FolderPath)?.Attempt ?? 1;
+        var attemptId = $"local-review-{attempt}";
         var followUp =
+            $"# Review finding fix round ({attemptId})\n\n" +
             "Auto-review found one or more blocking aspect verdicts. Address each item below, " +
             "then re-run the task and end with [[TASK_DONE]]:\n\n" +
             report.FollowUpSummary;
@@ -2883,6 +2964,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             // The aspect work is sunk; the next tick will retry.
             return;
         }
+
+        RecordFindingRound(moved.FolderPath, current, entry, report, attemptId);
 
         // Final verdict step: reissue. Recorded on the post-move folder so the
         // Overview pipeline shows the orchestrator's ruling distinctly from the
@@ -2938,6 +3021,383 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             moved.FolderPath);
     }
 
+    private void RecordFindingRound(
+        string folderPath,
+        TaskInfo current,
+        WatchPathEntry entry,
+        AspectRunReport report,
+        string attemptId)
+    {
+        var reviewedSubject = ResolveBuildTestGateSubject(current, entry.Path);
+        var projectSettings = _projectSettings?.Get(entry.Name);
+        var repositoryPath = _git?.ResolveRepoRoot(current.Id, entry.Path);
+        var integrationRef = TaskIntegrationBranch.Resolve(
+            current,
+            projectSettings?.IntegrationBranch ?? "develop");
+        var integrationTip = repositoryPath is null
+            ? null
+            : _git?.GetRefShaCached(repositoryPath, integrationRef);
+        var previousVerdicts = report.Verdicts.Select(verdict => new ReviewVerdictDto(
+            verdict.Aspect,
+            AspectVerdictParsing.StatusToken(verdict.Status),
+            verdict.ConcernTagId ?? "local-aspect",
+            verdict.Summary,
+            EvidenceChecked: verdict.EvidenceChecked,
+            Missing: LocalAspectFinding(verdict))).ToArray();
+        ReviewConcernRoundStore.RecordFinding(
+            folderPath,
+            ConfiguredMaxConcernRounds(entry.Name),
+            attemptId,
+            report.Verdicts
+                .Where(verdict => verdict.Status == AspectStatus.Block)
+                .Select(verdict => verdict.Aspect),
+            reviewedSubject.Sha,
+            integrationTip,
+            previousVerdicts);
+    }
+
+    private async Task ReissueOnConcernAsync(
+        string workspace,
+        WatchPathEntry entry,
+        TaskInfo current,
+        AspectRunReport report,
+        ReviewFollowUpDecision decision,
+        CancellationToken ct)
+    {
+        var maximum = ConfiguredMaxConcernRounds(entry.Name);
+        var attempt = _pipelineLog?.Read(current.FolderPath)?.Attempt ?? 1;
+        var attemptId = $"local-review-{attempt}";
+        var reviewedSubject = ResolveBuildTestGateSubject(current, entry.Path);
+        var projectSettings = _projectSettings?.Get(entry.Name);
+        var repositoryPath = _git?.ResolveRepoRoot(current.Id, entry.Path);
+        var integrationRef = TaskIntegrationBranch.Resolve(
+            current,
+            projectSettings?.IntegrationBranch ?? "develop");
+        var integrationTip = repositoryPath is null
+            ? null
+            : _git?.GetRefShaCached(repositoryPath, integrationRef);
+        var previousVerdicts = report.Verdicts.Select(verdict => new ReviewVerdictDto(
+            verdict.Aspect,
+            AspectVerdictParsing.StatusToken(verdict.Status),
+            verdict.ConcernTagId ?? "local-aspect",
+            verdict.Summary,
+            EvidenceChecked: verdict.EvidenceChecked,
+            Missing: LocalAspectFinding(verdict))).ToArray();
+        if (!ReviewConcernRoundStore.TryConsume(
+                current.FolderPath,
+                maximum,
+                attemptId,
+                decision.Findings.Select(item => item.Aspect),
+                reviewedSubject.Sha,
+                integrationTip,
+                previousVerdicts,
+                out var ledger))
+            return;
+
+        var followUp = BuildConcernFollowUp(decision.Findings, attemptId);
+        var moved = MoveReissueToReadyTop(current, entry, "multi-aspect-concern");
+        if (moved is null)
+        {
+            var latest = _scanner.FindJob(current.Id, entry.Path);
+            if (latest is not null
+                && !string.Equals(latest.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
+            {
+                CreatePostAcceptanceConcernFollowUp(latest, followUp, attemptId, ledger);
+            }
+            else
+            {
+                ReviewConcernRoundStore.RollBackUnstartedRound(current.FolderPath, attemptId);
+            }
+            return;
+        }
+        followUp = await WriteFollowUpFileAsync(moved, followUp, ct);
+
+        RecordOrchestratorDecisionStep(
+            moved.FolderPath,
+            PipelineStepStatus.Failed,
+            DecisionVerdictReissue,
+            $"Concern round {ledger.Used} of {ledger.Maximum}: {AspectSummaryLine(report)}");
+        _pipelineLog?.Complete(
+            moved.FolderPath,
+            pendingStepReason: $"Concern round {ledger.Used} of {ledger.Maximum} started.");
+        ConcernTagWriter.ReconcileConcernTags(moved.FolderPath, report.ConcernTagIds, _logger);
+        ConcernTagWriter.MergeConcernTags(
+            moved.FolderPath,
+            [ConcernRoundUsedTag(ledger.Used, ledger.Maximum)],
+            _logger);
+        _chatLog.Append(
+            moved,
+            OrchestratorMessageKind.Reissue,
+            $"Auto-review started concern round {ledger.Used} of {ledger.Maximum} for \"{(moved.Title ?? moved.Id)}\" ({decision.Findings.Count} actionable concern(s)).");
+        EmitVerdictTimeline(
+            moved.FolderPath,
+            TimelineEventKinds.QualityLoopReopened,
+            TimelineActors.QualityLoop,
+            $"Concern round {ledger.Used} of {ledger.Maximum} used.",
+            BuildReopenDetails(
+                "multi-aspect-concern",
+                CountPriorReissues(workspace, entry.Name, current.Id),
+                followUp,
+                report.Verdicts));
+        _statusSnapshot.RecordReissue();
+        AppendReviewDecision(workspace, new ReviewDecisionRecord(
+            DateTime.UtcNow,
+            current.Id,
+            entry.Name,
+            ReviewDecisionKind.Reissue,
+            $"Actionable review concerns; concern round {ledger.Used} of {ledger.Maximum} used.",
+            $"(concern policy for {attemptId})",
+            AspectSummaryLine(report),
+            followUp), current.FolderPath, moved.FolderPath);
+    }
+
+    private void CreatePostAcceptanceConcernFollowUp(
+        TaskInfo source,
+        string followUp,
+        string reviewAttemptId,
+        ReviewConcernRoundLedger ledger)
+    {
+        if (_taskMutations is null)
+        {
+            _logger.LogError(
+                "post-acceptance-review-concern-follow-up-unavailable review={ReviewAttemptId} task={TaskId}",
+                reviewAttemptId,
+                source.Id);
+            return;
+        }
+        var followUpId = _taskMutations.CreateJob(new AgentStudio.Shared.CreateTaskRequest
+        {
+            Title = $"Follow-up: review concerns in {source.Key ?? source.Id}",
+            Agent = source.Agent,
+            CliType = source.CliType,
+            Model = source.Model,
+            ThinkingLevel = source.ThinkingLevel,
+            WatchPath = source.WatchPath,
+            PromptMarkdown = $"{followUp}\n\nSource card: {source.Key ?? source.Id}. The source was already accepted or integrated, so do not reopen or rewrite its accepted delivery.",
+            TargetState = TaskStates.Ready,
+            TaskType = TaskTypes.Bug,
+            OwnerClientId = source.OwnerClientId,
+            CreationSource = "review-concern-follow-up",
+            CreatedBy = "pipeline",
+        });
+        var created = followUpId is null ? null : _scanner.FindJob(followUpId, source.WatchPath);
+        if (created is null)
+        {
+            _logger.LogError(
+                "post-acceptance-review-concern-follow-up-create-failed review={ReviewAttemptId} task={TaskId}",
+                reviewAttemptId,
+                source.Id);
+            return;
+        }
+
+        var sourceKey = source.Key ?? source.Id;
+        var createdKey = created.Key ?? created.Id;
+        _taskMutations.SetTaskReferences(created.Id, (created.References ?? new TaskReferences()) with
+        {
+            FollowUpOf = [sourceKey],
+        }, created.WatchPath);
+        _taskMutations.SetTaskReferences(source.Id, (source.References ?? new TaskReferences()) with
+        {
+            RaisedFollowUps = (source.References?.RaisedFollowUps ?? [])
+                .Append(createdKey)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+        }, source.WatchPath);
+        _taskMutations.AppendContinuationNote(
+            source.Id,
+            $"Review {reviewAttemptId} found actionable concerns after this card had left Auto Review. Fix work was created as linked follow-up {createdKey}; this accepted delivery was not reopened.",
+            source.WatchPath);
+        _taskMutations.AppendContinuationNote(
+            created.Id,
+            $"Linked source: {sourceKey}. Review concern round {ledger.Used} of {ledger.Maximum} was charged to the source card.",
+            created.WatchPath);
+        EmitVerdictTimeline(
+            source.FolderPath,
+            TimelineEventKinds.QualityLoopReopened,
+            TimelineActors.QualityLoop,
+            $"Review concerns were moved to linked follow-up {createdKey} because the source card was already accepted or integrated.",
+            new Dictionary<string, string>
+            {
+                ["cause"] = "post-acceptance-review-concern",
+                ["reviewAttemptId"] = reviewAttemptId,
+                ["followUpTaskId"] = created.Id,
+                ["followUpTaskKey"] = createdKey,
+            });
+    }
+
+    private static string BuildConcernFollowUp(
+        IReadOnlyList<ReviewFollowUpFinding> findings,
+        string reviewAttemptId)
+    {
+        var lines = new List<string>
+        {
+            $"# Review concern fix round ({reviewAttemptId})",
+            "",
+            "Fix exactly the actionable concerns below and nothing else. Preserve unrelated behavior. Run the relevant deterministic verification, then end with [[TASK_DONE]].",
+            "",
+        };
+        foreach (var finding in findings)
+        {
+            lines.Add($"## {finding.Aspect}");
+            lines.Add("");
+            lines.Add($"- Summary: {finding.Summary}");
+            if (!string.IsNullOrWhiteSpace(finding.EvidenceChecked))
+                lines.Add($"- Evidence checked: {finding.EvidenceChecked}");
+            if (!string.IsNullOrWhiteSpace(finding.Finding))
+                lines.Add($"- Finding: {finding.Finding}");
+            lines.Add("");
+        }
+        return string.Join('\n', lines).TrimEnd();
+    }
+
+    private static string? LocalAspectFinding(AspectVerdict verdict)
+        => ReviewFollowUpPolicy.ExtractFindingSection(verdict.Body)
+           ?? AspectVerdictParsing.ParseVerdictField(verdict.Body, "missing");
+
+    internal static AspectRunReport MarkRetryAspectAsInfrastructure(
+        AspectRunReport report,
+        ReviewFollowUpDecision decision)
+    {
+        var affected = decision.Findings
+            .Select(finding => finding.Aspect)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return AspectRunReport.From(report.Verdicts.Select(verdict =>
+            affected.Contains(verdict.Aspect)
+                ? verdict with { IsInfraFailure = true }
+                : verdict).ToArray());
+    }
+
+    private int ConfiguredMaxConcernRounds(string project)
+        => Math.Clamp(_projectSettings?.Get(project).MaxReviewConcernRounds ?? 1, 0, 10);
+
+    private LocalScopedReviewPlan PlanLocalScopedReview(
+        TaskInfo task,
+        WatchPathEntry entry,
+        IReadOnlyList<string> enabledAspects,
+        ProjectSettings? settings)
+    {
+        var ledger = ReviewConcernRoundStore.Read(task.FolderPath);
+        if (ledger is not { StillOpen: true, PreviousVerdicts.Count: > 0 }
+            || _git is null
+            || string.IsNullOrWhiteSpace(ledger.ReviewedResultSha))
+            return LocalScopedReviewPlan.Full(enabledAspects);
+
+        var currentResultSha = ResolveBuildTestGateSubject(task, entry.Path).Sha;
+        var repositoryPath = _git.ResolveRepoRoot(task.Id, entry.Path);
+        var integrationRef = TaskIntegrationBranch.Resolve(
+            task,
+            settings?.IntegrationBranch ?? "develop");
+        var currentIntegrationTip = repositoryPath is null
+            ? null
+            : _git.GetRefShaCached(repositoryPath, integrationRef);
+        var identityMatches = !string.IsNullOrWhiteSpace(currentResultSha)
+                              && !string.IsNullOrWhiteSpace(ledger.ReviewedIntegrationTipSha)
+                              && string.Equals(
+                                  currentIntegrationTip,
+                                  ledger.ReviewedIntegrationTipSha,
+                                  StringComparison.OrdinalIgnoreCase);
+        var changes = identityMatches
+            ? _git.GetFilesChangedInShaRange(
+                task.Id,
+                entry.Path,
+                ledger.ReviewedResultSha,
+                currentResultSha)
+            : [];
+        var previous = ledger.PreviousVerdicts
+            .Where(verdict => enabledAspects.Contains(verdict.Aspect, StringComparer.OrdinalIgnoreCase))
+            .GroupBy(verdict => verdict.Aspect, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.OrdinalIgnoreCase);
+        if (previous.Count == 0) return LocalScopedReviewPlan.Full(enabledAspects);
+
+        var decisions = ScopedReviewPolicy.Plan(new ScopedReviewFacts(
+            settings?.ScopedReviewAfterFinding ?? true,
+            identityMatches,
+            identityMatches ? changes.Count : -1,
+            Math.Max(0, settings?.ScopedReviewMaximumDeltaFiles ?? 20),
+            changes.Select(change => change.Path).ToArray(),
+            changes.Where(change => change.Status.StartsWith('D')).Select(change => change.Path).ToArray(),
+            previous.Values.Select(verdict => new ScopedReviewAspect(
+                verdict.Aspect,
+                verdict.Status,
+                string.IsNullOrWhiteSpace(verdict.EvidenceChecked)
+                    ? []
+                    : verdict.EvidenceChecked.Split(
+                        [',', ';', '\n'],
+                        StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+                ledger.AspectIds.Contains(verdict.Aspect, StringComparer.OrdinalIgnoreCase))).ToArray()));
+        var run = decisions.Where(item => item.Run).Select(item => item.Aspect)
+            .Concat(enabledAspects.Where(aspect => !previous.ContainsKey(aspect)))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var carried = decisions.Where(item => !item.Run)
+            .Select(item => previous[item.Aspect])
+            .Select(verdict => new AspectVerdict(
+                verdict.Aspect,
+                verdict.Status.Trim().ToLowerInvariant() switch
+                {
+                    "block" or "blocked" or "fail" => AspectStatus.Block,
+                    "concern" or "concerns" => AspectStatus.Concerns,
+                    _ => AspectStatus.Pass,
+                },
+                verdict.Summary,
+                $"_Carried over from review {ledger.ReviewAttemptId}; the fix delta did not touch this aspect's evidence._\n",
+                verdict.Status.Equals("pass", StringComparison.OrdinalIgnoreCase)
+                    ? null
+                    : verdict.Classification)
+                {
+                    EvidenceChecked = verdict.EvidenceChecked,
+                })
+            .ToArray();
+        return new LocalScopedReviewPlan(
+            run,
+            carried,
+            previous,
+            ledger.AspectIds.ToHashSet(StringComparer.OrdinalIgnoreCase),
+            ledger.ReviewAttemptId);
+    }
+
+    private void RecordLocalCarriedAspects(string folderPath, LocalScopedReviewPlan plan)
+    {
+        if (_pipelineLog is null) return;
+        var now = DateTime.UtcNow;
+        foreach (var verdict in plan.CarriedVerdicts)
+        {
+            _pipelineLog.RecordStep(folderPath, new PipelineStepExecution
+            {
+                StepId = $"aspect-{verdict.Aspect}",
+                Kind = StepKind.Aspect,
+                Status = verdict.Status == AspectStatus.Pass
+                    ? PipelineStepStatus.Passed
+                    : PipelineStepStatus.Failed,
+                StartedAt = now,
+                CompletedAt = now,
+                DurationMs = 0,
+                Reason = verdict.Summary,
+                Verdict = AspectVerdictParsing.StatusToken(verdict.Status),
+                VerdictSummary = verdict.Summary,
+                CarriedOverFrom = plan.ReviewAttemptId,
+                StillOpen = verdict.Status != AspectStatus.Pass,
+                ExecutionLocation = "carried-over",
+            });
+        }
+    }
+
+    private sealed record LocalScopedReviewPlan(
+        IReadOnlyList<string> RunAspects,
+        IReadOnlyList<AspectVerdict> CarriedVerdicts,
+        IReadOnlyDictionary<string, ReviewVerdictDto> PreviousByAspect,
+        IReadOnlySet<string> RerunFindingAspects,
+        string ReviewAttemptId)
+    {
+        public static LocalScopedReviewPlan Full(IReadOnlyList<string> aspects)
+            => new(
+                aspects,
+                [],
+                new Dictionary<string, ReviewVerdictDto>(StringComparer.OrdinalIgnoreCase),
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                string.Empty);
+    }
+
     /// <summary>
     /// Handle an aspect-verdict INFRA crash (AGT-2021): one or more aspects
     /// produced no verdict because the reviewing CLI died, and the aspect runner's
@@ -2966,21 +3426,30 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var crashedAspects = report.InfraFailures.Select(v => v.Aspect).ToList();
         var aspectList = crashedAspects.Count == 0 ? "aspect review" : string.Join(", ", crashedAspects);
         var noun = crashedAspects.Count == 1 ? "aspect" : "aspects";
-        var reason = AspectInfraCrashReasonPrefix +
-            $"the {aspectList} {noun} produced no verdict after an environmental retry (reviewing CLI died). " +
-            "Classified environmental (InfraCrash); the card's work is unaffected and its reissue budget is not charged.";
+        var unparseable = report.InfraFailures.Any(verdict =>
+            string.Equals(verdict.ConcernTagId, "review:unparseable", StringComparison.OrdinalIgnoreCase));
+        var failure = unparseable
+            ? "produced no parseable verdict after its bounded aspect retry"
+            : "produced no verdict after an environmental retry (reviewing CLI died)";
+        var classification = unparseable ? "review:unparseable" : "environmental";
+        var issueKind = unparseable ? RunIssueKind.OrchestratorInconclusive : RunIssueKind.InfraCrash;
+        var reasonPrefix = unparseable ? "aspect-verdict unparseable: " : AspectInfraCrashReasonPrefix;
+        var reason = reasonPrefix +
+            $"the {aspectList} {noun} {failure}. " +
+            $"Classified {classification} ({issueKind}); the card's work is unaffected and its reissue budget is not charged.";
 
         // Strip any stale concern chips a prior pass left behind; the infra-failure
         // verdicts hang no concern tag of their own.
         ConcernTagWriter.ReconcileConcernTags(current.FolderPath, report.ConcernTagIds, _logger);
 
         _chatLog.AppendSupervisor(current, "escalate",
-            $"Auto-review could not obtain an aspect verdict: the reviewing CLI died even after an environmental retry. " +
-            $"This is an infrastructure crash (InfraCrash), not a problem with the change. Promoted to {TaskStates.Escalated} flagged environmental.");
+            $"Auto-review could not obtain a usable aspect verdict even after its bounded retry. " +
+            $"This is {classification} ({issueKind}), not a problem with the change. Promoted to {TaskStates.Escalated}.");
 
         var move = GuardedMoveJob(
             current.Id, TaskStates.Escalated, entry.Path,
-            transitionCause: LaneChangeCauses.Escalated, transitionDetail: "aspect-verdict-infra-crash");
+            transitionCause: LaneChangeCauses.Escalated,
+            transitionDetail: unparseable ? "aspect-verdict-unparseable" : "aspect-verdict-infra-crash");
         if (move.Status != MoveJobStatus.Success)
         {
             _logger.LogWarning(
@@ -2996,7 +3465,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         }
 
         RecordOrchestratorDecisionStep(escalatedFolder, PipelineStepStatus.Failed,
-            "environmental", reason);
+            classification, reason);
         WritePostProcessingOutcome(escalated, PostProcessingOutcomes.FailedPostProcessing,
             summary: reason,
             stepId: PipelineCatalogue.OrchestratorDecisionStepId,
@@ -3006,7 +3475,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
         EmitVerdictTimeline(escalatedFolder,
             TimelineEventKinds.OrchestratorEscalated, TimelineActors.Orchestrator, reason,
-            BuildInfraCrashDetails(crashedAspects, reason));
+            BuildAspectRetryFailureDetails(crashedAspects, reason, unparseable, issueKind));
 
         // Escalate, NOT Reissue: the environmental infra crash adds no spend to
         // the current attempt epoch. The existing ceiling is retained until an
@@ -3037,12 +3506,17 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// Carries the <c>environmental</c> + <c>InfraCrash</c> flags so the frontend
     /// and any reviewer read it as an infra blip, not a failed change.
     /// </summary>
-    private static Dictionary<string, string> BuildInfraCrashDetails(IReadOnlyList<string> crashedAspects, string reason)
+    private static Dictionary<string, string> BuildAspectRetryFailureDetails(
+        IReadOnlyList<string> crashedAspects,
+        string reason,
+        bool unparseable,
+        RunIssueKind issueKind)
         => new()
         {
-            ["cause"] = "aspect-verdict-infra-crash",
-            ["environmental"] = "true",
-            ["issueKind"] = RunIssueKind.InfraCrash.ToString(),
+            ["cause"] = unparseable ? "aspect-verdict-unparseable" : "aspect-verdict-infra-crash",
+            ["environmental"] = (!unparseable).ToString().ToLowerInvariant(),
+            ["classification"] = unparseable ? "review:unparseable" : "environmental",
+            ["issueKind"] = issueKind.ToString(),
             ["aspects"] = string.Join(", ", crashedAspects),
             ["reason"] = Truncate(reason, 600),
         };
@@ -7316,6 +7790,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// runtime priority is carried by order 0, not by this tag.
     /// </summary>
     internal const string ReissueTagId = "reissue:autoreview";
+
+    internal static string ConcernRoundUsedTag(int used, int maximum)
+        => $"review:concern-round-{used}-of-{maximum}-used";
 
     /// <summary>
     /// Provenance tag stamped on a task when the orchestrator advances it

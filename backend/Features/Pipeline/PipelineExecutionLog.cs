@@ -349,6 +349,37 @@ public sealed class PipelineExecutionLog
         }
     }
 
+    /// <summary>Annotate aspects that caused a bounded review-driven coding round.</summary>
+    public void AnnotateReviewRound(
+        string jobFolderPath,
+        IReadOnlyCollection<string> aspectIds,
+        int fixRunIndex,
+        IReadOnlyCollection<string> stillOpenAspectIds)
+    {
+        var lockObj = _locks.GetOrAdd(NormalizeKey(jobFolderPath), _ => new object());
+        lock (lockObj)
+        {
+            var current = TryRead(jobFolderPath);
+            if (current is null) return;
+            var affected = aspectIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var open = stillOpenAspectIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var steps = current.Steps.Select(step =>
+            {
+                var aspect = step.StepId.StartsWith("aspect-", StringComparison.OrdinalIgnoreCase)
+                    ? step.StepId["aspect-".Length..]
+                    : step.StepId;
+                return affected.Contains(aspect)
+                    ? step with
+                    {
+                        FixedInRun = open.Contains(aspect) ? null : fixRunIndex,
+                        StillOpen = open.Contains(aspect),
+                    }
+                    : step;
+            }).ToList();
+            WriteAtomic(jobFolderPath, current with { Steps = steps });
+        }
+    }
+
     /// <summary>
     /// Read the current execution record for the job, or null if no
     /// pipeline run has been recorded yet.

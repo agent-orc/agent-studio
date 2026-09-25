@@ -1518,8 +1518,51 @@ public class ProjectRunner
     /// instructed to reconstruct context from the job folder. Moves the job back
     /// to <c>3-progress</c> if it sits in <c>4-review</c> or <c>5-completed</c>.
     /// </summary>
-    public Task<RunOutcome> ContinueJobAsync(string jobId, string followupPrompt, string? mode, CancellationToken ct)
-        => RunCliAsync(jobId, RunIntent.UserContinue, followupPrompt, reissueAttempt: 0, mode: mode, ct);
+    public Task<RunOutcome> ContinueJobAsync(
+        string jobId,
+        string followupPrompt,
+        string? mode,
+        CancellationToken ct,
+        RunTriggerMetadata? triggerMetadata = null)
+        => RunCliAsync(jobId, RunIntent.UserContinue, followupPrompt, reissueAttempt: 0, mode: mode, ct, triggerMetadata);
+
+    internal static RunTriggerMetadata TriggerForPendingIntent(PendingIntent intent, string? ownerClientId)
+    {
+        if (intent.TriggerMetadata is { } recordedTrigger)
+            return recordedTrigger;
+
+        var reason = intent.SavedReason ?? string.Empty;
+        var trigger = reason.Contains("integration", StringComparison.OrdinalIgnoreCase)
+            ? RunTriggers.IntegrationRecovery
+            : reason.Contains("timeout", StringComparison.OrdinalIgnoreCase)
+              || reason.Contains("salvage", StringComparison.OrdinalIgnoreCase)
+                ? RunTriggers.TimeoutContinuation
+            : reason.Contains("loop-continuation", StringComparison.OrdinalIgnoreCase)
+                ? RunTriggers.Replan
+            : reason.Contains("crash", StringComparison.OrdinalIgnoreCase)
+              || reason.Contains("provider", StringComparison.OrdinalIgnoreCase)
+                ? RunTriggers.RecoveryAfterCrash
+            : RunTriggers.OperatorContinue;
+        var actor = trigger switch
+        {
+            RunTriggers.TimeoutContinuation => "watchdog",
+            RunTriggers.OperatorContinue => $"operator {ownerClientId ?? "local-default"}",
+            _ => "pipeline",
+        };
+        var sentence = trigger switch
+        {
+            RunTriggers.IntegrationRecovery => $"Integration recovery was queued after {reason}.",
+            RunTriggers.TimeoutContinuation => "The watchdog queued a bounded continuation after a timed-out run.",
+            RunTriggers.Replan => "The pipeline queued the orchestrator's answer to an agent planning question.",
+            RunTriggers.RecoveryAfterCrash => $"The pipeline queued recovery after {reason}.",
+            _ => "An operator continuation was queued while the task could not start immediately.",
+        };
+        return new RunTriggerMetadata(
+            trigger,
+            actor,
+            sentence,
+            $"reason={reason}; prompt={RunTriggerMetadata.PromptPreview(intent.Prompt)}");
+    }
 
     /// <summary>
     /// Single entry point for spawning the CLI for a job. <see cref="RunPlanner.PlanRun"/>
@@ -2426,7 +2469,8 @@ public class ProjectRunner
     }
 
     private async Task<RunOutcome> RunCliAsync(
-        string jobId, RunIntent intent, string? followupPrompt, int reissueAttempt, string? mode, CancellationToken ct)
+        string jobId, RunIntent intent, string? followupPrompt, int reissueAttempt, string? mode, CancellationToken ct,
+        RunTriggerMetadata? triggerMetadata = null)
     {
         if (!_activeRuns.HasFreeSlot(SlotMax()) || _activeRuns.Contains(jobId))
         {
@@ -2537,6 +2581,7 @@ public class ProjectRunner
                     followupPrompt = stashed.Prompt;
                     mode = stashed.Mode;
                     consumedIntent = stashed;
+                    triggerMetadata ??= TriggerForPendingIntent(stashed, info.OwnerClientId);
                 }
             }
 
@@ -2553,13 +2598,34 @@ public class ProjectRunner
             IReadOnlyList<string>? sessionChainForPlan = info.SessionChain;
             try
             {
-                var latestSessionCli = _sessions.ReadSessionEvents(jobId, Entry.Path)
+                var priorSessionEvents = _sessions.ReadSessionEvents(jobId, Entry.Path);
+                var latestSessionCli = priorSessionEvents
                     .LastOrDefault(e => !string.IsNullOrWhiteSpace(e.Cli))?.Cli;
                 if (!string.IsNullOrWhiteSpace(latestSessionCli)
                     && !string.Equals(latestSessionCli, cli.CliType, StringComparison.OrdinalIgnoreCase))
                 {
                     sessionNameForPlan = null;
                     sessionChainForPlan = [];
+                }
+                if (triggerMetadata is null
+                    && intent == RunIntent.AutoPickup
+                    && priorSessionEvents.Count > 0)
+                {
+                    triggerMetadata = new RunTriggerMetadata(
+                        RunTriggers.DependencyRelease,
+                        "pipeline",
+                        "The task became eligible for another pipeline pickup.",
+                        $"previousRuns={priorSessionEvents.Count}");
+                }
+                else if (triggerMetadata is null
+                         && intent == RunIntent.ManualStart
+                         && priorSessionEvents.Count > 0)
+                {
+                    triggerMetadata = new RunTriggerMetadata(
+                        RunTriggers.Restart,
+                        $"operator {info.OwnerClientId ?? "local-default"}",
+                        "Operator restarted a task that already has a recorded run.",
+                        $"previousRuns={priorSessionEvents.Count}");
                 }
             }
             catch (Exception ex) { _logger.LogDebug(ex, "Could not validate session CLI for {JobId}; planner will use recorded session", jobId); }
@@ -2575,7 +2641,8 @@ public class ProjectRunner
                 jobFolder,
                 followupPrompt,
                 sessionChainForPlan,
-                continueMode: mode);
+                continueMode: mode,
+                triggerMetadata: triggerMetadata);
 
             // Pick<->Start atomicity (ASS-1655): remember whether THIS call is the
             // one that moved the task into 3-progress. Every early return between
@@ -3261,6 +3328,10 @@ public class ProjectRunner
             {
                 Ts = execution.StartedAt,
                 Kind = plan.EventKind,
+                Trigger = plan.TriggerMetadata.Trigger,
+                TriggeredBy = plan.TriggerMetadata.TriggeredBy,
+                TriggerReason = plan.TriggerMetadata.TriggerReason,
+                TriggerSource = plan.TriggerMetadata.TriggerSource,
                 Cli = cli.CliType,
                 Model = execution.Model ?? runModel,
                 ThinkingLevel = execution.ThinkingLevel ?? runThinkingLevel,
@@ -4687,7 +4758,12 @@ public class ProjectRunner
             // captured session id), so this is structurally identical to
             // the user typing the same reply in the chat.
             var continuation = await RunCliAsync(jobId, RunIntent.UserContinue, reply, reissueAttempt: 0,
-                                                 mode: ContinueModes.Continue, CancellationToken.None);
+                                                 mode: ContinueModes.Continue, CancellationToken.None,
+                                                 new RunTriggerMetadata(
+                                                     RunTriggers.Replan,
+                                                     "pipeline",
+                                                     "The orchestrator answered the agent's request for a planning decision.",
+                                                     RunTriggerMetadata.PromptPreview(reply)));
             if (continuation.Rejection?.Reason == RunRejectReason.ProjectBusy)
             {
                 // Another live CLI won the freed seat. Persist the continuation
@@ -6423,7 +6499,10 @@ public class ProjectRunner
                                     jobId, retryBackoff, retryAttempt);
                                 await Task.Delay(retryBackoff, CancellationToken.None);
                             }
-                            await RunCliAsync(jobId, RunIntent.UserContinue, retryPrompt, retryAttempt, ContinueModes.Continue, CancellationToken.None);
+                            var retryTrigger = TriggerForAutomaticRetry(
+                                action.IssueKind, action.MetaMessage, retryPrompt);
+                            await RunCliAsync(jobId, RunIntent.UserContinue, retryPrompt, retryAttempt, ContinueModes.Continue, CancellationToken.None,
+                                retryTrigger);
                         }
                         catch (Exception ex)
                         {
@@ -6528,7 +6607,14 @@ public class ProjectRunner
                     {
                         try
                         {
-                            await RunCliAsync(jobId, RunIntent.UserContinue, retryPrompt, 0, ContinueModes.Continue, CancellationToken.None);
+                            await RunCliAsync(jobId, RunIntent.UserContinue, retryPrompt, 0, ContinueModes.Continue, CancellationToken.None,
+                                new RunTriggerMetadata(
+                                    action.IssueKind == RunIssueKind.WatchdogTimeout
+                                        ? RunTriggers.TimeoutContinuation
+                                        : RunTriggers.RecoveryAfterCrash,
+                                    "watchdog",
+                                    $"The runner retriggered the task after {issueTopic}.",
+                                    $"failure={issueTopic}; prompt={RunTriggerMetadata.PromptPreview(retryPrompt)}"));
                         }
                         catch (Exception ex)
                         {
@@ -6963,7 +7049,12 @@ public class ProjectRunner
                 try
                 {
                     await RunCliAsync(jobId, RunIntent.UserContinue, retryPrompt,
-                        evidenceRetryAttempt + 1, ContinueModes.Continue, CancellationToken.None);
+                        evidenceRetryAttempt + 1, ContinueModes.Continue, CancellationToken.None,
+                        new RunTriggerMetadata(
+                            RunTriggers.GateFailure,
+                            "pipeline",
+                            "The UI evidence gate required missing review artifacts.",
+                            $"failure=ui-evidence-missing; prompt={RunTriggerMetadata.PromptPreview(retryPrompt)}"));
                 }
                 catch (Exception ex)
                 {
@@ -7051,7 +7142,12 @@ public class ProjectRunner
                 try
                 {
                     await RunCliAsync(jobId, RunIntent.UserContinue, steer,
-                        evidenceRetryAttempt + 1, ContinueModes.Continue, CancellationToken.None);
+                        evidenceRetryAttempt + 1, ContinueModes.Continue, CancellationToken.None,
+                        new RunTriggerMetadata(
+                            RunTriggers.ReviewFinding,
+                            "pipeline",
+                            visualQa.Decision.Reason ?? "Visual review found a defect that requires correction.",
+                            $"aspect=visual-qa; prompt={RunTriggerMetadata.PromptPreview(steer)}"));
                 }
                 catch (Exception exception)
                 {
@@ -7571,7 +7667,12 @@ public class ProjectRunner
                 {
                     try
                     {
-                        await RunCliAsync(jobId, RunIntent.UserContinue, retryPrompt, 0, ContinueModes.Continue, CancellationToken.None);
+                        await RunCliAsync(jobId, RunIntent.UserContinue, retryPrompt, 0, ContinueModes.Continue, CancellationToken.None,
+                            new RunTriggerMetadata(
+                                RunTriggers.RecoveryAfterCrash,
+                                "pipeline",
+                                "Abort review requested one bounded recovery run.",
+                                $"failure=abort-review; prompt={RunTriggerMetadata.PromptPreview(retryPrompt)}"));
                     }
                     catch (Exception ex)
                     {
@@ -7926,7 +8027,8 @@ public class ProjectRunner
                 jobId, mode, run.Followup!,
                 reason: savedReason,
                 activeJobId: jobId,
-                watchPath: Entry.Path);
+                watchPath: Entry.Path,
+                triggerMetadata: run.Plan?.TriggerMetadata);
         }
         catch (Exception ex)
         {
@@ -8224,9 +8326,56 @@ public class ProjectRunner
             PromptVariables = variables,
             EventKind = "reissue",
             EventReason = decision.Note ?? "auto-review reissue",
+            TriggerMetadata = new RunTriggerMetadata(
+                string.Equals(decision.ReissueCause, "multi-aspect-concern", StringComparison.OrdinalIgnoreCase)
+                    ? RunTriggers.ReviewConcern
+                    : RunTriggers.ReviewFinding,
+                "pipeline",
+                decision.Note ?? "Review findings require another coding run.",
+                ReviewTriggerSource(decision.FollowUpText)),
             ReissuePromptAssignment = assignment,
         };
     }
+
+    private static string ReviewTriggerSource(string? followUp)
+    {
+        var text = followUp ?? string.Empty;
+        var lines = text.Replace("\r\n", "\n").Split('\n');
+        var reviewLine = lines.FirstOrDefault(line =>
+            line.StartsWith("# Review ", StringComparison.OrdinalIgnoreCase)
+            || line.StartsWith("# Remote Review ", StringComparison.OrdinalIgnoreCase));
+        var open = reviewLine?.LastIndexOf('(') ?? -1;
+        var close = reviewLine?.LastIndexOf(')') ?? -1;
+        var reviewId = open >= 0 && close > open
+            ? reviewLine![(open + 1)..close]
+            : null;
+        var aspects = lines
+            .Where(line => line.StartsWith("## ", StringComparison.Ordinal))
+            .Select(line => line[3..].Trim())
+            .Where(line => line.Length > 0 && !line.StartsWith("Previous ", StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var fields = new List<string>();
+        if (!string.IsNullOrWhiteSpace(reviewId)) fields.Add($"review={reviewId}");
+        if (aspects.Length > 0) fields.Add($"aspects={string.Join(',', aspects)}");
+        fields.Add($"prompt={RunTriggerMetadata.PromptPreview(text)}");
+        return string.Join(';', fields);
+    }
+
+    internal static RunTriggerMetadata TriggerForAutomaticRetry(
+        RunIssueKind issueKind,
+        string reason,
+        string prompt)
+        => new(
+            issueKind switch
+            {
+                RunIssueKind.WatchdogTimeout => RunTriggers.TimeoutContinuation,
+                RunIssueKind.InfraCrash => RunTriggers.RecoveryAfterCrash,
+                _ => RunTriggers.GateFailure,
+            },
+            issueKind == RunIssueKind.WatchdogTimeout ? "watchdog" : "pipeline",
+            reason,
+            $"failure={ToIssueTopic(issueKind)}; prompt={RunTriggerMetadata.PromptPreview(prompt)}");
 
     private static string BuildReissueFindingsBlock(ReissueOpenItemsPreCheck.PreCheckDecision decision)
     {

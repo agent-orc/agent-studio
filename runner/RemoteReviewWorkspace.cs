@@ -209,7 +209,10 @@ public sealed class RemoteReviewWorkspace
         Func<ReviewExecutionCheckpoint, CancellationToken, Task>? checkpoint)
     {
         var commands = resume?.Commands?.ToList() ?? [];
-        var verdicts = resume?.Verdicts?.ToList() ?? [];
+        var verdicts = resume?.Verdicts?.ToList()
+                       ?? _subject.Plan.CarriedVerdicts?.ToList()
+                       ?? [];
+        IReadOnlyList<ReviewCommandDto> plannedCommands = _subject.Plan.Commands;
         var artifacts = resume?.Artifacts?.ToList() ?? [];
         DependencyCacheSession? candidateCache = null;
         string? reviewMaterial = null;
@@ -232,6 +235,15 @@ public sealed class RemoteReviewWorkspace
                 }
             }
 
+            if (resume is null
+                && (_subject.Plan.CarriedVerdicts?.Count ?? 0) == 0
+                && _subject.Plan.ScopedReview is not null)
+            {
+                var scoped = await PlanScopedReviewAsync(_subject.Plan.ScopedReview, plannedCommands, ct);
+                plannedCommands = scoped.Commands;
+                verdicts.AddRange(scoped.CarriedVerdicts);
+            }
+
             candidateCache = await ExecutePreparationAsync(
                 RepositoryPath,
                 "candidate",
@@ -241,7 +253,7 @@ public sealed class RemoteReviewWorkspace
                 artifacts,
                 ct);
 
-            foreach (var plannedCommand in _subject.Plan.Commands)
+            foreach (var plannedCommand in plannedCommands)
             {
                 if (CanResumeCommand(plannedCommand, commands, verdicts))
                     continue;
@@ -475,8 +487,27 @@ public sealed class RemoteReviewWorkspace
                         ct);
                 }
 
-                BaselineComparison? comparison = null;
                 var retryPerformed = false;
+                if (ReviewCommandKinds.IsAgent(command.ExecutionKind)
+                    && execution.Process.Success
+                    && string.Equals(
+                        ParseVerdict(command, execution.Process).Classification,
+                        "review:unparseable",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    _log($"review aspect '{command.StepId}' returned an unparseable verdict; retrying that aspect once");
+                    execution = await _agentCommands.RunAsync(command, ct);
+                    retryPerformed = true;
+                    if (!execution.Process.Success || execution.Signal is not null)
+                    {
+                        throw new ReviewInfrastructureException(
+                            execution.Signal == "timeout" ? "AspectTimeout" : "ToolUnavailable",
+                            $"Review aspect '{command.StepId}' failed while retrying an unparseable verdict: "
+                            + $"exit={execution.Process.ExitCode}; signal={execution.Signal ?? "none"}.");
+                    }
+                }
+
+                BaselineComparison? comparison = null;
                 if (command.CompareToBaseline && !execution.Process.Success)
                 {
                     comparison = await CompareToBaselineAsync(
@@ -691,6 +722,102 @@ public sealed class RemoteReviewWorkspace
                                  == ReviewFailureOwner.IntegrationBranch)
             .Select(command => command.StepId)
             .ToArray();
+
+    private async Task<ScopedRuntimePlan> PlanScopedReviewAsync(
+        ScopedReviewPlanDto source,
+        IReadOnlyList<ReviewCommandDto> commands,
+        CancellationToken ct)
+    {
+        try
+        {
+            var delta = await GitValueAsync(
+                ["diff", "--name-status", $"{source.PreviousResultSha}..{_subject.ExpectedResultSha}"],
+                ct);
+            var changes = ParseScopedDelta(delta);
+            var semantic = commands
+                .Where(command => ReviewCommandKinds.IsAgent(command.ExecutionKind))
+                .ToArray();
+            var previous = source.PreviousVerdicts
+                .Where(verdict => semantic.Any(command => string.Equals(
+                    command.Aspect,
+                    verdict.Aspect,
+                    StringComparison.OrdinalIgnoreCase)))
+                .GroupBy(verdict => verdict.Aspect, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.Last(), StringComparer.OrdinalIgnoreCase);
+            var decisions = ScopedReviewPolicy.Plan(new ScopedReviewFacts(
+                source.Enabled,
+                !string.IsNullOrWhiteSpace(_integrationHeadSha)
+                && string.Equals(
+                    _integrationHeadSha,
+                    source.PreviousIntegrationTipSha,
+                    StringComparison.OrdinalIgnoreCase),
+                changes.Count,
+                source.MaximumDeltaFiles,
+                changes.Select(change => change.Path).ToArray(),
+                changes.Where(change => change.Removed).Select(change => change.Path).ToArray(),
+                previous.Values.Select(verdict => new ScopedReviewAspect(
+                    verdict.Aspect,
+                    verdict.Status,
+                    EvidencePaths(verdict.EvidenceChecked),
+                    source.FindingAspects.Contains(verdict.Aspect, StringComparer.OrdinalIgnoreCase))).ToArray()))
+                .ToDictionary(decision => decision.Aspect, StringComparer.OrdinalIgnoreCase);
+            var runnable = new List<ReviewCommandDto>();
+            var carried = new List<ReviewVerdictDto>();
+            foreach (var planned in commands)
+            {
+                var command = planned;
+                if (!ReviewCommandKinds.IsAgent(command.ExecutionKind)
+                    || !decisions.TryGetValue(command.Aspect, out var decision)
+                    || decision.Run
+                    || !previous.TryGetValue(command.Aspect, out var prior))
+                {
+                    if (ReviewCommandKinds.IsAgent(command.ExecutionKind)
+                        && source.FindingAspects.Contains(command.Aspect, StringComparer.OrdinalIgnoreCase)
+                        && previous.TryGetValue(command.Aspect, out var raised))
+                    {
+                        command = command with
+                        {
+                            Prompt = (command.Prompt ?? string.Empty)
+                                     + $"\n\n## Previous finding to verify\n\nThis aspect raised the previous finding below in review {source.FromAttemptId}. Verify that it is fixed and that the fix introduced no new issue.\n\n- Previous status: {raised.Status}\n- Previous summary: {raised.Summary}\n- Previous evidence: {raised.EvidenceChecked ?? "not recorded"}\n- Previous finding: {raised.Missing ?? "not recorded"}",
+                        };
+                    }
+                    runnable.Add(command);
+                    continue;
+                }
+                carried.Add(prior with
+                {
+                    Classification = "carried-over",
+                    CarriedOverFrom = source.FromAttemptId,
+                });
+            }
+            _log($"scoped review planned from={source.FromAttemptId} run={runnable.Count} carried={carried.Count} deltaFiles={changes.Count}");
+            return new ScopedRuntimePlan(runnable, carried);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _log($"scoped review fell back to full review: {exception.Message}");
+            return new ScopedRuntimePlan(commands, []);
+        }
+    }
+
+    private static IReadOnlyList<string> EvidencePaths(string? evidence)
+        => string.IsNullOrWhiteSpace(evidence)
+            ? []
+            : evidence.Split([',', ';', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    private static IReadOnlyList<(string Path, bool Removed)> ParseScopedDelta(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return [];
+        return value.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(line => line.Split('\t', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            .Where(columns => columns.Length >= 2)
+            .Select(columns => (Path: columns[^1], Removed: columns[0].StartsWith('D')))
+            .ToArray();
+    }
+
+    private sealed record ScopedRuntimePlan(
+        IReadOnlyList<ReviewCommandDto> Commands,
+        IReadOnlyList<ReviewVerdictDto> CarriedVerdicts);
 
     private static bool CanResumeCommand(
         ReviewCommandDto command,
@@ -2116,10 +2243,10 @@ public sealed class RemoteReviewWorkspace
         }
         return new ReviewVerdictDto(
             command.Aspect,
-            result.Success ? "pass" : "block",
-            result.Success ? "CommandPassed" : "CommandFailed",
+            result.Success ? "concerns" : "block",
+            result.Success ? "review:unparseable" : "CommandFailed",
             result.Success
-                ? $"Review command '{command.StepId}' passed."
+                ? $"Review command '{command.StepId}' produced no parseable aspect verdict."
                 : $"Review command '{command.StepId}' exited {result.ExitCode}.",
             $"command:{command.StepId}",
             result.Success ? "none" : $"successful execution of {command.StepId}");

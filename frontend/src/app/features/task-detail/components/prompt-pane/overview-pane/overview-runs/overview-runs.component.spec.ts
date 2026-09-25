@@ -15,27 +15,53 @@ describe('OverviewRunsComponent', () => {
 
   it('renders every card-scoped run with trigger, result, duration and a visible-row sum', () => {
     const fixture = setup([
-      run(1, { intent: 'start', status: 'completed', durationSeconds: 12 }),
+      run(1, { intent: 'start', trigger: 'initial', status: 'completed', durationSeconds: 12 }),
       run(2, {
         intent: 'continue',
         status: 'failed',
         durationSeconds: 65,
+        trigger: 'operator-continue',
+        triggeredBy: 'operator local-default',
         userFollowup: 'Address the failed browser check.',
       }),
-      run(3, { intent: 'recovery', status: 'running', durationSeconds: null }),
+      run(3, {
+        intent: 'recovery',
+        trigger: 'recovery-after-crash',
+        triggerReason: 'Runner process crashed.',
+        status: 'running',
+        durationSeconds: null,
+      }),
     ]);
     const rows = all(fixture, 'overview-run-row');
 
     expect(rows).toHaveLength(3);
     expect(one(fixture, 'overview-runs-count').textContent?.trim()).toBe('3 runs');
     expect(rows[0].getAttribute('data-run-index')).toBe('3');
-    expect(testText(rows[0], 'overview-run-trigger')).toBe('Recovery');
+    expect(testText(rows[0], 'overview-run-trigger')).toBe('Recovery after crash: Runner process crashed.');
     expect(testText(rows[0], 'overview-run-result')).toContain('Running');
     expect(testText(rows[0], 'overview-run-duration')).toBe('In progress');
-    expect(testText(rows[1], 'overview-run-trigger')).toBe('User follow-up');
+    expect(testText(rows[1], 'overview-run-trigger')).toBe('Operator continue by local-default');
     expect(testText(rows[1], 'overview-run-result')).toContain('Failed');
     expect(testText(rows[1], 'overview-run-duration')).toBe('1m 5s');
     expect(testText(rows[2], 'overview-run-trigger')).toBe('Initial start');
+  });
+
+  it('labels a legacy run without trigger fields as not recorded', () => {
+    const fixture = setup([run(2, { intent: 'start', trigger: null })]);
+    expect(one(fixture, 'overview-run-trigger').textContent?.trim()).toBe('Not recorded');
+  });
+
+  it('names and links the aspect that caused a review concern run', () => {
+    const fixture = setup([run(2, {
+      trigger: 'review-concern',
+      triggerSource: 'review=review_01bb31c8;aspects=code-quality;prompt=Fix the dead assertion.',
+    })]);
+    fixture.componentRef.setInput('job', { id: 'AGT-2794', watchPath: '/workspace' });
+    fixture.detectChanges();
+
+    const link = one(fixture, 'overview-run-trigger') as HTMLAnchorElement;
+    expect(link.textContent?.trim()).toBe('Review concern: Code Quality (review_01bb31c8)');
+    expect(link.getAttribute('href')).toContain('remote-review-grade-review_01bb31c8.md');
   });
 
   it('shows optional per-run pipeline token usage only where it was recorded', () => {
