@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Task switch performance | Decision dossier</title>
+<style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #7c7a74;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main,
+    .article {
+      width: min(70ch, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 0 0 80px;
+    }
+    header.page {
+      margin-bottom: 12px;
+      padding: 48px 0 28px;
+      border-bottom: 1px solid var(--article-line);
+    }
+    h1,
+    h2,
+    h3,
+    h4,
+    .kicker,
+    .meta,
+    .number,
+    nav,
+    table,
+    figcaption,
+    .box,
+    .callout,
+    .evidence-figure,
+    .variant-grid,
+    .evidence-list {
+      font-family: var(--article-sans);
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      margin: 56px 0 10px;
+      font-size: 1.55rem;
+      line-height: 1.25;
+    }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker,
+    .number {
+      margin: 0 0 12px;
+      color: var(--article-faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code {
+      padding: 0.08em 0.34em;
+      border-radius: 4px;
+      background: var(--article-surface-strong);
+      font: 0.84em/1.5 var(--article-mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    pre code { padding: 0; background: transparent; }
+    ul,
+    ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+    th,
+    td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box,
+    .callout {
+      margin: 24px 0;
+      padding: 18px 22px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+    .box.accent,
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .box.good,
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .box.warn,
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .box.bad,
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    figure { margin: 30px 0; }
+    figure > img,
+    figure > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .evidence-figure { margin-top: 38px; margin-bottom: 38px; }
+    .evidence-captures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+      gap: 12px;
+    }
+    .evidence-capture {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    .evidence-capture > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .capture-theme,
+    .figure-annotation {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--article-line);
+      border-radius: 999px;
+      background: var(--article-surface);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      line-height: 1.35;
+    }
+    .capture-theme {
+      top: 10px;
+      left: 10px;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+    .figure-annotation {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(28ch, calc(100% - 24px));
+      padding: 5px 10px;
+      border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line));
+      background: var(--article-link-soft);
+      color: var(--article-link);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .figure-claim { display: block; color: var(--article-ink); font-size: 0.84rem; }
+    .figure-as-of {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 14px;
+      margin-top: 6px;
+      color: var(--article-faint);
+      font-size: 0.72rem;
+    }
+    .breakout,
+    .media-breakout {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .variant-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0; }
+    .variant {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    .variant h3 { margin: 0 0 8px; }
+    .variant img,
+    .variant svg { display: block; width: 100%; height: auto; margin-top: 12px; }
+    [data-document-pattern="ui"] .variant-grid {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    [data-document-pattern="ui"] .mockup { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--article-line);
+      border-radius: 9px;
+      background: var(--article-surface);
+      color: var(--article-ink);
+      text-decoration: none;
+    }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .dim { color: var(--article-muted); }
+
+    @media (max-width: 760px) {
+      main,
+      .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout,
+      .media-breakout,
+      [data-document-pattern="ui"] .variant-grid,
+      [data-document-pattern="ui"] .mockup { width: calc(100vw - 20px); }
+      [data-document-pattern="ui"] .variant-grid { grid-template-columns: 1fr; }
+      .evidence { grid-template-columns: 1fr; }
+      .evidence-captures { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+  </style>
+<style>
+nav { margin: 24px 0; font-size: .84rem; line-height: 2; }
+caption { text-align: left; color: var(--article-muted); margin-bottom: 10px; }
+.table-scroll, .diagram-scroll { overflow-x: auto; }
+.box h3 { margin-top: 0; }
+.architecture { position: relative; width: 100%; min-width: 760px; aspect-ratio: 1000 / 320; font-family: var(--article-sans); }
+.architecture svg { position:absolute; inset:0; width:100%; height:100%; fill:none; stroke:var(--article-line); stroke-width:2; }
+.architecture .soft-wire { stroke-dasharray: 6 5; }
+.node { position:absolute; width:26%; min-height:26%; border:1px solid var(--article-line); border-radius:8px; padding:14px; background:var(--article-surface); font-size: .82rem; line-height:1.45; }
+.node b,.node span { display:block; }
+.node span { margin-top:6px; color:var(--article-muted); }
+.n1 { left:3%; top:7%; } .n2 { left:37%; top:7%; } .n3 { left:71%; top:7%; }
+.n6 { left:3%; top:64%; } .n5 { left:37%; top:64%; } .n4 { left:71%; top:64%; }
+.diagram-figure { border:1px solid var(--article-line); border-radius:10px; padding:14px; }
+.diagram-figure figcaption { margin: 8px; }
+footer { border-top:1px solid var(--article-line); padding-top:20px; }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+</head>
+<body><main class="article">
+<header class="page">
+  <p class="kicker">Decision dossier · AGT-2910</p>
+  <h1>Task switch performance</h1>
+  <p class="lede">The task's identity, state, execution and working context should be readable within 100 ms. Git, costs, review evidence and long documents should arrive independently.</p>
+  <div class="meta"><span><b>Status</b> Decision pending</span><span><b>Date</b> 25 September 2026</span><span><b>Delivery</b> Concept only</span></div>
+</header>
+<nav aria-label="Document sections"><a href="#evidence">Evidence</a> · <a href="#core">Core set</a> · <a href="#recommendation">Recommendation</a> · <a href="#alternatives">Alternatives</a> · <a href="#programme">Programme</a> · <a href="#decisions">Open decisions</a></nav>
+<div class="callout" data-tone="accent"><strong>Recommendation.</strong> Add a bounded core route backed by a task-specific in-memory projection. Extend the existing background Git index to own detail facts. Render core first, then load independent resources. Keep board state across navigation.</div>
+<div class="callout" data-tone="warn"><strong>Evidence boundary.</strong> Thirty real Stable detail reads establish a handler p50 of 486 ms and p95 of 2,183 ms. They do not provide internal-stage timings or Git spawns per switch. The browser runs on Linux over a tunnel, not on the workstation. The 100 ms workstation outcome remains unverified. Missing internal-stage, per-switch Git and workstation paint measurements are implementation task 1. The operator directed delivery with the available evidence on 25 September 2026 at 16:58 local. This concept is ready for the next pipeline lane; human sight review remains pending.</div>
+
+<section id="evidence" data-concept-section="evidence">
+<h2>Evidence</h2>
+<p>The operator's v0.8.0 incident reports detail calls of roughly 230–2,700 ms, grouped reads of 300–1,000 ms, 68 <code>git config</code> spawns totaling 4,759 ms in one <code>git-index-run</code>, and a 40,345,891 ms spawn after host wake. Those excerpts are supplied evidence. The original daily <code>.api.log.out</code> and its distribution were not available in this checkout. A range cannot establish p50 or p95, and elapsed time across host suspension does not establish CPU use.</p>
+<p>The replay reached Windows Stable through the runner's forwarded ports. The <a href="evidence/stable-version.json">version response</a> identifies v0.9.1, commit <code>09e18909</code>, built at 09:08 UTC. The source walkthrough uses checkout <code>93d23ac4</code>. This is a later live sample, not a reproduction of the earlier binary. The API cohort is AGT-2797 (backlog), AGT-2736 (progress) and AGT-2878 (human review), ten reads each, from 13:57:28 to 14:00:57 UTC. Services and operator activity continued; no cache or backend was reset.</p>
+<h3>Request measurements</h3>
+<div class="breakout table-scroll"><table><caption>p50 / p95; milliseconds except size. Attempts / timeouts include failed reads.</caption><thead><tr><th>Request</th><th>Attempts / timeouts</th><th>Handler ms</th><th>Client total ms</th><th>Decoded bytes</th></tr></thead><tbody><tr><td>Detail</td><td>30 / 0</td><td>486 / 2,183</td><td>822 / 5,523</td><td>30,150 / 56,230</td></tr><tr><td>Grouped, unconditional</td><td>10 / 1</td><td>350 / 956</td><td>5,003 / 9,988</td><td>2,561,751 / 2,561,881</td></tr><tr><td>Grouped, initial ETag</td><td>10 / 2</td><td>584 / 1,245</td><td>5,754 / 7,316</td><td>2,561,751 / 2,561,867</td></tr></tbody></table></div>
+<p>The handler figure is <code>Server-Timing: task-op</code>; its endpoint filter ends before JSON serialization and writing the body. Client time includes those costs, transport and waiting. The 2.56 MB grouped payload also crosses the tunnel. Do not subtract these percentiles to estimate a stage or claim the tunnel's delay as workstation latency.</p>
+<p>All 30 detail calls exceeded the existing 30 ms handler budget. Three of twenty grouped attempts timed out at 15 seconds. Successful-call percentiles exclude those censored observations and therefore understate all-attempt tail risk. The conditional probe retained its initial validator; eight successes were 200, with two timeouts. It does not prove that fresh ETag reuse is broken.</p>
+<h3>Stage inventory</h3>
+<p>Unmeasured cells are unknown, not zero. The following table is the acceptance inventory as well as a statement of what this concept run can prove. Parent and child spans overlap and must not be summed.</p>
+<div class="breakout table-scroll"><table><thead><tr><th>Stage</th><th>p50 / p95</th><th>Population / Git count</th><th>Evidence and remaining boundary</th></tr></thead><tbody>
+<tr><td>Navigation to detail content</td><td>Unavailable</td><td>0 completed switches; recovery dialog</td><td>Linux browser proxy, not full proposed core or workstation latency. See browser capture below.</td></tr>
+<tr><td>Index lookup, wait and refresh</td><td>Unavailable</td><td>No stage spans; spawns unknown</td><td><code>FindJob → GetSnapshotPartitions → EnsureFresh</code> can initiate or wait for a scan.</td></tr>
+<tr><td><code>task.json</code> read</td><td>Unavailable</td><td>No read spans</td><td>Warm indexed lookup can avoid parsing; refresh and <code>BuildLog</code> have additional reads. Do not equate endpoint time with a file read.</td></tr>
+<tr><td>Prompt, status, log and other sidecars</td><td>Unavailable</td><td>No per-file spans</td><td><code>GetJobDetail</code> reads several files before responding.</td></tr>
+<tr><td>Git subprocess work per switch</td><td>Unavailable</td><td><strong>Unknown spawns per switch</strong></td><td>No detail boundary scope or switch correlation in the exposed telemetry. The 68-spawn example is an index run.</td></tr>
+<tr><td>Integration verdict</td><td>54 / 3,889 ms</td><td>2,000 mixed scopes; 14,686 total spawns</td><td>Rolling <code>board/integration-status</code> wall time, including background calls. Not detail-only integration timing.</td></tr>
+<tr><td>Merge projection</td><td>3 / 182 ms</td><td>905 mixed scopes; 78 total spawns</td><td>Rolling <code>board/merge-status</code>, not a switch population.</td></tr>
+<tr><td>Review projection</td><td>Unavailable</td><td>No separate stage spans</td><td>Detail calls canonical <code>reviewProjection.Read</code> inline.</td></tr>
+<tr><td>Token summary</td><td>Unavailable</td><td>No separate stage spans</td><td><code>BuildTokenLookup → WorkspacePerJob</code> is project scoped even for one card.</td></tr>
+<tr><td>Whole detail handler</td><td>486 / 2,183 ms</td><td>30 requests; Git unknown</td><td>Measured <code>task-op</code>, not including result serialization.</td></tr>
+<tr><td>JSON serialization</td><td>Unavailable</td><td>No post-result span</td><td>The existing timing filter does not isolate this stage.</td></tr>
+<tr><td>Detail body consumption after headers</td><td>0.24 / 155 ms</td><td>30 requests</td><td>Client measurement; buffering means this is not the entire transfer cost.</td></tr>
+<tr><td>Detail response size</td><td>30,150 / 56,230 bytes</td><td>30 decoded UTF-8 bodies</td><td>Size, not milliseconds or compressed bytes. The core proposal is capped at 16 KiB.</td></tr>
+<tr><td>Markdown conversion / DOM work</td><td>Unavailable</td><td>No valid switch population</td><td>Existing <code>beautiful-results-render</code> measures conversion only; DOM/layout and other renderers remain unmeasured.</td></tr>
+</tbody></table></div>
+<h3>Git accounting</h3>
+<p>The <a href="evidence/git-telemetry-before.json">live one-hour telemetry snapshot</a>, captured at 13:57:27 UTC, reports 933 background index scopes at p50 445 ms and p95 5,354 ms, totaling 29,299 spawns. It also reports <strong>zero spawns across 1,514 grouped scopes</strong> and zero across ten list scopes. The integration scope is capped at the latest 2,000 samples. These are mixed overlapping scopes; their counts are not additive. No per-switch count can be derived by dividing them by navigation attempts or subtracting successive snapshots.</p>
+<p>The source exposes a concrete amplification path: <code>TaskIntegrationStatusService.BuildRepositoryGroups</code> calls <code>GitService.ReadOriginUrlAt</code> for each task with attributed commits, before the reachability-cache lookup. That helper launches <code>git config --get remote.origin.url</code>. Resolving repository identity once per configuration generation is a specific correction. This path is consistent with the 68-config report; attributing every reported spawn to it still requires correlated tracing.</p>
+<h3>Source findings</h3>
+<p>AGT-2202 added the integration verdict to detail. The operator also identifies the TaskIndexCache/HEAD memoization work and the 1 September OrchestratorApi performance wave as prior context. Those improvements do not establish a cache-only detail contract: a dirty or expired index still invokes freshness work, while the detail route separately derives projections. A HEAD cache cannot remove a configuration lookup executed before that cache. Exact per-stage savings from those earlier changes are not available here.</p>
+<table><thead><tr><th>Boundary</th><th>Finding</th><th>Implication</th></tr></thead><tbody>
+<tr><td><a href="../../backend/Features/Tasks/TaskCrudEndpoints.cs">Detail endpoint</a></td><td>Reconstructs commits; builds tokens, dependencies, runtime, merge, integration, publish, tests and review before returning.</td><td>A cheap identity lookup cannot make the full response cheap.</td></tr>
+<tr><td><a href="../../backend/Features/Tasks/TaskScannerService.cs">Scanner</a> and <a href="../../backend/Features/Tasks/TaskIndexCache.cs">index</a></td><td>Cache entry lookup is preceded by freshness policy; full detail opens prompt/status/history/context/log/evidence.</td><td>Core needs a new read boundary, not a renamed full-detail call.</td></tr>
+<tr><td><a href="../../backend/Features/Tasks/TaskListGitProjectionCache.cs">Git snapshot</a> and <a href="../system/domains/tasks.md">tasks domain</a></td><td>Board Git snapshots, change-driven indexing, stale reads and ETag/304 already exist.</td><td>Extend their coverage and reduce invalidation cost; do not add another indexer.</td></tr>
+<tr><td><a href="../../frontend/src/app/features/task-detail/state/task-selection.service.ts">Selection</a> and <a href="../../frontend/src/app/features/task-detail/state/task-detail-prefetch.service.ts">prefetch</a></td><td>Source already has a board preview, two-peer prefetch, a 30 s full-detail cache and a response token. Cache hits can still be followed by a full fetch.</td><td>Reuse these owners with separate core/resource versions. A new loading shell alone is insufficient.</td></tr>
+</tbody></table>
+<h3>Browser evidence</h3>
+<p>The real browser session reached this task, but the replay stopped at its preflight visibility check because a shared crash-recovery dialog covered navigation. The final saved replay did not attempt a pager click. No recovery was committed or dismissed. Its screenshot proves the obstruction in this session; it does not prove that all operator sessions are blocked. Zero switches completed, so no browser p50/p95, markdown p50/p95 or full-core paint claim is published. The page emitted no JavaScript page errors during the capture. The initial Stable JavaScript bundle was 27,271,729 bytes; its tunnel transfer is cold startup and is outside the API handler measurements.</p>
+<figure class="evidence-figure media-breakout" data-evidence-class="observed">
+<div class="evidence-captures">
+<div class="evidence-capture"><img src="assets/stable-recovery-dialog-light--real.png" alt="Real Stable in light theme with AGT-2910 behind a modal titled Review recovered working-tree changes; the overlay covers task content and navigation." loading="lazy" width="1600" height="1000"><span class="capture-theme">Light · Real</span></div>
+<div class="evidence-capture"><img src="assets/stable-recovery-dialog-dark--real.png" alt="The same real Stable crash-recovery dialog in dark theme, with task content dimmed behind the overlay." loading="lazy" width="1600" height="1000"><span class="capture-theme">Dark · Real</span></div>
+</div>
+<figcaption><strong class="figure-claim">Figure 1. A crash-recovery modal overlays the selected AGT-2910 task in both themes.</strong> The screenshot and replay preflight result establish why the navigation replay has no completed switch. No product state or API response was fabricated.
+<span class="figure-as-of"><span>Light as of 2026-09-25T14:17:53.207Z</span><span>Playwright Chromium 147 · Linux runner → forwarded Windows Stable :4011 · 1600 × 1000 CSS pixels · scale 1</span></span>
+<span class="figure-as-of"><span>Dark as of 2026-09-25T14:17:53.374Z</span><span>Same real session and viewport; browser theme preference changed locally</span></span>
+</figcaption></figure>
+<h3>Recovery finding</h3>
+<p><strong>Persistent navigation obstruction.</strong> The operator reports a Stable backend restart at <time datetime="2026-09-25T12:23:00+02:00">25 September 2026, 12:23 Europe/Berlin</time> (10:23 UTC). The light capture was taken at <time datetime="2026-09-25T14:17:53.207Z">16:17:53.207 local / 14:17:53.207 UTC</time>; the dark capture followed at 16:17:53.374 local. The modal was therefore present 3 h 54 min 53 s after that restart, not merely during its immediate startup. Its visible recovery item is dated 22 September. The captures establish presence at that later instant, not continuous display since restart.</p>
+<p>Both captures use the exact URL <code>http://127.0.0.1:4011/?perf=1&amp;task=AGT-2910#/tasks/AGT-2910?view=overview%3Aactivity</code>. These are real Windows Stable responses viewed through the Linux runner's forwarded frontend. No boot identifier or recovery-record creation trace was retained, so attribution to the 12:23 restart is unproven. The persistent blocking presentation is recorded as a product bug in implementation task 8. Durable recovery decisions must remain available without preventing ordinary task navigation. No operator action is required to finish this Dossier. The <a href="evidence/recovery-finding.json">finding record</a> retains timestamps, attribution limits and screenshot hashes.</p>
+<h3>Initial navigation requests</h3>
+<p>The final real-browser capture (14:16:18–14:17:53 UTC) recorded 70 API request starts during application boot and opening AGT-2910. Of these, the table lists the completed selected-task reads and the board read. These are overlapping one-off observations, not a switch distribution. Their times must not be summed. Artifacts, step prompts, regression radar and dependents were also requested but were still pending at capture end.</p>
+<table><thead><tr><th>Resource during first open</th><th>Handler ms</th><th>Classification</th></tr></thead><tbody>
+<tr><td>Grouped board</td><td>12,193</td><td>Shell/board bootstrap; no selection causality established.</td></tr>
+<tr><td>AGT-2910 detail</td><td>1,339</td><td>Bundled detail.</td></tr>
+<tr><td>Provenance</td><td>230</td><td>Additional task resource.</td></tr>
+<tr><td>Output / session events</td><td>14 / 4</td><td>Separate task output reads.</td></tr>
+<tr><td>Runs / timeline</td><td>1,771 / 1,441</td><td>Separate history reads.</td></tr>
+<tr><td>Agent work summary / plan</td><td>5 / 1</td><td>Additional task resources.</td></tr>
+<tr><td>Pipeline / screenshots</td><td>6 / &lt;1</td><td>Additional task resources.</td></tr>
+</tbody></table>
+<p><a href="evidence/browser-replay.json">Browser report and request inventory</a>. The inventory records bootstrap resources, not a task-switch waterfall. A workstation capture is assigned to task 1; task 8 covers the persistent overlay. Shared recovery must not be mutated merely to obtain a performance sample.</p>
+<p>Raw evidence: <a href="evidence/api-replay.json">API samples</a>, <a href="evidence/summary.json">percentiles and field sizes</a>, <a href="evidence/git-telemetry-after.json">later Git snapshot</a>, <a href="measurement.md">method and capture contract</a>. The observation scope is performance. There is no matched test-run/runtime-event dataset from which to assert passed tests with runtime errors, missing runtime correlation streaks or repeated exceptions.</p>
+</section>
+
+<section id="core">
+<h2>Core set</h2>
+<p>Core answers: which task is this, where is it, what is happening, what did the operator pin, what is the current context, and what happened most recently. Every item below must be present or explicitly empty before the core-ready mark. Limits are UTF-8 byte limits with safe truncation. Full documents remain retrievable.</p>
+<table><thead><tr><th>Immediate field group</th><th>Contents and source</th><th>Limit and reason</th></tr></thead><tbody>
+<tr><td>Identity</td><td>Public key, stable id, project id/name, title, task mode and type from the keyed task index.</td><td>Small scalar fields. Essential orientation and correct navigation.</td></tr>
+<tr><td>Lane facts and blockers</td><td>State, archive state, entered-lane time, order, release/pending-intent flags and existing typed blocking summary.</td><td>Use cached dependency facts; no graph traversal or review-evidence derivation. Operators must see why work is waiting.</td></tr>
+<tr><td>Pins</td><td>Persisted task overrides and their explicitness flags, plus lane/order pins. Viewer-local pins come from the resident viewer store.</td><td>Preserve intent. No recommendation or model selection is performed during a read.</td></tr>
+<tr><td>Execution</td><td>Current activity, runner/location, attempt/lease identity, heartbeat and runtime version from memory.</td><td>Actual execution ownership, not the configured default. Freshness is explicit.</td></tr>
+<tr><td>Status summary</td><td>The latest existing summary or typed status, derived at write/index time.</td><td>1 KiB text. No summarization request on navigation. Missing summary has an explicit empty state.</td></tr>
+<tr><td>Prompt head</td><td>The first bounded portion of the current prompt, with content version, length and continuation link.</td><td>2 KiB. Escaped text first; no rich markdown or highlighting requirement for core.</td></tr>
+<tr><td>Timeline head</td><td>Latest five persisted events, ordered by event sequence, with attempt attribution and continuation cursor.</td><td>2 KiB total. A head preserves sequence without loading the entire log.</td></tr>
+</tbody></table>
+<p>The complete core is capped at <strong>16 KiB</strong>, including metadata. Status, prompt and timeline heads cannot be conjured from <code>task.json</code> alone: the existing index producer and sidecar watchers must materialize bounded heads before reads. A core request cannot silently fall back to opening those files. Cold hydration is a declared readiness state, not a successful fast render.</p>
+<table><thead><tr><th>Later resource</th><th>Contents</th><th>Trigger</th></tr></thead><tbody>
+<tr><td>Git</td><td>Reachability/integration verdict, merge and publish signals, commit graph and Git-dependent test evidence.</td><td>After core, when its pane is visible. Snapshot-only read, independently retryable.</td></tr>
+<tr><td>Usage</td><td>Token summary, cost and context usage.</td><td>Visible usage section after core. Versioned cached projection.</td></tr>
+<tr><td>Review</td><td>Canonical review projection, rounds, aspect results and evidence.</td><td>Review section; large evidence on expansion. Core retains a typed blocker, without inferring a verdict.</td></tr>
+<tr><td>Documents</td><td>Full prompt, full status/result, enrichment report.</td><td>Selected document. Render markdown only when needed.</td></tr>
+<tr><td>History</td><td>Prompt/title history, full timeline, full log, older runs.</td><td>Explicit expansion, with cursors and bounded pages.</td></tr>
+</tbody></table>
+</section>
+
+<section id="recommendation" data-concept-section="recommendation">
+<h2>Recommendation</h2>
+<h3>Read path</h3>
+<p>Add <code>GET /api/tasks/{jobId}/core?project=PROJ-002</code>. Keep the existing detail route for compatibility during migration. The core route reads a dictionary snapshot and in-memory runtime facts. It must not call the current freshness-enforcing scanner, aggregate tokens, derive review/Git state or enumerate the workspace. The only allowed disk fallback is a targeted <code>task.json</code> read using an already known locator. A missing locator queues background hydration and returns a bounded warming state; it never searches the filesystem on the request thread.</p>
+<figure class="media-breakout diagram-figure">
+<div class="diagram-scroll"><div class="architecture" role="img" aria-label="Proposed two-phase read: resident board core or a core endpoint paints first; separate resource requests begin after paint and consume published projections.">
+<svg viewBox="0 0 1000 320" aria-hidden="true"><path d="M290 65H360 M640 65H710 M850 104V205 M710 245H640 M360 245H290"/><path class="soft-wire" d="M145 104V205"/></svg>
+<div class="node n1"><b>Selection event</b><span>Board record and visited core</span></div>
+<div class="node n2"><b>Core lookup</b><span>Memory; ≤30 ms server</span></div>
+<div class="node n3"><b>Core paint</b><span>All core facts; ≤100 ms total</span></div>
+<div class="node n4"><b>Visible resources</b><span>At most two requests after paint</span></div>
+<div class="node n5"><b>Resource snapshots</b><span>Independent versions and errors</span></div>
+<div class="node n6"><b>Progressive sections</b><span>Git, usage, review, documents</span></div>
+</div></div>
+<figcaption><b>Figure 2. Proposed read flow.</b> The upper path owns the latency budget. The lower path can fail or remain pending without blanking core. The diagram describes a target, not deployed behavior.</figcaption>
+</figure>
+<p>Use independent resources under <code>/details/{git,usage,review,documents,history}</code>, reusing existing specialized routes where they already have the required contract. Each envelope includes task/project identity, its input core/attempt version, resource version, <code>computedAt</code>, state, data and an optional reason code. Resource states are <code>warming</code>, <code>ready</code>, <code>stale</code> and <code>unavailable</code>. A response for another task, attempt or superseded content version is discarded. Aborting old subscriptions saves work but does not replace this identity check.</p>
+<h3>Publication and invalidation</h3>
+<p>Introduce a cache-only core accessor alongside existing freshness-enforcing index accessors. Do not weaken runner pickup or mutation correctness to accelerate browsing. After a durable API mutation, publish the changed core record and version before acknowledging it. Sidecar writers and debounced watchers update bounded heads outside read requests. Keep separate core, runtime, document and Git generations; unrelated log churn must not evict every core.</p>
+<figure class="media-breakout diagram-figure">
+<div class="diagram-scroll"><div class="architecture" role="img" aria-label="Proposed invalidation: task writes publish per-task core; repository events and safety sweeps compute versioned Git snapshots; core readers never wait for Git.">
+<svg viewBox="0 0 1000 320" aria-hidden="true"><path d="M290 65H360 M640 65H710 M290 245H360 M640 245H710"/></svg>
+<div class="node n1"><b>Task mutation</b><span>Durable write and memory publish</span></div>
+<div class="node n2"><b>Core generation</b><span>Task, content and runtime versions</span></div>
+<div class="node n3"><b>Core readers</b><span>No scan and no Git dependency</span></div>
+<div class="node n6"><b>Ref/config events</b><span>Existing watcher plus 45 s sweep</span></div>
+<div class="node n5"><b>Bounded Git worker</b><span>Coalesce; one run per repository</span></div>
+<div class="node n4"><b>Git snapshot</b><span>Atomic publish; old snapshot on error</span></div>
+</div></div>
+<figcaption><b>Figure 3. Proposed ownership.</b> Durable task writes own core consistency. The existing Git worker owns derived Git truth. Resource reads never start a subprocess or wait for the worker.</figcaption>
+</figure>
+<p>Extend <code>GitStateIndexService</code> and <code>TaskListGitProjectionCache</code>. Retain the existing 400 ms debounce, one in-flight run plus at most one pending rerun per repository, two-repository concurrency bound and 45 s safety sweep. Trigger only on meaningful refs, repository configuration, integration settings, attributed commits or review-subject changes. Memoize repository/origin identity per relevant configuration generation, including Git's included/worktree configuration semantics. Do not substitute a partial hand-written Git config parser.</p>
+<p>Key a Git snapshot by repository identity, ref signature, settings version, task commit set and review-subject generation. Publish all facts atomically with their version. Discard a computation that finishes after its inputs were superseded. Preserve the last successful snapshot on failure, marked stale with a bounded reason. An old positive verdict from a previous attempt must not be presented as current. Existing acceptance/integration actions still validate authoritative state; a display cache cannot bypass their checks.</p>
+<h3>Frontend and board</h3>
+<p>Reuse the resident board identity/lane/runtime/pin data synchronously. Request the bounded core only for missing or changed heads, then render its escaped text and stable empty states. Keep enrichment placeholders local to their sections. Do not wait on a combined join of every resource. Load at most two visible resources after paint and cancel obsolete lookahead. Full history, evidence and log pages are demand-driven.</p>
+<p>The current board store and prefetch service remain the owners. Do not insert every prompt or timeline head into the already large grouped payload. Keep visited cores in a bounded cache and prefetch only the next two pager cores. Retain filters, sort and scroll when leaving the board. Selection alone causes no grouped reload; mutations, push events, reconnect and conditional polling still reconcile changes. Clear access-revoked/deleted records immediately. Resource version changes invalidate that resource, not the entire task or board.</p>
+<h3>Failure behavior</h3>
+<table><thead><tr><th>Condition</th><th>Core</th><th>Enrichment and convergence</th></tr></thead><tbody>
+<tr><td>Git unavailable or timed out</td><td>Renders normally.</td><td>Shows a bounded reason such as “Git information unavailable: refresh timed out.” Last-known data is dated; retry queues worker work without blocking reads.</td></tr>
+<tr><td>Git ref changes during navigation</td><td>Same core unless task facts changed.</td><td>Old compatible snapshot marked stale; push update supplies the next generation. Superseded attempt facts are suppressed.</td></tr>
+<tr><td>Core cache miss, ready server</td><td>One bounded core request.</td><td>Independent resources wait for core paint. No board reload.</td></tr>
+<tr><td>Server core index still warming</td><td>Explicit warming response and known identity if available.</td><td>Background hydration; bounded retry/push. This is not a passed 100 ms sample on a supposedly ready server.</td></tr>
+<tr><td>Own-task mutation</td><td>Write-through version, then reconcile.</td><td>Reject older replies; preserve the action's concurrency preconditions.</td></tr>
+<tr><td>Move, delete or access revocation</td><td>Updated location or explicit unavailable result.</td><td>Evict all affected resource entries; no stale private content after permission changes.</td></tr>
+<tr><td>Review, usage or document failure</td><td>Remains readable.</td><td>Only that section reports failure and offers retry. No synthetic zero cost or success verdict.</td></tr>
+</tbody></table>
+<h3>Latency allocation</h3>
+<p>For a ready workstation and a task without resident core, allocate 10 ms to input/lookup, 20 ms to local HTTP round-trip overhead, 30 ms to the core handler, 10 ms to serialization/parse and 25 ms to DOM/layout/paint opportunity, leaving 5 ms reserve. These are <strong>proposed planning budgets</strong>, not measured stage percentiles. Measure the complete path as the gate; stage percentiles do not add to a p95. Resident core targets p95 ≤50 ms. Every path has zero request Git spawns and zero workspace scans.</p>
+<p>With remote authority, a round trip can exceed the entire allowance. The resident client projection is then essential; the workstation SLA covers core already delivered to that workstation and a ready local core service. Arbitrary remote deep links need a separately measured network envelope. Do not claim 100 ms for that topology by excluding the network after the fact.</p>
+</section>
+
+<section id="alternatives" data-concept-section="alternatives">
+<h2>Alternatives</h2>
+<table><thead><tr><th>Option</th><th>Benefit</th><th>Cost and assessment</th></tr></thead><tbody>
+<tr><td>Optimize the existing bundled endpoint</td><td>Small client change, preserves wire shape.</td><td>Still couples core to Git, review and documents. Useful interim tracing and origin memoization; insufficient as the target.</td></tr>
+<tr><td>New core route plus independent resources</td><td>Explicit cheap contract, independent caching/failure, backward compatibility.</td><td>DTO and version discipline required. Recommended.</td></tr>
+<tr><td><code>?view=core</code> on existing route</td><td>Fewer route names.</td><td>Easy to invoke old enrichment accidentally, ambiguous response types and cache variants. Acceptable only with equally strict tests; not preferred.</td></tr>
+<tr><td>Core followed by streamed enrichments</td><td>One connection and early first bytes.</td><td>Proxy buffering, reconnection, cancellation and independent cache/retry are harder. Existing push plus resources is sufficient.</td></tr>
+<tr><td>Prefetch every full detail</td><td>Can hide a warm-cache switch.</td><td>Amplifies Git and filesystem work, wastes bandwidth and misses cold/invalidation cases. Limit prefetch to core neighbors.</td></tr>
+<tr><td>Scheduled Git refresh only</td><td>Simple cadence.</td><td>Unnecessary work while idle and delayed freshness after known changes. Keep event-driven computation with the existing slow sweep.</td></tr>
+</tbody></table>
+</section>
+
+<section id="programme">
+<h2>Implementation programme</h2>
+<p>The <a href="workbench.json">schemaVersion 1 descriptor</a> contains eight numbered, bounded slices with self-contained prompts and acceptance scopes. Promotion remains a human action. Run measurement first; then core and Git ownership, progressive UI, board reuse and the budget gate. Catalogue publication and the recovery obstruction fix are independent scopes. The millisecond effects below are targets or conditional estimates, not delivered improvements, and overlapping effects must not be added.</p>
+<table><thead><tr><th>Card</th><th>Expected effect</th><th>Proof</th></tr></thead><tbody>
+<tr><td>1. Correlated baseline</td><td>0 ms saved; ≤1 ms enabled tracing overhead target.</td><td>Workstation end-to-end, all stages and request-attributed Git counts.</td></tr>
+<tr><td>2. Core index and endpoint</td><td>Legacy handler 486 → ≤30 ms p50; 2,183 → ≤30 ms p95. Target reductions about 456 / 2,153 ms.</td><td>No scans, no Git, bounded payload; correct mutations and access.</td></tr>
+<tr><td>3. Background Git facts</td><td>0 additional core ms after split. Conditional 4,689 ms of summed config time saved per comparable 68-config index run.</td><td>4,759 − 4,759/68; assumes one reusable config lookup at the same average cost. Wall-time savings depend on concurrency. Never a per-switch estimate.</td></tr>
+<tr><td>4. Progressive detail</td><td>Remove the 486 / 2,183 ms legacy handler wait from cached-core paint; client budget ≤35 ms.</td><td>All core facts painted, late replies rejected, independent failures.</td></tr>
+<tr><td>5. Board reuse</td><td>Where a redundant grouped read occurs, avoid its measured 350 / 956 ms handler and 2.56 MB body.</td><td>Zero grouped requests caused by selection. Existing frequency remains to be measured.</td></tr>
+<tr><td>6. Performance gate</td><td>0 direct ms saved; maintains p95 ≤100 ms, cached ≤50 ms.</td><td>Controlled regression makes gate fail; no timeouts or missing spans dropped.</td></tr>
+<tr><td>7. Catalogue publication</td><td>0 runtime ms.</td><td>North star map and documentation index link to this Dossier.</td></tr>
+<tr><td>8. Persistent recovery overlay</td><td>Target 0 ms added navigation obstruction; measured saving unavailable because the block requires intervention.</td><td>Pending recovery remains discoverable without blocking normal task switches; the same ≤100 ms core gate applies.</td></tr>
+</tbody></table>
+<p>Migration keeps the legacy endpoint until all detail consumers use the new resources. Record old/new telemetry during rollout. Revert client routing if correctness fails without removing the new evidence. Preserve the authoritative integration gate and existing Git watcher, index TTL and conditional-read regression coverage. This concept changes no product code, configuration, tests or build files.</p>
+</section>
+
+<section id="decisions" data-concept-section="open-decisions">
+<h2>Open decisions</h2>
+<div class="box" data-decision-id="D1" data-decision-kind="single"><h3>D1 · Endpoint</h3><p><strong>Recommend a new <code>/core</code> route</strong> with its own DTO and validator. Alternative: a query mode with equivalent isolation tests. The separate route makes the no-Git/no-scan contract reviewable without weakening compatibility.</p><ul><li data-option-id="A">New core route (recommended)</li><li data-option-id="B">Query mode with the same isolation contract</li></ul></div>
+<div class="box" data-decision-id="D2" data-decision-kind="single"><h3>D2 · Git ownership</h3><p><strong>Recommend existing event-driven indexing plus the 45 s sweep</strong>, with versioned immutable task facts and per-repository config memoization. Alternatives are scheduled-only refresh and request-driven refresh. Neither should be allowed to make a read wait for Git.</p><ul><li data-option-id="A">Existing watcher plus safety sweep (recommended)</li><li data-option-id="B">Scheduled-only snapshot refresh</li></ul></div>
+<div class="box" data-decision-id="D3" data-decision-kind="single"><h3>D3 · Core boundary</h3><p><strong>Recommend the complete 16 KiB bounded core</strong>, including 1 KiB status, 2 KiB prompt and five events within 2 KiB. Alternative: identity only followed by all working context. That alternative does not satisfy this operator direction. Confirm limits through representative task review before promotion.</p><ul><li data-option-id="A">Complete bounded 16 KiB core (recommended)</li><li data-option-id="B">Identity only, with context deferred</li></ul></div>
+<div class="box" data-decision-id="D4"><h3>D4 · Acceptance evidence</h3><p><strong>Delivery direction recorded: available evidence is sufficient for this Dossier.</strong> The operator settled this delivery question on 25 September 2026 at 16:58 local. Missing internal-stage timings, per-switch Git counts and workstation paint measurements form implementation task 1. Estimates remain labeled, and no latency improvement is claimed as delivered. Human sight review follows delivery in the pipeline; it is not a prerequisite for completing this concept run.</p></div>
+<div class="box" data-decision-id="D5"><h3>D5 · Publication boundary</h3><p><strong>Recommend the canonical <code>docs/task-switch-performance/</code> directory</strong> required by concept mode. The later single-directory restriction prevents editing the existing <a href="../operations/nordstern/index.html#s5">North star map</a> and docs index in this run. <a href="catalogue-entry.md">Exact entries</a> and card 7 are ready; map registration is still outstanding.</p></div>
+<div class="box" data-decision-id="D6" data-decision-kind="single"><h3>D6 · Recovery presentation</h3><p><strong>Recommend nonblocking pending recovery with explicit operator opening.</strong> A view-local defer must preserve the durable recovery record and must not commit, discard or acknowledge recovered changes. The alternative of an automatic global modal prevents the requested immediate task switching whenever an old record remains pending. Task 8 verifies record lifetime and fixes the presentation independently of the detail latency work.</p><ul><li data-option-id="A">Nonblocking pending recovery (recommended)</li><li data-option-id="B">Automatic blocking recovery modal</li></ul></div>
+</section>
+<!-- agent-studio:implementation-section:start -->
+<section id="implementation" data-document-section="implementation"><h2>Implementation record</h2><p>The eight scopes above are proposed. Product implementation and human sight review have not occurred in this concept run.</p><ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+</ol></section>
+<!-- agent-studio:implementation-section:end -->
+<footer class="meta"><span>Source card AGT-2910 · Repository Dossier is canonical.</span><span>Observed, inferred and proposed evidence remain distinct.</span></footer>
+
+</main></body></html>
