@@ -1,0 +1,48 @@
+{
+  "assets": [
+    {
+      "file": "archive-board-light--pinned.png",
+      "source": "docs/assets/images/presentation/01-board-overview--light--pinned.png",
+      "sourceCommit": "684688c92",
+      "repositoryProvenanceDate": "2026-08-10",
+      "originalCaptureTimestamp": null,
+      "fixtureTime": "2026-08-09T13:00:00.000Z",
+      "inspectedOn": "2026-09-25",
+      "sha256": "d8fb1f28b56b3cbf01308f7481a0453282c16c48c9ed5793bbf140ffbb3cd356",
+      "limit": "Historical product capture; does not prove current quota clipping."
+    },
+    {
+      "file": "archive-board-dark--pinned.png",
+      "source": "docs/assets/images/presentation/01-board-overview--dark--pinned.png",
+      "sourceCommit": "684688c92",
+      "repositoryProvenanceDate": "2026-08-10",
+      "originalCaptureTimestamp": null,
+      "fixtureTime": "2026-08-09T13:00:00.000Z",
+      "inspectedOn": "2026-09-25",
+      "sha256": "30c3d5e1d61ffd2011dab2bf40444e391cb8f1e0cc0437b501f0b43501f5a833",
+      "limit": "Historical product capture; does not prove current quota clipping."
+    },
+    {
+      "file": "archive-detail-light--pinned.png",
+      "source": "docs/assets/images/presentation/02-task-execution-detail--light--pinned.png",
+      "sourceCommit": "684688c92",
+      "repositoryProvenanceDate": "2026-08-10",
+      "originalCaptureTimestamp": null,
+      "fixtureTime": "2026-08-09T13:00:00.000Z",
+      "inspectedOn": "2026-09-25",
+      "sha256": "a3466255ba11fd3e499cdfbad0b8cdf2dc712e3d29f2d34a5eeb0ee6b9bd2fc4",
+      "limit": "Historical product capture; does not prove current quota clipping."
+    },
+    {
+      "file": "archive-detail-dark--pinned.png",
+      "source": "docs/assets/images/presentation/02-task-execution-detail--dark--pinned.png",
+      "sourceCommit": "684688c92",
+      "repositoryProvenanceDate": "2026-08-10",
+      "originalCaptureTimestamp": null,
+      "fixtureTime": "2026-08-09T13:00:00.000Z",
+      "inspectedOn": "2026-09-25",
+      "sha256": "48b697c9bf4df76950c47bbb4ddfdf3076d5bd58a263561d8327a62d92542b48",
+      "limit": "Historical product capture; does not prove current quota clipping."
+    }
+  ]
+}
