@@ -28,6 +28,7 @@ public sealed class QuotaAdmissionService
     private readonly CliQuotaWaitPolicyService _waitPolicy;
     private readonly ProjectSettingsService _projectSettings;
     private readonly BetterCandidateService _betterCandidates;
+    private readonly CliFallbackPreferenceService? _preference;
     private readonly TimeProvider _timeProvider;
 
     public QuotaAdmissionService(
@@ -37,7 +38,8 @@ public sealed class QuotaAdmissionService
         CliQuotaWaitPolicyService waitPolicy,
         ProjectSettingsService projectSettings,
         TimeProvider? timeProvider = null,
-        BetterCandidateService? betterCandidates = null)
+        BetterCandidateService? betterCandidates = null,
+        CliFallbackPreferenceService? preference = null)
     {
         _quota = quota;
         _caps = caps;
@@ -45,6 +47,7 @@ public sealed class QuotaAdmissionService
         _waitPolicy = waitPolicy;
         _projectSettings = projectSettings;
         _betterCandidates = betterCandidates ?? new BetterCandidateService();
+        _preference = preference;
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
@@ -63,7 +66,8 @@ public sealed class QuotaAdmissionService
             cli => string.IsNullOrWhiteSpace(cli) ? null : _quota.GetCachedFor(cli),
             _timeProvider.GetUtcNow().UtcDateTime,
             request.OccupiedSlots,
-            _waitPolicy.Resolve(project));
+            _waitPolicy.Resolve(project),
+            _preference?.Get(request.CliType ?? CliTypes.Claude));
         return plan with
         {
             BetterCandidates = _betterCandidates.FindRoute(

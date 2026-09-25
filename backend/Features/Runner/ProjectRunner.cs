@@ -1117,6 +1117,7 @@ public class ProjectRunner
             Summary = plan.Reason,
             Reasoning = QuotaAdmissionPlanner.DescribeLoadNumbers(plan),
             BetterCandidates = plan.BetterCandidates,
+            ModelFallback = plan.ModelFallback,
         });
 
         // The healthy "launch primary" decision stays off the task-facing
@@ -1147,6 +1148,9 @@ public class ProjectRunner
                 ["projectionWarning"] = warning?.Reason ?? string.Empty,
                 ["betterCandidates"] = QuotaAdmissionRecorder.SerializeCandidates(plan.BetterCandidates),
                 ["matrixUrl"] = plan.BetterCandidates?.MatrixUrl ?? string.Empty,
+                ["modelFallback"] = plan.ModelFallback is null
+                    ? string.Empty
+                    : System.Text.Json.JsonSerializer.Serialize(plan.ModelFallback),
             });
 
         // AGT-2055 req 3 ("+ Feed-Zeile") + req 7: every load-steering decision
@@ -1158,46 +1162,21 @@ public class ProjectRunner
     }
 
     /// <summary>
-    /// If a job is currently running on this project and its CLI has gone
-    /// past a configured cap, request a stop. Returns the cap evaluation that
-    /// triggered the stop (or "not blocked" when nothing was stopped) so the
-    /// caller can produce a single chat note instead of one per tick.
+    /// Observe a cap crossing for an active job without interrupting it.
+    /// Quota admission is a launch-boundary decision for later work.
     /// </summary>
     public CapEvaluation EnforceQuotaCapsOnActiveJob(RunStopReason reason = RunStopReason.UserStop)
     {
+        _ = reason;
         var jobId = _activeJobId;
         var cliType = _activeCliType;
         if (jobId == null || string.IsNullOrWhiteSpace(cliType)) return CapEvaluation.NotBlocked;
-        var active = _activeRuns.Single;
-        // A same-CLI fallback is explicitly allowed to run past the primary
-        // model's cap. Cross-CLI fallbacks remain guarded by their own quota.
-        if (active?.FallbackFromCliType != null &&
-            string.Equals(active.FallbackFromCliType, cliType, StringComparison.OrdinalIgnoreCase))
-            return CapEvaluation.NotBlocked;
         var ev = EvaluateQuotaCap(cliType);
         if (!ev.Blocked) return CapEvaluation.NotBlocked;
-
-        _logger.LogWarning(
-            "[taskboard] stopping active job {JobId} on {Project}: quota cap exceeded ({Reason})",
-            jobId, ProjectName, ev.DescribeReason());
-
-        PreserveUnconsumedFollowUp(jobId, "quota cap exceeded");
-
-        try
-        {
-            var info = _scanner.FindJob(jobId, Entry.Path);
-            if (info != null)
-            {
-                _router.Get(info.CliType).Stop(info.TaskKey, reason);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex,
-                "EnforceQuotaCapsOnActiveJob: stop failed for {JobId} on {Project}",
-                jobId, ProjectName);
-        }
-        return ev;
+        _logger.LogDebug(
+            "quota_cap_crossed_during_active_run jobId={JobId} project={Project} cli={Cli} action=allow-current-run reason={Reason}",
+            jobId, ProjectName, cliType, ev.DescribeReason());
+        return CapEvaluation.NotBlocked;
     }
 
     public ProjectRunnerStatus GetStatus()
@@ -2905,7 +2884,9 @@ public class ProjectRunner
                 if (_activeRuns.Get(jobId) is { } fallbackRun)
                 {
                     fallbackRun.FallbackFromCliType = info.CliType ?? CliTypes.Claude;
-                    fallbackRun.QuotaFallbackReason = route.Reason;
+                    fallbackRun.QuotaFallbackReason = admissionPlan.ModelFallback is { } receipt
+                        ? QuotaFallbackMarker.DescribeStatus(receipt)
+                        : route.Reason;
                 }
                 var fallbackNote = $"Fallback: {route.CliType}/{route.Model}; reason: quota ({route.Reason})";
                 _logger.LogWarning(
@@ -2923,8 +2904,11 @@ public class ProjectRunner
                         ["primaryModel"] = info.Model ?? string.Empty,
                         ["fallbackCli"] = route.CliType,
                         ["fallbackModel"] = route.Model ?? string.Empty,
-                        ["reason"] = "quota",
+                        ["reason"] = admissionPlan.ModelFallback?.Reason ?? "quota-cap",
                         ["quotaDetail"] = route.Reason ?? string.Empty,
+                        ["modelFallback"] = admissionPlan.ModelFallback is null
+                            ? string.Empty
+                            : System.Text.Json.JsonSerializer.Serialize(admissionPlan.ModelFallback),
                     });
             }
 

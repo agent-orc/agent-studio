@@ -4,8 +4,9 @@ import type { CliModelInfo } from '../../models/cli.model';
 import { CliCatalogStore } from '../../services/cli-catalog.store';
 import { ModelMigrationCatalogStore } from '../../services/model-migration-catalog.store';
 import { ModelMigrationBadgeComponent } from '../../../../components/model-migration-badge/model-migration-badge.component';
+import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
 import { cliTypeIcon, cliTypeLabel } from '../../../../services/format.util';
-import { QuotaApiService, type CliModelRouteProfile, type ModelRoutingPolicyView } from '../../../quota';
+import { QuotaApiService, type CliFallbackState, type CliModelFallbackRoute, type CliModelRouteProfile, type ModelRoutingPolicyView } from '../../../quota';
 import { TaskService } from '../../../../services/task.service';
 import {
   WorkspaceOrchestratorSettingsService,
@@ -35,7 +36,7 @@ interface CliModelGroup {
   standalone: true,
   // The badge reads the migration store through the CLI barrel. Defer it so
   // file-order-dependent barrel evaluation cannot leave Angular an undefined dependency.
-  imports: [forwardRef(() => ModelMigrationBadgeComponent)],
+  imports: [forwardRef(() => ModelMigrationBadgeComponent), DisclosureMarkerComponent],
   templateUrl: './cli-models-panel.html',
   styleUrl: './cli-models-panel.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -48,6 +49,11 @@ export class CliModelsPanelComponent implements OnInit {
   /** AGT-2716 — public so the template can read `migrations.version()` directly. */
   readonly migrations = inject(ModelMigrationCatalogStore);
   readonly routes = signal<Record<string, CliModelRouteProfile>>({});
+  readonly fallbackRoutes = signal<CliModelFallbackRoute[]>([]);
+  readonly fallbackStates = signal<Record<string, CliFallbackState>>({});
+  readonly catalogueVersion = signal<string | null>(null);
+  readonly callersCannotReroute = signal<{ caller: string; cliType: string; reason: string }[]>([]);
+  readonly preferenceSaving = signal<string | null>(null);
   readonly savingCli = signal<string | null>(null);
   readonly policy = signal<ModelRoutingPolicyView | null>(null);
   readonly savingEconomyMode = signal(false);
@@ -80,10 +86,24 @@ export class CliModelsPanelComponent implements OnInit {
     }),
   );
 
+  /** Distinguish the thinking-level routes emitted for the same source model. */
+  fallbackRouteKey(route: CliModelFallbackRoute): string {
+    return JSON.stringify([
+      route.fromCliType, route.fromModel, route.fromThinkingLevel,
+      route.toCliType, route.toModel, route.toThinkingLevel,
+    ]);
+  }
+
   ngOnInit(): void {
     this.catalog.hydrateAll();
     this.routesApi.getModelRoutes().subscribe({
-      next: (response) => this.routes.set(response.profiles ?? {}),
+      next: (response) => {
+        this.routes.set(response.profiles ?? {});
+        this.fallbackRoutes.set(response.routes ?? []);
+        this.fallbackStates.set(response.states ?? {});
+        this.catalogueVersion.set(response.catalogueVersion ?? null);
+        this.callersCannotReroute.set(response.callersCannotReroute ?? []);
+      },
     });
     this.routesApi.getModelRoutingPolicy().subscribe({
       next: (policy) => this.policy.set(policy),
@@ -206,6 +226,57 @@ export class CliModelsPanelComponent implements OnInit {
   fallbackThinkingLevels(cliType: CliType): readonly string[] {
     const selected = this.routes()[cliType]?.fallbackModel;
     return this.fallbackModels(cliType).find((m) => m.id === selected)?.thinkingLevels ?? [];
+  }
+
+  setPreferFallback(cliType: CliType, active: boolean): void {
+    if (this.preferenceSaving()) return;
+    this.preferenceSaving.set(cliType);
+    this.routesApi.setFallbackPreference(cliType, active).subscribe({
+      next: preference => {
+        this.fallbackStates.update(states => ({
+          ...states,
+          [cliType]: {
+            ...(states[cliType] ?? { cliType, windows: [] }),
+            state: preference.active
+              ? 'fallback-preferred'
+              : states[cliType]?.windows.some(window => window.usedPct !== null && window.usedPct >= window.capPct)
+                ? 'fallback-active'
+                : 'normal',
+            activeSince: preference.enabledAt,
+            preferenceExpiresAt: preference.expiresAt,
+          },
+        }));
+        this.preferenceSaving.set(null);
+      },
+      error: () => this.preferenceSaving.set(null),
+    });
+  }
+
+  routeLabel(model: string, thinking: string | null): string {
+    return thinking ? `${model} ${thinking}` : model;
+  }
+
+  routeSource(route: CliModelFallbackRoute): string {
+    return route.source === 'override' ? 'override' : route.catalogueVersion ?? 'catalogue';
+  }
+
+  price(input: number | null, output: number | null): string {
+    if (input === null || output === null) return 'price unavailable';
+    return `$${input.toFixed(2)} in / $${output.toFixed(2)} out`;
+  }
+
+  fallbackStateLabel(cliType: CliType): string {
+    const state = this.fallbackStates()[cliType];
+    if (!state) return 'normal';
+    if (state.state === 'fallback-active') return `fallback active${state.activeSince ? ` since ${this.shortDate(state.activeSince)}` : ''}`;
+    if (state.state === 'fallback-preferred') {
+      return `fallback preferred by operator${state.preferenceExpiresAt ? ` until ${this.shortDate(state.preferenceExpiresAt)}` : ''}`;
+    }
+    return 'normal';
+  }
+
+  private shortDate(value: string): string {
+    return new Date(value).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   }
 
   setEconomyMode(enabled: boolean): void {
