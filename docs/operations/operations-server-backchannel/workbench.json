@@ -4,9 +4,9 @@
   "title": "Operations Server backchannel beside the Task Server",
   "summary": "Decision dossier for a central, browser-independent Operations Server that exposes host and developer-seat operations to multiple frontend backends while the Task Server remains the durable authority for tasks, runs, reviews, orchestration state, and workspaces. It reconciles the loopback Connector boundary with one-box Docker and distributed deployments, compares four architecture alternatives, recommends a new service plus outbound Operations Agents, and records the staged effect on AGT-2736 and dependent work.",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "decided",
   "phase": "decision-ready",
-  "updatedAt": "2026-09-12T00:00:00Z",
+  "updatedAt": "2026-09-25T06:17:42Z",
   "sourceTaskKeys": [
     "AGT-2777"
   ],
@@ -19,7 +19,8 @@
     "AGT-2757",
     "AGT-2758",
     "AGT-2764",
-    "AGT-W43"
+    "AGT-W43",
+    "AGT-2907"
   ],
   "implementationTasks": [
     {
@@ -59,5 +60,88 @@
       "reviewedBy": "Operator",
       "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
     }
-  ]
+  ],
+  "decision": {
+    "outcome": "feature-spawn",
+    "action": "created-card",
+    "state": "succeeded",
+    "operationId": "workbench-ui-dc2afcd1-a7c6-4019-b368-7815c535badc",
+    "sourceRevision": "7ceef399824382e48dae113cca51243351d382f8",
+    "sourceFingerprint": "e5ef09c7e9898071a32f2f92cabe8b649ef9d2ec21340a8bb5ee77368e99d491",
+    "sourceEntryFingerprint": "fa69ea10c8e41009eaa32329ef28c5c979d22a38101ffba2f5c88ec6b367fbe7",
+    "preparedAt": "2026-09-25T06:17:42Z",
+    "preparedBy": "Operator",
+    "confirmedAt": "2026-09-25T06:17:42Z",
+    "confirmedBy": "Operator",
+    "decidedAt": "2026-09-25T06:17:42Z",
+    "spawnedTaskKeys": [
+      "AGT-2907"
+    ],
+    "responses": [
+      {
+        "decisionId": "d1-architecture",
+        "kind": "single",
+        "selectedOptionIds": [
+          "d-new-operations-server"
+        ],
+        "comment": null
+      },
+      {
+        "decisionId": "d2-standard-deployment",
+        "kind": "single",
+        "selectedOptionIds": [
+          "one-box-standard"
+        ],
+        "comment": null
+      },
+      {
+        "decisionId": "d3-agt-2736",
+        "kind": "single",
+        "selectedOptionIds": [
+          "expand-agt-2736"
+        ],
+        "comment": "Hmmm nicht swicher. Entscheider selbvst."
+      },
+      {
+        "decisionId": "d4-orchestrator-sessions",
+        "kind": "single",
+        "selectedOptionIds": [
+          "task-server-sessions"
+        ],
+        "comment": null
+      }
+    ],
+    "cliType": "codex",
+    "model": "gpt-6-astra",
+    "thinkingLevel": "high",
+    "taskDraft": {
+      "title": "Implement Operations Server backchannel beside the Task Server",
+      "goal": "Decision dossier for a central, browser-independent Operations Server that exposes host and developer-seat operations to multiple frontend backends while the Task Server remains the durable authority for tasks, runs, reviews, orchestration state, and workspaces. It reconciles the loopback Connector boundary with one-box Docker and distributed deployments, compares four architecture alternatives, recommends a new service plus outbound Operations Agents, and records the staged effect on AGT-2736 and dependent work.\n\nRecorded decisions:\nD1 Architecture alternative: D New Operations Server (recommended)\nD2 Standard deployment form: One-box Docker (recommended)\nD3 Treatment of AGT-2736: Expand AGT-2736 now. Note: Hmmm nicht swicher. Entscheider selbvst.\nD4 Orchestrator session ownership: Task Server (recommended)",
+      "acceptanceCriteria": [
+        "Implement every recorded Dossier selection and preserve its stated constraints.",
+        "Verify the resulting behavior with the checks required by the affected surface."
+      ],
+      "evidenceLinks": [
+        "docs/operations/operations-server-backchannel/index.html"
+      ],
+      "chosenOption": "D1 Architecture alternative: D New Operations Server (recommended)\nD2 Standard deployment form: One-box Docker (recommended)\nD3 Treatment of AGT-2736: Expand AGT-2736 now. Note: Hmmm nicht swicher. Entscheider selbvst.\nD4 Orchestrator session ownership: Task Server (recommended)",
+      "relatedTaskKeys": [
+        "AGT-2777",
+        "AGT-2736",
+        "AGT-2754",
+        "AGT-2731",
+        "AGT-2755",
+        "AGT-2756",
+        "AGT-2757",
+        "AGT-2758",
+        "AGT-2764",
+        "AGT-W43"
+      ],
+      "targetProject": "Agent Studio",
+      "initialLane": "2-ready",
+      "mode": "coding",
+      "taskType": "feature"
+    }
+  },
+  "editedBy": "Operator"
 }
