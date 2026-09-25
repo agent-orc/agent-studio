@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "workbench-mockup-family",
+  "title": "Experiment Dossier: interactive concept mockup",
+  "summary": "Historical interactive prototype of the Dossier host, project-state specimen, decision panel, and Build or Archive flow; the original mockup remains the evidence artefact.",
+  "entrypoint": "index.html",
+  "status": "archived",
+  "statusReason": "AGT-2533 through AGT-2537 delivered the Dossier host and lifecycle; the original experiment mockup remains linked as design history.",
+  "phase": "testing",
+  "updatedAt": "2026-09-25T10:19:01Z",
+  "sourceTaskKeys": [],
+  "implementationTasks": [],
+  "review": {
+    "verdict": "historical",
+    "supersededBy": [],
+    "reviewedAt": "2026-09-25T10:19:01Z",
+    "reviewedBy": "AGT-2899",
+    "note": "The Dossier host and decision flow represented by this July prototype landed in product code, while its project-state specimen is preserved as design history in the original mockup."
+  },
+  "reviewHistory": [
+    {
+      "verdict": "historical",
+      "supersededBy": [],
+      "reviewedAt": "2026-09-25T10:19:01Z",
+      "reviewedBy": "AGT-2899",
+      "note": "The Dossier host and decision flow represented by this July prototype landed in product code, while its project-state specimen is preserved as design history in the original mockup."
+    }
+  ]
+}
