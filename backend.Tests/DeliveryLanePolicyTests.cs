@@ -36,6 +36,25 @@ public sealed class DeliveryLanePolicyTests
     }
 
     [Fact]
+    public void IntegrationPhase_EscalatesTypedGateFailureEvenWhenStatusIsPending()
+    {
+        Assert.True(DeliveryLanePolicy.RequiresEscalation(new TaskIntegrationStatus
+        {
+            Status = IntegrationStatuses.Pending,
+            Failure = new TaskIntegrationFailure { Code = "gate-failed" },
+        }));
+        Assert.True(DeliveryLanePolicy.RequiresEscalation(new TaskIntegrationStatus
+        {
+            Status = IntegrationStatuses.NoBranch,
+        }));
+        Assert.False(DeliveryLanePolicy.RequiresEscalation(new TaskIntegrationStatus
+        {
+            Status = IntegrationStatuses.Integrated,
+            Failure = new TaskIntegrationFailure { Code = "earlier-gate-failed" },
+        }));
+    }
+
+    [Fact]
     public void EveryKnownLaneEdge_UsesTheSameProtectedDestinationMatrix()
     {
         foreach (var source in TaskStates.All)

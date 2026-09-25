@@ -34,7 +34,7 @@ public sealed class DeliveryChainReconciler : BackgroundService
             if (!AcceptanceIntegrationPolicy.IsIntegrationRequired(card)) continue;
             statuses.TryGetValue(card.TaskKey, out var status);
             var integrated = status?.Status == IntegrationStatuses.Integrated;
-            var fatal = status?.Status is IntegrationStatuses.ConflictSkipped or IntegrationStatuses.NoBranch;
+            var fatal = DeliveryLanePolicy.RequiresEscalation(status);
             string? target = null;
             if (card.State == TaskStates.AutoReview && card.Phase == LifecyclePhases.Integrating)
                 target = integrated ? TaskStates.HumanReview : fatal ? TaskStates.Escalated : null;

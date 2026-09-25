@@ -3,6 +3,11 @@ namespace AgentStudio.Tasks;
 /// <summary>Pure lane admission rule for the guarded delivery chain.</summary>
 public static class DeliveryLanePolicy
 {
+    public static bool RequiresEscalation(TaskIntegrationStatus? status)
+        => status?.Status != IntegrationStatuses.Integrated
+           && (status?.Status is IntegrationStatuses.ConflictSkipped or IntegrationStatuses.NoBranch
+               || status?.Failure is not null);
+
     public static DeliveryLaneDecision Decide(
         string source, string target, bool requiresIntegration, string? status,
         bool archiveOverride = false)
