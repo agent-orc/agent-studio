@@ -43,6 +43,7 @@ public static class RunFailureSignatures
     public const string RunnerDisconnected = "runner-disconnected";
     public const string HostResourceExhausted = "host-resource-exhausted";
     public const string ProcessLaunchFailed = "process-launch-failed";
+    public const string GatePreparationCacheTorn = "gate-preparation-cache-torn";
 
     // Quota
     public const string CliQuotaExhausted = "cli-quota-exhausted";

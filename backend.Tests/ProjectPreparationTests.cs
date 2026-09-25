@@ -306,7 +306,7 @@ public sealed class ProjectPreparationTests : IDisposable
     }
 
     [Fact]
-    public async Task Incomplete_immutable_entry_fails_with_an_evictable_cache_signature()
+    public async Task Incomplete_immutable_entry_is_evicted_and_rebuilt_as_a_miss()
     {
         Write("package-lock.json", "{\"lockfileVersion\":3}");
         Write(".agent-studio/project.yml", Definition(".agent-studio/prepare"));
@@ -319,12 +319,98 @@ public sealed class ProjectPreparationTests : IDisposable
         Directory.Delete(content, recursive: true);
         Directory.CreateDirectory(content);
 
+        var logs = new List<string>();
         var second = await ProjectPreparationExecutor.RunAsync(
-            _root, cache, Path.Combine(_root, "second.json"), "subject-1", null, TimeSpan.FromSeconds(10), CancellationToken.None);
+            _root, cache, Path.Combine(_root, "second.json"), "subject-1", logs.Add, TimeSpan.FromSeconds(10), CancellationToken.None);
 
-        Assert.False(second.Succeeded);
-        Assert.Equal(PreparationFailureKind.Cache, second.FailureKind);
-        Assert.Equal("cache:incomplete", second.FailureSignature);
+        Assert.True(second.Succeeded, second.Output);
+        Assert.Equal(PreparationFailureKind.None, second.FailureKind);
+        Assert.Contains(logs, line =>
+            line.Contains("state=evicted", StringComparison.Ordinal)
+            && line.Contains("reason=validation-empty-content", StringComparison.Ordinal));
+        Assert.True(File.Exists(Path.Combine(
+            Assert.Single(second.Manifest!.Caches).EntryPath, "content", "marker")));
+    }
+
+    [Fact]
+    public async Task Torn_nuget_entry_without_extraction_metadata_is_evicted_and_rebuilt()
+    {
+        WriteRestoringDotNetRepository();
+        var cache = Path.Combine(_root, "product-cache");
+        var first = await PrepareAsync(cache, "nuget-first.json");
+        var nuget = Assert.Single(first.Manifest!.Caches, item => item.Block == "nuget");
+        var metadata = Path.Combine(
+            nuget.EntryPath, "content", "xunit.analyzers", "1.4.0", ".nupkg.metadata");
+        File.Delete(metadata);
+        var logs = new List<string>();
+
+        var second = await ProjectPreparationExecutor.RunAsync(
+            _root,
+            cache,
+            Path.Combine(_root, "nuget-second.json"),
+            "subject-1",
+            logs.Add,
+            TimeSpan.FromSeconds(60),
+            CancellationToken.None);
+
+        Assert.True(second.Succeeded, second.Output);
+        Assert.Equal("published", Assert.Single(second.Manifest!.Caches).State);
+        Assert.True(File.Exists(metadata));
+        Assert.Contains(logs, line =>
+            line.Contains("cache validation block=nuget", StringComparison.Ordinal)
+            && line.Contains($"key={nuget.Key}", StringComparison.Ordinal)
+            && line.Contains("state=invalid", StringComparison.Ordinal)
+            && line.Contains("nuget-metadata-missing", StringComparison.Ordinal));
+        Assert.Contains(logs, line =>
+            line.Contains($"block=nuget key={nuget.Key} state=evicted", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Nuget_block_validation_requires_extraction_metadata_for_every_package_version()
+    {
+        var content = Path.Combine(_root, "nuget-validation");
+        var first = Path.Combine(content, "example.package", "1.0.0");
+        var second = Path.Combine(content, "other.package", "2.0.0");
+        Directory.CreateDirectory(Path.Combine(first, "lib"));
+        Directory.CreateDirectory(Path.Combine(second, "analyzers"));
+        File.WriteAllText(Path.Combine(first, "lib", "example.dll"), "assembly");
+        File.WriteAllText(Path.Combine(second, "analyzers", "other.dll"), "assembly");
+        File.WriteAllText(Path.Combine(first, ".nupkg.metadata"), "metadata");
+
+        var torn = ProjectPreparationExecutor.ValidateCacheBlock("nuget", content);
+        File.WriteAllText(Path.Combine(second, ".nupkg.metadata"), "metadata");
+        var complete = ProjectPreparationExecutor.ValidateCacheBlock("nuget", content);
+
+        Assert.False(torn.Valid);
+        Assert.Contains("nuget-metadata-missing", torn.Reason);
+        Assert.True(complete.Valid, complete.Reason);
+    }
+
+    [Fact]
+    public async Task Successful_prepare_does_not_publish_an_empty_cache_block()
+    {
+        Write("package-lock.json", "{\"lockfileVersion\":3}");
+        Write(".agent-studio/project.yml", Definition(".agent-studio/prepare"));
+        Write(".agent-studio/prepare", "#!/bin/sh\nset -eu\n# Intentionally no cache output.\n");
+        var cache = Path.Combine(_root, "product-cache");
+        var logs = new List<string>();
+
+        var result = await ProjectPreparationExecutor.RunAsync(
+            _root,
+            cache,
+            Path.Combine(_root, "empty.json"),
+            "subject-1",
+            logs.Add,
+            TimeSpan.FromSeconds(10),
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded, result.Output);
+        var block = Assert.Single(result.Manifest!.Caches);
+        Assert.Equal("unused", block.State);
+        Assert.False(Directory.Exists(block.EntryPath));
+        Assert.Contains(logs, line =>
+            line.Contains($"block=npm key={block.Key}", StringComparison.Ordinal)
+            && line.Contains("state=publish-rejected reason=empty-content", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -744,6 +830,7 @@ public sealed class ProjectPreparationTests : IDisposable
             set -eu
             mkdir -p "$NUGET_PACKAGES/xunit.analyzers/1.4.0"
             printf nupkg > "$NUGET_PACKAGES/xunit.analyzers/1.4.0/xunit.analyzers.nupkg"
+            printf metadata > "$NUGET_PACKAGES/xunit.analyzers/1.4.0/.nupkg.metadata"
             """);
     }
 

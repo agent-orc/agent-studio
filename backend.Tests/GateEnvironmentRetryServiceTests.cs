@@ -173,6 +173,29 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RetryNow_AfterTornNugetGateFailure_ReplaysTheUnchangedPassedDelivery()
+    {
+        var stack = Build();
+        var missingPath =
+            @"C:\Users\runner\AppData\Local\Temp\agentstudio-preparation-cache\.runs\" +
+            @"9a82d10f\nuget\example.package\1.0.0\example.package.1.0.0.nupkg";
+        var delivery = SeedGateEnvironmentFailure(
+            stack,
+            "torn-nuget",
+            failedMinutesAgo: 1,
+            failureReason: $"NuGet.targets(198,5): error : Could not find file '{missingPath}'.");
+        var job = stack.Scanner.FindJob("torn-nuget", _watchPath)!;
+        var reviewAttempts = stack.Authority.GetTaskProjection(job.TaskKey).ReviewAttempts.Count;
+
+        var result = await stack.Retries.RetryNowAsync(job);
+
+        Assert.Equal(GateEnvironmentRetryStatus.Replayed, result.Status);
+        Assert.Equal(delivery, result.DeliverySha);
+        Assert.True(result.Outcome!.Value.IsSuccessfulIntegration());
+        Assert.Equal(reviewAttempts, stack.Authority.GetTaskProjection(job.TaskKey).ReviewAttempts.Count);
+    }
+
+    [Fact]
     public async Task RetryNow_WhileASweepReplayIsRunning_IsRefusedAndDoesNotSpendASecondRung()
     {
         using var gateEntered = new SemaphoreSlim(0, 1);
