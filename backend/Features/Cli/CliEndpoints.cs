@@ -246,14 +246,85 @@ public static class CliEndpoints
         // profile when one names a fallback, else the equivalence-catalogue
         // derived pair (AGT-2751). IsFallbackDerived tells the picker whether
         // to render "configured" or "auto (equivalence tier)".
-        cliGroup.MapGet("/quota/model-routes", (CliQuotaFallbackService routes) =>
-            Results.Ok(new
+        cliGroup.MapGet("/quota/model-routes", (
+            CliQuotaFallbackService routes,
+            IModelEquivalenceCatalog catalogue,
+            CliFallbackPreferenceService preferences,
+            QuotaService quota,
+            CliQuotaCapsService caps,
+            TaskScannerService scanner,
+            ProjectSettingsService projectSettings) =>
+        {
+            var profiles = CliTypes.All.ToDictionary(
+                cli => cli,
+                cli => routes.GetEffectiveProfile(cli),
+                StringComparer.OrdinalIgnoreCase);
+            var table = catalogue.Routes.Select(RouteView).ToList();
+            foreach (var profile in routes.GetAll().Values.Where(profile =>
+                         !string.IsNullOrWhiteSpace(profile.PrimaryModel)
+                         && !string.IsNullOrWhiteSpace(profile.FallbackModel)))
             {
-                profiles = CliTypes.All.ToDictionary(
-                    cli => cli,
-                    cli => routes.GetEffectiveProfile(cli),
-                    StringComparer.OrdinalIgnoreCase),
-            }));
+                table.RemoveAll(row =>
+                    string.Equals(row.FromCliType, profile.CliType, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(row.FromModel, profile.PrimaryModel, StringComparison.OrdinalIgnoreCase));
+                table.Add(OverrideView(profile));
+            }
+            foreach (var used in ModelsInUse(scanner, projectSettings))
+            {
+                if (table.Any(row =>
+                        string.Equals(row.FromCliType, used.CliType, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(row.FromModel, used.Model, StringComparison.OrdinalIgnoreCase)
+                        && SameThinking(row.FromThinkingLevel, used.ThinkingLevel)))
+                    continue;
+                var targetCli = used.CliType == CliTypes.Claude ? CliTypes.Codex : CliTypes.Claude;
+                var derived = catalogue.TryGetRoute(used.CliType, used.Model, used.ThinkingLevel, targetCli);
+                table.Add(derived is null
+                    ? UnavailableView(used.CliType, used.Model, used.ThinkingLevel, catalogue.Version)
+                    : RouteView(derived));
+            }
+
+            var states = CliTypes.All.ToDictionary(
+                cli => cli,
+                cli => QuotaState(cli, quota.GetCachedFor(cli), caps, preferences.Get(cli)),
+                StringComparer.OrdinalIgnoreCase);
+            return Results.Ok(new
+            {
+                profiles,
+                routes = table.OrderBy(row => row.FromCliType).ThenBy(row => row.FromModel),
+                catalogueVersion = catalogue.Version,
+                states,
+                callersCannotReroute = new[]
+                {
+                    new
+                    {
+                        caller = "quota-probe",
+                        cliType = "provider-native",
+                        reason = "Provider quota introspection does not invoke a model and cannot switch CLI families.",
+                    },
+                },
+            });
+        });
+
+        cliGroup.MapPut("/quota/fallback-preference", (
+            SetCliFallbackPreferenceRequest req,
+            CliFallbackPreferenceService preferences,
+            QuotaService quota,
+            CliQuotaCapsService caps) =>
+        {
+            if (!CliTypes.IsValid(req.CliType))
+                return Results.BadRequest(new { error = $"Unknown cliType '{req.CliType}'" });
+            var now = DateTime.UtcNow;
+            var reset = quota.GetCachedFor(req.CliType)?.Windows
+                .Where(window => window.ResetAt > now)
+                .OrderByDescending(window => (window.UsedPct ?? 0)
+                    / Math.Max(1, caps.GetCap(req.CliType, window.Label)))
+                .ThenBy(window => window.ResetAt)
+                .Select(window => window.ResetAt)
+                .FirstOrDefault();
+            if (req.PreferFallback && reset is null)
+                return Results.BadRequest(new { error = "A fresh quota window with a future reset is required." });
+            return Results.Ok(preferences.Set(req.CliType, req.PreferFallback, reset));
+        });
 
         cliGroup.MapPut("/quota/model-routes", (SetCliModelRouteRequest req, CliQuotaFallbackService routes) =>
         {
@@ -343,6 +414,116 @@ public static class CliEndpoints
             }
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
     }
+
+    private static CliModelRouteView RouteView(ModelEquivalenceRoute route) => new(
+        route.FromCliType, route.FromModel, route.FromThinkingLevel,
+        route.ToCliType, route.ToModel, route.ToThinkingLevel,
+        "catalogue", route.CatalogueVersion,
+        route.FromInputPerMTok, route.FromOutputPerMTok,
+        route.ToInputPerMTok, route.ToOutputPerMTok,
+        route.CapabilityClass,
+        true);
+
+    private static CliModelRouteView OverrideView(CliModelRouteProfile profile)
+    {
+        var from = Price(profile.PrimaryModel);
+        var to = Price(profile.FallbackModel);
+        return new CliModelRouteView(
+            profile.CliType, profile.PrimaryModel!, profile.PrimaryThinkingLevel,
+            profile.FallbackCliType ?? profile.CliType, profile.FallbackModel!, profile.FallbackThinkingLevel,
+            "override", null,
+            from.Input, from.Output, to.Input, to.Output,
+            "operator-override",
+            true);
+    }
+
+    private static CliModelRouteView UnavailableView(
+        string cliType, string model, string? thinkingLevel, string version)
+    {
+        var from = Price(model);
+        return new CliModelRouteView(
+            cliType, model, thinkingLevel,
+            string.Empty, "wait: no comparable model", null,
+            "catalogue", version,
+            from.Input, from.Output, null, null,
+            "unresolved",
+            false);
+    }
+
+    private static IReadOnlyList<(string CliType, string Model, string? ThinkingLevel)> ModelsInUse(
+        TaskScannerService scanner,
+        ProjectSettingsService projectSettings)
+    {
+        var rows = new List<(string CliType, string Model, string? ThinkingLevel)>();
+        foreach (var task in scanner.ScanAllJobs().Where(task =>
+                     !string.IsNullOrWhiteSpace(task.Model)
+                     && task.State is not TaskStates.Completed and not TaskStates.Archive))
+            rows.Add((CliForModel(task.CliType, task.Model!), task.Model!, task.ThinkingLevel));
+        foreach (var settings in projectSettings.GetAll().Values)
+        {
+            Add(settings.OrchestratorModel, settings.OrchestratorThinkingLevel, null);
+            Add(settings.EpicPlanningModel, settings.EpicPlanningThinkingLevel, null);
+            if (settings.PipelineSteps is not null)
+                foreach (var step in settings.PipelineSteps.Values)
+                    Add(step.Model, step.ThinkingLevel, step.CliType);
+            if (settings.PipelineStepsByType is not null)
+                foreach (var pipeline in settings.PipelineStepsByType.Values)
+                    foreach (var step in pipeline.Values)
+                        Add(step.Model, step.ThinkingLevel, step.CliType);
+        }
+        return rows.Distinct().ToArray();
+
+        void Add(string? model, string? thinking, string? cli)
+        {
+            if (!string.IsNullOrWhiteSpace(model))
+                rows.Add((CliForModel(cli, model), model.Trim(), thinking));
+        }
+    }
+
+    private static string CliForModel(string? configuredCli, string model)
+    {
+        if (!string.IsNullOrWhiteSpace(configuredCli)) return CliTypes.Normalize(configuredCli);
+        var metadata = ModelMetadataRegistry.Find(model);
+        return string.Equals(metadata?.Vendor, "anthropic", StringComparison.OrdinalIgnoreCase)
+            || model.StartsWith("claude-", StringComparison.OrdinalIgnoreCase)
+            ? CliTypes.Claude
+            : CliTypes.Codex;
+    }
+
+    private static bool SameThinking(string? left, string? right)
+        => string.Equals(left?.Trim(), right?.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    private static (decimal? Input, decimal? Output) Price(string? model)
+    {
+        var estimate = TokenPricing.Estimate(model, 0, 0, 0, 0);
+        return (estimate.PriceBasis?.InputPerMillion, estimate.PriceBasis?.OutputPerMillion);
+    }
+
+    private static object QuotaState(
+        string cliType,
+        QuotaSnapshot? snapshot,
+        CliQuotaCapsService caps,
+        CliFallbackPreference preference)
+    {
+        var cap = caps.Evaluate(snapshot);
+        var state = preference.Active
+            ? "fallback-preferred"
+            : cap.Blocked ? "fallback-active" : "normal";
+        return new
+        {
+            cliType,
+            state,
+            activeSince = preference.Active ? preference.EnabledAt : cap.Blocked ? snapshot?.FetchedAt : null,
+            preferenceExpiresAt = preference.ExpiresAt,
+            windows = snapshot?.Windows.Select(window => new
+            {
+                window.Label,
+                window.UsedPct,
+                capPct = caps.GetCap(cliType, window.Label),
+                window.ResetAt,
+            }).ToArray() ?? [],
+        };
+    }
 }
 
 public sealed record SetCliQuotaWaitPolicyRequest
@@ -350,3 +531,23 @@ public sealed record SetCliQuotaWaitPolicyRequest
     public bool Enabled { get; init; }
     public int ThresholdMinutes { get; init; } = CliQuotaWaitPolicyService.DefaultThresholdMinutes;
 }
+
+public sealed record SetCliFallbackPreferenceRequest(
+    string CliType,
+    bool PreferFallback);
+
+public sealed record CliModelRouteView(
+    string FromCliType,
+    string FromModel,
+    string? FromThinkingLevel,
+    string ToCliType,
+    string ToModel,
+    string? ToThinkingLevel,
+    string Source,
+    string? CatalogueVersion,
+    decimal? FromInputPerMTok,
+    decimal? FromOutputPerMTok,
+    decimal? ToInputPerMTok,
+    decimal? ToOutputPerMTok,
+    string CapabilityClass,
+    bool Reroutable);

@@ -18,6 +18,7 @@ interface CapRow {
   windowLabel: string;
   capPct: number;
   usedPct: number | null;
+  resetAt: string | null;
   // Stored separately so the slider can show a transient drag value before
   // the debounced PUT lands and the canonical caps map updates.
   pendingCapPct: number;
@@ -30,8 +31,8 @@ interface CapRow {
  * the per-CLI model catalog and fallback routes (what CLIs exist, which models
  * per CLI, the primary/fallback route state); per-CLI per-window usage caps
  * (each quota window from the latest /api/cli/quota snapshot gets a slider the
- * user drags to set "do not run past N% of this window" - the runner gates
- * auto-pickup and stops in-flight runs when usage crosses these caps); and the
+ * user drags to set "do not start new work past N% of this window" - the runner
+ * gates later admissions without interrupting in-flight runs); and the
  * per-CLI completion contract (how each backend signals turn completion).
  *
  * The per-CLI session inventory and on-disk filesystem locations were split out
@@ -79,6 +80,7 @@ export class CliAdminPanelComponent implements OnInit, OnDestroy {
           windowLabel: w.label,
           capPct: cap,
           usedPct: w.usedPct,
+          resetAt: w.resetAt,
           pendingCapPct: cap,
           saving: false
         });
@@ -275,6 +277,11 @@ export class CliAdminPanelComponent implements OnInit, OnDestroy {
   formatPct(pct: number | null): string {
     if (pct === null || isNaN(pct)) return 'Unknown';
     return `${pct.toFixed(pct >= 10 ? 0 : 1)}%`;
+  }
+
+  formatReset(resetAt: string | null): string {
+    if (!resetAt) return 'reset unknown';
+    return `resets ${new Date(resetAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`;
   }
 
   barWidth(pct: number | null): number {

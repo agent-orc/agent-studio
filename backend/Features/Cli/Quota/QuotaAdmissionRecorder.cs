@@ -71,6 +71,7 @@ public sealed class QuotaAdmissionRecorder
             Summary = plan.Reason,
             Reasoning = QuotaAdmissionPlanner.DescribeLoadNumbers(plan),
             BetterCandidates = plan.BetterCandidates,
+            ModelFallback = plan.ModelFallback,
         });
 
         if (plan.Outcome == QuotaAdmissionOutcome.LaunchPrimary
@@ -93,6 +94,9 @@ public sealed class QuotaAdmissionRecorder
                 ["projectionWarning"] = warning?.Reason ?? string.Empty,
                 ["betterCandidates"] = SerializeCandidates(plan.BetterCandidates),
                 ["matrixUrl"] = plan.BetterCandidates?.MatrixUrl ?? string.Empty,
+                ["modelFallback"] = plan.ModelFallback is null
+                    ? string.Empty
+                    : JsonSerializer.Serialize(plan.ModelFallback),
             });
     }
 
@@ -100,11 +104,35 @@ public sealed class QuotaAdmissionRecorder
         => note is null ? string.Empty : JsonSerializer.Serialize(note);
 
     /// <summary>
+    /// Record a workspace-level one-shot that has no task or project folder,
+    /// such as title generation or prompt enrichment. The structured runtime
+    /// log is its durable receipt because there is no narrower timeline.
+    /// </summary>
+    public void EmitUnscopedAdmissionDecision(QuotaAdmissionPlan plan, string source)
+    {
+        _logger.LogInformation(
+            "cli_quota_admission_decision source={Source} scope=workspace outcome={Outcome} cli={Cli} model={Model} isFallback={IsFallback} reason={Reason} modelFallback={ModelFallback}",
+            source,
+            plan.Outcome,
+            plan.CliType,
+            plan.Model ?? "<default>",
+            plan.IsFallback,
+            plan.Reason,
+            plan.ModelFallback is null ? string.Empty : JsonSerializer.Serialize(plan.ModelFallback));
+    }
+
+    /// <summary>
     /// Record that a run/claim actually switched CLI families for quota
     /// reasons. Mirrors the <c>cli_quota_fallback_activated</c> block in
     /// <c>ProjectRunner.RunCliAsync</c>.
     /// </summary>
-    public void EmitFallbackActivated(TaskInfo info, string? primaryCli, string? primaryModel, CliRouteDecision route, string source)
+    public void EmitFallbackActivated(
+        TaskInfo info,
+        string? primaryCli,
+        string? primaryModel,
+        CliRouteDecision route,
+        string source,
+        ModelFallbackInfo? modelFallback = null)
     {
         var fallbackNote = $"Fallback: {route.CliType}/{route.Model}; reason: quota ({route.Reason})";
         _logger.LogWarning(
@@ -123,8 +151,12 @@ public sealed class QuotaAdmissionRecorder
                 ["primaryModel"] = primaryModel ?? string.Empty,
                 ["fallbackCli"] = route.CliType,
                 ["fallbackModel"] = route.Model ?? string.Empty,
-                ["reason"] = "quota",
+                ["reason"] = route.FallbackReason ?? "quota-cap",
                 ["quotaDetail"] = route.Reason ?? string.Empty,
+                ["catalogueVersion"] = route.CatalogueVersion ?? string.Empty,
+                ["modelFallback"] = modelFallback is null
+                    ? string.Empty
+                    : JsonSerializer.Serialize(modelFallback),
             });
     }
 
@@ -157,6 +189,7 @@ public sealed class QuotaAdmissionRecorder
             Summary = plan.Reason,
             Reasoning = $"{source}; {QuotaAdmissionPlanner.DescribeLoadNumbers(plan)}",
             BetterCandidates = plan.BetterCandidates,
+            ModelFallback = plan.ModelFallback,
         });
     }
 }
