@@ -5078,16 +5078,22 @@ public class GitService
         string repoRoot,
         string branch,
         string newSha,
-        string? expectedPreviousTip)
+        string? expectedPreviousTip,
+        bool retryOnTimeout = false)
     {
         if (!IsLikelyBranchName(branch)) return $"Invalid integration branch '{branch}'.";
         if (!IsLikelyShaOrRef(newSha)) return $"Invalid integration commit '{newSha}'.";
 
         var refName = $"refs/heads/{branch}";
-        var (_, updateError, updateCode) = string.IsNullOrWhiteSpace(expectedPreviousTip)
-            ? RunGitArgs(repoRoot, "update-ref", refName, newSha)
-            : RunGitArgs(repoRoot, "update-ref", refName, newSha, expectedPreviousTip!);
-        if (updateCode == 0) return null;
+        var args = string.IsNullOrWhiteSpace(expectedPreviousTip)
+            ? new[] { "update-ref", refName, newSha }
+            : new[] { "update-ref", refName, newSha, expectedPreviousTip! };
+        var (_, updateError, updateCode) = retryOnTimeout
+            ? RollbackGitArgs(repoRoot, args)
+            : RunGitArgs(repoRoot, args);
+        if (updateCode == 0
+            || (retryOnTimeout && string.Equals(GetBranchTip(repoRoot, branch), newSha, StringComparison.OrdinalIgnoreCase)))
+            return null;
 
         _logger.LogWarning(
             "Integration branch {Branch} at {Path} could not be advanced to {Sha}: {Error}",
@@ -5129,24 +5135,24 @@ public class GitService
             return new GitWorktreeResult(false, null, $"Invalid rollback commit '{toSha}'.");
 
         if (IsIntegrationHeadAttached(repoRoot, integrationBranch))
-            return ResetHard(repoRoot, toSha);
+            return ResetHardForIntegrationRollback(repoRoot, toSha);
 
         var rolledBackFrom = GetBranchTip(repoRoot, integrationBranch);
         // Observed before the ref moves: afterwards the holder's HEAD already
         // resolves through the rolled-back branch and cannot be recognised.
         var forwardedCheckout = FastForwardedCheckout(repoRoot, integrationBranch, rolledBackFrom);
-        var reset = ResetHard(repoRoot, toSha);
+        var reset = ResetHardForIntegrationRollback(repoRoot, toSha);
         if (!reset.Success) return reset;
 
         if (string.Equals(rolledBackFrom, toSha, StringComparison.OrdinalIgnoreCase))
             return reset;
 
-        if (UpdateBranchRef(repoRoot, integrationBranch, toSha, rolledBackFrom) is { } error)
+        if (UpdateBranchRef(repoRoot, integrationBranch, toSha, rolledBackFrom, retryOnTimeout: true) is { } error)
             return new GitWorktreeResult(false, repoRoot, error);
 
         if (forwardedCheckout is not null)
         {
-            var restored = ResetHard(forwardedCheckout, toSha);
+            var restored = ResetHardForIntegrationRollback(forwardedCheckout, toSha);
             if (!restored.Success)
             {
                 _logger.LogWarning(
@@ -6164,6 +6170,48 @@ public class GitService
             return new GitWorktreeResult(false, worktreePath, err.Trim());
         }
         return new GitWorktreeResult(true, worktreePath, null);
+    }
+
+    private GitWorktreeResult ResetHardForIntegrationRollback(string worktreePath, string toRef)
+    {
+        var result = RollbackGitArgs(worktreePath, "reset", "--hard", toRef);
+        try
+        {
+            if (IntegrationWorktreeProvider.WorktreeGitDirectory(worktreePath) is { } gitDir)
+                File.WriteAllText(Path.Combine(gitDir, IntegrationWorktreeProvider.LastIntegrationMarker),
+                    DateTimeOffset.UtcNow.ToString("O"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not record integration rollback completion at {Path}", worktreePath);
+        }
+        if (result.Code == 0)
+            return new GitWorktreeResult(true, worktreePath, null);
+        _logger.LogWarning("Integration rollback reset at {Path} failed: {Error}", worktreePath, result.Err.Trim());
+        return new GitWorktreeResult(false, worktreePath, result.Err.Trim());
+    }
+
+    private (string Out, string Err, int Code) RollbackGitArgs(string worktreePath, params string[] args)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "git",
+            WorkingDirectory = worktreePath,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        foreach (var arg in args) psi.ArgumentList.Add(arg);
+        var result = GitNetworkProcessRunner.Run(psi, timeout: GitNetworkProcessRunner.DefaultTimeout);
+        if (result.FailureKind == GitProcessFailureKind.TimedOut)
+        {
+            _logger.LogWarning(
+                "Integration rollback git {Operation} timed out at {Path}; retrying once with a 120-second budget",
+                args[0], worktreePath);
+            result = GitNetworkProcessRunner.Run(psi, timeout: TimeSpan.FromSeconds(120));
+        }
+        return (result.StandardOutput, result.StandardError, result.ExitCode);
     }
 
     /// <summary>

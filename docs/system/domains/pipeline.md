@@ -684,6 +684,14 @@ steer the pipeline in this policy version.
   retries the gate on its next pass instead of returning the card to an
   operator or spending a rebase-recovery steer round - a toolchain crash is
   never a product failure and the delivery cannot fix it (CAC-18).
+- AGT-2912: Windows platform verify commands use Git Bash with `-lc`. When Git
+  Bash is unavailable, convention-derived commands run with direct process
+  arguments so the appended `dotnet test` logger values stay intact. The
+  MSB1006/MSB4177 signature for those composed logger arguments is an
+  `Environment` failure and can enter the integration retry path. A timed-out
+  integration rollback reset or ref update receives one longer retry. On the next preparation,
+  the Studio-owned integration worktree removes an old private `index.lock`,
+  logs the removal, and resets to the integration branch tip.
 - AGT-2872: a gate-run budget cutoff without failed tests also projects as
   `GateEnvironmentFailure`. Red test evidence wins over timeout classification.
   Verification records process-tree CPU, wall time, and host saturation; sustained

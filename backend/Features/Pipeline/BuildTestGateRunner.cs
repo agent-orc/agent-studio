@@ -1605,9 +1605,9 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         // literal characters and MSBuild fails with MSB4177/MSB1006, AGT-2912),
         // so platform commands run through Git Bash there, exactly like
         // explicit build-profile commands already do.
-        var (fileName, args) = shell == VerifyCommandShell.Bash || OperatingSystem.IsWindows()
-            ? (BashExecutable.Path, (IReadOnlyList<string>)["-lc", executableCommand])
-            : ("/bin/sh", (IReadOnlyList<string>)["-c", executableCommand]);
+        var (fileName, args) = GateShellInvocation.Build(
+            executableCommand, shell, OperatingSystem.IsWindows(),
+            BashExecutable.Path, File.Exists(BashExecutable.Path));
         return RunProcessAsync(
             workingDirectory, command, fileName, args,
             budget, elapsedBefore, output, ct, phase, projectPreparation, reportDirectory, reportPrefix);
@@ -1841,6 +1841,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         if (process.ExitCode == 137 || string.Equals(process.TerminationSignal, "SIGKILL", StringComparison.Ordinal))
             return BuildTestGateFailureKind.OutOfMemory;
         var evidence = process.StandardError + "\n" + process.StandardOutput;
+        if (IsComposedLoggerArgumentFailure(process, evidence))
+            return BuildTestGateFailureKind.Environment;
         var classified = ClassifyFailure(evidence);
         if (classified == BuildTestGateFailureKind.None)
             return BuildTestGateFailureKind.Code;
@@ -1879,6 +1881,14 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
     private static bool IsGenuineBuildOutputLock(string evidence)
         => evidence.Contains("MSB3026", StringComparison.OrdinalIgnoreCase)
            || evidence.Contains("MSB3027", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsComposedLoggerArgumentFailure(BuildTestGateProcessEvidence process, string evidence)
+        => GateFlakyRerunPolicy.IsTargetableDotNetTest(process.Command)
+           && process.Arguments.Any(arg => arg.Contains("console;verbosity=normal", StringComparison.OrdinalIgnoreCase))
+           && (evidence.Contains("MSB1006", StringComparison.OrdinalIgnoreCase)
+               || evidence.Contains("MSB4177", StringComparison.OrdinalIgnoreCase))
+           && (evidence.Contains("console%3bverbosity", StringComparison.OrdinalIgnoreCase)
+               || evidence.Contains("console;verbosity", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Narrow, high-confidence signatures of a bundler/toolchain crash that
