@@ -487,6 +487,11 @@ public sealed partial class TaskServerStore
                     }
                 }
             }
+            var activeGateCount = Convert.ToInt32(await ScalarAsync(connection, """
+                SELECT count(*) FROM gate_attempts
+                 WHERE host_id = $host
+                   AND state IN ('claimed','materializing','running','reporting','cleaning');
+                """, ct, ("$host", runner.HostId)) ?? 0);
             result.Add(new RunnerCapabilitySnapshotDto(
                 runner.Id,
                 runner.Name,
@@ -513,7 +518,8 @@ public sealed partial class TaskServerStore
                     _options.CodexCliTargetVersion,
                     _options.ClaudeCliTargetVersion),
                 CliUpdate: await ReadHostCliUpdateAsync(connection, null, runner.HostId, ct),
-                Release: runner.Release));
+                Release: runner.Release,
+                ActiveGateCount: activeGateCount));
         }
         return result;
     }
