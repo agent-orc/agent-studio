@@ -37,6 +37,7 @@ since 0.9.1, all merged through the work-package gates.
 - Merge gate: a torn preparation cache (missing .nupkg in the cache run directory) is classified as a gate environment failure and retried, not as a code failure (AGT-2901).
 - LinkSupervisor: a dead client session that still holds the remote listener no longer makes the cleanup probe time out; the stale session is fenced and replaced (AGT-2911).
 - integration/retry accepts a passed delivery whose review attempt passed on the delivery SHA (AGT-2914).
+- Runner: post-completion result uploads on the v1 Task Server plane carry the exact outbox authority; without it the standalone Task Server answered 409 and the evidence artifact was lost (AGT-2890 follow-up, found by the deployment regression scenario in the 0.9.2 promotion gate).
 
 ## [0.9.1] - 2026-09-25
 

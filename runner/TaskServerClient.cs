@@ -1402,7 +1402,12 @@ public sealed class TaskServerClient : IDisposable
     public async Task<ArtifactIngestResponse?> UploadArtifactsAsync(ArtifactIngestRequest req, CancellationToken ct)
     {
         if (!_useV1) return await PostJsonAsync<ArtifactIngestRequest, ArtifactIngestResponse>("/api/runner/artifacts", req, ct);
-        var authority = V1Authority(req.TaskKey);
+        // Result evidence is uploaded after the fenced completion (AGT-2890), so
+        // the lease is already "completed" on the v1 plane. The Task Server admits
+        // that only with the exact outbox authority (runner, instance, lease),
+        // exactly as the durable outbox replay sends it; the fence alone is
+        // answered with 409 lease-not-active and the artifact is lost.
+        var authority = OutboxAuthority(req.TaskKey);
         var files = new List<string>();
         foreach (var artifact in req.Artifacts)
         {
@@ -1418,7 +1423,10 @@ public sealed class TaskServerClient : IDisposable
                     artifact.ContentBase64,
                     sha,
                     key,
-                    authority.Lease.FencingToken),
+                    authority.Fence,
+                    authority.RunnerId,
+                    authority.InstanceId,
+                    authority.LeaseId),
                 ct);
             files.Add(artifact.Path);
         }

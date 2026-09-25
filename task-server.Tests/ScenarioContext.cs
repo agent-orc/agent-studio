@@ -335,6 +335,24 @@ public sealed class ScenarioContext : IDisposable
             $"/api/v1/projects/{_project.ProjectId}/tasks/{_task.TaskKey}/history");
         Assert.NotNull(history);
         _codingRun = Assert.Single(history.Runs);
+        // Since AGT-2890 the runner publishes the Git result and the fenced
+        // completion first and uploads the bounded result evidence afterwards,
+        // so the artifact can land after the task has already reached
+        // 4-auto-review. Wait for it instead of asserting the instant snapshot.
+        await WaitForConditionAsync(
+            async () =>
+            {
+                var latest = await _serverClient.GetFromJsonAsync<TaskHistoryDto>(
+                    $"/api/v1/projects/{_project.ProjectId}/tasks/{_task.TaskKey}/history");
+                return latest?.Artifacts.Any(artifact =>
+                    artifact.Name.Contains("scenario-run-log", StringComparison.Ordinal)) == true;
+            },
+            _runner!,
+            TimeSpan.FromSeconds(30),
+            "the scenario-run-log result artifact was uploaded after completion");
+        history = await _serverClient.GetFromJsonAsync<TaskHistoryDto>(
+            $"/api/v1/projects/{_project.ProjectId}/tasks/{_task.TaskKey}/history");
+        Assert.NotNull(history);
         Assert.Contains(history.Artifacts, artifact => artifact.Name.Contains("scenario-run-log", StringComparison.Ordinal));
 
         var afterCommits = await CountCommitsAsync(_bareRepositoryPath);
