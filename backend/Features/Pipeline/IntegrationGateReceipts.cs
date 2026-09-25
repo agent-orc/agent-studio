@@ -203,6 +203,7 @@ public static class IntegrationGateReceipts
             $"verdict={result.Verdict} exit={result.ExitCode?.ToString() ?? "n/a"} durationMs={result.DurationMs} failureKind={result.FailureKind}\n" +
             $"expectedSha={result.ExpectedSha ?? "n/a"} testedSha={result.TestedSha ?? "n/a"}\n" +
             $"reason={result.Reason}\n" +
+            $"testSelectionAuditDigest={result.TestSelectionAuditDigest ?? "n/a"}\n" +
             reuseLine + "\n" +
             budget + "\n" +
             flaky + "\n" +

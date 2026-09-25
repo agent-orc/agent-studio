@@ -576,42 +576,6 @@ public sealed class TestSelectionPlannerTests : IDisposable
     }
 
     [Fact]
-    public void LlmAdvice_IsAllowlistedAndAuditRetainsDiffChoiceAndReason()
-    {
-        var verify = new VerifyPlan([
-            new(VerifyEcosystem.Custom, VerifyCommandKind.Test, "", "test-fast"),
-            new(VerifyEcosystem.Custom, VerifyCommandKind.Test, "", "test-broad"),
-        ], VerifyPlan.SourceBuildProfile);
-        var policy = new TestExecutionPolicy
-        {
-            ImpactRules = [new TestImpactRule
-            {
-                PathPrefixes = ["src/feature"],
-                TestCommands = ["test-fast"],
-                Reason = "feature ownership map",
-            }],
-        };
-        var initial = TestSelectionPlanner.Plan(
-            _root, verify, ["src/feature/component.ts"], policy,
-            TaskStates.AutoReview, requiredLevel: null);
-        var broadId = initial.Audit.Candidates.Single(candidate => candidate.Command.Command == "test-broad").Id;
-
-        var result = TestSelectionPlanner.Plan(
-            _root, verify, ["src/feature/component.ts"], policy,
-            TaskStates.AutoReview, requiredLevel: null,
-            new TestSelectionAdvice([broadId, "not-allowlisted"], "shared namespace risk", "model-x"));
-
-        Assert.Equal(["src/feature/component.ts"], result.Audit.DiffInput);
-        Assert.Equal("deterministic+llm", result.Audit.Selector);
-        Assert.Equal("model-x", result.Audit.SelectorModel);
-        Assert.Equal("shared namespace risk", result.Audit.AdvisorReason);
-        Assert.Contains(broadId, result.Audit.SelectedCandidateIds);
-        Assert.DoesNotContain("not-allowlisted", result.Audit.SelectedCandidateIds);
-        Assert.Contains(result.Commands, command =>
-            command.Command == "test-broad" && command.SelectionReason!.Contains("shared namespace risk"));
-    }
-
-    [Fact]
     public void RequiredFull_OverridesLaneAndIncludesBaselinePlusEveryDeclaredTest()
     {
         var verify = new VerifyPlan([

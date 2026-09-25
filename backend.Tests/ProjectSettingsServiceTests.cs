@@ -663,6 +663,13 @@ public sealed class ProjectSettingsServiceTests : IDisposable
                 TestCommands = [" test-api ", ""],
                 Reason = " api ownership ",
             }],
+            MappedSourceRoots = [" src ", "src"],
+            FolderToTestProjects = [new TestFolderMapping
+            {
+                Folder = " src/api/ ",
+                Module = " api ",
+                TestProjects = [" tests/Api.Tests/Api.Tests.csproj ", ""],
+            }],
             TestHubHistoryPath = " .test-hub/history.jsonl ",
         });
 
@@ -677,6 +684,11 @@ public sealed class ProjectSettingsServiceTests : IDisposable
         Assert.Equal(["src/api"], rule.PathPrefixes);
         Assert.Equal(["test-api"], rule.TestCommands);
         Assert.Equal("api ownership", rule.Reason);
+        Assert.Equal(["src"], policy.MappedSourceRoots);
+        var mapping = Assert.Single(policy.FolderToTestProjects!);
+        Assert.Equal("src/api", mapping.Folder);
+        Assert.Equal("api", mapping.Module);
+        Assert.Equal(["tests/Api.Tests/Api.Tests.csproj"], mapping.TestProjects);
         Assert.Equal(".test-hub/history.jsonl", policy.TestHubHistoryPath);
     }
 

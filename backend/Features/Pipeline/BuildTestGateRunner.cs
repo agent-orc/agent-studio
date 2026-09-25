@@ -54,6 +54,7 @@ public sealed record BuildTestGateRequest(
     public string Lane { get; init; } = TaskStates.AutoReview;
     public string? RequiredTestLevel { get; init; }
     public TestExecutionPolicy? TestExecution { get; init; }
+    public IReadOnlyDictionary<string, string>? ChangedFileStatuses { get; init; }
     public string? JobFolderPath { get; init; }
 
     /// <summary>
@@ -183,6 +184,7 @@ public sealed record BuildTestGateResult(
     public BuildTestGateDependencyCacheDecision? DependencyCacheDecision { get; init; }
     public BuildTestGateBudgetEvidence? ViolatedBudget { get; init; }
     public TestSelectionAudit? TestSelection { get; init; }
+    public string? TestSelectionAuditDigest { get; init; }
     public IReadOnlyList<BuildTestGateFinding> Findings { get; init; } = [];
 
     /// <summary>
@@ -288,7 +290,6 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
 
     private readonly ILogger<BuildTestGateRunner> _logger;
     private readonly ILoadThrottleGate? _loadThrottle;
-    private readonly ITestSelectionAdvisor? _testSelectionAdvisor;
     private readonly IPipelineHealthSensor? _health;
     private readonly BuildTestMachineGateMode _machineGateMode;
     private readonly Func<int, IGateProcessResources> _resourceFactory = pid => new GateProcessResources(pid);
@@ -296,12 +297,10 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
     public BuildTestGateRunner(
         ILogger<BuildTestGateRunner> logger,
         ILoadThrottleGate? loadThrottle = null,
-        ITestSelectionAdvisor? testSelectionAdvisor = null,
         IPipelineHealthSensor? health = null)
     {
         _logger = logger;
         _loadThrottle = loadThrottle;
-        _testSelectionAdvisor = testSelectionAdvisor;
         _health = health;
         _machineGateMode = BuildTestMachineGateMode.Shared;
     }
@@ -328,17 +327,6 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         CancellationToken ct)
     {
         if (mode == PostStepMode.Off) return Skipped("mode=off");
-        var requestedLevel = TestSelectionPlanner.ResolveLevel(
-            request.TestExecution, request.Lane, request.RequiredTestLevel);
-        var hasContinuousBaseline = request.TestExecution?.ContinuousCommands?
-            .Any(command => !string.IsNullOrWhiteSpace(command)) == true;
-        if (changedFiles is { Count: > 0 }
-            && !HasCodeDiff(changedFiles)
-            && requestedLevel != TestExecutionLevels.Full
-            && requestedLevel != TestExecutionLevels.BuildOnly
-            && requestedLevel != TestExecutionLevels.CompileOnly
-            && !hasContinuousBaseline)
-            return Skipped("no code diff");
 
         var repositoryPath = Path.GetFullPath(request.RepositoryPath);
         var gateRunId = Guid.NewGuid().ToString("N");
@@ -487,27 +475,20 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                     _logger.LogInformation(
                         "BuildTestGateRunner: no verify commands derivable for {Repo}; gate runs without a build check",
                         workspace);
-                    completed = NotApplicable("no verify commands derivable");
+                    var emptySelection = DeterministicTestScope.Plan(
+                        workspace!, plan, changedFiles, request.ChangedFileStatuses,
+                        request.TestExecution, request.Lane, request.RequiredTestLevel);
+                    completed = NotApplicable("no verify commands derivable") with
+                    {
+                        TestSelection = emptySelection.Audit,
+                        TestSelectionAuditDigest = emptySelection.Audit.Digest,
+                    };
                 }
                 else
                 {
-                    var staged = TestSelectionPlanner.Plan(
-                        workspace!, plan, changedFiles, request.TestExecution,
-                        request.Lane, request.RequiredTestLevel);
-                    if (_testSelectionAdvisor is not null
-                        && staged.Audit.Level == TestExecutionLevels.WorkPackage
-                        && staged.Audit.Candidates.Count > 0)
-                    {
-                        var advice = await _testSelectionAdvisor.AdviseAsync(
-                            staged.Audit, request.TestExecution, workspace!,
-                            request.Project, request.JobId, request.JobFolderPath, ct).ConfigureAwait(false);
-                        if (advice is not null)
-                        {
-                            staged = TestSelectionPlanner.Plan(
-                                workspace!, plan, changedFiles, request.TestExecution,
-                                request.Lane, request.RequiredTestLevel, advice);
-                        }
-                    }
+                    var staged = DeterministicTestScope.Plan(
+                        workspace!, plan, changedFiles, request.ChangedFileStatuses,
+                        request.TestExecution, request.Lane, request.RequiredTestLevel);
                     var commands = staged.Commands.Where(c => ShouldRunForChange(c, changedFiles)).ToList();
                     IReadOnlyList<GatePreparationCommand> preparation = projectPreparation?.Configured == true
                         ? []
@@ -537,15 +518,32 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                             };
                         }
                     }
-                    var completedAudit = CompleteAudit(staged.Audit, commands, completed.Processes);
+                    var completedAudit = DeterministicTestScope.WithDigest(staged with
+                    {
+                        Audit = CompleteAudit(staged.Audit, commands, completed.Processes),
+                    }, request.ChangedFileStatuses).Audit;
                     completed = completed with
                     {
                         TestSelection = completedAudit,
+                        TestSelectionAuditDigest = completedAudit.Digest,
                         Reason = CoverageReason(completed.Reason, completedAudit),
                         PreparationManifest = projectPreparation?.Manifest,
                         ProjectDefinitionIssues = projectPreparation?.DefinitionIssues ?? [],
                     };
                 }
+            }
+
+            if (completed?.TestSelection is { UnmappedSourceDirectories.Count: > 0 } selection
+                && completed.Verdict is (BuildTestGateVerdict.Ok
+                    or BuildTestGateVerdict.Warn or BuildTestGateVerdict.NotApplicable))
+            {
+                var reason = "folder-to-test-project map is stale; unmapped source directories: "
+                    + string.Join(", ", selection.UnmappedSourceDirectories);
+                completed = WithFailure(completed with
+                {
+                    Verdict = BuildTestGateVerdict.Fail,
+                    Reason = reason,
+                }, BuildTestGateFailureKind.Code);
             }
 
             if (workspaceLease is not null)
@@ -963,7 +961,9 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         var omitted = audit.OmittedTestCommands.Count;
         return $"{reason}; test-level={audit.Level}; selected={audit.SelectedCommands.Count}; " +
                (audit.FullSuiteRan
-                   ? audit.FullSuiteRequired ? "full-suite=required-and-run" : "full-suite=run-conservatively"
+                   ? audit.Selector == "deterministic-map-full-fallback"
+                       ? "full-suite=map-fallback-and-run"
+                       : audit.FullSuiteRequired ? "full-suite=required-and-run" : "full-suite=run-conservatively"
                    : $"full-suite=not-run; omitted={omitted}");
     }
 
@@ -972,8 +972,6 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         IReadOnlyList<VerifyCommand> commands,
         IReadOnlyList<BuildTestGateProcessEvidence> processes)
     {
-        if (audit.Level != TestExecutionLevels.Full) return audit;
-
         // Evidence is appended once per attempted command and commands execute
         // sequentially. A failure can stop the loop, so only the matching prefix
         // is known to have run. An empty declared test inventory is complete
@@ -983,6 +981,13 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
             .Where(process => string.Equals(process.Phase, "verification", StringComparison.OrdinalIgnoreCase))
             .ToArray();
         var attemptedCount = Math.Min(commands.Count, verificationProcesses.Length);
+        var attempted = commands
+            .Select((command, index) => (command, index))
+            .Where(item => item.command.Kind == VerifyCommandKind.Test
+                && item.index < attemptedCount
+                && verificationProcesses[item.index].LaunchError is null)
+            .Select(item => TestSelectionPlanner.Describe(item.command))
+            .ToArray();
         var allTestsAttempted = commands
             .Select((command, index) => (command, index))
             .Where(item => item.command.Kind == VerifyCommandKind.Test)
@@ -995,7 +1000,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
             .Select(item => TestSelectionPlanner.Describe(item.command));
         return audit with
         {
-            FullSuiteRan = allTestsAttempted,
+            AttemptedTestCommands = attempted,
+            FullSuiteRan = audit.Level == TestExecutionLevels.Full && allTestsAttempted,
             OmittedTestCommands = audit.OmittedTestCommands
                 .Concat(notRun)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -2107,11 +2113,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
     internal static bool ShouldRunForChange(VerifyCommand command, IReadOnlyList<string>? changedFiles)
     {
         if (changedFiles is null) return true;
-        // Staged test selection has already applied diff, ownership, Test Hub,
-        // and optional model evidence. Re-applying the legacy package-prefix
-        // filter here would silently discard cross-package tests selected from
-        // history or by the adviser. It would also make an explicit full run
-        // smaller than the declared suite.
+        // Test selection has already applied the configured folder map. A second
+        // package-prefix filter would silently discard cross-package tests.
         if (command.Kind == VerifyCommandKind.Test) return true;
         if (command.Ecosystem != VerifyEcosystem.Node || string.IsNullOrEmpty(command.WorkingSubdir))
             return true;

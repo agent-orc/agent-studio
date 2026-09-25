@@ -3764,7 +3764,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var queueWaitTimeoutSeconds = _configuration.GetValue(
             $"PostSteps:{PipelineCatalogue.BuildTestGateStepId}:QueueWaitTimeoutSeconds",
             timeoutSeconds + infrastructureTimeoutSeconds);
-        var changedFiles = ResolveLatestRunChangedFiles(current, entry.Path);
+        var gateChanges = ResolveLatestRunChangedFileChanges(current, entry.Path);
+        var changedFiles = gateChanges?.Select(change => change.Path).ToArray();
 
         var request = new BuildTestGateRequest(
             repoPath,
@@ -3779,6 +3780,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             JobId = current.Id,
             Lane = current.State,
             TestExecution = settings?.TestExecution,
+            ChangedFileStatuses = gateChanges?.ToDictionary(change => change.Path,
+                change => change.Status, StringComparer.OrdinalIgnoreCase),
             JobFolderPath = current.FolderPath,
             InfrastructureTimeout = TimeSpan.FromSeconds(Math.Max(1, infrastructureTimeoutSeconds)),
             QueueWaitTimeout = TimeSpan.FromSeconds(Math.Max(1, queueWaitTimeoutSeconds)),
@@ -3887,12 +3890,16 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             "ReviewDecisionOrchestrator: build-test gate {Verdict} for {Project}/{JobId} in {DurationMs}ms (backend={Backend} frontend={Frontend} changedFiles={ChangedFiles})",
             result.Verdict, entry.Name, current.Id, result.DurationMs,
             result.RanBackendBuild, result.RanFrontendBuild,
-            changedFiles?.Count.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unknown");
+            changedFiles?.Length.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unknown");
 
         return result;
     }
 
     private IReadOnlyList<string>? ResolveLatestRunChangedFiles(TaskInfo job, string? watchPath)
+        => ResolveLatestRunChangedFileChanges(job, watchPath)?.Select(change => change.Path).ToArray();
+
+    private IReadOnlyList<AgentStudio.Git.GitFileChange>? ResolveLatestRunChangedFileChanges(
+        TaskInfo job, string? watchPath)
     {
         if (_sessions == null || _git == null) return null;
         try
@@ -3902,11 +3909,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             var latest = SelectLastSuccessfulReviewRun(
                 RunTimelineBuilder.Build(events, lines, DateTime.UtcNow).Runs);
             if (latest == null) return null;
-            return _git.GetFilesChangedInShaRange(job.Id, watchPath, latest.HeadShaBefore, latest.HeadShaAfter)
-                .Select(f => f.Path)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            return _git.GetFilesChangedInShaRange(job.Id, watchPath,
+                latest.HeadShaBefore, latest.HeadShaAfter);
         }
         catch (Exception ex)
         {
@@ -3987,6 +3991,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                        $"repository={result.Repository ?? "n/a"} expectedSha={result.ExpectedSha ?? "n/a"} testedSha={result.TestedSha ?? "n/a"}\n" +
                        $"attemptChainId={result.AttemptChainId ?? "n/a"} executor={result.Executor ?? "n/a"} workspace={result.Workspace ?? "n/a"}\n" +
                        $"reason={result.Reason}\n" +
+                       $"testSelectionAuditDigest={result.TestSelectionAuditDigest ?? "n/a"}\n" +
                        $"backend={result.RanBackendBuild} frontend={result.RanFrontendBuild}\n" +
                        $"changedFiles={(changedFiles == null ? "unknown" : string.Join(", ", changedFiles.Take(50)))}\n" +
                        "--- dependency-cache-decision.json ---\n" +
