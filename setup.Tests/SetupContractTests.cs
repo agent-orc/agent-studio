@@ -129,20 +129,10 @@ public sealed class SetupContractTests
     }
 
     [Fact]
-    public void DemoCompose_IsPinnedAndMountsNoHostRepository()
+    public void Demo_mode_redirects_to_the_root_compose_install()
     {
-        var compose = DemoInstaller.BuildCompose(
-            "0.4.0",
-            4011,
-            "ghcr.io/agent-orc");
-
-        Assert.Contains("agent-studio-api:v0.4.0", compose);
-        Assert.Contains("agent-studio-web:v0.4.0", compose);
-        Assert.Contains("\"127.0.0.1:4011:80\"", compose);
-        Assert.Contains("demo-workspace:/data/workspace", compose);
-        Assert.DoesNotContain("./", compose);
-        Assert.DoesNotContain("/home/", compose);
-        Assert.DoesNotContain("agent-host", compose);
+        var error = Assert.Throws<ArgumentException>(() => SetupOptions.Parse(["--mode", "demo"]));
+        Assert.Contains("docker-compose.yml", error.Message);
     }
 
     [Fact]
@@ -252,7 +242,6 @@ public sealed class SetupContractTests
     }
 
     [Theory]
-    [InlineData("demo", "Demo")]
     [InlineData("single", "SingleMachine")]
     [InlineData("control-plane", "ControlPlane")]
     [InlineData("agent-host", "AgentHost")]

@@ -31,31 +31,29 @@
   definitions and in-flight runs remain durable Task Server data, so restarting
   the Engine does not orphan work.
 
-## Get started
+## Install with Docker
 
 ```bash
-git clone https://github.com/agent-orc/agent-studio.git
-cd agent-studio
-docker compose up --wait
+git clone https://github.com/agent-orc/agent-studio.git && cd agent-studio
+cp .env.example .env
+docker compose up -d --wait
 ```
 
 Open [http://localhost:4011](http://localhost:4011). Docker Compose is the
-primary new-user installation path. It pulls pinned, non-root
-[release container images](./docs/operations/setup/task-server.md#container-images)
-per service, so it requires at least 8 GB of free disk space but no host .NET
-or Node.js install, local settings file, maintainer switch, or neighbouring
-repository. See the
-[setup guide](./docs/operations/setup/getting-started.md) for prerequisites,
-persistence, and troubleshooting. As an alternative for Linux x64 release
-installs with no source checkout and no .NET prerequisite, the guided
-[`agent-orchestrator-setup`](https://github.com/agent-orc/agent-studio/releases/latest/download/agent-orchestrator-setup)
-executable offers an isolated Docker demo, a native single-machine install, and
-a guided [multi-machine](./docs/operations/setup/multi-machine.md) join flow.
-To add execution capacity after the Studio is running, follow the
-[Agent Host guide](./docs/operations/setup/linux-runner-host.md), or stay in
-Docker with `docker compose --profile runner up --wait` after
-`scripts/compose-runner-bootstrap.sh` (see
-[getting started, §5](./docs/operations/setup/getting-started.md#5-add-execution-capacity)).
+primary new-user installation path. It pulls published images at one tag,
+starts the distributed Task Server and Engine, and registers a Runner. The
+stack generates its own principal credentials on first boot and keeps task
+data in named Docker volumes. The UI binds to loopback by default. Set
+`AGENT_STUDIO_VERSION` in `.env` to pin a release. A CLI login and Git access
+are needed before the Runner can execute tasks. See the
+[setup guide](./docs/operations/setup/getting-started.md) and
+[Docker operations](./docs/operations/setup/docker.md).
+
+This deployment currently forwards `/api/v1` and `/hubs` through the Studio
+BFF; remaining Studio routes use the legacy bridge and do not yet have full
+distributed parity. The Connector remains for a local loopback seat. The
+guided installer still supports native and multi-machine installations; its
+old Docker demo has been retired in favor of this compose file.
 Source contributors use the separate
 [contributor setup](./docs/operations/setup/contributor-setup.md).
 

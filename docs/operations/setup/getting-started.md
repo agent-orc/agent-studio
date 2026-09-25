@@ -1,213 +1,74 @@
 # Getting started
 
-Docker Compose is the primary path for a new Agent Studio installation.
-It gives the application a consistent Linux runtime on Windows, macOS, and
-Linux, and keeps .NET, Node.js, local configuration files, maintainer switches,
-and repository-neighbour assumptions out of the first run.
+Docker Compose is the primary installation path for Agent Studio on Linux,
+Windows with Docker Desktop and WSL2, and macOS with Docker Desktop. The same
+root `docker-compose.yml` starts the distributed Task Server, Orchestrator
+Engine, Studio BFF, legacy route bridge, web UI, and a registered Agent Host.
 
-As an alternative for release installs on Linux x64, the guided self-contained
-`agent-orchestrator-setup` executable needs no source checkout and no .NET
-installation:
+## Prerequisites
+
+Install Docker Engine with Compose v2 or Docker Desktop. Allow at least 8 GB of
+free disk space for images and task data. The host needs neither .NET nor Node.js.
+
+## Install
 
 ```sh
-curl -fLO https://github.com/agent-orc/agent-studio/releases/latest/download/agent-orchestrator-setup
-chmod +x agent-orchestrator-setup
-sudo ./agent-orchestrator-setup
+git clone https://github.com/agent-orc/agent-studio.git && cd agent-studio
+cp .env.example .env
+docker compose up -d --wait
 ```
 
-It offers Demo, Single Machine, Multi-machine Control Plane, and Agent Host
-join paths; see [multi-machine.md](./multi-machine.md) for the distributed
-flow. The rest of this page describes the Docker Compose path.
+Open [http://localhost:4011](http://localhost:4011). The UI binds to
+`127.0.0.1` by default. All product containers use the same published image
+tag from `AGENT_STUDIO_VERSION`. Set an exact released tag in `.env` before
+starting if you need a reproducible installation.
 
-The default stack starts the Studio UI and its API. It deliberately does not
-start an Agent Host or install coding-agent CLIs. Those execution credentials
-belong to the later host-onboarding step, not to the first successful boot.
+The one-shot `bootstrap` container creates five 256-bit principal credentials
+in the named `credentials` volume on the first start. Files are mode `0600`
+and owned by the service UID. The Task Server creates the matching Studio,
+Engine, and Runner principals; no token needs to be generated or pasted.
+Later `up` runs reuse the files. Preserve the `credentials` volume alongside
+the `orchestrator-data` volume. The bootstrap refuses to mint new Studio,
+Engine, or Runner secrets for an existing store whose secret volume is missing.
+An older distributed install with `DISTRIBUTED_*_TOKEN` entries in `.env` is
+migrated into the credentials volume automatically.
 
-## 1. Prerequisites
+The default Agent Host registers immediately. To run coding tasks it also
+needs a CLI login and Git access, both external credentials. See
+[Docker operations](./docker.md#runner-credentials) for their read-only mounts.
+Additional coding and review containers are available with
+`docker compose --profile runner up -d --wait`.
 
-- Git.
-- Docker Desktop, or Docker Engine with Docker Compose v2.
-- At least 8 GB of free disk space for base images and build layers, plus the
-  space needed for persistent task data and managed project checkouts.
+## Current route coverage
 
-You do not need a .NET SDK, Node.js, Git Bash, a second repository,
-`appsettings.Local.json`, or a special environment variable.
+This release follows deployment option C. The Studio BFF forwards `/api/v1`
+and `/hubs` to the Task Server. The legacy OrchestratorApi bridge serves the
+remaining `/api` routes, so some Studio views still use its local data and do
+not have distributed route parity. The local Connector remains loopback only;
+LAN access to its full route set is not part of this deployment. The
+board may show "no runners" even while the Task Server has a registered
+Runner; use the Task Server's `/api/v1/runners` route for that inventory. The
+[route ownership gap](./docker-compose-connector-gap.md) records the deferred
+parity work. AGT-W49 recommends a separate Operations Server backchannel; this
+compose keeps the current services until that component has a released image
+and contract.
 
-Confirm Docker before cloning:
-
-```sh
-docker version
-docker compose version
-```
-
-Both commands must show a working client and server. On Linux, your user must
-be allowed to access the Docker daemon.
-
-## 2. Install and start
-
-Clone one repository and run one start command:
-
-```sh
-git clone https://github.com/agent-orc/agent-studio.git
-cd agent-studio
-docker compose up --wait
-```
-
-The default `orchestrator-api` and `frontend` services have no `build:` step;
-`up` pulls the pinned `ghcr.io/agent-orc/agent-studio-api` and
-`agent-studio-web` release images (tag `latest` unless `AGENT_STUDIO_VERSION`
-is set - see [Container images](./task-server.md#container-images)). Cloning
-the repository is only needed for `docker-compose.yml` itself; no source
-checkout is required to run it. `--wait` returns only after Compose reports
-the API and browser endpoint healthy.
-
-Building from this checkout instead of pulling (for example, while working on
-a change to a Dockerfile) uses the `dev` profile, which is the only place
-`build:` is wired in this compose file:
+## Operate and verify
 
 ```sh
-docker compose --profile dev up --build --wait orchestrator-api-dev frontend-dev
-```
-
-Open [http://localhost:4011](http://localhost:4011). A successful first run
-shows the empty Agent Studio board. The same end-to-end check is available at:
-
-```sh
-curl --fail http://localhost:4011/healthz
-```
-
-It returns `"ok"`.
-
-## 3. What the command creates
-
-The default Compose project contains exactly two services:
-
-| Service | Purpose | Host endpoint |
-|---|---|---|
-| `orchestrator-api` | Board API and current local orchestration runtime | `127.0.0.1:5031` |
-| `frontend` | Production Studio bundle and reverse proxy | `0.0.0.0:4011` |
-
-Task data and managed project data live in the named Docker volumes
-`agent-studio_workspace` and `agent-studio_projects`. Rebuilding or replacing a
-container does not delete those volumes.
-
-The default ports can be changed when they conflict with another local service:
-
-```sh
-STUDIO_UI_PORT=14011 STUDIO_API_PORT=15031 docker compose up --wait
-```
-
-This is the same Compose installation path with port overrides, not a second
-setup method.
-
-## 4. Stop, restart, and inspect
-
-```sh
-docker compose stop
-docker compose start --wait
 docker compose ps
-docker compose logs -f
-```
-
-To remove the containers while retaining product data:
-
-```sh
+docker compose logs --tail 100
 docker compose down
 ```
 
-Do not add `--volumes` unless you intentionally want to delete the installation
-data.
-
-## 5. Add execution capacity
-
-The green board is the first-install boundary. Running coding tasks also
-requires an Agent Host with a coding-agent CLI login and repository access.
-Follow [Linux runner host](./linux-runner-host.md) for that separate,
-credential-bearing host setup. The control plane remains usable while no Agent
-Host is connected.
-
-As a Docker-native alternative to a separately installed host, the same
-`docker-compose.yml` has a `runner` profile that runs the coding and review
-Agent Hosts as two more containers against this same `orchestrator-api`. A
-fresh clone has neither the shared `runner.env` nor the `runner.token` file
-the profile's containers require, so create them first instead of copying
-`runner.env.template` by hand:
-
-```sh
-scripts/compose-runner-bootstrap.sh
-```
-
-It creates both files under `umask 077` (mode `0600`), generates a private
-`runner.token` value, and never overwrites a file that already exists. Edit
-the generated `runner.env` for `RUNNER_GIT_REMOTE`, `RUNNER_GIT_PUSH_REMOTE`,
-and one of `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`, then:
-
-```sh
-docker compose --profile runner up --wait
-```
-
-## Distributed profile
-
-`--profile distributed` replaces the in-process orchestration runtime with
-three separate services - `task-server`, `orchestrator-engine`, and
-`studio-bff` - fronted by `orchestrator-api` acting as a transparent `/api/v1`
-proxy (`TASK_SERVER_BASE_URL`). It needs three independent bearer credentials
-(`DISTRIBUTED_STUDIO_TOKEN`, `DISTRIBUTED_ENGINE_TOKEN`,
-`DISTRIBUTED_RUNNER_TOKEN`) that the Task Server bootstraps as principals on
-first start. Generate them into `.env` instead of creating and pasting your
-own 256-bit values:
-
-```sh
-scripts/compose-distributed-bootstrap.sh
-docker compose --profile distributed up --wait
-```
-
-The script copies `.env.example` to `.env` if it does not exist yet, fills in
-any of the three tokens that are still empty with a fresh
-`openssl rand -hex 32` value, sets `.env` to mode `0600`, and leaves any value
-you already set untouched - re-running it after a token has been generated is
-a no-op for that variable. See
-[task-server.md](./task-server.md#container-images) for what each of the
-three services owns.
-
-## Maintainer verification
-
-CI runs `scripts/compose-smoke-test.sh`, which builds every service from this
-checkout's Dockerfiles through the `dev` profile (so it needs no registry
-access) and proves four topologies: the default two-service stack (health
-checks, browser shell, a real API call), the `distributed` profile with
-OrchestratorApi proxying `/api/v1` to a Task Server, a containerised
-agent-host that registers against a Task Server and claims a seeded task
-through to `4-auto-review` with a fake CLI fixture, and the plain `runner`
-profile (agent-host-coding and agent-host-review against OrchestratorApi),
-bootstrapped only through `scripts/compose-runner-bootstrap.sh` - the same
-command a first-time operator runs.
-
-For a clean-machine proof, `scripts/compose-smoke-vm-test.sh` boots a pinned
-Ubuntu 24.04 cloud image with KVM acceleration, installs only Docker and Compose
-inside the guest, and runs the same smoke test against a source archive of the
-current worktree. The guest has a 24 GB sparse virtual disk. The host needs KVM,
-QEMU, cloud-image-utils, genisoimage, 8 GB RAM available to the guest, and about
-12 GB of free disk space for the cached base image plus transient build layers.
-The harness has no software-emulation fallback, so a nested-virtualization
-failure is reported instead of silently running a different test.
-
-On Ubuntu 24.04:
-
-```sh
-sudo apt-get install cloud-image-utils genisoimage qemu-system-x86 qemu-utils
-scripts/compose-smoke-vm-test.sh
-```
-
-## Troubleshooting
-
-| Symptom | Check or fix |
-|---|---|
-| `docker compose` is not a command | Install Docker Compose v2. Docker's legacy `docker-compose` command is not supported. |
-| A port is already allocated | Use the `STUDIO_UI_PORT` and `STUDIO_API_PORT` overrides shown above. |
-| `--wait` ends with an unhealthy service | Run `docker compose ps` and `docker compose logs`; the service health checks preserve the failing component. |
-| The browser cannot reach `4011` on a remote host | Allow the selected UI port in the host firewall or bind it through your existing private tunnel. The API stays loopback-only by default. |
-| A rebuild consumes too much disk | Inspect with `docker system df`. Do not remove named volumes that contain installation data. |
-
-If you are changing Agent Studio source code rather than installing the product,
-use the separate [contributor setup](./contributor-setup.md).
+`down` retains the named volumes. See [Docker operations](./docker.md) for
+updates, backup, restore, TLS edge, resource limits, and Docker Desktop volume
+behavior. Contributors can build the equivalent `-dev` service set with the
+`dev` profile; CI runs `scripts/compose-smoke-test.sh` with that profile and a
+Playwright browser check of the web and Task Server route.
+For a manual source build, set `AGENT_STUDIO_VERSION` to the value in `VERSION`
+and name the `-dev` services explicitly so the pulled release services do not
+also start.
+Release-tag CI runs the same smoke against published images and then runs
+`scripts/compose-upgrade-test.sh` from the previous release to the new tag.
+The fresh-VM harness is `scripts/compose-smoke-vm-test.sh`.

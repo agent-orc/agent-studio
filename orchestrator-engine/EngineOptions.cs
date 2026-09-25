@@ -41,9 +41,18 @@ public sealed class EngineOptions
                 + "Set ENGINE_ALLOW_INSECURE_HTTP=1 to opt in to plain HTTP on a trusted private "
                 + "container network.");
 
+        var credentialFile = value("CLIENT_CREDENTIAL_FILE")?.Trim();
         var credential = value("CLIENT_CREDENTIAL")?.Trim();
+        if (!string.IsNullOrWhiteSpace(credentialFile))
+        {
+            if (!string.IsNullOrWhiteSpace(credential))
+                throw new ArgumentException("Configure only one of CLIENT_CREDENTIAL or CLIENT_CREDENTIAL_FILE.");
+            if (!File.Exists(credentialFile))
+                throw new ArgumentException($"CLIENT_CREDENTIAL_FILE does not exist: {credentialFile}");
+            credential = File.ReadAllText(credentialFile).Trim();
+        }
         if (!isLoopback && string.IsNullOrWhiteSpace(credential))
-            throw new ArgumentException("CLIENT_CREDENTIAL is required for a non-loopback SERVER_URL.");
+            throw new ArgumentException("CLIENT_CREDENTIAL or CLIENT_CREDENTIAL_FILE is required for a non-loopback SERVER_URL.");
 
         return new EngineOptions
         {

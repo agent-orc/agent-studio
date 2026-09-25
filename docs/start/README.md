@@ -99,7 +99,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Board status model, lane-transition map, and integration/archive guard decisions (AGT-2424) | [interactive Dossier](../operations/board-statusmodell-ist-soll/index.html) |
 | Deck icon alternatives for a multi-faceted project console (AGT-2355, Round 2) | [interactive Dossier](../operations/deck-icon-exploration/index.html) · [standalone SVG proof](../operations/deck-icon-exploration/results/deck-icon-options-round-2.svg) |
 | Guided installer story for an all-Docker install on a fresh Linux or Windows machine, with per-step failure modes and a test protocol template (AGT-2503) | [interactive Dossier](../operations/installer-story/index.html) |
-| Open gap: why the Connector (D4b) cannot be the root compose's LAN-reachable Studio backend as built, and the options for the next Docker-deployable card (AGT-2736) | [gap note](../operations/setup/docker-compose-connector-gap.md) |
+| Adopted option C: one-box Compose with `/api/v1` route coverage and a legacy bridge (AGT-2736) | [Docker operations](../operations/setup/docker.md) · [decision history](../operations/setup/docker-compose-connector-gap.md) |
 | Global Orchestrator Watcher decision dossier: triggers, recovery authority, Activity visibility, model economy, and observe-first slices (AGT-2557) | [decision dossier](../operations/orchestrator-waechter/index.html) |
 | Organization-wide telemetry layer: current signals, shared event model, local-first hybrid bus, orchestrator action rules, Agent Studio operations-hub boundary, and rollout slices (AGT-2661) | [decision dossier](../operations/telemetry-layer/index.html) |
 | Observation theme Dossier: the four-layer observation stack (file, cluster, case, projection), merging the Global Orchestrator Watcher, the organization-wide telemetry layer and the project feed, with ten open decisions (AGT-2800) | [decision dossier](../operations/observation/index.html) |
@@ -188,6 +188,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Remote three-unit Compose infrastructure harness | [operations/setup/remote-compose-test-harness.md](../operations/setup/remote-compose-test-harness.md) |
 | Private Hetzner Task Server with local Angular Studio (Phase A architecture, migration, security, and rollback) | [operations/remote-task-server-local-studio.md](../operations/remote-task-server-local-studio.md) |
 | Control plane on Docker (task-server-01): install, update, rollback, backup restore, firewall, WireGuard | [operations/setup/control-plane-docker.md](../operations/setup/control-plane-docker.md) |
+| One-box Docker Compose operations: update, backup, restore, network binding, runner credentials, and Docker Desktop volumes | [operations/setup/docker.md](../operations/setup/docker.md) |
 | Windows Task Server fallback runbook (Phase B slice B4: install, warm standby, sub-15-minute switch drill both directions; AGT-2735) | [operations/setup/windows-fallback-runbook.md](../operations/setup/windows-fallback-runbook.md) |
 | Hosted Wiki publication (published revision, freshness SLO, credentials, atomic promotion, typed failures, rollback drill) | [operations/setup/hosted-wiki-publication.md](../operations/setup/hosted-wiki-publication.md) |
 | Common problems | [common-problems/README.md](../operations/common-problems/README.md) |

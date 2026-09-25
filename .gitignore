@@ -144,3 +144,7 @@ frontend/.frontend-dev.log
 
 # Local docker-compose overrides (ports, version pin, distributed tokens).
 /.env
+
+# Local Docker runner CLI and Git login bind mounts.
+/.runner-credentials/
+/.runner-git/

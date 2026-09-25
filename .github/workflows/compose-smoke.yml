@@ -4,12 +4,22 @@ on:
   push:
     branches:
       - main
-    tags:
-      - 'v*.*.*'
+  pull_request:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
   workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Build source images or pull a published release'
+        required: true
+        type: choice
+        options: [dev, release]
+        default: dev
 
 permissions:
   contents: read
+  packages: read
 
 concurrency:
   group: onboarding-smoke-${{ github.ref }}
@@ -18,11 +28,15 @@ concurrency:
 jobs:
   compose-smoke:
     name: Docker Compose up and health check
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Record Docker versions
         run: |
@@ -31,8 +45,47 @@ jobs:
 
       - name: Validate container image contracts
         run: |
-          scripts/compose-smoke-version.test.sh
-          scripts/container-image-contracts.test.sh
+          bash scripts/compose-smoke-version.test.sh
+          bash scripts/container-image-contracts.test.sh
 
-      - name: Build, start, and verify onboarding stack
-        run: scripts/compose-smoke-test.sh
+      - name: Prepare browser routing check
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install browser test dependencies
+        run: |
+          npm --prefix frontend ci
+          cd frontend
+          npx playwright install --with-deps chromium
+
+      - name: Authenticate for published images
+        if: inputs.mode == 'release' || github.event_name == 'workflow_run'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Build or pull, start, and verify product stack
+        env:
+          COMPOSE_SMOKE_MODE: ${{ inputs.mode == 'release' || github.event_name == 'workflow_run' && 'release' || 'dev' }}
+          COMPOSE_SMOKE_PLAYWRIGHT: '1'
+        run: bash scripts/compose-smoke-test.sh
+
+      - name: Prove previous release store upgrades to this release
+        if: github.event_name == 'workflow_run'
+        run: |
+          previous="$(git tag -l 'v*.*.*' --sort=-version:refname | sed -n '2p')"
+          test -n "$previous"
+          bash scripts/compose-upgrade-test.sh "$previous" "v$(cat VERSION)"
+
+      - name: Upload browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compose-browser-evidence
+          path: |
+            frontend/test-results/
+            frontend/playwright-report/
+          if-no-files-found: ignore

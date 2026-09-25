@@ -1,6 +1,6 @@
 # Gap: the Connector (D4b) cannot be the root compose's Studio backend
 
-Status: open, needs a decision. Written while working AGT-2736 ("Agent Studio
+Status: option C adopted on 2026-09-25. Written while working AGT-2736 ("Agent Studio
 Docker-deployable: one compose file runs the complete product from published
 images"). Not itself a decision dossier; it exists so the next card does not
 re-derive this from scratch.
@@ -72,8 +72,9 @@ component is both today.
    `orchestrator-api` proxy) as-is, accept its `/api/v1`-only coverage as a
    known limitation, and defer full route parity to a later card.
 
-This note takes no position between the three; it only establishes that one
-of them is required before item 1 and item 7 can be implemented.
+The operator selected option C on 2026-09-25. The root compose now runs the
+distributed stack by default with the `/api/v1` BFF, the legacy route bridge,
+and the registered Runner. Full Connector route parity remains deferred.
 
 ## What AGT-2736 shipped instead
 

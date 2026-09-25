@@ -21,22 +21,6 @@ services:
       BOOTSTRAP_RUNNER_ID: scenario-coding-runner
       TaskServer__MinimumLeaseSeconds: "5"
       TaskServer__MaximumLeaseSeconds: "30"
-    secrets:
-      - source: studio_token
-        target: /run/secrets/studio_token
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
-      - source: engine_token
-        target: /run/secrets/engine_token
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
-      - source: runner_token
-        target: /run/secrets/runner_token
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
 
   studio-bff:
     image: "${SCENARIO_STUDIO_BFF_IMAGE:?set SCENARIO_STUDIO_BFF_IMAGE}"
@@ -49,6 +33,7 @@ services:
 
   agent-host-distributed:
     profiles: ["distributed", "runner"]
+    networks: [core]
     image: "${SCENARIO_AGENT_HOST_IMAGE:?set SCENARIO_AGENT_HOST_IMAGE}"
     user: "${SCENARIO_UID:?set SCENARIO_UID}:${SCENARIO_GID:?set SCENARIO_GID}"
     build:
@@ -58,6 +43,8 @@ services:
       HOME: /scenario/home
       DOTNET_CLI_HOME: /scenario/home
       RUNNER_ID: scenario-coding-runner
+      RUNNER_SERVER_URL: http://task-server:5071
+      RUNNER_ALLOW_INSECURE_HTTP: "1"
       RUNNER_NAME: scenario-coding-runner
       RUNNER_HOSTNAME: scenario-coding-host
       RUNNER_ROLE: coding
@@ -80,7 +67,6 @@ services:
       - type: bind
         source: ${SCENARIO_HOST_DIR:?set SCENARIO_HOST_DIR}
         target: /scenario
-    secrets:
-      - source: runner_token
-        target: /run/secrets/runner_token
-        mode: 0400
+    depends_on:
+      task-server:
+        condition: service_healthy

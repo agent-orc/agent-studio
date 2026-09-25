@@ -24,5 +24,7 @@ artifacts
 docs/**
 !docs/app/
 !docs/app/**
+!docs/studio-route-ownership/
+!docs/studio-route-ownership/routes.json
 **/*.log
 **/cli-output.log

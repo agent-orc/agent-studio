@@ -1,37 +1,7 @@
-# Agent Studio - container-default stack.
-#
-# Default (no profile):    orchestrator API + frontend  -> a working Studio,
-#                          pulled from the pinned ${AGENT_STUDIO_VERSION}
-#                          release images. No source checkout required.
-# --profile runner:        adds coding/review agent-hosts (needs runner.env
-#                          with identity, auth token, and git remotes; the
-#                          coding CLIs run INSIDE these containers - the
-#                          container is the isolation boundary). Run
-#                          scripts/compose-runner-bootstrap.sh first; it
-#                          creates runner.env and runner.token from
-#                          runner.env.template instead of you doing it by hand.
-# --profile distributed:   target-architecture preview (task-server, engine,
-#                          studio-bff) - not required for a working install.
-#                          Needs DISTRIBUTED_STUDIO_TOKEN/_ENGINE_TOKEN/
-#                          _RUNNER_TOKEN in .env; run
-#                          scripts/compose-distributed-bootstrap.sh first
-#                          instead of generating and pasting them by hand.
-# --profile dev:            source-built "-dev" siblings of every service
-#                          above, for contributors iterating on this checkout.
-#                          Build is intentionally never wired to the default,
-#                          runner, or distributed services - only the "dev"
-#                          profile ever triggers `build:`. Name the exact
-#                          "-dev" services you want on the command line
-#                          (e.g. `docker compose --profile dev up --build
-#                          orchestrator-api-dev frontend-dev`); a bare
-#                          `--profile dev up` also starts every profile-less
-#                          default service and will collide on their ports.
-#
-# Every "-dev" sibling repeats its anchor's `environment:` map in full rather
-# than adding to it: YAML's `<<:` merge key replaces a same-named key wholesale
-# instead of deep-merging it, so a service that needs one different value
-# (e.g. RUNNER_SERVER_URL pointing at a "-dev" dependency) must restate every
-# other key too. Keep prod/dev pairs' shared keys in sync by hand.
+# Agent Studio one-box deployment. The Connector remains a loopback-only local
+# process; this stack uses the current /api/v1 BFF and legacy-route bridge.
+# All product services pull the same published release tag. Source builds are
+# explicit -dev services under the dev profile.
 name: agent-studio
 
 x-logging: &bounded-logs
@@ -40,8 +10,87 @@ x-logging: &bounded-logs
     max-size: "10m"
     max-file: "3"
 
-x-orchestrator-api: &orchestrator-api
+x-common: &common
   restart: unless-stopped
+  logging: *bounded-logs
+  mem_limit: 1g
+  cpus: 2
+  networks: [core]
+
+x-task-server: &task-server
+  <<: *common
+  image: ghcr.io/agent-orc/agent-task-server:${AGENT_STUDIO_VERSION:-latest}
+  ports:
+    - "127.0.0.1:${STUDIO_TASKSERVER_PORT:-5071}:5071"
+  volumes:
+    - orchestrator-data:/var/lib/agent-orchestrator
+    - backup:/var/lib/agent-orchestrator/backup
+    - credentials:/run/secrets:ro
+  environment:
+    LISTEN_URL: http://0.0.0.0:5071
+    STORE_PATH: /var/lib/agent-orchestrator
+    BACKUP_PATH: /var/lib/agent-orchestrator/backup
+    AUTH: bearer
+    STUDIO_AUTH_TOKEN_FILE: /run/secrets/studio_token
+    ENGINE_AUTH_TOKEN_FILE: /run/secrets/engine_token
+    BOOTSTRAP_RUNNER_ID: distributed-runner
+    BOOTSTRAP_RUNNER_AUTH_TOKEN_FILE: /run/secrets/runner_token
+    BOOTSTRAP_CODING_RUNNER_AUTH_TOKEN_FILE: /run/secrets/coding_runner_token
+    BOOTSTRAP_REVIEW_RUNNER_AUTH_TOKEN_FILE: /run/secrets/review_runner_token
+  depends_on:
+    bootstrap:
+      condition: service_completed_successfully
+  healthcheck:
+    test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:5071/healthz"]
+    interval: 5s
+    timeout: 3s
+    retries: 24
+    start_period: 10s
+
+x-engine: &engine
+  <<: *common
+  image: ghcr.io/agent-orc/agent-orchestrator-engine:${AGENT_STUDIO_VERSION:-latest}
+  entrypoint: ["/bin/sh", "/entrypoint/compose-engine-entrypoint.sh"]
+  environment:
+    SERVER_URL: http://task-server:5071
+    CLIENT_ID: orchestrator-engine
+    ENGINE_ALLOW_INSECURE_HTTP: "1"
+  volumes:
+    - credentials:/run/secrets:ro
+    - ./scripts/compose-engine-entrypoint.sh:/entrypoint/compose-engine-entrypoint.sh:ro
+  depends_on:
+    task-server:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "dotnet", "orchestrator-engine.dll", "--health-check"]
+    interval: 10s
+    timeout: 3s
+    retries: 12
+    start_period: 10s
+
+x-bff: &bff
+  <<: *common
+  image: ghcr.io/agent-orc/agent-studio-bff:${AGENT_STUDIO_VERSION:-latest}
+  ports:
+    - "127.0.0.1:${STUDIO_BFF_PORT:-5072}:5072"
+  environment:
+    TaskServer__BaseUrl: http://task-server:5071
+    TaskServer__AuthTokenFile: /run/secrets/studio_token
+  volumes:
+    - credentials:/run/secrets:ro
+  depends_on:
+    task-server:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:5072/healthz"]
+    interval: 5s
+    timeout: 3s
+    retries: 24
+    start_period: 10s
+
+x-legacy-bridge: &legacy-bridge
+  <<: *common
+  image: ghcr.io/agent-orc/agent-studio-api:${AGENT_STUDIO_VERSION:-latest}
   ports:
     - "127.0.0.1:${STUDIO_API_PORT:-5031}:5031"
   volumes:
@@ -49,339 +98,293 @@ x-orchestrator-api: &orchestrator-api
     - projects:/data/projects
   environment:
     TaskRepository: /data/workspace
-    # Blank keeps OrchestratorApi in local mode. The distributed smoke test
-    # sets this to the Task Server URL to exercise the /api/v1 proxy.
-    TaskServer__BaseUrl: ${TASK_SERVER_BASE_URL:-}
+    TaskServer__BaseUrl: http://task-server:5071
+  depends_on:
+    task-server:
+      condition: service_healthy
   healthcheck:
     test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:5031/healthz"]
     interval: 5s
     timeout: 3s
     retries: 24
     start_period: 10s
-  logging: *bounded-logs
 
-x-frontend: &frontend
-  restart: unless-stopped
+x-web: &web
+  <<: *common
+  image: ghcr.io/agent-orc/agent-studio-web:${AGENT_STUDIO_VERSION:-latest}
   ports:
-    - "${STUDIO_UI_PORT:-4011}:8080"
+    - "${STUDIO_UI_BIND_ADDRESS:-127.0.0.1}:${STUDIO_UI_PORT:-4011}:8080"
+  environment:
+    STUDIO_API_UPSTREAM: orchestrator-api:5031
+    STUDIO_TASK_API_UPSTREAM: studio-bff:5072
+  depends_on:
+    orchestrator-api:
+      condition: service_healthy
+    studio-bff:
+      condition: service_healthy
   healthcheck:
     test: ["CMD", "wget", "--quiet", "--output-document=-", "http://127.0.0.1:8080/healthz"]
     interval: 5s
     timeout: 3s
     retries: 12
     start_period: 5s
-  logging: *bounded-logs
 
-x-agent-host-coding: &agent-host-coding
-  restart: unless-stopped
-  env_file:
-    - path: ./runner.env
-      required: true
+x-runner: &runner
+  <<: *common
+  image: ghcr.io/agent-orc/agent-host:${AGENT_STUDIO_VERSION:-latest}
+  mem_limit: 4g
+  cpus: 4
   environment:
-    RUNNER_SERVER_URL: http://orchestrator-api:5031
-    RUNNER_ROLE: coding
-    # Compose-internal network: plain HTTP is an explicit, contained opt-in.
-    RUNNER_ALLOW_INSECURE_HTTP: "1"
-    RUNNER_AUTH_TOKEN_FILE: /run/secrets/runner.token
-  volumes:
-    - runner-coding:/var/lib/agent-host
-    - ./runner.token:/run/secrets/runner.token:ro
-  logging: *bounded-logs
-
-x-agent-host-review: &agent-host-review
-  restart: unless-stopped
-  env_file:
-    - path: ./runner.env
-      required: true
-  environment:
-    RUNNER_SERVER_URL: http://orchestrator-api:5031
-    RUNNER_ROLE: review
-    RUNNER_ALLOW_INSECURE_HTTP: "1"
-    RUNNER_AUTH_TOKEN_FILE: /run/secrets/runner.token
-  volumes:
-    - runner-review:/var/lib/agent-host
-    - ./runner.token:/run/secrets/runner.token:ro
-  logging: *bounded-logs
-
-x-task-server: &task-server
-  restart: unless-stopped
-  ports:
-    - "127.0.0.1:${STUDIO_TASKSERVER_PORT:-5071}:5071"
-  volumes:
-    - orchestrator-data:/var/lib/agent-orchestrator
-  environment:
-    LISTEN_URL: http://0.0.0.0:5071
-    AllowedHosts: "*"
-    STORE_PATH: /var/lib/agent-orchestrator
-    AUTH: bearer
-    STUDIO_AUTH_TOKEN_FILE: /run/secrets/studio_token
-    ENGINE_AUTH_TOKEN_FILE: /run/secrets/engine_token
-    BOOTSTRAP_RUNNER_ID: distributed-runner
-    BOOTSTRAP_RUNNER_AUTH_TOKEN_FILE: /run/secrets/runner_token
-  secrets:
-    - source: studio_token
-      uid: "10001"
-      gid: "10001"
-      mode: 0400
-    - source: engine_token
-      uid: "10001"
-      gid: "10001"
-      mode: 0400
-    - source: runner_token
-      uid: "10001"
-      gid: "10001"
-      mode: 0400
-  healthcheck:
-    test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:5071/healthz"]
-    interval: 5s
-    timeout: 3s
-    retries: 24
-    start_period: 10s
-  logging: *bounded-logs
-
-x-orchestrator-engine: &orchestrator-engine
-  restart: unless-stopped
-  environment:
-    CLIENT_ID: orchestrator-engine
-    # Empty by default: Compose interpolates every service's environment
-    # block up front regardless of which profile is active, so a required
-    # (`:?`) value here would break a bare `docker compose up` even though
-    # orchestrator-engine only ever runs under --profile distributed/dev.
-    # orchestrator-engine itself refuses to start without a real credential
-    # for a non-loopback SERVER_URL (orchestrator-engine/EngineOptions.cs) -
-    # that is the actual enforcement point.
-    CLIENT_CREDENTIAL: ${DISTRIBUTED_ENGINE_TOKEN:-}
-  logging: *bounded-logs
-
-x-studio-bff: &studio-bff
-  restart: unless-stopped
-  ports:
-    - "127.0.0.1:${STUDIO_BFF_PORT:-5072}:5072"
-  environment:
-    TaskServer__AuthTokenFile: /run/secrets/studio_token
-  secrets:
-    - source: studio_token
-      uid: "10001"
-      gid: "10001"
-      mode: 0400
-  healthcheck:
-    test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:5072/healthz"]
-    interval: 5s
-    timeout: 3s
-    retries: 24
-    start_period: 10s
-  logging: *bounded-logs
-
-x-agent-host-distributed: &agent-host-distributed
-  restart: unless-stopped
-  env_file:
-    - path: ./runner.env
-      required: false
-  environment:
+    RUNNER_SERVER_URL: http://task-server:5071
     RUNNER_ID: distributed-runner
     RUNNER_NAME: distributed-runner
     RUNNER_ALLOW_INSECURE_HTTP: "1"
     RUNNER_AUTH_TOKEN_FILE: /run/secrets/runner_token
-  secrets:
-    - source: runner_token
-      uid: "10001"
-      gid: "10001"
-      mode: 0400
-  logging: *bounded-logs
+    RUNNER_GIT_REMOTE: ${RUNNER_GIT_REMOTE:-}
+    RUNNER_GIT_PUSH_REMOTE: ${RUNNER_GIT_PUSH_REMOTE:-}
+    RUNNER_CLI_BIN: ${RUNNER_CLI_BIN:-}
+  volumes:
+    - runner-workspace:/var/lib/agent-host
+    - credentials:/run/secrets:ro
+    - ${RUNNER_CREDENTIALS_DIR:-./.runner-credentials}/claude:/home/runner/.claude:ro
+    - ${RUNNER_CREDENTIALS_DIR:-./.runner-credentials}/codex:/home/runner/.codex:ro
+    - ${RUNNER_CREDENTIALS_DIR:-./.runner-credentials}/gemini:/home/runner/.gemini:ro
+    - ${RUNNER_GIT_CREDENTIALS_DIR:-./.runner-git}:/home/runner/.ssh:ro
+  depends_on:
+    task-server:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "dotnet", "/opt/agent-host/agent-host.dll", "--health-check"]
+    interval: 15s
+    timeout: 10s
+    retries: 6
+    start_period: 20s
 
 services:
-  orchestrator-api:
-    <<: *orchestrator-api
-    image: ghcr.io/agent-orc/agent-studio-api:${AGENT_STUDIO_VERSION:-latest}
-
-  orchestrator-api-dev:
-    <<: *orchestrator-api
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-      args:
-        VERSION: ${AGENT_STUDIO_VERSION:-0.0.0-dev}
-    profiles: ["dev"]
-
-  frontend:
-    <<: *frontend
-    image: ghcr.io/agent-orc/agent-studio-web:${AGENT_STUDIO_VERSION:-latest}
-    depends_on:
-      orchestrator-api:
-        condition: service_healthy
-
-  frontend-dev:
-    <<: *frontend
-    build:
-      context: .
-      dockerfile: frontend/Dockerfile
-      args:
-        VERSION: ${AGENT_STUDIO_VERSION:-0.0.0-dev}
+  bootstrap:
+    image: alpine:3.22
+    restart: "no"
+    command: ["/bin/sh", "/bootstrap/compose-bootstrap.sh"]
+    volumes:
+      - credentials:/run/secrets
+      - orchestrator-data:/store:ro
+      - backup:/backup
+      - ./scripts/compose-bootstrap.sh:/bootstrap/compose-bootstrap.sh:ro
     environment:
-      # The Caddyfile's reverse_proxy target: frontend-dev's dependency is
-      # orchestrator-api-dev, not the prod-image orchestrator-api container.
-      STUDIO_API_UPSTREAM: orchestrator-api-dev:5031
-    depends_on:
-      orchestrator-api-dev:
-        condition: service_healthy
-    profiles: ["dev"]
-
-  agent-host-coding:
-    <<: *agent-host-coding
-    image: ghcr.io/agent-orc/agent-host:${AGENT_STUDIO_VERSION:-latest}
-    profiles: ["runner"]
-    depends_on:
-      - orchestrator-api
-
-  agent-host-coding-dev:
-    <<: *agent-host-coding
-    build:
-      context: .
-      dockerfile: runner/Dockerfile
-      args:
-        VERSION: ${AGENT_STUDIO_VERSION:-0.0.0-dev}
-    environment:
-      RUNNER_SERVER_URL: http://orchestrator-api-dev:5031
-      RUNNER_ROLE: coding
-      RUNNER_ALLOW_INSECURE_HTTP: "1"
-      RUNNER_AUTH_TOKEN_FILE: /run/secrets/runner.token
-    depends_on:
-      - orchestrator-api-dev
-    profiles: ["dev"]
-
-  agent-host-review:
-    <<: *agent-host-review
-    image: ghcr.io/agent-orc/agent-host:${AGENT_STUDIO_VERSION:-latest}
-    profiles: ["runner"]
-    depends_on:
-      - orchestrator-api
-
-  agent-host-review-dev:
-    <<: *agent-host-review
-    build:
-      context: .
-      dockerfile: runner/Dockerfile
-      args:
-        VERSION: ${AGENT_STUDIO_VERSION:-0.0.0-dev}
-    environment:
-      RUNNER_SERVER_URL: http://orchestrator-api-dev:5031
-      RUNNER_ROLE: review
-      RUNNER_ALLOW_INSECURE_HTTP: "1"
-      RUNNER_AUTH_TOKEN_FILE: /run/secrets/runner.token
-    depends_on:
-      - orchestrator-api-dev
-    profiles: ["dev"]
+      LEGACY_STUDIO_TOKEN: ${DISTRIBUTED_STUDIO_TOKEN:-}
+      LEGACY_ENGINE_TOKEN: ${DISTRIBUTED_ENGINE_TOKEN:-}
+      LEGACY_RUNNER_TOKEN: ${DISTRIBUTED_RUNNER_TOKEN:-}
+    networks: [core]
+    logging: *bounded-logs
+    mem_limit: 64m
+    cpus: 0.25
 
   task-server:
     <<: *task-server
-    image: ghcr.io/agent-orc/agent-task-server:${AGENT_STUDIO_VERSION:-latest}
-    profiles: ["distributed"]
-
-  task-server-dev:
-    <<: *task-server
-    build:
-      context: .
-      dockerfile: task-server/Dockerfile
-      args:
-        VERSION: ${AGENT_STUDIO_VERSION:-0.0.0-dev}
-    profiles: ["dev"]
 
   orchestrator-engine:
-    <<: *orchestrator-engine
-    image: ghcr.io/agent-orc/agent-orchestrator-engine:${AGENT_STUDIO_VERSION:-latest}
-    profiles: ["distributed"]
+    <<: *engine
+
+  studio-bff:
+    <<: *bff
+
+  orchestrator-api:
+    <<: *legacy-bridge
+
+  web:
+    <<: *web
+
+  agent-host:
+    <<: *runner
+
+  # Additional capacity is opt-in. The default runner already registers.
+  agent-host-coding:
+    <<: *runner
+    profiles: [runner]
+    environment:
+      RUNNER_SERVER_URL: http://task-server:5071
+      RUNNER_ID: compose-coding
+      RUNNER_NAME: compose-coding
+      RUNNER_ROLE: coding
+      RUNNER_ALLOW_INSECURE_HTTP: "1"
+      RUNNER_AUTH_TOKEN_FILE: /run/secrets/coding_runner_token
+      RUNNER_GIT_REMOTE: ${RUNNER_GIT_REMOTE:-}
+      RUNNER_GIT_PUSH_REMOTE: ${RUNNER_GIT_PUSH_REMOTE:-}
+    volumes:
+      - runner-coding:/var/lib/agent-host
+      - credentials:/run/secrets:ro
+      - ${RUNNER_CREDENTIALS_DIR:-./.runner-credentials}/claude:/home/runner/.claude:ro
+      - ${RUNNER_CREDENTIALS_DIR:-./.runner-credentials}/codex:/home/runner/.codex:ro
+      - ${RUNNER_CREDENTIALS_DIR:-./.runner-credentials}/gemini:/home/runner/.gemini:ro
+      - ${RUNNER_GIT_CREDENTIALS_DIR:-./.runner-git}:/home/runner/.ssh:ro
+
+  agent-host-review:
+    <<: *runner
+    profiles: [runner]
+    environment:
+      RUNNER_SERVER_URL: http://task-server:5071
+      RUNNER_ID: compose-review
+      RUNNER_NAME: compose-review
+      RUNNER_ROLE: review
+      RUNNER_ALLOW_INSECURE_HTTP: "1"
+      RUNNER_AUTH_TOKEN_FILE: /run/secrets/review_runner_token
+      RUNNER_GIT_REMOTE: ${RUNNER_GIT_REMOTE:-}
+      RUNNER_GIT_PUSH_REMOTE: ${RUNNER_GIT_PUSH_REMOTE:-}
+    volumes:
+      - runner-review:/var/lib/agent-host
+      - credentials:/run/secrets:ro
+      - ${RUNNER_CREDENTIALS_DIR:-./.runner-credentials}/claude:/home/runner/.claude:ro
+      - ${RUNNER_CREDENTIALS_DIR:-./.runner-credentials}/codex:/home/runner/.codex:ro
+      - ${RUNNER_CREDENTIALS_DIR:-./.runner-credentials}/gemini:/home/runner/.gemini:ro
+      - ${RUNNER_GIT_CREDENTIALS_DIR:-./.runner-git}:/home/runner/.ssh:ro
+
+  edge:
+    image: caddy:2.10-alpine
+    profiles: [edge]
+    restart: unless-stopped
+    ports:
+      - "${STUDIO_EDGE_BIND_ADDRESS:-127.0.0.1}:${STUDIO_EDGE_PORT:-8443}:8443"
+    environment:
+      STUDIO_EDGE_HOSTNAME: ${STUDIO_EDGE_HOSTNAME:-localhost}
+    volumes:
+      - ./deploy/compose/Caddyfile.edge:/etc/caddy/Caddyfile:ro
+      - edge-data:/data
+      - edge-config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+    networks: [core, ingress]
+    logging: *bounded-logs
+    mem_limit: 256m
+    cpus: 0.5
+    healthcheck:
+      test: ["CMD", "caddy", "validate", "--config", "/etc/caddy/Caddyfile"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  credential-manager:
+    image: python:3.13-alpine
+    profiles: [maintenance]
+    restart: "no"
+    entrypoint: ["python", "/manager/compose-rotate-credential.py"]
+    volumes:
+      - credentials:/run/secrets
+      - ./scripts/compose-rotate-credential.py:/manager/compose-rotate-credential.py:ro
     depends_on:
       task-server:
         condition: service_healthy
-    environment:
-      SERVER_URL: http://task-server:5071
-      CLIENT_ID: orchestrator-engine
-      CLIENT_CREDENTIAL: ${DISTRIBUTED_ENGINE_TOKEN:-}
-      # Explicitly scoped to this private, disposable Compose network.
-      ENGINE_ALLOW_INSECURE_HTTP: "1"
+    networks: [core]
+    logging: *bounded-logs
+    mem_limit: 128m
+    cpus: 0.5
+
+  # Dev builds are explicit siblings, never pulled into the default stack.
+  task-server-dev:
+    <<: *task-server
+    image: agent-task-server:dev
+    build:
+      context: .
+      dockerfile: task-server/Dockerfile
+      args: { VERSION: "${AGENT_STUDIO_VERSION:-0.0.0-dev}" }
+    profiles: [dev]
 
   orchestrator-engine-dev:
-    <<: *orchestrator-engine
+    <<: *engine
+    image: agent-orchestrator-engine:dev
     build:
       context: .
       dockerfile: orchestrator-engine/Dockerfile
-      args:
-        VERSION: ${AGENT_STUDIO_VERSION:-0.0.0-dev}
-    depends_on:
-      task-server-dev:
-        condition: service_healthy
+      args: { VERSION: "${AGENT_STUDIO_VERSION:-0.0.0-dev}" }
     environment:
       SERVER_URL: http://task-server-dev:5071
       CLIENT_ID: orchestrator-engine
-      CLIENT_CREDENTIAL: ${DISTRIBUTED_ENGINE_TOKEN:-}
       ENGINE_ALLOW_INSECURE_HTTP: "1"
-    profiles: ["dev"]
-
-  studio-bff:
-    <<: *studio-bff
-    image: ghcr.io/agent-orc/agent-studio-bff:${AGENT_STUDIO_VERSION:-latest}
-    profiles: ["distributed"]
     depends_on:
-      - task-server
-    environment:
-      TaskServer__BaseUrl: http://task-server:5071
-      TaskServer__AuthTokenFile: /run/secrets/studio_token
+      task-server-dev:
+        condition: service_healthy
+    profiles: [dev]
 
   studio-bff-dev:
-    <<: *studio-bff
+    <<: *bff
+    image: agent-studio-bff:dev
     build:
       context: .
       dockerfile: studio-bff/Dockerfile
-      args:
-        VERSION: ${AGENT_STUDIO_VERSION:-0.0.0-dev}
-    depends_on:
-      - task-server-dev
+      args: { VERSION: "${AGENT_STUDIO_VERSION:-0.0.0-dev}" }
     environment:
       TaskServer__BaseUrl: http://task-server-dev:5071
       TaskServer__AuthTokenFile: /run/secrets/studio_token
-    profiles: ["dev"]
-
-  agent-host-distributed:
-    <<: *agent-host-distributed
-    image: ghcr.io/agent-orc/agent-host:${AGENT_STUDIO_VERSION:-latest}
-    profiles: ["distributed"]
     depends_on:
-      - task-server
-    environment:
-      RUNNER_SERVER_URL: http://task-server:5071
-      RUNNER_ID: distributed-runner
-      RUNNER_NAME: distributed-runner
-      RUNNER_ALLOW_INSECURE_HTTP: "1"
-      RUNNER_AUTH_TOKEN_FILE: /run/secrets/runner_token
+      task-server-dev:
+        condition: service_healthy
+    profiles: [dev]
 
-  agent-host-distributed-dev:
-    <<: *agent-host-distributed
+  orchestrator-api-dev:
+    <<: *legacy-bridge
+    image: agent-studio-api:dev
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      args: { VERSION: "${AGENT_STUDIO_VERSION:-0.0.0-dev}" }
+    environment:
+      TaskRepository: /data/workspace
+      TaskServer__BaseUrl: http://task-server-dev:5071
+    depends_on:
+      task-server-dev:
+        condition: service_healthy
+    profiles: [dev]
+
+  web-dev:
+    <<: *web
+    image: agent-studio-web:dev
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args: { VERSION: "${AGENT_STUDIO_VERSION:-0.0.0-dev}" }
+    environment:
+      STUDIO_API_UPSTREAM: orchestrator-api-dev:5031
+      STUDIO_TASK_API_UPSTREAM: studio-bff-dev:5072
+    depends_on:
+      orchestrator-api-dev:
+        condition: service_healthy
+      studio-bff-dev:
+        condition: service_healthy
+    profiles: [dev]
+
+  agent-host-dev:
+    <<: *runner
+    image: agent-host:dev
     build:
       context: .
       dockerfile: runner/Dockerfile
-      args:
-        VERSION: ${AGENT_STUDIO_VERSION:-0.0.0-dev}
-    depends_on:
-      - task-server-dev
+      args: { VERSION: "${AGENT_STUDIO_VERSION:-0.0.0-dev}" }
     environment:
       RUNNER_SERVER_URL: http://task-server-dev:5071
       RUNNER_ID: distributed-runner
       RUNNER_NAME: distributed-runner
       RUNNER_ALLOW_INSECURE_HTTP: "1"
       RUNNER_AUTH_TOKEN_FILE: /run/secrets/runner_token
-    profiles: ["dev"]
+      RUNNER_GIT_REMOTE: ${RUNNER_GIT_REMOTE:-}
+      RUNNER_GIT_PUSH_REMOTE: ${RUNNER_GIT_PUSH_REMOTE:-}
+      RUNNER_CLI_BIN: ${RUNNER_CLI_BIN:-}
+    depends_on:
+      task-server-dev:
+        condition: service_healthy
+    profiles: [dev]
+
+networks:
+  core:
+  ingress:
 
 volumes:
+  orchestrator-data:
+  backup:
+  credentials:
   workspace:
   projects:
+  runner-workspace:
   runner-coding:
   runner-review:
-  orchestrator-data:
-
-secrets:
-  studio_token:
-    environment: DISTRIBUTED_STUDIO_TOKEN
-  engine_token:
-    environment: DISTRIBUTED_ENGINE_TOKEN
-  runner_token:
-    environment: DISTRIBUTED_RUNNER_TOKEN
+  edge-data:
+  edge-config:

@@ -17,6 +17,8 @@ public sealed class TaskServerBootstrapOptions
         string? engineAuthenticationToken,
         string? bootstrapRunnerId,
         string? bootstrapRunnerAuthenticationToken,
+        string? codingRunnerAuthenticationToken,
+        string? reviewRunnerAuthenticationToken,
         string? legacyRunnerAuthenticationToken,
         bool usesLegacyRoleAuthentication)
     {
@@ -29,6 +31,8 @@ public sealed class TaskServerBootstrapOptions
         EngineAuthenticationToken = engineAuthenticationToken;
         BootstrapRunnerId = bootstrapRunnerId;
         BootstrapRunnerAuthenticationToken = bootstrapRunnerAuthenticationToken;
+        CodingRunnerAuthenticationToken = codingRunnerAuthenticationToken;
+        ReviewRunnerAuthenticationToken = reviewRunnerAuthenticationToken;
         LegacyRunnerAuthenticationToken = legacyRunnerAuthenticationToken;
         UsesLegacyRoleAuthentication = usesLegacyRoleAuthentication;
     }
@@ -42,6 +46,8 @@ public sealed class TaskServerBootstrapOptions
     public string? EngineAuthenticationToken { get; }
     public string? BootstrapRunnerId { get; }
     public string? BootstrapRunnerAuthenticationToken { get; }
+    public string? CodingRunnerAuthenticationToken { get; }
+    public string? ReviewRunnerAuthenticationToken { get; }
     public string? LegacyRunnerAuthenticationToken { get; }
     public bool UsesSharedBearerAuthentication =>
         string.Equals(AuthenticationMode, BearerAuthentication, StringComparison.Ordinal);
@@ -104,6 +110,18 @@ public sealed class TaskServerBootstrapOptions
             $"{TaskServerOptions.SectionName}:BootstrapRunnerAuthToken",
             "BOOTSTRAP_RUNNER_AUTH_TOKEN_FILE",
             $"{TaskServerOptions.SectionName}:BootstrapRunnerAuthTokenFile");
+        var codingRunnerToken = ReadCredential(
+            configuration,
+            "BOOTSTRAP_CODING_RUNNER_AUTH_TOKEN",
+            $"{TaskServerOptions.SectionName}:BootstrapCodingRunnerAuthToken",
+            "BOOTSTRAP_CODING_RUNNER_AUTH_TOKEN_FILE",
+            $"{TaskServerOptions.SectionName}:BootstrapCodingRunnerAuthTokenFile");
+        var reviewRunnerToken = ReadCredential(
+            configuration,
+            "BOOTSTRAP_REVIEW_RUNNER_AUTH_TOKEN",
+            $"{TaskServerOptions.SectionName}:BootstrapReviewRunnerAuthToken",
+            "BOOTSTRAP_REVIEW_RUNNER_AUTH_TOKEN_FILE",
+            $"{TaskServerOptions.SectionName}:BootstrapReviewRunnerAuthTokenFile");
         if ((bootstrapRunnerId is null) != (bootstrapRunnerToken is null))
             throw new InvalidOperationException(
                 "BOOTSTRAP_RUNNER_ID and BOOTSTRAP_RUNNER_AUTH_TOKEN(_FILE) must be configured together.");
@@ -116,7 +134,7 @@ public sealed class TaskServerBootstrapOptions
             ? FirstOrNull(configuration[$"{TaskServerOptions.SectionName}:RunnerBearerToken"])
             : null;
 
-        foreach (var configuredToken in new[] { token, studioToken, engineToken, bootstrapRunnerToken, legacyRunnerToken })
+        foreach (var configuredToken in new[] { token, studioToken, engineToken, bootstrapRunnerToken, codingRunnerToken, reviewRunnerToken, legacyRunnerToken })
             if (configuredToken is not null && configuredToken.Length < 32)
                 throw new InvalidOperationException(
                     "Configured bearer credentials must contain at least 32 characters.");
@@ -127,7 +145,9 @@ public sealed class TaskServerBootstrapOptions
             && !usesLegacyRoleAuthentication
             && (studioToken is not null
                 || engineToken is not null
-                || bootstrapRunnerToken is not null))
+                || bootstrapRunnerToken is not null
+                || codingRunnerToken is not null
+                || reviewRunnerToken is not null))
             throw new InvalidOperationException(
                 "Principal bootstrap credentials are invalid when AUTH=none.");
         if (usesLegacyRoleAuthentication
@@ -165,6 +185,8 @@ public sealed class TaskServerBootstrapOptions
             engineToken,
             bootstrapRunnerId,
             bootstrapRunnerToken,
+            codingRunnerToken,
+            reviewRunnerToken,
             legacyRunnerToken,
             usesLegacyRoleAuthentication);
     }

@@ -24,18 +24,18 @@ not need to install .NET.
 
 ## Choose a path
 
-### View the demo
+### Install with Docker Compose
 
-Use this path to inspect the board without connecting a repository or starting
-an Agent Host. Docker and Docker Compose v2 are required only for this path.
+Use the root Compose file for the distributed product. Docker Engine with
+Compose v2 or Docker Desktop is required.
 
 ```sh
-./agent-orchestrator-setup --mode demo
+cp .env.example .env
+docker compose up -d --wait
 ```
 
-The demo binds the UI to loopback, uses isolated Docker volumes, mounts no host
-repositories, and performs no coding work. Setup prints the local URL and stop
-command.
+The UI binds to loopback, and the stack retains task data and generated
+principal credentials in Docker volumes. See [Getting started](./getting-started.md).
 
 ### Run everything on one machine
 

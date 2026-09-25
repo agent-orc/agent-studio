@@ -156,15 +156,14 @@ for (const [serviceName, contract] of Object.entries(expected)) {
     throw new Error(`${serviceName} does not build ${contract.dockerfile}`);
   }
 }
-for (const source of ["studio_token", "engine_token", "runner_token"]) {
-  const secret = config.services["task-server"].secrets
-    .find(candidate => candidate.source === source);
-  if (!secret || String(secret.uid) !== "10001" || String(secret.gid) !== "10001") {
-    throw new Error(`task-server/${source} is not readable by UID/GID 10001`);
-  }
-  if (String(secret.mode) !== "0400") {
-    throw new Error(`task-server/${source} mode is not 0400`);
-  }
+const credentialMount = config.services["task-server"].volumes
+  .find(volume => volume.target === "/run/secrets");
+if (!credentialMount?.read_only) throw new Error("Task Server lacks read-only bootstrap credentials");
+if (config.services.bootstrap.environment.LEGACY_STUDIO_TOKEN !== "scenario-contract-studio-token") {
+  throw new Error("Scenario Studio token is not imported into the credential volume");
+}
+if (!Object.hasOwn(config.services["agent-host-distributed"].networks ?? {}, "core")) {
+  throw new Error("Scenario Runner is not on the Task Server core network");
 }
 if (config.services["task-server"].build.args.VERSION !== process.argv[2]
     || config.services["studio-bff"].build.args.VERSION !== process.argv[2]) {

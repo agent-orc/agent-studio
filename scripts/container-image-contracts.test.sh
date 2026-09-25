@@ -62,74 +62,43 @@ grep -F 'FROM mcr.microsoft.com/dotnet/aspnet:10.0' \
     "$repo_root/orchestrator-engine/Dockerfile" > /dev/null
 grep -F 'ENV URLS=http://0.0.0.0:5072' \
     "$repo_root/studio-bff/Dockerfile" > /dev/null
-grep -F 'user: "$smoke_uid:$smoke_gid"' \
-    "$repo_root/scripts/compose-smoke-test.sh" > /dev/null
-grep -F 'RUNNER_WORKDIR: /fixtures/runner-work' \
-    "$repo_root/scripts/compose-smoke-test.sh" > /dev/null
-grep -F 'uid: "$smoke_uid"' \
-    "$repo_root/scripts/compose-smoke-test.sh" > /dev/null
-grep -F 'mode: 0400' \
-    "$repo_root/scripts/compose-smoke-test.sh" > /dev/null
-if grep -F 'chmod -R o+rwX "$fixture_dir"' \
-    "$repo_root/scripts/compose-smoke-test.sh" > /dev/null; then
-    echo "compose smoke globally weakens disposable fixture permissions" >&2
-    exit 1
-fi
 
+# The default must be the distributed product, with bootstrap before every
+# credential-reading process. Only explicit dev services may have build steps.
 config_root="$(mktemp -d)"
 trap 'rm -rf "$config_root"' EXIT HUP INT TERM
-: > "$config_root/runner.env"
 version="$(tr -d '\r\n' < "$repo_root/VERSION")"
-compose_json="$(
-    AGENT_STUDIO_VERSION="$version" \
-    DISTRIBUTED_ENGINE_TOKEN=container-image-contract-test \
-    docker compose \
-        --project-directory "$config_root" \
-        -f "$repo_root/docker-compose.yml" \
-        --profile dev \
-        --profile distributed \
-        config --format json
-)"
-
+compose_json="$(AGENT_STUDIO_VERSION="v$version" docker compose \
+    --project-directory "$config_root" -f "$repo_root/docker-compose.yml" \
+    --profile dev --profile runner --profile edge config --format json)"
 node -e '
 const config = JSON.parse(process.argv[1]);
-const expected = {
-  "task-server": ["studio_token", "engine_token", "runner_token"],
-  "task-server-dev": ["studio_token", "engine_token", "runner_token"],
-  "studio-bff": ["studio_token"],
-  "studio-bff-dev": ["studio_token"],
-  "agent-host-distributed": ["runner_token"],
-  "agent-host-distributed-dev": ["runner_token"],
-};
-for (const serviceName of ["orchestrator-engine", "orchestrator-engine-dev"]) {
-  const environment = config.services[serviceName]?.environment ?? {};
-  if (environment.ENGINE_ALLOW_INSECURE_HTTP !== "1") {
-    throw new Error(`${serviceName} does not explicitly opt in to private-network HTTP`);
+const required = ["bootstrap", "task-server", "orchestrator-engine", "studio-bff", "orchestrator-api", "web", "agent-host"];
+for (const name of required) {
+  const service = config.services[name];
+  if (!service || service.profiles?.length) throw new Error(`${name} is not in the default stack`);
+  if (name !== "bootstrap" && !service.image.endsWith(":v" + process.argv[2])) {
+    throw new Error(`${name} does not use the pinned release tag`);
   }
+  if (service.build) throw new Error(`${name} unexpectedly builds from source`);
 }
-const healthyDependencies = {
-  "orchestrator-engine": "task-server",
-  "orchestrator-engine-dev": "task-server-dev",
-};
-for (const [serviceName, dependencyName] of Object.entries(healthyDependencies)) {
-  const condition = config.services[serviceName]?.depends_on?.[dependencyName]?.condition;
-  if (condition !== "service_healthy") {
-    throw new Error(`${serviceName} starts before ${dependencyName} is healthy`);
-  }
+for (const [name, service] of Object.entries(config.services)) {
+  if (service.build && !service.profiles?.includes("dev")) throw new Error(`${name} build is not dev-only`);
 }
-for (const [serviceName, sources] of Object.entries(expected)) {
-  const mounted = config.services[serviceName]?.secrets ?? [];
-  for (const source of sources) {
-    const secret = mounted.find(candidate => candidate.source === source);
-    if (!secret) throw new Error(`${serviceName} does not mount ${source}`);
-    if (String(secret.uid) !== "10001" || String(secret.gid) !== "10001") {
-      throw new Error(`${serviceName}/${source} is not owned by UID/GID 10001`);
-    }
-    if (String(secret.mode) !== "0400") {
-      throw new Error(`${serviceName}/${source} mode is ${secret.mode}, expected 0400`);
-    }
-  }
+const bootstrap = config.services.bootstrap;
+if (!bootstrap.volumes.some(v => v.target === "/run/secrets" && !v.read_only)) {
+  throw new Error("bootstrap does not own the credentials volume");
 }
-' "$compose_json"
+for (const name of ["task-server", "studio-bff", "agent-host", "orchestrator-engine"]) {
+  const volume = config.services[name].volumes.find(v => v.target === "/run/secrets");
+  if (!volume?.read_only) throw new Error(`${name} does not read credentials read-only`);
+}
+if (config.services["task-server"].depends_on.bootstrap?.condition !== "service_completed_successfully") {
+  throw new Error("Task Server does not wait for bootstrap");
+}
+if (!config.services["orchestrator-engine"].depends_on["task-server"]?.condition.includes("healthy")) {
+  throw new Error("Engine does not wait for Task Server health");
+}
+' "$compose_json" "$version"
 
-printf 'Container image user, health, and entrypoint contracts passed.\n'
+printf 'Container image user, health, bootstrap, and entrypoint contracts passed.\n'

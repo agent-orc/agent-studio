@@ -25,12 +25,9 @@ fi
 grep -F "does not match VERSION $expected" "$error_file" > /dev/null
 
 # Compose must pass the resolved repository version to every dev build. The
-# temporary project directory supplies the required runner.env without
-# modifying the checkout; config rendering does not contact the Docker daemon.
-: > "$config_root/runner.env"
+# Config rendering does not contact the Docker daemon or require credentials.
 compose_json="$(
     AGENT_STUDIO_VERSION="$resolved" \
-    DISTRIBUTED_ENGINE_TOKEN=compose-smoke-version-test \
     docker compose \
         --project-directory "$config_root" \
         -f "$repo_root/docker-compose.yml" \
@@ -43,8 +40,8 @@ const config = JSON.parse(process.argv[1]);
 const builds = Object.entries(config.services)
   .filter(([, service]) => service.build)
   .map(([name, service]) => ({ name, version: service.build.args?.VERSION }));
-if (builds.length !== 8) {
-  throw new Error(`expected 8 dev builds, found ${builds.length}`);
+if (builds.length !== 6) {
+  throw new Error(`expected 6 dev builds, found ${builds.length}`);
 }
 for (const build of builds) {
   if (build.version !== process.env.EXPECTED_VERSION) {

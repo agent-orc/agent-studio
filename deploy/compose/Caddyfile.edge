@@ -1,0 +1,9 @@
+{
+    auto_https off
+    admin off
+}
+https://{$STUDIO_EDGE_HOSTNAME}:8443 {
+    tls internal
+    encode zstd gzip
+    reverse_proxy web:8080
+}

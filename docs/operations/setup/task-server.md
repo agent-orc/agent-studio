@@ -577,6 +577,7 @@ settings.
 | `ENGINE_AUTH_TOKEN_FILE` | One-time bootstrap input for the initial Engine principal | Generated and written by packaged setup |
 | `STUDIO_AUTH_TOKEN`, `ENGINE_AUTH_TOKEN` | Direct bootstrap alternatives for ephemeral deployments | Unset |
 | `BOOTSTRAP_RUNNER_ID` and `BOOTSTRAP_RUNNER_AUTH_TOKEN(_FILE)` | Optional bound Runner bootstrap for deterministic Compose or topology harnesses | Unset |
+| `BOOTSTRAP_CODING_RUNNER_AUTH_TOKEN(_FILE)`, `BOOTSTRAP_REVIEW_RUNNER_AUTH_TOKEN(_FILE)` | Optional one-box Compose principals bound to `compose-coding` and `compose-review` | Unset |
 | `AUTH_TOKEN_FILE`, `AUTH_TOKEN` | Deprecated shared bearer input, mapped to the bootstrap Studio principal only | Unset |
 | `TaskServer:MinimumLeaseSeconds` | Lower clamp for Runner leases | `30` |
 | `TaskServer:MaximumLeaseSeconds` | Upper clamp for Runner leases | `600` |

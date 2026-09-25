@@ -203,6 +203,22 @@ if (bootstrap.RequiresAuthentication)
             bootstrap.BootstrapRunnerAuthenticationToken,
             bootstrap.BootstrapRunnerId,
             app.Lifetime.ApplicationStopping);
+    if (bootstrap.CodingRunnerAuthenticationToken is not null)
+        await BootstrapPrincipalAsync(
+            store,
+            "runner:compose-coding",
+            TaskServerPrincipalKinds.Runner,
+            bootstrap.CodingRunnerAuthenticationToken,
+            "compose-coding",
+            app.Lifetime.ApplicationStopping);
+    if (bootstrap.ReviewRunnerAuthenticationToken is not null)
+        await BootstrapPrincipalAsync(
+            store,
+            "runner:compose-review",
+            TaskServerPrincipalKinds.Runner,
+            bootstrap.ReviewRunnerAuthenticationToken,
+            "compose-review",
+            app.Lifetime.ApplicationStopping);
     if (bootstrap.LegacyRunnerAuthenticationToken is not null)
         await BootstrapPrincipalAsync(
             store,

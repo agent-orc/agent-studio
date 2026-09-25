@@ -2,6 +2,9 @@ using AgentStudio.OrchestratorEngine;
 using AgentStudio.TaskServer;
 using AgentStudio.TaskServer.Contracts;
 using Microsoft.Extensions.Options;
+using System.Net;
+using System.Text;
+using System.Text.Json;
 using Xunit;
 
 namespace OrchestratorEngine.Tests;
@@ -54,6 +57,58 @@ public sealed class EngineContractTests
             () => EngineOptions.Parse(key => insecure.GetValueOrDefault(key))).Message);
         Assert.Contains("CLIENT_CREDENTIAL", Assert.Throws<ArgumentException>(
             () => EngineOptions.Parse(key => anonymous.GetValueOrDefault(key))).Message);
+    }
+
+    [Fact]
+    public void Engine_reads_a_credential_file_and_rejects_ambiguous_credentials()
+    {
+        using var temp = new TempDirectory();
+        var path = Path.Combine(temp.Path, "engine.token");
+        File.WriteAllText(path, "file-secret\n");
+        var values = new Dictionary<string, string?>
+        {
+            ["SERVER_URL"] = "https://tasks.example.test",
+            ["CLIENT_ID"] = "engine-a",
+            ["CLIENT_CREDENTIAL_FILE"] = path,
+        };
+
+        Assert.Equal("file-secret", EngineOptions.Parse(key => values.GetValueOrDefault(key)).ClientCredential);
+        values["CLIENT_CREDENTIAL"] = "second-secret";
+        Assert.Contains("only one", Assert.Throws<ArgumentException>(
+            () => EngineOptions.Parse(key => values.GetValueOrDefault(key))).Message);
+    }
+
+    [Fact]
+    public async Task Engine_claim_uses_Task_Server_numeric_stage_wire_contract()
+    {
+        using var handler = new ClaimCaptureHandler();
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://tasks.example.test") };
+        using var client = new EngineTaskServerClient(http);
+
+        var claim = await client.ClaimAsync(
+            new OrchestrationClaimRequest("engine-a", "instance-a", [OrchestrationStage.ReviewDecision]),
+            default);
+
+        Assert.Equal("none", claim.Status);
+        using var body = JsonDocument.Parse(Assert.IsType<string>(handler.Body));
+        Assert.Equal(JsonValueKind.Number, body.RootElement.GetProperty("supportedStages")[0].ValueKind);
+        Assert.Equal(0, body.RootElement.GetProperty("supportedStages")[0].GetInt32());
+    }
+
+    private sealed class ClaimCaptureHandler : HttpMessageHandler
+    {
+        public string? Body { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Body = await request.Content!.ReadAsStringAsync(cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"status\":\"none\"}", Encoding.UTF8, "application/json"),
+            };
+        }
     }
 
     [Fact]

@@ -5,7 +5,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fixture_root="$repo_root/scripts/fixtures/compose-smoke-cloud-init"
 cache_root="${COMPOSE_SMOKE_VM_CACHE:-/var/tmp/agent-studio-compose-smoke-cache}"
-artifact_root="${COMPOSE_SMOKE_VM_ARTIFACTS:-$repo_root/results/compose-smoke-vm}"
+artifact_root="${COMPOSE_SMOKE_VM_ARTIFACTS:-${JOB_RESULTS_DIR:-$repo_root/results}/compose-smoke-vm}"
 memory_mb="${COMPOSE_SMOKE_VM_MEMORY_MB:-8192}"
 cpus="${COMPOSE_SMOKE_VM_CPUS:-4}"
 timeout_seconds="${COMPOSE_SMOKE_VM_TIMEOUT_SECONDS:-3600}"

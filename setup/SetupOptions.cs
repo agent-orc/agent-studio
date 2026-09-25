@@ -3,7 +3,6 @@ namespace AgentStudio.Setup;
 internal enum SetupMode
 {
     Guided,
-    Demo,
     SingleMachine,
     ControlPlane,
     AgentHost,
@@ -32,7 +31,6 @@ internal sealed record SetupOptions(
     string? OffhostBackupPath,
     string Role,
     int MaxParallelism,
-    int DemoPort,
     bool NonInteractive,
     bool DryRun,
     bool ShowHelp,
@@ -56,7 +54,6 @@ internal sealed record SetupOptions(
         string? offhostBackupPath = null;
         var role = "coding";
         var maxParallelism = 2;
-        var demoPort = 4011;
         var nonInteractive = false;
         var dryRun = false;
         var showHelp = false;
@@ -150,12 +147,6 @@ internal sealed record SetupOptions(
                         throw new ArgumentException("--max-parallelism must be a positive integer.");
                     index++;
                     break;
-                case "--demo-port":
-                    if (!int.TryParse(ValueAt(index, "--demo-port"), out demoPort)
-                        || demoPort is < 1 or > 65535)
-                        throw new ArgumentException("--demo-port must be between 1 and 65535.");
-                    index++;
-                    break;
                 case "--non-interactive":
                     nonInteractive = true;
                     break;
@@ -191,7 +182,6 @@ internal sealed record SetupOptions(
             offhostBackupPath,
             role,
             maxParallelism,
-            demoPort,
             nonInteractive,
             dryRun,
             showHelp,
@@ -201,12 +191,13 @@ internal sealed record SetupOptions(
     internal static SetupMode ParseMode(string value)
         => value.Trim().ToLowerInvariant() switch
         {
-            "demo" => SetupMode.Demo,
+            "demo" => throw new ArgumentException(
+                "The Docker demo is retired. Use the root docker-compose.yml; see docs/operations/setup/getting-started.md."),
             "single" or "single-machine" => SetupMode.SingleMachine,
             "control" or "control-plane" => SetupMode.ControlPlane,
             "host" or "agent-host" => SetupMode.AgentHost,
             _ => throw new ArgumentException(
-                "--mode must be demo, single, control-plane, or agent-host."),
+                "--mode must be single, control-plane, or agent-host."),
         };
 
     internal static SetupTarget ParseTarget(string value)
