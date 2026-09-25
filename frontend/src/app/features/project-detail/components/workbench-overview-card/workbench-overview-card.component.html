@@ -18,6 +18,8 @@
         <i aria-hidden="true"></i>{{ project().shortCode || project().displayName }}
       </span>
       <span class="workbench-overview__status" [attr.data-status]="item().workbench.status">{{ statusLabel() }}</span>
+      <app-tag-chips [ids]="item().workbench.tags ?? []" />
+      <app-tag-proposals [projectName]="item().projectName" subjectKind="dossier" [subjectId]="item().workbench.id" [taggingStatus]="item().workbench.taggingStatus ?? null" />
       @if (mode() !== 'invalid') {
         <app-workbench-review-tag [review]="item().workbench.review"
                                   [reviewDue]="item().workbench.reviewDue ?? false"

@@ -188,6 +188,10 @@
       "comment": "Scoped spacing-token enforcement for the lane rail and new components. Padding/margin/gap must source --studio-spacing-* tokens. If a raw value is structurally necessary, use a targeted disable with rationale.",
       "files": [
         "src/app/features/retention/**/*.scss",
+        "src/app/components/tag-chips/tag-chips.component.scss",
+        "src/app/components/tag-filters/tag-filters.component.scss",
+        "src/app/components/tag-proposals/tag-proposals.component.scss",
+        "src/app/features/project-detail/components/project-wiki-section/area-glossary/area-glossary.component.scss",
         "src/app/components/async-feedback/loading-surface/loading-surface.component.scss",
         "src/app/components/cli-model-selector/cli-model-selector.component.scss",
         "src/app/components/model-level-indicator/model-level-indicator.component.scss",

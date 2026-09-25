@@ -13,6 +13,11 @@ import {
   viewChildren,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { TagFiltersComponent } from '../../../../components/tag-filters/tag-filters.component';
+import { TagChipsComponent } from '../../../../components/tag-chips/tag-chips.component';
+import { TagProposalsComponent } from '../../../../components/tag-proposals/tag-proposals.component';
+import { AreaGlossaryComponent } from './area-glossary/area-glossary.component';
+import { BoardFiltersService } from '../../../board/state/board-filters.service';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import { ProjectDocsService } from '../../../../services/project-docs.service';
 import { TaskService } from '../../../../services/task.service';
@@ -29,6 +34,7 @@ import {
   WikiPulse,
   RelatedTaskReference,
   WikiSearchResult,
+  WikiSearchResponse,
   WikiTree,
   WikiTreeNode,
   WorkbenchListItem,
@@ -154,6 +160,10 @@ interface WikiResizeState {
   standalone: true,
   imports: [
     FormsModule,
+    TagFiltersComponent,
+    TagChipsComponent,
+    TagProposalsComponent,
+    AreaGlossaryComponent,
     MarkdownViewComponent,
     MarkdownRichEditorComponent,
     MenuComponent,
@@ -192,6 +202,7 @@ export class ProjectWikiSectionComponent implements OnDestroy {
   readonly openWorkbench = output<WorkbenchListItem>();
 
   private readonly docs = inject(ProjectDocsService);
+  private readonly tagFilters = inject(BoardFiltersService);
   private readonly stars = inject(WikiStarsService);
   private readonly tasks = inject(TaskService);
   private readonly catalog = inject(CliCatalogStore);
@@ -229,6 +240,12 @@ export class ProjectWikiSectionComponent implements OnDestroy {
   readonly folderReloadNonce = signal(0);
   readonly filter = signal('');
   readonly filterOpen = signal(false);
+  readonly glossaryOpen = signal(false);
+  openGlossaries(): void { this.glossaryOpen.set(true); }
+  openGlossaryPage(rel: string): void {
+    this.glossaryOpen.set(false);
+    this.openFile(rel, this.wikiTypeForRel(rel));
+  }
 
   readonly expanded = signal<ReadonlySet<string>>(new Set());
   readonly focusedRowId = signal<string | null>(null);
@@ -403,6 +420,23 @@ export class ProjectWikiSectionComponent implements OnDestroy {
   }
 
   readonly roots = computed<WikiTreeNode[]>(() => this.tree()?.root ?? []);
+  readonly selectedTagIds = this.tagFilters.activeTagFilter;
+  readonly tagFilteredRoots = computed<WikiTreeNode[]>(() => {
+    const ids = [...this.selectedTagIds()];
+    if (!ids.length) return this.roots();
+    const keep = (node: WikiTreeNode): WikiTreeNode | null => {
+      if (node.type !== 'folder') return ids.every(id => node.tags?.includes(id)) ? node : null;
+      const children = node.children.map(keep).filter((child): child is WikiTreeNode => child !== null);
+      return children.length ? { ...node, children } : null;
+    };
+    return this.roots().map(keep).filter((node): node is WikiTreeNode => node !== null);
+  });
+  readonly filteredSearchResponse = computed<WikiSearchResponse | null>(() => {
+    const response = this.searchResponse();
+    if (!response || !this.selectedTagIds().size) return response;
+    const paths = new Set(collectDocumentPaths(this.tagFilteredRoots()));
+    return { ...response, results: response.results.filter(hit => paths.has(hit.relPath)) };
+  });
   readonly wikiDocumentOrder = computed<string[]>(() => collectDocumentPaths(this.roots()));
   readonly selectedFolderDocumentOrder = computed<string[]>(() => {
     const rel = this.selectedFolderRel();
@@ -410,7 +444,7 @@ export class ProjectWikiSectionComponent implements OnDestroy {
   });
 
   readonly filteredRoots = computed<WikiTreeNode[]>(() =>
-    filterWikiTree(this.roots(), this.filter()));
+    filterWikiTree(this.tagFilteredRoots(), this.filter()));
 
   readonly rows = computed<WikiTreeRow[]>(() => {
     const roots = this.filteredRoots();

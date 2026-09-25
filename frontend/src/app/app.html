@@ -134,6 +134,7 @@
                 <app-loading-surface kind="board" label="Loading board…" />
               } @else {
               <app-active-board-filters [resultCount]="filteredTaskCount()" />
+              <app-tag-filters [projectName]="boardProjectScope()" />
               @if (groupByEpic()) {
                 <main class="dashboard dashboard--studio dashboard--epic-board"
                       data-testid="studio-board">
@@ -505,6 +506,7 @@
             [activeTagIds]="activeTagFilter()"
             (setType)="onSetType($event)"
             (toggleTag)="toggleTagFilter($event)" />
+          <app-tag-filters [projectName]="boardProjectScope()" />
           <button class="btn btn--create" [disabled]="updateClient.mutationsBlocked()" (click)="openCreate()">
             ＋ Add Task
           </button>
@@ -567,6 +569,7 @@
                   <h2 class="task-nav__title">Focused view</h2>
                 </div>
               </div>
+              <app-tag-filters />
 
               <div class="task-nav__groups">
                 @for (group of focusGroups(); track group.state) {
@@ -592,6 +595,7 @@
                                   [style.--project-on]="identityFor(job.projectName).onColor"
                                   (click)="openDetail(job)">
                             <span class="task-nav__item-title">{{ job.title || job.id }}</span>
+                            <app-tag-chips [ids]="job.tags ?? []" />
                             <span class="task-nav__item-meta">
                               <span class="task-nav__item-project">
                                 <span class="task-nav__item-disk" aria-hidden="true">{{ identityFor(job.projectName).initial }}</span>

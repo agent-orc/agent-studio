@@ -1,0 +1,14 @@
+<div class="tag-filters" role="group" aria-label="Area and tag filters" data-testid="shared-tag-filters">
+  <label>Area
+    <select data-testid="shared-area-filter" [value]="area()" (change)="select('area', $event)">
+      <option value="" [selected]="!area()">All areas</option>
+      @for (entry of areas(); track entry.id) { <option [value]="entry.id" [selected]="entry.id === area()">{{ entry.label }}</option> }
+    </select>
+  </label>
+  <label>Tag
+    <select data-testid="shared-facet-filter" [value]="facet()" (change)="select('facet', $event)">
+      <option value="" [selected]="!facet()">All tags</option>
+      @for (entry of facets(); track entry.id) { <option [value]="entry.id" [selected]="entry.id === facet()">{{ entry.label }}</option> }
+    </select>
+  </label>
+</div>

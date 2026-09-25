@@ -93,6 +93,8 @@
          [style.--pwiki-nav-width]="navWidthStyle()">
       @if (!navCollapsed()) {
       <nav class="pwiki__tree" id="project-wiki-tree" data-testid="project-wiki-tree" aria-label="Knowledge categories">
+        <app-tag-filters [projectName]="projectName()" />
+        <button class="pwiki__glossary-open" type="button" data-testid="area-glossary-open" (click)="openGlossaries()">Area glossaries</button>
         <label class="pwiki__filter-wrap">
           <app-studio-icon name="search" [size]="13"></app-studio-icon>
           <input class="pwiki__filter"
@@ -219,6 +221,8 @@
                   </span>
                   <span class="pwiki__label-copy">
                     <span class="pwiki__label-text">{{ row.node.title }}</span>
+                    <app-tag-chips [ids]="row.node.tags ?? []" />
+                    <app-tag-proposals [projectName]="projectName()" subjectKind="wiki" [subjectId]="row.node.relPath ?? ''" [taggingStatus]="row.node.taggingStatus ?? null" />
                     <span class="pwiki__metric-strip"
                           [attr.data-testid]="'project-wiki-ratings-' + row.node.relPath">
                       @for (chip of documentMetricChips(row.node); track chip.key) {
@@ -282,11 +286,14 @@
       </div>
       }
       <div class="pwiki__viewer">
-        @if (searchActive()) {
+        @if (glossaryOpen()) {
+          <app-area-glossary [projectName]="projectName()" [roots]="roots()"
+            (openPage)="openGlossaryPage($event)" (openDossier)="openWorkbench.emit($event)" />
+        } @else if (searchActive()) {
           <app-wiki-search-results
               [projectName]="projectName()"
               [query]="searchQuery()"
-              [response]="searchResponse()" [documentOrder]="wikiDocumentOrder()"
+              [response]="filteredSearchResponse()" [documentOrder]="wikiDocumentOrder()"
               [loading]="searchLoading()"
               [semanticLoading]="semanticLoading()"
               [semanticRequested]="semanticRequested()"
