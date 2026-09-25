@@ -4,9 +4,10 @@
   "title": "Batch Gate: one full suite for a delivery wave",
   "summary": "Decision-ready concept for mechanically assembling every eligible pending delivery into a closed, fenced temporary candidate, running one full suite, publishing an exact green tip with per-member evidence, and isolating red members through honestly bounded halving. Reconciles the 25 July per-task economics with the 11 August 12-core host saturation evidence and defines authority alongside integrate-before-review, auto-main advancement, and candidate-SHA promotion. [Curation 2026-08-18: stays decision-pending; no operator decision is recorded yet. The durable mechanics are now also written up as architecture documentation in docs/concepts/platform-architecture/batch-gate.md. This Dossier held the duplicate key AGT-W36 alongside the Escalation view Dossier, which made both render as invalid. The duplicate was resolved from the other side in develop: the Escalation view Dossier moved to AGT-W45, so this Dossier keeps AGT-W36.]",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "archived",
+  "statusReason": "Archived because AGT-W59 absorbs the complete batch-gate proposal and its open decisions under AGT-W55 D1 and D2.",
   "phase": "decision-ready",
-  "updatedAt": "2026-08-11T21:40:58Z",
+  "updatedAt": "2026-09-24T18:00:06Z",
   "sourceTaskKeys": [
     "AGT-2648"
   ],
@@ -23,9 +24,9 @@
     "supersededBy": [
       "AGT-W59"
     ],
-    "reviewedAt": "2026-09-14T00:00:00Z",
-    "reviewedBy": "AGT-2801",
-    "note": "Consolidated into the Gates theme Dossier docs/operations/gates (AGT-W59) on 2026-09-14 per AGT-W55 D1 and D2; content preserved there, this Dossier stays readable as History."
+    "reviewedAt": "2026-09-24T18:00:06Z",
+    "reviewedBy": "AGT-2895",
+    "note": "AGT-W59 remains the complete current home for the batch-gate mechanics and open decisions, while develop has only supporting gate optimizations and no batch coordinator."
   },
   "reviewHistory": [
     {
@@ -43,6 +44,15 @@
       "reviewedAt": "2026-09-14T00:00:00Z",
       "reviewedBy": "AGT-2801",
       "note": "Consolidated into the Gates theme Dossier docs/operations/gates (AGT-W59) on 2026-09-14 per AGT-W55 D1 and D2; content preserved there, this Dossier stays readable as History."
+    },
+    {
+      "verdict": "superseded",
+      "supersededBy": [
+        "AGT-W59"
+      ],
+      "reviewedAt": "2026-09-24T18:00:06Z",
+      "reviewedBy": "AGT-2895",
+      "note": "AGT-W59 remains the complete current home for the batch-gate mechanics and open decisions, while develop has only supporting gate optimizations and no batch coordinator."
     }
   ]
 }

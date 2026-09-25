@@ -1,9 +1,12 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 1,
   "id": "architecture-quality-layer",
   "title": "Architecture and quality layer",
   "summary": "Explore the Project Map, applicable guides, analysis history, and evidence-backed component grading contracts. [Curation 2026-08-18 (AGT-2671): DONE CHECK - review-requested since 2026-07-21, no newer lifecycle history entry and no runner-work task evidence for AGT-2126/2127/2128 found; no completion claim to verify. Stays in review, not closable.]",
   "entrypoint": "index.html",
+  "status": "archived",
+  "statusReason": "Archived as historical contract provenance; the durable architecture and quality contract lives in docs/concepts/architecture-quality-layer.md and the delivered Project Map and guide slices are tracked by AGT-2127 and AGT-2128.",
+  "updatedAt": "2026-09-24T18:00:06Z",
   "pageKind": "workbench",
   "lifecycleState": "review-requested",
   "phase": "decision-ready",
@@ -32,9 +35,9 @@
   "review": {
     "verdict": "historical",
     "supersededBy": [],
-    "reviewedAt": "2026-09-13T10:20:00Z",
-    "reviewedBy": "Operator",
-    "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    "reviewedAt": "2026-09-24T18:00:06Z",
+    "reviewedBy": "AGT-2895",
+    "note": "This illustrative contract sample is historical; its durable contract lives in docs/concepts/architecture-quality-layer.md, with current Project Map and quality guidance maintained outside this Dossier."
   },
   "reviewHistory": [
     {
@@ -43,6 +46,13 @@
       "reviewedAt": "2026-09-13T10:20:00Z",
       "reviewedBy": "Operator",
       "note": "AGT-W53 matrix approved by the operator on 2026-09-13; consolidation, archiving with artefacts and area tags follow AGT-W55."
+    },
+    {
+      "verdict": "historical",
+      "supersededBy": [],
+      "reviewedAt": "2026-09-24T18:00:06Z",
+      "reviewedBy": "AGT-2895",
+      "note": "This illustrative contract sample is historical; its durable contract lives in docs/concepts/architecture-quality-layer.md, with current Project Map and quality guidance maintained outside this Dossier."
     }
   ]
 }

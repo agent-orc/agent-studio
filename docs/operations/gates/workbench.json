@@ -7,7 +7,7 @@
   "status": "decision-pending",
   "phase": "decision-ready",
   "pattern": "concept",
-  "updatedAt": "2026-09-14T00:00:00Z",
+  "updatedAt": "2026-09-24T18:00:06Z",
   "sourceTaskKeys": [
     "AGT-2801"
   ],
@@ -36,5 +36,21 @@
       "promptMarkdown": "# Batch gate pilot\n\nSource of truth: `docs/operations/gates/index.html` (AGT-W59) section 3, and open decisions D1 to D6 in section 9. Do not start this slice before the operator records D1 to D6 and before D10's measurement exists; the recommended defaults are option A in each.\n\nDeliver:\n\n1. Closed manifest: eligibility exactly as the Dossier states (settled envelope with immutable result ref, result SHA, run attempt, delivery epoch and fencing token; per-card model review passed on that subject with the build and test aspect recorded as deferred-to-batch; current generation with no newer attempt, reissue or supersede; matching project, repository, integration branch, gate profile and platform version; not owned by another batch or an active per-task gate). Record every eligible key and every exclusion with a typed reason. The manifest is durable before any Git work starts and never absorbs a member after close.\n2. Deterministic order and a membership digest over order, base SHA, member subjects and gate profile, carried on every state write and candidate ref.\n3. Mechanical replay into disposable detached worktrees with the existing conflict-free rebase rules, a replacement-to-original SHA mapping per member, typed ejection of a conflicting member without changing the batch tip, and the conflict cascade guard (close the candidate at more than a quarter conflicting or three in succession).\n4. Green path: persist the batch-run record before execution; run the complete suite once on a clean checkout of the candidate SHA; revalidate every member generation; acquire the shared project ref-mutation lease; verify the develop tip still equals the recorded pre-tip; publish by fast-forward, or by a merge commit only if that exact commit was the tested candidate; never create an untested merge commit after the suite; verify the remote resolves to the tested candidate. A moved pre-tip is stale-base: reconstruct and rerun.\n5. A native append-only per-member batch-gate record carrying task key, run attempt, delivery epoch, original result SHA, replacement SHA set, batch id, membership digest, base SHA, tested candidate SHA, gate profile digest, batch-run id, verdict and evidence path. Missing or mismatched identity is batch-gate-evidence-missing and blocks lane release. The existing integration-record endpoint keeps only its bookkeeping role.\n6. Red path: classify infrastructure red, deterministic suite red and flaky red separately; one same-SHA retry on a healthy host for infrastructure red and a visible pause on the second; ordered halving capped at ceil(log2 n) diagnostic runs per cycle with an explicit unresolved-cohort fallback and a survivor rerun; the existing bounded flaky quarantine policy, never majority-vote green.\n7. Authority: a durable coordinator lease keyed by project, repository, integration branch and gate profile, with publication forbidden after lease loss; the shared fenced ref-mutation lease with direct integration, auto-main advancement and the candidate-SHA promotion train, whose publish phases may not overlap; supersede handling per the four moments in the Dossier.\n8. Formation triggers and gate-ordering behaviour per the recorded D1 and D6 answers, configurable per project, plus a per-project disable that stops manifest formation and returns unmirrored members to the per-task gate with the same immutable subject.\n9. The predeclared pilot measurements from section 7 as reportable numbers, including the correctness floor (zero stale-attempt passes, missing SHA mappings, untested publish SHAs or false Completed cards).\n10. Tests for eligibility, ordering, conflict ejection and the cascade guard, stale-base, supersede at each of the four moments, lease loss, halving bounds, and evidence-record failure blocking lane release.\n\nRoute the pilot to documentation-only deliveries first. Do not change default routing for code-bearing cards in this slice.\n\n## Operator decisions carried from AGT-W55 (2026-09-13 07:53 UTC)\n\n- D1 Target set: A, sixteen Dossiers as proposed in the AGT-W55 target set.\n- D2 Archiving rule: A, archive when the durable knowledge has a documentation home; the consolidation card writes the artefact if it is missing. A Dossier superseded by a theme Dossier needs no artefact.\n\nUmbrella card: AGT-2797 stays the program record. The Gates theme Dossier is docs/operations/gates (AGT-W59); its open decisions D1 to D10 are recorded in section 9 and are not yet answered.\n"
     }
   ],
-  "key": "AGT-W59"
+  "key": "AGT-W59",
+  "review": {
+    "verdict": "current",
+    "supersededBy": [],
+    "reviewedAt": "2026-09-24T18:00:06Z",
+    "reviewedBy": "AGT-2895",
+    "note": "The consolidated Gates Dossier remains the current decision record: develop implements supporting cache, exact-subject, MachineBound, and review-reuse mechanics, while the batch coordinator and dedicated GateAttempt lifecycle remain open."
+  },
+  "reviewHistory": [
+    {
+      "verdict": "current",
+      "supersededBy": [],
+      "reviewedAt": "2026-09-24T18:00:06Z",
+      "reviewedBy": "AGT-2895",
+      "note": "The consolidated Gates Dossier remains the current decision record: develop implements supporting cache, exact-subject, MachineBound, and review-reuse mechanics, while the batch coordinator and dedicated GateAttempt lifecycle remain open."
+    }
+  ]
 }

@@ -181,6 +181,16 @@ svg.diagram .num { font: 700 10px var(--article-sans); fill: var(--gate-note); l
     to choose; it changes no runtime behavior and contains no pipeline implementation. Human acceptance
     of a delivered card remains outside the gate contract in every option below.
   </div>
+  <div class="box accent">
+    <b>Status 2026-09-24.</b> Develop has implemented supporting pieces, not the batch gate or the
+    dedicated remote-gate lifecycle proposed here. <code>BuildTestGateRunner</code> now prepares an exact
+    disposable subject, uses the bounded preparation cache, and applies deterministic test scoping with
+    <code>Category!=MachineBound</code>. The integration gate can reuse a passed Remote Review verdict
+    only when the integration tip and tested tree are unchanged. AGT-2843 separately caches a Review Executor's
+    merge-base command result; it does not cache a candidate gate verdict. No closed batch manifest,
+    batch coordinator, native per-member batch-gate record, or Task Server <code>GateAttempt</code>
+    contract exists. Decisions D1 to D10 therefore remain open.
+  </div>
 
   <h2 id="sect2"><span class="number">&sect;2</span> What a gate is, and the two planes it runs in</h2>
   <p>A gate is deterministic verification of an exact tree: build, test, lint, and the checks that have a
@@ -386,13 +396,12 @@ svg.diagram .num { font: 700 10px var(--article-sans); fill: var(--gate-note); l
 
   <h2 id="sect4"><span class="number">&sect;4</span> Remote gate: a claimable, fenced gate step</h2>
   <p>Batching decides <i>what</i> a suite run covers. This section decides <i>who owns the run</i>. The
-  path in production today is a direct SSH subprocess: the Studio backend chooses a SHA, derives an SSH
-  alias from the configured execution runner, and waits for the exit code of a remote command that scans
-  <code>$HOME/runner-work/*/repo</code> for a matching repository. It is fast, and it is out of band. The
-  central control plane has no claim, lease, fence or durable gate attempt to show; the activity store is
-  process-local and lost on restart; and once the remote command loop starts, an SSH exit can be recorded
-  as the gate verdict instead of selecting a fallback. That is the transport boundary leaking into
-  verdict classification.</p>
+  source Dossier described the production path in July 2026 as a direct SSH subprocess. Develop no
+  longer contains that SSH gate path: the backend-owned <code>BuildTestGateRunner</code> materializes an
+  exact disposable workspace and runs the gate locally, while Remote Review is separately claimable by a
+  Review Executor. The remaining gap is still the one this section targets: the Task Server has no
+  dedicated claim, lease, fence, or durable gate-attempt lifecycle for deterministic gates, and the
+  ReviewAttempt lifecycle is not that contract.</p>
 
   <h3>What the replacement must make true</h3>
   <table>
