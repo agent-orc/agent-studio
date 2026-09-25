@@ -85,7 +85,8 @@ internal static class ReviewBaselineResultCache
         ReviewBaselineCacheKey key,
         int parserVersion,
         DateTime utcNow)
-        => entry.ParserVersion == parserVersion
+        => entry.ExitCode == 0
+           && entry.ParserVersion == parserVersion
            && string.Equals(entry.RepositoryId, key.RepositoryId, StringComparison.Ordinal)
            && string.Equals(entry.BaselineSha, key.BaselineSha, StringComparison.OrdinalIgnoreCase)
            && string.Equals(entry.CommandHash, key.CommandHash, StringComparison.Ordinal)

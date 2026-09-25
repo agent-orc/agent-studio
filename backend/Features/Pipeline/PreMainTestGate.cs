@@ -32,7 +32,11 @@ public sealed class PreMainTestGate
             timeout,
             ct).ConfigureAwait(false);
 
-        if (result.Verdict != BuildTestGateVerdict.Ok) return result;
+        if (result.Verdict != BuildTestGateVerdict.Ok)
+            return result.FailureKind == BuildTestGateFailureKind.Code
+                   && result.Diagnosis?.ChargesCard != true
+                ? result with { FailureKind = BuildTestGateFailureKind.Environment }
+                : result;
         if (result.TestSelection is
             {
                 Level: TestExecutionLevels.Full,
@@ -49,9 +53,9 @@ public sealed class PreMainTestGate
         {
             Verdict = BuildTestGateVerdict.Fail,
             Reason = reason,
-            FailureKind = BuildTestGateFailureKind.Code,
+            FailureKind = BuildTestGateFailureKind.Environment,
             FailureFingerprint = BuildTestGateRunner.Fingerprint(
-                BuildTestGateFailureKind.Code, reason),
+                BuildTestGateFailureKind.Environment, reason),
         };
     }
 }

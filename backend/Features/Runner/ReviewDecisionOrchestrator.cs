@@ -3774,6 +3774,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         {
             AttemptChainId = subject.AttemptChainId,
             SubjectRef = subject.SubjectRef,
+            IntegrationRef = _git?.ResolveIntegrationBranch(
+                repoPath, _projectSettings?.Get(entry.Name)?.IntegrationBranch),
             Project = entry.Name,
             WatchPath = entry.Path,
             JobId = current.Id,
@@ -3831,6 +3833,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             if (result.Verdict == BuildTestGateVerdict.Fail
                 && normalizedKind == BuildTestGateFailureKind.None)
                 normalizedKind = BuildTestGateFailureKind.Code;
+            if (normalizedKind == BuildTestGateFailureKind.Code
+                && result.Diagnosis?.ChargesCard != true)
+                normalizedKind = BuildTestGateFailureKind.Environment;
             result = result with
             {
                 GateId = request.GateId,

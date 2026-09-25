@@ -405,7 +405,8 @@ public sealed class RemoteReviewExecutor
             slot,
             workspace,
             evidence,
-            result.FailureClassification,
+            result.FailureClassification
+                ?? (evidence.Outcome == "ReviewInfra" ? "Environment" : null),
             result.Summary ?? ExecutionSummary(evidence),
             ct);
     }

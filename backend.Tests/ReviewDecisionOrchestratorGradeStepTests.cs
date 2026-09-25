@@ -329,7 +329,13 @@ public class ReviewDecisionOrchestratorGradeStepTests : IDisposable
                 "error CS1001: build failed",
                 "dotnet build exit 1",
                 true,
-                false)));
+                false)
+            {
+                Diagnosis = new AgentStudio.TaskServer.Contracts.DeliveryFailureDiagnosis(
+                    AgentStudio.TaskServer.Contracts.DeliveryFailureClass.Product,
+                    0.95,
+                    "Baseline green, clean repeat red, card-specific fingerprint."),
+            }));
 
         await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
 

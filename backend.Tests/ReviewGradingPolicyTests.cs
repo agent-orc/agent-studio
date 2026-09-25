@@ -97,4 +97,18 @@ public sealed class ReviewGradingPolicyTests
         Assert.Equal("block", normalized.Status);
         Assert.Equal(ReviewGrade.ProductFailure, ReviewGradingPolicy.Grade([normalized.Status]));
     }
+
+    [Fact]
+    public void Reviewer_block_without_evidence_against_the_diff_is_a_concern()
+    {
+        var verdict = new ReviewVerdictDto(
+            "requirement-fit", "block", "RemoteAspectVerdict", "Concern about scope.",
+            "task description", "an implementation detail");
+
+        var normalized = ReviewVerdictCitationPolicy.Normalize(verdict, semanticAspect: true);
+
+        Assert.Equal("concerns", normalized.Status);
+        Assert.Equal(ReviewGrade.PassWithConcerns,
+            ReviewGradingPolicy.Grade([normalized.Status]));
+    }
 }

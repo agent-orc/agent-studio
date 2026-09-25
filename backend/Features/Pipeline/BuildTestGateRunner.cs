@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using AgentStudio.Git;
 using AgentStudio.Runner;
@@ -51,6 +52,10 @@ public sealed record BuildTestGateRequest(
     public string? JobId { get; init; }
     public string? AttemptChainId { get; init; }
     public string? SubjectRef { get; init; }
+    /// <summary>Integration ref used for the mandatory failing-gate counter-run.</summary>
+    public string? IntegrationRef { get; init; }
+    /// <summary>Per-diagnosis empty cache root. Set only for the uncached repeat.</summary>
+    internal string? DiagnosticFreshCacheRoot { get; init; }
     public string Lane { get; init; } = TaskStates.AutoReview;
     public string? RequiredTestLevel { get; init; }
     public TestExecutionPolicy? TestExecution { get; init; }
@@ -178,6 +183,7 @@ public sealed record BuildTestGateResult(
     public string? TerminationSignal { get; init; }
     public BuildTestGateFailureKind FailureKind { get; init; }
     public string? FailureFingerprint { get; init; }
+    public DeliveryFailureDiagnosis? Diagnosis { get; init; }
     public IReadOnlyList<BuildTestGateProcessEvidence> Processes { get; init; } = [];
     public IReadOnlyList<BuildTestGateDependencyCacheEvidence> DependencyCache { get; init; } = [];
     public BuildTestGateDependencyCacheDecision? DependencyCacheDecision { get; init; }
@@ -271,10 +277,6 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         "\\b\\d+\\b", RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly Regex Whitespace = new(
         "\\s+", RegexOptions.Compiled | RegexOptions.CultureInvariant);
-    private static readonly Regex MissingRelativeModuleFromNodeModules = new(
-        "cannot find module\\s+['\"]\\.{1,2}[\\\\/][^'\"]+['\"][\\s\\S]{0,8192}" +
-        "require stack:[\\s\\S]{0,8192}node_modules[\\\\/]",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     private static readonly string[] CodeExtensions =
     [
@@ -316,6 +318,21 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
     }
 
     public async Task<BuildTestGateResult> RunAsync(
+        BuildTestGateRequest request,
+        IReadOnlyList<string>? changedFiles,
+        BuildProfile? profile,
+        PostStepMode mode,
+        TimeSpan timeout,
+        CancellationToken ct)
+    {
+        var result = await RunCoreAsync(request, changedFiles, profile, mode, timeout, ct);
+        if (result.Verdict is BuildTestGateVerdict.Ok or BuildTestGateVerdict.Skipped
+            or BuildTestGateVerdict.NotApplicable || mode == PostStepMode.Off)
+            return result;
+        return await DiagnoseFailureAsync(request, changedFiles, profile, mode, timeout, result, ct);
+    }
+
+    private async Task<BuildTestGateResult> RunCoreAsync(
         BuildTestGateRequest request,
         IReadOnlyList<string>? changedFiles,
         BuildProfile? profile,
@@ -444,11 +461,11 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
 
             if (completed is null)
             {
-                var preparationManifestPath = PreparationManifestPath(
-                    repositoryPath, _preparationCacheRoot);
+                var cacheRoot = request.DiagnosticFreshCacheRoot ?? _preparationCacheRoot;
+                var preparationManifestPath = PreparationManifestPath(repositoryPath, cacheRoot);
                 projectPreparation = await ProjectPreparationExecutor.RunAsync(
                     workspace!,
-                    _preparationCacheRoot,
+                    cacheRoot,
                     preparationManifestPath,
                     testedSha,
                     message => _logger.LogInformation("{ProjectPreparationMessage}", message),
@@ -617,6 +634,194 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                     completedAt.UtcDateTime,
                     completed?.FailureFingerprint));
             }
+        }
+    }
+
+    private async Task<BuildTestGateResult> DiagnoseFailureAsync(
+        BuildTestGateRequest request,
+        IReadOnlyList<string>? changedFiles,
+        BuildProfile? profile,
+        PostStepMode mode,
+        TimeSpan timeout,
+        BuildTestGateResult original,
+        CancellationToken ct)
+    {
+        var fingerprint = DiagnosisFingerprint(original);
+        var historyPath = Path.Combine(_preparationCacheRoot, "diagnosis", "fingerprints.jsonl");
+        var onOtherCard = SeenOnOtherCard(historyPath, fingerprint, request.JobId, DateTimeOffset.UtcNow);
+        RecordFingerprint(historyPath, fingerprint, request.JobId, DateTimeOffset.UtcNow);
+
+        var baselineMeasured = false;
+        var baselineGreen = false;
+        var baselineSame = false;
+        var cleanMeasured = false;
+        var cleanGreen = false;
+        var cleanSame = false;
+        var evidence = new List<string>();
+        var repository = Path.GetFullPath(request.RepositoryPath);
+        string? baselineSha = null;
+        if (request.RequireExactSubject && !string.IsNullOrWhiteSpace(request.ExpectedSha)
+            && !string.IsNullOrWhiteSpace(request.IntegrationRef))
+        {
+            var mergeBase = await RunGitAsync(repository,
+                ["merge-base", request.ExpectedSha!, request.IntegrationRef!],
+                request.InfrastructureTimeout, ct);
+            if (mergeBase.ExitCode == 0 && SafeSha.IsMatch(mergeBase.StandardOutput.Trim()))
+                baselineSha = mergeBase.StandardOutput.Trim();
+            else
+                evidence.Add($"baseline unavailable: {mergeBase.StandardError.Trim()}");
+        }
+        else
+        {
+            evidence.Add("baseline unavailable: exact subject or integration ref missing");
+        }
+
+        if (baselineSha is not null)
+        {
+            var cachePath = BaselineDiagnosisCachePath(repository, baselineSha, changedFiles, profile);
+            var cachedBaseline = ReadGreenBaseline(cachePath, DateTimeOffset.UtcNow);
+            var baselineRoot = Path.Combine(_preparationCacheRoot, "diagnosis", Guid.NewGuid().ToString("N"));
+            try
+            {
+                var baseline = cachedBaseline ?? await RunCoreAsync(request with
+                    {
+                        ExpectedSha = baselineSha,
+                        SubjectRef = null,
+                        DiagnosticFreshCacheRoot = baselineRoot,
+                    }, changedFiles, profile, PostStepMode.Fail, timeout, ct);
+                baselineMeasured = baseline.Verdict is BuildTestGateVerdict.Ok or BuildTestGateVerdict.Warn
+                    or BuildTestGateVerdict.Fail;
+                baselineGreen = baseline.Verdict == BuildTestGateVerdict.Ok;
+                if (cachedBaseline is null && baselineGreen)
+                    WriteGreenBaseline(cachePath, baseline, DateTimeOffset.UtcNow);
+                baselineSame = !baselineGreen
+                    && string.Equals(DiagnosisFingerprint(baseline), fingerprint, StringComparison.Ordinal);
+                evidence.Add($"baseline sha={baselineSha} verdict={baseline.Verdict} " +
+                             $"fingerprint={DiagnosisFingerprint(baseline)} cache={(cachedBaseline is null ? "miss" : "hit")}");
+            }
+            finally
+            {
+                if (Directory.Exists(baselineRoot)) Directory.Delete(baselineRoot, recursive: true);
+            }
+        }
+
+        if (request.RequireExactSubject && !string.IsNullOrWhiteSpace(request.ExpectedSha))
+        {
+            var cleanRoot = Path.Combine(_preparationCacheRoot, "diagnosis", Guid.NewGuid().ToString("N"));
+            try
+            {
+                var clean = await RunCoreAsync(request with
+                {
+                    SubjectRef = null,
+                    DiagnosticFreshCacheRoot = cleanRoot,
+                }, changedFiles, profile, PostStepMode.Fail, timeout, ct);
+                cleanMeasured = clean.Verdict is BuildTestGateVerdict.Ok or BuildTestGateVerdict.Warn
+                    or BuildTestGateVerdict.Fail;
+                cleanGreen = clean.Verdict == BuildTestGateVerdict.Ok;
+                cleanSame = string.Equals(DiagnosisFingerprint(clean), fingerprint, StringComparison.Ordinal);
+                evidence.Add($"uncached repeat verdict={clean.Verdict} fingerprint={DiagnosisFingerprint(clean)}");
+            }
+            finally
+            {
+                if (Directory.Exists(cleanRoot)) Directory.Delete(cleanRoot, recursive: true);
+            }
+        }
+
+        var diagnosis = DeliveryFailureDiagnosisPolicy.Classify(new DeliveryFailureEvidence(
+            baselineMeasured, baselineGreen, baselineSame,
+            cleanMeasured, cleanGreen, cleanSame, onOtherCard, SporadicOnBothSides: false));
+        evidence.Add($"24h same fingerprint on other card={onOtherCard}");
+        evidence.Add($"class={diagnosis.Class} confidence={diagnosis.Confidence:F2}: {diagnosis.Reason}");
+        if (diagnosis.Class == DeliveryFailureClass.Environment)
+            EvacuatePreparationEntries(original.PreparationManifest, _preparationCacheRoot);
+        if (baselineMeasured && !baselineGreen)
+            _logger.LogWarning("build_test_gate_baseline_red project={Project} job={JobId} baseline={BaselineSha}",
+                request.Project, request.JobId, baselineSha);
+        return original with
+        {
+            Diagnosis = diagnosis,
+            FailureKind = diagnosis.ChargesCard ? BuildTestGateFailureKind.Code : BuildTestGateFailureKind.Environment,
+            FailureFingerprint = fingerprint,
+            Reason = original.Reason + "; diagnosis: " + diagnosis.Reason,
+            Output = AppendOutput(original.Output, "# diagnosis " + string.Join("; ", evidence)),
+        };
+    }
+
+    private sealed record FingerprintOccurrence(DateTimeOffset At, string? JobId, string Fingerprint);
+    private sealed record GreenBaselineEntry(DateTimeOffset At, BuildTestGateResult Result);
+
+    private string BaselineDiagnosisCachePath(
+        string repository, string baselineSha, IReadOnlyList<string>? changedFiles, BuildProfile? profile)
+    {
+        var input = repository + "\0" + baselineSha + "\0" + JsonSerializer.Serialize(changedFiles)
+                    + "\0" + BuildProfileValidationFingerprint.Create(profile) + "\0" + Environment.Version
+                    + "\0" + Environment.GetEnvironmentVariable("PATH");
+        var key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(input))).ToLowerInvariant();
+        return Path.Combine(_preparationCacheRoot, "diagnosis", "baselines", key + ".json");
+    }
+
+    private static BuildTestGateResult? ReadGreenBaseline(string path, DateTimeOffset now)
+    {
+        if (!File.Exists(path)) return null;
+        try
+        {
+            var entry = JsonSerializer.Deserialize<GreenBaselineEntry>(File.ReadAllText(path));
+            return entry is not null && entry.At <= now && now - entry.At <= TimeSpan.FromHours(1)
+                && entry.Result.Verdict == BuildTestGateVerdict.Ok
+                ? entry.Result : null;
+        }
+        catch (Exception exception) when (exception is IOException or JsonException) { return null; }
+    }
+
+    private static void WriteGreenBaseline(string path, BuildTestGateResult result, DateTimeOffset now)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        File.WriteAllText(temporary, JsonSerializer.Serialize(new GreenBaselineEntry(now, result)));
+        File.Move(temporary, path, overwrite: true);
+    }
+
+    private static string DiagnosisFingerprint(BuildTestGateResult result)
+    {
+        var failed = result.Processes.LastOrDefault(process => process.ExitCode != 0
+            || process.TimedOut || process.LaunchError is not null);
+        var content = failed is null
+            ? result.Reason
+            : failed.Command + "\n" + failed.StandardOutput + "\n" + failed.StandardError;
+        return Fingerprint(BuildTestGateFailureKind.Code, content);
+    }
+
+    private static bool SeenOnOtherCard(string path, string fingerprint, string? jobId, DateTimeOffset now)
+    {
+        if (!File.Exists(path) || string.IsNullOrWhiteSpace(jobId)) return false;
+        foreach (var line in File.ReadLines(path))
+        {
+            FingerprintOccurrence? occurrence;
+            try { occurrence = JsonSerializer.Deserialize<FingerprintOccurrence>(line); }
+            catch (JsonException) { continue; }
+            if (occurrence is not null && occurrence.At >= now.AddHours(-24)
+                && occurrence.At <= now && occurrence.Fingerprint == fingerprint
+                && !string.Equals(occurrence.JobId, jobId, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
+    private static void RecordFingerprint(string path, string fingerprint, string? jobId, DateTimeOffset now)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.AppendAllText(path, JsonSerializer.Serialize(new FingerprintOccurrence(now, jobId, fingerprint)) + "\n");
+    }
+
+    private static void EvacuatePreparationEntries(ProjectPreparationManifest? manifest, string cacheRoot)
+    {
+        if (manifest is null) return;
+        var entriesRoot = Path.GetFullPath(Path.Combine(cacheRoot, "entries")) + Path.DirectorySeparatorChar;
+        foreach (var cache in manifest.Caches)
+        {
+            var path = Path.GetFullPath(cache.EntryPath);
+            if (path.StartsWith(entriesRoot, StringComparison.Ordinal) && Directory.Exists(path))
+                Directory.Delete(path, recursive: true);
         }
     }
 
@@ -1821,30 +2026,10 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
             : BuildTestGateFailureKind.Timeout;
         if (process.ExitCode == 137 || string.Equals(process.TerminationSignal, "SIGKILL", StringComparison.Ordinal))
             return BuildTestGateFailureKind.OutOfMemory;
-        var evidence = process.StandardError + "\n" + process.StandardOutput;
-        var classified = ClassifyFailure(evidence);
-        if (classified == BuildTestGateFailureKind.None)
-            return BuildTestGateFailureKind.Code;
-        // A verify command that ran to completion and returned an exit code was NOT
-        // prevented from running by the host: whatever lock / OOM / timeout string it
-        // printed is its own reported result - e.g. a test that logs an
-        // IOException "... because it is being used by another process" on its temp
-        // DB files (AGT-2110, 21.07.). Treating such a DETERMINISTIC test failure as
-        // review infrastructure poisoned the environmental-retry budget: the same
-        // 15-25 min build+test was re-run twice more, each time holding the machine
-        // gate and starving every queued card, before escalating "Lock persisted".
-        // Only a genuine MSBuild build-output lock (MSB3026/MSB3027) is a real,
-        // retryable host fault; every other string from a completed process is a
-        // code/test defect that must flow through the normal reissue path instead.
-        // A genuine toolchain/bundler startup crash is the one other exemption:
-        // it is an unambiguous signature that the process never reached test
-        // discovery, so it cannot be a completed process reporting its own
-        // product result the way a logged lock string can (CAC-18).
-        if (CompletedNormally(process)
-            && !IsGenuineBuildOutputLock(evidence)
-            && classified != BuildTestGateFailureKind.Environment)
-            return BuildTestGateFailureKind.Code;
-        return classified;
+        // Text emitted by the command does not establish ownership. The
+        // mandatory baseline and uncached repeat decide whether this red
+        // command can be charged to the delivery.
+        return BuildTestGateFailureKind.Code;
     }
 
     private static bool CompletedNormally(BuildTestGateProcessEvidence process)
@@ -1854,57 +2039,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
            && process.ExitCode is not null
            && process.ExitCode != 137;
 
-    private static bool IsGenuineBuildOutputLock(string evidence)
-        => evidence.Contains("MSB3026", StringComparison.OrdinalIgnoreCase)
-           || evidence.Contains("MSB3027", StringComparison.OrdinalIgnoreCase);
-
-    /// <summary>
-    /// Narrow, high-confidence signatures of a bundler/toolchain crash that
-    /// happened before any test could run, e.g. vite's case-insensitive-FS probe
-    /// throwing while loading its config or Angular requiring a missing relative
-    /// worker from a corrupted or torn node_modules tree (CAC-18, WEB-19). Kept
-    /// deliberately specific: a broad heuristic here would
-    /// repeat the AGT-2110 mistake of misclassifying genuine product failures.
-    /// </summary>
-    private static bool IsGenuineToolchainStartupCrash(string evidence)
-        => evidence.Contains("testCaseInsensitiveFS", StringComparison.OrdinalIgnoreCase)
-           || evidence.Contains("vite/dist/node/chunks/config.js", StringComparison.OrdinalIgnoreCase)
-           || MissingRelativeModuleFromNodeModules.IsMatch(evidence)
-           || (evidence.Contains("javascript-transformer-worker", StringComparison.OrdinalIgnoreCase)
-               && evidence.Contains("node_modules/@angular/build", StringComparison.OrdinalIgnoreCase));
-
     internal static BuildTestGateFailureKind ClassifyFailure(string? text)
-    {
-        var value = text ?? string.Empty;
-        if (IsGenuineToolchainStartupCrash(value))
-            return BuildTestGateFailureKind.Environment;
-        if (ContainsAny(value,
-                "being used by another process", "file is locked", "cannot access the file",
-                "resource temporarily unavailable", "sharing violation", "MSB3026", "MSB3027"))
-            return BuildTestGateFailureKind.Lock;
-        if (ContainsAny(value,
-                "out of memory", "outofmemoryexception", "cannot allocate memory", "heap limit"))
-            return BuildTestGateFailureKind.OutOfMemory;
-        if (ContainsAny(value,
-                "timed out after", "deadline exceeded", "operation exceeded its time limit"))
-            return BuildTestGateFailureKind.Timeout;
-        if (ContainsAny(value,
-                "process.start failed", "process.start returned null", "failed to start process",
-                "executable file not found"))
-            return BuildTestGateFailureKind.ProcessLaunch;
-        if (ContainsAny(value, "operation was cancelled", "operation was canceled", "operationcanceledexception"))
-            return BuildTestGateFailureKind.Cancellation;
-        if (ContainsAny(value,
-                "repository not found", "missing source", "bad object", "not a git repository",
-                "unknown revision", "not a valid object name", "couldn't find remote ref"))
-            return BuildTestGateFailureKind.MissingSource;
-        if (ContainsAny(value, "review model", "model not found", "invalid model", "no parseable verdict"))
-            return BuildTestGateFailureKind.ReviewModel;
-        return BuildTestGateFailureKind.None;
-    }
-
-    private static bool ContainsAny(string value, params string[] needles)
-        => needles.Any(needle => value.Contains(needle, StringComparison.OrdinalIgnoreCase));
+        => BuildTestGateFailureKind.None;
 
     internal static string Fingerprint(BuildTestGateFailureKind kind, string evidence)
     {

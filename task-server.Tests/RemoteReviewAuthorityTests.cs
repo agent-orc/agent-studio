@@ -155,7 +155,13 @@ public sealed class RemoteReviewAuthorityTests
         using var temp = new TempDirectory();
         var store = Store(temp.Path);
         await store.InitializeAsync();
-        var source = await SeedReviewSubjectAsync(store);
+        var source = await SeedReviewSubjectAsync(store, plan: Plan() with
+        {
+            Commands = Plan().Commands.Select((command, index) => index == 0
+                ? command with { CompareToBaseline = true }
+                : command).ToArray(),
+            IntegrationRef = "refs/heads/develop",
+        });
         await RegisterReviewerAsync(store, "review-a", "review-instance-a", "review-host-a");
         var claim = await store.ClaimReviewAsync(
             new ReviewClaimRequest("review-a", "review-instance-a"), "review-a", default);
@@ -164,9 +170,23 @@ public sealed class RemoteReviewAuthorityTests
         var failedAspect = passing.Commands[0].Aspect;
         var productFailure = passing with
         {
+            Outcome = "ProductFailure",
             Commands = passing.Commands.Select(command =>
                 command.StepId == failedStep
-                    ? command with { ExitCode = 1 }
+                    ? command with
+                    {
+                        ExitCode = 1,
+                        WorkspaceRole = "candidate-clean",
+                        BaselineSha = new string('c', 40),
+                        BaselineExitCode = 0,
+                        CleanRepeatExitCode = 1,
+                        CleanRepeatSameFingerprint = true,
+                        DiagnosisClass = "Product",
+                        DiagnosisConfidence = 0.95,
+                        NewFailures = ["Product.Regression"],
+                        PreExistingFailures = [],
+                        RetryPerformed = true,
+                    }
                     : command).ToArray(),
             Verdicts = passing.Verdicts.Select(verdict =>
                 verdict.Aspect == failedAspect
@@ -1259,13 +1279,11 @@ public sealed class RemoteReviewAuthorityTests
         Assert.Equal("CommandSubjectMismatch", subjectMismatch.FailureClassification);
     }
 
-    // AGT-2819: a test command that is red on the merge base too no longer
-    // settles as a silent Pass. It settles as the integration branch's own
-    // defect, and only a failure name the merge base did not have is charged to
-    // the card.
+    // A red integration baseline cannot charge the card, even when the
+    // candidate has a new failure name.
     [Theory]
     [InlineData(false, "IntegrationBranchDefect")]
-    [InlineData(true, "ProductFailure")]
+    [InlineData(true, "IntegrationBranchDefect")]
     public async Task Baseline_evidence_allows_only_pre_existing_nonzero_test_commands(
         bool hasNewFailure,
         string expectedOutcome)
@@ -1289,11 +1307,14 @@ public sealed class RemoteReviewAuthorityTests
         var request = PassingReport(claim);
         request = request with
         {
+            Outcome = "ProductFailure",
             Commands = request.Commands.Select(command => command with
             {
                 ExitCode = 1,
                 BaselineSha = new string('c', 40),
                 BaselineExitCode = 1,
+                DiagnosisClass = "Environment",
+                DiagnosisConfidence = 0.99,
                 NewFailures = hasNewFailure ? ["Product.NewFailure"] : [],
                 PreExistingFailures = ["Product.ExistingFailure"],
                 RetryPerformed = hasNewFailure,
@@ -1353,11 +1374,17 @@ public sealed class RemoteReviewAuthorityTests
         var request = PassingReport(claim);
         request = request with
         {
+            Outcome = "ProductFailure",
             Commands = request.Commands.Select(command => command with
             {
                 ExitCode = 1,
+                WorkspaceRole = "candidate-clean",
                 BaselineSha = new string('c', 40),
                 BaselineExitCode = baselineExitCode,
+                DiagnosisClass = baselineExitCode == 0 ? "Product" : "Environment",
+                DiagnosisConfidence = 0.95,
+                CleanRepeatExitCode = 1,
+                CleanRepeatSameFingerprint = true,
                 NewFailures = [],
                 PreExistingFailures = [],
             }).ToArray(),

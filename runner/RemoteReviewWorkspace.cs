@@ -212,6 +212,7 @@ public sealed class RemoteReviewWorkspace
         var verdicts = resume?.Verdicts?.ToList() ?? [];
         var artifacts = resume?.Artifacts?.ToList() ?? [];
         DependencyCacheSession? candidateCache = null;
+        var evacuateCandidateCache = false;
         string? reviewMaterial = null;
         try
         {
@@ -317,7 +318,7 @@ public sealed class RemoteReviewWorkspace
                         ct,
                         command,
                         execution.AgentUsage));
-                    SaveCaches(candidateCache);
+                    DiscardCaches(candidateCache);
                     throw await InfrastructureFailureAsync(
                         "AspectTimeout",
                         $"Review aspect '{command.StepId}' violated review-command budget on " +
@@ -355,7 +356,7 @@ public sealed class RemoteReviewWorkspace
                         ct,
                         command,
                         execution.AgentUsage));
-                    SaveCaches(candidateCache);
+                    DiscardCaches(candidateCache);
                     throw await InfrastructureFailureAsync(
                         "CommandStalled",
                         $"Review command '{command.StepId}' produced no output for its whole silence " +
@@ -392,7 +393,7 @@ public sealed class RemoteReviewWorkspace
                         ct,
                         command,
                         execution.AgentUsage));
-                    SaveCaches(candidateCache);
+                    DiscardCaches(candidateCache);
                     throw await InfrastructureFailureAsync(
                         NoCpuProgressClassification,
                         NoProgressSummary("Review command", command.StepId, CommandLine(command), execution),
@@ -427,7 +428,7 @@ public sealed class RemoteReviewWorkspace
                         ct,
                         command,
                         execution.AgentUsage));
-                    SaveCaches(candidateCache);
+                    DiscardCaches(candidateCache);
                     throw await InfrastructureFailureAsync(
                         "ToolUnavailable",
                         $"Review command '{command.StepId}' could not use its declared toolchain: " +
@@ -463,7 +464,7 @@ public sealed class RemoteReviewWorkspace
                         ct,
                         command,
                         execution.AgentUsage));
-                    SaveCaches(candidateCache);
+                    DiscardCaches(candidateCache);
                     throw await InfrastructureFailureAsync(
                         ReviewInfraAttributionPolicy.TmpMountTornDownClassification,
                         $"Review command '{command.StepId}' failed with a torn-down-/tmp signature " +
@@ -477,7 +478,7 @@ public sealed class RemoteReviewWorkspace
 
                 BaselineComparison? comparison = null;
                 var retryPerformed = false;
-                if (command.CompareToBaseline && !execution.Process.Success)
+                if (!ReviewCommandKinds.IsAgent(command.ExecutionKind) && !execution.Process.Success)
                 {
                     comparison = await CompareToBaselineAsync(
                         command,
@@ -486,7 +487,8 @@ public sealed class RemoteReviewWorkspace
                         commands,
                         artifacts,
                         ct);
-                    if (comparison.NewFailures.Count > 0)
+                    var initialFingerprint = ReviewDiagnosisFingerprint(
+                        command, comparison, execution.Process);
                     {
                         var reviewFlakyTests = ReviewFlakyTestIndex.Discover(RepositoryPath, _log);
                         retryPerformed = true;
@@ -495,7 +497,7 @@ public sealed class RemoteReviewWorkspace
                             execution.Process,
                             artifacts,
                             ct);
-                        execution = await RunCommandAsync(command, RepositoryPath, ct);
+                        execution = await RunCleanRepeatAsync(command, commands, artifacts, ct);
                         if (MissingToolchain(execution.Process))
                         {
                             commands.Add(await AddCommandEvidenceAsync(
@@ -519,7 +521,7 @@ public sealed class RemoteReviewWorkspace
                                 dependencyCache: null,
                                 artifacts,
                                 ct));
-                            SaveCaches(candidateCache);
+                            DiscardCaches(candidateCache);
                             throw await InfrastructureFailureAsync(
                                 "ToolUnavailable",
                                 $"Review retry '{command.StepId}' lost its declared toolchain; " +
@@ -551,7 +553,7 @@ public sealed class RemoteReviewWorkspace
                                 dependencyCache: null,
                                 artifacts,
                                 ct));
-                            SaveCaches(candidateCache);
+                            DiscardCaches(candidateCache);
                             throw await InfrastructureFailureAsync(
                                 NoCpuProgressClassification,
                                 NoProgressSummary(
@@ -586,7 +588,7 @@ public sealed class RemoteReviewWorkspace
                                 dependencyCache: null,
                                 artifacts,
                                 ct));
-                            SaveCaches(candidateCache);
+                            DiscardCaches(candidateCache);
                             throw await InfrastructureFailureAsync(
                                 ReviewInfraAttributionPolicy.TmpMountTornDownClassification,
                                 $"Review retry '{command.StepId}' failed with a torn-down-/tmp signature " +
@@ -600,6 +602,33 @@ public sealed class RemoteReviewWorkspace
                             SubjectFailures(command, execution.Process),
                             reviewFlakyTests);
                     }
+                    var fingerprint = ReviewDiagnosisFingerprint(command, comparison, execution.Process);
+                    var onOtherCard = ReviewFailureFingerprintHistory.SeenOnOtherCard(
+                        BaselineCacheRoot, _subject.RepositoryId, initialFingerprint,
+                        _subject.TaskId, DateTime.UtcNow);
+                    ReviewFailureFingerprintHistory.Record(
+                        BaselineCacheRoot, _subject.RepositoryId, initialFingerprint,
+                        _subject.TaskId, DateTime.UtcNow);
+                    comparison = comparison with
+                    {
+                        Diagnosis = DeliveryFailureDiagnosisPolicy.Classify(new DeliveryFailureEvidence(
+                            BaselineMeasured: true,
+                            BaselineGreen: comparison.BaselineExitCode == 0,
+                            BaselineHasSameFingerprint: comparison.BaselineFailures.Count > 0
+                                && comparison.NewFailures.Count == 0,
+                            CleanRepeatMeasured: true,
+                            CleanRepeatGreen: execution.Process.Success,
+                            CleanRepeatSameFingerprint: fingerprint == initialFingerprint,
+                            SameFingerprintOnOtherCardWithin24Hours: onOtherCard,
+                            SporadicOnBothSides: false)),
+                        CleanRepeatExitCode = execution.Process.ExitCode,
+                        CleanRepeatSameFingerprint = fingerprint == initialFingerprint,
+                        FingerprintSeenOnOtherCardWithin24Hours = onOtherCard,
+                    };
+                    if (comparison.Diagnosis.Class == DeliveryFailureClass.Environment)
+                        evacuateCandidateCache = true;
+                    if (comparison.BaselineExitCode != 0)
+                        _log($"review baseline red repository={_subject.RepositoryId} sha={comparison.BaselineSha} step={command.StepId}");
                 }
 
                 commands.Add(await AddCommandEvidenceAsync(
@@ -615,7 +644,7 @@ public sealed class RemoteReviewWorkspace
                     execution.Signal,
                     command.TimeoutSeconds,
                     "verification",
-                    "candidate",
+                    retryPerformed ? "candidate-clean" : "candidate",
                     comparison?.BaselineSha,
                     comparison,
                     retryPerformed,
@@ -651,7 +680,9 @@ public sealed class RemoteReviewWorkspace
         finally
         {
             if (candidateCache is not null)
-                foreach (var message in candidateCache.Save()) _log(message);
+                foreach (var message in evacuateCandidateCache
+                             ? candidateCache.DiscardIncludingWorkspace("diagnosed-environment")
+                             : candidateCache.Save()) _log(message);
         }
 
         var proof = await CurrentProofAsync(ct);
@@ -662,6 +693,11 @@ public sealed class RemoteReviewWorkspace
         var outcome = ReviewGradingPolicy.Grade(verdicts.Select(verdict => verdict.Status))
             == ReviewGrade.ProductFailure
             ? "ProductFailure"
+            : commands.Any(command => command.DiagnosisClass == nameof(DeliveryFailureClass.Inconclusive))
+                ? "Inconclusive"
+            : commands.Any(command => command.DiagnosisClass == nameof(DeliveryFailureClass.Environment)
+                && command.BaselineExitCode == 0)
+                ? "ReviewInfra"
             // AGT-2819: no verdict refuses the change, but at least one gate was
             // already red on the merge base. That is a defect of the integration
             // branch and reported as such, not a silent pass and not this
@@ -681,7 +717,7 @@ public sealed class RemoteReviewWorkspace
         IReadOnlyList<ReviewCommandEvidenceDto> commands)
         => commands
             .Where(command => string.Equals(command.Phase, "verification", StringComparison.Ordinal)
-                              && string.Equals(command.WorkspaceRole, "candidate", StringComparison.Ordinal)
+                              && command.WorkspaceRole is "candidate" or "candidate-clean"
                               && ReviewFailureAttributionPolicy.Attribute(
                                      _subject.Plan.Commands.FirstOrDefault(planned => string.Equals(
                                          planned.StepId,
@@ -924,7 +960,8 @@ public sealed class RemoteReviewWorkspace
         IReadOnlyDictionary<string, string?> environment,
         ICollection<ReviewCommandEvidenceDto> commands,
         ICollection<ReviewArtifactEvidenceDto> artifacts,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool skipRestoredCache = false)
     {
         var preparation = _subject.Plan.Preparation ?? [];
         if (preparation.Count == 0) return null;
@@ -949,7 +986,7 @@ public sealed class RemoteReviewWorkspace
             _subject.Plan.PreserveGlobs,
             cacheRole,
             _log);
-        var cacheMessages = cache.Restore();
+        var cacheMessages = skipRestoredCache ? ["dependency cache restore skipped for clean repeat"] : cache.Restore();
 
         foreach (var command in preparation)
         {
@@ -1043,7 +1080,7 @@ public sealed class RemoteReviewWorkspace
 
             if (StalledWithoutCpuProgress(execution))
             {
-                foreach (var message in cache.Save()) _log(message);
+                foreach (var message in cache.DiscardIncludingWorkspace("preparation-stalled")) _log(message);
                 throw await InfrastructureFailureAsync(
                     NoCpuProgressClassification,
                     NoProgressSummary(
@@ -1058,7 +1095,7 @@ public sealed class RemoteReviewWorkspace
 
             if (!execution.Process.Success || execution.Signal is not null)
             {
-                foreach (var message in cache.Save()) _log(message);
+                foreach (var message in cache.DiscardIncludingWorkspace("preparation-failed")) _log(message);
                 var summary =
                     $"Dependency preparation '{command.StepId}' failed: " +
                     $"command={CommandLine(command)}; exit={execution.Process.ExitCode}; " +
@@ -1158,7 +1195,12 @@ public sealed class RemoteReviewWorkspace
             agentUsage?.InputIncludesCached,
             reusedFromAttemptId ?? comparison?.ReusedFromAttemptId,
             (long)Math.Max(0, (reusedAge ?? comparison?.ReusedAge ?? TimeSpan.Zero).TotalSeconds),
-            comparison?.BaselineExitCode);
+            comparison?.BaselineExitCode,
+            comparison?.CleanRepeatExitCode,
+            comparison?.CleanRepeatSameFingerprint ?? false,
+            comparison?.Diagnosis?.Class.ToString(),
+            comparison?.Diagnosis?.Confidence,
+            comparison?.FingerprintSeenOnOtherCardWithin24Hours ?? false);
     }
 
     private async Task<ReviewArtifactEvidenceDto> WriteArtifactAsync(
@@ -1459,7 +1501,7 @@ public sealed class RemoteReviewWorkspace
                 ct));
             if (MissingToolchain(execution.Process))
             {
-                SaveCaches(baselineCache, candidateCache);
+                DiscardCaches(baselineCache, candidateCache);
                 throw await InfrastructureFailureAsync(
                     "ToolUnavailable",
                     $"Baseline review command '{command.StepId}' could not use its declared toolchain: " +
@@ -1471,7 +1513,7 @@ public sealed class RemoteReviewWorkspace
             }
             if (StalledWithoutCpuProgress(execution))
             {
-                SaveCaches(baselineCache, candidateCache);
+                DiscardCaches(baselineCache, candidateCache);
                 throw await InfrastructureFailureAsync(
                     NoCpuProgressClassification,
                     NoProgressSummary(
@@ -1489,7 +1531,7 @@ public sealed class RemoteReviewWorkspace
                     $"Baseline command '{command.StepId}' did not complete normally.",
                     baselineSha,
                     command);
-                SaveCaches(baselineCache, candidateCache);
+                DiscardCaches(baselineCache, candidateCache);
                 throw await InfrastructureFailureAsync(
                     unavailable.Classification,
                     unavailable.Message,
@@ -1501,7 +1543,7 @@ public sealed class RemoteReviewWorkspace
         finally
         {
             if (baselineCache is not null)
-                foreach (var message in baselineCache.Save()) _log(message);
+                foreach (var message in baselineCache.Discard("baseline-counter-run-finished")) _log(message);
         }
         var failures = BaselineFailures(command, execution.Process);
         var entry = new BaselineCacheEntry(
@@ -1518,9 +1560,10 @@ public sealed class RemoteReviewWorkspace
             execution.Process.StdOut,
             execution.Process.StdErr,
             DateTime.UtcNow);
-        await ReviewBaselineResultCache.WriteAsync(cachePath, entry, ct);
+        if (execution.Process.Success)
+            await ReviewBaselineResultCache.WriteAsync(cachePath, entry, ct);
         _log(
-            $"review baseline cache fill repository={_subject.RepositoryId} baseline={baselineSha} " +
+            $"review baseline cache {(execution.Process.Success ? "fill" : "skip-red")} repository={_subject.RepositoryId} baseline={baselineSha} " +
             $"step={command.StepId} mode={command.BaselineMode} exit={execution.Process.ExitCode} " +
             $"failures={failures.Count}");
         return BaselineComparison.Create(
@@ -1529,6 +1572,53 @@ public sealed class RemoteReviewWorkspace
             SubjectFailures(command, subjectResult),
             cacheHit: false,
             execution.Process.ExitCode);
+    }
+
+    private async Task<CommandExecution> RunCleanRepeatAsync(
+        ReviewCommandDto command,
+        ICollection<ReviewCommandEvidenceDto> commands,
+        ICollection<ReviewArtifactEvidenceDto> artifacts,
+        CancellationToken ct)
+    {
+        var hash = HashText("clean:" + CommandHash(command));
+        var path = Path.Combine(AttemptRoot, $"candidate-clean-{hash[..12]}");
+        var environment = BaselineProcessEnvironment(hash);
+        var add = await ProcessRunner.RunAsync(
+            "git", ["worktree", "add", "--detach", path, _subject.ExpectedResultSha],
+            RepositoryPath, environment: ProcessEnvironment(), clearEnvironment: true, ct: ct);
+        if (!add.Success)
+            throw new ReviewInfrastructureException("CleanRepeatUnavailable",
+                $"Clean repeat worktree could not be created: {add.StdErr.Trim()}");
+        DependencyCacheSession? cache = null;
+        try
+        {
+            cache = await ExecutePreparationAsync(path, "candidate-clean", null,
+                environment, commands, artifacts, ct, skipRestoredCache: true);
+            return await RunCommandAsync(command, path, ct, environment);
+        }
+        finally
+        {
+            if (cache is not null)
+                foreach (var message in cache.Discard("clean-repeat-finished")) _log(message);
+            var remove = await ProcessRunner.RunAsync(
+                "git", ["worktree", "remove", "--force", path], RepositoryPath,
+                environment: ProcessEnvironment(), clearEnvironment: true, ct: CancellationToken.None);
+            if (!remove.Success)
+                _log($"clean repeat worktree cleanup failed: {remove.StdErr.Trim()}");
+        }
+    }
+
+    private static string ReviewDiagnosisFingerprint(
+        ReviewCommandDto command,
+        BaselineComparison comparison,
+        ProcessResult clean)
+    {
+        var named = comparison.NewFailures.Count > 0
+            ? string.Join("\n", comparison.NewFailures.Order(StringComparer.Ordinal))
+            : clean.StdErr + "\n" + clean.StdOut;
+        var normalized = Regex.Replace(named.ToLowerInvariant(), @"\b[0-9a-f]{7,64}\b|\b\d+\b", "<volatile>");
+        normalized = Regex.Replace(normalized, @"\s+", " ").Trim();
+        return HashText(command.FileName + " " + string.Join(" ", command.Arguments) + "\n" + normalized);
     }
 
     /// <summary>
@@ -1587,10 +1677,10 @@ public sealed class RemoteReviewWorkspace
             age);
     }
 
-    private void SaveCaches(params DependencyCacheSession?[] sessions)
+    private void DiscardCaches(params DependencyCacheSession?[] sessions)
     {
         foreach (var session in sessions.Where(item => item is not null).Cast<DependencyCacheSession>())
-            foreach (var message in session.Save()) _log(message);
+            foreach (var message in session.DiscardIncludingWorkspace("review-infrastructure-failure")) _log(message);
     }
 
     /// <summary>
@@ -2138,30 +2228,35 @@ public sealed class RemoteReviewWorkspace
         var quarantined = comparison.FlakyQuarantinedFailures.Count == 0
             ? "0 flaky quarantined failures"
             : $"{comparison.FlakyQuarantinedFailures.Count} flaky quarantined failures: {string.Join(", ", comparison.FlakyQuarantinedFailures)}";
-        var owner = ReviewFailureAttributionPolicy.Attribute(
-            commandFailed: true,
-            command.BaselineMode,
-            comparison.BaselineSha,
-            comparison.BaselineExitCode,
-            comparison.NewFailures);
-        var classification = owner switch
+        var diagnosis = comparison.Diagnosis
+            ?? DeliveryFailureDiagnosisPolicy.Classify(new DeliveryFailureEvidence(
+                BaselineMeasured: true, BaselineGreen: comparison.BaselineExitCode == 0,
+                BaselineHasSameFingerprint: false,
+                CleanRepeatMeasured: false, CleanRepeatGreen: false,
+                CleanRepeatSameFingerprint: false,
+                SameFingerprintOnOtherCardWithin24Hours: false,
+                SporadicOnBothSides: false));
+        var classification = diagnosis.Class switch
         {
-            ReviewFailureOwner.IntegrationBranch => IntegrationBranchDefectClassification,
-            _ when comparison.NewFailures.Count > 0 => "NewTestFailures",
-            _ when comparison.FlakyQuarantinedFailures.Count > 0 => ReviewFlakyTestIndex.VerdictClassification,
-            _ => "BaselineCompared",
+            DeliveryFailureClass.Product => "NewTestFailures",
+            DeliveryFailureClass.Environment when comparison.BaselineExitCode != 0 => IntegrationBranchDefectClassification,
+            DeliveryFailureClass.Environment => "Environment",
+            DeliveryFailureClass.Flaky => ReviewFlakyTestIndex.VerdictClassification,
+            DeliveryFailureClass.Inconclusive => "Inconclusive",
+            _ => "Concern",
         };
         var baselineState = comparison.BaselineExitCode == 0
             ? "green on the merge base"
             : $"already exiting {comparison.BaselineExitCode} on the merge base";
         return new ReviewVerdictDto(
             command.Aspect,
-            owner == ReviewFailureOwner.Delivery ? "block" : "pass",
+            diagnosis.ChargesCard ? "block" : "pass",
             classification,
             $"{newFailures}; {preExisting}; {quarantined}. Step {command.StepId} is {baselineState}. " +
-            $"Baseline {comparison.BaselineSha} ({comparison.Provenance}).",
+            $"Baseline {comparison.BaselineSha} ({comparison.Provenance}). " +
+            $"Diagnosis {diagnosis.Class} confidence={diagnosis.Confidence:F2}: {diagnosis.Reason}",
             $"command:{command.StepId}; baseline:{comparison.BaselineSha}",
-            owner == ReviewFailureOwner.Delivery
+            diagnosis.ChargesCard
                 ? comparison.NewFailures.Count > 0
                     ? string.Join(", ", comparison.NewFailures)
                     : $"successful execution of {command.StepId}"
@@ -2560,6 +2655,10 @@ internal sealed record BaselineComparison(
     string? ReusedFromAttemptId = null,
     TimeSpan? ReusedAge = null)
 {
+    public DeliveryFailureDiagnosis? Diagnosis { get; init; }
+    public int? CleanRepeatExitCode { get; init; }
+    public bool CleanRepeatSameFingerprint { get; init; }
+    public bool FingerprintSeenOnOtherCardWithin24Hours { get; init; }
     /// <summary>
     /// How the baseline side of this comparison was produced, worded once for
     /// the verdict summary, the Markdown grade, and the card projection.

@@ -750,8 +750,27 @@ public sealed class PreMainTestGateTests
             CancellationToken.None);
 
         Assert.Equal(BuildTestGateVerdict.Fail, result.Verdict);
-        Assert.Equal(BuildTestGateFailureKind.Code, result.FailureKind);
         Assert.Contains("mandatory full-suite evidence is missing", result.Reason);
+        Assert.Equal(BuildTestGateFailureKind.Environment, result.FailureKind);
+    }
+
+    [Fact]
+    public async Task RunAsync_DoesNotChargeAnUnconfirmedRedGate()
+    {
+        var runner = new CapturingGateRunner
+        {
+            Result = new BuildTestGateResult(
+                BuildTestGateVerdict.Fail, 1, 1, "red", "unconfirmed", false, false)
+            {
+                FailureKind = BuildTestGateFailureKind.Code,
+            },
+        };
+
+        var result = await new PreMainTestGate(runner).RunAsync(
+            new BuildTestGateRequest("/repo", "abc", "release"),
+            new BuildProfile(), TimeSpan.FromMinutes(1), CancellationToken.None);
+
+        Assert.Equal(BuildTestGateFailureKind.Environment, result.FailureKind);
     }
 
     [Fact]

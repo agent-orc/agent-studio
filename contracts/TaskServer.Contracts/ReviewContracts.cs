@@ -227,7 +227,12 @@ public sealed record ReviewCommandEvidenceDto(
     /// plan asked for a baseline comparison (AGT-2819). Null means no baseline
     /// run happened, which attributes any failure to the delivery.
     /// </summary>
-    int? BaselineExitCode = null);
+    int? BaselineExitCode = null,
+    int? CleanRepeatExitCode = null,
+    bool CleanRepeatSameFingerprint = false,
+    string? DiagnosisClass = null,
+    double? DiagnosisConfidence = null,
+    bool FingerprintSeenOnOtherCardWithin24Hours = false);
 
 /// <summary>
 /// The one word every surface uses for a test failure that a targeted re-run
@@ -434,7 +439,10 @@ public static class ReviewVerdictCitationPolicy
 
     public static bool HasCitation(ReviewVerdictDto verdict)
         => Meaningful(verdict.EvidenceChecked)
-           && Meaningful(verdict.Missing);
+           && Meaningful(verdict.Missing)
+           && (verdict.EvidenceChecked!.Contains("diff", StringComparison.OrdinalIgnoreCase)
+               || System.Text.RegularExpressions.Regex.IsMatch(
+                   verdict.EvidenceChecked, @"(?:^|\s|;)[^\s;]+:\d+(?:\b|$)"));
 
     private static bool Meaningful(string? value)
         => !string.IsNullOrWhiteSpace(value)

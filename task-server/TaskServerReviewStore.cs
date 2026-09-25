@@ -720,6 +720,7 @@ public sealed partial class TaskServerStore
                 subject.Plan.Commands
                     .Where(command => ReviewCommandKinds.IsAgent(command.ExecutionKind))
                     .Select(command => command.Aspect));
+            request = ReviewDiagnosisAdmissionPolicy.NormalizeReport(request, subject.Plan.Commands);
             var payloadJson = JsonSerializer.Serialize(request, ReviewJson);
             var payloadHash = Hash(payloadJson);
             if (!string.IsNullOrWhiteSpace(attempt.ReportIdempotencyKey))
@@ -1049,7 +1050,8 @@ public sealed partial class TaskServerStore
         if (commandKeys.Count != request.Commands.Count)
             return ("ReviewInfra", "DuplicateCommandEvidence");
         var candidateSteps = request.Commands
-            .Where(command => command.Phase == "verification" && command.WorkspaceRole == "candidate")
+            .Where(command => command.Phase == "verification"
+                              && command.WorkspaceRole is "candidate" or "candidate-clean")
             .Select(command => command.StepId)
             .ToHashSet(StringComparer.Ordinal);
         if (subject.Plan.Commands.Where(command => command.Required).Any(command => !candidateSteps.Contains(command.StepId)))
@@ -1107,7 +1109,8 @@ public sealed partial class TaskServerStore
         // card; a step that is red on the integration branch too is reported as
         // that branch's defect, with its own terminal and its own alert.
         var attributions = request.Commands
-            .Where(command => command.Phase == "verification" && command.WorkspaceRole == "candidate")
+            .Where(command => command.Phase == "verification"
+                && command.WorkspaceRole is "candidate" or "candidate-clean")
             .Select(command => (
                 command.StepId,
                 Owner: ReviewFailureAttributionPolicy.Attribute(
@@ -1115,9 +1118,10 @@ public sealed partial class TaskServerStore
                         string.Equals(item.StepId, command.StepId, StringComparison.Ordinal)),
                     command)))
             .ToArray();
-        if (attributions.Any(item => item.Owner == ReviewFailureOwner.Delivery)
-            || ReviewGradingPolicy.Grade(request.Verdicts.Select(verdict => verdict.Status))
-                == ReviewGrade.ProductFailure)
+        if (string.Equals(request.Outcome, "ProductFailure", StringComparison.Ordinal)
+            && (attributions.Any(item => item.Owner == ReviewFailureOwner.Delivery)
+                || ReviewGradingPolicy.Grade(request.Verdicts.Select(verdict => verdict.Status))
+                    == ReviewGrade.ProductFailure))
             return ("ProductFailure", request.FailureClassification ?? "ReviewFinding");
         if (string.Equals(request.Outcome, "ReviewInfra", StringComparison.Ordinal))
             return ("ReviewInfra", string.IsNullOrWhiteSpace(request.FailureClassification)
@@ -1190,7 +1194,7 @@ public sealed partial class TaskServerStore
                && (!ReviewCommandKinds.IsAgent(plannedCommand.ExecutionKind)
                    || (string.Equals(plannedCommand.Model, command.Model, StringComparison.Ordinal)
                        && string.Equals(plannedCommand.ThinkingLevel, command.ThinkingLevel, StringComparison.Ordinal)))
-               && (command.WorkspaceRole == "candidate"
+               && (command.WorkspaceRole is "candidate" or "candidate-clean"
                    || command.WorkspaceRole.StartsWith("baseline-", StringComparison.Ordinal));
     }
 
@@ -1554,7 +1558,12 @@ public sealed partial class TaskServerStore
                 ct);
             return;
         }
-        var gates = report.Commands.Select(command =>
+        var gates = report.Commands
+            .Where(command => command.Phase == "verification"
+                && command.WorkspaceRole is "candidate" or "candidate-clean")
+            .GroupBy(command => command.StepId, StringComparer.Ordinal)
+            .Select(group => group.Last())
+            .Select(command =>
         {
             var planned = subject.Plan.Commands.Single(item =>
                 string.Equals(item.StepId, command.StepId, StringComparison.Ordinal));

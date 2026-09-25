@@ -10,27 +10,32 @@ public enum ReviewFailureOwner
     None,
 
     /// <summary>
-    /// The failure is new against the merge base, so the delivery under review
-    /// introduced it. Blocks the card.
+    /// The green baseline, red uncached repeat, and card-specific fingerprint
+    /// confirm a delivery regression. Blocks the card.
     /// </summary>
     Delivery,
 
     /// <summary>
-    /// The command was already failing on the merge base and the delivery added
-    /// no failure of its own. The integration branch owns it: reported as an
+    /// The command was already failing on the merge base. Reported as an
     /// integration-branch defect with its own alert, never charged to the card.
     /// </summary>
     IntegrationBranch,
 
+    /// <summary>The uncached repeat cleared the failure or another card shares it.</summary>
+    Environment,
+
     /// <summary>
-    /// The command failed but every failure it named is accounted for by the
-    /// flaky-test retry, so it charges neither the card nor the branch.
+    /// An intermittent or reviewer-concern result charges neither the card nor
+    /// the branch.
     /// </summary>
     Tolerated,
+
+    /// <summary>A required diagnosis measurement was absent; no card charge.</summary>
+    Undiagnosed,
 }
 
 /// <summary>
-/// Pure attribution of one failing review command (AGT-2819).
+/// Pure projection of a completed diagnosis into review ownership.
 /// <para>
 /// The failure this settles: <c>npm --prefix frontend run lint</c> had been red
 /// on <c>develop</c> since 2026-08-19 because the component-size baseline had
@@ -41,9 +46,8 @@ public enum ReviewFailureOwner
 /// deliveries were merged by hand instead.
 /// </para>
 /// <para>
-/// A command's exit status alone therefore cannot attribute a failure. The merge
-/// base has to be consulted first, and the answer is one of three things, not
-/// two: green over there, new failure here, or already broken over there.
+/// A command's exit status alone cannot attribute a failure. The required
+/// baseline, clean repeat, and fingerprint evidence is classified first.
 /// </para>
 /// </summary>
 public static class ReviewFailureAttributionPolicy
@@ -53,57 +57,30 @@ public static class ReviewFailureAttributionPolicy
     /// recorded evidence.
     /// </summary>
     /// <remarks>
-    /// Fails closed to <see cref="ReviewFailureOwner.Delivery"/>: a failing
-    /// command without complete baseline evidence is charged to the card, so a
-    /// missing or malformed comparison can never launder a real regression into
-    /// branch debt.
+    /// Missing diagnosis proof is undiagnosed and cannot charge a card.
     /// </remarks>
     public static ReviewFailureOwner Attribute(
         ReviewCommandDto? planned,
         ReviewCommandEvidenceDto evidence)
     {
         if (!Failed(evidence)) return ReviewFailureOwner.None;
-        if (planned?.CompareToBaseline != true) return ReviewFailureOwner.Delivery;
-        return Attribute(
-            commandFailed: true,
-            planned.BaselineMode,
-            evidence.BaselineSha,
-            evidence.BaselineExitCode,
-            evidence.NewFailures);
-    }
-
-    /// <summary>
-    /// The decision table, in terms of the facts that carry it. Exposed
-    /// separately so the matrix can be tested without building evidence
-    /// records.
-    /// </summary>
-    public static ReviewFailureOwner Attribute(
-        bool commandFailed,
-        string? baselineMode,
-        string? baselineSha,
-        int? baselineExitCode,
-        IReadOnlyList<string>? newFailures)
-    {
-        if (!commandFailed) return ReviewFailureOwner.None;
-
-        // No baseline was measured: the card carries it.
-        if (string.IsNullOrWhiteSpace(baselineSha) || baselineExitCode is null)
-            return ReviewFailureOwner.Delivery;
-
-        // Named failures the merge base did not have are the card's own, even
-        // when the step was already red over there.
-        if (newFailures is null || newFailures.Count > 0) return ReviewFailureOwner.Delivery;
-
-        if (baselineExitCode != 0) return ReviewFailureOwner.IntegrationBranch;
-
-        // Green on the merge base, red here, and no new failure name to point
-        // at. Under exit-status comparison there are no names at all, so the
-        // exit codes are the whole evidence and the card turned it red. Under
-        // failure-name comparison the names are authoritative and an empty
-        // difference means the retry accounted for every failure.
-        return ReviewBaselineModes.IsExitStatus(baselineMode)
-            ? ReviewFailureOwner.Delivery
-            : ReviewFailureOwner.Tolerated;
+        if (planned?.CompareToBaseline != true) return ReviewFailureOwner.Undiagnosed;
+        if (Enum.TryParse<DeliveryFailureClass>(evidence.DiagnosisClass, true, out var diagnosis))
+            return diagnosis switch
+            {
+                DeliveryFailureClass.Product when !string.IsNullOrWhiteSpace(evidence.BaselineSha)
+                    && evidence.BaselineExitCode == 0
+                    && evidence.CleanRepeatExitCode is not null and not 0
+                    && evidence.CleanRepeatSameFingerprint
+                    && !evidence.FingerprintSeenOnOtherCardWithin24Hours
+                    => ReviewFailureOwner.Delivery,
+                DeliveryFailureClass.Environment => evidence.BaselineExitCode != 0
+                    ? ReviewFailureOwner.IntegrationBranch
+                    : ReviewFailureOwner.Environment,
+                DeliveryFailureClass.Flaky or DeliveryFailureClass.Concern => ReviewFailureOwner.Tolerated,
+                _ => ReviewFailureOwner.Undiagnosed,
+            };
+        return ReviewFailureOwner.Undiagnosed;
     }
 
     /// <summary>

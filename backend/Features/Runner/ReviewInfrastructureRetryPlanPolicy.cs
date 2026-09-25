@@ -10,8 +10,6 @@ public static class ReviewInfrastructureRetryPlanPolicy
     public const string PreparationFailed = "PreparationFailed";
 
     public static bool RequiresRebuild(string? failureClassification)
-        => string.Equals(
-            failureClassification,
-            PreparationFailed,
-            StringComparison.OrdinalIgnoreCase);
+        => string.Equals(failureClassification, PreparationFailed, StringComparison.OrdinalIgnoreCase)
+           || string.Equals(failureClassification, "Environment", StringComparison.OrdinalIgnoreCase);
 }

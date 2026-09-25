@@ -18,9 +18,10 @@ public sealed class ReviewInfrastructureRepeatPolicyTests
     [Theory]
     [InlineData("PreparationFailed", true)]
     [InlineData("preparationfailed", true)]
+    [InlineData("Environment", true)]
     [InlineData("BaselineUnavailable", false)]
     [InlineData(null, false)]
-    public void Only_preparation_failures_rebuild_the_retry_plan(
+    public void Mutable_environment_failures_rebuild_the_retry_plan(
         string? classification,
         bool expected)
         => Assert.Equal(

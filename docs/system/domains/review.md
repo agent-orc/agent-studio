@@ -227,7 +227,7 @@ suite is roughly twenty minutes - and several attempts on one integration
 branch resolve the same baseline SHA within the hour, so before AGT-2843 a card
 paid for the identical baseline run once per attempt.
 
-`runner/ReviewBaselineResultCache.cs` stores each baseline result once per host
+`runner/ReviewBaselineResultCache.cs` stores each green baseline result once per host
 under `$RUNNER_REVIEW_WORKDIR/.baseline-cache`, keyed by the inputs the grade
 already records: repository, resolved baseline SHA, verify command line, and a
 toolchain fingerprint over the `runtime`, `git`, and per-step executable
@@ -240,7 +240,9 @@ Three rules keep a hit honest:
 
 - **A hit never replaces a candidate run.** The lookup happens only after the
   candidate command has already failed in this attempt's own workspace, and the
-  flake retry still re-runs the candidate.
+  mandatory uncached repeat still runs the candidate in a fresh worktree.
+- **A red baseline is never reused.** It is logged and run again on the next
+  failure, so recovery of the integration branch is observed promptly.
 - **Entries expire.** A result older than 24 hours is dropped and re-executed,
   and every baseline SHA the freshly fetched integration ref no longer contains
   is pruned before the first lookup of an attempt.
@@ -280,38 +282,46 @@ that verdict in its finding count but explicitly excludes the
 `block-without-citation` classification from its blocker count.
 
 Deterministic build and test verdicts are not model opinions. Their command,
-baseline SHA, and exact new failures provide their citation and retain normal
-blocking behavior.
+baseline SHA, clean-repeat result, and normalized failure fingerprint provide
+the evidence required before they can block as a product failure.
 
-## Failure attribution contract (AGT-2819)
+## Failure attribution contract (AGT-2916)
 
-A failing verification command is attributed before it is graded. Every
-deterministic gate in the frozen plan carries `CompareToBaseline: true`, so when
-it fails on the delivery the executor runs the same command on the merge base and
-records that run's exit code as `BaselineExitCode` alongside the baseline SHA.
-`contracts/TaskServer.Contracts/ReviewFailureAttributionPolicy.cs` then names the
-owner:
+A failed deterministic command is diagnosed before it can charge a card. The
+executor compares the same command with the integration merge base, using the
+24-hour baseline result cache when its key is still valid. It then runs the
+delivery command in a fresh worktree without restoring dependencies and compares
+the normalized failure with the baseline and other cards seen in the last 24
+hours. Command evidence records the baseline SHA and exit code, clean-repeat exit
+code, diagnosis class and confidence, and cross-card fingerprint result. A red
+baseline is logged explicitly. Test commands retain failure-name comparison;
+lint and build commands compare exit status.
 
-| Gate failed on delivery | New failure names | Merge base | Owner |
-|---|---|---|---|
-| yes | any | not measured | `Delivery` (fails closed) |
-| yes | one or more | any | `Delivery` |
-| yes | none | red | `IntegrationBranch` |
-| yes | none, exit-status gate | green | `Delivery` |
-| yes | none, failure-name gate | green | `Tolerated` (flaky retry) |
-| no | - | - | `None` |
+`DeliveryFailureDiagnosisPolicy` is the decision table. Only a green baseline,
+red clean repeat with the same fingerprint, and a fingerprint specific to this
+card yield `Product`. A red baseline, a clean green repeat, a different failure
+on the clean repeat, or the same failure on another card yields `Environment`.
+A failure intermittent on both baseline and delivery yields `Flaky`. Missing
+measurements yield `Inconclusive`. Only `Product` charges the card. The Task Server's
+`ReviewDiagnosisAdmissionPolicy` checks the report before settling a
+`ProductFailure`; old reports without this proof cannot charge a card.
+The policy has a `Flaky` branch, but the runners do not yet keep the red and
+green observation history needed to prove intermittence on both sides.
 
-Two comparison modes exist because the evidence differs by gate. A test gate uses
-`ReviewBaselineModes.TestFailures`: failure names are diffed, so a new failure
-inside an already-red suite still blocks the card. A lint or build gate uses
-`ReviewBaselineModes.ExitStatus`: there are no names to diff, and synthesising an
-`<unparsed failure in verify-N>` marker for one was exactly the bug - it made a
-gate that was already red on the branch look like a brand-new product failure on
-every card.
+The 24-hour fingerprint history is currently local to a review host. The
+existing `RequireDifferentHostFailureDomain` flag separates coding and review
+hosts; it does not declare a clean-repeat executor. A future alternate-executor
+declaration needs a Task Server owned repeat lease and shared fingerprint
+history before cross-executor evidence can confirm a product failure. An
+environment verdict discards the participating dependency cache content and
+workspace dependencies, and the retry rebuilds the frozen review plan.
 
-The terminal follows the attribution. Any `Delivery` owner grades
-`ProductFailure`. Otherwise, one or more `IntegrationBranch` owners grade the
-distinct terminal `ReviewTerminalOutcome.IntegrationBranchDefect`, which:
+A semantic reviewer block must cite evidence against the delivery diff and name
+the exact gap. A block without that citation is a concern and does not become
+`ProductFailure`. A cited semantic regression can still block the delivery.
+
+The terminal follows the attribution. A red baseline grades the distinct
+`ReviewTerminalOutcome.IntegrationBranchDefect`, which:
 
 - is `AttemptLifecycleState.Completed`, not `Failed` - the review reached a
   verdict and it was not against the card;
@@ -329,8 +339,8 @@ finding.
 
 ## Integration-branch gate health (AGT-2819)
 
-Because each gate is measured on the merge base on every delivery, the review
-plane is also the integration branch's health monitor.
+Because each failing gate is measured on the merge base, the review plane also
+reports integration-branch health.
 `backend/Features/Pipeline/IntegrationBranchGateReporter.cs` reads each settled
 report, and `IntegrationBranchGateHealthPolicy` decides what is news:
 

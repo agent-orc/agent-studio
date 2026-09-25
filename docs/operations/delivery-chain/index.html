@@ -515,6 +515,7 @@
   <p>Delivery slices append their current implementation status here.</p>
   <ol class="implementation-log">
 <!-- agent-studio:implementation-log:start -->
+    <li><strong>2026-09-25, AGT-2916, partial:</strong> Mandatory baseline and uncached repeat diagnosis now guards the local build gate and Remote Review product-failure settlement. It records a class and confidence, keeps red baselines visible, evicts participating caches on environment results, and treats uncited reviewer blocks as concerns. Cross-executor repeat and shared fingerprint history remain open because the current ReviewAttempt protocol has no delegated diagnostic lease. The existing different-host review flag separates coding and review hosts, and does not declare an alternate clean-repeat executor. The policy's flaky class still needs red and green observation history from both sides before the runners can emit it.</li>
 <!-- agent-studio:implementation-log:end -->
   </ol>
 </section>

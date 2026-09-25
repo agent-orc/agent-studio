@@ -644,19 +644,19 @@ steer the pipeline in this policy version.
   with subject SHA, definition digest, observed tools, lockfile hashes, cache
   states, duration, and a stable failure signature. Existing dependency-cache
   fields remain readable for historical receipts but new gates leave them empty.
-- The build/test gate classifies a verify command's own toolchain/bundler
-  crashing before it reaches test discovery (`BuildTestGateFailureKind.Environment`
-  - vite's case-insensitive-filesystem probe throwing while loading its config,
-  or a relative `Cannot find module` require stack rooted in `node_modules`)
-  separately from every other
-  completed-process result. This is a narrow, signature-based exemption from
-  the AGT-2110 rule that a completed process's own printed diagnostics are
-  always `Code`: only an unambiguous toolchain-startup signature qualifies, so
-  a genuine product failure that happens to mention the same tool stays
-  `Code`. `BuildTestGateResult.IsInfrastructureFailure` is true for it.
-  A failed repository preparation discards its private cache staging area and
-  cannot publish an immutable entry. Recovery and cache eviction policy belong
-  to the orchestrator healing stage rather than to the gate.
+- A failed build/test gate runs the same selected commands on the integration
+  merge base and repeats the delivery in a fresh worktree with an empty
+  preparation cache before reporting a chargeable failure. The result carries
+  `Diagnosis` with class, confidence and evidence. Text signatures in
+  `ClassifyFailure` no longer decide whether a completed process is a product
+  fault. Only a confirmed `Product` diagnosis has `FailureKind.Code`; missing
+  measurements remain uncharged. An `Environment` diagnosis discards the
+  preparation entries that participated in the failed run. The gate logs a red
+  baseline with its SHA because no card can be charged while it stays red. A
+  green baseline result is reused for at most one hour for the same repository,
+  SHA, selected files, build profile, and runtime environment; a red baseline
+  is run again and reported. The pre-main wrapper also treats missing full-suite
+  proof and a red result without a confirmed diagnosis as environment evidence.
 - A pre-develop/pre-main gate classified `Environment` still rolls the
   integration branch back to its exact pre-merge tip like any other red gate,
   but `MergeIntoDevelopRunner` reports it as the distinct
@@ -734,18 +734,12 @@ steer the pipeline in this policy version.
   failure is non-blocking at the pre-main full-suite boundary. If one physical
   command belongs to both the baseline and the diff-selected set, the stricter
   work-package classification wins.
-- A remote ReviewAttempt does not require an historically red integration
-  branch to become absolutely green. For each baseline-compared test command,
-  its verdict is based on `subject failures - merge-base failures`.
-  Intersecting failures remain visible as pre-existing, while the aspect summary
-  names every new failure. The Review Executor reads xUnit
-  `Category=ReviewFlaky` traits from the exact subject's built test assemblies.
-  A newly failing marked test is retried once; if it does not reproduce, the
-  report retains its identity as `FlakyQuarantine` and does not classify the
-  card as `ProductFailure`. A reproduced marked failure remains a blocking new
-  failure. A command with unparseable failing-test output stays fail-closed as a
-  new failure. This comparison does not weaken the absolute full-suite boundary
-  before advancing `main`.
+- A failed remote ReviewAttempt compares its exact verification command with
+  the integration merge base, then repeats it in a fresh delivery worktree
+  without restored dependencies. Named failures remain visible as new or
+  pre-existing, but a red baseline cannot charge the card even if a new name
+  appears. Only the shared diagnosis contract can label the result `Product`.
+  The absolute full-suite boundary before advancing `main` remains in force.
 - Remote Review command execution survives a planned Review daemon restart.
   Recovered attempts retain their original fence and containment namespace and
   resume before load-aware admission evaluates any fresh slot. Completed
