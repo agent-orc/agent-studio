@@ -1211,6 +1211,21 @@ public sealed class TaskServerClient : IDisposable
             throw new InvalidDataException(
                 $"Task Server renewed mismatched outbox authority for run '{authority.RunId}'.");
         }
+        _v1Leases[authority.TaskKey] = (
+            authority.RunId,
+            new RunLeaseInfoDto(
+                authority.TaskKey,
+                authority.RunnerId,
+                authority.RunnerId,
+                _options?.Hostname ?? "recovery",
+                Environment.ProcessId,
+                _options?.BackendName ?? "task-server",
+                authority.LeaseId,
+                authority.Fence,
+                lease.AcquiredAt,
+                lease.ExpiresAt,
+                authority.RunId),
+            authority.InstanceId);
         return lease;
     }
 

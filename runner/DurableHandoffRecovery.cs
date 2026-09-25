@@ -90,12 +90,12 @@ public sealed class DurableHandoffRecovery
             fencingToken: outbox.Authority.Fence);
 
         var finalItem = outbox.Items.LastOrDefault(item => item.Kind == "final-result");
+        var manifest = LatestManifest(outbox);
         ImmutableResultEnvelope envelope;
         WorktreeTeardownResult secured;
         if (finalItem is null)
         {
-            var manifest = LatestManifest(outbox)
-                           ?? await JournalArtifactsAsync(outbox, ct);
+            manifest ??= await JournalArtifactsAsync(outbox, ct);
             outbox.RecordHandoffState("transferring");
             await ReportSafeAsync(outbox, ct);
             secured = await workspace.SecureForHandoffAsync(
@@ -135,6 +135,11 @@ public sealed class DurableHandoffRecovery
         }
         else
         {
+            if (manifest is null)
+            {
+                throw new InvalidDataException(
+                    $"Run '{outbox.Authority.RunId}' has no durable artifact manifest.");
+            }
             envelope = JsonSerializer.Deserialize<ImmutableResultEnvelope>(
                            finalItem.PayloadJson,
                            Json)
@@ -199,7 +204,7 @@ public sealed class DurableHandoffRecovery
         await ReportSafeAsync(outbox, ct);
         try
         {
-            await TransferArtifactsAfterDeliveryAsync(outbox, ct);
+            await TransferArtifactsAfterDeliveryAsync(outbox, manifest, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -242,6 +247,7 @@ public sealed class DurableHandoffRecovery
 
     private async Task TransferArtifactsAfterDeliveryAsync(
         DurableRunOutbox outbox,
+        DurableArtifactManifest manifest,
         CancellationToken ct)
     {
         var results = Path.Combine(
@@ -255,15 +261,52 @@ public sealed class DurableHandoffRecovery
             RemoteTaskRunner.ObserveResultFiles(results),
             limits);
         var issues = initialSkipped.ToList();
-        foreach (var file in files.OrderBy(file =>
-                     file.RelativePath.EndsWith("/deliverables.md", StringComparison.OrdinalIgnoreCase) ? 1 : 0))
+        var expected = JsonSerializer.Deserialize<ArtifactManifestEntry[]>(manifest.Json, Json)
+                       ?? throw new InvalidDataException(
+                           $"Run '{outbox.Authority.RunId}' has an empty artifact manifest.");
+        var expectedByPath = expected.ToDictionary(
+            entry => entry.Path,
+            StringComparer.Ordinal);
+        var acknowledgedPaths = outbox.Items
+            .Where(item => item.Kind == "artifact"
+                           && item.Sequence <= outbox.LastAcknowledgedSequence)
+            .Select(item => JsonSerializer.Deserialize<DurableArtifactPayload>(item.PayloadJson, Json)?.Name)
+            .OfType<string>()
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .ToHashSet(StringComparer.Ordinal);
+        var observedPaths = files.Select(file => file.RelativePath)
+            .Concat(initialSkipped.Select(issue => issue.Path))
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var missing in expected.Where(entry =>
+                     !observedPaths.Contains(entry.Path)
+                     && !acknowledgedPaths.Contains(entry.Path)))
         {
+            issues.Add(new ArtifactTransferIssue(
+                missing.Path,
+                missing.SizeBytes,
+                "was unavailable after artifact manifest preparation",
+                ArtifactTransferOutcomes.TransferFailed));
+        }
+        foreach (var file in files)
+        {
+            if (acknowledgedPaths.Contains(file.RelativePath)) continue;
             try
             {
-                if (file.RelativePath.EndsWith("/deliverables.md", StringComparison.OrdinalIgnoreCase)
-                    && issues.Count > initialSkipped.Count)
-                    RemoteTaskRunner.UpdateDeliverablesArtifactPolicy(results, issues, limits);
                 var bytes = await File.ReadAllBytesAsync(file.FullPath, ct);
+                var sha = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+                if (!expectedByPath.TryGetValue(file.RelativePath, out var entry)
+                    || entry.SizeBytes != bytes.LongLength
+                    || !string.Equals(entry.Sha256, sha, StringComparison.OrdinalIgnoreCase))
+                {
+                    issues.Add(new ArtifactTransferIssue(
+                        file.RelativePath,
+                        bytes.LongLength,
+                        expectedByPath.ContainsKey(file.RelativePath)
+                            ? "changed after artifact manifest preparation; skipped to preserve manifest integrity"
+                            : "was created after artifact manifest preparation; skipped to preserve manifest integrity",
+                        ArtifactTransferOutcomes.TransferFailed));
+                    continue;
+                }
                 var upload = new RunnerArtifactUpload(file.RelativePath, Convert.ToBase64String(bytes));
                 RemoteTaskRunner.ValidateArtifactAcknowledgement(
                     outbox.Authority.TaskKey,

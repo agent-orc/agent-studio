@@ -253,6 +253,29 @@ public sealed class CodingFinalizationRetryTests : IDisposable
             string.Join(Environment.NewLine, requests));
         Assert.Contains(logs, line => line.Contains("outcome=ArtifactTooLarge", StringComparison.Ordinal));
         Assert.DoesNotContain(logs, line => line.Contains("slot failed", StringComparison.Ordinal));
+
+        var results = Path.Combine(options.WorkDir, "tasks", lease.TaskKey, "results");
+        var limits = new ArtifactTransferLimitsResponse(
+            25L * 1024 * 1024,
+            18L * 1024 * 1024,
+            100L * 1024 * 1024);
+        var (selected, _) = ArtifactTransferPolicy.Select(
+            results,
+            RemoteTaskRunner.ObserveResultFiles(results),
+            limits);
+        var entries = new List<ArtifactManifestEntry>();
+        foreach (var file in selected)
+        {
+            var bytes = await File.ReadAllBytesAsync(file.FullPath);
+            entries.Add(new ArtifactManifestEntry(
+                file.RelativePath,
+                Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes))
+                    .ToLowerInvariant(),
+                bytes.LongLength));
+        }
+        Assert.Contains(
+            RemoteTaskRunner.BuildArtifactManifest(entries).Digest,
+            server.ArtifactManifestDigests);
     }
 
     private RunnerOptions Options(string origin) => new()
@@ -274,6 +297,7 @@ public sealed class CodingFinalizationRetryTests : IDisposable
         CliArgs =
             "-c \"printf 'delivered\\n' > delivered.txt; "
             + "printf 'delivered\\n' > $JOB_RESULTS_DIR/deliverables.md; "
+            + "printf 'evidence\\n' > $JOB_RESULTS_DIR/evidence.txt; "
             + "printf 'delivered\\n[[TASK_DONE]]\\n'\"",
         TtlSeconds = 120,
         HeartbeatSeconds = 30,
@@ -395,6 +419,7 @@ public sealed class CodingFinalizationRetryTests : IDisposable
 
         public List<string> ArtifactIdempotencyKeys { get; } = [];
         public List<string> CompletionIdempotencyKeys { get; } = [];
+        public List<string> ArtifactManifestDigests { get; } = [];
         public List<string> ResultShas { get; } = [];
         public ConcurrentQueue<string> RequestOrder { get; } = new();
         public int CompletionCount { get; private set; }
@@ -522,6 +547,7 @@ public sealed class CodingFinalizationRetryTests : IDisposable
             lock (_gate)
             {
                 CompletionIdempotencyKeys.Add(Text(root, "idempotencyKey"));
+                ArtifactManifestDigests.Add(Text(root, "artifactManifestDigest"));
                 ResultShas.Add(Text(root, "resultSha"));
             }
             if (CompletionIdempotencyKeys.Count <= refuseCompletions)

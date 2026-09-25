@@ -6,7 +6,11 @@ public static class ArtifactTransferOutcomes
     public const string TransferFailed = "ArtifactTransferFailed";
 }
 
-public sealed record ArtifactTransferCandidate(string FullPath, string RelativePath, long SizeBytes);
+public sealed record ArtifactTransferCandidate(
+    string FullPath,
+    string RelativePath,
+    long SizeBytes,
+    string? Sha256 = null);
 
 public sealed record ArtifactTransferPlan(
     ArtifactTransferLimitsResponse Limits,
@@ -23,6 +27,9 @@ public static class ArtifactTransferPolicy
 {
     private static readonly HashSet<string> ExcludedDirectories = new(
         ["node_modules", "bin", "obj"],
+        StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> ExcludedVideoExtensions = new(
+        [".webm", ".mp4", ".mov", ".avi"],
         StringComparer.OrdinalIgnoreCase);
 
     public static (IReadOnlyList<ArtifactTransferCandidate> Files, IReadOnlyList<ArtifactTransferIssue> Skipped)
@@ -48,12 +55,28 @@ public static class ArtifactTransferPolicy
                     "is in an excluded dependency or build-output directory"));
                 continue;
             }
+            if (IsPlaywrightTrace(relative))
+            {
+                skipped.Add(new ArtifactTransferIssue(
+                    wirePath,
+                    file.SizeBytes,
+                    "is a Playwright trace excluded by the result-artifact policy"));
+                continue;
+            }
+            if (IsVideo(relative))
+            {
+                skipped.Add(new ArtifactTransferIssue(
+                    wirePath,
+                    file.SizeBytes,
+                    "is a video excluded by the result-artifact policy"));
+                continue;
+            }
             if (file.SizeBytes > limits.MaxFileBytes)
             {
                 skipped.Add(new ArtifactTransferIssue(
                     wirePath,
                     file.SizeBytes,
-                    $"exceeded the {FormatMb(limits.MaxRequestBodyBytes)} MB upload limit"));
+                    $"exceeded the {FormatMb(limits.MaxFileBytes)} MB per-file result budget"));
                 continue;
             }
             if (total + file.SizeBytes > limits.MaxTotalBytes)
@@ -79,6 +102,15 @@ public static class ArtifactTransferPolicy
 
     private static bool HasExcludedDirectory(string relativePath)
         => relativePath.Split('/', '\\').Any(ExcludedDirectories.Contains);
+
+    private static bool IsPlaywrightTrace(string relativePath)
+        => string.Equals(
+            Path.GetFileName(relativePath),
+            "trace.zip",
+            StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsVideo(string relativePath)
+        => ExcludedVideoExtensions.Contains(Path.GetExtension(relativePath));
 
     private static int Priority((string FullPath, string RelativePath, long SizeBytes) file)
         => file.RelativePath.Replace('\\', '/') switch

@@ -1605,11 +1605,13 @@ public sealed class RemoteTaskRunner
         }
 
         var manifest = new List<ArtifactManifestEntry>();
+        var prepared = new List<ArtifactTransferCandidate>();
         foreach (var file in selected)
         {
             var bytes = await File.ReadAllBytesAsync(file.FullPath, ct);
             var sha = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
             manifest.Add(new ArtifactManifestEntry(file.RelativePath, sha, bytes.LongLength));
+            prepared.Add(file with { SizeBytes = bytes.LongLength, Sha256 = sha });
         }
         var artifactManifest = BuildArtifactManifest(manifest);
         if (outbox is not null)
@@ -1618,7 +1620,7 @@ public sealed class RemoteTaskRunner
             _log(
                 $"durably journaled artifact manifest files={manifest.Count} skipped={skipped.Count}");
         }
-        return new ArtifactTransferPlan(limits, selected, skipped, artifactManifest);
+        return new ArtifactTransferPlan(limits, prepared, skipped, artifactManifest);
     }
 
     private async Task TransferResultsSafeAsync(
@@ -1630,17 +1632,26 @@ public sealed class RemoteTaskRunner
         if (plan is null) return;
         var issues = plan.Skipped.ToList();
         var uploaded = 0;
-        // deliverables.md is sent last so it can include any server-side
-        // capacity rejection observed while sending the other files.
-        foreach (var file in plan.Files.OrderBy(file =>
-                     file.RelativePath.EndsWith("/deliverables.md", StringComparison.OrdinalIgnoreCase) ? 1 : 0))
+        foreach (var file in plan.Files)
         {
             try
             {
-                if (file.RelativePath.EndsWith("/deliverables.md", StringComparison.OrdinalIgnoreCase)
-                    && issues.Count > plan.Skipped.Count)
-                    UpdateDeliverablesArtifactPolicy(ResultsDir(taskKey), issues, plan.Limits);
                 var bytes = await File.ReadAllBytesAsync(file.FullPath, CancellationToken.None);
+                var sha = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+                if (bytes.LongLength != file.SizeBytes
+                    || !string.Equals(sha, file.Sha256, StringComparison.OrdinalIgnoreCase))
+                {
+                    var changed = new ArtifactTransferIssue(
+                        file.RelativePath,
+                        bytes.LongLength,
+                        "changed after artifact manifest preparation; skipped to preserve manifest integrity",
+                        ArtifactTransferOutcomes.TransferFailed);
+                    issues.Add(changed);
+                    _log(
+                        $"artifact-transfer outcome=ArtifactTransferFailed task={taskKey} "
+                        + ArtifactFact(changed));
+                    continue;
+                }
                 var upload = new RunnerArtifactUpload(file.RelativePath, Convert.ToBase64String(bytes));
                 var response = await _client.UploadArtifactsAsync(new ArtifactIngestRequest(
                     taskKey,

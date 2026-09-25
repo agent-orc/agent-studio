@@ -24,6 +24,49 @@ public sealed class RemoteArtifactTransferTests
         Assert.All(skipped, issue => Assert.Equal(ArtifactTransferOutcomes.ArtifactTooLarge, issue.Outcome));
     }
 
+    [Fact]
+    public void Playwright_traces_and_videos_are_skipped_even_when_below_the_file_cap()
+    {
+        var limits = new ArtifactTransferLimitsResponse(
+            25 * 1024 * 1024,
+            20 * 1024 * 1024,
+            100 * 1024 * 1024);
+        var files = new[]
+        {
+            ("/results/trace.zip", "playwright/example/trace.zip", 2L * 1024 * 1024),
+            ("/results/video.webm", "playwright/example/video.webm", 3L * 1024 * 1024),
+            ("/results/report.md", "report.md", 1L),
+        };
+
+        var (selected, skipped) = ArtifactTransferPolicy.Select("/results", files, limits);
+
+        Assert.Equal(["results/report.md"], selected.Select(file => file.RelativePath));
+        Assert.Contains(skipped, issue =>
+            issue.Path.EndsWith("trace.zip", StringComparison.Ordinal)
+            && issue.Reason.Contains("Playwright trace", StringComparison.Ordinal));
+        Assert.Contains(skipped, issue =>
+            issue.Path.EndsWith("video.webm", StringComparison.Ordinal)
+            && issue.Reason.Contains("video", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Per_file_cap_rejection_names_the_file_budget_not_the_request_limit()
+    {
+        var limits = new ArtifactTransferLimitsResponse(
+            25 * 1024 * 1024,
+            10 * 1024 * 1024,
+            100 * 1024 * 1024);
+
+        var (_, skipped) = ArtifactTransferPolicy.Select(
+            "/results",
+            [("/results/report.bin", "report.bin", 11L * 1024 * 1024)],
+            limits);
+
+        var issue = Assert.Single(skipped);
+        Assert.Contains("10 MB per-file result budget", issue.Reason);
+        Assert.DoesNotContain("25 MB upload limit", issue.Reason);
+    }
+
     [Theory]
     [InlineData(413)]
     [InlineData(507)]

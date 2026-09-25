@@ -40,9 +40,12 @@ state.
   result evidence transport. Git result or salvage publication and fenced
   completion happen first. The server advertises its base64-safe request
   budget plus project file and total caps; the runner selects bounded files,
-  uploads one per request, and records skipped or HTTP 413/507 evidence as the
-  non-fatal `ArtifactTooLarge` / `artifacts: partial` outcome. The Task Server's
-  global request-body denial-of-service bound is not raised.
+  excludes Playwright traces, videos, dependency trees, and build output,
+  then uploads one manifest-bound file per request. Deterministic skips are
+  written to `results/deliverables.md` before the manifest is created. A later
+  HTTP 413/507 never rewrites a manifested file; it is recorded as the
+  non-fatal `ArtifactTooLarge` / `artifacts: partial` board fact instead. The
+  Task Server's global request-body denial-of-service bound is not raised.
 - `backend/Services/TaskRunnerService.cs`: project runner ownership and public
   start, stop, continue, and mode surface.
 - `runner/FinalizationRetryPolicy.cs`, `runner/CodingFinalizationReconciler.cs`,
