@@ -195,6 +195,8 @@ public sealed class ProjectTokenReceiptReader
                     ThinkingLevel = call.ThinkingLevel,
                     InputIncludesCached = call.InputIncludesCached,
                     UsageNormalization = call.UsageNormalization,
+                    PinnedModel = call.PinnedModel,
+                    ModelMismatch = call.ModelMismatch,
                 },
             };
         }

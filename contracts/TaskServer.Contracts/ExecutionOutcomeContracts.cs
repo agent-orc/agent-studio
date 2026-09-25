@@ -115,7 +115,8 @@ public sealed record ExecutionRawFacts(
     ImmutableReviewSubject? ReviewSubject = null,
     string? EffectiveCliType = null,
     string? EffectiveModel = null,
-    string? EffectiveThinkingLevel = null);
+    string? EffectiveThinkingLevel = null,
+    IReadOnlyList<string>? ObservedModels = null);
 
 /// <summary>
 /// Safe provider refusal evidence. The request and raw response are deliberately
@@ -126,6 +127,10 @@ public sealed record ProviderRequestRejection(
     string? Parameter,
     string Message,
     int? HttpStatus = null);
+
+public sealed record ModelUsageMismatch(
+    string PinnedModel,
+    IReadOnlyList<string> ObservedModels);
 
 public sealed record ExecutionOutcomeDecision(
     string ClassifierVersion,
@@ -140,7 +145,8 @@ public sealed record ExecutionOutcomeDecision(
     bool InvokesCodingModel,
     ExecutionRawFacts RawFacts,
     string? Detail = null,
-    ProviderRequestRejection? ProviderRejection = null);
+    ProviderRequestRejection? ProviderRejection = null,
+    ModelUsageMismatch? ModelMismatch = null);
 
 public sealed record ProviderOutputEvidence(
     string? TerminalEvent,
@@ -148,7 +154,8 @@ public sealed record ProviderOutputEvidence(
     string? SessionId,
     bool ProviderReportedCompletion,
     bool ProviderReportedFailure,
-    string? FailureMessage = null);
+    string? FailureMessage = null,
+    IReadOnlyList<string>? ObservedModels = null);
 
 /// <summary>
 /// Shared terminal-outcome adapter for Remote coding and review execution.
@@ -183,6 +190,10 @@ public static class ExecutionOutcomeAdapter
 
     private static readonly Regex ProviderFailed = new(
         @"""type""\s*:\s*""(?:error|turn\.failed|response\.failed)""|""subtype""\s*:\s*""error[^""]*""|""is_error""\s*:\s*true|""status""\s*:\s*""(?:error|failed|failure)""",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly Regex ClaudeUnrecognizedModel = new(
+        @"\[claude-code:unrecognized_model\]\s*(?<payload>\{[^\r\n]*\})?",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     public static ExecutionOutcomeDecision Classify(ExecutionRawFacts facts)
@@ -229,6 +240,19 @@ public static class ExecutionOutcomeAdapter
             return Decide(facts, ExecutionOutcomeKind.OutOfMemory, OutcomeConfidence.High, null, infrastructure: true);
         if (facts.SessionState == ExecutionSessionState.Invalid || (!honestTerminal && InvalidSession.IsMatch(diagnostic)))
             return Decide(facts, ExecutionOutcomeKind.InvalidSession, OutcomeConfidence.High, null, infrastructure: true);
+        if (TryClassifyClaudeUnrecognizedModel(diagnostic, facts.EffectiveModel, out var unrecognized))
+        {
+            return BuildProviderRejection(facts, unrecognized, modelMismatch: null);
+        }
+        if (TryModelMismatch(facts.EffectiveModel, facts.ObservedModels, out var mismatch))
+        {
+            var observed = string.Join(", ", mismatch.ObservedModels);
+            var rejection = new ProviderRequestRejection(
+                "model_mismatch",
+                "model",
+                $"Pinned model '{mismatch.PinnedModel}' was not used; provider reported {observed}.");
+            return BuildProviderRejection(facts, rejection, mismatch);
+        }
         if (!honestTerminal
             && ProviderRequestRejectionClassifier.TryClassify(
                 diagnostic,
@@ -237,21 +261,7 @@ public static class ExecutionOutcomeAdapter
             // execution.outcome.classified is durable. Persist only the bounded,
             // safe refusal fields, never a provider frame that could grow to
             // include a request body or credential-bearing metadata.
-            var safeFacts = facts with
-            {
-                ProviderTerminalEvent = null,
-                FinalAssistantOutput = null,
-                StdOut = null,
-                StdErr = null,
-            };
-            return Decide(
-                safeFacts,
-                ExecutionOutcomeKind.ProviderRejectedRequest,
-                OutcomeConfidence.High,
-                null,
-                infrastructure: true,
-                detail: providerRejection.Message,
-                providerRejection: providerRejection);
+            return BuildProviderRejection(facts, providerRejection, modelMismatch: null);
         }
         var providerAccess = ProviderAccessClassifier.Classify(
             facts.ExitCode ?? (providerFailed ? 1 : 0),
@@ -332,6 +342,92 @@ public static class ExecutionOutcomeAdapter
             RawFacts: facts,
             Detail: detail,
             ProviderRejection: providerRejection);
+    }
+
+    private static ExecutionOutcomeDecision BuildProviderRejection(
+        ExecutionRawFacts facts,
+        ProviderRequestRejection rejection,
+        ModelUsageMismatch? modelMismatch)
+    {
+        var safeFacts = facts with
+        {
+            ProviderTerminalEvent = null,
+            FinalAssistantOutput = null,
+            StdOut = null,
+            StdErr = null,
+        };
+        return Decide(
+            safeFacts,
+            ExecutionOutcomeKind.ProviderRejectedRequest,
+            OutcomeConfidence.High,
+            null,
+            infrastructure: true,
+            detail: rejection.Message,
+            providerRejection: rejection) with
+        {
+            ModelMismatch = modelMismatch,
+        };
+    }
+
+    private static bool TryClassifyClaudeUnrecognizedModel(
+        string diagnostic,
+        string? effectiveModel,
+        out ProviderRequestRejection rejection)
+    {
+        rejection = null!;
+        var match = ClaudeUnrecognizedModel.Match(diagnostic);
+        if (!match.Success) return false;
+
+        var model = effectiveModel?.Trim();
+        if (match.Groups["payload"].Success)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(match.Groups["payload"].Value);
+                if (document.RootElement.TryGetProperty("model", out var value)
+                    && value.ValueKind == JsonValueKind.String)
+                    model = value.GetString()?.Trim() ?? model;
+            }
+            catch (JsonException)
+            {
+                // The marker itself is authoritative even when its optional
+                // bounded metadata is malformed.
+            }
+        }
+
+        rejection = new ProviderRequestRejection(
+            "unrecognized_model",
+            "model",
+            string.IsNullOrWhiteSpace(model)
+                ? "The installed Claude CLI does not recognize the pinned model."
+                : $"The installed Claude CLI does not recognize pinned model '{model}'.");
+        return true;
+    }
+
+    private static bool TryModelMismatch(
+        string? pinnedModel,
+        IReadOnlyList<string>? observedModels,
+        out ModelUsageMismatch mismatch)
+    {
+        mismatch = null!;
+        if (string.IsNullOrWhiteSpace(pinnedModel) || observedModels is null) return false;
+        var observed = observedModels
+            .Where(model => !string.IsNullOrWhiteSpace(model))
+            .Select(model => model.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (observed.Length == 0 || observed.All(model => ModelsEquivalent(pinnedModel.Trim(), model)))
+            return false;
+        mismatch = new ModelUsageMismatch(pinnedModel.Trim(), observed);
+        return true;
+    }
+
+    private static bool ModelsEquivalent(string pinned, string observed)
+    {
+        if (string.Equals(pinned, observed, StringComparison.OrdinalIgnoreCase)) return true;
+        if (!observed.StartsWith(pinned + "-", StringComparison.OrdinalIgnoreCase)) return false;
+        var suffix = observed[(pinned.Length + 1)..];
+        return suffix.Length == 8 && suffix.All(char.IsDigit);
     }
 
     private static ExecutionRecoveryAction SelectRecovery(
@@ -447,6 +543,7 @@ public static class ProviderOutputEvidenceExtractor
         var completed = false;
         var failed = false;
         string? failureMessage = null;
+        var observedModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var line in (stdout ?? string.Empty).Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
         {
@@ -457,6 +554,7 @@ public static class ProviderOutputEvidenceExtractor
             {
                 var root = document.RootElement;
                 var type = StringProperty(root, "type");
+                ObserveModels(root, type, observedModels);
                 var terminalFailed = IsFailure(root, type);
                 if (terminalFailed)
                 {
@@ -484,7 +582,25 @@ public static class ProviderOutputEvidenceExtractor
             sessionId,
             completed,
             failed,
-            failureMessage);
+            failureMessage,
+            observedModels.ToArray());
+    }
+
+    private static void ObserveModels(
+        JsonElement root,
+        string? type,
+        ISet<string> observed)
+    {
+        if (TryProperty(root, "modelUsage", out var modelUsage)
+            && modelUsage.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in modelUsage.EnumerateObject())
+                if (!string.IsNullOrWhiteSpace(property.Name)) observed.Add(property.Name.Trim());
+        }
+
+        if (type is not ("result" or "turn.completed" or "response.completed")) return;
+        var model = StringProperty(root, "model")?.Trim();
+        if (!string.IsNullOrWhiteSpace(model)) observed.Add(model);
     }
 
     private static string? ExtractFailureMessage(JsonElement root)

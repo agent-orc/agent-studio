@@ -2697,6 +2697,27 @@
             downgrades conflicting evidence to a claimable degraded state.
           </td>
         </tr>
+        <tr id="case-agt-2893-claude-unrecognized-model-substitution">
+          <td>2026-09-24</td>
+          <td><code>AGT-2893</code><br><span class="small">Claude accepted an unknown pin, substituted Haiku, and reported success</span></td>
+          <td>
+            Claude Code 2.1.270 received <code>claude-opus-5-5</code>, wrote
+            <code>[claude-code:unrecognized_model]</code> to stderr, executed the prompt on
+            <code>claude-haiku-4-5-20251001</code>, and exited 0. Studio trusted the success and terminal sentinel.
+          </td>
+          <td>
+            Pickup did not validate explicit pins against installed CLI capability. Claude usage parsing ignored
+            <code>modelUsage</code>, remote receipts replaced missing observation with <code>task.model</code>, and the
+            outcome adapter did not recognize the stderr marker or compare observed and pinned models.
+          </td>
+          <td>
+            <span class="pill ok">fixed in dev</span> local and remote admission reject unsupported explicit pins before
+            spawn or lease. Claude minimum CLI versions come from the model registry; Codex uses the live catalogue
+            advertised by the Runner. Post-run evidence records actual provider models, prices those models, marks
+            mismatches on receipts and cards, and classifies the Claude marker or a model mismatch as
+            <code>ProviderRejectedRequest</code> even when the CLI exits 0.
+          </td>
+        </tr>
       </tbody>
     </table>
 

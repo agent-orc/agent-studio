@@ -582,6 +582,49 @@ public sealed class ExecutionOutcomeAdapterTests
     }
 
     [Fact]
+    public void Claude_unrecognized_model_marker_with_Haiku_usage_is_rejection_not_success()
+    {
+        const string stdout = """
+            {"type":"result","subtype":"success","is_error":false,"result":"ok [[TASK_DONE]]","modelUsage":{"claude-haiku-4-5-20251001":{"inputTokens":10,"outputTokens":2}}}
+            """;
+        const string stderr = """
+            [claude-code:unrecognized_model] {"model":"claude-opus-5-5","query_source":"sdk"}
+            """;
+        var provider = ProviderOutputEvidenceExtractor.Extract(stdout);
+
+        var result = ExecutionOutcomeAdapter.Classify(Coding(
+            ProviderTerminalEvent: provider.TerminalEvent,
+            FinalAssistantOutput: provider.FinalAssistantOutput,
+            StdOut: stdout,
+            StdErr: stderr,
+            ExitCode: 0,
+            EffectiveCliType: "claude",
+            EffectiveModel: "claude-opus-5-5",
+            ObservedModels: provider.ObservedModels));
+
+        Assert.Equal(ExecutionOutcomeKind.ProviderRejectedRequest, result.Outcome);
+        Assert.Equal("unrecognized_model", result.ProviderRejection!.Code);
+        Assert.NotEqual(ExecutionOutcomeKind.SuccessfulCompletion, result.Outcome);
+    }
+
+    [Fact]
+    public void Observed_model_mismatch_is_provider_rejection_even_without_marker()
+    {
+        var result = ExecutionOutcomeAdapter.Classify(Coding(
+            ProviderTerminalEvent: """{"type":"result","subtype":"success"}""",
+            FinalAssistantOutput: "ok [[TASK_DONE]]",
+            ExitCode: 0,
+            EffectiveCliType: "claude",
+            EffectiveModel: "claude-opus-5-5",
+            ObservedModels: ["claude-haiku-4-5-20251001"]));
+
+        Assert.Equal(ExecutionOutcomeKind.ProviderRejectedRequest, result.Outcome);
+        Assert.Equal("model_mismatch", result.ProviderRejection!.Code);
+        Assert.Equal("claude-opus-5-5", result.ModelMismatch!.PinnedModel);
+        Assert.Equal(["claude-haiku-4-5-20251001"], result.ModelMismatch.ObservedModels);
+    }
+
+    [Fact]
     public void Durable_salvage_changes_provider_rejection_recovery_without_restoring_raw_provider_output()
     {
         var provider = ProviderOutputEvidenceExtractor.Extract(CodexUnsupportedParameter);
@@ -637,7 +680,8 @@ public sealed class ExecutionOutcomeAdapterTests
         int FreshSalvageAttempts = 0,
         string? EffectiveCliType = null,
         string? EffectiveModel = null,
-        string? EffectiveThinkingLevel = null)
+        string? EffectiveThinkingLevel = null,
+        IReadOnlyList<string>? ObservedModels = null)
         => new(
             "run-1",
             ExecutionAttemptKind.Coding,
@@ -663,5 +707,6 @@ public sealed class ExecutionOutcomeAdapterTests
             ReviewSubject: null,
             EffectiveCliType,
             EffectiveModel,
-            EffectiveThinkingLevel);
+            EffectiveThinkingLevel,
+            ObservedModels);
 }

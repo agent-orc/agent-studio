@@ -192,9 +192,15 @@ public sealed class ModelRoutingPolicyRegistry
     public ProviderRejectionModelFallback? ProviderRejectionFallback(
         string? cliType,
         string? model)
-        => Policy.ProviderRejectionFallbacks.FirstOrDefault(candidate =>
+    {
+        var normalizedModel = ModelMetadataRegistry.NormalizeId(model);
+        return Policy.ProviderRejectionFallbacks.FirstOrDefault(candidate =>
             string.Equals(candidate.CliType, CliTypes.Normalize(cliType), StringComparison.OrdinalIgnoreCase)
-            && string.Equals(candidate.FromModel, model?.Trim(), StringComparison.OrdinalIgnoreCase));
+            && string.Equals(
+                ModelMetadataRegistry.NormalizeId(candidate.FromModel),
+                normalizedModel,
+                StringComparison.OrdinalIgnoreCase));
+    }
 
     /// <summary>
     /// Computes only the hard correctness floor. It deliberately ignores live
