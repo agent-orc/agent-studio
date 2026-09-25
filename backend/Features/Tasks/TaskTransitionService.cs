@@ -1205,7 +1205,9 @@ public sealed class TaskTransitionService
             IntegrationRequired: integrationRequired,
             HasAttributedCommits: attributed.Count > 0,
             HasEffectiveCommits: attributed.Any(TaskCommitSupersession.IsEffectiveDelivery),
-            ContainmentStatus: status?.Status ?? CompletionContractPolicy.ContainmentUnknown,
+            ContainmentStatus: status?.ReachUnavailable == true
+                ? CompletionContractPolicy.ContainmentUnknown
+                : status?.Status ?? CompletionContractPolicy.ContainmentUnknown,
             ContainmentCommitSha: status?.Sha,
             IntegrationBranch: status?.IntegrationBranch ?? ResolveIntegrationBranch(info, settings),
             OperatorOverride: operatorOverride,

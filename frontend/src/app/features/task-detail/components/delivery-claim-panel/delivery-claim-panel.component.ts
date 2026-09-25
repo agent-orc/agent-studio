@@ -15,6 +15,7 @@ import {
   type TaskInfo,
 } from '../../../../models/task.model';
 import { TaskService } from '../../../../services/task.service';
+import { IntegrationDeadEndComponent } from '../integration-dead-end/integration-dead-end.component';
 
 /** Tri-state containment answer. `unknown` is a question, never a negative. */
 export type DeliveryIntegrationState =
@@ -55,7 +56,7 @@ const DELIVERED_LANES: readonly string[] = [
   selector: 'app-delivery-claim-panel',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TooltipDirective],
+  imports: [TooltipDirective, IntegrationDeadEndComponent],
   templateUrl: './delivery-claim-panel.component.html',
   styleUrl: './delivery-claim-panel.component.scss',
 })
@@ -102,6 +103,7 @@ export class DeliveryClaimPanelComponent {
       if (answer.containmentStatus === 'no-branch') return 'nothing-to-integrate';
       return answer.containmentStatus === 'unknown' ? 'unknown' : 'not-integrated';
     }
+    if (this.job().integration?.reachUnavailable) return 'unknown';
     switch (this.job().integration?.status) {
       // AGT-2849: the delivery is in the integration branch graph either way.
       // The panel reports containment, and the badge carries the unpublished
@@ -231,5 +233,17 @@ export class DeliveryClaimPanelComponent {
   );
 
   readonly show = computed(() => this.inDeliveredLane()
-    && (!!this.answer() || !!this.job().integration || !!this.job().completionClaim));
+    && (!!this.answer() || !!this.job().integration || !!this.job().completionClaim
+      || !!this.job().reviewProjection?.blockingAspects?.length
+      || this.job().reviewProjection?.delivery.status === 'gate-failed'));
+
+  recheckIntegration(): void {
+    this.tasks.getDeliveryClaim(this.job().id, this.job().watchPath ?? undefined).subscribe({
+      next: (answer) => {
+        this.answer.set(answer);
+        this.tasks.refresh(true);
+      },
+      error: () => this.answer.set(null),
+    });
+  }
 }
