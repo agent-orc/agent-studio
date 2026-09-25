@@ -20,6 +20,11 @@ public sealed record AcceptanceRailSnapshot
     /// are unchanged since the attempt that was refused (AGT-2856).
     /// </summary>
     public int Suppressed { get; init; }
+    public int BounceEligible { get; init; }
+    public int BounceDeferred { get; init; }
+    public int BounceShadowed { get; init; }
+    public int BounceFalseEligibility { get; init; }
+    public string? PlatformProblem { get; init; }
 }
 
 /// <summary>
@@ -31,6 +36,7 @@ public sealed class AcceptanceRailHostedService : BackgroundService
 {
     private readonly TaskScannerService _scanner;
     private readonly IntegrationGenerationReconcileSweep? _generationReconcile;
+    private readonly AttemptAuthorityService? _attemptAuthority;
     private readonly TaskIntegrationStatusService _integrationStatus;
     private readonly TaskTransitionService _transitions;
     private readonly TaskIntegrationRecoveryService _recovery;
@@ -39,6 +45,8 @@ public sealed class AcceptanceRailHostedService : BackgroundService
     private readonly IConfiguration _configuration;
     private readonly ILogger<AcceptanceRailHostedService> _logger;
     private readonly object _snapshotGate = new();
+    private readonly SemaphoreSlim _runGate = new(1, 1);
+    private readonly DateTime _startedAtUtc = DateTime.UtcNow;
 
     /// <summary>
     /// Per card, the fingerprint of the last attempt that was refused. The rail
@@ -62,10 +70,12 @@ public sealed class AcceptanceRailHostedService : BackgroundService
         TimelineLog timeline,
         IConfiguration configuration,
         ILogger<AcceptanceRailHostedService> logger,
-        IntegrationGenerationReconcileSweep? generationReconcile = null)
+        IntegrationGenerationReconcileSweep? generationReconcile = null,
+        AttemptAuthorityService? attemptAuthority = null)
     {
         _scanner = scanner;
         _generationReconcile = generationReconcile;
+        _attemptAuthority = attemptAuthority;
         _integrationStatus = integrationStatus;
         _transitions = transitions;
         _recovery = recovery;
@@ -77,13 +87,32 @@ public sealed class AcceptanceRailHostedService : BackgroundService
 
     public AcceptanceRailSnapshot Current
     {
-        get { lock (_snapshotGate) return _current; }
+        get
+        {
+            lock (_snapshotGate)
+            {
+                var last = _current.LastRunAtUtc ?? _startedAtUtc;
+                return _current.Enabled && DateTime.UtcNow - last > TimeSpan.FromMinutes(5)
+                    ? _current with { PlatformProblem = "integration-bounce-worker-unavailable" }
+                    : _current;
+            }
+        }
     }
 
     public async Task<AcceptanceRailSnapshot> RunOnceAsync(CancellationToken ct = default)
     {
+        await _runGate.WaitAsync(ct);
+        try { return await RunCoreAsync(ct); }
+        finally { _runGate.Release(); }
+    }
+
+    private async Task<AcceptanceRailSnapshot> RunCoreAsync(CancellationToken ct)
+    {
         var options = AcceptanceRailOptions.FromConfiguration(_configuration);
-        var jobs = _scanner.ScanAllAutomationJobs()
+        var allJobs = _scanner.ScanAllAutomationJobs();
+        foreach (var ready in allJobs.Where(job => job.State == TaskStates.Ready))
+            ReconcileReadyBounce(ready);
+        var jobs = allJobs
             .Where(job => job.State is TaskStates.HumanReview or TaskStates.Escalated)
             .OrderBy(job => job.ProjectName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(job => job.EnteredLaneAt)
@@ -101,6 +130,10 @@ public sealed class AcceptanceRailHostedService : BackgroundService
         var escalated = 0;
         var failed = 0;
         var suppressed = 0;
+        var bounceEligible = 0;
+        var bounceDeferred = 0;
+        var bounceShadowed = 0;
+        var bounceFalseEligibility = 0;
         ForgetCardsOutsideRailLanes(jobs);
 
         foreach (var job in jobs)
@@ -133,6 +166,18 @@ public sealed class AcceptanceRailHostedService : BackgroundService
                     quotaResetAt: null);
                 if (decision.Reason == "operator-hold")
                 {
+                    if (status?.Status == IntegrationStatuses.ConflictSkipped
+                        && status.Failure?.RebaseRecoveryAvailable == true
+                        && ReviewSubjectStore.Read(job.FolderPath) is { } heldSubject)
+                    {
+                        IntegrationBounceObligationStore.Ensure(job.FolderPath,
+                            IntegrationBounceObligationStore.Project(
+                                job, heldSubject, status,
+                                OperatorReviewRequeueService.ReadEpoch(job.FolderPath),
+                                used, "operator-hold", "operator-hold",
+                                status.Failure.Reason));
+                        bounceDeferred++;
+                    }
                     held++;
                     continue;
                 }
@@ -157,8 +202,17 @@ public sealed class AcceptanceRailHostedService : BackgroundService
                         else { failed++; RememberRefusal(job, fingerprint); }
                         break;
                     case AcceptanceRailAction.Requeue:
-                        if (status is not null && Requeue(job, status, used + 1)) requeued++;
-                        else { failed++; RememberRefusal(job, fingerprint); }
+                        if (status is null) { failed++; RememberRefusal(job, fingerprint); break; }
+                        var bounce = ProcessBounce(job, status, used + 1);
+                        if (bounce == "queued") { requeued++; bounceEligible++; }
+                        else if (bounce == "shadow") { bounceEligible++; bounceShadowed++; }
+                        else if (bounce == "deferred") { bounceEligible++; bounceDeferred++; }
+                        else
+                        {
+                            if (bounce == "false-eligibility") bounceFalseEligibility++;
+                            failed++;
+                            RememberRefusal(job, fingerprint);
+                        }
                         break;
                     case AcceptanceRailAction.RequeueInfrastructure:
                         if (status is not null
@@ -218,6 +272,10 @@ public sealed class AcceptanceRailHostedService : BackgroundService
             Escalated = escalated,
             Failed = failed,
             Suppressed = suppressed,
+            BounceEligible = bounceEligible,
+            BounceDeferred = bounceDeferred,
+            BounceShadowed = bounceShadowed,
+            BounceFalseEligibility = bounceFalseEligibility,
         });
         _logger.LogInformation(
             "acceptance-rail-run humanReviewDepth={HumanReviewDepth} escalatedDepth={EscalatedDepth} held={Held} accepted={Accepted} requeued={Requeued} escalated={Escalated} failed={Failed} suppressed={Suppressed} lastRunAtUtc={LastRunAtUtc}",
@@ -314,34 +372,140 @@ public sealed class AcceptanceRailHostedService : BackgroundService
         return true;
     }
 
-    private bool Requeue(TaskInfo job, TaskIntegrationStatus status, int retryNumber)
+    private string ProcessBounce(
+        TaskInfo job, TaskIntegrationStatus status, int retryNumber)
     {
-        var result = _recovery.Queue(
-            job,
-            status,
-            status.Failure?.Code ?? AcceptedIntegrationFailureCodes.MergeConflict,
-            TaskIntegrationRecoveryService.AcceptanceRailSource,
-            retryNumber);
-        if (!result.Queued)
+        var subject = ReviewSubjectStore.Read(job.FolderPath);
+        if (subject is null || string.IsNullOrWhiteSpace(subject.ResultRef)
+            || string.IsNullOrWhiteSpace(subject.RunAttemptId)
+            || !ReviewSubjectStore.IsValidResultSha(subject.ResultSha)
+            || !string.Equals(subject.TaskKey, job.Key ?? job.Id, StringComparison.OrdinalIgnoreCase)
+            || (_attemptAuthority is not null
+                && !ReviewSubjectStore.TryValidateCurrentAttempt(
+                    job.FolderPath, subject, _attemptAuthority, out _))
+            || (!string.IsNullOrWhiteSpace(status.DeliveryRef)
+                && !string.Equals(subject.ResultRef, status.DeliveryRef, StringComparison.Ordinal)
+                && !string.Equals(subject.ImmutableResultRef, status.DeliveryRef, StringComparison.Ordinal))
+            || !job.Commits.Any(commit => string.Equals(
+                commit.Sha, subject.ResultSha, StringComparison.OrdinalIgnoreCase)))
         {
-            _logger.LogWarning(
-                "acceptance-rail-requeue-refused project={Project} job={JobId} error={Error}",
-                job.ProjectName,
-                job.Id,
-                result.Error);
-            return false;
+            _logger.LogWarning("acceptance-rail-requeue-refused project={Project} job={JobId} error={Error}",
+                job.ProjectName, job.Id, "Reviewed delivery evidence is stale or incomplete.");
+            return "false-eligibility";
         }
 
-        var moved = _scanner.FindJob(job.Id, job.WatchPath);
-        if (moved is not null)
+        var epoch = OperatorReviewRequeueService.ReadEpoch(job.FolderPath);
+        var alreadyUsedEpoch = _timeline.ReadAll(job.FolderPath).Any(entry =>
+            entry.Kind == TimelineEventKinds.IntegrationRecoveryQueued
+            && entry.Details?.GetValueOrDefault("automatic") == "true"
+            && entry.Details?.GetValueOrDefault("attemptEpoch") == epoch.ToString(
+                System.Globalization.CultureInfo.InvariantCulture));
+        var bounceConfig = _configuration.GetSection(AcceptanceRailDefaults.BounceConfigurationSection);
+        var globallyEnabled = bounceConfig.GetValue<bool?>("Enabled") ?? true;
+        var projectEnabled = bounceConfig.GetSection("Projects").GetSection(job.ProjectName)
+            .GetValue<bool?>("Enabled") ?? true;
+        var shadowOnly = bounceConfig.GetValue<bool?>("ShadowOnly") ?? false;
+        var route = alreadyUsedEpoch ? "guardian-required"
+            : !globallyEnabled || !projectEnabled ? "operator-disabled"
+            : shadowOnly ? "shadow" : "automatic";
+        var proposal = IntegrationBounceObligationStore.Project(
+            job, subject, status, epoch, retryNumber - 1, "none", route,
+            status.Failure?.Reason);
+        if (proposal.MechanicalRoute == "operator") return "false-eligibility";
+        var obligation = IntegrationBounceObligationStore.Ensure(job.FolderPath, proposal);
+        if (obligation.State == "queued") return "deferred";
+        if (route == "shadow") return "shadow";
+        if (route != "automatic")
         {
-            AppendAction(
-                moved,
-                "requeued",
-                $"Queued deterministic integration recovery retry {retryNumber}.",
-                retryNumber);
+            IntegrationBounceObligationStore.Update(job.FolderPath,
+                obligation with { State = "deferred", RouteDecision = route });
+            return "deferred";
         }
-        return true;
+
+        var result = _recovery.Queue(job, status,
+            status.Failure?.Code ?? AcceptedIntegrationFailureCodes.MergeConflict,
+            TaskIntegrationRecoveryService.AcceptanceRailSource, retryNumber);
+        if (!result.Queued)
+        {
+            _logger.LogWarning("integration-bounce-refused task={TaskKey} error={Error}", job.TaskKey, result.Error);
+            IntegrationBounceObligationStore.Update(job.FolderPath,
+                obligation with { State = "deferred", RouteDecision = "operator-error" });
+            return "failed";
+        }
+        var moved = _scanner.FindJob(job.Id, job.WatchPath);
+        if (moved is null) return "failed";
+        var selected = _recovery.SelectRecoveryRoute(moved);
+        IntegrationBounceObligationStore.Update(moved.FolderPath, obligation with
+        {
+            State = "queued",
+            RouteDecision = "automatic",
+            ClaimedAtUtc = DateTimeOffset.UtcNow,
+            PreviousRoute = selected.Previous,
+            SelectedRoute = selected.Selected,
+            RouteReason = selected.Reason,
+            PolicyVersion = selected.PolicyVersion,
+            OperatorPinPresent = selected.Pinned,
+        });
+        AppendAction(moved, "requeued", $"Queued deterministic integration recovery retry {retryNumber}.", retryNumber);
+        return "queued";
+    }
+
+    private void ReconcileReadyBounce(TaskInfo ready)
+    {
+        if (ready.PendingIntent?.SavedReason?.StartsWith(
+                TaskIntegrationRecoveryService.AcceptanceRailSource + ":",
+                StringComparison.Ordinal) != true)
+            return;
+        var directory = Path.Combine(TaskPaths.LogsDir(ready.FolderPath), "integration-bounce");
+        if (!Directory.Exists(directory)) return;
+        foreach (var path in Directory.EnumerateFiles(directory, "*.json"))
+        {
+            var obligation = IntegrationBounceObligationStore.Read(path);
+            if (obligation is null || obligation.State == "queued"
+                || obligation.RouteDecision is not ("automatic" or "shadow")
+                || ready.PendingIntent?.Prompt?.Contains(
+                    obligation.ResultSha, StringComparison.OrdinalIgnoreCase) != true
+                || ready.PendingIntent?.Prompt?.Contains(
+                    obligation.ResultRef, StringComparison.Ordinal) != true)
+                continue;
+            var events = _timeline.ReadAll(ready.FolderPath);
+            var recorded = events.Any(entry =>
+                entry.Kind == TimelineEventKinds.IntegrationRecoveryQueued
+                && entry.Details?.GetValueOrDefault("attemptEpoch")
+                    == obligation.OperatorReviewEpoch.ToString(
+                        System.Globalization.CultureInfo.InvariantCulture)
+                && entry.Details?.GetValueOrDefault("resultSha") == obligation.ResultSha);
+            if (!recorded)
+            {
+                _timeline.Append(ready.FolderPath,
+                    TimelineEventKinds.IntegrationRecoveryQueued,
+                    TimelineActors.System,
+                    "Recovered the queued integration bounce after a backend restart.",
+                    details: new Dictionary<string, string>
+                    {
+                        ["automatic"] = "true",
+                        ["source"] = TaskIntegrationRecoveryService.AcceptanceRailSource,
+                        ["attemptEpoch"] = obligation.OperatorReviewEpoch.ToString(
+                            System.Globalization.CultureInfo.InvariantCulture),
+                        ["resultSha"] = obligation.ResultSha,
+                        ["deliveryRef"] = obligation.ResultRef,
+                        ["reason"] = obligation.FailureCode,
+                    });
+            }
+            var selected = _recovery.SelectRecoveryRoute(ready);
+            IntegrationBounceObligationStore.Update(ready.FolderPath, obligation with
+            {
+                State = "queued",
+                RouteDecision = "automatic",
+                ClaimedAtUtc = DateTimeOffset.UtcNow,
+                PreviousRoute = selected.Previous,
+                SelectedRoute = selected.Selected,
+                RouteReason = selected.Reason,
+                PolicyVersion = selected.PolicyVersion,
+                OperatorPinPresent = selected.Pinned,
+            });
+            AppendAction(ready, "requeued", "Recovered queued integration bounce after restart.");
+        }
     }
 
     /// <summary>
@@ -506,5 +670,10 @@ public static class AcceptanceRailEndpoints
     {
         app.MapGet("/api/pipeline/acceptance-rail", (
             AcceptanceRailHostedService rail) => Results.Ok(rail.Current));
+        app.MapGet("/api/pipeline/integration-bounce/metrics", (
+            TaskScannerService scanner, AcceptanceRailHostedService rail) => Results.Ok(
+                IntegrationBounceObligationStore.Measure(
+                    scanner.ScanAllAutomationJobsWithArchive(),
+                    rail.Current.BounceFalseEligibility)));
     }
 }
