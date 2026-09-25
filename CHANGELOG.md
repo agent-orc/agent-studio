@@ -12,6 +12,23 @@ release yet.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-25
+
+Operations and integration release, 80 commits since 0.8.0. Integration
+verdicts no longer read "pending" for a delivery whose earlier generation was
+superseded (AGT-2871); a provider rejection of the requested model falls back
+to the declared sibling instead of counting as a CLI crash (AGT-2874, routing
+policy 2026-09-18); an integration that failed on the gate environment is
+replayed with its passed review (AGT-2824); Codex usage no longer double-counts
+cached input in costs and context (AGT-2882); a card that cannot be picked says
+so where it claims to be queued (AGT-2818); lost detached workers are salvaged
+with their context instead of quarantined (AGT-2870); result transfers survive
+a Task Server restart (AGT-2869). The Dossier landscape was consolidated
+(AGT-W14 North star rewritten, AGT-W57 to W60 created, round-2 reviews of the
+delivery-chain, gates, observation, task-and-board-UI and governance clusters
+merged). Entries below cover the cards that maintained this file; the full
+list is in the promotion manifest.
+
 ### Fixed
 
 - Auto Review wait classification now uses the restart-resume policy's
