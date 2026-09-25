@@ -17,6 +17,10 @@ stops `ssh`, judges health by runner capability heartbeats, recovers failed
 routes, and exposes the state to Studio. A Windows Scheduled Task is no longer
 part of normal operation.
 
+On 2026-09-25 the operator disabled `AgentRunner-TunnelKeeper` on the Windows
+workstation. It remains installed but disabled during the seven-day acceptance
+window. Do not enable it while `RunnerLinks` is configured for this runner.
+
 ## Configure the product-owned link
 
 `RunnerLinks` is empty in `backend/appsettings.json`, so a checkout does not dial
@@ -83,6 +87,12 @@ and `paused`.
 At Task Server startup, a successful bounded functional route probe adopts one
 already-running matching route. This prevents a flap during migration from the
 Scheduled Task. The next failed probe moves ownership to a supervisor child.
+Adoption proves the route works, not which process created it. The 2026-09-25
+handover did not exercise successful adoption: a foreign SSH process held the
+remote listener, the cleanup probe exited 124, and the operator stopped that
+process. The current resource reports a supervisor `childPid` and fresh
+heartbeats. If cleanup cannot remove a foreign listener, stop its owner on the
+host before expecting the supervisor to bind the port.
 
 ## API and Studio operation
 
@@ -108,6 +118,49 @@ minutes while a Ready card targets that runner, the Task Server emits one
 `link_down_notification` with the last error. A new heartbeat clears the acute
 state. Ready-card copy reads this same resource, so a link failure never appears
 as a provider sign-in failure.
+
+## Seven-day migration acceptance
+
+The S3 soak starts at the latest verified `link_up` after the operator's final
+handover action. The 2026-09-25 resource capture showed `state: up`, a fresh
+`lastHeartbeatAt`, and a non-null `childPid`; its `since` timestamp was
+2026-09-25 10:23:58 UTC. The workspace operator feed for that day contained
+`link_down` and `link_up` transitions, including the 10:23:40 UTC down and
+10:23:58 UTC recovery. These captures are in the AGT-2764 delivery results.
+The earliest possible acceptance time is 2026-10-02 10:23:58 UTC. A later
+manual intervention moves the start to the next verified recovery.
+
+From the workstation's loopback Task Server endpoint, save both views at the
+start and end of the window (and after the sleep or resume):
+
+```sh
+curl -fsS -H 'X-Client-Id: local-default' \
+  http://127.0.0.1:5031/api/v1/management/links > link-resource.json
+curl -fsS \
+  'http://127.0.0.1:5031/api/bus/_workspace/messages?tag=runner-link&since=2026-09-25T10%3A23%3A58Z&limit=5000' \
+  > link-events.json
+```
+
+Record the capture time separately. The resource's `lastError` can retain a
+previous failure after `state` returns to `up`; judge current health from
+`state`, `since`, `lastHeartbeatAt`, and `childPid` together. If the feed query
+returns 5000 lines, collect shorter UTC intervals so older events are not lost.
+
+For acceptance, preserve the link resource and the workspace operator-feed
+lines with timestamps for the entire window. Confirm that the resource is
+`up`, heartbeats remain fresh, recovery after any down transition is automatic,
+and no operator reconnect, SSH kill, or keeper restart occurred. Include one
+recorded workstation sleep or standby and resume during the window, followed by
+an automatic `link_up` and fresh heartbeat. A pre-window sleep does not satisfy
+this check. The current resource is a snapshot; use the feed for transition
+history and the operator log for manual actions and sleep or resume evidence.
+Do not mark S3 done from an `up` snapshot alone.
+
+The disabled Scheduled Task may be deleted after this acceptance is documented
+and the operator confirms that the repository emergency scripts can register it
+again. Keep `deploy/windows/agent-runner-tunnel/` for decision D3's explicit
+emergency path even after deleting the task. Until then, leave the task
+installed and disabled for a quick rollback.
 
 ## Verify
 
