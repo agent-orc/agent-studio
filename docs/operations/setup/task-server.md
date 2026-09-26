@@ -547,7 +547,7 @@ create owner-only `.env`, `runner.env`, and four service credentials first:
 | Profile | Services | Purpose |
 |---|---|---|
 | (none) | `task-server`, `orchestrator-engine`, `studio-bff`, `frontend`, coding and review `agent-host` services | Transitional one-box baseline with one task authority. See [Getting started](./getting-started.md) for route and acceptance limits. |
-| `legacy` | `orchestrator-api`, `agent-host-coding`, `agent-host-review` | Compatibility API forwards only versioned routes to the same Task Server; old runner routes are unsupported in the one-box installation. |
+| `legacy` | `orchestrator-api` | Compatibility API forwards only versioned routes to the same Task Server. Old runner services are absent because their protocol routes are rejected. |
 | `dev` | a `-dev` sibling of every service above | Builds from this checkout's Dockerfiles instead of pulling. This is the only place `build:` is wired in the compose file; name the exact `-dev` services you want (e.g. `docker compose --profile dev up --build orchestrator-api-dev frontend-dev`) rather than a bare `--profile dev up`, which also starts every profile-less default service and collides on their ports. |
 
 The disposable Compose topology explicitly sets

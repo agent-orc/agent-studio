@@ -12,8 +12,8 @@
 #   3. runner:       a containerised agent-host registers against the Task
 #                    Server and claims a seeded task through to
 #                    4-auto-review, using a fake CLI fixture.
-# The separate legacy-local runner path remains owned by the accepted option C
-# baseline and is not a service in this one-box installation check.
+# The legacy proxy is available for migration, but no legacy runner services
+# are exposed: it rejects the old runner protocol routes.
 #
 # Requires: docker compose v2, curl, jq, git.
 set -euo pipefail
@@ -49,6 +49,7 @@ bff_port="${COMPOSE_SMOKE_BFF_PORT:-5072}"
 compose=(docker compose --project-name "$project_name")
 fixture_dir=""
 runner_override=""
+bootstrap_fixture=""
 
 down()
 {
@@ -67,6 +68,7 @@ finish()
     down
     [ -n "$fixture_dir" ] && rm -rf "$fixture_dir"
     [ -n "$runner_override" ] && rm -f "$runner_override"
+    [ -n "$bootstrap_fixture" ] && rm -rf "$bootstrap_fixture"
     exit "$status"
 }
 
@@ -133,6 +135,33 @@ export STUDIO_ALLOWED_ORIGINS="http://127.0.0.1:${ui_port}"
 
 default_services="$("${compose[@]}" config --services | sort)"
 test "$default_services" = "$(printf 'agent-host-distributed\nagent-host-review-distributed\nfrontend\norchestrator-engine\nstudio-bff\ntask-server')"
+legacy_services="$("${compose[@]}" --profile legacy config --services | sort)"
+test "$legacy_services" = "$(printf 'agent-host-distributed\nagent-host-review-distributed\nfrontend\norchestrator-api\norchestrator-engine\nstudio-bff\ntask-server')"
+if "${compose[@]}" --profile dev config --services | grep -Eq '^agent-host-(coding|review)(-dev)?$'; then
+    echo 'unsupported legacy runner protocol service reappeared in Compose' >&2
+    exit 1
+fi
+
+# Exercise the retained bootstrap entry point in an empty installation copy.
+# It must select the Task Server profile and preserve every generated secret.
+bootstrap_fixture="$(mktemp -d)"
+mkdir -p "$bootstrap_fixture/scripts"
+cp docker-compose.yml .env.example runner.env.template "$bootstrap_fixture/"
+cp scripts/compose-runner-bootstrap.sh scripts/compose-distributed-bootstrap.sh "$bootstrap_fixture/scripts/"
+(
+    cd "$bootstrap_fixture"
+    file_mode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
+    bash scripts/compose-runner-bootstrap.sh >/dev/null
+    test -s .env && test -s runner.env && test ! -e runner.token
+    test "$(file_mode .env)" = 600
+    test "$(file_mode runner.env)" = 600
+    first_tokens="$(grep '^DISTRIBUTED_.*_TOKEN=' .env)"
+    test "$(printf '%s\n' "$first_tokens" | cut -d= -f2 | sort -u | wc -l)" -eq 4
+    bash scripts/compose-runner-bootstrap.sh >/dev/null
+    test "$first_tokens" = "$(grep '^DISTRIBUTED_.*_TOKEN=' .env)"
+)
+rm -rf "$bootstrap_fixture"
+bootstrap_fixture=""
 
 # --- Scenario 1: source-built one-box authority and browser boundary -------
 echo "=== default profile ==="
@@ -224,13 +253,17 @@ legacy_write_status="$(curl --silent --output /dev/null --write-out '%{http_code
     -X POST -H 'Content-Type: application/json' -d '{}' \
     "http://127.0.0.1:${resolved_api_port}/api/projects")"
 test "$legacy_write_status" = 404
+legacy_claim_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    -X POST -H 'Content-Type: application/json' -d '{}' \
+    "http://127.0.0.1:${resolved_api_port}/api/runner/claim")"
+test "$legacy_claim_status" = 404
 
 printf '%s\n' \
     "compose-smoke=passed" \
     "scenario=compatibility" \
     "services=task-server,orchestrator-api(proxy)" \
     "protocol-proxy=matched" \
-    "legacy-write=closed"
+    "legacy-write-and-claim=closed"
 
 teardown_scenario compose dev -- task-server-dev orchestrator-api-dev
 unset TASK_SERVER_BASE_URL
