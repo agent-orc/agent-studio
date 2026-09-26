@@ -515,6 +515,35 @@ public sealed class GitStateIndexServiceTests : IDisposable
     }
 
     [Fact]
+    public void PipelineRuntimeLogWrites_DoNotChangeGitInputOrReviewSubjectGeneration()
+    {
+        var jobsPath = NewRepoWatchPath("proj");
+        var folder = Path.Combine(jobsPath, "task-1");
+        Directory.CreateDirectory(folder);
+        var task = new TaskInfo
+        {
+            Id = "task-1", TaskKey = "task-1", ProjectName = "proj",
+            WatchPath = jobsPath, FolderPath = folder,
+        };
+        var cache = new TaskListGitProjectionCache();
+        var before = GitStateIndexService.CaptureTaskInputSignature([task], cache);
+        var runtimeLog = Path.Combine(folder, PipelineExecutionLog.FileName);
+
+        for (var i = 0; i < 10; i++)
+        {
+            File.WriteAllText(runtimeLog, new string('x', i + 1));
+            Assert.False(GitStateIndexService.IsGitRelevantSidecar(runtimeLog));
+            Assert.Equal(before, GitStateIndexService.CaptureTaskInputSignature([task], cache));
+            Assert.Equal(0, cache.SubjectVersion(folder));
+        }
+
+        var subject = Path.Combine(folder, ReviewSubjectStore.FileName);
+        File.WriteAllText(subject, "new review subject");
+        Assert.True(GitStateIndexService.IsGitRelevantSidecar(subject));
+        Assert.NotEqual(before, GitStateIndexService.CaptureTaskInputSignature([task], cache));
+    }
+
+    [Fact]
     public async Task RefChangeDuringRefresh_DiscardsOldComputationAndPublishesRerun()
     {
         var jobsPath = NewRepoWatchPath("proj");
