@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-taskboard.local/schemas/run-record.schema.json",
+  "title": "Run record",
+  "description": "One run timeline row. Trigger provenance records why and by whom the run started independently from CLI session resume mechanics.",
+  "type": "object",
+  "required": ["index", "intent", "startedAt", "status"],
+  "properties": {
+    "index": { "type": "integer", "minimum": 1, "description": "One-based chronological run number." },
+    "intent": { "type": "string", "description": "Legacy CLI session action such as start, continue, recovery, restart, or reissue. It is not the business trigger." },
+    "startedAt": { "type": "string", "format": "date-time", "description": "UTC instant at which execution started." },
+    "status": { "type": "string", "description": "Current or terminal execution status." },
+    "trigger": {
+      "type": ["string", "null"],
+      "enum": ["initial", "operator-continue", "review-finding", "review-concern", "integration-recovery", "gate-failure", "timeout-continuation", "recovery-after-crash", "restart", "replan", "dependency-release", null],
+      "description": "Closed business-trigger vocabulary. Null only for legacy rows, which UIs display as not recorded."
+    },
+    "triggeredBy": { "type": ["string", "null"], "description": "Actor: operator client/user, pipeline, runner <id>, or watchdog." },
+    "triggerReason": { "type": ["string", "null"], "description": "One sentence explaining why this run started." },
+    "triggerSource": { "type": ["string", "null"], "maxLength": 1000, "description": "Review attempt/aspect ids, integration failure code, or at most the first 300 prompt characters." }
+  },
+  "additionalProperties": true
+}

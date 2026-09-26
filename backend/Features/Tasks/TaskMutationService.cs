@@ -1975,7 +1975,8 @@ public class TaskMutationService
         string reason,
         string? activeJobId,
         string? watchPath = null,
-        ModelFallbackInfo? modelFallback = null)
+        ModelFallbackInfo? modelFallback = null,
+        RunTriggerMetadata? triggerMetadata = null)
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return null;
@@ -1985,6 +1986,8 @@ public class TaskMutationService
             Prompt = prompt ?? string.Empty,
             SavedAt = DateTime.UtcNow,
             SavedReason = string.IsNullOrWhiteSpace(reason) ? "project-busy" : reason,
+            TriggeredBy = triggerMetadata?.TriggeredBy,
+            TriggerReason = triggerMetadata?.TriggerReason,
             SavedAgainstActiveJobId = activeJobId,
             ModelFallback = modelFallback,
         };

@@ -13,6 +13,8 @@ public record StartJobRequest
 public record ContinueJobRequest
 {
     public string Prompt { get; init; } = "";
+    /// <summary>Optional operator sentence explaining why this continuation was requested.</summary>
+    public string? Reason { get; init; }
     public string? Model { get; init; }
     public string? CliType { get; init; }
     public string? ThinkingLevel { get; init; }
@@ -89,6 +91,10 @@ public record PendingIntent
     /// when a stopped run's unconsumed follow-up was written back.
     /// </summary>
     public string SavedReason { get; init; } = FollowUpQueueReasons.ProjectBusy;
+    /// <summary>The run actor supplied when an operator queued this follow-up.</summary>
+    public string? TriggeredBy { get; init; }
+    /// <summary>The operator's reason, or the prompt-derived default, for the eventual run.</summary>
+    public string? TriggerReason { get; init; }
     /// <summary>Diagnostic only: which job was active when this was saved.</summary>
     public string? SavedAgainstActiveJobId { get; init; }
     /// <summary>

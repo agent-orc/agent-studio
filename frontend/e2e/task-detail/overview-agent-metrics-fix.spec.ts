@@ -371,12 +371,38 @@ function mkt21HealedTimeline() {
   };
 }
 
+function triggerProvenanceTimeline() {
+  return {
+    runCount: 3,
+    firstStartedAt: '2026-09-18T08:00:00Z',
+    lastActivityAt: '2026-09-18T09:30:00Z',
+    hasActiveRun: false,
+    runs: [
+      {
+        ...runRecord(1, 'start', '2026-09-18T08:00:00Z', 30),
+        trigger: 'initial',
+        triggeredBy: 'pipeline',
+        triggerReason: 'Initial task run.',
+      },
+      {
+        ...runRecord(2, 'start', '2026-09-18T09:00:00Z', 20),
+        trigger: 'review-concern',
+        triggeredBy: 'pipeline',
+        triggerReason: 'Review concern round 1 of 1.',
+        triggerSource: 'review=review_01bb31c8;aspects=code-quality',
+      },
+      runRecord(3, 'start', '2026-09-18T09:30:00Z', 10),
+    ],
+  };
+}
+
 async function installRoutes(
   page: Page,
   state: string,
   timeline: ReturnType<typeof multiRunTimeline>
     | ReturnType<typeof legacyMissingCloseoutTimeline>
     | ReturnType<typeof mkt21HealedTimeline>
+    | ReturnType<typeof triggerProvenanceTimeline>
     = multiRunTimeline(),
   detailIdentity?: { key: string; title: string },
   reviewEvidence: readonly Record<string, unknown>[] = [],
@@ -651,11 +677,11 @@ test.describe('Overview agent-run metrics fix (tokens + cumulative duration)', (
     const runRows = runs.getByTestId('overview-run-row');
     await expect(runRows).toHaveCount(5);
     await expect(runRows.first()).toHaveAttribute('data-run-index', '5');
-    await expect(runRows.first().getByTestId('overview-run-trigger')).toHaveText('Continue');
+    await expect(runRows.first().getByTestId('overview-run-trigger')).toHaveText('Not recorded');
     await expect(runRows.first().getByTestId('overview-run-result')).toContainText('Completed');
     await expect(runRows.first().getByTestId('overview-run-duration')).toHaveText('55s');
-    await expect(runRows.first().getByTestId('overview-run-tokens')).toHaveText('86.2k tokens');
-    await expect(runRows.nth(3).getByTestId('overview-run-trigger')).toHaveText('User follow-up');
+    await expect(runRows.first().getByTestId('overview-run-tokens')).toHaveText('86k tokens');
+    await expect(runRows.nth(3).getByTestId('overview-run-trigger')).toHaveText('Not recorded');
     await expect(runs.getByTestId('overview-runs-agent')).toHaveText(
       'Claude Code · opus 4.8 · high',
     );
@@ -668,7 +694,7 @@ test.describe('Overview agent-run metrics fix (tokens + cumulative duration)', (
     // Symptom 1 (direct): the CORE Agent-execution row now carries the claude
     // run's own token + cost values on the pipeline row, not "—".
     const coreTokens = coreRow.getByTestId('overview-pipeline-step-tokens');
-    await expect(coreTokens).toHaveText('86.2k');
+    await expect(coreTokens).toHaveText('86k');
     const coreCost = coreRow.getByTestId('overview-pipeline-step-cost');
     await expect(coreCost).toHaveText('$0.96');
 
@@ -708,6 +734,35 @@ test.describe('Overview agent-run metrics fix (tokens + cumulative duration)', (
       if (RESULTS_DIR) {
         await runs.screenshot({
           path: path.join(RESULTS_DIR, `runs-panel-legacy-closeout-${theme}--mocked.png`),
+        });
+      }
+    }
+  });
+
+  test('run cards show recorded review provenance and do not guess legacy triggers', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await installRoutes(page, '5-human-review', triggerProvenanceTimeline());
+    await openDetail(page);
+
+    const runs = page.getByTestId('overview-runs');
+    const rows = runs.getByTestId('overview-run-row');
+    await expect(rows).toHaveCount(3);
+    await expect(rows.nth(0).getByTestId('overview-run-trigger')).toHaveText('Not recorded');
+    await expect(rows.nth(1).getByTestId('overview-run-trigger')).toHaveText(
+      'Review concern: Code Quality (review_01bb31c8)',
+    );
+    await expect(rows.nth(1).getByTestId('overview-run-trigger')).toHaveAttribute(
+      'href',
+      /remote-review-grade-review_01bb31c8\.md/,
+    );
+    await expect(rows.nth(2).getByTestId('overview-run-trigger')).toHaveText('Initial start');
+
+    if (RESULTS_DIR) {
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await expect(page.locator('html')).toHaveAttribute('data-studio-theme', theme);
+        await runs.screenshot({
+          path: path.join(RESULTS_DIR, `run-trigger-provenance-${theme}--mocked.png`),
         });
       }
     }
