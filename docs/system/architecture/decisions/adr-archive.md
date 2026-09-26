@@ -1788,3 +1788,19 @@ The standalone Linux Runner owns one clean checkout per project and executor. It
 **Implementation pointers.** Pure decision layer and accepted-ref rules: [`WikiPublicationPolicy.cs`](../../../../backend/Features/Docs/Publication/WikiPublicationPolicy.cs). Coordination, promotion, rollback, retention, and diagnostics: [`WikiPublicationService.cs`](../../../../backend/Features/Docs/Publication/WikiPublicationService.cs). Records, typed failures, and clamped options: [`WikiPublishedRevision.cs`](../../../../backend/Features/Docs/Publication/WikiPublishedRevision.cs). Scheduled trigger: [`WikiPublicationSyncService.cs`](../../../../backend/Features/Docs/Publication/WikiPublicationSyncService.cs). Operator endpoints: [`WikiPublicationEndpoints.cs`](../../../../backend/Features/Docs/Publication/WikiPublicationEndpoints.cs). Staged materialization and SHA-pinned snapshots: `MaterializeWikiSnapshot` and `GetWikiSnapshotForShaCached` in [`GitService.cs`](../../../../backend/Features/Git/GitService.cs). Read-side pinning: [`ProjectWikiSourceResolver.cs`](../../../../backend/Features/Docs/ProjectWikiSourceResolver.cs). Operational contract: [`hosted-wiki-publication.md`](../../../operations/setup/hosted-wiki-publication.md). Read model: [`wiki-tree.md`](../../contracts/wiki-tree.md).
 
 **Status.** Accepted.
+
+---
+
+## ADR-0075 - One-box Compose uses distributed authority and persistent product-managed credentials (2026-09-26)
+
+**Decision.** The root Compose file is the one-box Studio deployment: Task Server owns the store and principal authority, Orchestrator Engine runs the flow, Studio BFF serves browser `/api/v1` requests, the compatibility Studio API serves remaining dev-seat routes, and one Agent Host registers as a Runner. A one-shot bootstrap creates separate Studio, Engine, and Runner credentials in a persistent named volume. A product credential-manager command rotates each principal through the Task Server management API, replaces its protected file, and recreates the consumer. Option C accepts the current `/api/v1` route coverage limit until the operations topology work assigns the remaining routes.
+
+**Context.** The local Connector rejects LAN and Docker origins by a decided security boundary. Extending the BFF to all Connector routes would preempt the pending Operations Server topology. The operator selected option C for AGT-2736 and required first-run and rotation workflows without manual secret copying. Source-built Compose is the verified checkout path; published images receive their own release smoke and upgrade checks.
+
+**Non-goals.** This deployment does not relax the Connector's origin checks, make the Task Server publicly reachable, or claim Connector-equivalent route coverage. Docker Compose does not own Task Server principal state. Deleting the secrets volume is not a rotation method because it can strand principals in the retained store.
+
+**Reasoning style.** Keep durable authority in the Task Server, and let the deployment own only the file distribution needed by its processes. Credential creation is idempotent, and rotation uses the same principal API as other management clients. Browser routing must exercise the BFF that carries the distributed Studio principal.
+
+**Implementation pointers.** [docker-compose.yml](../../../../docker-compose.yml), [Caddyfile](../../../../deploy/compose/Caddyfile), [bootstrap](../../../../scripts/compose-secret-bootstrap.sh), [rotation command](../../../../scripts/compose-rotate.sh), [rotation worker](../../../../scripts/compose-rotate-credentials.sh), [smoke](../../../../scripts/compose-smoke-test.sh), and [Docker operations](../../../operations/setup/docker.md).
+
+**Status.** Accepted.
