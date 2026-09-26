@@ -999,6 +999,24 @@ public static class ProjectSettingsEndpoints
             return Results.Ok(new { cleared = true });
         });
 
+        app.MapGet("/api/projects/{projectName}/gate-result-cache", (
+            string projectName, TaskScannerService scanner) =>
+        {
+            if (!scanner.GetWatchPaths().Any(entry =>
+                    string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            return Results.Ok(new GateResultCache().Report(projectName));
+        });
+        app.MapDelete("/api/projects/{projectName}/gate-result-cache", async (
+            string projectName, TaskScannerService scanner, CancellationToken ct) =>
+        {
+            if (!scanner.GetWatchPaths().Any(entry =>
+                    string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            await new GateResultCache().InvalidateAsync(projectName, ct);
+            return Results.Ok(new { invalidated = true });
+        });
+
         // DELETE clears the build profile entirely, reverting the project to the
         // legacy "no onboarding gate" behaviour.
         app.MapDelete("/api/projects/{projectName}/build-profile", (
@@ -1236,6 +1254,7 @@ public static class ProjectSettingsEndpoints
                 RemoteProjectRepositoryResolver.ReadRepositoryDefaultBranch(project)).IntegrationRef;
             return remoteReviewPlans.Build(task, repositoryPath, taskSettings, integrationRef);
         });
+
     }
 
     private static bool IsKnownPipelineStep(string? stepId, string pipelineType = PipelineTypes.Task)

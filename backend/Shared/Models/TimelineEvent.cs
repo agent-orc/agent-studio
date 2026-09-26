@@ -153,6 +153,8 @@ public static class TimelineEventKinds
     public const string PostStepStarted = "post_step_started";
     /// <summary>A pipeline post-step finished.</summary>
     public const string PostStepFinished = "post_step_finished";
+    /// <summary>A gate reused an exact-SHA verdict; details name the original evidence and time.</summary>
+    public const string GateVerdictCacheHit = "gate_verdict_cache_hit";
     /// <summary>
     /// The orchestrator could not decide unattended and asked a human to
     /// take the wheel. The original card is escalated to
