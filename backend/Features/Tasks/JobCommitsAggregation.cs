@@ -8,8 +8,8 @@ namespace AgentStudio.Tasks;
 /// <para>
 /// <see cref="Build"/> is the single binding of <see cref="TaskCommitsAggregator"/>
 /// against the production <see cref="GitService"/> + session timeline. It was
-/// extracted from <c>TaskGitEndpoints</c> so that BOTH the <c>/commits</c> family
-/// AND the task-detail endpoint agree on which commits belong to a job - no
+/// extracted from <c>TaskGitEndpoints</c> so that the <c>/commits</c> family
+/// and the background task-detail Git snapshot agree on which commits belong to a job - no
 /// second, drifting implementation.
 /// </para>
 ///
@@ -22,10 +22,10 @@ namespace AgentStudio.Tasks;
 /// by <see cref="TaskCommitsAggregator.Aggregate"/>) recovers the real task-branch
 /// history, but it previously reached only the bare <c>/commits</c> endpoint - a
 /// surface the frontend never calls. <see cref="WithReconstructedInProgressCommits(TaskDetail, TaskSessionLog, string?, GitService)"/>
-/// folds that reconstruction into the task-detail response's
+/// folds that reconstruction into the background task-detail snapshot's
 /// <see cref="TaskInfo.Commits"/>, which the git-pane chain strip and the
 /// header commit-count badge DO read, so Task-Detail shows the full history
-/// instead of one commit. Scope is deliberately narrow (detail endpoint only);
+/// instead of one commit. Scope is deliberately narrow (detail snapshot only);
 /// the board card still reads the list projection (see the gap analysis,
 /// <c>results/ASS-1712-ui-wiring-gap.md</c>, Option A).
 /// </para>
@@ -84,7 +84,7 @@ public static class JobCommitsAggregation
     }
 
     /// <summary>
-    /// I/O wrapper for the task-detail endpoint: when the detail's task is an
+    /// I/O wrapper for the background task-detail index: when the task is an
     /// in-progress task with a collapsed chain, builds the aggregate and folds
     /// the reconstructed history into <see cref="TaskDetail.Info"/>. Best-effort -
     /// any failure returns <paramref name="detail"/> unchanged so a detail read
