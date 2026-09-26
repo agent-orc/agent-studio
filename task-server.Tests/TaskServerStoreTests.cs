@@ -39,6 +39,49 @@ public sealed class TaskServerStoreTests
     }
 
     [Fact]
+    public async Task Three_identical_prelaunch_failures_escalate_and_stop_claiming()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+            Assert.Equal("claimed", claim.Status);
+            await store.ReleaseLeaseAsync(claim.Run!.RunId,
+                new LeaseReleaseRequest("runner-a", "instance-a", claim.Lease!.LeaseId,
+                    claim.Lease.Fence, "runner-environment-preparation-failed",
+                    Detail: "fatal: not a git repository"), "runner-a", default);
+            var current = await store.GetTaskAsync(project.ProjectId, task.TaskId, default);
+            Assert.Equal(attempt == 3 ? "5e-escalated" : "2-ready", current!.State);
+        }
+
+        var next = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.NotEqual("claimed", next.Status);
+        var failure = Assert.Single(await store.ListRunnerInfrastructureFailuresAsync(default));
+        Assert.Equal(task.TaskKey, failure.TaskKey);
+        Assert.Equal(3, failure.Attempts);
+        Assert.Equal("host-a", failure.Host);
+        Assert.Equal("fatal: not a git repository", failure.LastError);
+        Assert.Equal(16, failure.Fingerprint.Length);
+
+        var escalated = (await store.GetTaskAsync(project.ProjectId, task.TaskId, default))!;
+        await store.UpdateTaskAsync(project.ProjectId, task.TaskId,
+            new UpdateTaskRequest(null, null, "2-ready", escalated.Version), "operator", default);
+        Assert.Empty(await store.ListRunnerInfrastructureFailuresAsync(default));
+        var retried = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal("claimed", retried.Status);
+        await store.ReleaseLeaseAsync(retried.Run!.RunId,
+            new LeaseReleaseRequest("runner-a", "instance-a", retried.Lease!.LeaseId,
+                retried.Lease.Fence, "runner-environment-preparation-failed",
+                Detail: "fatal: not a git repository"), "runner-a", default);
+        Assert.Equal("2-ready", (await store.GetTaskAsync(project.ProjectId, task.TaskId, default))!.State);
+    }
+
+    [Fact]
     public async Task Schema_migration_is_recorded_and_a_newer_store_fails_closed()
     {
         using var temp = new TempDirectory();

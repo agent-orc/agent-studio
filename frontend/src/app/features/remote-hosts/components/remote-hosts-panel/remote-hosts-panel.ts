@@ -105,6 +105,7 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
     deriveBoardRunningTruth(this.tasks.grouped().progress));
   readonly readyCandidateTasks = computed(() => this.tasks.grouped().ready
     .filter(task => (task.betterCandidates?.candidates.length ?? 0) > 0));
+  readonly brokenRunnerTasks = this.service.runnerInfrastructureFailures;
   readonly sortKey = this.tableState.sortKey;
   readonly sortDirection = this.tableState.direction;
   readonly sortedHostGroups = computed(() =>

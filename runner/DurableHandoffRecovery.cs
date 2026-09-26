@@ -39,6 +39,9 @@ public sealed class DurableHandoffRecovery
                 continue;
             if (DurableRunOutbox.IsActive(outbox.Authority.RunId))
                 continue;
+            if (string.Equals(outbox.Snapshot.FinalHandoffState,
+                    "abandoned-prelaunch", StringComparison.Ordinal))
+                continue;
             if (string.Equals(
                     outbox.Snapshot.FinalHandoffState,
                     "completed",

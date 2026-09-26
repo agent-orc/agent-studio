@@ -45,6 +45,27 @@ public sealed class GitWorkspaceTests : IDisposable
     }
 
     [Fact]
+    public async Task Missing_git_metadata_is_quarantined_and_next_preparation_succeeds()
+    {
+        await SeedOriginAsync();
+        var first = CreateWorkspace();
+        await first.PrepareAsync(CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(first.RepoPath, "container-output.txt"), "keep for inspection");
+        File.Delete(Path.Combine(first.RepoPath, ".git"));
+        var logs = new List<string>();
+
+        var replacement = CreateWorkspace(logs.Add);
+        await replacement.PrepareAsync(CancellationToken.None);
+
+        var quarantineRoot = Path.Combine(_workDir, ".runner-state", "quarantine", "AGT-2147");
+        var retained = Assert.Single(Directory.GetDirectories(quarantineRoot));
+        Assert.Equal("keep for inspection", await File.ReadAllTextAsync(Path.Combine(retained, "container-output.txt")));
+        Assert.True(File.Exists(Path.Combine(replacement.RepoPath, ".git")));
+        Assert.Contains(logs, line => line.Contains("worktree-metadata-missing quarantined", StringComparison.Ordinal)
+            && line.Contains("salvageRefs=", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Existing_project_clone_repairs_wrong_push_url_from_registry()
     {
         await SeedOriginAsync();

@@ -2697,6 +2697,20 @@
             downgrades conflicting evidence to a claimable degraded state.
           </td>
         </tr>
+        <tr id="case-agt-2736-missing-worktree-metadata">
+          <td>2026-09-25 to 2026-09-26</td>
+          <td><code>AGT-2736</code><br><span class="small">missing worktree Git metadata</span></td>
+          <td>Compose tests removed the card worktree's <code>.git</code>. Preparation and salvage failed before any agent process started. The lease went silent and the card cycled between <span class="lane">3-progress</span> and <span class="lane">2-ready</span> without a terminal.</td>
+          <td>The runner retried Git commands against an invalid worktree, while the Task Server treated the released prelaunch fault as an interrupted live run and waited through the silence grace.</td>
+          <td><span class="pill ok">fixed in dev</span> The runner quarantines the broken directory and prunes its shared registration before a fresh preparation. If infrastructure still fails, a typed release spends a per-card fingerprint budget; the third identical failure reaches <span class="lane">5e-escalated</span> with <code>runner-environment-broken</code>.</td>
+        </tr>
+        <tr id="case-agt-2737-foreign-owned-results">
+          <td>2026-09-25 to 2026-09-26</td>
+          <td><code>AGT-2737</code><br><span class="small">container-owned result files</span></td>
+          <td>Twenty-one result files owned by uid 10001 caused <code>UnauthorizedAccessException</code> during results handling. No agent process started. The card repeated the same <span class="lane">3-progress</span> to <span class="lane">2-ready</span> cycle without a terminal.</td>
+          <td>The runner could not reclaim files written by the container, and the released prelaunch fault consumed the same 120-second grace as lost mid-run authority.</td>
+          <td><span class="pill ok">fixed in dev</span> The allowlisted <code>chown-results</code> helper repairs ownership and retries the operation. If it cannot, the typed release records path and owner; the third identical failure reaches <span class="lane">5e-escalated</span> with the fingerprint and recovery hint.</td>
+        </tr>
       </tbody>
     </table>
 

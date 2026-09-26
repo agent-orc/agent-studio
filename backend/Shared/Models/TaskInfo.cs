@@ -25,6 +25,8 @@ public record TaskInfo
     /// </summary>
     public TaskAcceptanceScope? AcceptanceScope { get; init; }
     public string State { get; init; } = "draft";
+    /// <summary>Consecutive runner infrastructure failure shown in Execution Hosts.</summary>
+    public AgentStudio.Runner.RemoteClaimFailureState? RemoteClaimFailure { get; init; }
     /// <summary>Cold-storage marker when this task has an archive manifest.</summary>
     public string? ArchiveState { get; init; }
     /// <summary>

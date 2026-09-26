@@ -27,9 +27,10 @@ public sealed partial class TaskServerStore
     // counts for the 24-hour execution-host projection.
     // 19 persists host CLI update state, target drift age, and deduplicated
     // per-host model minimum alerts.
+    // 20 persists the per-card runner infrastructure failure fingerprint budget.
     // The migration block is idempotent; the number guards downgrades from
     // binaries that do not know this state.
-    public const int CurrentSchemaVersion = 19;
+    public const int CurrentSchemaVersion = 20;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -480,6 +481,25 @@ public sealed partial class TaskServerStore
         return result;
     }
 
+    public async Task<IReadOnlyList<RunnerInfrastructureFailureDto>> ListRunnerInfrastructureFailuresAsync(CancellationToken ct)
+    {
+        await using var connection = await OpenReadyAsync(ct);
+        await using var command = Command(connection, """
+            SELECT t.task_key, f.attempts, f.fingerprint, f.host, f.last_error
+              FROM runner_infrastructure_failures f
+              JOIN tasks t ON t.id = f.task_id
+             WHERE t.state = '5e-escalated'
+             ORDER BY f.updated_at DESC;
+            """);
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        var result = new List<RunnerInfrastructureFailureDto>();
+        while (await reader.ReadAsync(ct))
+            result.Add(new RunnerInfrastructureFailureDto(
+                reader.GetString(0), reader.GetInt32(1), reader.GetString(2),
+                reader.GetString(3), reader.GetString(4)));
+        return result;
+    }
+
     public async Task<IReadOnlyList<ExecutionAttemptTimelineDto>> ListAttemptsAsync(
         string projectId,
         string taskIdentity,
@@ -551,6 +571,10 @@ public sealed partial class TaskServerStore
                 """, ct, transaction,
                 ("$title", updated.Title), ("$body", updated.Body), ("$state", updated.State),
                 ("$version", updated.Version), ("$updated", Iso(now)), ("$id", updated.TaskId), ("$expected", request.ExpectedVersion));
+            if (existing.State == "5e-escalated" && updated.State == "2-ready")
+                await ExecuteAsync(connection,
+                    "DELETE FROM runner_infrastructure_failures WHERE task_id = $task;",
+                    ct, transaction, ("$task", updated.TaskId));
             if (updated.State is "6-completed" or "7-archive")
             {
                 await SupersedeUnclaimableReviewAttemptsAsync(
@@ -1481,15 +1505,53 @@ public sealed partial class TaskServerStore
             ValidateLeaseReference(lease, request.RunnerId, request.InstanceId, request.LeaseId, request.Fence);
             if (!string.Equals(lease.Status, "active", StringComparison.Ordinal))
                 throw new TaskServerConflictException("lease-not-active", $"Lease status is '{lease.Status}'.");
+            var infrastructureFailure = request.Outcome is
+                "runner-environment-preparation-failed" or "runner-salvage-failed" or "runner-results-handling-failed";
+            var diagnostic = (request.Detail ?? request.Outcome).Replace('\r', ' ').Replace('\n', ' ').Trim();
+            if (diagnostic.Length > 1000) diagnostic = diagnostic[..1000];
+            var fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+                $"{request.Outcome}:{diagnostic}".ToLowerInvariant())))[..16].ToLowerInvariant();
+            var host = Convert.ToString(await ScalarAsync(connection,
+                "SELECT host_id FROM runners WHERE id = $runner;", ct, transaction,
+                ("$runner", request.RunnerId)), CultureInfo.InvariantCulture)
+                ?? request.RunnerId;
+            var attempts = 0;
+            if (infrastructureFailure)
+            {
+                await ExecuteAsync(connection, """
+                    INSERT INTO runner_infrastructure_failures(task_id, fingerprint, cause, attempts, last_error, host, updated_at)
+                    VALUES ($task, $fingerprint, $cause, 1, $error, $host, $now)
+                    ON CONFLICT(task_id) DO UPDATE SET
+                        attempts = CASE WHEN fingerprint = excluded.fingerprint THEN attempts + 1 ELSE 1 END,
+                        fingerprint = excluded.fingerprint,
+                        cause = excluded.cause,
+                        last_error = excluded.last_error,
+                        host = excluded.host,
+                        updated_at = excluded.updated_at;
+                    """, ct, transaction,
+                    ("$task", lease.TaskId), ("$fingerprint", fingerprint),
+                    ("$cause", request.Outcome), ("$error", diagnostic),
+                    ("$host", host), ("$now", Iso(UtcNow)));
+                attempts = Convert.ToInt32(await ScalarAsync(connection,
+                    "SELECT attempts FROM runner_infrastructure_failures WHERE task_id = $task;",
+                    ct, transaction, ("$task", lease.TaskId)) ?? 0, CultureInfo.InvariantCulture);
+            }
+            else
+                await ExecuteAsync(connection,
+                    "DELETE FROM runner_infrastructure_failures WHERE task_id = $task;",
+                    ct, transaction, ("$task", lease.TaskId));
+            var targetState = infrastructureFailure
+                && attempts >= Math.Clamp(_options.RunnerInfrastructureFailureBudget, 1, 20)
+                ? "5e-escalated" : "2-ready";
             await ExecuteAsync(connection, """
                 UPDATE leases SET status = 'released' WHERE run_id = $run;
                 UPDATE runs SET status = $outcome, finished_at = $now WHERE id = $run;
-                UPDATE tasks SET state = '2-ready', version = version + 1, updated_at = $now
+                UPDATE tasks SET state = $state, version = version + 1, updated_at = $now
                  WHERE id = $task AND state = '3-progress';
                 UPDATE work_permits SET status = 'released'
                  WHERE run_id = $run AND status = 'accepted';
                 """, ct, transaction, ("$run", runId), ("$outcome", request.Outcome),
-                ("$now", Iso(UtcNow)), ("$task", lease.TaskId));
+                ("$now", Iso(UtcNow)), ("$task", lease.TaskId), ("$state", targetState));
             released = lease with { Status = "released" };
             // AGT-2870: a release that follows a lost worker names the salvage
             // ref its work was published under. Recording it on the audit row
@@ -1503,7 +1565,31 @@ public sealed partial class TaskServerStore
                     salvageRef = request.Salvage?.Branch,
                     salvageCommitSha = request.Salvage?.CommitSha,
                     salvageDetail = request.Salvage?.Detail,
+                    infrastructureFailure = infrastructureFailure ? new
+                    {
+                        category = "runner-environment-broken",
+                        fingerprint,
+                        attempts,
+                        host,
+                        lastError = diagnostic,
+                        recoveryHint = "Repair the runner environment or results ownership, then move the card to Ready.",
+                    } : null,
                 }), ct);
+            if (targetState == "5e-escalated")
+            {
+                await AuditAsync(connection, transaction, actorId, "runner-environment-broken", "task", lease.TaskId,
+                    JsonSerializer.Serialize(new { fingerprint, attempts, host, lastError = diagnostic }), ct);
+                await AppendLifecycleEventAsync(connection, transaction, runId, lease.TaskId,
+                    request.Fence, "runner.environment.broken",
+                    new {
+                        category = "runner-environment-broken",
+                        fingerprint,
+                        attempts,
+                        host,
+                        lastError = diagnostic,
+                        recoveryHint = "Repair the runner environment or results ownership, then move the card to Ready.",
+                    }, ct);
+            }
         }, ct);
         return new LeaseResponse("released", released);
     }
@@ -1829,6 +1915,7 @@ public sealed partial class TaskServerStore
                        source_bundle_sha256 = $bundleSha
                  WHERE id = $run;
                 UPDATE tasks SET state = $nextState, version = version + 1, updated_at = $now WHERE id = $task;
+                DELETE FROM runner_infrastructure_failures WHERE task_id = $task;
                 UPDATE work_permits SET status = 'completed'
                  WHERE run_id = $run AND status = 'accepted';
                 INSERT INTO run_completions(
@@ -3101,6 +3188,15 @@ public sealed partial class TaskServerStore
                 state TEXT NOT NULL,
                 version INTEGER NOT NULL,
                 created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS runner_infrastructure_failures(
+                task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+                fingerprint TEXT NOT NULL,
+                cause TEXT NOT NULL,
+                attempts INTEGER NOT NULL,
+                last_error TEXT NOT NULL,
+                host TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS orchestrator_contexts(

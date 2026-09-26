@@ -1,11 +1,14 @@
 # Runner Domain Map
 
-Version: 2026-09-19
+Version: 2026-09-26
 Status: System-of-record map for runner-side changes.
 
 Use this when a change touches task pickup, active execution, post-run outcome
 policy, reissue behavior, crash recovery, supervisor loops, or runtime runner
 state.
+
+Prelaunch infrastructure faults use the per-card fingerprint budget described
+in the [Execution hosts runbook](../../operations/remote-hosts.md#prelaunch-infrastructure-failures).
 
 ## Entry Points
 

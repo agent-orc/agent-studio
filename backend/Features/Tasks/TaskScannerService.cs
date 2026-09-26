@@ -672,6 +672,10 @@ public class TaskScannerService : ITaskScanner
                 Title = raw.TryGetProperty("title", out var title) ? title.GetString() ?? "" : "",
                 AcceptanceScope = ReadAcceptanceScope(raw),
                 State = resolvedState,
+                RemoteClaimFailure = raw.TryGetProperty("remoteClaimFailure", out var runnerFailure)
+                    && runnerFailure.ValueKind == JsonValueKind.Object
+                    ? JsonSerializer.Deserialize<RemoteClaimFailureState>(runnerFailure.GetRawText(), TaskJsonFile.ReadOpts)
+                    : null,
                 ArchiveState = ReadArchiveState(jobDir),
                 Order = raw.TryGetProperty("order", out var ord) && ord.TryGetInt32(out var orderVal) ? orderVal : 999,
                 Agent = raw.TryGetProperty("agent", out var agent) ? agent.GetString() ?? "" : "",

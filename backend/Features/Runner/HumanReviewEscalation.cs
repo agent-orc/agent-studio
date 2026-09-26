@@ -18,6 +18,7 @@ public static class HumanReviewEscalationCategories
     /// <summary>A remote coding claim could not prepare its repository or
     /// execution environment after the durable per-task retry budget.</summary>
     public const string RemoteClaimEnvironment = "remote-claim-environment";
+    public const string RunnerEnvironmentBroken = "runner-environment-broken";
 
     /// <summary>The agent explicitly reported that it could not proceed.</summary>
     public const string AgentBlocked = "agent-blocked";

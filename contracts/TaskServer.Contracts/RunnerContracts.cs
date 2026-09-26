@@ -167,7 +167,8 @@ public sealed record LeaseReleaseRequest(
     string LeaseId,
     long Fence,
     string Outcome,
-    LeaseReleaseSalvage? Salvage = null);
+    LeaseReleaseSalvage? Salvage = null,
+    string? Detail = null);
 
 /// <summary>
 /// Server -> Runner: an operator asked this attempt to stop. It travels on the
