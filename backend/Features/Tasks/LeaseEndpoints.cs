@@ -1015,6 +1015,7 @@ public static class LeaseEndpoints
                             Model = candidateQuotaPlan.Model,
                             ThinkingLevel = candidateQuotaPlan.ThinkingLevel,
                             Reason = candidateQuotaPlan.Reason,
+                            ModelFallback = candidateQuotaPlan.ModelFallback,
                         }, logger);
                         quotaAdmissionRecorder.EmitFallbackActivated(
                             claimedInfo,
@@ -1023,7 +1024,8 @@ public static class LeaseEndpoints
                             new CliRouteDecision(
                                 candidateQuotaPlan.CliType, candidateQuotaPlan.Model, candidateQuotaPlan.ThinkingLevel,
                                 true, candidateQuotaPlan.Reason, CapEvaluation.NotBlocked),
-                            source: "remote-claim");
+                            source: "remote-claim",
+                            modelFallback: candidateQuotaPlan.ModelFallback);
                     }
                     else
                     {

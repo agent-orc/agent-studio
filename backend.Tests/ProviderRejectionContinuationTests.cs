@@ -116,6 +116,7 @@ public sealed class ProviderRejectionContinuationTests : IDisposable
         Assert.Equal(ModelIds.Gpt6Astra, queued.Model);
         Assert.Equal(ModelIds.Gpt56Sol, queued.PendingIntent!.ModelFallback!.To);
         Assert.Equal("high", queued.PendingIntent.ModelFallback.ThinkingLevel);
+        Assert.Equal("provider-rejection", queued.PendingIntent.ModelFallback.Reason);
         var entry = Assert.Single(_timeline.ReadAll(queued.FolderPath), item =>
             item.Kind == TimelineEventKinds.ProviderRejectionContinuationStarted);
         Assert.Contains("continued on gpt-5.6-sol", entry.Summary, StringComparison.Ordinal);
