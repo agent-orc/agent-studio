@@ -65,6 +65,19 @@ public sealed class ReviewSubjectStoreTests : IDisposable
         Assert.Contains("result ref", error, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void ValidateCurrentAttempt_MatchingImmutableResultRef_IsAccepted()
+    {
+        var folder = Path.Combine(_root, "5-human-review", "matching-ref");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "task.json"), """{"key":"TE-39"}""");
+        var (authority, subject) = CompletedSubject(
+            "TE-39", "refs/heads/runner/fixture/TE-39");
+
+        Assert.True(ReviewSubjectStore.TryValidateCurrentAttempt(
+            folder, subject, authority, out var error), error);
+    }
+
     private (AttemptAuthorityService Authority, ReviewSubjectRecord Subject) CompletedSubject(
         string taskKey, string? immutableRef = null)
     {
