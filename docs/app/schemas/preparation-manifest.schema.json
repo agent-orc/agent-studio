@@ -27,9 +27,13 @@
         "properties": {
           "block": { "enum": ["npm", "nuget", "playwright"] },
           "key": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-          "state": { "enum": ["hit", "published", "unused", "discarded"] },
+          "state": { "enum": ["hit", "published", "already-published", "unused", "publish-skipped", "publish-rejected", "discarded"] },
           "entryPath": { "description": "Executor-local immutable cache entry path.", "type": "string", "minLength": 1 },
-          "inputs": { "description": "Repository-relative cache-key inputs.", "type": "array", "items": { "type": "string" } }
+          "inputs": { "description": "Repository-relative cache-key inputs.", "type": "array", "items": { "type": "string" } },
+          "contentBytes": { "description": "Bytes observed in this run's private block copy.", "type": "integer", "minimum": 0 },
+          "unusedRunCount": { "description": "Consecutive successful preparations in which this binding received no files.", "type": "integer", "minimum": 0 },
+          "warning": { "description": "Definition warning after the unused-run threshold, otherwise null.", "type": ["string", "null"] },
+          "recovery": { "description": "Lookup recovery applied before this run, such as evicted-incomplete or legacy-empty-miss.", "type": ["string", "null"] }
         }
       }
     },
