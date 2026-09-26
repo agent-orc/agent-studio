@@ -14,6 +14,13 @@ import type { ContextUsageMetric, TaskExecutionLocation } from '../../../models/
 export interface RunRecord {
   index: number;
   intent: string; // 'start' | 'continue' | 'recovery' | 'restart' | 'reissue'
+  /** Durable business trigger. Missing on legacy runs and never inferred from intent. */
+  trigger?: 'initial' | 'operator-continue' | 'review-finding' | 'review-concern' |
+    'integration-recovery' | 'gate-failure' | 'timeout-continuation' |
+    'recovery-after-crash' | 'restart' | 'replan' | 'dependency-release' | null;
+  triggeredBy?: string | null;
+  triggerReason?: string | null;
+  triggerSource?: string | null;
   startedAt: string;
   endedAt: string | null;
   status: string; // 'running' | 'completed' | typed terminal status | 'unknown'

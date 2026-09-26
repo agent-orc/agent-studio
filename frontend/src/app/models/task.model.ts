@@ -2007,6 +2007,9 @@ export interface ProjectSnapshot {
     integrationGateReviewReuse?: boolean | null;
     /** AGT-2839: the reuse value the merge gate actually applies. */
     integrationGateReviewReuseEffective?: boolean;
+    maxReviewConcernRounds?: number;
+    scopedReviewAfterFinding?: boolean;
+    scopedReviewMaximumDeltaFiles?: number;
     /** F35: every lane resolved to its effective sort strategy (defaults filled in). */
     laneSortStrategies?: Record<string, string>;
   };

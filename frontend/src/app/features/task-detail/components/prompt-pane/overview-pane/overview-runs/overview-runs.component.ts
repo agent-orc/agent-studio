@@ -1,12 +1,13 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import type { RunRecord } from '../../../../../run-timeline';
-import type { CliType } from '../../../../../../models/task.model';
+import type { CliType, TaskInfo } from '../../../../../../models/task.model';
 import {
   cliTypeLabel,
   formatCompactDateTime,
   shortModelName,
 } from '../../../../../../services/format.util';
 import { formatDuration, formatTokens } from '../overview-pane-formatters';
+import { runTriggerLabel, runTriggerReportHref } from '../../../protocol-pane/run-timeline/run-trigger-presentation.util';
 
 const KNOWN_CLIS: readonly CliType[] = ['claude', 'codex', 'gemini'];
 
@@ -19,6 +20,7 @@ interface OverviewRunVm {
   engine: string | null;
   tokens: string | null;
   reason: string | null;
+  reportHref: string | null;
 }
 
 @Component({
@@ -31,6 +33,7 @@ interface OverviewRunVm {
 export class OverviewRunsComponent {
   /** Run records from the currently open task only. */
   readonly runs = input<readonly RunRecord[]>([]);
+  readonly job = input<TaskInfo | null>(null);
 
   /**
    * Persisted CORE duration used only when an interrupted run has no timeline
@@ -45,12 +48,13 @@ export class OverviewRunsComponent {
       .map((run) => ({
         record: run,
         startedAt: this.startedAtLabel(run),
-        trigger: this.triggerLabel(run),
+        trigger: runTriggerLabel(run),
         result: this.resultLabel(run),
         duration: this.durationLabel(run),
         engine: this.engineLabel(run),
         tokens: this.tokenLabel(run),
         reason: this.reasonLabel(run),
+        reportHref: runTriggerReportHref(run, this.job()),
       })),
   );
 
@@ -77,23 +81,6 @@ export class OverviewRunsComponent {
   }
 
   totalDurationLabel(): string { return `${formatDuration(this.totalDurationSeconds())} total`; }
-
-  private triggerLabel(run: RunRecord): string {
-    switch (run.intent.trim().toLowerCase()) {
-      case 'start':
-        return 'Initial start';
-      case 'continue':
-        return run.userFollowup?.trim() ? 'User follow-up' : 'Continue';
-      case 'recovery':
-        return 'Recovery';
-      case 'restart':
-        return 'Restart';
-      case 'reissue':
-        return 'Review reissue';
-      default:
-        return run.intent.trim() || 'Run';
-    }
-  }
 
   private resultLabel(run: RunRecord): string {
     if (this.isLegacyUnrecorded(run)) return 'Not recorded (legacy run)';

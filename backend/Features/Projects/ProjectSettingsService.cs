@@ -359,6 +359,27 @@ public class ProjectSettingsService
         }
     }
 
+    public void SetReviewFollowUp(
+        string projectName,
+        int maxConcernRounds,
+        bool scopedReviewAfterFinding,
+        int scopedReviewMaximumDeltaFiles)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var value) ? value : new ProjectSettings();
+            _cache[key] = current with
+            {
+                MaxReviewConcernRounds = Math.Clamp(maxConcernRounds, 0, 10),
+                ScopedReviewAfterFinding = scopedReviewAfterFinding,
+                ScopedReviewMaximumDeltaFiles = Math.Clamp(scopedReviewMaximumDeltaFiles, 0, 1000),
+            };
+            Persist();
+        }
+    }
+
     /// <summary>
     /// ADR-0052: sets the integration branch parallel task worktrees branch off
     /// and merge back into. Blank reverts to repository <c>origin/HEAD</c>.

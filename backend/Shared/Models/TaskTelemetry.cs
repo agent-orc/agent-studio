@@ -87,6 +87,18 @@ public record SessionEvent
     public DateTime Ts { get; init; }
     /// <summary><c>start</c> | <c>continue</c> | <c>recovery</c></summary>
     public string Kind { get; init; } = "";
+    /// <summary>
+    /// Durable business reason that caused this run. Unlike <see cref="Kind"/>,
+    /// this does not change when the CLI resumes or reconstructs a session.
+    /// See <see cref="RunTriggers"/> for the closed wire vocabulary.
+    /// </summary>
+    public string? Trigger { get; init; }
+    /// <summary>Actor that requested the run, for example <c>pipeline</c>, <c>watchdog</c>, or <c>runner host-1</c>.</summary>
+    public string? TriggeredBy { get; init; }
+    /// <summary>One-sentence operator-facing explanation of the trigger.</summary>
+    public string? TriggerReason { get; init; }
+    /// <summary>Machine-readable source details such as review/aspect ids, a failure code, or a prompt preview.</summary>
+    public string? TriggerSource { get; init; }
     public string? Cli { get; init; }
     /// <summary>
     /// Effective model resolved for this run at confirmed process start.
@@ -171,6 +183,42 @@ public record SessionEvent
     /// <c>RunTimelineBuilder</c> into the run-detail "Execution Context" panel.
     /// </summary>
     public CliExecutionContext? ExecutionContext { get; init; }
+}
+
+/// <summary>Closed run-trigger vocabulary persisted in session events and exposed by the run timeline.</summary>
+public static class RunTriggers
+{
+    public const string Initial = "initial";
+    public const string OperatorContinue = "operator-continue";
+    public const string ReviewFinding = "review-finding";
+    public const string ReviewConcern = "review-concern";
+    public const string IntegrationRecovery = "integration-recovery";
+    public const string GateFailure = "gate-failure";
+    public const string TimeoutContinuation = "timeout-continuation";
+    public const string RecoveryAfterCrash = "recovery-after-crash";
+    public const string Restart = "restart";
+    public const string Replan = "replan";
+    public const string DependencyRelease = "dependency-release";
+
+    public static bool IsKnown(string? value) => value is
+        Initial or OperatorContinue or ReviewFinding or ReviewConcern or
+        IntegrationRecovery or GateFailure or TimeoutContinuation or
+        RecoveryAfterCrash or Restart or Replan or DependencyRelease;
+}
+
+/// <summary>Run trigger provenance resolved before a CLI process or remote lease starts.</summary>
+public sealed record RunTriggerMetadata(
+    string Trigger,
+    string TriggeredBy,
+    string TriggerReason,
+    string? TriggerSource = null)
+{
+    public static string PromptPreview(string? prompt)
+    {
+        var normalized = string.Join(' ', (prompt ?? string.Empty)
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return normalized.Length <= 300 ? normalized : normalized[..300];
+    }
 }
 
 /// <summary>

@@ -186,6 +186,45 @@
       </p>
     </section>
 
+    <section class="proj-detail__group">
+      <h3>Review follow-up</h3>
+      <div class="proj-detail__model-row">
+        <label for="review-concern-rounds">Automatic concern rounds</label>
+        <input id="review-concern-rounds"
+               class="proj-detail__model-select studio-measure studio-measure--tabular"
+               data-testid="project-detail-review-concern-rounds"
+               type="number"
+               min="0"
+               max="10"
+               [(ngModel)]="maxReviewConcernRoundsDraft"
+               (change)="onReviewFollowUpChange()" />
+        <span class="proj-detail__hint proj-detail__hint--inline">0 disables; default 1.</span>
+      </div>
+      <div class="proj-detail__model-row">
+        <label>
+          <input type="checkbox"
+                 data-testid="project-detail-scoped-review"
+                 [(ngModel)]="scopedReviewAfterFindingDraft"
+                 (change)="onReviewFollowUpChange()" />
+          Carry over unaffected aspects
+        </label>
+      </div>
+      <div class="proj-detail__model-row">
+        <label for="scoped-review-delta">Maximum scoped delta files</label>
+        <input id="scoped-review-delta"
+               class="proj-detail__model-select studio-measure studio-measure--tabular"
+               data-testid="project-detail-scoped-review-delta"
+               type="number"
+               min="0"
+               max="1000"
+               [(ngModel)]="scopedReviewMaximumDeltaFilesDraft"
+               (change)="onReviewFollowUpChange()" />
+      </div>
+      <p class="proj-detail__hint">
+        Build, tests, and lint always run again. The finding aspect always reruns; unaffected semantic aspects can be carried over only while the reviewed tree identity and evidence rules still match.
+      </p>
+    </section>
+
   }
 
   @if (view() === 'workflow') {

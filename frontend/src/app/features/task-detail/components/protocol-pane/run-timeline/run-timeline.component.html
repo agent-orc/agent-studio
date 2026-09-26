@@ -43,6 +43,9 @@
               <span class="prompt-entry__preview">
                 {{ item.entry.promptPreview || item.run.userFollowup || '(no follow-up)' }}
               </span>
+              <span class="prompt-entry__preview" data-testid="run-trigger-line">
+                {{ triggerLabel(item.run) }}
+              </span>
               <span class="prompt-entry__meta">
                 <span>Run #{{ item.run.index }}</span>
                 <span>{{ formatTime(item.entry.at) }}</span>
@@ -108,6 +111,15 @@
               @if (isReissueRun(r)) {
                 <div class="run-card__reissue-note">Auto-review reissue - findings prompt captured.</div>
               }
+
+              <div class="run-card__row" data-testid="run-trigger-detail">
+                <span class="run-card__row-label">Trigger</span>
+                @if (triggerReportHref(r); as reportHref) {
+                  <a [href]="reportHref" target="_blank" rel="noopener">{{ triggerLabel(r) }}</a>
+                } @else {
+                  <span>{{ triggerLabel(r) }}</span>
+                }
+              </div>
 
               <div class="run-card__row run-card__row--context">
                 <span class="run-card__row-label">Prompt text</span>

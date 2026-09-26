@@ -298,6 +298,12 @@ public sealed record PipelineStepExecution
     /// detail (e.g. a pass verdict, or a non-aspect step).
     /// </summary>
     public string? VerdictSummary { get; init; }
+    /// <summary>Prior review attempt supplying this unchanged aspect verdict.</summary>
+    public string? CarriedOverFrom { get; init; }
+    /// <summary>Coding run that addressed this aspect, when known.</summary>
+    public int? FixedInRun { get; init; }
+    /// <summary>True when the finding remained after the bounded fix round.</summary>
+    public bool? StillOpen { get; init; }
 }
 
 public enum PipelineStepStatus
