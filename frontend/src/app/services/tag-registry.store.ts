@@ -11,7 +11,7 @@ export class TagRegistryStore {
   private readonly http = inject(HttpClient);
   readonly workspaceTags = signal<TagRegistryEntry[]>([]);
   private workspaceLoaded = false;
-  private readonly projectTags = new Map<string, TagRegistryEntry[]>();
+  private readonly projectTags = signal(new Map<string, TagRegistryEntry[]>());
   private readonly pendingProjects = new Set<string>();
   readonly activeProject = signal<string | null>(null);
   readonly activeProjectLoaded = signal(false);
@@ -26,20 +26,25 @@ export class TagRegistryStore {
     this.workspaceTags.set(entries ?? []);
     this.workspaceLoaded = true;
     this.publish();
-    this.activeProjectLoaded.set(!this.activeProject() || this.projectTags.has(this.activeProject()!));
+    this.activeProjectLoaded.set(!this.activeProject() || this.projectTags().has(this.activeProject()!));
   }
 
   loadProject(projectName: string | null): void {
     this.activeProject.set(projectName);
-    this.activeProjectLoaded.set(this.workspaceLoaded && (!projectName || this.projectTags.has(projectName)));
+    this.activeProjectLoaded.set(this.workspaceLoaded && (!projectName || this.projectTags().has(projectName)));
     this.publish();
-    if (!projectName || this.projectTags.has(projectName) || this.pendingProjects.has(projectName)) return;
+    if (projectName) this.ensureProject(projectName);
+  }
+
+  /** Load a project's registry without changing the active filter options. */
+  ensureProject(projectName: string): void {
+    if (this.projectTags().has(projectName) || this.pendingProjects.has(projectName)) return;
     this.pendingProjects.add(projectName);
     this.http.get<{ items: TagRegistryEntry[] }>(`/api/projects/${encodeURIComponent(projectName)}/tags`)
       .subscribe({
         next: response => {
           this.pendingProjects.delete(projectName);
-          this.projectTags.set(projectName, response.items ?? []);
+          this.projectTags.update(current => new Map(current).set(projectName, response.items ?? []));
           if (this.activeProject() === projectName) {
             this.publish();
             this.activeProjectLoaded.set(this.workspaceLoaded);
@@ -52,11 +57,18 @@ export class TagRegistryStore {
       });
   }
 
+  /** Resolve chips against their owning project, including workspace tags. */
+  byIdForProject(projectName: string | null): Map<string, TagRegistryEntry> {
+    const byId = new Map(this.workspaceTags().map(tag => [tag.id, tag]));
+    for (const tag of this.projectTags().get(projectName ?? '') ?? []) byId.set(tag.id, tag);
+    return byId;
+  }
+
   private publish(): void {
     const project = this.activeProject();
     const byId = new Map(this.workspaceTags().map(tag => [tag.id, tag]));
     if (project) {
-      for (const tag of this.projectTags.get(project) ?? []) byId.set(tag.id, tag);
+      for (const tag of this.projectTags().get(project) ?? []) byId.set(tag.id, tag);
     }
     this.tags.set([...byId.values()]);
   }
