@@ -262,6 +262,15 @@
   gap: var(--studio-spacing-2);
 }
 
+.sheet__chat-waiting {
+  margin: 0;
+  padding: var(--studio-spacing-2);
+  color: var(--studio-fg-strong);
+  background: var(--studio-surface-muted);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
 .sheet__conversation {
   flex: 1 1 auto;
   min-height: 0;

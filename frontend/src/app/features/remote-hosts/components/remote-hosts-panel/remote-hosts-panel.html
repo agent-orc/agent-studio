@@ -200,6 +200,7 @@
           <tbody appRemoteHostCard [host]="group.machine" [roles]="group.roles"
             [roleActiveSlots]="roleSlots(group)" [now]="now()"
             [boardActiveSlots]="groupSlots(group)" [projectSlots]="projectSlots(group.machine)"
+            [chatUsage]="chatUsageFor(group.machine)"
             [stableRelease]="stableRelease()" [expanded]="isExpanded(group.id)"
             (expandedChange)="setExpanded(group.id, $event)"
             (action)="onAction($event)"

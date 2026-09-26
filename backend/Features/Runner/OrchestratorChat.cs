@@ -20,6 +20,7 @@ namespace AgentStudio.Runner;
 /// </summary>
 public class OrchestratorChat
 {
+    private static readonly object AppendGate = new();
     private readonly ILogger<OrchestratorChat> _logger;
     private readonly ProjectChatStore? _projectStore;
     private readonly ProjectChatIndex? _projectIndex;
@@ -76,16 +77,14 @@ public class OrchestratorChat
             // through the existing GET attachments route.
             var persisted = StripInlineBytes(turn);
             var line = JsonSerializer.Serialize(persisted, WriteOpts) + Environment.NewLine;
-            File.AppendAllText(path, line, Encoding.UTF8);
-
-            // Slice D mirror: also write the per-turn markdown file so the
-            // new file-tree + FTS index stay current as turns are appended.
-            // Best-effort; legacy JSONL remains the fallback if this fails.
-            // Only the project-scoped thread mirrors — the project chat tree
-            // is per-project, so folding an isolated task or Dossier turn
-            // into it would cross-contaminate the board's history.
-            if (!IsIsolatedContext(context))
-                MirrorToProjectChat(watchPath, persisted);
+            lock (AppendGate)
+            {
+                File.AppendAllText(path, line, Encoding.UTF8);
+                // Keep the project mirror in the same order when independent
+                // remote turns finish concurrently.
+                if (!IsIsolatedContext(context))
+                    MirrorToProjectChat(watchPath, persisted);
+            }
             return true;
         }
         catch (Exception ex)
@@ -142,6 +141,9 @@ public class OrchestratorChat
                 Author = author,
                 Kind = ProjectChatTurnKinds.Turn,
                 Ts = DateTime.SpecifyKind(turn.Ts, DateTimeKind.Utc),
+                QueuedAt = turn.QueuedAt,
+                StartedAt = turn.StartedAt,
+                FinishedAt = turn.FinishedAt,
                 Body = body
             };
             var written = _projectStore.Write(projectFolder, pTurn);
@@ -326,6 +328,9 @@ public record OrchestratorChatTurn
     public string? ConfiguredModel { get; init; }
     public string? QuotaFallbackReason { get; init; }
     public OrchestratorTokenUsage? TokenUsage { get; init; }
+    public DateTime? QueuedAt { get; init; }
+    public DateTime? StartedAt { get; init; }
+    public DateTime? FinishedAt { get; init; }
     public string? ErrorMessage { get; init; }
     /// <summary>
     /// Persisted transparency receipt for the context composed into this
@@ -477,16 +482,8 @@ public class OrchestratorChatService
     private readonly QuotaAdmissionRecorder? _quotaAdmissionRecorder;
 
     /// <summary>
-    /// Serializes concurrent <see cref="SendAsync"/> calls so multiple Codex
-    /// one-shots do not contend for the same orchestrator working directory
-    /// and transcript writes. The user still sees the pending turn while it
-    /// waits.
-    ///
-    /// <para>
-    /// This is a pragmatic correctness guard, not a parallelism win:
-    /// requests across all projects serialize on this gate. Per-context
-    /// concurrency is outside this footer-selection change.
-    /// </para>
+    /// Serializes local session resumes. Remote turns use independent host
+    /// checkouts and bypass this gate.
     /// </summary>
     private static readonly SemaphoreSlim SessionGate = new(1, 1);
 
@@ -591,13 +588,11 @@ public class OrchestratorChatService
         _ = OrchestratorContextEnvelopePolicy.Snapshot(
             projectName, context, req, userTurn.Ts);
 
-        // Serialize on the singleton-session gate. Two concurrent resumes
-        // race on the session id, the on-disk usage record, and Claude's
-        // own session memory; the gate is the simplest correctness fix
-        // until per-conversation sessions land. The wait counter tells us
-        // when chats are actually queueing in the wild.
+        var remoteRoute = _remoteWork is null ? null : ResolveRemoteRoute(projectName, watchPath);
+        var holdsSessionGate = remoteRoute is null;
         var queuedAt = DateTime.UtcNow;
-        await SessionGate.WaitAsync(ct);
+        if (holdsSessionGate)
+            await SessionGate.WaitAsync(ct);
         var queueWaitMs = (DateTime.UtcNow - queuedAt).TotalMilliseconds;
         if (queueWaitMs > 250)
         {
@@ -621,11 +616,14 @@ public class OrchestratorChatService
                 ? ModelMetadataRegistry.DefaultThinkingLevelForCli(CliTypes.Codex, requestedModel)
                 : req.ThinkingLevel.Trim();
             var workingDirectory = ResolveWorkingDirectory(projectName, watchPath);
+            var startedAt = DateTime.UtcNow;
+            DateTime? fallbackQueuedAt = null;
             OrchestratorDecisionResult result;
+            RemoteChatWorkResult? remoteResult = null;
+            string? executionNote = null;
             try
             {
                 var fullPrompt = prompt;
-                var remoteRoute = ResolveRemoteRoute(projectName, watchPath);
                 if (remoteRoute != null && _remoteWork != null)
                 {
                     var quotaPlan = _quotaAdmission?.Plan(new QuotaAdmissionRequest(
@@ -662,29 +660,56 @@ public class OrchestratorChatService
                                 watchPath, projectName, quotaPlan, "remote-project-chat");
                         }
 
-                        var remote = await _remoteWork.EnqueueTurnAsync(
-                            remoteRoute,
-                            fullPrompt,
-                            effectiveModel,
-                            effectiveThinking,
-                            ct,
-                            effectiveCli,
-                            CliTypes.Codex,
-                            requestedModel,
-                            quotaPlan?.IsFallback == true ? quotaPlan.Reason : null).ConfigureAwait(false);
-                        result = new OrchestratorDecisionResult(
-                            remote.Success,
-                            remote.ReplyText,
-                            string.IsNullOrWhiteSpace(remote.Model) ? effectiveModel : remote.Model,
-                            remote.TokenUsage,
-                            CapturedSessionId: null,
-                            remote.ErrorMessage)
+                        try
                         {
-                            CliType = remote.CliType ?? effectiveCli,
-                            ConfiguredModel = remote.ConfiguredModel ?? requestedModel,
-                            QuotaFallback = !string.IsNullOrWhiteSpace(remote.QuotaFallbackReason),
-                            QuotaFallbackReason = remote.QuotaFallbackReason,
-                        };
+                            var remote = await _remoteWork.EnqueueTurnAsync(
+                                remoteRoute with { ContextKey = context?.Value },
+                                fullPrompt,
+                                effectiveModel,
+                                effectiveThinking,
+                                ct,
+                                effectiveCli,
+                                CliTypes.Codex,
+                                requestedModel,
+                                quotaPlan?.IsFallback == true ? quotaPlan.Reason : null).ConfigureAwait(false);
+                            remoteResult = remote;
+                            result = new OrchestratorDecisionResult(
+                                remote.Success,
+                                remote.ReplyText,
+                                string.IsNullOrWhiteSpace(remote.Model) ? effectiveModel : remote.Model,
+                                remote.TokenUsage,
+                                CapturedSessionId: null,
+                                remote.ErrorMessage)
+                            {
+                                CliType = remote.CliType ?? effectiveCli,
+                                ConfiguredModel = remote.ConfiguredModel ?? requestedModel,
+                                QuotaFallback = !string.IsNullOrWhiteSpace(remote.QuotaFallbackReason),
+                                QuotaFallbackReason = remote.QuotaFallbackReason,
+                            };
+                        }
+                        catch (RemoteChatHostUnreachableException unreachable)
+                        {
+                            fallbackQueuedAt = unreachable.QueuedAt;
+                            await SessionGate.WaitAsync(ct);
+                            try
+                            {
+                                startedAt = DateTime.UtcNow;
+                                result = await _runner.DecideCodexAsync(
+                                    fullPrompt, effectiveModel, effectiveThinking,
+                                    workingDirectory, ct, projectName, watchPath);
+                            }
+                            finally
+                            {
+                                SessionGate.Release();
+                            }
+                            executionNote = $"Ran on the workstation because {remoteRoute.RunnerId} was unreachable.";
+                            if (result.Success)
+                                _remoteWork.RecordLocalFallback(remoteRoute, new ChatExecutionContext(
+                                    "local", "local", workingDirectory,
+                                    _git?.ReadBranchAt(workingDirectory),
+                                    _git?.ReadHeadShaAt(workingDirectory),
+                                    "ready", DateTime.UtcNow));
+                        }
                     }
                 }
                 else
@@ -718,6 +743,9 @@ public class OrchestratorChatService
                     Text = "",
                     ErrorMessage = translation.FriendlyMessage,
                     ErrorDetail = translation.RawDetail,
+                    QueuedAt = remoteResult?.QueuedAt ?? fallbackQueuedAt ?? queuedAt,
+                    StartedAt = remoteResult?.StartedAt ?? startedAt,
+                    FinishedAt = DateTime.UtcNow,
                     ContextReceipt = contextReceipt
                 };
                 await AppendTurnAsync(projectName, watchPath, context, failure, ct).ConfigureAwait(false);
@@ -743,6 +771,9 @@ public class OrchestratorChatService
                     TokenUsage = result.TokenUsage,
                     ErrorMessage = translation.FriendlyMessage,
                     ErrorDetail = translation.RawDetail,
+                    QueuedAt = remoteResult?.QueuedAt ?? fallbackQueuedAt ?? queuedAt,
+                    StartedAt = remoteResult?.StartedAt ?? startedAt,
+                    FinishedAt = DateTime.UtcNow,
                     ContextReceipt = contextReceipt
                 };
                 await AppendTurnAsync(projectName, watchPath, context, failure, ct).ConfigureAwait(false);
@@ -752,12 +783,15 @@ public class OrchestratorChatService
             var reply = new OrchestratorChatTurn
             {
                 Role = OrchestratorChatRoles.Orchestrator,
-                Text = result.ReplyText,
+                Text = executionNote is null ? result.ReplyText : $"{executionNote}\n\n{result.ReplyText}",
                 Model = result.Model,
                 CliType = result.CliType,
                 ConfiguredModel = result.ConfiguredModel,
                 QuotaFallbackReason = result.QuotaFallbackReason,
                 TokenUsage = result.TokenUsage,
+                QueuedAt = remoteResult?.QueuedAt ?? fallbackQueuedAt ?? queuedAt,
+                StartedAt = remoteResult?.StartedAt ?? startedAt,
+                FinishedAt = remoteResult?.FinishedAt ?? DateTime.UtcNow,
                 ContextReceipt = contextReceipt
             };
             await AppendTurnAsync(projectName, watchPath, context, reply, ct).ConfigureAwait(false);
@@ -765,7 +799,8 @@ public class OrchestratorChatService
         }
         finally
         {
-            SessionGate.Release();
+            if (holdsSessionGate)
+                SessionGate.Release();
         }
     }
 
