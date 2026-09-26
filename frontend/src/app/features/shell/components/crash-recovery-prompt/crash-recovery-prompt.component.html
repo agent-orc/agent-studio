@@ -1,3 +1,14 @@
+@if (pending().length > 0 && !open()) {
+  <button type="button"
+          class="crp__entry"
+          data-testid="crash-recovery-entry"
+          [attr.aria-label]="'Review ' + pending().length + ' pending crash recovery ' + (pending().length === 1 ? 'item' : 'items')"
+          (click)="openRecovery()">
+    <app-studio-icon name="archive" [size]="14"></app-studio-icon>
+    <span>Recovery pending</span>
+    <span class="crp__entry-count">{{ pending().length }}</span>
+  </button>
+}
 @if (open()) {
   <app-dialog
     eyebrow="Crash recovery"
@@ -5,7 +16,9 @@
     subtitle="The backend found uncommitted changes during startup. Nothing will be committed until you confirm it here."
     kind="primary"
     widthTier="lg"
-    [closable]="false"
+    [closable]="true"
+    (closeRequest)="closeLocal()"
+    (backdropClick)="closeLocal()"
     testid="crash-recovery-prompt">
     <div class="crp" data-testid="crash-recovery-list">
       <div class="crp__toolbar">
@@ -23,14 +36,22 @@
         <p class="crp__error" data-testid="crash-recovery-error">{{ msg }}</p>
       }
 
-      @for (item of reviewPending(); track item.id) {
+      @for (item of pending(); track item.id) {
         <article class="crp__item" [attr.data-testid]="'crash-recovery-item-' + item.id">
           <header class="crp__item-head">
             <div class="crp__identity">
               <span class="crp__project">{{ item.projectName }}</span>
               <span class="crp__job">{{ item.jobId || 'No active task attribution' }}</span>
             </div>
-            <time class="crp__time" [dateTime]="item.createdAt">{{ item.createdAt | date: 'short' }}</time>
+            <div class="crp__timestamps">
+              @if (item.detectedAt) {
+                <time class="crp__time" [dateTime]="item.detectedAt">Found {{ item.detectedAt | date: 'short' }}</time>
+              }
+              <time class="crp__time" [dateTime]="item.createdAt">Oldest change {{ item.createdAt | date: 'short' }}</time>
+              @if (item.bootId) {
+                <span class="crp__time" [title]="item.bootId">Boot {{ item.bootId.slice(0, 8) }}</span>
+              }
+            </div>
           </header>
 
           <p class="crp__reason">{{ item.reason }}</p>
@@ -82,6 +103,10 @@
     </div>
 
     <div footer class="crp__footer">
+      <button type="button"
+              class="crp__button crp__button--ghost"
+              data-testid="crash-recovery-defer"
+              (click)="closeLocal()">Close for now</button>
       <button type="button"
               class="crp__button crp__button--ghost"
               data-testid="crash-recovery-refresh"

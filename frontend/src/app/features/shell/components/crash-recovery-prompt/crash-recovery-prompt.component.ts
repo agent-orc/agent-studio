@@ -22,15 +22,14 @@ export class CrashRecoveryPromptComponent implements OnInit {
   private readonly destroyRef = inject(DestroyRef);
 
   readonly pending = signal<CrashRecoveryPending[]>([]);
-  readonly reviewPending = computed(() =>
-    this.pending().filter(item => item.classification !== 'trivial'));
   readonly trivialPending = computed(() =>
     this.pending().filter(item => item.classification === 'trivial'));
   readonly loading = signal(false);
   readonly busyId = signal<string | null>(null);
   readonly busyAll = signal(false);
   readonly error = signal<string | null>(null);
-  readonly open = computed(() => this.reviewPending().length > 0);
+  /** Only explicit operator opening may cover the current view. */
+  readonly open = signal(false);
 
   private stackDispose: (() => void) | null = null;
   private trivialNotificationId: number | null = null;
@@ -43,7 +42,10 @@ export class CrashRecoveryPromptComponent implements OnInit {
     effect(() => {
       if (this.open()) {
         if (!this.stackDispose) {
-          this.stackDispose = this.modalStack.push('crash-recovery-prompt', () => true);
+          this.stackDispose = this.modalStack.push('crash-recovery-prompt', () => {
+            this.closeLocal();
+            return true;
+          });
         }
       } else if (this.stackDispose) {
         this.stackDispose();
@@ -62,12 +64,25 @@ export class CrashRecoveryPromptComponent implements OnInit {
     this.refresh();
   }
 
+  openRecovery(): void {
+    if (this.pending().length === 0) return;
+    this.open.set(true);
+    this.refresh();
+  }
+
+  /** Closing this view does not acknowledge the shared recovery decision. */
+  closeLocal(): void {
+    this.open.set(false);
+    this.error.set(null);
+  }
+
   refresh(): void {
     this.loading.set(true);
     this.error.set(null);
     this.tasks.getPendingCrashRecoveries().subscribe({
       next: (res) => {
         this.pending.set(res.pending ?? []);
+        if (this.pending().length === 0) this.closeLocal();
         this.syncTrivialNotification();
         this.loading.set(false);
       },
@@ -105,7 +120,7 @@ export class CrashRecoveryPromptComponent implements OnInit {
     if (this.busyId() || this.busyAll()) return;
     this.busyAll.set(true);
     this.error.set(null);
-    const queue = [...this.reviewPending()];
+    const queue = [...this.pending()];
     const next = () => {
       const item = queue.shift();
       if (!item) {
@@ -172,6 +187,7 @@ export class CrashRecoveryPromptComponent implements OnInit {
 
   private remove(id: string): void {
     this.pending.update(items => items.filter(item => item.id !== id));
+    if (this.pending().length === 0) this.closeLocal();
     this.syncTrivialNotification();
   }
 

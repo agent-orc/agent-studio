@@ -50,6 +50,7 @@ public sealed class CrashRecoveryService
     private readonly PickupLockFile _pickupLock;
     private readonly object _pendingLock = new();
     private readonly List<PendingCrashRecovery> _pendingOrphanRecoveries = [];
+    private readonly string _bootId = Guid.NewGuid().ToString("N");
 
     public CrashRecoveryService(
         TaskScannerService scanner,
@@ -303,8 +304,8 @@ public sealed class CrashRecoveryService
             ProjectName = entry.Name,
             JobId = jobId,
             Reason = jobId == null
-                ? $"operator confirmation required before committing orphan changes; pendingId={pending.Id}; no active 3-progress job to attribute to"
-                : $"operator confirmation required before committing orphan changes for {jobId}; pendingId={pending.Id}"
+                ? $"operator confirmation required before committing orphan changes; pendingId={pending.Id}; bootId={pending.BootId}; detectedAt={pending.DetectedAt:O}; no active 3-progress job to attribute to"
+                : $"operator confirmation required before committing orphan changes for {jobId}; pendingId={pending.Id}; bootId={pending.BootId}; detectedAt={pending.DetectedAt:O}"
         };
         decisions.Add(decision);
         AppendRecoveryEntry(decision);
@@ -422,6 +423,8 @@ public sealed class CrashRecoveryService
         {
             Id = id,
             CreatedAt = firstObservedAt,
+            DetectedAt = DateTime.UtcNow,
+            BootId = _bootId,
             ProjectName = entry.Name,
             JobId = jobId,
             RepoRoot = repoRoot,
@@ -1008,7 +1011,11 @@ public sealed record RecoveryDecision
 public sealed record PendingCrashRecovery
 {
     [JsonPropertyName("id")] public string Id { get; init; } = "";
+    /// <summary>Oldest surviving dirty-file time, retained for existing clients.</summary>
     [JsonPropertyName("createdAt")] public DateTime CreatedAt { get; init; }
+    /// <summary>When this boot discovered the pending decision.</summary>
+    [JsonPropertyName("detectedAt")] public DateTime DetectedAt { get; init; }
+    [JsonPropertyName("bootId")] public string BootId { get; init; } = "";
     [JsonPropertyName("projectName")] public string ProjectName { get; init; } = "";
     [JsonPropertyName("jobId")] public string? JobId { get; init; }
     [JsonPropertyName("repoRoot")] public string RepoRoot { get; init; } = "";
