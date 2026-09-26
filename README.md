@@ -31,33 +31,27 @@
   definitions and in-flight runs remain durable Task Server data, so restarting
   the Engine does not orphan work.
 
-## Get started
+## Install with Docker
 
 ```bash
 git clone https://github.com/agent-orc/agent-studio.git
 cd agent-studio
-docker compose up --wait
+docker compose --profile dev up --build --wait task-server-dev orchestrator-engine-dev studio-bff-dev orchestrator-api-dev web-dev agent-host-distributed-dev
 ```
 
-Open [http://localhost:4011](http://localhost:4011). Docker Compose is the
-primary new-user installation path. It pulls pinned, non-root
-[release container images](./docs/operations/setup/task-server.md#container-images)
-per service, so it requires at least 8 GB of free disk space but no host .NET
-or Node.js install, local settings file, maintainer switch, or neighbouring
-repository. See the
-[setup guide](./docs/operations/setup/getting-started.md) for prerequisites,
-persistence, and troubleshooting. As an alternative for Linux x64 release
-installs with no source checkout and no .NET prerequisite, the guided
-[`agent-orchestrator-setup`](https://github.com/agent-orc/agent-studio/releases/latest/download/agent-orchestrator-setup)
-executable offers an isolated Docker demo, a native single-machine install, and
-a guided [multi-machine](./docs/operations/setup/multi-machine.md) join flow.
-To add execution capacity after the Studio is running, follow the
-[Agent Host guide](./docs/operations/setup/linux-runner-host.md), or stay in
-Docker with `docker compose --profile runner up --wait` after
-`scripts/compose-runner-bootstrap.sh` (see
-[getting started, §5](./docs/operations/setup/getting-started.md#5-add-execution-capacity)).
-Source contributors use the separate
-[contributor setup](./docs/operations/setup/contributor-setup.md).
+Open [http://localhost:4011](http://localhost:4011). This source-built Compose
+path is the verified installation path for this checkout. The one-box stack
+starts the Task Server, Engine, Studio API proxy, web UI, and an agent host.
+It creates restricted principal credentials in a named volume on first start
+and reuses them on later starts. Coding tasks additionally need provider and
+Git credentials mounted into the agent host.
+
+To run a published release after its images pass post-release CI, copy
+`.env.example` to `.env`, set `AGENT_STUDIO_VERSION` to that release version,
+and run `docker compose up -d --wait`. The default UI listens only on loopback;
+LAN exposure is an explicit `.env` setting. See the
+[Docker operations guide](./docs/operations/setup/docker.md) for updates,
+backups, credential mounts, and the current `/api/v1` route coverage limit.
 
 ## Testing
 

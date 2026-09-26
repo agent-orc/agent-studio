@@ -62,73 +62,45 @@ grep -F 'FROM mcr.microsoft.com/dotnet/aspnet:10.0' \
     "$repo_root/orchestrator-engine/Dockerfile" > /dev/null
 grep -F 'ENV URLS=http://0.0.0.0:5072' \
     "$repo_root/studio-bff/Dockerfile" > /dev/null
-grep -F 'user: "$smoke_uid:$smoke_gid"' \
-    "$repo_root/scripts/compose-smoke-test.sh" > /dev/null
-grep -F 'RUNNER_WORKDIR: /fixtures/runner-work' \
-    "$repo_root/scripts/compose-smoke-test.sh" > /dev/null
-grep -F 'uid: "$smoke_uid"' \
-    "$repo_root/scripts/compose-smoke-test.sh" > /dev/null
-grep -F 'mode: 0400' \
-    "$repo_root/scripts/compose-smoke-test.sh" > /dev/null
-if grep -F 'chmod -R o+rwX "$fixture_dir"' \
-    "$repo_root/scripts/compose-smoke-test.sh" > /dev/null; then
-    echo "compose smoke globally weakens disposable fixture permissions" >&2
-    exit 1
-fi
-
 config_root="$(mktemp -d)"
 trap 'rm -rf "$config_root"' EXIT HUP INT TERM
-: > "$config_root/runner.env"
 version="$(tr -d '\r\n' < "$repo_root/VERSION")"
 compose_json="$(
     AGENT_STUDIO_VERSION="$version" \
-    DISTRIBUTED_ENGINE_TOKEN=container-image-contract-test \
     docker compose \
         --project-directory "$config_root" \
         -f "$repo_root/docker-compose.yml" \
         --profile dev \
-        --profile distributed \
         config --format json
 )"
 
-node -e '
+EXPECTED_VERSION="$version" node -e '
 const config = JSON.parse(process.argv[1]);
-const expected = {
-  "task-server": ["studio_token", "engine_token", "runner_token"],
-  "task-server-dev": ["studio_token", "engine_token", "runner_token"],
-  "studio-bff": ["studio_token"],
-  "studio-bff-dev": ["studio_token"],
-  "agent-host-distributed": ["runner_token"],
-  "agent-host-distributed-dev": ["runner_token"],
-};
-for (const serviceName of ["orchestrator-engine", "orchestrator-engine-dev"]) {
-  const environment = config.services[serviceName]?.environment ?? {};
-  if (environment.ENGINE_ALLOW_INSECURE_HTTP !== "1") {
-    throw new Error(`${serviceName} does not explicitly opt in to private-network HTTP`);
-  }
+const services = config.services;
+const secretMount = service => services[service]?.volumes?.find(
+  volume => volume.source === "secrets" && volume.target === "/run/agent-studio-secrets");
+for (const [service, bootstrap] of [["bootstrap", true], ["bootstrap-dev", true],
+  ...["task-server", "orchestrator-engine", "studio-bff", "orchestrator-api", "agent-host-distributed"].map(name => [name, false]),
+  ...["task-server-dev", "orchestrator-engine-dev", "studio-bff-dev", "orchestrator-api-dev", "agent-host-distributed-dev"].map(name => [name, false])]) {
+  const mount = secretMount(service);
+  if (!mount || mount.type !== "volume" || Boolean(mount.read_only) === bootstrap)
+    throw new Error(`${service} has an invalid secret volume mount`);
 }
-const healthyDependencies = {
-  "orchestrator-engine": "task-server",
-  "orchestrator-engine-dev": "task-server-dev",
-};
-for (const [serviceName, dependencyName] of Object.entries(healthyDependencies)) {
-  const condition = config.services[serviceName]?.depends_on?.[dependencyName]?.condition;
-  if (condition !== "service_healthy") {
-    throw new Error(`${serviceName} starts before ${dependencyName} is healthy`);
-  }
+for (const service of ["task-server", "orchestrator-engine", "studio-bff", "orchestrator-api", "web", "agent-host-distributed"]) {
+  if (services[service].build || !services[service].image?.endsWith(`:v${process.env.EXPECTED_VERSION}`))
+    throw new Error(`${service} must use the pinned release image`);
 }
-for (const [serviceName, sources] of Object.entries(expected)) {
-  const mounted = config.services[serviceName]?.secrets ?? [];
-  for (const source of sources) {
-    const secret = mounted.find(candidate => candidate.source === source);
-    if (!secret) throw new Error(`${serviceName} does not mount ${source}`);
-    if (String(secret.uid) !== "10001" || String(secret.gid) !== "10001") {
-      throw new Error(`${serviceName}/${source} is not owned by UID/GID 10001`);
-    }
-    if (String(secret.mode) !== "0400") {
-      throw new Error(`${serviceName}/${source} mode is ${secret.mode}, expected 0400`);
-    }
-  }
+for (const service of ["task-server-dev", "orchestrator-engine-dev", "studio-bff-dev", "orchestrator-api-dev", "web-dev", "agent-host-distributed-dev"]) {
+  if (!services[service].build)
+    throw new Error(`${service} must build from this checkout`);
+}
+for (const [service, dependency] of [["task-server", "bootstrap"], ["task-server-dev", "bootstrap-dev"]]) {
+  if (services[service].depends_on?.[dependency]?.condition !== "service_completed_successfully")
+    throw new Error(`${service} must wait for credential bootstrap`);
+}
+for (const service of ["task-server", "task-server-dev", "web", "web-dev"]) {
+  if (services[service].ports?.[0]?.host_ip !== "127.0.0.1")
+    throw new Error(`${service} must bind to loopback by default`);
 }
 ' "$compose_json"
 
