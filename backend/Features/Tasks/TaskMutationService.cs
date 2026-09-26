@@ -1009,8 +1009,9 @@ public class TaskMutationService
     /// write time and rendered as a ghost chip until it lands in
     /// <c>tags.json</c> (or the job is re-tagged).
     /// </summary>
-    public bool SetJobTags(string jobId, IEnumerable<string> tags, string? watchPath = null)
+    public bool SetJobTags(string jobId, IEnumerable<string> tags, string? watchPath = null, string? taggingStatus = null)
     {
+        if (taggingStatus is not (null or "tagged" or "tags-proposed")) return false;
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
         var clean = (tags ?? Array.Empty<string>())
@@ -1018,7 +1019,14 @@ public class TaskMutationService
             .Where(s => !string.IsNullOrWhiteSpace(s))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
-        TaskJsonFile.UpdateField(info.FolderPath, "tags", clean, _logger);
+        var written = taggingStatus == null
+            ? TaskJsonFile.UpdateField(info.FolderPath, "tags", clean, _logger, _keyFileWriter)
+            : TaskJsonFile.UpdateFields(info.FolderPath, new Dictionary<string, object>
+            {
+                ["tags"] = clean,
+                ["taggingStatus"] = taggingStatus,
+            }, _logger, _keyFileWriter);
+        if (!written) return false;
         return Updated(info);
     }
 
@@ -1080,7 +1088,8 @@ public class TaskMutationService
         if (status is not ("tagged" or "tags-proposed")) return false;
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
-        TaskJsonFile.UpdateField(info.FolderPath, "taggingStatus", status, _logger);
+        if (!TaskJsonFile.UpdateField(info.FolderPath, "taggingStatus", status, _logger, _keyFileWriter))
+            return false;
         return Updated();
     }
 
