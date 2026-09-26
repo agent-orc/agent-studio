@@ -966,7 +966,11 @@ public sealed record PreparationCacheManifest(
     string Key,
     string State,
     string EntryPath,
-    IReadOnlyList<string> Inputs);
+    IReadOnlyList<string> Inputs,
+    long ContentBytes = 0,
+    int UnusedRunCount = 0,
+    string? Warning = null,
+    string? Recovery = null);
 
 public sealed record ProjectPreparationManifest(
     int SchemaVersion,
@@ -1075,6 +1079,20 @@ public static partial class ProjectPreparationExecutor
     public const int ReasonTailLimit = 600;
 
     /// <summary>
+    /// Consecutive successful preparations before an empty cache binding becomes
+    /// a repository-definition warning. One empty run may be intentional; three
+    /// establish that the prepare script is probably writing somewhere else.
+    /// </summary>
+    public const int UnusedCacheWarningThreshold = 3;
+
+    /// <summary>
+    /// Maximum time one cache operation waits for another process to release
+    /// the same entry. A contended or persistently unavailable lock degrades to
+    /// a private cache miss instead of extending preparation without a bound.
+    /// </summary>
+    private static readonly TimeSpan EntryLockWaitLimit = TimeSpan.FromSeconds(2);
+
+    /// <summary>
     /// How long an unreleased per-run cache folder is assumed to still belong to
     /// a live gate or coding run. Both are bounded far below this by their own
     /// timeouts, so anything older is the residue of a killed process.
@@ -1111,28 +1129,27 @@ public static partial class ProjectPreparationExecutor
 
         var started = DateTimeOffset.UtcNow;
         var stopwatch = Stopwatch.StartNew();
+        var previousManifest = ReadManifest(manifestPath);
         PruneStaleRunRoots(productCacheRoot, log);
         var runRoot = Path.Combine(productCacheRoot, ".runs", Guid.NewGuid().ToString("N"));
-        var cacheBindings = BuildCacheBindings(workspace, productCacheRoot, runRoot, read.Definition, log);
+        var entryLockWait = EntryLockWait(timeout);
+        var cacheBindings = BuildCacheBindings(
+            workspace,
+            productCacheRoot,
+            runRoot,
+            read.Definition,
+            log,
+            entryLockWait,
+            cancellationToken);
         var selectedNodeBin = ResolveNvmNodeBin(read.Definition, workspace);
         var tools = await ReadToolVersionsAsync(
             read.Definition, workspace, selectedNodeBin, timeout, cancellationToken).ConfigureAwait(false);
-        var incompleteCache = cacheBindings.FirstOrDefault(binding => binding.InvalidEntry);
-        if (incompleteCache is not null)
-        {
-            var incompleteReason = $"Immutable {incompleteCache.Block} cache entry {incompleteCache.Key} is incomplete and requires orchestrator eviction.";
-            var failedManifest = Manifest(read, subjectSha, started, stopwatch, false, tools,
-                cacheBindings, PreparationFailureKind.Cache, "cache:incomplete", incompleteReason);
-            WriteManifest(manifestPath, failedManifest);
-            DeleteBestEffort(runRoot);
-            return new(true, false, failedManifest, [], string.Empty, null,
-                PreparationFailureKind.Cache, "cache:incomplete", incompleteReason);
-        }
         var versionFailure = VersionFailure(read.Definition, workspace, tools);
         if (versionFailure is not null)
         {
             var failedManifest = Manifest(read, subjectSha, started, stopwatch, false, tools,
-                cacheBindings, versionFailure.Value.Kind, versionFailure.Value.Signature, versionFailure.Value.Reason);
+                cacheBindings, versionFailure.Value.Kind, versionFailure.Value.Signature, versionFailure.Value.Reason,
+                previousManifest: previousManifest);
             WriteManifest(manifestPath, failedManifest);
             DeleteBestEffort(runRoot);
             return new(true, false, failedManifest, [], string.Empty, null,
@@ -1144,7 +1161,8 @@ public static partial class ProjectPreparationExecutor
         {
             var entryReason = entryPoint.FailureReason!;
             var failedManifest = Manifest(read, subjectSha, started, stopwatch, false, tools,
-                cacheBindings, PreparationFailureKind.ScriptMissing, entryPoint.FailureSignature, entryReason);
+                cacheBindings, PreparationFailureKind.ScriptMissing, entryPoint.FailureSignature, entryReason,
+                previousManifest: previousManifest);
             WriteManifest(manifestPath, failedManifest);
             DeleteBestEffort(runRoot);
             return new(true, false, failedManifest, [], string.Empty, null,
@@ -1229,8 +1247,18 @@ public static partial class ProjectPreparationExecutor
         }
 
         var succeeded = failureKind == PreparationFailureKind.None;
-        if (succeeded) Publish(cacheBindings, log);
-        else DeleteBestEffort(runRoot);
+        if (succeeded) Publish(productCacheRoot, cacheBindings, log, entryLockWait, cancellationToken);
+        else
+        {
+            if (failureKind == PreparationFailureKind.Cache)
+                QuarantineCacheFailureEntries(
+                    productCacheRoot,
+                    cacheBindings,
+                    log,
+                    entryLockWait,
+                    cancellationToken);
+            DeleteBestEffort(runRoot);
+        }
         // AGT-2858: published entries used to accumulate without any bound. The
         // sweep runs after publication so the entries this preparation just
         // restored from or created are the ones it protects.
@@ -1248,7 +1276,7 @@ public static partial class ProjectPreparationExecutor
         if (!succeeded) reason = ReasonWithOutputTail(reason, outputTail);
         stopwatch.Stop();
         var manifest = Manifest(read, subjectSha, started, stopwatch, succeeded, tools,
-            cacheBindings, failureKind, signature, reason, outputTail);
+            cacheBindings, failureKind, signature, reason, outputTail, previousManifest);
         WriteManifest(manifestPath, manifest);
         log?.Invoke($"project-prepare completed succeeded={succeeded} durationMs={stopwatch.ElapsedMilliseconds} cacheHit={manifest.Caches.All(cache => cache.State == "hit")}");
         return new(true, succeeded, manifest, [], Bound(stdout, stderr), exitCode,
@@ -1324,23 +1352,28 @@ public static partial class ProjectPreparationExecutor
         string cacheRoot,
         string runRoot,
         ProjectExecutionDefinition definition,
-        Action<string>? log)
+        Action<string>? log,
+        TimeSpan entryLockWait,
+        CancellationToken cancellationToken)
     {
         var bindings = new List<CacheBinding>();
         if (definition.Stack.Contains("node", StringComparer.OrdinalIgnoreCase)
             || Files(workspace, "package-lock.json").Count > 0)
             bindings.Add(Binding("npm", "NPM_CONFIG_CACHE", workspace, cacheRoot, runRoot,
-                Files(workspace, "package-lock.json"), ToolInputs(definition.ToolVersions, "node"), log));
+                Files(workspace, "package-lock.json"), ToolInputs(definition.ToolVersions, "node"), log,
+                entryLockWait, cancellationToken));
         if (definition.Stack.Contains("dotnet", StringComparer.OrdinalIgnoreCase)
             || Files(workspace, "*.csproj").Count > 0)
             bindings.Add(Binding("nuget", "NUGET_PACKAGES", workspace, cacheRoot, runRoot,
                 Files(workspace, "packages.lock.json").Count > 0
                     ? Files(workspace, "packages.lock.json")
-                    : Files(workspace, "*.csproj"), ToolInputs(definition.ToolVersions, "dotnet", "dotnetSdk"), log));
+                    : Files(workspace, "*.csproj"), ToolInputs(definition.ToolVersions, "dotnet", "dotnetSdk"), log,
+                entryLockWait, cancellationToken));
         if (definition.Stack.Contains("playwright", StringComparer.OrdinalIgnoreCase)
             || Files(workspace, "playwright.config.*").Count > 0)
             bindings.Add(Binding("playwright", "PLAYWRIGHT_BROWSERS_PATH", workspace, cacheRoot, runRoot,
-                Files(workspace, "package-lock.json"), ToolInputs(definition.ToolVersions, "node"), log));
+                Files(workspace, "package-lock.json"), ToolInputs(definition.ToolVersions, "node"), log,
+                entryLockWait, cancellationToken));
         return bindings;
     }
 
@@ -1358,7 +1391,9 @@ public static partial class ProjectPreparationExecutor
         string runRoot,
         IReadOnlyList<string> inputs,
         IReadOnlyDictionary<string, string> tools,
-        Action<string>? log)
+        Action<string>? log,
+        TimeSpan entryLockWait,
+        CancellationToken cancellationToken)
     {
         var allInputs = inputs.Concat(tools.Values.Select(value => Path.Combine(workspace, value)))
             .Distinct(StringComparer.Ordinal).Where(File.Exists).OrderBy(value => value, StringComparer.Ordinal).ToArray();
@@ -1366,43 +1401,48 @@ public static partial class ProjectPreparationExecutor
         var entry = Path.Combine(cacheRoot, "entries", block, key);
         var content = Path.Combine(entry, "content");
         var working = Path.Combine(runRoot, block);
-        var entryExists = Directory.Exists(entry);
-        var validation = ValidateCacheBlock(block, content);
-        var manifestPresent = File.Exists(Path.Combine(entry, "manifest.json"));
-        var hit = manifestPresent && Directory.Exists(content) && validation.Valid;
-        var invalidEntry = entryExists && !hit;
-        var validationReason = !manifestPresent
-            ? "manifest-missing"
-            : !Directory.Exists(content)
-                ? "content-missing"
-                : validation.Reason;
-        if (entryExists)
+        var hit = false;
+        string? recovery = null;
+        using var entryLock = AcquireEntryLock(
+            cacheRoot, block, key, entryLockWait, cancellationToken);
+        if (entryLock is null)
         {
-            log?.Invoke(
-                $"project-prepare cache validation block={block} key={key} " +
-                $"state={(hit ? "valid" : "invalid")} reason={validationReason}");
+            recovery = "lock-timeout-miss";
+            Directory.CreateDirectory(working);
+            log?.Invoke($"project-prepare cache block={block} key={key} state=lock-timeout action=miss");
         }
-        if (invalidEntry)
+        else
         {
-            var evicted = ProjectPreparationCacheSweep.EvictEntry(entry);
-            if (evicted || !Directory.Exists(entry))
+            var inspection = InspectEntry(entry, block, key);
+            if (inspection == CacheEntryInspection.Hit)
             {
-                log?.Invoke(
-                    $"project-prepare cache block={block} key={key} state=evicted " +
-                    $"reason=validation-{validationReason}");
-                invalidEntry = false;
+                CopyDirectory(content, working);
+                hit = true;
+                // AGT-2858: a hit is a use. Stamping the entry is what makes the
+                // retention sweep's age and LRU rules measure last use rather than
+                // publication date, so a cache that is still being hit never expires.
+                ProjectPreparationCacheSweep.Touch(entry, DateTime.UtcNow);
+            }
+            else
+            {
+                if (inspection == CacheEntryInspection.LegacyEmpty)
+                {
+                    if (TryQuarantine(cacheRoot, block, key, entry, "legacy-empty"))
+                        recovery = "legacy-empty-miss";
+                }
+                else if (inspection == CacheEntryInspection.Incomplete)
+                {
+                    if (TryQuarantine(cacheRoot, block, key, entry, "incomplete"))
+                    {
+                        recovery = "evicted-incomplete";
+                        log?.Invoke($"project-prepare cache block={block} key={key} state=evicted-incomplete");
+                    }
+                }
+                Directory.CreateDirectory(working);
             }
         }
-        if (hit)
-        {
-            CopyDirectory(content, working);
-            // AGT-2858: a hit is a use. Stamping the entry is what makes the
-            // retention sweep's age and LRU rules measure last use rather than
-            // publication date, so a cache that is still being hit never expires.
-            ProjectPreparationCacheSweep.Touch(entry, DateTime.UtcNow);
-        }
-        else Directory.CreateDirectory(working);
-        log?.Invoke($"project-prepare cache block={block} key={key} state={(invalidEntry ? "incomplete" : hit ? "hit" : "miss")}");
+        log?.Invoke($"project-prepare cache block={block} key={key} state={(hit ? "hit" : "miss")}" +
+                    (recovery is null ? string.Empty : $" recovery={recovery}"));
         var relativeInputs = allInputs
             .Select(path => Path.GetRelativePath(workspace, path).Replace('\\', '/'))
             .ToArray();
@@ -1410,20 +1450,74 @@ public static partial class ProjectPreparationExecutor
             path => Path.GetRelativePath(workspace, path).Replace('\\', '/'),
             path => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))).ToLowerInvariant(),
             StringComparer.Ordinal);
-        return new(block, environmentVariable, key, entry, working, hit, invalidEntry,
+        return new(block, environmentVariable, key, entry, working, hit, recovery,
             relativeInputs, inputHashes);
     }
 
+    private enum CacheEntryInspection
+    {
+        Miss,
+        Hit,
+        LegacyEmpty,
+        Incomplete,
+    }
+
     /// <summary>
-    /// Validates the reusable payload of one preparation-cache block. NuGet's
-    /// global-packages layout considers a package extraction complete only when
-    /// every package-version directory contains <c>.nupkg.metadata</c>. The
-    /// marker check catches a tree whose assemblies survived an external
-    /// eviction but whose package archive and extraction marker did not.
+    /// The single validity rule shared by lookup and publication. A published
+    /// entry has a readable manifest for this block/key, a content directory,
+    /// at least one file, and, when sizeBytes is present, exactly that many
+    /// content bytes. A pre-fix, internally consistent empty entry is a legacy
+    /// miss rather than corruption; every other partial or contradictory entry
+    /// is incomplete.
     /// </summary>
-    internal static (bool Valid, string Reason) ValidateCacheBlock(
-        string block,
-        string contentRoot)
+    private static CacheEntryInspection InspectEntry(string entry, string block, string key)
+    {
+        if (!Directory.Exists(entry)) return CacheEntryInspection.Miss;
+        var manifestPath = Path.Combine(entry, "manifest.json");
+        var content = Path.Combine(entry, "content");
+        if (!File.Exists(manifestPath) || !Directory.Exists(content))
+            return CacheEntryInspection.Incomplete;
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(manifestPath));
+            var root = document.RootElement;
+            if (!root.TryGetProperty("block", out var manifestBlock)
+                || !root.TryGetProperty("key", out var manifestKey)
+                || !string.Equals(manifestBlock.GetString(), block, StringComparison.Ordinal)
+                || !string.Equals(manifestKey.GetString(), key, StringComparison.Ordinal)
+                || root.TryGetProperty("writeOnce", out var writeOnce) && writeOnce.ValueKind == JsonValueKind.False)
+                return CacheEntryInspection.Incomplete;
+
+            long? declaredSize = null;
+            if (root.TryGetProperty("sizeBytes", out var size))
+            {
+                if (!size.TryGetInt64(out var bytes) || bytes < 0)
+                    return CacheEntryInspection.Incomplete;
+                declaredSize = bytes;
+            }
+            var actualSize = ProjectPreparationCacheSweep.Measure(content);
+            var hasFiles = ContainsAnyFile(content);
+            if (declaredSize is not null && declaredSize != actualSize)
+                return CacheEntryInspection.Incomplete;
+            if (!hasFiles)
+                return actualSize == 0 && (declaredSize is null or 0)
+                    ? CacheEntryInspection.LegacyEmpty
+                    : CacheEntryInspection.Incomplete;
+            return ValidateCacheBlock(block, content).Valid
+                ? CacheEntryInspection.Hit
+                : CacheEntryInspection.Incomplete;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return CacheEntryInspection.Incomplete;
+        }
+    }
+
+    /// <summary>
+    /// A NuGet package is reusable only after extraction wrote its metadata marker.
+    /// A missing marker can leave a tree with the expected size but unusable files.
+    /// </summary>
+    internal static (bool Valid, string Reason) ValidateCacheBlock(string block, string contentRoot)
     {
         if (!Directory.Exists(contentRoot) || !ContainsAnyFile(contentRoot))
             return (false, "empty-content");
@@ -1447,8 +1541,7 @@ public static partial class ProjectPreparationExecutor
                 {
                     if (!File.Exists(Path.Combine(version, ".nupkg.metadata")))
                     {
-                        var relative = Path.GetRelativePath(contentRoot, version)
-                            .Replace('\\', '/');
+                        var relative = Path.GetRelativePath(contentRoot, version).Replace('\\', '/');
                         return (false, "nuget-metadata-missing:" + relative);
                     }
                 }
@@ -1619,26 +1712,52 @@ public static partial class ProjectPreparationExecutor
     /// A block whose entry another run published in the meantime keeps this run's
     /// own copy and publishes nothing - the entry is immutable once it exists.
     /// </summary>
-    private static void Publish(IReadOnlyList<CacheBinding> bindings, Action<string>? log)
+    private static void Publish(
+        string cacheRoot,
+        IReadOnlyList<CacheBinding> bindings,
+        Action<string>? log,
+        TimeSpan entryLockWait,
+        CancellationToken cancellationToken)
     {
         foreach (var binding in bindings.Where(binding => !binding.Hit))
         {
+            // An empty block has no reusable payload. Publishing it used to
+            // create an entry that lookup rejected on the next run, alternating
+            // every gate between green and a cache failure. Keep it a miss.
+            if (!ContainsAnyFile(binding.WorkingPath))
+            {
+                binding.PublicationState = "unused";
+                log?.Invoke($"project-prepare cache block={binding.Block} key={binding.Key} state=unused");
+                continue;
+            }
             var validation = ValidateCacheBlock(binding.Block, binding.WorkingPath);
             if (!validation.Valid)
             {
-                log?.Invoke(
-                    $"project-prepare cache validation block={binding.Block} key={binding.Key} " +
-                    $"state=invalid reason={validation.Reason}");
-                log?.Invoke(
-                    $"project-prepare cache block={binding.Block} key={binding.Key} " +
-                    $"state=publish-rejected reason={validation.Reason}");
+                binding.PublicationState = "publish-rejected";
+                log?.Invoke($"project-prepare cache block={binding.Block} key={binding.Key} " +
+                            $"state=publish-rejected reason={validation.Reason}");
                 continue;
             }
-            if (Directory.Exists(binding.EntryPath))
+            using var entryLock = AcquireEntryLock(
+                cacheRoot, binding.Block, binding.Key, entryLockWait, cancellationToken);
+            if (entryLock is null)
             {
+                binding.PublicationState = "publish-skipped";
+                log?.Invoke(
+                    $"project-prepare cache block={binding.Block} key={binding.Key} state=lock-timeout action=publish-skipped");
+                continue;
+            }
+            var existing = InspectEntry(binding.EntryPath, binding.Block, binding.Key);
+            if (existing == CacheEntryInspection.Hit)
+            {
+                binding.PublicationState = "already-published";
                 log?.Invoke($"project-prepare cache block={binding.Block} key={binding.Key} state=already-published");
                 continue;
             }
+            if (existing is CacheEntryInspection.Incomplete or CacheEntryInspection.LegacyEmpty)
+                TryQuarantine(cacheRoot, binding.Block, binding.Key, binding.EntryPath,
+                    existing == CacheEntryInspection.Incomplete ? "incomplete" : "legacy-empty");
+
             var parent = Path.GetDirectoryName(binding.EntryPath)!;
             Directory.CreateDirectory(parent);
             var staging = binding.EntryPath + ".staging-" + Guid.NewGuid().ToString("N");
@@ -1660,13 +1779,117 @@ public static partial class ProjectPreparationExecutor
             try
             {
                 Directory.Move(staging, binding.EntryPath);
+                binding.PublicationState = "published";
                 log?.Invoke($"project-prepare cache block={binding.Block} key={binding.Key} state=published");
             }
             catch (IOException) when (Directory.Exists(binding.EntryPath))
             {
                 DeleteBestEffort(staging);
+                binding.PublicationState = "already-published";
+                log?.Invoke($"project-prepare cache block={binding.Block} key={binding.Key} state=already-published");
             }
         }
+    }
+
+    /// <summary>
+    /// A prepare command that itself reports cache corruption invalidates only
+    /// the published entries it copied from. Its private run root is discarded,
+    /// and the integration gate may make one clean retry.
+    /// </summary>
+    private static void QuarantineCacheFailureEntries(
+        string cacheRoot,
+        IReadOnlyList<CacheBinding> bindings,
+        Action<string>? log,
+        TimeSpan entryLockWait,
+        CancellationToken cancellationToken)
+    {
+        foreach (var binding in bindings.Where(binding => binding.Hit))
+        {
+            using var entryLock = AcquireEntryLock(
+                cacheRoot, binding.Block, binding.Key, entryLockWait, cancellationToken);
+            if (entryLock is null)
+            {
+                log?.Invoke(
+                    $"project-prepare cache block={binding.Block} key={binding.Key} state=lock-timeout action=eviction-skipped");
+                continue;
+            }
+            if (!TryQuarantine(cacheRoot, binding.Block, binding.Key, binding.EntryPath, "cache-failure"))
+                continue;
+            log?.Invoke(
+                $"project-prepare cache block={binding.Block} key={binding.Key} state=evicted-cache-failure");
+        }
+    }
+
+    private static bool TryQuarantine(
+        string cacheRoot,
+        string block,
+        string key,
+        string entryPath,
+        string reason)
+    {
+        if (!Directory.Exists(entryPath)) return false;
+        var quarantine = Path.Combine(cacheRoot, ProjectPreparationCacheSweep.QuarantineDirectoryName, block);
+        Directory.CreateDirectory(quarantine);
+        var destination = Path.Combine(
+            quarantine,
+            key + "." + reason + "-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.Move(entryPath, destination);
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // Another process may already have moved the same broken entry. In
+            // either case this run continues from an isolated empty working copy.
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Tries to serialize lookup/copy, incomplete-entry quarantine, and
+    /// publication for one immutable key across concurrent processes. The lock
+    /// lives outside the entry, so renaming the entry cannot invalidate the lock
+    /// itself. Cancellation interrupts the wait, while timeout returns null so
+    /// the caller can continue without the shared cache.
+    /// </summary>
+    private static FileStream? AcquireEntryLock(
+        string cacheRoot,
+        string block,
+        string key,
+        TimeSpan waitTimeout,
+        CancellationToken cancellationToken)
+    {
+        var directory = Path.Combine(cacheRoot, ".locks", block);
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, key + ".lock");
+        var wait = Stopwatch.StartNew();
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                return new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                var remaining = waitTimeout - wait.Elapsed;
+                if (remaining <= TimeSpan.Zero) return null;
+                var delay = remaining < TimeSpan.FromMilliseconds(25)
+                    ? remaining
+                    : TimeSpan.FromMilliseconds(25);
+                if (cancellationToken.WaitHandle.WaitOne(delay))
+                    cancellationToken.ThrowIfCancellationRequested();
+            }
+        }
+    }
+
+    private static TimeSpan EntryLockWait(TimeSpan preparationTimeout)
+    {
+        if (preparationTimeout <= TimeSpan.Zero) return EntryLockWaitLimit;
+        return preparationTimeout < EntryLockWaitLimit
+            ? preparationTimeout
+            : EntryLockWaitLimit;
     }
 
     private static ProjectPreparationManifest Manifest(
@@ -1680,7 +1903,8 @@ public static partial class ProjectPreparationExecutor
         PreparationFailureKind kind,
         string? signature,
         string? reason,
-        string? outputTail = null)
+        string? outputTail = null,
+        ProjectPreparationManifest? previousManifest = null)
     {
         stopwatch.Stop();
         var lockHashes = bindings.SelectMany(binding => binding.InputHashes)
@@ -1690,13 +1914,44 @@ public static partial class ProjectPreparationExecutor
         return new(1, subjectSha, read.DefinitionSha256!, started, DateTimeOffset.UtcNow,
             stopwatch.ElapsedMilliseconds, succeeded, read.Definition!.Commands.Prepare,
             tools, lockHashes,
-            bindings.Select(binding => new PreparationCacheManifest(
-                binding.Block, binding.Key,
-                binding.Hit ? "hit"
-                    : succeeded && ValidateCacheBlock(binding.Block, binding.WorkingPath).Valid ? "published"
-                    : succeeded ? "unused"
-                    : "discarded",
-                binding.EntryPath, binding.Inputs)).ToArray(), kind, signature, reason, outputTail);
+            bindings.Select(binding =>
+            {
+                var contentBytes = ProjectPreparationCacheSweep.Measure(binding.WorkingPath);
+                var unused = succeeded && !binding.Hit && !ContainsAnyFile(binding.WorkingPath);
+                var unusedRuns = unused
+                    ? (previousManifest?.Caches.FirstOrDefault(cache =>
+                           string.Equals(cache.Block, binding.Block, StringComparison.Ordinal)
+                           && cache.State == "unused")?.UnusedRunCount ?? 0) + 1
+                    : 0;
+                var warning = unusedRuns >= UnusedCacheWarningThreshold
+                    ? $"{binding.Block} block is bound but unused for {unusedRuns} consecutive preparations; "
+                      + $"the prepare script may redirect {binding.EnvironmentVariable}."
+                    : null;
+                return new PreparationCacheManifest(
+                    binding.Block,
+                    binding.Key,
+                    binding.Hit ? "hit" : succeeded ? binding.PublicationState ?? "publish-skipped" : "discarded",
+                    binding.EntryPath,
+                    binding.Inputs,
+                    contentBytes,
+                    unusedRuns,
+                    warning,
+                    binding.Recovery);
+            }).ToArray(), kind, signature, reason, outputTail);
+    }
+
+    private static ProjectPreparationManifest? ReadManifest(string path)
+    {
+        try
+        {
+            return File.Exists(path)
+                ? JsonSerializer.Deserialize<ProjectPreparationManifest>(File.ReadAllText(path), Json)
+                : null;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return null;
+        }
     }
 
     /// <summary>
@@ -1840,7 +2095,10 @@ public static partial class ProjectPreparationExecutor
         string EntryPath,
         string WorkingPath,
         bool Hit,
-        bool InvalidEntry,
+        string? Recovery,
         IReadOnlyList<string> Inputs,
-        IReadOnlyDictionary<string, string> InputHashes);
+        IReadOnlyDictionary<string, string> InputHashes)
+    {
+        public string? PublicationState { get; set; }
+    }
 }

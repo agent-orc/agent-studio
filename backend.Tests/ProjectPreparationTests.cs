@@ -306,7 +306,7 @@ public sealed class ProjectPreparationTests : IDisposable
     }
 
     [Fact]
-    public async Task Incomplete_immutable_entry_is_evicted_and_rebuilt_as_a_miss()
+    public async Task Truncated_entry_is_quarantined_and_the_preparation_continues_as_a_miss()
     {
         Write("package-lock.json", "{\"lockfileVersion\":3}");
         Write(".agent-studio/project.yml", Definition(".agent-studio/prepare"));
@@ -325,11 +325,10 @@ public sealed class ProjectPreparationTests : IDisposable
 
         Assert.True(second.Succeeded, second.Output);
         Assert.Equal(PreparationFailureKind.None, second.FailureKind);
-        Assert.Contains(logs, line =>
-            line.Contains("state=evicted", StringComparison.Ordinal)
-            && line.Contains("reason=validation-empty-content", StringComparison.Ordinal));
+        Assert.Contains(logs, line => line.Contains("state=evicted-incomplete", StringComparison.Ordinal));
+        Assert.Equal("evicted-incomplete", Assert.Single(second.Manifest!.Caches).Recovery);
         Assert.True(File.Exists(Path.Combine(
-            Assert.Single(second.Manifest!.Caches).EntryPath, "content", "marker")));
+            Assert.Single(second.Manifest.Caches).EntryPath, "content", "marker")));
     }
 
     [Fact]
@@ -357,12 +356,9 @@ public sealed class ProjectPreparationTests : IDisposable
         Assert.Equal("published", Assert.Single(second.Manifest!.Caches).State);
         Assert.True(File.Exists(metadata));
         Assert.Contains(logs, line =>
-            line.Contains("cache validation block=nuget", StringComparison.Ordinal)
-            && line.Contains($"key={nuget.Key}", StringComparison.Ordinal)
-            && line.Contains("state=invalid", StringComparison.Ordinal)
-            && line.Contains("nuget-metadata-missing", StringComparison.Ordinal));
+            line.Contains($"block=nuget key={nuget.Key} state=evicted-incomplete", StringComparison.Ordinal));
         Assert.Contains(logs, line =>
-            line.Contains($"block=nuget key={nuget.Key} state=evicted", StringComparison.Ordinal));
+            line.Contains($"block=nuget key={nuget.Key} state=miss", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -387,30 +383,134 @@ public sealed class ProjectPreparationTests : IDisposable
     }
 
     [Fact]
-    public async Task Successful_prepare_does_not_publish_an_empty_cache_block()
+    public async Task Empty_block_is_not_published_and_warns_after_three_consecutive_runs()
     {
         Write("package-lock.json", "{\"lockfileVersion\":3}");
         Write(".agent-studio/project.yml", Definition(".agent-studio/prepare"));
-        Write(".agent-studio/prepare", "#!/bin/sh\nset -eu\n# Intentionally no cache output.\n");
+        Write(".agent-studio/prepare", "#!/bin/sh\nset -eu\n# This repository intentionally writes nothing to NPM_CONFIG_CACHE.\n");
         var cache = Path.Combine(_root, "product-cache");
+        var manifest = Path.Combine(_root, "latest.json");
+
+        ProjectPreparationResult? result = null;
+        for (var run = 0; run < ProjectPreparationExecutor.UnusedCacheWarningThreshold; run++)
+        {
+            result = await ProjectPreparationExecutor.RunAsync(
+                _root, cache, manifest, "subject-1", null, TimeSpan.FromSeconds(10), CancellationToken.None);
+            Assert.True(result.Succeeded, result.Output);
+        }
+
+        var block = Assert.Single(result!.Manifest!.Caches);
+        Assert.Equal("unused", block.State);
+        Assert.Equal(ProjectPreparationExecutor.UnusedCacheWarningThreshold, block.UnusedRunCount);
+        Assert.Contains("NPM_CONFIG_CACHE", block.Warning);
+        Assert.False(Directory.Exists(block.EntryPath));
+    }
+
+    [Fact]
+    public async Task Legacy_empty_entry_is_a_miss_and_is_replaced_by_non_empty_content()
+    {
+        Write("package-lock.json", "{\"lockfileVersion\":3}");
+        Write(".agent-studio/project.yml", Definition(".agent-studio/prepare"));
+        Write(".agent-studio/prepare", "#!/bin/sh\nset -eu\n");
+        var cache = Path.Combine(_root, "product-cache");
+        var empty = await ProjectPreparationExecutor.RunAsync(
+            _root, cache, Path.Combine(_root, "legacy-seed.json"), "subject-1", null,
+            TimeSpan.FromSeconds(10), CancellationToken.None);
+        var block = Assert.Single(empty.Manifest!.Caches);
+        Directory.CreateDirectory(Path.Combine(block.EntryPath, "content"));
+        File.WriteAllText(
+            Path.Combine(block.EntryPath, "manifest.json"),
+            $$"""{"schemaVersion":2,"block":"{{block.Block}}","key":"{{block.Key}}","writeOnce":true,"sizeBytes":0}""");
+        Write(".agent-studio/prepare", "printf cache > \"$NPM_CONFIG_CACHE/marker\"");
+
+        var replacement = await ProjectPreparationExecutor.RunAsync(
+            _root, cache, Path.Combine(_root, "legacy-replaced.json"), "subject-1", null,
+            TimeSpan.FromSeconds(10), CancellationToken.None);
+
+        var replaced = Assert.Single(replacement.Manifest!.Caches);
+        Assert.True(replacement.Succeeded, replacement.Output);
+        Assert.Equal("published", replaced.State);
+        Assert.Equal("legacy-empty-miss", replaced.Recovery);
+        Assert.True(File.Exists(Path.Combine(replaced.EntryPath, "content", "marker")));
+    }
+
+    [Fact]
+    public async Task Two_concurrent_runs_that_find_one_broken_entry_both_continue()
+    {
+        WriteRestoringDotNetRepository();
+        var cache = Path.Combine(_root, "product-cache");
+        var first = await PrepareAsync(cache, "broken-seed.json");
+        var entry = Assert.Single(first.Manifest!.Caches).EntryPath;
+        var manifest = Path.Combine(entry, "manifest.json");
+        File.WriteAllText(
+            manifest,
+            File.ReadAllText(manifest).Replace(
+                $"\"sizeBytes\": {Assert.Single(first.Manifest.Caches).ContentBytes}",
+                "\"sizeBytes\": 5000", StringComparison.Ordinal));
+
+        var runs = await Task.WhenAll(
+            PrepareAsync(cache, "broken-concurrent-a.json"),
+            PrepareAsync(cache, "broken-concurrent-b.json"));
+
+        Assert.All(runs, run => Assert.True(run.Succeeded, run.Output));
+        Assert.Contains(runs.SelectMany(run => run.Manifest!.Caches), cacheEntry =>
+            cacheEntry.Recovery == "evicted-incomplete");
+        var after = await PrepareAsync(cache, "broken-concurrent-hit.json");
+        Assert.True(after.CacheHit);
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Contended_entry_lock_times_out_and_preparation_continues_with_a_private_miss()
+    {
+        Write("package-lock.json", "{\"lockfileVersion\":3}");
+        Write(".agent-studio/project.yml", Definition(".agent-studio/prepare"));
+        Write(".agent-studio/prepare", "printf cache > \"$NPM_CONFIG_CACHE/marker\"");
+        var cache = Path.Combine(_root, "product-cache");
+        var seed = await ProjectPreparationExecutor.RunAsync(
+            _root, cache, Path.Combine(_root, "lock-seed.json"), "subject-1", null,
+            TimeSpan.FromSeconds(10), CancellationToken.None);
+        var block = Assert.Single(seed.Manifest!.Caches);
+        var lockPath = Path.Combine(cache, ".locks", block.Block, block.Key + ".lock");
+        using var heldLock = new FileStream(
+            lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         var logs = new List<string>();
 
-        var result = await ProjectPreparationExecutor.RunAsync(
-            _root,
-            cache,
-            Path.Combine(_root, "empty.json"),
-            "subject-1",
-            logs.Add,
-            TimeSpan.FromSeconds(10),
-            CancellationToken.None);
+        var result = await Task.Run(() => ProjectPreparationExecutor.RunAsync(
+                _root, cache, Path.Combine(_root, "lock-timeout.json"), "subject-1", logs.Add,
+                TimeSpan.FromMilliseconds(150), CancellationToken.None))
+            .WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.True(result.Succeeded, result.Output);
-        var block = Assert.Single(result.Manifest!.Caches);
-        Assert.Equal("unused", block.State);
-        Assert.False(Directory.Exists(block.EntryPath));
-        Assert.Contains(logs, line =>
-            line.Contains($"block=npm key={block.Key}", StringComparison.Ordinal)
-            && line.Contains("state=publish-rejected reason=empty-content", StringComparison.Ordinal));
+        Assert.Equal("lock-timeout-miss", Assert.Single(result.Manifest!.Caches).Recovery);
+        Assert.Equal("publish-skipped", Assert.Single(result.Manifest.Caches).State);
+        Assert.Contains(logs, line => line.Contains("state=lock-timeout action=miss", StringComparison.Ordinal));
+        Assert.Contains(logs, line => line.Contains("state=lock-timeout action=publish-skipped", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Contended_entry_lock_observes_preparation_cancellation()
+    {
+        Write("package-lock.json", "{\"lockfileVersion\":3}");
+        Write(".agent-studio/project.yml", Definition(".agent-studio/prepare"));
+        Write(".agent-studio/prepare", "printf cache > \"$NPM_CONFIG_CACHE/marker\"");
+        var cache = Path.Combine(_root, "product-cache");
+        var seed = await ProjectPreparationExecutor.RunAsync(
+            _root, cache, Path.Combine(_root, "cancel-seed.json"), "subject-1", null,
+            TimeSpan.FromSeconds(10), CancellationToken.None);
+        var block = Assert.Single(seed.Manifest!.Caches);
+        var lockPath = Path.Combine(cache, ".locks", block.Block, block.Key + ".lock");
+        using var heldLock = new FileStream(
+            lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+
+        var run = Task.Run(() => ProjectPreparationExecutor.RunAsync(
+            _root, cache, Path.Combine(_root, "lock-cancelled.json"), "subject-1", null,
+            TimeSpan.FromSeconds(10), cancellation.Token));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await run.WaitAsync(TimeSpan.FromSeconds(5)));
     }
 
     [Fact]
@@ -567,7 +667,7 @@ public sealed class ProjectPreparationTests : IDisposable
 
     [Fact]
     [Trait("Category", "MachineBound")]
-    public async Task Agent_studio_pilot_runs_twice_and_second_run_is_a_cache_hit()
+    public async Task Agent_studio_pilot_reuses_non_empty_blocks_and_leaves_empty_blocks_unpublished()
     {
         var repository = FindRepositoryRoot();
         var results = Environment.GetEnvironmentVariable("JOB_RESULTS_DIR")
@@ -587,7 +687,19 @@ public sealed class ProjectPreparationTests : IDisposable
             subjectSha, null, TimeSpan.FromMinutes(20), CancellationToken.None);
 
         Assert.True(second.Succeeded, second.Output);
-        Assert.True(second.CacheHit, "The unchanged Agent Studio pilot must hit every technology cache.");
+        foreach (var cacheBlock in second.Manifest!.Caches)
+        {
+            var firstBlock = Assert.Single(first.Manifest!.Caches, candidate => candidate.Block == cacheBlock.Block);
+            if (firstBlock.State == "unused")
+            {
+                Assert.Equal("unused", cacheBlock.State);
+                Assert.False(Directory.Exists(cacheBlock.EntryPath));
+            }
+            else
+            {
+                Assert.Equal("hit", cacheBlock.State);
+            }
+        }
     }
 
     [Theory]

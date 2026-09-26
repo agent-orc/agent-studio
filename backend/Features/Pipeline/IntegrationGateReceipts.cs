@@ -193,6 +193,8 @@ public static class IntegrationGateReceipts
             $"flakyQuarantined={(result.FlakyQuarantinedFailures.Count == 0
                 ? "none"
                 : string.Join(", ", result.FlakyQuarantinedFailures))}";
+        var preparationCacheRetry =
+            $"preparationCacheRetryPerformed={result.PreparationCacheRetryPerformed.ToString().ToLowerInvariant()}";
         // The first three lines are the durable-recovery header parsed by
         // ReadExact; the reuse line is appended after it so a new field can
         // never shift that contract (AGT-2839).
@@ -207,6 +209,7 @@ public static class IntegrationGateReceipts
             reuseLine + "\n" +
             budget + "\n" +
             flaky + "\n" +
+            preparationCacheRetry + "\n" +
             "--- dependency-cache-decision.json ---\n" +
             dependencyCacheDecision + "\n" +
             "--- dependency-cache.json ---\n" +
@@ -229,6 +232,20 @@ public static class IntegrationGateReceipts
         {
             GateFlakyRerunReceipts.Record(
                 timeline, jobFolderPath, prefix, result.TestedSha, result.FlakyQuarantinedFailures);
+            if (result.PreparationCacheRetryPerformed)
+            {
+                timeline.Append(
+                    jobFolderPath,
+                    TimelineEventKinds.IntegrationGatePreparationCacheRetried,
+                    TimelineActors.System,
+                    $"{prefix}: preparation found a cache failure, quarantined affected entries when present, and retried the integration gate once.",
+                    details: new Dictionary<string, string>
+                    {
+                        ["gate"] = prefix,
+                        ["sha"] = result.TestedSha ?? "unknown",
+                        ["outcome"] = result.Verdict.ToString(),
+                    });
+            }
         }
     }
 }

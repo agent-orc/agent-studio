@@ -42,6 +42,17 @@
       </ul>
     }
 
+    @if ((execution.preparationWarnings?.length ?? 0) > 0) {
+      <ul class="execution__warnings" data-testid="execution-preparation-warnings" aria-label="Preparation definition warnings">
+        @for (warning of execution.preparationWarnings ?? []; track warning.code + ':' + warning.block) {
+          <li>
+            <strong>{{ warning.block }}</strong>
+            <span>{{ warning.message }}</span>
+          </li>
+        }
+      </ul>
+    }
+
     @if (execution.lastManifest; as manifest) {
       <section class="execution__manifest" aria-label="Last preparation manifest">
         <div class="execution__manifest-head">
