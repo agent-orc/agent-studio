@@ -119,7 +119,6 @@ internal static class ProposedGlossaryContext
 /// <summary>One project-scoped dry-run/apply coordinator. All writes use the existing tag boundaries.</summary>
 public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAutoTagClassifier classifier,
     TagGoldenSetEvaluator goldenSets, ProjectSettingsService settings, TaskScannerService scanner,
-    TaskMutationService mutations, WorkbenchTagService dossierTags, ProjectDocsService docs,
     AreaRegistryService areaRegistry,
     TimelineLog timeline, OrchestratorLog activity, IConfiguration configuration)
 {
@@ -222,42 +221,21 @@ public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAuto
                     foreach (var area in prediction.Tags.Where(areas.Contains))
                         counts[area] = counts.GetValueOrDefault(area) + 1;
                 if (!apply) continue;
-                if (item.Kind == "dossier")
-                {
-                    var write = dossierTags.Set(project, item.Id, new SetWorkbenchTagsRequest
-                    {
-                        Tags = accepted ? prediction.Tags.ToList() : item.Tags.ToList(),
-                        TaggingStatus = result.Status,
-                    });
-                    if (!write.Success) throw new InvalidOperationException(write.Error);
-                }
-                else if (accepted)
-                {
-                    var change = new TagMaintenanceChange(item.Kind, project, item.Id,
-                        TagMaintenancePolicy.Encode(item.Tags), TagMaintenancePolicy.Encode(prediction.Tags));
-                    if (!workspace.Write(change))
-                        throw new InvalidOperationException($"Auto-tag {item.Kind} tag write did not apply: {item.Id}.");
-                }
+                // Tags and their status share one checked write. A failure leaves no
+                // tags-only item that the next scan would incorrectly skip.
+                var change = new TagMaintenanceChange(item.Kind, project, item.Id,
+                    TagMaintenancePolicy.Encode(item.Tags),
+                    TagMaintenancePolicy.Encode(accepted ? prediction.Tags : item.Tags));
+                if (!workspace.Write(change, result.Status))
+                    throw new InvalidOperationException($"Auto-tag {item.Kind} write did not apply: {item.Id}.");
                 prior[(item.Kind, item.Id)] = result;
                 if (item.Kind == "card")
                 {
-                    var watch = scanner.GetWatchPaths().Single(p => p.Name == project);
-                    var task = scanner.FindJob(item.Id, watch.Path);
+                    var task = scanner.FindJob(item.Id, watchPath);
                     if (task != null)
-                    {
-                        mutations.SetTaggingStatus(item.Id, result.Status, watch.Path);
                         timeline.Append(task.FolderPath, "auto-tag", "system",
                             accepted ? $"Auto-tagged: {string.Join(", ", prediction.Tags)}" :
                                 $"Tags proposed: {string.Join(", ", prediction.Tags)}");
-                    }
-                }
-                if (item.Kind == "wiki")
-                {
-                    var file = docs.ReadWikiFile(project, item.Id)
-                        ?? throw new InvalidOperationException("Wiki article disappeared before its tagging status was written.");
-                    var updated = TagMaintenanceWorkspace.RewriteTaggingStatus(file.Content, result.Status);
-                    var write = docs.WriteWikiFile(project, item.Id, updated);
-                    if (!write.Success) throw new InvalidOperationException(write.Error);
                 }
                 Save(project, prior.Values.OrderBy(x => x.Kind).ThenBy(x => x.Id).ToList());
                 activity.Append(watchPath!, new OrchestratorLogEntry

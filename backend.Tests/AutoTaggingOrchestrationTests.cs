@@ -16,6 +16,8 @@ public sealed class AutoTaggingOrchestrationTests : IDisposable
     private readonly ProjectSettingsService _settings;
     private readonly FakeWorkspace _workspace = new();
     private readonly FakeClassifier _classifier = new();
+    private readonly RejectableWriter _writer = new();
+    private readonly ProjectDocsService _docs;
     private readonly AutoTaggingService _service;
 
     public AutoTaggingOrchestrationTests()
@@ -36,13 +38,18 @@ public sealed class AutoTaggingOrchestrationTests : IDisposable
         _mutations = new TaskMutationService(_scanner,
             new ClientIdentityStore(_config, NullLogger<ClientIdentityStore>.Instance), registry,
             new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance),
-            NullLogger<TaskMutationService>.Instance);
+            NullLogger<TaskMutationService>.Instance, fileWriter: _writer);
         new TaskStateMachine(_scanner, NullLogger<TaskStateMachine>.Instance).EnsureStateFoldersAndMigrate();
         _settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, _config);
         var areas = new AreaRegistryService(new TagRegistryService(NullLogger<TagRegistryService>.Instance, _config), _settings);
+        _docs = new ProjectDocsService(_scanner, registry, NullLogger<ProjectDocsService>.Instance,
+            fileWriter: _writer);
+        var persistence = new TagMaintenanceWorkspace(_scanner, _mutations, null!, areas, null!,
+            null!, null!, _docs);
+        _workspace.Writer = persistence.Write;
         _service = new AutoTaggingService(_workspace, _classifier,
             new TagGoldenSetEvaluator(new FakeGoldenClassifier(), _config), _settings, _scanner,
-            _mutations, null!, null!, areas,
+            areas,
             new TimelineLog(NullLogger<TimelineLog>.Instance),
             new OrchestratorLog(NullLogger<OrchestratorLog>.Instance), _config);
     }
@@ -71,7 +78,7 @@ public sealed class AutoTaggingOrchestrationTests : IDisposable
         var applied = await _service.BackfillAsync(Project, apply: true, CancellationToken.None);
         Assert.True(applied.Applied);
         Assert.Equal(2, applied.Classified);
-        Assert.Single(_workspace.Writes);
+        Assert.Equal(2, _workspace.Writes.Count);
         Assert.Equal("accepted", _workspace.Writes[0].Id);
         Assert.Equal("tagged", _service.Read(Project).Single(x => x.Id == "accepted").Status);
         Assert.Equal("tags-proposed", _service.Read(Project).Single(x => x.Id == "uncertain").Status);
@@ -136,8 +143,7 @@ public sealed class AutoTaggingOrchestrationTests : IDisposable
     public async Task FailedTagWriteDoesNotRecordSuccessOrPreventRetry(string kind)
     {
         if (kind == "card") AddCard("failed-write");
-        else _workspace.Items.Add(new(Project, "wiki", "failed-write", "Failed write", [],
-            "Article body", true));
+        else AddWiki("failed-write.md");
         _workspace.RejectWrites = true;
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -149,12 +155,122 @@ public sealed class AutoTaggingOrchestrationTests : IDisposable
         if (kind == "card")
             Assert.Null(_scanner.FindJob("failed-write", Watch())!.TaggingStatus);
 
+        _workspace.RejectWrites = false;
+        var retried = await _service.BackfillAsync(Project, apply: true, CancellationToken.None);
+        Assert.Single(retried.Items);
+        Assert.Equal("tagged", _service.Read(Project).Single().Status);
+    }
+
+    [Fact]
+    public async Task CardDisappearingDuringApplyDoesNotRecordSuccess()
+    {
+        AddCard("disappearing");
+        var folder = _scanner.FindJob("disappearing", Watch())!.FolderPath;
+        _workspace.BeforeWrite = () =>
+        {
+            Directory.Delete(folder, recursive: true);
+            _scanner.InvalidateCache();
+        };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _service.BackfillAsync(Project, apply: true, CancellationToken.None));
+
+        Assert.Empty(_service.Read(Project));
+        Assert.Empty(new OrchestratorLog(NullLogger<OrchestratorLog>.Instance).Read(Watch()));
+    }
+
+    [Theory]
+    [InlineData("card", 0.95)]
+    [InlineData("card", 0.4)]
+    [InlineData("wiki-md", 0.95)]
+    [InlineData("wiki-md", 0.4)]
+    [InlineData("wiki-html", 0.95)]
+    [InlineData("wiki-html", 0.4)]
+    public async Task StorageFailureLeavesTagsAndStatusUnchangedAndRetryCompletes(string kind, double confidence)
+    {
+        var id = kind == "card" ? "atomic-card" : "atomic-article." + (kind == "wiki-md" ? "md" : "html");
+        if (kind == "card") AddCard(id); else AddWiki(id);
+        _classifier.Confidence[id] = confidence;
+        var path = kind == "card"
+            ? Path.Combine(_scanner.FindJob(id, Watch())!.FolderPath, "task.json")
+            : Path.Combine(Watch(), "docs", id);
+        var before = File.ReadAllText(path);
+        _writer.Attempts.Clear();
+        _writer.Reject = true;
+
+        await Assert.ThrowsAnyAsync<Exception>(() =>
+            _service.BackfillAsync(Project, apply: true, CancellationToken.None));
+
+        Assert.Equal(before, File.ReadAllText(path));
+        Assert.Single(_writer.Attempts);
+        Assert.Empty(_workspace.Items.Single().Tags);
+        Assert.Empty(_service.Read(Project));
+        Assert.Null(_service.ReadReport(Project));
+        Assert.Empty(new OrchestratorLog(NullLogger<OrchestratorLog>.Instance).Read(Watch()));
+        Assert.False(File.Exists(Path.Combine(Path.GetDirectoryName(path)!, "logs", "timeline.jsonl")));
+
+        _writer.Reject = false;
+        var applied = await _service.BackfillAsync(Project, apply: true, CancellationToken.None);
+        var expectedStatus = confidence >= 0.8 ? "tagged" : "tags-proposed";
+        Assert.Equal(expectedStatus, Assert.Single(applied.Items).Status);
+        Assert.Equal(expectedStatus, Assert.Single(_service.Read(Project)).Status);
+        Assert.Equal(2, _writer.Attempts.Count);
+        string[] tags;
         if (kind == "card")
         {
-            _workspace.RejectWrites = false;
-            var retried = await _service.BackfillAsync(Project, apply: true, CancellationToken.None);
-            Assert.Single(retried.Items);
-            Assert.Equal("tagged", _service.Read(Project).Single().Status);
+            var card = _scanner.FindJob(id, Watch())!;
+            Assert.Equal(expectedStatus, card.TaggingStatus);
+            tags = [.. card.Tags ?? []];
+        }
+        else
+        {
+            var content = _docs.ReadWikiFile(Project, id)!.Content;
+            Assert.Equal(expectedStatus, ProjectDocsService.ReadTaggingStatus(content));
+            tags = ProjectDocsService.FrontmatterTags(content);
+            Assert.Contains("Article body", content);
+        }
+        Assert.Equal(confidence >= 0.8 ? new[] { "execution-and-runner" } : [], tags);
+        Assert.Single(new OrchestratorLog(NullLogger<OrchestratorLog>.Instance).Read(Watch()));
+    }
+
+    [Fact]
+    public void StandaloneCardStatusWriterReportsStorageFailure()
+    {
+        AddCard("status-write");
+        _writer.Reject = true;
+        Assert.False(_mutations.SetTaggingStatus("status-write", "tagged", Watch()));
+        Assert.Null(_scanner.FindJob("status-write", Watch())!.TaggingStatus);
+        _writer.Reject = false;
+        Assert.True(_mutations.SetTaggingStatus("status-write", "tagged", Watch()));
+        Assert.Equal("tagged", _scanner.FindJob("status-write", Watch())!.TaggingStatus);
+    }
+
+    private void AddWiki(string id)
+    {
+        Directory.CreateDirectory(Path.Combine(Watch(), "docs"));
+        var content = id.EndsWith(".html", StringComparison.Ordinal)
+            ? "<!doctype html><html><head><title>Article</title></head><body>Article body</body></html>"
+            : "# Article\n\nArticle body";
+        File.WriteAllText(Path.Combine(Watch(), "docs", id), content);
+        Assert.True(_docs.PreloadWikiContent(Project));
+        _workspace.Items.Add(new(Project, "wiki", id, "Article", [], content, true));
+    }
+
+    private sealed class RejectableWriter : IAtomicJsonFileWriter
+    {
+        private readonly AtomicJsonFileWriter _inner = new();
+        public bool Reject { get; set; }
+        public List<string> Attempts { get; } = [];
+        public void Write(string path, string content) => ReplaceExisting(path, content);
+        public void ReplaceExisting(string path, string content)
+        {
+            Attempts.Add(content);
+            // Reject the write containing status. A split tags/status implementation
+            // would already have changed the file before reaching this failure.
+            if (Reject && (content.Contains("taggingStatus", StringComparison.Ordinal)
+                || content.Contains("agent-studio-tagging-status", StringComparison.Ordinal)))
+                throw new IOException("Injected status persistence failure.");
+            _inner.ReplaceExisting(path, content);
         }
     }
 
@@ -178,17 +294,21 @@ public sealed class AutoTaggingOrchestrationTests : IDisposable
         public List<TagMaintenanceItem> Items { get; } = [];
         public List<TagMaintenanceChange> Writes { get; } = [];
         public bool RejectWrites { get; set; }
+        public Action? BeforeWrite { get; set; }
+        public Func<TagMaintenanceChange, string?, bool> Writer { get; set; } = null!;
         public IReadOnlyList<string> Projects() => [Project];
         public TagMaintenanceSnapshot Capture(string project) => new([], ["execution-and-runner"],
             new() { ["execution-and-runner"] = [] }, Items.ToList());
         public string CreateCard(string project, TagMaintenanceDecision decision) => throw new NotSupportedException();
         public string Read(TagMaintenanceChange change) => throw new NotSupportedException();
-        public bool Write(TagMaintenanceChange change)
+        public bool Write(TagMaintenanceChange change, string? taggingStatus = null)
         {
+            BeforeWrite?.Invoke();
             if (RejectWrites) return false;
+            if (!Writer(change, taggingStatus)) return false;
             Writes.Add(change);
             var index = Items.FindIndex(x => x.Kind == change.Kind && x.Id == change.Id);
-            Items[index] = Items[index] with { Tags = ["execution-and-runner"] };
+            Items[index] = Items[index] with { Tags = System.Text.Json.JsonSerializer.Deserialize<string[]>(change.After)! };
             return true;
         }
     }

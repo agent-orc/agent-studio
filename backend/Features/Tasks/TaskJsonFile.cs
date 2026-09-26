@@ -146,13 +146,14 @@ internal static class TaskJsonFile
     /// <summary>
     /// Replaces or adds multiple top-level fields in one atomic rewrite.
     /// </summary>
-    internal static void UpdateFields(
+    internal static bool UpdateFields(
         string jobDir,
         IReadOnlyDictionary<string, object> values,
-        ILogger logger)
+        ILogger logger,
+        IAtomicJsonFileWriter? fileWriter = null)
     {
         var jobJsonPath = Path.Combine(jobDir, "task.json");
-        if (!File.Exists(jobJsonPath)) return;
+        if (!File.Exists(jobJsonPath)) return false;
 
         try
         {
@@ -171,11 +172,13 @@ internal static class TaskJsonFile
                 if (!updated.ContainsKey(kv.Key)) updated[kv.Key] = kv.Value;
             }
 
-            Write(jobJsonPath, updated);
+            Write(jobJsonPath, updated, fileWriter);
+            return true;
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to update fields in task.json at {Dir}", jobDir);
+            return false;
         }
     }
 

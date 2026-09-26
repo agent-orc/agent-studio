@@ -10,7 +10,7 @@ public interface ITagMaintenanceWorkspace
     TagMaintenanceSnapshot CaptureForClassification(string project) => Capture(project);
     string CreateCard(string project, TagMaintenanceDecision decision);
     string Read(TagMaintenanceChange change);
-    bool Write(TagMaintenanceChange change);
+    bool Write(TagMaintenanceChange change, string? taggingStatus = null);
 }
 
 /// <summary>Uses the existing application writers; no maintenance-specific task or Dossier storage.</summary>
@@ -129,10 +129,14 @@ public sealed class TagMaintenanceWorkspace(TaskScannerService scanner, TaskMuta
         }
     }
 
-    public bool Write(TagMaintenanceChange change)
+    public bool Write(TagMaintenanceChange change, string? taggingStatus = null)
     {
+        if (taggingStatus is not (null or "tagged" or "tags-proposed"))
+            throw new ArgumentException("Unknown tagging status.");
+        if (taggingStatus != null && change.Kind is not ("card" or "dossier" or "wiki"))
+            throw new ArgumentException("Tagging status is only supported for classified items.");
         var current = Read(change);
-        if (current == change.After) return false;
+        if (current == change.After && taggingStatus == null) return false;
         if (current != change.Before) throw new InvalidOperationException($"Stale {change.Kind}/{change.Id}.");
         switch (change.Kind)
         {
@@ -165,18 +169,20 @@ public sealed class TagMaintenanceWorkspace(TaskScannerService scanner, TaskMuta
                 if (change.Kind == "card")
                 {
                     var watch = scanner.GetWatchPaths().Single(p => p.Name == change.Project);
-                    if (!tasks.SetJobTags(change.Id, ids, watch.Path)) throw new InvalidOperationException("Card tag write failed.");
+                    if (!tasks.SetJobTags(change.Id, ids, watch.Path, taggingStatus)) throw new InvalidOperationException("Card tag write failed.");
                 }
                 else if (change.Kind == "dossier")
                 {
-                    var result = dossierTags.Set(change.Project, change.Id, new() { Tags = ids.ToList() });
+                    var result = dossierTags.Set(change.Project, change.Id, new() { Tags = ids.ToList(), TaggingStatus = taggingStatus });
                     if (!result.Success) throw new InvalidOperationException(result.Error);
                     docs.InvalidateWikiContent(change.Project);
                 }
                 else
                 {
                     var file = docs.ReadWikiFile(change.Project, change.Id)!;
-                    var result = docs.WriteWikiFile(change.Project, change.Id, RewriteFrontmatter(file.Content, ids));
+                    var updated = RewriteFrontmatter(file.Content, ids);
+                    if (taggingStatus != null) updated = RewriteTaggingStatus(updated, taggingStatus);
+                    var result = docs.WriteWikiFile(change.Project, change.Id, updated);
                     if (!result.Success) throw new InvalidOperationException(result.Error);
                 }
                 break;

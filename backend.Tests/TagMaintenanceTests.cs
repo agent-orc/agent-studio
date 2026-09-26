@@ -393,7 +393,7 @@ public sealed class TagMaintenanceTests : IDisposable
             }
             return Values.GetValueOrDefault(key, change.Before);
         }
-        public bool Write(TagMaintenanceChange change)
+        public bool Write(TagMaintenanceChange change, string? taggingStatus = null)
         {
             var key = change.Kind + "/" + change.Id;
             if (key == FailOnce) { FailOnce = null; throw new IOException("Simulated write failure"); }

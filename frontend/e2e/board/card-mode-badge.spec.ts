@@ -75,6 +75,11 @@ async function installRoutes(page: Page) {
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }).catch(() => undefined);
   });
 
+  await page.route('**/api/tasks/archive**', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ items: [], total: 0, offset: 0, limit: 50 }),
+  }));
+
   await page.route('**/api/tasks/grouped**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(GROUPED_PAYLOAD) }));
 
@@ -163,17 +168,12 @@ test.describe('Card mode badge (planning / research / concept recognizable on th
     await expect(proposal).toHaveText('Tags proposed');
     await expect(tagged).toHaveText('Auto-tagged');
     await expect(cardByTitle(page, CODING_TASK.title).getByTestId('task-card-tagging-status')).toHaveCount(0);
-    // The broad board fixture can open an unrelated error dialog while its
-    // placeholder API responses settle; keep the marker capture unobscured.
-    if (await page.getByTestId('error-dialog').isVisible())
-      await page.getByTestId('error-dialog-close').click();
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
       await expect(proposal).toBeVisible();
       await expect(tagged).toBeVisible();
-      if (await page.getByTestId('error-dialog').isVisible())
-        await page.getByTestId('error-dialog-close').click();
-      const path = `${process.env.JOB_RESULTS_DIR ?? 'test-results'}/auto-tag-card-${theme}.png`;
+      await expect(page.getByTestId('error-dialog')).toHaveCount(0);
+      const path = `${process.env.JOB_RESULTS_DIR ?? 'test-results'}/auto-tag-card-${theme}--mocked.png`;
       await cardByTitle(page, PLANNING_TASK.title).screenshot({ path });
     }
   });
@@ -243,13 +243,13 @@ test.describe('Card mode badge (planning / research / concept recognizable on th
       await expect(cardByTitle(page, CODING_TASK.title).getByTestId('task-card-mode')).toHaveCount(0);
 
       const buf = await page.screenshot({ fullPage: false });
-      await testInfo.attach(`card-mode-badge-${theme}.png`, { body: buf, contentType: 'image/png' });
+      await testInfo.attach(`card-mode-badge-${theme}--mocked.png`, { body: buf, contentType: 'image/png' });
       const resultsDir = process.env.JOB_RESULTS_DIR;
       if (resultsDir) {
-        await page.screenshot({ path: `${resultsDir}/card-mode-badge-${theme}.png`, fullPage: false });
+        await page.screenshot({ path: `${resultsDir}/card-mode-badge-${theme}--mocked.png`, fullPage: false });
       }
       // Local scratch copy for inline review (test-results/ is gitignored).
-      await page.screenshot({ path: `test-results/card-mode-badge-${theme}.png`, fullPage: false });
+      await page.screenshot({ path: `test-results/card-mode-badge-${theme}--mocked.png`, fullPage: false });
     });
   }
 });
