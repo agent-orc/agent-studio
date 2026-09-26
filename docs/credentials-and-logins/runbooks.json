@@ -1,0 +1,304 @@
+{
+  "schemaVersion": 1,
+  "recordClass": "proposed-runbook-catalogue",
+  "runbooks": [
+    {
+      "id": "RB-CLAUDE-ROTATION",
+      "incidentDate": "2026-09-07",
+      "kind": "refresh_rotation_conflict",
+      "credentialKinds": [
+        "claude_native_login",
+        "claude_oauth_token"
+      ],
+      "reportedEvent": "Copied workstation credentials worked about eight hours, then host and workstation failed. A dead host cache was dated 2026-09-08; an environment setup-token was reported in runner.env.",
+      "discrimination": [
+        "Discover actual daemon source before reading expiry.",
+        "Compare account/session provenance across hosts without transferring tokens.",
+        "Check applicable provider incident and network evidence before confirming invalid credentials."
+      ],
+      "historicalFix": "Operator reports host-owned setup-token in runner.env; canonical provider-auth.env migration is proposed, not observed.",
+      "unknowns": [
+        "actual token expiry",
+        "issuance actor and time",
+        "independent real-call transcript"
+      ],
+      "targetOutcome": "credential_invalid",
+      "operatorAction": "Renew Claude on this host",
+      "humanSteps": [
+        "Complete browser consent in the host setup-token session."
+      ],
+      "platformSteps": [
+        "discover_effective_source",
+        "classify_provider_access",
+        "begin_host_login",
+        "stage_local_secret",
+        "install_generation",
+        "reconcile_units_safely",
+        "verify_real_request",
+        "advertise_generation",
+        "retire_old_generation"
+      ],
+      "verification": [
+        "Same generation is loaded by both applicable units.",
+        "Real request succeeds; newer capability receipt admits work."
+      ],
+      "rollback": [
+        "Retain old valid local generation until new proof.",
+        "If old generation is unusable, keep claims parked and resume the host login; never copy a workstation refresh session."
+      ],
+      "actionPolicy": "One deduplicated renewal item only after credential-invalid confirmation.",
+      "version": 1,
+      "provenance": {
+        "type": "operator-report",
+        "sourceTaskKey": "AGT-2968",
+        "reportedAt": "2026-09-26",
+        "independentlyReproduced": false
+      },
+      "preconditions": [
+        "Authorized actor for this host and credential scope.",
+        "Current expected credential generation and idempotency key.",
+        "Protected channel available or explicit recovery path."
+      ],
+      "stepExecution": "Allowlisted adapter opcodes only; implementations must not execute document-provided shell text.",
+      "receiptFields": [
+        "operationId",
+        "stepId",
+        "actorId",
+        "hostId",
+        "credentialId",
+        "expectedGeneration",
+        "observedGeneration",
+        "outcome",
+        "evidenceRefs",
+        "occurredAt"
+      ],
+      "match": {
+        "all": [
+          {
+            "field": "credential.kind",
+            "operator": "in",
+            "value": [
+              "claude_native_login",
+              "claude_oauth_token"
+            ]
+          },
+          {
+            "field": "evidence.refreshSessionSharedAcrossHosts",
+            "operator": "equals",
+            "value": true
+          },
+          {
+            "field": "probe.outcome",
+            "operator": "equals",
+            "value": "credential_invalid"
+          }
+        ]
+      },
+      "executionPolicy": {
+        "generationFenceRequired": true,
+        "durableIdempotencyRequired": true,
+        "secretValuesAllowedInReceipts": false,
+        "authorization": "actor must hold the existing capability for the target scope",
+        "onUnknownPredicate": "diagnosis-only; do not begin repair"
+      }
+    },
+    {
+      "id": "RB-CODEX-INCIDENT",
+      "incidentDate": "2026-09-26",
+      "kind": "provider_incident_unauthorized",
+      "credentialKinds": [
+        "codex_chatgpt_login"
+      ],
+      "reportedEvent": "All reported Codex runs returned 401 Incorrect API key provided with a service-account-shaped token string. ProviderUnauthorized stopped Codex claims; status.openai.com distinguished an incident after roughly forty minutes.",
+      "discrimination": [
+        "Normalize unauthorized signature and retain actual ChatGPT login mode.",
+        "Correlate fresh status incident by affected service and time, or identical comparable failure from independent known-good credentials.",
+        "Uncorroborated 401 remains indeterminate."
+      ],
+      "historicalFix": "Status-page correlation established the reported diagnosis; historical recovery action and resolution time were not supplied.",
+      "unknowns": [
+        "provider incident ID",
+        "archived status response",
+        "known-good comparison result",
+        "historical successful recovery call"
+      ],
+      "targetOutcome": "provider_incident",
+      "operatorAction": "Diagnose provider access",
+      "humanSteps": [],
+      "platformSteps": [
+        "discover_effective_source",
+        "verify_real_request",
+        "correlate_incident",
+        "pause_affected_claims",
+        "schedule_bounded_retry",
+        "verify_recovery_canary",
+        "advertise_generation"
+      ],
+      "verification": [
+        "Applicable incident evidence is recorded with its retrieval and occurrence times.",
+        "A successful same-generation recovery canary and fresh advertisement precede reopening."
+      ],
+      "rollback": [
+        "Failed canary retains scoped hold.",
+        "If incident is resolved but only this credential fails, repeat classification and require explicit credential-invalid evidence before renewal."
+      ],
+      "actionPolicy": "Confirmed incident creates no operator action item. Inconclusive diagnosis has a separate bounded escalation, without sign-in advice.",
+      "version": 1,
+      "provenance": {
+        "type": "operator-report",
+        "sourceTaskKey": "AGT-2968",
+        "reportedAt": "2026-09-26",
+        "independentlyReproduced": false
+      },
+      "preconditions": [
+        "Authorized actor for this host and credential scope.",
+        "Current expected credential generation and idempotency key.",
+        "Protected channel available or explicit recovery path."
+      ],
+      "stepExecution": "Allowlisted adapter opcodes only; implementations must not execute document-provided shell text.",
+      "receiptFields": [
+        "operationId",
+        "stepId",
+        "actorId",
+        "hostId",
+        "credentialId",
+        "expectedGeneration",
+        "observedGeneration",
+        "outcome",
+        "evidenceRefs",
+        "occurredAt"
+      ],
+      "match": {
+        "all": [
+          {
+            "field": "credential.kind",
+            "operator": "in",
+            "value": [
+              "codex_chatgpt_login"
+            ]
+          },
+          {
+            "field": "request.normalizedCode",
+            "operator": "equals",
+            "value": "unauthorized"
+          },
+          {
+            "field": "incident.corroboration",
+            "operator": "in",
+            "value": [
+              "official-applicable",
+              "independent-known-good-match"
+            ]
+          }
+        ]
+      },
+      "executionPolicy": {
+        "generationFenceRequired": true,
+        "durableIdempotencyRequired": true,
+        "secretValuesAllowedInReceipts": false,
+        "authorization": "actor must hold the existing capability for the target scope",
+        "onUnknownPredicate": "diagnosis-only; do not begin repair"
+      }
+    },
+    {
+      "id": "RB-GITHUB-WORKSPACE",
+      "incidentDate": "2026-09-26",
+      "kind": "repository_scope_missing",
+      "credentialKinds": [
+        "github_https_token",
+        "github_provisioning_oauth",
+        "github_deploy_key"
+      ],
+      "reportedEvent": "Runner could push product repositories but could not reach the private workspace repository.",
+      "discrimination": [
+        "Test the exact workspace origin and required access, not a fallback product remote.",
+        "Separate missing repository grant from SSH host trust, DNS and provider failure."
+      ],
+      "historicalFix": "An ed25519 key was generated on the host and its public part registered through GitHub API using the workstation stored OAuth credential.",
+      "unknowns": [
+        "GitHub deploy-key ID",
+        "exact key path",
+        "write-permission evidence",
+        "issuer actor receipt"
+      ],
+      "targetOutcome": "credential_invalid",
+      "operatorAction": "Provision access for this repository",
+      "humanSteps": [
+        "Repository administrator authorizes registration or missing write grants if the existing integration lacks authority."
+      ],
+      "platformSteps": [
+        "discover_repository_binding",
+        "probe_exact_origin",
+        "generate_host_key",
+        "register_public_key",
+        "verify_repository_access",
+        "switch_repository_identity",
+        "retire_old_generation"
+      ],
+      "verification": [
+        "Fetch succeeds on the exact private workspace origin with candidate identity alone.",
+        "Required push permission is separately proven by managed Git or explicitly remains unverified."
+      ],
+      "rollback": [
+        "If registration or proof fails, retain the prior working product credentials and remove only the operation-owned failed candidate.",
+        "Do not revoke the provisioning token without checking dependent deploy keys."
+      ],
+      "actionPolicy": "One repository-scoped repair item; no whole-provider logout.",
+      "version": 1,
+      "provenance": {
+        "type": "operator-report",
+        "sourceTaskKey": "AGT-2968",
+        "reportedAt": "2026-09-26",
+        "independentlyReproduced": false
+      },
+      "preconditions": [
+        "Authorized actor for this host and credential scope.",
+        "Current expected credential generation and idempotency key.",
+        "Protected channel available or explicit recovery path."
+      ],
+      "stepExecution": "Allowlisted adapter opcodes only; implementations must not execute document-provided shell text.",
+      "receiptFields": [
+        "operationId",
+        "stepId",
+        "actorId",
+        "hostId",
+        "credentialId",
+        "expectedGeneration",
+        "observedGeneration",
+        "outcome",
+        "evidenceRefs",
+        "occurredAt"
+      ],
+      "match": {
+        "all": [
+          {
+            "field": "credential.kind",
+            "operator": "in",
+            "value": [
+              "github_https_token",
+              "github_provisioning_oauth",
+              "github_deploy_key"
+            ]
+          },
+          {
+            "field": "repository.purpose",
+            "operator": "equals",
+            "value": "workspace"
+          },
+          {
+            "field": "repository.requiredAccessVerified",
+            "operator": "equals",
+            "value": false
+          }
+        ]
+      },
+      "executionPolicy": {
+        "generationFenceRequired": true,
+        "durableIdempotencyRequired": true,
+        "secretValuesAllowedInReceipts": false,
+        "authorization": "actor must hold the existing capability for the target scope",
+        "onUnknownPredicate": "diagnosis-only; do not begin repair"
+      }
+    }
+  ]
+}
