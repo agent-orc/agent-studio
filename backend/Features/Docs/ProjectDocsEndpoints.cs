@@ -406,12 +406,13 @@ public static class ProjectDocsEndpoints
 
         // Create a new wiki page (.md/.html/.json). The file is written to disk
         // then committed into the project repo so it shows up in git history.
-        app.MapPost("/api/projects/{projectName}/wiki/pages", (string projectName, WikiCreatePageRequest body, ProjectDocsService docs, GitService git) =>
+        app.MapPost("/api/projects/{projectName}/wiki/pages", (string projectName, WikiCreatePageRequest body, ProjectDocsService docs, GitService git, AgentStudio.Tags.AutoTagCreationWorker autoTag) =>
         {
             var rel = Normalize(body.RelPath);
             if (rel == null) return Results.BadRequest(new { error = "relPath is required" });
             var result = docs.CreateWikiPage(projectName, rel, body.Content);
             if (!result.Success) return Results.BadRequest(new { error = result.Error });
+            autoTag.Wake();
             return CommitWikiChange(docs, git, projectName, result.FullPath!, $"wiki: create {rel}", result.ExtraPaths);
         });
 

@@ -14,7 +14,8 @@ public sealed record TagGoldenSetItem
 
 public sealed record TagGoldenSet
 {
-    public string ApprovedBy { get; init; } = "";
+    public string Status { get; init; } = "approved";
+    public string? ApprovedBy { get; init; }
     public DateTimeOffset? ApprovedAt { get; init; }
     public List<TagGoldenSetItem> Items { get; init; } = [];
 }
@@ -68,30 +69,39 @@ public sealed class TagGoldenSetClassifier(CliOneShotRegistry oneShots, RuntimeP
         IReadOnlyList<TagGoldenSetItem> items, TagMaintenanceSnapshot context,
         string thinkingLevel, CancellationToken ct)
     {
-        var input = TagMaintenancePolicy.Encode(new
-        {
-            registry = context.Registry,
-            context.AreaIds,
-            context.Glossaries,
-            items = items.Select(item => new { item.Kind, item.Id, item.Title, item.Text }),
-        });
-        var prompt = prompts.Render(PromptTemplate, new Dictionary<string, string?> { ["input"] = input },
-            new PromptCallContext(project, "tag-classification-golden-evaluation", Model));
-        if (prompt.Length > 500_000)
-            throw new InvalidOperationException("Golden-set context exceeds the bounded classification budget.");
         var cli = oneShots.Get(CliTypes.Claude)
             ?? throw new InvalidOperationException("Sonnet classification CLI unavailable.");
-        var result = await cli.RunAsync(new(CliTypes.Claude, Model, prompt)
+        var predictions = new List<TagClassificationPrediction>(items.Count);
+        foreach (var batch in items.Chunk(8))
         {
-            ThinkingLevel = thinkingLevel,
-            Timeout = TimeSpan.FromMinutes(5),
-            Project = project,
-            Source = "tag-classification-evaluation",
-            StepId = "tag-classification-golden-evaluation",
-        }, ct);
-        if (!result.Ok) throw new InvalidOperationException(result.Error ?? "Tag classification evaluation failed.");
-        return JsonSerializer.Deserialize<List<TagClassificationPrediction>>(result.ParsedText, TagMaintenancePolicy.Json)
-            ?? throw new InvalidOperationException("Tag classification evaluation returned no prediction array.");
+            var input = TagMaintenancePolicy.Encode(new
+            {
+                registry = context.Registry,
+                context.AreaIds,
+                context.Glossaries,
+                items = batch.Select(item => new { item.Kind, item.Id, item.Title, item.Text }),
+            });
+            var prompt = prompts.Render(PromptTemplate, new Dictionary<string, string?> { ["input"] = input },
+                new PromptCallContext(project, "tag-classification-golden-evaluation", Model));
+            if (prompt.Length > 60_000)
+                throw new InvalidOperationException("Golden-set batch exceeds the bounded classification budget.");
+            var result = await cli.RunAsync(new(CliTypes.Claude, Model, prompt)
+            {
+                ThinkingLevel = thinkingLevel,
+                Timeout = TimeSpan.FromMinutes(5),
+                Project = project,
+                Source = "tag-classification-evaluation",
+                StepId = "tag-classification-golden-evaluation",
+                ExtraArgs = ["--tools", "", "--max-budget-usd", "1.00"],
+            }, ct);
+            if (!result.Ok) throw new InvalidOperationException(result.Error ?? "Tag classification evaluation failed.");
+            if (result.Usage?.OutputTokens > 4096 || result.ParsedText.Length > 16_384)
+                throw new InvalidOperationException("Golden-set response exceeds the batch output cap.");
+            predictions.AddRange(JsonSerializer.Deserialize<List<TagClassificationPrediction>>(result.ParsedText,
+                TagMaintenancePolicy.Json)
+                ?? throw new InvalidOperationException("Tag classification evaluation returned no prediction array."));
+        }
+        return predictions;
     }
 }
 
@@ -126,7 +136,8 @@ public sealed class TagGoldenSetEvaluator(ITagGoldenSetClassifier classifier, IC
             }
             return new()
             {
-                Status = "evaluated", Metrics = "available", Path = path,
+                Status = golden.Status == "proposed" ? "evaluated-proposed" : "evaluated",
+                Metrics = golden.Status == "proposed" ? "available (proposed reference)" : "available", Path = path,
                 CardCount = cards, DossierCount = dossiers,
                 SelectedTier = selectedTier, Tiers = tiers,
                 Message = selectedTier == 2
@@ -175,6 +186,14 @@ public sealed class TagGoldenSetEvaluator(ITagGoldenSetClassifier classifier, IC
         var configured = configuration["TagMaintenance:GoldenSetPath"];
         if (!string.IsNullOrWhiteSpace(configured))
             return Path.GetFullPath(configured.Replace("{project}", project, StringComparison.Ordinal));
+        if (string.Equals(project, "Agent Studio", StringComparison.OrdinalIgnoreCase))
+        {
+            for (var dir = new DirectoryInfo(Directory.GetCurrentDirectory()); dir != null; dir = dir.Parent)
+            {
+                var proposal = Path.Combine(dir.FullName, "docs", "quality", "tagging-golden-set", "items.json");
+                if (File.Exists(proposal)) return proposal;
+            }
+        }
         var root = configuration["TaskRepository"]
             ?? throw new InvalidOperationException("TaskRepository is required for golden-set evaluation.");
         return Path.Combine(root, "tag-golden-sets", TagMaintenancePolicy.Fingerprint(project) + ".json");
@@ -182,8 +201,10 @@ public sealed class TagGoldenSetEvaluator(ITagGoldenSetClassifier classifier, IC
 
     private static void Validate(TagGoldenSet golden, int cards, int dossiers, HashSet<string> allowedTags)
     {
-        if (string.IsNullOrWhiteSpace(golden.ApprovedBy) || golden.ApprovedAt == null)
+        if (golden.Status != "proposed" && (string.IsNullOrWhiteSpace(golden.ApprovedBy) || golden.ApprovedAt == null))
             throw new InvalidOperationException("Golden set lacks operator approval metadata; no metrics were calculated.");
+        if (golden.Status == "proposed" && (golden.ApprovedBy != null || golden.ApprovedAt != null))
+            throw new InvalidOperationException("A proposed golden set cannot carry approval metadata.");
         if (cards < 60 || dossiers < 20)
             throw new InvalidOperationException("Golden set must contain at least 60 cards and 20 Dossiers; no metrics were calculated.");
         if (golden.Items.Any(item => item.Kind is not ("card" or "dossier")

@@ -26,6 +26,8 @@ namespace AgentStudio.Pipeline;
 /// </summary>
 public static class PipelineCatalogue
 {
+    /// <summary>Creation pipeline step for cards, Dossiers, and wiki articles; outside coding-run pipelines.</summary>
+    public const string AutoTagStepId = "auto-tag";
     public const string StandardPipelineId = "standard-task-pipeline";
 
     /// <summary>

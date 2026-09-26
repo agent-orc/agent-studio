@@ -656,6 +656,15 @@ builder.Services.AddSingleton<AgentStudio.Tags.ITagMaintenanceSynthesis, AgentSt
 builder.Services.AddSingleton<AgentStudio.Tags.ITagGoldenSetClassifier, AgentStudio.Tags.TagGoldenSetClassifier>();
 builder.Services.AddSingleton<AgentStudio.Tags.TagGoldenSetEvaluator>();
 builder.Services.AddSingleton<AgentStudio.Tags.TagMaintenanceService>();
+builder.Services.AddSingleton<AgentStudio.Tags.IAutoTagClassifier, AgentStudio.Tags.AutoTagClassifier>();
+builder.Services.AddSingleton<AgentStudio.Tags.AutoTaggingService>();
+builder.Services.AddSingleton<AgentStudio.Tags.AutoTagCreationWorker>();
+builder.Services.AddSingleton<AgentStudio.Tags.AutoTagBackfillQueue>();
+if (!builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
+{
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Tags.AutoTagCreationWorker>());
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Tags.AutoTagBackfillQueue>());
+}
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService<AgentStudio.Tags.TagMaintenanceWorker>();
 builder.Services.AddSingleton<ProjectObservationService>();

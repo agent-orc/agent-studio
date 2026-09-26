@@ -12,9 +12,11 @@ owns a glossary: the ubiquitous language an agent must use for that area. A
 - **facet tags** name a cross-cutting aspect (a quality domain such as
   `testing`, or a document kind such as `decision`).
 
-Auto-tagging is delivered separately by AGT-2804. Tag maintenance reviews the
-resulting vocabulary and usage, but changes it only after an operator approves
-the exact proposal.
+AGT-2804 adds the creation-time `auto-tag` classifier and the dry-run/apply
+backfill. The [proposed reference set](../../quality/tagging-golden-set/index.html)
+contains 60 cards, 20 Dossiers, and glossary proposals awaiting operator
+approval. Tag maintenance reviews the resulting vocabulary and usage, but
+changes it only after an operator approves the exact proposal.
 
 ## Ownership
 
@@ -30,6 +32,7 @@ the exact proposal.
 | Periodic usage review and durable per-project reports | `backend/Features/Tags/Maintenance/TagMaintenanceService.cs` |
 | Proposal validation and exact before/after plans | `backend/Features/Tags/Maintenance/TagMaintenancePolicy.cs` (pure) |
 | Card, Dossier, wiki, registry, and glossary reads and writes | `backend/Features/Tags/Maintenance/TagMaintenanceWorkspace.cs` |
+| Creation classification, confidence policy, proposals, and backfill | `backend/Features/Tags/AutoTaggingService.cs` |
 
 ## The ten product areas
 
@@ -60,6 +63,15 @@ facets, as the v2 plan records.
 
 ## Project additions
 
+### Auto-tag opt-out
+
+Every project starts with `AutoTag = true` in the workspace project settings.
+`PUT /api/projects/{project}/auto-tag` accepts `{"enabled":false}` to opt out
+of creation classification. The current v1 `.agent-studio/project.yml` reader
+is closed, so the opt-out is not a key there. The project-definition v2 plan
+records `tagging.autoTag` as moved to this workspace setting. An explicit
+backfill request remains available when automatic creation tagging is off.
+
 A project may add areas and re-label an inherited one. The active
 `.agent-studio/project.yml` (v1) is closed for new fields and the v2 plan lists
 `project.areas` as a later extension request, so project additions are stored
@@ -85,8 +97,20 @@ the write path lives in one place and the wiki-path guard covers it.
 |---|---|
 | Card | `task.json` → `tags[]` |
 | Dossier | `workbench.json` → `tags[]`, projected onto the catalogue item |
-| Wiki article | YAML front matter `tags: [a, b]` or a block list |
+| Wiki article | YAML front matter `tags: [a, b]` or a block list; HTML pages use `<meta name="agent-studio-tags" content="a, b">` in `<head>` |
 | Dossier entry page in the wiki tree | the Dossier descriptor's `tags[]` |
+
+Auto-tagging also persists an optional `taggingStatus` alongside these tags.
+The only recognized values are `tagged` (the classifier applied registry tags)
+and `tags-proposed` (low-confidence suggestions are held in the project's
+auto-tag state for review). Cards store it at `task.json.taggingStatus`;
+Dossiers store it at `workbench.json.taggingStatus`. Wiki Markdown stores
+`taggingStatus: tagged` or `taggingStatus: tags-proposed` in YAML front matter.
+Wiki HTML stores `<meta name="agent-studio-tagging-status" content="tagged">`
+or the same meta element with `content="tags-proposed"` inside `<head>`.
+Readers treat missing and unrecognized values as no status marker; they do
+not infer successful tagging from an unknown value. Archived items are not
+classified.
 
 ## API
 
@@ -159,14 +183,15 @@ partial failure. The alternative `keep` choice records rejection without any
 registry, glossary, or subject write. Area ids and platform provenance tags are
 never eligible for retirement or merge.
 
-When an operator-approved golden-set file is present, the same run also records
-micro precision and recall per classification tier. The file is accepted only
-with approval metadata and at least 60 cards plus 20 Dossiers. Tier 1 uses the
-Sonnet-class route at low thinking. Precision below 0.9 automatically evaluates
-and selects tier 2 on the Sonnet-class route at high thinking. Missing,
-unapproved, undersized, malformed, or out-of-registry data produces an explicit
-report status instead of a metric claim. The repository does not ship an
-agent-authored golden set as ground truth.
+When a valid golden-set file is present, the run records micro precision and
+recall per classification tier. The repository's Agent Studio set contains 60
+cards and 20 Dossiers and is marked `proposed`, with no approver. Its metrics
+are explicitly labelled as agreement with a proposed reference, pending the
+operator decision. An approved set requires `approvedBy` and `approvedAt`.
+Tier 1 uses the Sonnet-class route at low thinking. Precision below 0.9
+automatically evaluates and selects tier 2 at high thinking. Missing,
+undersized, malformed, or out-of-registry data produces an explicit report
+status instead of a metric claim.
 
 ### Filesystem and report contract
 
@@ -190,18 +215,19 @@ preimages verified immediately before application.
 Each run's `goldenSet` object contains `status`, `metrics`, `path`, `message`,
 `cardCount`, `dossierCount`, `selectedTier`, and `tiers[]`. Each tier row contains
 `tier`, `model`, `thinkingLevel`, `items`, `precision`, `recall`, and
-`meanConfidence`. Without an operator-approved file, the report says
-`metrics: "unavailable (no approved golden set)"`, leaves `tiers` empty, and
-does not emit precision or recall numbers.
+`meanConfidence`. A valid proposed file reports `evaluated-proposed` and
+`available (proposed reference)`; no file leaves `tiers` empty and emits no
+precision or recall numbers.
 
-The evaluation harness reads
+The evaluation harness reads the proposed Agent Studio set at
+`docs/quality/tagging-golden-set/items.json` when present, and otherwise reads
 `<TaskRepository>/tag-golden-sets/<sha256(project)>.json` by default. Its schema
-is `approvedBy` (non-empty string), `approvedAt` (timestamp), and `items[]`.
+has `status`, nullable `approvedBy` and `approvedAt`, and `items[]`.
 Each item has `kind` (`card` or `dossier`), `id`, `title`, `text`, and a non-empty
 `tags[]` drawn from the effective closed registry. `(kind, id)` pairs are
 unique. A usable file contains at least 60 cards and 20 Dossiers. Invalid,
-unapproved, undersized, or out-of-registry input is reported as unavailable or
-invalid and never treated as ground truth.
+undersized, or out-of-registry input is reported as invalid. Proposed input is
+measured but is never represented as operator-approved ground truth.
 
 ### Configuration
 
@@ -211,10 +237,10 @@ invalid and never treated as ground truth.
 | `TagMaintenance:Projects:<project>:Enabled` | `true` | Enables the hosted sweep for one exact project name. `false` skips that project; the explicit run API remains available. |
 | `TagMaintenance:IntervalHours` | `168` | Cadence after the most recent successful (`reported`) run. Values are clamped to 1 through 8760 hours. |
 | `TagMaintenance:RetryDelayMinutes` | `60` | Delay after the most recent failed attempt since the last success. Values are clamped to 1 through 1440 minutes. Cancellation creates no run and does not alter due time. |
-| `TagMaintenance:GoldenSetPath` | `<TaskRepository>/tag-golden-sets/<sha256(project)>.json` | Optional golden-set path override. Every `{project}` token is replaced with the exact project name, then the result is resolved to an absolute path. |
+| `TagMaintenance:GoldenSetPath` | Agent Studio: shipped proposed set; other projects: `<TaskRepository>/tag-golden-sets/<sha256(project)>.json` | Optional golden-set path override. Every `{project}` token is replaced with the exact project name, then the result is resolved to an absolute path. |
 
-`TaskRepository` is the required workspace root for both report and default
-golden-set paths. The hosted worker checks eligibility every 15 minutes; that
+`TaskRepository` is the required workspace root for reports and per-project
+golden-set paths outside the shipped Agent Studio proposal. The hosted worker checks eligibility every 15 minutes; that
 poll interval is fixed and is not a `TagMaintenance` configuration key.
 
 ## Tests

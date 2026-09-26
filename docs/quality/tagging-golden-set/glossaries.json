@@ -1,0 +1,37 @@
+{
+  "status": "proposed",
+  "approvedBy": null,
+  "areas": {
+    "execution-and-runner": [
+      {"term":"Pickup", "definition":"The admission of a ready card into an execution slot.", "synonyms":["dispatch"]},
+      {"term":"Runner", "definition":"The host process that executes an assigned card in an isolated worktree.", "synonyms":["execution host"]},
+      {"term":"Worktree", "definition":"The isolated checkout used for one card attempt.", "synonyms":[]}],
+    "delivery-chain": [
+      {"term":"Integration", "definition":"The verified movement of an accepted delivery into the target branch.", "synonyms":["merge"]},
+      {"term":"Promotion", "definition":"Movement of an integrated branch through the release path.", "synonyms":[]}],
+    "gates-and-review": [
+      {"term":"Gate", "definition":"A validation boundary that controls whether a delivery may proceed.", "synonyms":["quality gate"]},
+      {"term":"Review verdict", "definition":"The evidenced outcome of a review attempt for an exact candidate.", "synonyms":["verdict"]}],
+    "observation": [
+      {"term":"Observation", "definition":"A recorded signal about product or delivery state that carries no mutation authority.", "synonyms":["signal"]},
+      {"term":"Project feed", "definition":"The project-scoped chronology of operator-relevant events and decisions.", "synonyms":["activity feed"]}],
+    "task-and-board-ui": [
+      {"term":"Card", "definition":"A task shown on the board with its current lane and visible status.", "synonyms":["task card"]},
+      {"term":"Lane", "definition":"The board column representing the card's lifecycle position.", "synonyms":["state column"]}],
+    "dossiers-and-documentation": [
+      {"term":"Dossier", "definition":"A living decision document with alternatives, recommendation, evidence, and decisions.", "synonyms":["Workbench"]},
+      {"term":"Documentation home", "definition":"The durable page that owns knowledge after a historical Dossier is archived.", "synonyms":["artefact"]}],
+    "websites": [
+      {"term":"Publish target", "definition":"A configured destination for public website content or release artifacts.", "synonyms":["publishing target"]},
+      {"term":"Website", "definition":"A public-facing site produced or maintained by the project.", "synonyms":["public site"]}],
+    "security": [
+      {"term":"Principal", "definition":"An authenticated user or service identity making a request.", "synonyms":["identity"]},
+      {"term":"Project scope", "definition":"The boundary that limits a principal's access to a project.", "synonyms":["project access"]}],
+    "retention": [
+      {"term":"Archive", "definition":"Cold task or Dossier history kept after active work ends.", "synonyms":["cold archive"]},
+      {"term":"Retention rule", "definition":"A policy that controls how long stored evidence remains available.", "synonyms":["pruning rule"]}],
+    "token-economy": [
+      {"term":"Token ledger", "definition":"The per-call record of model usage and estimated cost.", "synonyms":["usage ledger"]},
+      {"term":"Classification route", "definition":"A bounded model route for assigning tags rather than executing coding work.", "synonyms":[]}]
+  }
+}

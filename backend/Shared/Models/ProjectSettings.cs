@@ -2,6 +2,8 @@ namespace AgentStudio.Shared;
 
 public record ProjectSettings
 {
+    /// <summary>Default-on creation classification. Stored here until project definition v2 accepts tagging.autoTag.</summary>
+    public bool AutoTag { get; init; } = true;
     /// <summary>
     /// Maximum raw bytes retained for one remote-run result artifact. The
     /// server further clamps this against its advertised request-body budget so

@@ -111,6 +111,18 @@ public class ProjectSettingsService
         }
     }
 
+    public void SetAutoTag(string projectName, bool enabled)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var s) ? s : new ProjectSettings();
+            _cache[key] = current with { AutoTag = enabled };
+            Persist();
+        }
+    }
+
     /// <summary>
     /// AGT-2839: may the local integration gate stand on the Remote Review
     /// verdict with the same integration tip and tested tree? Null clears the override and falls
