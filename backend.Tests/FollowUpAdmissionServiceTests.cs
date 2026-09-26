@@ -276,7 +276,7 @@ public sealed class FollowUpAdmissionServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task TerminalTransition_SupersedeFailureIsRetriedThenRefusesTheMove()
+    public async Task TerminalTransition_SupersedeFailureLeavesNonReplayableStashForReconciliation()
     {
         const string slug = "terminal-supersede-failure";
         WriteJob(slug, TaskStates.Ready);
@@ -292,23 +292,50 @@ public sealed class FollowUpAdmissionServiceTests : IDisposable
             suppressProductExecution: true);
 
         Assert.Equal(MoveJobStatus.PendingIntentSupersedeFailed, failed.Status);
-        Assert.Contains("terminal transition was not applied", failed.Message, StringComparison.Ordinal);
+        Assert.Contains("terminal transition landed", failed.Message, StringComparison.Ordinal);
         Assert.Equal(2, Assert.IsType<FailingSupersedeMutationService>(harness.Mutations).SupersedeCalls);
-        Assert.NotNull(ReadIntent(Path.Combine(_watchPath, TaskStates.Ready, slug)));
-        Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.Archive, slug)));
-
-        var retried = await harness.Transitions.MoveAsync(
-            slug,
-            TaskStates.Archive,
-            _watchPath,
-            suppressProductExecution: true);
-
-        Assert.Equal(MoveJobStatus.Success, retried.Status);
         var archivedFolder = Path.Combine(_watchPath, TaskStates.Archive, slug);
         Assert.Null(ReadIntent(archivedFolder));
+        Assert.True(File.Exists(Path.Combine(archivedFolder, "pending-intent.consumed.json")));
+
+        var retried = harness.Transitions.ReconcilePendingIntents();
+
+        Assert.Equal(1, retried.Superseded);
+        Assert.Null(ReadIntent(archivedFolder));
+        Assert.False(File.Exists(Path.Combine(archivedFolder, "pending-intent.consumed.json")));
         Assert.Contains(
             harness.Timeline.ReadAll(archivedFolder),
             row => row.Kind == TimelineEventKinds.FollowUpSuperseded);
+    }
+
+    [Fact]
+    public async Task RefusedTerminalMove_RestoresQueuedFollowUpWithoutCompletionReceipt()
+    {
+        const string slug = "refused-terminal-move";
+        WriteJob(slug, TaskStates.Ready);
+        var harness = Build();
+        harness.Mutations.SavePendingIntent(
+            slug, ContinueModes.Continue, "Still needed after the failed move.", "operator-continue",
+            activeJobId: null, watchPath: _watchPath);
+        var blockedTarget = Path.Combine(_watchPath, TaskStates.Archive, slug);
+        File.WriteAllText(blockedTarget, "Occupied by a file.");
+
+        var failed = await harness.Transitions.MoveAsync(
+            slug, TaskStates.Archive, _watchPath, suppressProductExecution: true);
+
+        Assert.Equal(MoveJobStatus.TargetFolderExists, failed.Status);
+        var readyFolder = Path.Combine(_watchPath, TaskStates.Ready, slug);
+        Assert.Equal("Still needed after the failed move.", ReadIntent(readyFolder)?.Prompt);
+        Assert.False(File.Exists(Path.Combine(readyFolder, "pending-intent.consumed.json")));
+        Assert.DoesNotContain(
+            harness.Timeline.ReadAll(readyFolder),
+            row => row.Kind == TimelineEventKinds.FollowUpSuperseded);
+
+        File.Delete(blockedTarget);
+        var retried = await harness.Transitions.MoveAsync(
+            slug, TaskStates.Archive, _watchPath, suppressProductExecution: true);
+        Assert.Equal(MoveJobStatus.Success, retried.Status);
+        Assert.Null(ReadIntent(Path.Combine(_watchPath, TaskStates.Archive, slug)));
     }
 
     [Fact]

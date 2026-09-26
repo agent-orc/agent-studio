@@ -294,26 +294,23 @@ public sealed class TaskTransitionService
             }
         }
 
-        // A terminal lane must never retain a replayable follow-up. Perform
-        // this bounded mutation before the lane write so a storage failure is
-        // a typed transition failure, not a successful completion with hidden
-        // stale intent. The second attempt covers a transient atomic-write or
-        // file-handle race; both failures leave the intent in its source lane
-        // for a later transition attempt.
+        // Hide a queued follow-up while the terminal move is in flight. The
+        // move can still be refused by the state machine, so do not record a
+        // completion receipt or delete the prompt until the lane write lands.
+        // A refused move restores the queued file; a landed move supersedes the
+        // stash, which remains non-replayable if history persistence fails.
         var enteringTerminalState = targetState is TaskStates.Completed or TaskStates.Archive;
         var hasPendingIntent = info.PendingIntent is not null
             || _mutations.ReadStashedPendingIntent(info.FolderPath) is not null;
-        if (enteringTerminalState
-            && hasPendingIntent
-            && !TrySupersedePendingIntent(
-                info.FolderPath,
-                resolution: "superseded-by-completion",
-                source: targetState == TaskStates.Archive ? "archive-transition" : "completion-transition"))
+        var stagedPendingIntent = false;
+        if (enteringTerminalState && info.PendingIntent is not null)
         {
-            return new MoveJobOutcome(
-                MoveJobStatus.PendingIntentSupersedeFailed,
-                "The queued follow-up could not be superseded, so the terminal transition was not applied.",
-                info.FolderPath);
+            if (_mutations.ReadAndStashPendingIntent(info.FolderPath) is null)
+                return new MoveJobOutcome(
+                    MoveJobStatus.PendingIntentSupersedeFailed,
+                    "The queued follow-up could not be staged, so the terminal transition was not applied.",
+                    info.FolderPath);
+            stagedPendingIntent = true;
         }
 
         ReleaseCliOutputResourcesBeforeMove(info);
@@ -331,6 +328,15 @@ public sealed class TaskTransitionService
                       && targetState is TaskStates.Completed or TaskStates.Archive
             ? _reviewAttemptLifecycle.ExecuteTerminalTransition(info, targetState, MoveCore)
             : MoveCore();
+        if (enteringTerminalState && stagedPendingIntent && outcome.Status != MoveJobStatus.Success)
+            _mutations.RollbackStashedPendingIntent(info.FolderPath);
+        var pendingIntentSupersedeFailed = enteringTerminalState
+            && hasPendingIntent
+            && outcome.Status == MoveJobStatus.Success
+            && !TrySupersedePendingIntent(
+                outcome.NewFolderPath ?? info.FolderPath,
+                resolution: "superseded-by-completion",
+                source: targetState == TaskStates.Archive ? "archive-transition" : "completion-transition");
         var operatorRequeue = outcome.Status == MoveJobStatus.Success
             && OperatorReviewRequeueService.IsOperatorRequeue(fromState, targetState, cause);
         var supersedeFailedDelivery = operatorRequeue && HasFailedIntegrationRound(
@@ -588,7 +594,12 @@ public sealed class TaskTransitionService
                 TriggerBranchReclaimAfterArchive(jobId, watchPath, projectName, info);
         }
 
-        return outcome;
+        return pendingIntentSupersedeFailed
+            ? new MoveJobOutcome(
+                MoveJobStatus.PendingIntentSupersedeFailed,
+                "The terminal transition landed, but the follow-up receipt could not be saved. Startup reconciliation will retry it.",
+                outcome.NewFolderPath ?? info.FolderPath)
+            : outcome;
     }
 
     /// <summary>
