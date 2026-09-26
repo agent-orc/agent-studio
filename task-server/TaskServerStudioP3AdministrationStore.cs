@@ -423,7 +423,8 @@ public sealed partial class TaskServerStore
         string WikiPath,
         IReadOnlyList<ModelRoutingTierDto> Tiers,
         IReadOnlyList<ModelRoutingTaskTypeDefaultDto> TaskTypeDefaults,
-        IReadOnlyList<ProviderModelFallback> ProviderRejectionFallbacks);
+        IReadOnlyList<ProviderModelFallback> ProviderRejectionFallbacks,
+        IReadOnlyDictionary<string, (string Model, string ThinkingLevel)> AnthropicRoutes);
 
     private static readonly Lazy<ModelRoutingPolicyDocumentData> ModelRoutingPolicyDocument = new(LoadModelRoutingPolicyDocument);
 
@@ -443,6 +444,15 @@ public sealed partial class TaskServerStore
                 tier.GetProperty("thinkingLevel").GetString()!,
                 tier.GetProperty("estimatedSavingsPercent").GetInt32()))
             .ToList();
+        var anthropicRoutes = root.GetProperty("tiers").EnumerateArray()
+            .Where(tier => tier.TryGetProperty("vendorOverrides", out var overrides)
+                && overrides.TryGetProperty("anthropic", out _))
+            .ToDictionary(
+                tier => tier.GetProperty("id").GetString()!,
+                tier => (
+                    tier.GetProperty("vendorOverrides").GetProperty("anthropic").GetProperty("model").GetString()!,
+                    tier.GetProperty("vendorOverrides").GetProperty("anthropic").GetProperty("thinkingLevel").GetString()!),
+                StringComparer.Ordinal);
         var taskTypeDefaults = root.GetProperty("taskTypeDefaults").EnumerateObject()
             .Select(property => new ModelRoutingTaskTypeDefaultDto(
                 property.Name,
@@ -463,6 +473,7 @@ public sealed partial class TaskServerStore
             root.GetProperty("wikiPath").GetString()!,
             tiers,
             taskTypeDefaults,
-            providerFallbacks);
+            providerFallbacks,
+            anthropicRoutes);
     }
 }

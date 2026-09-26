@@ -400,6 +400,20 @@ public class TaskServerClientHealthTests
                     "acquiredAt": "{{now:o}}",
                     "expiresAt": "{{now.AddMinutes(2):o}}",
                     "status": "active"
+                  },
+                  "mechanicalDelta": {
+                    "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "deliveryRef": "refs/heads/result",
+                    "deliverySha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "conflictPaths": ["src/Feature.cs"],
+                    "steer": "Resolve the conflict.",
+                    "verificationPlan": "Run focused tests."
+                  },
+                  "mechanicalFreshRoute": {
+                    "cliType": "codex",
+                    "model": "gpt-5.6-terra",
+                    "thinkingLevel": "medium",
+                    "reason": "pending-mechanical-continuation"
                   }
                 }
                 """)
@@ -448,6 +462,10 @@ public class TaskServerClientHealthTests
         Assert.Equal("main", claim.DefaultBranch);
         Assert.Equal("run-v1", claim.RunId);
         Assert.Equal("lease-v1", claim.Lease!.LeaseId);
+        Assert.Equal("gpt-5.6-terra", claim.RunSpec?.Model);
+        Assert.Equal("medium", claim.RunSpec?.ThinkingLevel);
+        Assert.Equal("clean", claim.RunSpec?.ContextMode);
+        Assert.NotNull(claim.MechanicalDelta);
     }
 
     [Fact]
@@ -548,6 +566,36 @@ public class TaskServerClientHealthTests
         var authority = client.OutboxAuthority("RTS-21");
         Assert.Equal("host-v1:original-process", authority.InstanceId);
         Assert.NotEqual(client.RunnerInstanceId, authority.InstanceId);
+    }
+
+    [Fact]
+    public async Task Durable_direct_completion_reports_mechanical_fallback_as_ready()
+    {
+        var now = DateTime.UtcNow;
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = System.Net.Http.Json.JsonContent.Create(new RunDto(
+                "run-v1", "task-v1", "MechanicalFallback", "runner-v1", 7,
+                now, now, now)),
+        });
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://task-server") };
+        using var client = new TaskServerClient(http, "runner-v1", usesDurableTaskServer: true);
+        client.RestoreRunAuthority("RTS-21", "run-v1", "instance-v1", new RunLeaseInfoDto(
+            "RTS-21", "runner-v1", "Runner v1", "host-v1", 42, "test",
+            "lease-v1", 7, now, now.AddMinutes(2), "run-v1"));
+        var decision = MechanicalRoundFallbackPolicy.AsTypedDecision(
+            ExecutionOutcomeAdapter.Classify(new ExecutionRawFacts(
+                "run-v1", ExecutionAttemptKind.Coding, LaunchFailed: true)),
+            "semantic-conflict");
+
+        var response = await client.CompleteRunAsync(new RemoteRunCompletionRequest(
+            "RTS-21", "lease-v1", 7, "runner-v1", "MechanicalFallback",
+            OutcomeDecision: decision), CancellationToken.None);
+
+        Assert.Equal("2-ready", response?.TargetState);
+        Assert.Equal("MechanicalFallback", response?.Outcome);
+        Assert.Contains(handler.Requests, request =>
+            request.PathAndQuery == "/api/v1/runs/run-v1/completion");
     }
 
     private static RunnerOptions CapacityOptions(string stateDirectory)

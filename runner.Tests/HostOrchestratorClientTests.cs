@@ -24,7 +24,11 @@ public sealed class HostOrchestratorClientTests
         var step = new PostStepPlanDto(
             "step-1", run.RunId, "post-worktree-containment", "runner-1", "available");
         var acceptance = new WorkPermitAcceptanceDto(
-            "accepted", "permit-1", run, task, lease, lease.ExpiresAt, [step]);
+            "accepted", "permit-1", run, task, lease, lease.ExpiresAt, [step],
+            MechanicalFreshRoute: new MechanicalFreshRunRoute(
+                "codex", "gpt-5.6-sol", "medium", "semantic-conflict"),
+            ContinuationBaseRef: "refs/heads/result",
+            ContinuationBaseSha: new string('a', 40));
         var handler = new ContractHandler((request, _) => request.RequestUri!.AbsolutePath switch
         {
             "/api/v1/runners/runner-1/reports" => Json(new HostReportResponse(
@@ -50,6 +54,10 @@ public sealed class HostOrchestratorClientTests
 
         Assert.Equal("run-1", claim.RunId);
         Assert.Equal("lease-1", claim.Lease!.LeaseId);
+        Assert.Equal("gpt-5.6-sol", claim.RunSpec?.Model);
+        Assert.Equal("semantic-conflict", claim.FreshRunReason);
+        Assert.Equal("refs/heads/result", claim.ContinuationBaseRef);
+        Assert.Equal(new string('a', 40), claim.ContinuationBaseSha);
         Assert.Equal(
             [
                 "/api/v1/runners/runner-1/reports",

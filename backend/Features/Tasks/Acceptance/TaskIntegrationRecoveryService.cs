@@ -1,3 +1,6 @@
+using AgentStudio.Runner;
+using AgentStudio.TaskServer.Contracts;
+
 namespace AgentStudio.Tasks;
 
 public sealed record TaskIntegrationRecoveryResult(
@@ -94,6 +97,15 @@ public sealed class TaskIntegrationRecoveryService
                 "The recovery intent was persisted, but the superseded delivery history could not be marked.",
                 internalError: true);
         }
+
+        var conflict = status.Failure?.ConflictReport;
+        SessionContinuationLedgerStore.SaveDelta(current.FolderPath, new MechanicalRoundDelta(
+            conflict?.IntegrationTipSha ?? string.Empty,
+            subject.ResultRef,
+            subject.ResultSha,
+            conflict?.ConflictedFiles ?? [],
+            prompt,
+            "Verify the updated delivery with the relevant focused checks, then run the required deterministic delivery gate."));
 
         var position = _states.PromoteToReadyTop(
             current.Id,
