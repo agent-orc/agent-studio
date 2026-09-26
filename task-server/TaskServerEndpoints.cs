@@ -454,18 +454,24 @@ public static class TaskServerEndpoints
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim)
             .RequireTaskServerScope(TaskServerScopes.ReviewsClaim);
         gates.MapPost("/attempts/{attemptId}/renew", async (
-            string attemptId, GateRenewRequest request, TaskServerStore store, CancellationToken ct)
-            => await InvokeAsync(() => store.RenewGateAsync(attemptId, request, ct)))
+            HttpContext context, string attemptId, GateRenewRequest request, TaskServerStore store, CancellationToken ct)
+            => GateRunnerPrincipalPolicy.Matches(context.TaskServerPrincipal(), request.Authority.ExecutorId)
+                ? await InvokeAsync(() => store.RenewGateAsync(attemptId, request, ct))
+                : GateRunnerPrincipalPolicy.Denied())
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue)
             .RequireTaskServerScope(TaskServerScopes.ReviewsWrite);
         gates.MapPost("/attempts/{attemptId}/phase", async (
-            string attemptId, GatePhaseRequest request, TaskServerStore store, CancellationToken ct)
-            => await InvokeAsync(() => store.AdvanceGateAsync(attemptId, request, ct)))
+            HttpContext context, string attemptId, GatePhaseRequest request, TaskServerStore store, CancellationToken ct)
+            => GateRunnerPrincipalPolicy.Matches(context.TaskServerPrincipal(), request.Authority.ExecutorId)
+                ? await InvokeAsync(() => store.AdvanceGateAsync(attemptId, request, ct))
+                : GateRunnerPrincipalPolicy.Denied())
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue)
             .RequireTaskServerScope(TaskServerScopes.ReviewsWrite);
         gates.MapPost("/attempts/{attemptId}/report", async (
             HttpContext context, string attemptId, SubmitGateReportRequest request, TaskServerStore store, CancellationToken ct)
-            => await InvokeAsync(() => store.ReportGateAsync(attemptId, request, Actor(context), ct)))
+            => GateRunnerPrincipalPolicy.Matches(context.TaskServerPrincipal(), request.Authority.ExecutorId)
+                ? await InvokeAsync(() => store.ReportGateAsync(attemptId, request, Actor(context), ct))
+                : GateRunnerPrincipalPolicy.Denied())
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
             .RequireTaskServerScope(TaskServerScopes.ReviewsWrite);
         gates.MapPost("/attempts/{attemptId}/containment", async (

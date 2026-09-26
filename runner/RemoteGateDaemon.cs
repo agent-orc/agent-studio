@@ -12,12 +12,20 @@ public sealed class RemoteGateDaemon
     private readonly RunnerOptions _options;
     private readonly TaskServerClient _client;
     private readonly Action<string> _log;
+    private readonly Func<RemoteReviewWorkspace, string, Task<bool>> _cleanup;
 
     public RemoteGateDaemon(RunnerOptions options, TaskServerClient client, Action<string> log)
+        : this(options, client, log, (workspace, attemptId) => workspace.CleanupAsync(attemptId))
+    {
+    }
+
+    internal RemoteGateDaemon(RunnerOptions options, TaskServerClient client, Action<string> log,
+        Func<RemoteReviewWorkspace, string, Task<bool>> cleanup)
     {
         _options = options;
         _client = client;
         _log = log;
+        _cleanup = cleanup;
     }
 
     public async Task RunAsync(CancellationToken shutdown)
@@ -74,7 +82,7 @@ public sealed class RemoteGateDaemon
         File.Move(temporary, ClaimFile, overwrite: true);
     }
 
-    private async Task RecoverPreviousClaimAsync(CancellationToken ct)
+    internal async Task RecoverPreviousClaimAsync(CancellationToken ct)
     {
         if (!File.Exists(ClaimFile)) return;
         var claim = JsonSerializer.Deserialize<GateClaimResponse>(await File.ReadAllTextAsync(ClaimFile, ct));
@@ -116,7 +124,7 @@ public sealed class RemoteGateDaemon
         File.Delete(ClaimFile);
     }
 
-    private async Task<bool> ExecuteAsync(GateSubject subject, GateAttempt attempt, GateLease lease, CancellationToken shutdown)
+    internal async Task<bool> ExecuteAsync(GateSubject subject, GateAttempt attempt, GateLease lease, CancellationToken shutdown)
     {
         var authority = new GateAuthority(lease.ExecutorId, lease.InstanceId, lease.LeaseId,
             lease.Fence, lease.AuthorityEpoch);
@@ -251,7 +259,7 @@ public sealed class RemoteGateDaemon
             }
             try
             {
-                if (!await workspace.CleanupAsync(attempt.AttemptId))
+                if (!await _cleanup(workspace, attempt.AttemptId))
                     cleanup = "failed";
             }
             catch (Exception exception)
