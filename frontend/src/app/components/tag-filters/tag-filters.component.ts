@@ -23,7 +23,10 @@ export class TagFiltersComponent {
   constructor() {
     effect(() => this.registry.loadProject(this.projectName()));
     effect(() => {
-      if (!this.registry.activeProjectLoaded()) return;
+      // The workspace view can contain tags from any project. Only a complete,
+      // matching project registry can establish that a selected id is invalid.
+      const project = this.projectName();
+      if (!project || this.registry.activeProject() !== project || !this.registry.activeProjectLoaded()) return;
       const valid = new Set(this.registry.tags().map(tag => tag.id));
       const selected = this.filters.activeTagFilter();
       if ([...selected].some(id => !valid.has(id))) {

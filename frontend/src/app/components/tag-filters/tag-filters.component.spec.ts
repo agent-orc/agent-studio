@@ -59,4 +59,58 @@ describe('shared area and tag filters', () => {
     expect(TestBed.inject(BoardFiltersService).activeTagFilter().size).toBe(0);
     http.verify();
   });
+
+  it('preserves persisted project selections after a failed load and validates only after a successful retry', () => {
+    const fixture = TestBed.createComponent(TagFiltersComponent);
+    const http = TestBed.inject(HttpTestingController);
+    const registry = TestBed.inject(TagRegistryStore);
+    const filters = TestBed.inject(BoardFiltersService);
+    fixture.componentRef.setInput('projectName', 'Alpha');
+    filters.setTagSelection(new Set(['alpha-only', 'retired-tag']));
+    const persistedUrl = window.location.href;
+    fixture.detectChanges();
+    http.expectOne('/api/projects/Alpha/tags').flush('Unavailable', { status: 503, statusText: 'Service Unavailable' });
+    fixture.detectChanges();
+
+    expect(registry.activeProjectLoaded()).toBe(false);
+    expect([...filters.activeTagFilter()]).toEqual(['alpha-only', 'retired-tag']);
+    expect(window.location.href).toBe(persistedUrl);
+
+    // A workspace refresh cannot turn the incomplete project response into a loaded registry.
+    registry.set(registry.workspaceTags());
+    fixture.detectChanges();
+    expect([...filters.activeTagFilter()]).toEqual(['alpha-only', 'retired-tag']);
+    expect(window.location.href).toBe(persistedUrl);
+
+    registry.loadProject('Alpha');
+    http.expectOne('/api/projects/Alpha/tags').flush({ items: [
+      { id: 'alpha-only', label: 'Alpha only', color: '#777', description: '', kind: 'facet' },
+    ] });
+    fixture.detectChanges();
+    expect(registry.activeProjectLoaded()).toBe(true);
+    expect([...filters.activeTagFilter()]).toEqual(['alpha-only']);
+    expect(new URLSearchParams(window.location.search).get('tag')).toBe('alpha-only');
+    const facet = fixture.nativeElement.querySelector('[data-testid="shared-facet-filter"]') as HTMLSelectElement;
+    expect(facet.value).toBe('alpha-only');
+    http.verify();
+  });
+
+  it('keeps project selections while the workspace view resolves the destination project', () => {
+    const fixture = TestBed.createComponent(TagFiltersComponent);
+    const filters = TestBed.inject(BoardFiltersService);
+    filters.setTagSelection(new Set(['alpha-only']));
+    const persistedUrl = window.location.href;
+    fixture.detectChanges();
+    expect([...filters.activeTagFilter()]).toEqual(['alpha-only']);
+    expect(window.location.href).toBe(persistedUrl);
+
+    fixture.componentRef.setInput('projectName', 'Alpha');
+    fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/projects/Alpha/tags').flush('Unavailable', { status: 503, statusText: 'Service Unavailable' });
+    fixture.detectChanges();
+    expect([...filters.activeTagFilter()]).toEqual(['alpha-only']);
+    expect(window.location.href).toBe(persistedUrl);
+    http.verify();
+  });
 });
