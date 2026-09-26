@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Diagnostics;
 
 using Xunit;
 
@@ -490,5 +491,265 @@ public sealed class GitStateIndexServiceTests : IDisposable
         {
             await service.StopAsync(CancellationToken.None);
         }
+    }
+
+    [Fact]
+    public async Task UnchangedTaskEvent_DoesNotRecomputeGitProjection()
+    {
+        var jobsPath = NewRepoWatchPath("proj");
+        var scanner = BuildScanner("proj", jobsPath, Path.Combine(Path.GetDirectoryName(jobsPath)!, "repo"));
+        var cache = new TaskListGitProjectionCache();
+        var builder = new FakeBuilder();
+        using var service = new GitStateIndexService(scanner, BuildWatcher(scanner), cache,
+            builder.BuildAsync, _ => { }, NullLogger.Instance, FastOptions(), TimeProvider.System);
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            await WaitUntilAsync(() => !service.IsRunning("proj") && Volatile.Read(ref builder.Calls) > 0);
+            var before = Volatile.Read(ref builder.Calls);
+            for (var i = 0; i < 40; i++) service.RequestRefresh("proj", "task-event");
+            await Task.Delay(150);
+            Assert.Equal(before, Volatile.Read(ref builder.Calls));
+        }
+        finally { await service.StopAsync(CancellationToken.None); }
+    }
+
+    [Fact]
+    public async Task RefChangeDuringRefresh_DiscardsOldComputationAndPublishesRerun()
+    {
+        var jobsPath = NewRepoWatchPath("proj");
+        var repoPath = Path.Combine(Path.GetDirectoryName(jobsPath)!, "repo");
+        var scanner = BuildScanner("proj", jobsPath, repoPath);
+        var builder = new FakeBuilder
+        {
+            Gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously),
+        };
+        using var service = new GitStateIndexService(scanner, BuildWatcher(scanner),
+            new TaskListGitProjectionCache(), builder.BuildAsync, _ => { }, NullLogger.Instance,
+            FastOptions(), TimeProvider.System);
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            await WaitUntilAsync(() => Volatile.Read(ref builder.Calls) == 1);
+            File.WriteAllText(Path.Combine(repoPath, ".git", "refs", "heads", "main"),
+                new string('2', 40) + "\n");
+            builder.Gate!.SetResult(true);
+            await WaitUntilAsync(() => Volatile.Read(ref builder.Calls) >= 2);
+            await WaitUntilAsync(() => !service.IsRunning("proj")
+                && service.GetRepositoryStatuses().FirstOrDefault()?.GitStateAt is not null);
+            Assert.True(Volatile.Read(ref builder.Calls) >= 2);
+        }
+        finally { await service.StopAsync(CancellationToken.None); }
+    }
+
+    [Fact]
+    public async Task IncludedConfigChangeDuringRefresh_DiscardsOldComputation()
+    {
+        var jobsPath = NewRepoWatchPath("proj");
+        var repoPath = Path.Combine(Path.GetDirectoryName(jobsPath)!, "repo");
+        var extra = Path.Combine(Path.GetDirectoryName(jobsPath)!, "included.conf");
+        RunGit(repoPath, "init", "-q");
+        File.WriteAllText(extra, "[remote \"origin\"]\nurl = https://example.invalid/one.git\n");
+        File.WriteAllText(Path.Combine(repoPath, ".git", "config"),
+            $"[include]\npath = {extra}\n");
+        var scanner = BuildScanner("proj", jobsPath, repoPath);
+        var builder = new FakeBuilder
+        {
+            Gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously),
+        };
+        using var service = new GitStateIndexService(scanner, BuildWatcher(scanner),
+            new TaskListGitProjectionCache(), builder.BuildAsync, _ => { }, NullLogger.Instance,
+            FastOptions(), TimeProvider.System);
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            await WaitUntilAsync(() => Volatile.Read(ref builder.Calls) == 1);
+            var capturedConfig = GitConfigSignature.Capture(repoPath);
+            Assert.Equal("https://example.invalid/one.git", capturedConfig.OriginUrl);
+            File.WriteAllText(extra, "[remote \"origin\"]\nurl = https://example.invalid/two.git\n");
+            Assert.False(GitConfigSignature.FilesUnchanged(capturedConfig));
+            builder.Gate!.SetResult(true);
+            await WaitUntilAsync(() => Volatile.Read(ref builder.Calls) >= 2);
+            await WaitUntilAsync(() => service.GetRepositoryStatuses().FirstOrDefault()?.GitStateAt is not null);
+        }
+        finally { await service.StopAsync(CancellationToken.None); }
+    }
+
+    [Fact]
+    public async Task MissingRepository_KeepsPriorSnapshotAndReportsFailure()
+    {
+        var jobsPath = NewRepoWatchPath("proj");
+        var repoPath = Path.Combine(Path.GetDirectoryName(jobsPath)!, "repo");
+        var scanner = BuildScanner("proj", jobsPath, repoPath);
+        var cache = new TaskListGitProjectionCache();
+        var builder = new FakeBuilder();
+        using var service = new GitStateIndexService(scanner, BuildWatcher(scanner), cache,
+            builder.BuildAsync, _ => { }, NullLogger.Instance,
+            FastOptions() with { MaxRetries = 0 }, TimeProvider.System);
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            await WaitUntilAsync(() => !service.IsRunning("proj")
+                && service.GetRepositoryStatuses().FirstOrDefault()?.GitStateAt is not null);
+            var previous = service.GetRepositoryStatuses().Single().GitStateAt;
+            Directory.Delete(repoPath, recursive: true);
+            service.RequestRefresh("proj", "repo-deleted");
+            var task = new TaskInfo { TaskKey = "job", WatchPath = jobsPath };
+            await WaitUntilAsync(() => cache.ReadTask(task).ReasonCode == "repository-unavailable");
+            Assert.Equal(previous, service.GetRepositoryStatuses().Single().GitStateAt);
+            Assert.Equal("stale", cache.ReadTask(task).State);
+        }
+        finally { await service.StopAsync(CancellationToken.None); }
+    }
+
+    [Fact]
+    public async Task DeletedLinkedWorktree_MarksTheLastSnapshotStale()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), "git-index-worktree-" + Guid.NewGuid().ToString("N"));
+        _tempDirs.Add(temp);
+        var main = Path.Combine(temp, "main");
+        var worktree = Path.Combine(temp, "task-worktree");
+        var jobs = Path.Combine(temp, "jobs");
+        Directory.CreateDirectory(main);
+        Directory.CreateDirectory(jobs);
+        RunGit(main, "init", "-q");
+        RunGit(main, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+            "commit", "-q", "--allow-empty", "-m", "first");
+        RunGit(main, "worktree", "add", "--detach", "-q", worktree);
+
+        var before = GitRefSignature.Capture(worktree);
+        RunGit(main, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+            "commit", "-q", "--allow-empty", "-m", "second");
+        Assert.NotEqual(before, GitRefSignature.Capture(worktree));
+
+        var scanner = BuildScanner("proj", jobs, worktree);
+        var cache = new TaskListGitProjectionCache();
+        using var service = new GitStateIndexService(scanner, BuildWatcher(scanner), cache,
+            _ => Task.FromResult(TaskListGitProjection.Empty), _ => { }, NullLogger.Instance,
+            FastOptions() with { MaxRetries = 0 }, TimeProvider.System);
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            await WaitUntilAsync(() => !service.IsRunning("proj")
+                && service.GetRepositoryStatuses().FirstOrDefault()?.GitStateAt is not null);
+            Directory.Delete(worktree, recursive: true);
+            service.RequestRefresh("proj", "worktree-deleted");
+            await WaitUntilAsync(() => cache.ReadTask(new TaskInfo
+                { TaskKey = "job", WatchPath = jobs }).ReasonCode == "repository-unavailable");
+            Assert.NotNull(service.GetRepositoryStatuses().Single().GitStateAt);
+        }
+        finally { await service.StopAsync(CancellationToken.None); }
+    }
+
+    [Fact]
+    public async Task ProjectRepositoryPathChange_ReplacesTheOldSnapshotAndIndexesTheNewRepo()
+    {
+        var jobsPath = NewRepoWatchPath("proj");
+        var firstRepo = Path.Combine(Path.GetDirectoryName(jobsPath)!, "repo");
+        var secondJobs = NewRepoWatchPath("second");
+        var secondRepo = Path.Combine(Path.GetDirectoryName(secondJobs)!, "repo");
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["WatchPaths:0:Name"] = "proj",
+            ["WatchPaths:0:Path"] = jobsPath,
+            ["WatchPaths:0:RootPath"] = firstRepo,
+            ["WatchPaths:0:RepositoryPath"] = firstRepo,
+        }).Build();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var builder = new FakeBuilder();
+        var cache = new TaskListGitProjectionCache();
+        using var service = new GitStateIndexService(scanner, BuildWatcher(scanner), cache,
+            builder.BuildAsync, _ => { }, NullLogger.Instance,
+            FastOptions() with { SweepInterval = TimeSpan.FromMilliseconds(100) }, TimeProvider.System);
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            await WaitUntilAsync(() => service.GetRepositoryStatuses().FirstOrDefault()?.GitStateAt is not null);
+            var firstGeneration = cache.Generation;
+            config["WatchPaths:0:RootPath"] = secondRepo;
+            config["WatchPaths:0:RepositoryPath"] = secondRepo;
+            await WaitUntilAsync(() => Volatile.Read(ref builder.Calls) >= 2
+                && cache.Generation > firstGeneration);
+            await WaitUntilAsync(() => service.GetRepositoryStatuses().FirstOrDefault()?.GitStateAt is not null
+                && !service.IsRunning("proj"));
+            Assert.True(Volatile.Read(ref builder.Calls) >= 2);
+        }
+        finally { await service.StopAsync(CancellationToken.None); }
+    }
+
+    private static void RunGit(string root, params string[] args)
+    {
+        var start = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = root, RedirectStandardOutput = true,
+            RedirectStandardError = true, UseShellExecute = false,
+        };
+        foreach (var arg in args) start.ArgumentList.Add(arg);
+        using var process = Process.Start(start)!;
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        Assert.True(process.ExitCode == 0, error);
+    }
+
+    [Fact]
+    public async Task FailureRetriesAreBounded()
+    {
+        var jobsPath = NewRepoWatchPath("proj");
+        var scanner = BuildScanner("proj", jobsPath, Path.Combine(Path.GetDirectoryName(jobsPath)!, "repo"));
+        var calls = 0;
+        Task<TaskListGitProjection> Fail(IReadOnlyCollection<TaskInfo> _)
+        {
+            Interlocked.Increment(ref calls);
+            throw new IOException("fake Git failure");
+        }
+        using var service = new GitStateIndexService(scanner, BuildWatcher(scanner),
+            new TaskListGitProjectionCache(), Fail, _ => { }, NullLogger.Instance,
+            FastOptions() with { MaxRetries = 2 }, TimeProvider.System);
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            await WaitUntilAsync(() => Volatile.Read(ref calls) == 3);
+            await Task.Delay(250);
+            Assert.Equal(3, Volatile.Read(ref calls));
+        }
+        finally { await service.StopAsync(CancellationToken.None); }
+    }
+
+    [SkippableFact]
+    public async Task HangingGitFake_DeadlineKillsChildAndReleasesRepositorySlot()
+    {
+        Skip.IfNot(OperatingSystem.IsLinux(), "The fake Git process uses /bin/sh.");
+        var jobsPath = NewRepoWatchPath("proj");
+        var scanner = BuildScanner("proj", jobsPath, Path.Combine(Path.GetDirectoryName(jobsPath)!, "repo"));
+        var childDone = new TaskCompletionSource<GitProcessResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<TaskListGitProjection> Hang(IReadOnlyCollection<TaskInfo> _) => Task.Run(() =>
+        {
+            var start = new ProcessStartInfo("/bin/sh")
+            {
+                RedirectStandardOutput = true, RedirectStandardError = true,
+                UseShellExecute = false, CreateNoWindow = true,
+            };
+            start.ArgumentList.Add("-c");
+            start.ArgumentList.Add("sleep 30");
+            var result = GitNetworkProcessRunner.Run(start,
+                cancellationToken: GitProcessBudget.Token);
+            childDone.TrySetResult(result);
+            return TaskListGitProjection.Empty;
+        });
+        var cache = new TaskListGitProjectionCache();
+        using var service = new GitStateIndexService(scanner, BuildWatcher(scanner), cache,
+            Hang, _ => { }, NullLogger.Instance,
+            FastOptions() with { RunDeadline = TimeSpan.FromMilliseconds(300), MaxRetries = 0 },
+            TimeProvider.System);
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            var result = await childDone.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await WaitUntilAsync(() => !service.IsRunning("proj"));
+            Assert.Equal(GitProcessFailureKind.Cancelled, result.FailureKind);
+            Assert.Equal("timeout", cache.ReadTask(new TaskInfo { TaskKey = "job", WatchPath = jobsPath }).ReasonCode);
+        }
+        finally { await service.StopAsync(CancellationToken.None); }
     }
 }
