@@ -67,6 +67,15 @@ public static class IntegrationGateReceipts
                 var reason = reasonLine.StartsWith("reason=", StringComparison.Ordinal)
                     ? reasonLine["reason=".Length..]
                     : "Recovered durable gate verdict.";
+                var provenanceLine = reader.ReadLine() ?? "";
+                var cached = HeaderValue(provenanceLine, "verdictSource=") == nameof(GateVerdictSource.CacheHit);
+                var originalTime = DateTimeOffset.TryParse(
+                    HeaderValue(provenanceLine, "originalCompletedAtUtc="), out var parsedTime)
+                    ? parsedTime : (DateTimeOffset?)null;
+                var encodedOriginPath = HeaderValue(provenanceLine, "originalEvidencePathB64=");
+                var originPath = cached && !string.IsNullOrEmpty(encodedOriginPath)
+                    ? System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(encodedOriginPath))
+                    : null;
                 return new BuildTestGateResult(
                     verdict,
                     exitCode,
@@ -80,6 +89,15 @@ public static class IntegrationGateReceipts
                     TestedSha = recordedTested == "n/a" ? null : recordedTested,
                     FailureKind = Enum.TryParse<BuildTestGateFailureKind>(HeaderValue(verdictLine, "failureKind="), out var kind)
                         ? kind : BuildTestGateFailureKind.None,
+                    VerdictSource = cached ? GateVerdictSource.CacheHit : GateVerdictSource.Executed,
+                    GateRunId = cached ? HeaderValue(provenanceLine, "originalRunId=") : null,
+                    GateCompletedAtUtc = originalTime,
+                    OriginEvidencePath = originPath,
+                    GateProfileDigest = HeaderValue(provenanceLine, "profileDigest="),
+                    PipelineDefinitionVersion = int.TryParse(
+                        HeaderValue(provenanceLine, "pipelineDefinitionVersion="), out var definitionVersion)
+                        ? definitionVersion : null,
+                    ToolchainIdentity = HeaderValue(provenanceLine, "toolchainIdentity="),
                 };
             }
             catch (Exception ex)
@@ -205,6 +223,7 @@ public static class IntegrationGateReceipts
             $"verdict={result.Verdict} exit={result.ExitCode?.ToString() ?? "n/a"} durationMs={result.DurationMs} failureKind={result.FailureKind}\n" +
             $"expectedSha={result.ExpectedSha ?? "n/a"} testedSha={result.TestedSha ?? "n/a"}\n" +
             $"reason={result.Reason}\n" +
+            $"verdictSource={result.VerdictSource} originalRunId={result.GateRunId ?? "n/a"} originalCompletedAtUtc={result.GateCompletedAtUtc?.ToString("O") ?? "n/a"} originalEvidencePathB64={Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(result.OriginEvidencePath ?? ""))} profileDigest={result.GateProfileDigest ?? "n/a"} pipelineDefinitionVersion={result.PipelineDefinitionVersion?.ToString() ?? "n/a"} toolchainIdentity={result.ToolchainIdentity ?? "n/a"}\n" +
             $"testSelectionAuditDigest={result.TestSelectionAuditDigest ?? "n/a"}\n" +
             reuseLine + "\n" +
             budget + "\n" +
@@ -230,6 +249,18 @@ public static class IntegrationGateReceipts
             body);
         if (timeline is not null)
         {
+            if (result.VerdictSource == GateVerdictSource.CacheHit)
+                timeline.Append(jobFolderPath, TimelineEventKinds.GateVerdictCacheHit,
+                    TimelineActors.System,
+                    $"Cached {prefix} {result.Verdict} for {result.TestedSha}; original run {result.GateCompletedAtUtc:O}",
+                    details: new Dictionary<string, string>
+                    {
+                        ["testedSha"] = result.TestedSha ?? "",
+                        ["profileDigest"] = result.GateProfileDigest ?? "",
+                        ["originalRunId"] = result.GateRunId ?? "",
+                        ["originalCompletedAtUtc"] = result.GateCompletedAtUtc?.ToString("O") ?? "",
+                        ["originalEvidencePath"] = result.OriginEvidencePath ?? "",
+                    });
             GateFlakyRerunReceipts.Record(
                 timeline, jobFolderPath, prefix, result.TestedSha, result.FlakyQuarantinedFailures);
             if (result.PreparationCacheRetryPerformed)
