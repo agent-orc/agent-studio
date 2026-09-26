@@ -110,7 +110,11 @@ priced known subtotals with missing receipts, unpriced models, or unresolved
 legacy normalization carry `partial` coverage. A complete empty ledger may
 legitimately have zero. `observedAt` on a project cost row is the latest
 successful ledger observation, not the request time. `latestReceiptAt` on a
-project row and on `cost` is the newest durable task receipt timestamp.
+project row and on `cost` is the newest durable task receipt timestamp. An
+empty receipt collection is valid: a complete empty project returns zero,
+while a bus-only project returns its bus-derived amount. Both leave
+`latestReceiptAt` null.
+
 `dailyBudgetUsd` and
 `weeklyBudgetUsd` are null until a real workspace USD budget owner exists.
 The `ledgerEndpointTemplate` points to the existing project token report API.

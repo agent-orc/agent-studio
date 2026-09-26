@@ -48,7 +48,7 @@ public static class UsageCockpitEndpoints
                 || ProjectAccessAuthorization.Allows(human.User, project.Id, projects)).ToList();
             if (human is not null && human.User.Role != StudioRoles.Owner
                 && human.User.Projects.Count > 0 && visibleProjects.Count == 0)
-                return Results.Forbid();
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
 
             var now = DateTime.UtcNow;
             var sourceStates = new Dictionary<string, UsageSourceState>(StringComparer.Ordinal);
@@ -86,7 +86,8 @@ public static class UsageCockpitEndpoints
                     var snapshot = ledger.LoadSnapshot(project.DisplayName, project.StorageLocation);
                     costInputs.Add(new UsageCostInput(project.Id, project.DisplayName,
                         snapshot.Entries, snapshot.Freshness,
-                        snapshot.ReceiptSummaries.Values.Select(summary => summary.LastUpdate).Max()));
+                        snapshot.ReceiptSummaries.Values
+                            .Select(summary => (DateTime?)summary.LastUpdate).Max()));
                 }
                 catch (Exception)
                 {
