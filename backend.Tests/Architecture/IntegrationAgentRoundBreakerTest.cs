@@ -5,22 +5,22 @@ namespace AgentStudio.Tests;
 /// <summary>
 /// Architecture breaker for loop-inventory entry
 /// <c>integration.attribution-agent-round</c>. An ambiguous mechanical rebase
-/// may open two automatic steer rounds, but a repeat after that budget for the
+/// may open one automatic steer round, but a repeat after that budget for the
 /// same fenced delivery terminates in Human Review.
 /// </summary>
 public sealed class IntegrationAgentRoundBreakerTest
 {
     [Fact]
-    public void Budget_AllowsExactlyTwoAutomaticRounds()
+    public void Budget_AllowsExactlyOneAutomaticRound()
     {
-        Assert.Equal(2, RemoteIntegrationContinuationPolicy.MaxAutomaticAgentRounds);
+        Assert.Equal(1, RemoteIntegrationContinuationPolicy.MaxAutomaticAgentRounds);
         Assert.Equal(
             RemoteIntegrationContinuationAction.StartAgentRound,
             RemoteIntegrationContinuationPolicy.Decide(
                 MergeIntoIntegrationOutcome.AgentRoundRequired,
                 automaticAgentRoundsUsed: 0));
         Assert.Equal(
-            RemoteIntegrationContinuationAction.StartAgentRound,
+            RemoteIntegrationContinuationAction.LeaveForHumanReview,
             RemoteIntegrationContinuationPolicy.Decide(
                 MergeIntoIntegrationOutcome.AgentRoundRequired,
                 automaticAgentRoundsUsed: 1));
@@ -29,13 +29,20 @@ public sealed class IntegrationAgentRoundBreakerTest
             RemoteIntegrationContinuationPolicy.Decide(
                 MergeIntoIntegrationOutcome.AgentRoundRequired,
                 automaticAgentRoundsUsed: 2));
+        Assert.Equal(
+            RemoteIntegrationContinuationAction.LeaveForHumanReview,
+            RemoteIntegrationContinuationPolicy.Decide(
+                MergeIntoIntegrationOutcome.Conflict,
+                automaticAgentRoundsUsed: 1,
+                maximumAgentRounds: 3));
     }
 
     [Fact]
     public void OtherIntegrationOutcomes_NeverOpenThisLoop()
     {
         foreach (var outcome in Enum.GetValues<MergeIntoIntegrationOutcome>()
-                     .Where(outcome => outcome != MergeIntoIntegrationOutcome.AgentRoundRequired))
+                     .Where(outcome => outcome is not (MergeIntoIntegrationOutcome.AgentRoundRequired
+                         or MergeIntoIntegrationOutcome.Conflict)))
         {
             Assert.Equal(
                 RemoteIntegrationContinuationAction.None,
@@ -91,8 +98,8 @@ public sealed class IntegrationAgentRoundBreakerTest
         Assert.Equal(2, usage.Used);
         Assert.Equal(2, usage.LegacyRounds);
         Assert.Equal(
-            "automatic recovery budget used: 2/2 for delivery cccccccccccc (includes 2 legacy automatic recovery rounds without a delivery identifier)",
-            usage.ExhaustedReason(maximumRounds: 2));
+            "automatic recovery budget used: 1/1 for delivery cccccccccccc (includes 2 legacy automatic recovery rounds without a delivery identifier)",
+            usage.ExhaustedReason(maximumRounds: 1));
     }
 
     private static ReviewSubjectRecord Subject(string sha, string deliveryRef)

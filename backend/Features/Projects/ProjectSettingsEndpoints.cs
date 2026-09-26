@@ -604,6 +604,15 @@ public static class ProjectSettingsEndpoints
             return Results.Ok(settings.Get(projectName));
         });
 
+        app.MapPut("/api/projects/{projectName}/automatic-failure-continuations", (
+            string projectName, SetCrashRecoveryRequest req, ProjectSettingsService settings, TaskScannerService scanner) =>
+        {
+            var known = scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            settings.SetAutomaticFailureContinuationsEnabled(projectName, req.Enabled);
+            return Results.Ok(settings.Get(projectName));
+        });
+
         // Flag-gated local CLI execution engine. The effective value resolves
         // process environment -> project override -> workspace default -> CAR
         // platform default.

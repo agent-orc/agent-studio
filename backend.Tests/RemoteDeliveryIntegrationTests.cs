@@ -147,9 +147,10 @@ public sealed class RemoteDeliveryIntegrationCoordinatorTests
 {
     [Theory]
     [InlineData(MergeIntoIntegrationOutcome.Merged, 0, RemoteIntegrationContinuationAction.None)]
-    [InlineData(MergeIntoIntegrationOutcome.Conflict, 0, RemoteIntegrationContinuationAction.None)]
+    [InlineData(MergeIntoIntegrationOutcome.Conflict, 0, RemoteIntegrationContinuationAction.StartAgentRound)]
+    [InlineData(MergeIntoIntegrationOutcome.Conflict, 1, RemoteIntegrationContinuationAction.LeaveForHumanReview)]
     [InlineData(MergeIntoIntegrationOutcome.AgentRoundRequired, 0, RemoteIntegrationContinuationAction.StartAgentRound)]
-    [InlineData(MergeIntoIntegrationOutcome.AgentRoundRequired, 1, RemoteIntegrationContinuationAction.StartAgentRound)]
+    [InlineData(MergeIntoIntegrationOutcome.AgentRoundRequired, 1, RemoteIntegrationContinuationAction.LeaveForHumanReview)]
     [InlineData(MergeIntoIntegrationOutcome.AgentRoundRequired, 2, RemoteIntegrationContinuationAction.LeaveForHumanReview)]
     public void ContinuationPolicy_BoundsAutomaticAgentRound(
         MergeIntoIntegrationOutcome outcome,
