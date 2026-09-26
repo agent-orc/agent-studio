@@ -406,6 +406,8 @@ Every switch emits the shared `modelFallback` receipt:
 ```
 
 `reason` is `quota-cap`, `operator-preference`, or `provider-rejection`.
+`catalogueVersion` is set only for catalogue-selected routes; operator overrides
+leave it null so their receipts do not claim catalogue provenance.
 Provider-rejection continuations use the same record type. Remote runners never
 select a fallback independently: the task server records the admission decision
 and returns the effective CLI, model, and thinking level in the claim plan.

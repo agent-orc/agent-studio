@@ -323,6 +323,7 @@ public sealed class QuotaAdmissionPlannerTests : IDisposable
         Assert.Equal(96, plan.ModelFallback?.UsedPct);
         Assert.Equal("claude-opus-5 high", plan.ModelFallback?.From);
         Assert.Equal("gpt-5.6-sol high", plan.ModelFallback?.To);
+        Assert.Null(plan.ModelFallback?.CatalogueVersion);
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────

@@ -91,6 +91,7 @@ public sealed class CliQuotaFallbackService
             return new(cli, primaryModel, primaryThinking, false,
                 $"primary {cap.DescribeReason()}; fallback {fallbackCap.DescribeReason()}", cap);
 
+        var isOverride = profile is not null && !string.IsNullOrWhiteSpace(profile.FallbackModel);
         return new(
             fallbackCli,
             fallbackModel,
@@ -99,8 +100,8 @@ public sealed class CliQuotaFallbackService
             preferFallback ? "operator preference" : cap.DescribeReason(),
             cap,
             preferFallback ? "operator-preference" : "quota-cap",
-            profile is not null && !string.IsNullOrWhiteSpace(profile.FallbackModel) ? "override" : "catalogue",
-            _equivalence?.Version);
+            isOverride ? "override" : "catalogue",
+            isOverride ? null : _equivalence?.Version);
     }
 
     /// <summary>

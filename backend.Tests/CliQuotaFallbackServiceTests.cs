@@ -125,6 +125,8 @@ public sealed class CliQuotaFallbackServiceTests : IDisposable
         Assert.Equal(CliTypes.Codex, decision.CliType);
         Assert.Equal(ModelIds.Gpt56Sol, decision.Model);
         Assert.Equal("high", decision.ThinkingLevel);
+        Assert.Equal("catalogue", decision.FallbackSource);
+        Assert.Equal(new ModelEquivalenceCatalog().Version, decision.CatalogueVersion);
     }
 
     [Fact]
@@ -146,6 +148,8 @@ public sealed class CliQuotaFallbackServiceTests : IDisposable
 
         Assert.True(decision.IsFallback);
         Assert.Equal("operator-chosen-model", decision.Model);
+        Assert.Equal("override", decision.FallbackSource);
+        Assert.Null(decision.CatalogueVersion);
     }
 
     [Fact]
