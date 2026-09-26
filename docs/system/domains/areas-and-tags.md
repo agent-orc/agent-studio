@@ -119,6 +119,31 @@ leaves the original file intact and fails the run before recording completion
 or success activity, so a subsequent creation scan or backfill can retry the
 untagged item. Dossiers use the existing combined descriptor writer.
 
+### Auto-tag apply recovery
+
+Before the first item mutation, the coordinator atomically saves
+`<TaskRepository>/auto-tag/<sha256(project)>.pending.json`. This write-ahead
+record contains the full `report` (including predictions, confidence, tier
+metrics and area counts) and `changes[]` with each item's serialized tag
+`before` and `after` values. No item is changed if that record cannot be saved.
+
+An apply retry completes this saved batch before accepting a new batch. It
+checks each item's current tags against its saved preimage and result and
+refuses conflicting changes. Accepted tag writes already at the saved target
+are reused; proposals repeat their status-only write while retaining the tags.
+It then repairs the card timeline, project auto-tag state, activity feed, and
+report. Timeline and activity appends check their boolean outcomes and use the
+saved result timestamp and identity to recognize an already written event.
+The pending record is removed only after the report is durable. Recovery does
+not call the classifier again, and the presence of tags never excludes pending
+bookkeeping. Dry runs do not replay pending writes.
+
+The enabled creation worker checks for pending batches on each sweep, including
+when no new item is found. Project opt-out pauses this automatic recovery too;
+an explicit apply request remains available. A failed queued job retains its
+failure status; a later apply or creation sweep can complete its pending batch,
+whose report remains available through the project report endpoint.
+
 ## API
 
 | Route | Purpose |

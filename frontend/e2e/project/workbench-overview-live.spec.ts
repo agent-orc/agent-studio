@@ -304,7 +304,7 @@ test('project and central overviews receive a newly created item without reloadi
       // A cold dev-server bundle can take longer than the default navigation window.
       timeout: 45_000,
     });
-    await page.goto('/');
+    await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 45_000 });
     await hubConnected;
     await page.addStyleTag({ content: '[data-testid="offline-banner"] { display: none !important; }' });
 
@@ -378,6 +378,7 @@ test('project and central overviews receive a newly created item without reloadi
       });
     }
   } finally {
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
     fs.rmSync(probeDir, { recursive: true, force: true });
   }
 });
