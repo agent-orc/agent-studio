@@ -1216,6 +1216,10 @@ public class ProjectRunner
             Mode = _mode,
             ActiveJobId = _activeJobId,
             ActiveExecution = activeExec,
+            ActiveRuns = _activeRuns.Snapshot().Where(run => run.HoldsExecutionSlot)
+                .Select(run => new ActiveRunStatus(run.JobId, run.CliType,
+                    run.CliType is null ? null : _router.Get(run.CliType).GetExecution(GetJobKey(run.JobId)),
+                    run.QuotaFallbackReason)).ToList(),
             QuotaFallbackModel = activeRun?.FallbackFromCliType == null ? null : activeExec?.Model,
             QuotaFallbackReason = activeRun?.QuotaFallbackReason,
             ProviderLimits = providerLimits,

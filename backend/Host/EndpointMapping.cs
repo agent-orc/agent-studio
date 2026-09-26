@@ -80,6 +80,7 @@ public static class EndpointMapping
         app.MapSecurityReviewEndpoints();
         app.MapDesignSurfaceEndpoints();
         app.MapProjectTokenUsageEndpoints();
+        app.MapUsageCockpitEndpoints();
         app.MapPipelineHealthEndpoints();
         app.MapFailureInterventionEndpoints();
         app.MapTokenPricingEndpoints();
