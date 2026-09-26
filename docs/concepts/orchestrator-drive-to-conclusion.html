@@ -2718,6 +2718,13 @@
             <code>ProviderRejectedRequest</code> even when the CLI exits 0.
           </td>
         </tr>
+        <tr id="case-agt-2959-pending-recovery-navigation">
+          <td>2026-09-25</td>
+          <td><code>AGT-2959</code><br><span class="small">pending recovery obscured task navigation</span></td>
+          <td>A real Stable recovery dialog covered AGT-2910 at 16:17:53 Europe/Berlin, 3 h 54 min 53 s after the operator-reported 12:23 restart. The visible dirty-file date was 22 September. The browser replay completed zero task switches; no shared recovery action was taken. Neither the source boot nor continuous display is established.</td>
+          <td>The shell automatically opened a global modal for every review-required pending item. The old dirty-file timestamp was shown as its creation time, with no boot or detection identifier to connect the decision to a restart.</td>
+          <td>The observed navigation terminal was an intervention-dependent block with no finite duration. The presentation now keeps the pending decision reachable through a quiet entry point; opening and closing the view leave the shared record untouched. Explicit commit or leave-uncommitted actions retain their backend checks. New findings expose boot and detection identifiers; the 12:23 attribution remains unknown.</td>
+        </tr>
       </tbody>
     </table>
 

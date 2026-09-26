@@ -56,6 +56,9 @@ describe('CrashRecoveryPromptComponent', () => {
 
     const fixture = TestBed.createComponent(CrashRecoveryPromptComponent);
     fixture.detectChanges();
+    expect(fixture.componentInstance.open()).toBe(false);
+    fixture.componentInstance.openRecovery();
+    fixture.detectChanges();
     expect(fixture.componentInstance.open()).toBe(true);
 
     // app-dialog renders into an overlay on document.body, not under the fixture.

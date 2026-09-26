@@ -270,8 +270,17 @@ state.
   circuit breaker.
 - `backend/Services/Runner/EvidenceGate.cs`: visual and acceptance evidence
   gates before auto-accept.
-- `backend/Services/Runner/CrashRecoveryService.cs`: recovery for orphaned run
-  state after process failure.
+- `backend/Features/Runner/CrashRecoveryService.cs`: recovery for orphaned run
+  state after process failure. An orphan working-tree finding stays pending until
+  an explicit operator commit or leave-uncommitted action. The global recovery
+  entry point is visible while a finding remains pending, but ordinary task
+  navigation does not open a blocking dialog. Opening the entry point shows the
+  decision; closing that view changes no shared record or files. A browser
+  reload and task selection do not reopen it. The pending response exposes a
+  stable finding ID, the oldest dirty-file time (`createdAt` for compatibility),
+  the current boot's `bootId`, and `detectedAt`. A new boot may rediscover the
+  same dirty files; these fields distinguish discovery from file age. Expiry
+  never commits or discards recovered files.
 - `backend/Services/Supervisor/*`: Layer 2 advisory loop, meta-cycle, and rare
   intervention primitives.
 - `runner/*`: the standalone `agent-host` daemon. A dependency-free console

@@ -182,6 +182,10 @@ public sealed class CrashRecoveryServiceTests : IDisposable
         Assert.Equal(firstFindingAt, original.CreatedAt);
         Assert.Equal(original.CreatedAt, recovered.CreatedAt);
         Assert.Equal(original.Id, recovered.Id);
+        Assert.NotEqual(original.BootId, recovered.BootId);
+        Assert.NotEqual(Guid.Empty, Guid.ParseExact(original.BootId, "N"));
+        Assert.True(original.DetectedAt >= firstFindingAt);
+        Assert.True(recovered.DetectedAt >= original.DetectedAt);
         Assert.Equal(64, recovered.Id.Length);
         Assert.All(recovered.Id, c => Assert.True(char.IsAsciiHexDigitLower(c)));
     }
