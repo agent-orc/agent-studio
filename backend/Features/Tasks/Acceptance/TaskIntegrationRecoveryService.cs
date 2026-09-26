@@ -123,15 +123,15 @@ public sealed class TaskIntegrationRecoveryService
         if (source == AcceptanceRailSource)
         {
             route = SelectRecoveryRoute(current);
-            // A restart may replay after the route write but before Ready
-            // promotion. Keep the original receipt when the persisted route
-            // still clears the current policy floor.
+            // The obligation is the write-ahead receipt for the task route.
+            // Replay can encounter either the old route or the selected route.
             if (automaticObligation is { PreviousRoute: not null, SelectedRoute: not null,
                     RouteReason: not null, PolicyVersion: not null }
-                && route.Reason == "already at safe thinking level"
-                && route.Previous == automaticObligation.SelectedRoute
+                && (route.Previous == automaticObligation.PreviousRoute
+                    || route.Previous == automaticObligation.SelectedRoute)
                 && route.PolicyVersion == automaticObligation.PolicyVersion
-                && !route.Pinned)
+                && !route.Pinned
+                && RouteStillMeetsFloor(current, automaticObligation.SelectedRoute))
                 route = new RecoveryRouteSelection(
                     automaticObligation.PreviousRoute,
                     automaticObligation.SelectedRoute,
@@ -148,6 +148,15 @@ public sealed class TaskIntegrationRecoveryService
                         PolicyVersion = route.PolicyVersion,
                         OperatorPinPresent = route.Pinned,
                     });
+            if (route.Selected != route.Previous
+                && !string.Equals(
+                    $"{current.Model ?? "default"}/{current.ThinkingLevel ?? "default"}",
+                    route.Selected, StringComparison.Ordinal))
+            {
+                var selectedLevel = route.Selected[(route.Selected.LastIndexOf('/') + 1)..];
+                if (!_mutations.SetRecoveryThinkingLevel(current.Id, selectedLevel, current.WatchPath))
+                    return Failed("The recovery route was recorded but could not be applied.", internalError: true);
+            }
         }
 
         var position = _states.PromoteToReadyTop(
@@ -255,9 +264,19 @@ public sealed class TaskIntegrationRecoveryService
             return new(previous, previous, $"policy floor {floor?.Id ?? "none"} retained", policyVersion, false);
         if (string.Equals(job.ThinkingLevel, candidate, StringComparison.OrdinalIgnoreCase))
             return new(previous, previous, "already at safe thinking level", policyVersion, false);
-        if (!_mutations.SetRecoveryThinkingLevel(job.Id, candidate, job.WatchPath))
-            return new(previous, previous, "route update deferred", policyVersion, false);
         return new(previous, $"{job.Model}/{candidate}", "mechanical recovery within policy floor", policyVersion, false);
+    }
+
+    private bool RouteStillMeetsFloor(TaskInfo job, string selectedRoute)
+    {
+        var separator = selectedRoute.LastIndexOf('/');
+        if (separator < 0 || string.IsNullOrWhiteSpace(job.Model) || !string.Equals(
+                selectedRoute[..separator], job.Model, StringComparison.OrdinalIgnoreCase))
+            return false;
+        var promptPath = Path.Combine(job.FolderPath, "prompt.md");
+        var prompt = File.Exists(promptPath) ? File.ReadAllText(promptPath) : string.Empty;
+        return _routing.RouteMeetsFloor(job.Model, selectedRoute[(separator + 1)..],
+            _routing.CorrectnessFloor(job.TaskType, job.Title, prompt));
     }
 
     internal static string BuildPrompt(

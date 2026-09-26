@@ -327,6 +327,49 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RestartAfterRouteReceipt_AppliesPlannedRouteAndKeepsPreviousRoute()
+    {
+        var stack = Build();
+        var id = "route-receipt-before-write";
+        var folder = SeedTask(stack, id, CreateUnintegratedDelivery(id), conflict: true);
+        TaskJsonFile.UpdateField(folder, "model", "gpt-5.6-sol", NullLogger.Instance);
+        TaskJsonFile.UpdateField(folder, "thinkingLevel", "xhigh", NullLogger.Instance);
+        TaskJsonFile.UpdateField(folder, "modelExplicit", false, NullLogger.Instance);
+        TaskJsonFile.UpdateField(folder, "thinkingLevelExplicit", false, NullLogger.Instance);
+        stack.Scanner.InvalidateCache();
+        var job = stack.Scanner.FindJob(id, _watchPath)!;
+        var status = stack.Integration.BuildLookup([job])[job.TaskKey];
+        var subject = ReviewSubjectStore.Read(folder)!;
+        var proposal = IntegrationBounceObligationStore.Project(job, subject, status,
+            epoch: 0, roundCount: 0, holdState: "none", routeDecision: "automatic",
+            attemptReason: status.Failure?.Reason);
+        IntegrationBounceObligationStore.Ensure(folder, proposal with
+        {
+            PreviousRoute = "gpt-5.6-sol/xhigh",
+            SelectedRoute = "gpt-5.6-sol/low",
+            RouteReason = "mechanical recovery within policy floor",
+            PolicyVersion = new ModelRoutingPolicyRegistry().Policy.Version,
+        });
+
+        var restarted = Build();
+        Assert.Equal(1, (await restarted.Rail.RunOnceAsync()).Requeued);
+
+        var ready = restarted.Scanner.FindJob(id, _watchPath)!;
+        Assert.Equal(TaskStates.Ready, ready.State);
+        Assert.Equal("low", ready.ThinkingLevel);
+        var path = Assert.Single(Directory.GetFiles(
+            Path.Combine(ready.FolderPath, "logs", "integration-bounce"), "*.json"));
+        var receipt = IntegrationBounceObligationStore.Read(path)!;
+        Assert.Equal("gpt-5.6-sol/xhigh", receipt.PreviousRoute);
+        Assert.Equal("gpt-5.6-sol/low", receipt.SelectedRoute);
+        Assert.Equal("queued", receipt.State);
+        var recoveryEvent = Assert.Single(restarted.Timeline.ReadAll(ready.FolderPath),
+            entry => entry.Kind == TimelineEventKinds.IntegrationRecoveryQueued);
+        Assert.Equal(receipt.PreviousRoute, recoveryEvent.Details?.GetValueOrDefault("previousRoute"));
+        Assert.Equal(receipt.SelectedRoute, recoveryEvent.Details?.GetValueOrDefault("selectedRoute"));
+    }
+
+    [Fact]
     public async Task DuplicateConcurrentTicks_QueueOneBounce()
     {
         var stack = Build();
