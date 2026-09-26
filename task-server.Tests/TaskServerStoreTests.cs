@@ -13,6 +13,158 @@ namespace TaskServer.Tests;
 public sealed class TaskServerStoreTests
 {
     [Fact]
+    public async Task Completed_session_evidence_survives_restart_and_reaches_the_next_claim()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        var run = claim.Run!;
+        var lease = claim.Lease!;
+        var evidence = new SessionContinuationLedgerEntry(
+            run.RunId, task.TaskKey, "codex", "https://example.test/repo.git",
+            "/work/task", "runner/task", "refs/heads/result", new string('a', 40),
+            "host|/clean/task", null, "session-1", "fresh-run", null, false, 0,
+            100, 20, 0, 120, 45, DateTime.UtcNow);
+        await store.CompleteRunAsync(run.RunId, new CompleteRunRequest(
+            "runner-a", "instance-a", lease.LeaseId, lease.Fence,
+            ExecutionOutcomeKind.LaunchFailure.ToString(),
+            IdempotencyKey: "completion-session-ledger", Sequence: 1,
+            SessionContinuation: evidence), "test", default);
+        var current = await store.GetTaskAsync(project.ProjectId, task.TaskKey, default);
+        var delta = new MechanicalRoundDelta(new string('b', 40),
+            "refs/heads/result", new string('a', 40), ["src/Feature.cs"],
+            "Resolve the conflict.", "Run focused tests.");
+        await store.UpdateTaskAsync(project.ProjectId, task.TaskKey,
+            new UpdateTaskRequest(null, null, "2-ready", current!.Version, delta), "test", default);
+
+        var restarted = Store(temp.Path);
+        await restarted.InitializeAsync();
+        var next = await restarted.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal("session-1", next.PreviousSession?.CapturedSessionId);
+        Assert.Equal(120, next.PreviousSession?.TotalTokens);
+        Assert.Equal(delta.DeliverySha, next.MechanicalDelta?.DeliverySha);
+        Assert.Equal(delta.ConflictPaths, next.MechanicalDelta?.ConflictPaths);
+        Assert.Equal("pending-mechanical-continuation", next.MechanicalFreshRoute?.Reason);
+        Assert.Equal("gpt-5.6-terra", next.MechanicalFreshRoute?.Model);
+        await restarted.CompleteRunAsync(next.Run!.RunId, new CompleteRunRequest(
+            "runner-a", "instance-a", next.Lease!.LeaseId, next.Lease.Fence,
+            ExecutionOutcomeKind.LaunchFailure.ToString(),
+            IdempotencyKey: "completion-after-delta", Sequence: 2), "test", default);
+        var after = await restarted.GetTaskAsync(project.ProjectId, task.TaskKey, default);
+        await restarted.UpdateTaskAsync(project.ProjectId, task.TaskKey,
+            new UpdateTaskRequest(null, null, "2-ready", after!.Version), "test", default);
+        var later = await restarted.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Null(later.MechanicalDelta);
+    }
+
+    [Fact]
+    public async Task Resumed_mechanical_fallback_requeues_with_reason_and_qualifies_the_next_fresh_claim()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var first = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        var prior = new SessionContinuationLedgerEntry(
+            first.Run!.RunId, task.TaskKey, "codex", "https://example.test/repo.git",
+            "/work/task", "runner/task", "refs/heads/result", new string('a', 40),
+            "host|/clean/task", null, "session-1", "fresh-run", null, false, 0,
+            100, 20, 0, 120, 45, DateTime.UtcNow);
+        await store.CompleteRunAsync(first.Run.RunId, new CompleteRunRequest(
+            "runner-a", "instance-a", first.Lease!.LeaseId, first.Lease.Fence,
+            ExecutionOutcomeKind.LaunchFailure.ToString(),
+            IdempotencyKey: "first-completion", Sequence: 1,
+            SessionContinuation: prior), "test", default);
+        var current = await store.GetTaskAsync(project.ProjectId, task.TaskKey, default);
+        var delta = new MechanicalRoundDelta(new string('b', 40),
+            "refs/heads/result", new string('a', 40), ["src/Feature.cs"],
+            "Resolve the conflict.", "Run focused tests.");
+        await store.UpdateTaskAsync(project.ProjectId, task.TaskKey,
+            new UpdateTaskRequest(null, null, "2-ready", current!.Version, delta), "test", default);
+        var resumed = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal("pending-mechanical-continuation", resumed.MechanicalFreshRoute?.Reason);
+
+        var fallbackEvidence = prior with
+        {
+            AttemptId = resumed.Run!.RunId,
+            InputSessionId = "session-1",
+            CapturedSessionId = "session-1",
+            ResumeDecision = "resumed-mechanical",
+            MechanicalRound = true,
+            MechanicalResumesUsed = 1,
+            FallbackReason = "semantic-conflict",
+        };
+        var decision = ExecutionOutcomeAdapter.Classify(new ExecutionRawFacts(
+            resumed.Run.RunId, ExecutionAttemptKind.Coding, LaunchFailed: true)) with
+        {
+            Outcome = ExecutionOutcomeKind.MechanicalFallback,
+            RecoveryAction = ExecutionRecoveryAction.StartFreshAttemptFromSalvage,
+        };
+        await store.CompleteRunAsync(resumed.Run.RunId, new CompleteRunRequest(
+            "runner-a", "instance-a", resumed.Lease!.LeaseId, resumed.Lease.Fence,
+            ExecutionOutcomeKind.MechanicalFallback.ToString(),
+            IdempotencyKey: "fallback-completion", Sequence: 1,
+            OutcomeDecision: decision,
+            SessionContinuation: fallbackEvidence), "test", default);
+
+        var restarted = Store(temp.Path);
+        await restarted.InitializeAsync();
+        var ready = await restarted.GetTaskAsync(project.ProjectId, task.TaskKey, default);
+        Assert.Equal("2-ready", ready!.State);
+        var fresh = await restarted.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Null(fresh.MechanicalDelta);
+        Assert.Equal("semantic-conflict", fresh.MechanicalFreshRoute?.Reason);
+        Assert.Equal("gpt-5.6-sol", fresh.MechanicalFreshRoute?.Model);
+        Assert.Equal("medium", fresh.MechanicalFreshRoute?.ThinkingLevel);
+        Assert.Equal("semantic-conflict", fresh.PreviousSession?.FallbackReason);
+        Assert.Equal("refs/heads/result", fresh.ContinuationBaseRef);
+        Assert.Equal(new string('a', 40), fresh.ContinuationBaseSha);
+    }
+
+    [Fact]
+    public async Task Mechanical_fallback_without_resumed_evidence_is_rejected()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, _, _) = await SeedReadyTaskAsync(store);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        var error = await Assert.ThrowsAsync<TaskServerConflictException>(() => store.CompleteRunAsync(
+            claim.Run!.RunId, new CompleteRunRequest(
+                "runner-a", "instance-a", claim.Lease!.LeaseId, claim.Lease.Fence,
+                ExecutionOutcomeKind.MechanicalFallback.ToString(),
+                IdempotencyKey: "invalid-fallback", Sequence: 1), "test", default));
+        Assert.Equal("mechanical-fallback-evidence-required", error.Code);
+    }
+
+    [Theory]
+    [InlineData("Resolve a public protocol conflict.", "medium")]
+    [InlineData("Resolve a security boundary conflict.", "xhigh")]
+    public async Task Mechanical_claim_respects_the_task_text_correctness_floor(
+        string body, string expectedThinking)
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        var delta = new MechanicalRoundDelta(new string('b', 40),
+            "refs/heads/result", new string('a', 40), ["src/Feature.cs"],
+            "Resolve the conflict.", "Run focused tests.");
+        await store.UpdateTaskAsync(project.ProjectId, task.TaskKey,
+            new UpdateTaskRequest(null, body, "2-ready", task.Version, delta), "test", default);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal("gpt-5.6-sol", claim.MechanicalFreshRoute?.Model);
+        Assert.Equal(expectedThinking, claim.MechanicalFreshRoute?.ThinkingLevel);
+    }
+
+    [Fact]
     public async Task Releasing_a_dead_runner_attempt_returns_its_progress_task_to_ready()
     {
         using var temp = new TempDirectory();

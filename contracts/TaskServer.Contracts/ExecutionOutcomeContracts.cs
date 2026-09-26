@@ -27,6 +27,7 @@ public enum ExecutionOutcomeKind
     ExplicitAgentBlocker,
     SuccessfulCompletion,
     ProtocolInconclusive,
+    MechanicalFallback,
 }
 
 public enum ExecutionRecoveryAction
@@ -403,6 +404,8 @@ public static class ExecutionOutcomeAdapter
         ExecutionOutcomeDecision decision,
         ExecutionRawFacts facts)
     {
+        if (decision.Outcome == ExecutionOutcomeKind.MechanicalFallback)
+            return decision with { RawFacts = facts };
         if (decision.Outcome != ExecutionOutcomeKind.ProviderRejectedRequest)
             return Classify(facts);
 

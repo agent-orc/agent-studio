@@ -310,6 +310,21 @@ state.
   worktree teardown. An incomplete or absent acknowledgement retains the
   worktree. A genuine summary failure is allowed through so the marked
   `TaskTransitionService` scaffold remains the honest terminal backstop.
+  Integration recovery carries a compact mechanical delta on the claim. The
+  runner resumes one prior clean-context session only when task, provider,
+  host-bound clean home, repository, worktree, branch and delivery ref/SHA
+  agree with the task's durable continuation ledger. The ledger records each
+  fenced generation's input and captured session IDs, decision, typed reason,
+  token total and duration. A resumed round stops at 300 seconds or the
+  1,211,213-token observation threshold. Semantic conflicts and invalid
+  sessions return to Ready for a policy-qualified fresh claim. The original
+  task prompt is never resent on the resume path.
+  On the standalone Task Server plane, both direct claims and accepted host
+  permits carry a policy-qualified route with the mechanical delta. A resumed
+  fallback completes as typed `MechanicalFallback`, records its reason with the
+  fenced session entry, and returns the task to Ready. The next claim reads
+  that reason, qualifies its fresh route before execution, and carries the
+  recorded result ref and SHA as its continuation base when available.
 - `runner/ReviewStateStore.cs`, `runner/ReviewSlotReconciler.cs`,
   `runner/DurableReviewProcess.cs`, `runner/RemoteReviewDaemon.cs`, and
   `runner/RemoteReviewExecutor.cs`: durable
@@ -769,6 +784,12 @@ state.
   standalone Task Server carry the salvage ref and exact commit in the
   continuation claim, and the runner verifies that pair before preparing the
   sibling run's worktree.
+- Mechanical continuation deltas on the standalone Task Server are stored with
+  the version-fenced Ready task update. Direct claims consume one pending delta;
+  host permit acceptance returns the same delta on idempotent replay. The
+  claimed run id stays in the durable store so a restart cannot offer that
+  instruction to a later generation. The runner still verifies session and
+  branch lineage before it uses the delta.
 - Account-level provider session, usage, and rate limits are CLI capability
   state, not task outcomes. The local runner records `claude: limited until
   <time>` in runner status, persists the current card in provider-scoped

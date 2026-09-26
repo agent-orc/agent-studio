@@ -8,7 +8,7 @@ namespace AgentStudio.TaskServer;
 public sealed partial class TaskServerStore
 {
     private static readonly Regex CriticalProviderFallbackFloor = new(
-        @"\b(security|auth(?:entication|orization)?|permission|credential|encryption|data[ -]?loss|race[ -]?condition|concurren|deadlock|distributed|migration|architecture)\b",
+        @"\b(security|auth(?:entication|orization)?|permission|credential|encryption|data[ -]?loss|race[ -]?condition|concurren|deadlock|distributed|fenc\w*|lease\w*|stale[ -]?write|migration|architecture)\b",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     private sealed record ProviderRejectionRecoveryPlan(

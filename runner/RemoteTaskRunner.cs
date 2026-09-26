@@ -99,7 +99,10 @@ public sealed class RemoteTaskRunner
         // server sends it with the claim, so the worktree below starts on the
         // rescued work instead of on the integration branch.
         string? continuationBaseRef = null,
-        string? continuationBaseSha = null)
+        string? continuationBaseSha = null,
+        AgentStudio.TaskServer.Contracts.SessionContinuationLedgerEntry? previousSession = null,
+        AgentStudio.TaskServer.Contracts.MechanicalRoundDelta? mechanicalDelta = null,
+        string? freshRunReason = null)
     {
         var isProjectClone = !string.IsNullOrWhiteSpace(projectId);
         if (isProjectClone && string.IsNullOrWhiteSpace(repositoryUrl))
@@ -128,6 +131,12 @@ public sealed class RemoteTaskRunner
         var slot = _state.Create(
             taskKey, lease, workspace.RepoPath, runId, leaseInstanceId,
             projectId, repositoryUrl, defaultBranch, taskKind, runSpec);
+        slot = _state.Save(slot with
+        {
+            PreviousSession = previousSession,
+            MechanicalDelta = mechanicalDelta,
+            FreshRunReason = freshRunReason,
+        });
         return await RunPersistedAsync(
             slot,
             workspace,
@@ -488,6 +497,18 @@ public sealed class RemoteTaskRunner
             outcome = execution.Outcome;
             outcomeDecision = execution.Decision;
             outputLines = execution.OutputLines;
+            var resumedMechanical = _state.LoadAll().FirstOrDefault(candidate =>
+                string.Equals(candidate.AttemptId, slot.AttemptId, StringComparison.Ordinal))?.InputSessionId is not null;
+            var mechanicalFallbackReason = MechanicalRoundFallbackPolicy.Reason(
+                resumedMechanical, outcome.Kind, outcomeDecision.Outcome,
+                outcomeDecision.RawFacts.StdErr);
+            if (mechanicalFallbackReason is not null)
+            {
+                outcome = new RunOutcome(RunOutcomeKind.MechanicalFallback,
+                    $"The resumed mechanical round requires a policy-qualified fresh attempt ({mechanicalFallbackReason}).");
+                outcomeDecision = MechanicalRoundFallbackPolicy.AsTypedDecision(
+                    outcomeDecision, mechanicalFallbackReason);
+            }
             await shipper.FlushAsync(stopRun.Token);
             NeedsInputArtifactWriter.Write(
                 ResultsDir(taskKey),
@@ -594,6 +615,12 @@ public sealed class RemoteTaskRunner
                 securedTeardown = teardown;
             }
             outcomeDecision = WithDurableOutput(outcomeDecision, teardown);
+            var currentSlot = _state.LoadAll().FirstOrDefault(candidate =>
+                string.Equals(candidate.AttemptId, slot.AttemptId, StringComparison.Ordinal)) ?? slot;
+            var continuationEntry = epicPlanning ? null : SessionContinuationEvidence.Build(
+                currentSlot, workspace, teardown, _options.Hostname,
+                AgentCliProcess.Resolve(_options, currentSlot.RunSpec).CliType) with
+                { FallbackReason = mechanicalFallbackReason };
             if (finalizationRetries > 0)
             {
                 // Delivery evidence: the card must say that this completion is
@@ -630,7 +657,8 @@ public sealed class RemoteTaskRunner
                     teardown,
                     workspace.BaseSha,
                     envelopeDigest,
-                    _options.Hostname);
+                    _options.Hostname,
+                    continuationEntry);
                 if (durableCompletion.GateItems is { Count: > 0 })
                 {
                     _log(
@@ -666,7 +694,8 @@ public sealed class RemoteTaskRunner
                     artifactManifest?.Digest,
                     outputLines,
                     sourceMutated,
-                    shutdown);
+                    shutdown,
+                    continuationEntry);
             }
             handedBack = true;
             _log(
@@ -1130,6 +1159,45 @@ public sealed class RemoteTaskRunner
         // evidence is filtered on, so it is written to the journal as well as to
         // the task's shipped log.
         var invocation = AgentCliProcess.Resolve(_options, runSpec);
+        if (!string.IsNullOrWhiteSpace(slot.FreshRunReason))
+        {
+            slot = _state.Save(slot with
+            {
+                ResumeDecision = "fresh-run",
+                ResumeRejectionReason = slot.FreshRunReason,
+            });
+            shipper.Add("system", $"[runner] mechanical-continuation decision=fresh-run reason={slot.FreshRunReason}");
+        }
+        else if (slot.MechanicalDelta is not null)
+        {
+            var continuation = _options.ExecEngine == RunnerOptions.ExecEngineCar
+                ? await MechanicalSessionContinuation.DecideAsync(
+                    slot, workspace, invocation.CliType,
+                    CodingAgentRunner.Model.CliContextModes.Normalize(runSpec?.ContextMode),
+                    _options.Hostname, shutdown)
+                : (SessionId: (string?)null, Reason: (string?)"unsupported-engine", DeltaPrompt: (string?)null);
+            if (continuation.SessionId is not null)
+            {
+                prompt = continuation.DeltaPrompt!;
+                slot = _state.Save(slot with
+                {
+                    InputSessionId = continuation.SessionId,
+                    ResumeDecision = "resumed-mechanical",
+                    ResumeRejectionReason = null,
+                });
+            }
+            else
+            {
+                slot = _state.Save(slot with
+                {
+                    ResumeDecision = "fresh-run",
+                    ResumeRejectionReason = continuation.Reason ?? "resume-precondition-failed",
+                });
+            }
+            shipper.Add("system",
+                $"[runner] mechanical-continuation decision={slot.ResumeDecision} reason={slot.ResumeRejectionReason ?? "none"} " +
+                $"inputSession={slot.InputSessionId ?? "none"}");
+        }
         var specLine =
             $"[runner] spec cli={invocation.CliType} model={invocation.Model ?? "<cli-default>"} " +
             $"thinking={invocation.ThinkingLevel ?? "<cli-default>"} " +
@@ -1170,7 +1238,11 @@ public sealed class RemoteTaskRunner
                 _options, slot.WorkerDirectory, workspace.RepoPath, prompt, resultsDir,
                 runSpec: runSpec,
                 runId: slot.AttemptId,
+                resumeSessionId: slot.InputSessionId,
                 cleanContextKey: taskKey,
+                tokenCeiling: slot.InputSessionId is null ? null : MechanicalSessionResumePolicy.TokenCeiling,
+                timeoutSeconds: slot.InputSessionId is null ? null : MechanicalSessionResumePolicy.DurationCeilingSeconds,
+                tokenBaseline: slot.InputSessionId is null ? null : slot.PreviousSession?.TotalTokens,
                 // The agent runs this repository's own build, test and lint
                 // commands. Without the preparation's cache binding its first
                 // `--no-restore` build resolves against a package folder the
@@ -1328,6 +1400,7 @@ public sealed class RemoteTaskRunner
                             $"[runner] provider rejected model request provider={invocation.CliType}; provider-auth capability unchanged");
                     }
                     if (classified.Decision.RecoveryAction == ExecutionRecoveryAction.ResumeSameSession
+                        && slot.InputSessionId is null
                         && sameSessionResumeAttempts < ExecutionOutcomeAdapter.MaxSameSessionResumeAttempts)
                     {
                         var sessionId = classified.Decision.RawFacts.SessionId!;
@@ -1928,7 +2001,8 @@ public sealed class RemoteTaskRunner
         IReadOnlyList<string> outputLines,
         bool sourceMutated,
         CancellationToken ct,
-        IReadOnlyList<string>? gateItems = null)
+        IReadOnlyList<string>? gateItems = null,
+        SessionContinuationLedgerEntry? sessionContinuation = null)
     {
         var (envelopeBaseSha, envelopeResultRef, envelopeManifestDigest) =
             BuildEnvelopeCompletionFields(teardown, baseSha, artifactManifestDigest);
@@ -1959,7 +2033,8 @@ public sealed class RemoteTaskRunner
             ArtifactManifestDigest: envelopeManifestDigest,
             IntegrationBranch: integrationBranch,
             NeedsInputMessage: outcome.NeedsInputMessage,
-            GateItems: gateItems), ct);
+            GateItems: gateItems,
+            SessionContinuation: sessionContinuation), ct);
         _log($"remote-runner-completion recorded: outcome {resp?.Outcome}, state {resp?.TargetState}, result-envelope {(envelopeResultRef is null ? "absent" : "attached")}");
     }
 
@@ -1975,7 +2050,8 @@ public sealed class RemoteTaskRunner
         string? artifactManifestDigest,
         IReadOnlyList<string> outputLines,
         bool sourceMutated,
-        CancellationToken ct)
+        CancellationToken ct,
+        SessionContinuationLedgerEntry? sessionContinuation = null)
     {
         // AGT-2820: a run that delivered without a terminal sentinel used to be
         // reconciled into 5-human-review as "Completed out-of-band", where the
@@ -2010,7 +2086,8 @@ public sealed class RemoteTaskRunner
             outputLines,
             sourceMutated,
             ct,
-            incident is null ? null : [incident.GateItem]);
+            incident is null ? null : [incident.GateItem],
+            sessionContinuation);
     }
 
     /// <summary>
@@ -2040,7 +2117,8 @@ public sealed class RemoteTaskRunner
         WorktreeTeardownResult teardown,
         string? baseSha,
         string? envelopeDigest,
-        string host)
+        string host,
+        SessionContinuationLedgerEntry? sessionContinuation = null)
     {
         var incident = MissingSentinelIncidentFor(
             outcome, outcomeDecision, teardown, baseSha, host);
@@ -2052,7 +2130,8 @@ public sealed class RemoteTaskRunner
             outcome.NeedsInputMessage,
             teardown.Branch,
             teardown.CommitSha,
-            incident is null ? null : [incident.GateItem]);
+            incident is null ? null : [incident.GateItem],
+            sessionContinuation);
     }
 
     /// <summary>
