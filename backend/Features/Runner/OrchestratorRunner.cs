@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text.Json;
 
 namespace AgentStudio.Runner;
@@ -54,7 +53,6 @@ public class OrchestratorRunner
 {
     public static string DefaultModel => ModelFamilyResolver.Resolve(ModelFamilies.ClaudeHaiku);
 
-    private readonly GenericCliExecutionService _claude;
     private readonly ILogger<OrchestratorRunner> _logger;
     private readonly ICliUsageParser? _claudeUsageParser;
     private readonly ICliModelRegistry? _modelRegistry;
@@ -67,7 +65,7 @@ public class OrchestratorRunner
         ICliModelRegistry? modelRegistry = null,
         CliOneShotRegistry? oneShotRegistry = null)
     {
-        _claude = claude;
+        _ = claude; // Retained in the constructor for source compatibility with test hosts.
         _logger = logger;
         _claudeUsageParser = parsers?.Get("claude");
         _modelRegistry = modelRegistry;
@@ -441,114 +439,13 @@ public class OrchestratorRunner
             };
         }
 
-        // Fallback (legacy tests): inline implementation, still stdin-piped.
-        var (args, _) = BuildArgs(modelId, resumeSessionId);
-
-        var psi = new ProcessStartInfo
-        {
-            FileName = GenericCliExecutionService.ResolveExecutable(_claude.GetCliPath()),
-            Arguments = string.Join(' ', args),
-            WorkingDirectory = workingDirectory,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            RedirectStandardInput = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            StandardOutputEncoding = System.Text.Encoding.UTF8,
-            StandardErrorEncoding = System.Text.Encoding.UTF8
-        };
-        psi.Environment["LC_ALL"] = "C.UTF-8";
-        psi.Environment["LANG"] = "C.UTF-8";
-
-        // Bound the call so a hung CLI cannot pin the orchestrator forever.
-        // The token chains the caller's ct with the timeout. Cancellation on
-        // either source surfaces a typed timeout/cancelled error so the
-        // policy layer can decide what to do (boot retries; auto-mode
-        // surfaces the question to the user).
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeoutCts.CancelAfter(DefaultTimeout);
-        var effectiveCt = timeoutCts.Token;
-
-        // Latency capture: requestedAt = moment we send the prompt to the CLI;
-        // completedAt = moment the CLI exits. firstTokenAt is unavailable on
-        // -p (one-shot, the CLI buffers and emits a single JSON blob at exit),
-        // so we leave it null on this path; the streaming task agent path
-        // (Claude stream-json) populates it from the first OutputDelta.
-        var requestedAt = DateTime.UtcNow;
-        try
-        {
-            using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
-            process.Start();
-
-            // Pipe the prompt via stdin instead of a quoted -p argument.
-            // The boot prompt embeds README/AGENTS/ROADMAP markdown plus
-            // recent activity, easily pushing into the multi-KB range
-            // with newlines, backticks, double quotes, and backslashes.
-            // Passing that as a single quoted argument on Windows breaks
-            // through cmd.exe's command-line length and quoting limits;
-            // the failure mode in production was the CLI receiving the
-            // prompt with --output-format dropped from the args, then
-            // returning prose ("I'll wait for...") that ParseResult
-            // rejected with "'I' is an invalid start of a value". stdin
-            // sidesteps the entire quoting/length surface.
-            try
-            {
-                await process.StandardInput.WriteAsync(prompt.AsMemory(), effectiveCt);
-                await process.StandardInput.FlushAsync(effectiveCt);
-            }
-            finally
-            {
-                try { process.StandardInput.Close(); } catch (Exception __ex) { SilentCatch.Note(__ex, "OrchestratorRunner:331"); }
-            }
-
-            var stdoutTask = process.StandardOutput.ReadToEndAsync(effectiveCt);
-            var stderrTask = process.StandardError.ReadToEndAsync(effectiveCt);
-
-            await process.WaitForExitAsync(effectiveCt);
-            var stdout = await stdoutTask;
-            var stderr = await stderrTask;
-
-            if (process.ExitCode != 0)
-            {
-                // claude puts session-resume errors ("No conversation found
-                // with session ID: ...") on STDOUT, not stderr, then exits 1.
-                // We surface stdout into the error string so the policy layer
-                // (ProjectRunner.RunOrchestratorDecisionAsync) can detect and
-                // fall back to a fresh one-shot. Without this, the runner
-                // silently dropped the auto-mode decision instead of
-                // recovering.
-                var combined = string.IsNullOrWhiteSpace(stderr)
-                    ? (string.IsNullOrWhiteSpace(stdout)
-                        ? $"claude CLI exited with code {process.ExitCode}"
-                        : stdout.Trim())
-                    : stderr.Trim();
-                _logger.LogWarning(
-                    "Orchestrator decision failed: exit={Exit}, stdout={Stdout}, stderr={Stderr}",
-                    process.ExitCode, stdout?.Trim(), stderr?.Trim());
-                return new OrchestratorDecisionResult(false, "", modelId, null, null, combined);
-            }
-
-            var completedAt = DateTime.UtcNow;
-            var result = ParseResult(stdout, modelId);
-            return EnrichWithLatencyAndContext(result, requestedAt, completedAt);
-        }
-        catch (OperationCanceledException)
-        {
-            // Distinguish caller-cancelled from timeout so the policy layer
-            // can react: timeout means the CLI hung; cancellation means the
-            // app is shutting down. Either way the process is killed below
-            // by the using-dispose; we just surface the right reason.
-            var reason = !ct.IsCancellationRequested && timeoutCts.IsCancellationRequested
-                ? $"timeout after {DefaultTimeout.TotalSeconds:F0}s"
-                : "cancelled";
-            _logger.LogWarning("Orchestrator decision {Reason}", reason);
-            return new OrchestratorDecisionResult(false, "", modelId, null, null, reason);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Orchestrator decision call failed to spawn or read");
-            return new OrchestratorDecisionResult(false, "", modelId, null, null, ex.Message);
-        }
+        return new OrchestratorDecisionResult(
+            false,
+            "",
+            modelId,
+            null,
+            null,
+            "Claude one-shot registry is not configured");
     }
 
     private static string? ProjectNameFromWorkingDirectory(string workingDirectory)

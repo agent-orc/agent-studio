@@ -336,8 +336,7 @@ public sealed class DurableHandoffRecoveryTests : IDisposable
         GitRemote = gitRemote,
         WorkDir = _root,
         BaseBranch = "main",
-        CliBin = "must-not-run",
-        CliArgs = "",
+        ClaudeCliBin = "must-not-run",
     };
 
     private static readonly JsonSerializerOptions WebJson =

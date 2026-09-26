@@ -107,9 +107,9 @@ internal sealed class CliProtocolNoveltyTracker(string cliType)
 
     private bool IsKnown(string frameType)
     {
-        if (string.Equals(cliType, AgentCliProcess.ClaudeCli, StringComparison.Ordinal))
+        if (string.Equals(cliType, CliSelection.ClaudeCli, StringComparison.Ordinal))
             return ClaudeFrameTypes.Contains(frameType);
-        if (!string.Equals(cliType, AgentCliProcess.CodexCli, StringComparison.Ordinal))
+        if (!string.Equals(cliType, CliSelection.CodexCli, StringComparison.Ordinal))
             return false;
         if (CodexFrameTypes.Contains(frameType) && !frameType.StartsWith("item.", StringComparison.Ordinal)) return true;
         var separator = frameType.IndexOf('/');

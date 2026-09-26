@@ -24,41 +24,18 @@ public sealed partial class ProcessStartGuardTests
         "studio-bff",
     ];
 
-    /// <summary>
-    /// Explicit exceptions for start-info factories hardened by their shared
-    /// caller. Keys are file:line so an unrelated new spawn cannot inherit an
-    /// exception merely by landing in the same file.
-    /// </summary>
-    private static readonly IReadOnlyDictionary<string, Allowance> Allowlist =
-        new Dictionary<string, Allowance>(StringComparer.Ordinal)
-        {
-            ["backend/Features/Cli/Execution/BuiltInCliBehaviors.cs:137"] =
-                SharedCliHardeningAllowance(),
-            ["backend/Features/Cli/Execution/BuiltInCliBehaviors.cs:757"] =
-                SharedCliHardeningAllowance(),
-            ["backend/Features/Cli/Execution/BuiltInCliBehaviors.cs:1256"] =
-                SharedCliHardeningAllowance(),
-        };
-
-    private static Allowance SharedCliHardeningAllowance()
-        => new(
-            "GenericCliExecutionService sets CreateNoWindow on every behavior-built ProcessStartInfo before it delegates to a spawner.",
-            "backend/Features/Cli/Execution/CliExecutionServiceBase.cs",
-            @"\bpsi\.CreateNoWindow\s*=\s*true\b");
-
     [Fact]
     public void Every_process_start_is_hidden_on_windows()
     {
         var sites = ScanRepository();
         var violations = sites
-            .Where(site => !site.Guarded && !Allowlist.ContainsKey(site.Location))
+            .Where(site => !site.Guarded)
             .Select(site => $"{site.Location} ({site.Kind})")
             .ToList();
 
         Assert.True(
             violations.Count == 0,
-            "Every ProcessStartInfo must set CreateNoWindow = true in its initializer, "
-            + "or be listed with a narrow reason when a shared caller applies the guard. "
+            "Every ProcessStartInfo must set CreateNoWindow = true in its initializer. "
             + "Every Process object must receive StartInfo before Start. Unguarded sites:\n  "
             + string.Join("\n  ", violations));
     }
@@ -99,30 +76,6 @@ public sealed partial class ProcessStartGuardTests
 
         Assert.All(ScanSource("backend/Example.cs", source), site => Assert.True(site.Guarded));
     }
-
-    [Fact]
-    public void Every_allowlist_entry_has_a_reason_and_still_exists()
-    {
-        Assert.All(Allowlist, entry => Assert.False(string.IsNullOrWhiteSpace(entry.Value.Reason)));
-        var locations = ScanRepository().Select(site => site.Location).ToHashSet(StringComparer.Ordinal);
-        var stale = Allowlist.Keys.Where(location => !locations.Contains(location)).ToList();
-
-        Assert.True(
-            stale.Count == 0,
-            "Delete or update stale process-spawn allowlist entries:\n  " + string.Join("\n  ", stale));
-
-        var root = RepoRoot();
-        Assert.All(Allowlist, entry =>
-        {
-            var helperPath = Path.Combine(root, entry.Value.GuardFile.Replace('/', Path.DirectorySeparatorChar));
-            Assert.True(
-                File.Exists(helperPath)
-                && Regex.IsMatch(File.ReadAllText(helperPath), entry.Value.GuardPattern),
-                $"Allowlisted process spawn {entry.Key} lost its shared CreateNoWindow enforcement in {entry.Value.GuardFile}.");
-        });
-    }
-
-    private sealed record Allowance(string Reason, string GuardFile, string GuardPattern);
 
     private sealed record SpawnSite(string File, int Line, string Kind, bool Guarded)
     {

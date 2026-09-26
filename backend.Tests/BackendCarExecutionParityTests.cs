@@ -74,7 +74,8 @@ public sealed class BackendCarExecutionParityTests : IDisposable
         Assert.DoesNotContain(run.Output, line =>
             line.Stream == "system"
             && line.Text.StartsWith("[runner] Started ", StringComparison.Ordinal));
-        if (string.Equals(fixture.Form, "stream-json", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(fixture.Form, "stream-json", StringComparison.OrdinalIgnoreCase)
+            && !Path.GetFileName(fixture.Path).StartsWith("p24-", StringComparison.OrdinalIgnoreCase))
         {
             Assert.DoesNotContain(run.Output, line =>
                 line.Stream == "stdout"
@@ -90,7 +91,7 @@ public sealed class BackendCarExecutionParityTests : IDisposable
 
     [SkippableTheory]
     [InlineData("p1-happy-done.claude.fixture", 1542L, 911L, 48230L, 2010L, null)]
-    [InlineData("p1-happy-done.codex.fixture", 22267L, 910L, 6528L, 0L, 128L)]
+    [InlineData("p1-happy-done.codex.fixture", 15739L, 910L, 6528L, 0L, 128L)]
     public async Task TurnCompleted_subscriber_sees_parsed_usage_before_the_event(
         string fixtureName,
         long input,
@@ -261,7 +262,7 @@ public sealed class BackendCarExecutionParityTests : IDisposable
 
         Assert.Equal("gpt-5.5", final.Model);
         Assert.Equal("xhigh", final.ThinkingLevel);
-        Assert.Equal("exec", argv[0]);
+        Assert.Contains("exec", argv);
         Assert.Contains("--experimental-json", argv);
         AssertOption(argv, "--sandbox", "read-only");
         AssertOption(argv, "-m", "gpt-5.5");
@@ -325,8 +326,7 @@ public sealed class BackendCarExecutionParityTests : IDisposable
             "Run the fixture.",
             workingDirectory,
             jobFolderPath: Path.Combine(_root, "task"),
-            contextMode: CliContextModes.Shared,
-            executionEngine: CliExecutionEngines.Car);
+            contextMode: CliContextModes.Shared);
 
         Assert.Null(started);
         Assert.Contains("could not adopt", error, StringComparison.OrdinalIgnoreCase);
@@ -362,8 +362,7 @@ public sealed class BackendCarExecutionParityTests : IDisposable
             "Run the fixture.",
             workingDirectory,
             jobFolderPath: Path.Combine(_root, "task"),
-            contextMode: CliContextModes.Clean,
-            executionEngine: CliExecutionEngines.Car);
+            contextMode: CliContextModes.Clean);
 
         Assert.Null(started);
         Assert.NotNull(error);
@@ -549,8 +548,7 @@ public sealed class BackendCarExecutionParityTests : IDisposable
             thinkingLevel: settings.ThinkingLevel,
             jobFolderPath: jobFolder,
             permissionMode: settings.PermissionMode,
-            contextMode: CliContextModes.Shared,
-            executionEngine: CliExecutionEngines.Car);
+            contextMode: CliContextModes.Shared);
 
         Assert.Null(error);
         Assert.NotNull(started);

@@ -91,26 +91,6 @@ public sealed class WorkspaceSettingsService
     }
 
     /// <summary>
-    /// Sets or clears the workspace-default local CLI execution engine. Blank
-    /// clears the default; unknown non-blank values are rejected.
-    /// </summary>
-    public void SetCliExecutionEngine(string workspaceId, string? executionEngine)
-    {
-        if (string.IsNullOrWhiteSpace(workspaceId)) return;
-        var normalized = CliExecutionEngines.NormalizeOverride(executionEngine);
-        EnsureLoaded();
-        lock (_lock)
-        {
-            var current = _cache.TryGetValue(workspaceId, out var s) ? s : new WorkspaceSettings();
-            _cache[workspaceId] = current with { CliExecutionEngine = normalized };
-            Persist();
-        }
-        _logger.LogInformation(
-            "workspace-settings CLI execution engine set to {ExecutionEngine} for workspace {Workspace}",
-            normalized ?? "(default)", workspaceId);
-    }
-
-    /// <summary>
     /// Sets the workspace-default autonomy level (<c>0..4</c>; out-of-range values
     /// are clamped). Null clears the workspace default (projects then fall through
     /// to the platform default of balanced/2).

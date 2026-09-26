@@ -113,15 +113,6 @@ public record ProjectSettings
     public string? BenchmarkCapabilityClass { get; init; }
 
     /// <summary>
-    /// Per-project override for the local CLI execution engine. One of
-    /// <see cref="CliExecutionEngines.Car"/> or
-    /// <see cref="CliExecutionEngines.Legacy"/>. Null inherits the owning
-    /// workspace default, then <see cref="CliExecutionEngines.Default"/>. The
-    /// process-wide rollback selector takes precedence when present.
-    /// </summary>
-    public string? CliExecutionEngine { get; init; }
-
-    /// <summary>
     /// Per-topic cadence for scheduled analysis reports (project-level
     /// "Analysis Reports" surface). Map of topic slug
     /// (e.g. <c>roadmapAlignment</c>, <c>queueHealth</c>, <c>docsDrift</c>,

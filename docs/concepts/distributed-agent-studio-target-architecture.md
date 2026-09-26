@@ -114,6 +114,11 @@ carries task authority, events, evidence metadata, and commands.
 | **Agent Runner** | Host registration, capability probes, project workspaces, CodingAgentRunner integration, process containment, execution of an admitted run plan, typed output, artifact upload, bounded local spool | Global task namespace, user passwords, arbitrary lane changes, autonomous claims, policy changes, release authority |
 | **Shared contracts** | Versioned resource DTOs, event envelopes, command/result schemas, compatibility rules, deterministic policy primitives | Network hosting, persistence technology, UI projections, OS process ownership |
 
+**Implementation status (2026-09-24).** Local Studio runs and detached Agent
+Runner workers now construct and execute coding-agent requests through
+CodingAgentRunner. Host adapters retain durability, fencing, output projection,
+and process containment, but no longer own a second CLI argv or raw-spawn path.
+
 ### Where orchestration runs
 
 The Task Server owns the durable orchestration state machine. It may send an
@@ -405,6 +410,11 @@ CodingAgentRunner remains the process and CLI-protocol library used by
 `agent-runner`. The standalone Runner must not recreate a second unstructured
 Codex invocation path.
 
+That boundary is now implemented in both deployables with the exact NuGet pin
+`CodingAgentRunner [0.7.0]`. The backend and Runner project files are the two
+consumers of that one package version; an architecture test rejects drift. See
+[ADR-0075](../system/architecture/decisions/adr-archive.md#adr-0075---studio-uses-codingagentrunner-as-its-only-card-run-cli-execution-layer-2026-09-24).
+
 Each deployable publishes its own version and compatibility range. Contract
 tests pin supported combinations. Release order is additive first: Task Server
 accepts both old and new clients, then Runners and Studio upgrade, then obsolete
@@ -538,7 +548,9 @@ key-alias decision. Do not duplicate or renumber these tasks in the meantime.
 5. **Connect Agent Studio only by API.** Remove in-process task-store and Runner
    ownership from the surface runtime.
 6. **Align Agent Runner with shared contracts.** Use CodingAgentRunner structured
-   events, fenced commands, typed outcomes, and bounded replay.
+   events, fenced commands, typed outcomes, and bounded replay. **Implemented:**
+   CAR owns every card-run CLI launch; the Runner retains detached-worker
+   durability and reattaches to the worker process rather than to CAR internals.
 7. **Pass the client-off golden path.** This is the first complete target
    milestone.
 8. **Add workspace/component organization.** Split boards and lifecycles without

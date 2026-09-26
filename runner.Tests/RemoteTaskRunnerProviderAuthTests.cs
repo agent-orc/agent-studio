@@ -165,13 +165,13 @@ public sealed class RemoteTaskRunnerProviderAuthTests
         Directory.CreateDirectory(results);
         var specPath = Path.Combine(directory, "spec.json");
         var spec = new DetachedJobSpec(
-            PosixShell.RequirePath(),
-            ["-c", command],
+            CarStubCli.Write(directory, command),
+            [],
             directory,
             string.Empty,
             results,
             TimeoutSeconds: 10,
-            Engine: RunnerOptions.ExecEngineLegacy);
+            CliType: CliSelection.ClaudeCli);
         await File.WriteAllTextAsync(
             specPath,
             JsonSerializer.Serialize(spec, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
@@ -193,8 +193,7 @@ public sealed class RemoteTaskRunnerProviderAuthTests
             BackendName = "test",
             WorkDir = root,
             BaseBranch = "develop",
-            CliBin = PosixShell.RequirePath(),
-            CliArgs = string.Empty,
+            ClaudeCliBin = PosixShell.RequirePath(),
         };
         var lease = new RunLeaseInfoDto(
             "AGT-PROVIDER-AUTH",

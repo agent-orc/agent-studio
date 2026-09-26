@@ -230,11 +230,11 @@ public sealed class LostWorkerSalvageTests : IDisposable
         WorkDir = Path.Combine(_root, "work"),
         StateDir = Path.Combine(_root, "state"),
         BaseBranch = "main",
-        ExecEngine = RunnerOptions.ExecEngineLegacy,
-        CliBin = PosixShell.RequirePath(),
+        ClaudeCliBin = CarStubCli.Write(
+            Path.Combine(_root, "stubs"),
+            "printf 'work in progress\\n' > salvaged.txt; sleep 120"),
         // Writes the "nearly finished delivery" into the worktree, then waits to
         // be killed like the observed worker was.
-        CliArgs = "-c \"printf 'work in progress\\n' > salvaged.txt; sleep 120\"",
         TtlSeconds = 300,
         HeartbeatSeconds = 30,
         RunTimeoutSeconds = 300,

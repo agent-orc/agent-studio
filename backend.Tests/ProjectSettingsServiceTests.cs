@@ -333,38 +333,6 @@ public sealed class ProjectSettingsServiceTests : IDisposable
         Assert.Equal(IntegrationStrategies.DirectMerge, svc.Get("runbook").IntegrationStrategy);
     }
 
-    [Fact]
-    public void SetCliExecutionEngine_OverridePersistsCanonicalValueAcrossReload()
-    {
-        var svc = Build();
-
-        svc.SetCliExecutionEngine("runbook", " LEGACY ");
-
-        var reloaded = Build();
-        Assert.Equal(CliExecutionEngines.Legacy, reloaded.Get("runbook").CliExecutionEngine);
-    }
-
-    [Fact]
-    public void SetCliExecutionEngine_BlankClearsOverride()
-    {
-        var svc = Build();
-        svc.SetCliExecutionEngine("runbook", CliExecutionEngines.Legacy);
-
-        svc.SetCliExecutionEngine("runbook", "   ");
-
-        Assert.Null(svc.Get("runbook").CliExecutionEngine);
-    }
-
-    [Fact]
-    public void SetCliExecutionEngine_InvalidValueIsRejectedWithoutMutation()
-    {
-        var svc = Build();
-        svc.SetCliExecutionEngine("runbook", CliExecutionEngines.Legacy);
-
-        Assert.Throws<ArgumentException>(() =>
-            svc.SetCliExecutionEngine("runbook", "automatic"));
-        Assert.Equal(CliExecutionEngines.Legacy, svc.Get("runbook").CliExecutionEngine);
-    }
 
     [Fact]
     public void ResolveCliMode_UnconfiguredProject_DefaultsToYolo()

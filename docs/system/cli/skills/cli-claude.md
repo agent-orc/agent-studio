@@ -49,7 +49,7 @@ printf '%s' "<prompt>" | claude -p \
   [--append-system-prompt-file <path>]
 ```
 
-`-p` is the headless / "print" mode; output goes to stdout, the process exits when the model is done. The CAR-backed default writes the one-shot prompt to stdin and closes it immediately. The legacy rollback passes the prompt as the final argv value. `--verbose` is *required* alongside `stream-json` because Claude's CLI rejects the combo without it. `--dangerously-skip-permissions` auto-approves tool calls, which is required for unattended runs.
+`-p` is the headless / "print" mode; output goes to stdout, the process exits when the model is done. CAR writes the one-shot prompt to stdin and closes it immediately. `--verbose` is *required* alongside `stream-json` because Claude's CLI rejects the combo without it. `--dangerously-skip-permissions` auto-approves tool calls, which is required for unattended runs.
 
 `--append-system-prompt-file <path>` injects [`agent-rules/core.md`](../../../../agent-rules/core.md) as a system-prompt overlay. It's a *file* flag (not the inline string flag) so the multi-line markdown stays out of the command-line argument and lets the Anthropic CLI cache the system-prompt portion across runs. We resolve the path via `ResolveAgentRulesPath` (looks at config + walks up from `AppContext.BaseDirectory`); files larger than 8 KB are skipped with a warning to avoid blowing the system-prompt cache.
 

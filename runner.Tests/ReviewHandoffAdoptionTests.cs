@@ -821,8 +821,7 @@ public sealed class ReviewHandoffAdoptionTests : IDisposable
         ReviewWorkDir = _root,
         StateDir = Path.Combine(_root, "state"),
         BaseBranch = "main",
-        CliBin = "test",
-        CliArgs = "",
+        ClaudeCliBin = "test",
         TtlSeconds = 120,
         // An hour of heartbeat silence: every renewal these tests observe is an
         // adoption check or a handoff extension, never a timer tick.

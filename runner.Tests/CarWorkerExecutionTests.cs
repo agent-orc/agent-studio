@@ -254,7 +254,6 @@ public sealed class CarWorkerExecutionTests : IDisposable
                 TimeoutSeconds: 10,
                 CliType: "claude",
                 ContextMode: "shared",
-                Engine: RunnerOptions.ExecEngineCar,
                 RunId: $"car-{mode}");
             var (result, timedOut, launchFailed) = await CarWorkerExecution.RunAsync(
                 spec,
@@ -379,7 +378,6 @@ public sealed class CarWorkerExecutionTests : IDisposable
             ResultsDirectory: resultsDirectory,
             TimeoutSeconds: 30,
             CliType: "claude",
-            Engine: RunnerOptions.ExecEngineCar,
             RunId: "car-launch-failure");
 
         var (result, timedOut, launchFailed) = await CarWorkerExecution.RunAsync(
@@ -446,53 +444,6 @@ public sealed class CarWorkerExecutionTests : IDisposable
                 new CliOutputLine(DateTime.UtcNow, markerLine.Stream, markerLine.Text)));
     }
 
-    [Fact]
-    public void Legacy_engine_shadow_trace_maps_stream_json_lines_through_the_car_adapters()
-    {
-        var directory = Path.Combine(_root, "shadow");
-        Directory.CreateDirectory(directory);
-        var fixture = Fixture.Load("p1-happy-done.claude.fixture");
-        using (var trace = CarEventTrace.Open(directory))
-        {
-            foreach (var line in fixture.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-                trace.WriteFromRawLine("claude", "shadow-run", "stdout", line);
-        }
-
-        var lines = File.ReadAllLines(Path.Combine(directory, "events.jsonl"));
-        Assert.Contains(lines, line => line.Contains("\"type\":\"SessionStarted\""));
-        Assert.Contains(lines, line => line.Contains("\"type\":\"TurnCompleted\""));
-    }
-
-    [Fact]
-    public void Plaintext_lines_produce_no_shadow_events_which_is_the_honest_trace()
-    {
-        var directory = Path.Combine(_root, "shadow-plain");
-        Directory.CreateDirectory(directory);
-        var fixture = Fixture.Load("p5-no-sentinel.plaintext.fixture");
-        using (var trace = CarEventTrace.Open(directory))
-        {
-            foreach (var line in fixture.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-                trace.WriteFromRawLine("claude", "shadow-run", "stdout", line);
-        }
-
-        var nonEmpty = File.ReadAllLines(Path.Combine(directory, "events.jsonl"))
-            .Where(l => !string.IsNullOrWhiteSpace(l))
-            .ToList();
-        Assert.Empty(nonEmpty);
-    }
-
-    [Fact]
-    public void Exec_engine_defaults_to_car_and_rejects_unknown_values()
-    {
-        var (defaults, _, _, _) = RunnerOptions.Parse(["--exec-engine", ""]);
-        Assert.Equal(RunnerOptions.ExecEngineCar, defaults.ExecEngine);
-
-        var (legacy, _, _, _) = RunnerOptions.Parse(["--exec-engine", "legacy"]);
-        Assert.Equal(RunnerOptions.ExecEngineLegacy, legacy.ExecEngine);
-
-        Assert.Throws<ArgumentException>(() => RunnerOptions.Parse(["--exec-engine", "bogus"]));
-    }
-
     // ── harness ─────────────────────────────────────────────────────────
 
     private sealed record FixtureRun(
@@ -536,7 +487,6 @@ public sealed class CarWorkerExecutionTests : IDisposable
             CliType: fixture.Cli,
             PermissionMode: permissionMode,
             ContextMode: contextMode,
-            Engine: RunnerOptions.ExecEngineCar,
             RunId: $"car-parity-{Guid.NewGuid():N}",
             CleanContextKey: cleanContextKey);
 
