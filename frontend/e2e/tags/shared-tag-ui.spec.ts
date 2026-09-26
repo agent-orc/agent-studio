@@ -48,8 +48,12 @@ test('area and facet selection follows board, Dossier list and wiki at desktop a
   }));
   await page.addInitScript(({ projectName, dossierId }) => {
     localStorage.setItem('atp.studio.theme', 'light');
-    localStorage.setItem('tagProposalsMock', JSON.stringify([{ id: 'mock-tag-proposal', projectName,
-      subjectKind: 'dossier', subjectId: dossierId, tagIds: ['decision'], confidence: 0.7, state: 'pending' }]));
+    localStorage.setItem('tagProposalsMock', JSON.stringify([
+      { id: 'mock-tag-proposal', projectName, subjectKind: 'dossier', subjectId: dossierId,
+        tagIds: ['decision'], confidence: 0.7, state: 'pending' },
+      { id: 'mock-tag-proposal-2', projectName, subjectKind: 'dossier', subjectId: dossierId,
+        tagIds: ['evidence'], confidence: 0.6, state: 'pending' },
+    ]));
   }, { projectName: project, dossierId: featured!.id });
   await page.goto('/#/board', { waitUntil: 'domcontentloaded', timeout: 45_000 });
   // The isolated static proxy does not carry the live hub; keep its banner out of tag screenshots.
@@ -64,7 +68,7 @@ test('area and facet selection follows board, Dossier list and wiki at desktop a
   await expect.poll(() => areaSelect.locator('option').count()).toBeGreaterThan(1);
   await areaSelect.selectOption('execution-and-runner');
   await expect(areaSelect).toHaveValue('execution-and-runner');
-  await page.screenshot({ path: path.join(resultsDir, 'tag-ui-board-desktop.png') });
+  await page.screenshot({ path: path.join(resultsDir, 'tag-ui-board-desktop--mocked.png') });
 
   await page.evaluate(projectSlug => { window.location.hash = `#/projects/${projectSlug}/workbenches`; }, slug(project));
   const dossier = page.getByTestId('workbench-overview');
@@ -72,7 +76,11 @@ test('area and facet selection follows board, Dossier list and wiki at desktop a
   await expect(dossier.getByTestId('shared-area-filter')).toHaveValue('execution-and-runner');
   await expect(dossier.getByTestId('tag-chips')).toContainText('Execution and runner');
   await expect(dossier.getByTestId('tags-proposed')).toContainText('Tags proposed');
-  await page.screenshot({ path: path.join(resultsDir, 'tag-ui-dossiers-desktop.png') });
+  await page.screenshot({ path: path.join(resultsDir, 'tag-ui-dossiers-desktop--mocked.png') });
+  await dossier.getByRole('button', { name: 'Accept', exact: true }).first().click();
+  await expect(dossier.getByRole('button', { name: 'Accept', exact: true })).toHaveCount(1);
+  await dossier.getByRole('button', { name: 'Reject', exact: true }).click();
+  await expect(dossier.getByTestId('tags-proposed')).toHaveCount(0);
 
   await page.evaluate(projectSlug => { window.location.hash = `#/projects/${projectSlug}/wiki`; }, slug(project));
   const wiki = page.getByTestId('project-wiki-tree');
@@ -84,27 +92,27 @@ test('area and facet selection follows board, Dossier list and wiki at desktop a
   await page.getByTestId('area-glossary-select').selectOption('execution-and-runner');
   await expect(page.getByTestId('area-glossary')).toContainText('The service that drives a task');
   await expect(page.getByTestId('area-glossary')).toContainText('Tagged items');
-  await page.screenshot({ path: path.join(resultsDir, 'tag-ui-wiki-desktop.png') });
+  await page.screenshot({ path: path.join(resultsDir, 'tag-ui-wiki-desktop--mocked.png') });
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByTestId('studio-ab-explorer').click();
   await page.getByTestId('project-wiki-toggle-nav').click();
-  await page.screenshot({ path: path.join(resultsDir, 'tag-ui-wiki-phone.png') });
+  await page.screenshot({ path: path.join(resultsDir, 'tag-ui-wiki-phone--mocked.png') });
   await page.evaluate(() => document.documentElement.setAttribute('data-studio-theme', 'dark'));
-  await page.screenshot({ path: path.join(resultsDir, 'tag-ui-wiki-phone-dark.png') });
+  await page.screenshot({ path: path.join(resultsDir, 'tag-ui-wiki-phone-dark--mocked.png') });
   await page.evaluate(() => document.documentElement.setAttribute('data-studio-theme', 'light'));
   await page.evaluate(projectSlug => { window.location.hash = `#/projects/${projectSlug}/workbenches`; }, slug(project));
   await expect(dossier).toBeVisible({ timeout: 30_000 });
-  await page.screenshot({ path: path.join(resultsDir, 'tag-ui-dossiers-phone.png') });
+  await page.screenshot({ path: path.join(resultsDir, 'tag-ui-dossiers-phone--mocked.png') });
   await page.evaluate(() => document.documentElement.setAttribute('data-studio-theme', 'dark'));
-  await page.screenshot({ path: path.join(resultsDir, 'tag-ui-dossiers-phone-dark.png') });
+  await page.screenshot({ path: path.join(resultsDir, 'tag-ui-dossiers-phone-dark--mocked.png') });
   await page.evaluate(() => document.documentElement.setAttribute('data-studio-theme', 'light'));
   await page.evaluate(() => { window.location.hash = '#/board'; });
   await expect(page.getByTestId('shared-area-filter').first()).toBeVisible({ timeout: 30_000 });
-  await page.screenshot({ path: path.join(resultsDir, 'tag-ui-board-phone.png') });
+  await page.screenshot({ path: path.join(resultsDir, 'tag-ui-board-phone--mocked.png') });
   await page.evaluate(() => {
     localStorage.setItem('atp.studio.theme', 'dark');
     document.documentElement.setAttribute('data-studio-theme', 'dark');
   });
-  await page.screenshot({ path: path.join(resultsDir, 'tag-ui-board-phone-dark.png') });
+  await page.screenshot({ path: path.join(resultsDir, 'tag-ui-board-phone-dark--mocked.png') });
 });
