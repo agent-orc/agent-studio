@@ -604,10 +604,11 @@ public sealed class RemoteReviewWorkspace
                             SubjectFailures(command, execution.Process),
                             reviewFlakyTests);
                     }
-                    comparison = comparison! with
+                    var requiredComparison = RequireBaselineComparison(comparison, command);
+                    comparison = requiredComparison with
                     {
                         Diagnosis = await DiagnoseFailureAsync(
-                            command, comparison, firstProcess, execution.Process, ct),
+                            command, requiredComparison, firstProcess, execution.Process, ct),
                     };
                     if (comparison.Diagnosis.Classification == DeliveryFailureDiagnosis.Environment
                         && candidateCache is not null)
@@ -2039,6 +2040,14 @@ public sealed class RemoteReviewWorkspace
                     new(ReviewInfrastructureDiagnosis.StepKey, command?.StepId),
                     new(ReviewInfrastructureDiagnosis.CommandKey, CommandLine(command)),
                 ]));
+
+    internal BaselineComparison RequireBaselineComparison(
+        BaselineComparison? comparison,
+        ReviewCommandDto command)
+        => comparison ?? throw BaselineUnavailable(
+            $"Baseline comparison for '{command.StepId}' produced no result.",
+            _baselineSha,
+            command);
 
     private static string? CommandLine(ReviewCommandDto? command)
         => command is null

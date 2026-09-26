@@ -1292,6 +1292,30 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Fact]
+    public void Missing_baseline_comparison_is_reported_as_infrastructure_with_command_context()
+    {
+        var command = BaselineCommand("exit 1");
+        var (workspace, _) = Workspace(
+            "attempt-null-baseline",
+            new string('a', 40),
+            [command],
+            26039,
+            integrationRef: "refs/heads/main");
+
+        var exception = Assert.Throws<ReviewInfrastructureException>(
+            () => workspace.RequireBaselineComparison(null, command));
+
+        Assert.Equal("BaselineUnavailable", exception.Classification);
+        var facts = ReviewInfrastructureDiagnosis.Parse(exception.Message);
+        Assert.Equal(ReviewInfrastructureDiagnosis.UnresolvedBase,
+            facts[ReviewInfrastructureDiagnosis.BaseKey]);
+        Assert.Equal("refs/heads/main", facts[ReviewInfrastructureDiagnosis.RefKey]);
+        Assert.Equal("verify-2", facts[ReviewInfrastructureDiagnosis.StepKey]);
+        Assert.Contains("exit 1", facts[ReviewInfrastructureDiagnosis.CommandKey],
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Baseline_failure_names_the_base_the_ref_and_the_command_it_used()
     {
         var (baselineSha, subjectSha) = await SeedSubjectBranchAsync();
