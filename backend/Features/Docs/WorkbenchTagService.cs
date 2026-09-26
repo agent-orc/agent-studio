@@ -10,6 +10,7 @@ namespace AgentStudio.Docs;
 public sealed record SetWorkbenchTagsRequest
 {
     public List<string> Tags { get; init; } = [];
+    public string? TaggingStatus { get; init; }
 }
 
 public sealed record WorkbenchTagsResult(
@@ -52,6 +53,8 @@ public sealed class WorkbenchTagService
 
     public WorkbenchTagsResult Set(string projectName, string id, SetWorkbenchTagsRequest body)
     {
+        if (body?.TaggingStatus is not (null or "tagged" or "tags-proposed"))
+            return Failure(id, "Unknown tagging status.");
         var validation = _areas.ValidateTags(projectName, body?.Tags);
         if (!validation.Ok) return Failure(id, validation.Error);
         if (validation.TagIds.Count > 50)
@@ -71,6 +74,8 @@ public sealed class WorkbenchTagService
 
             snapshot.Descriptor["tags"] = new JsonArray(
                 validation.TagIds.Select(tag => (JsonNode)tag).ToArray());
+            if (body?.TaggingStatus != null)
+                snapshot.Descriptor["taggingStatus"] = body.TaggingStatus;
             var mutation = _mutations.Execute(
                 projectName,
                 snapshot.Root,

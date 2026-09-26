@@ -165,6 +165,8 @@ export interface WikiTreeNode {
   metadata?: WikiTreeMetadata | null;
   /** Curated classification (pages only; null for folders and unclassified pages). */
   classification?: WikiClassification | null;
+  tags?: string[] | null;
+  taggingStatus?: 'tagged' | 'tags-proposed' | null;
 }
 
 /** The physical docs/ folder tree backing the wiki navigation. */
@@ -352,6 +354,9 @@ export interface WorkbenchListItem {
   valid: boolean;
   error: string | null;
   sourceTaskKeys: string[];
+  tags?: string[];
+  /** Auto-tag outcome; proposals are retained without applying suggested tags. */
+  taggingStatus?: 'tagged' | 'tags-proposed' | null;
   /** Presentation variant. Missing or unknown server values render as concept. */
   pattern?: ArticlePattern | null;
   /** Legacy descriptor bridge. Derived card references use the keyed endpoint. */
