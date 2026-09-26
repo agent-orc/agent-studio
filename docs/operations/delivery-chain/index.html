@@ -374,7 +374,7 @@
   <label data-option-id="platform-rule" data-option-label="A &middot; Deterministic backend rule, one round per operator review epoch (recommendation)"><input type="radio" name="first-bounce-owner" value="platform-rule" checked><span><b>A &middot; Deterministic backend rule</b><span class="d">One automatic round per operator review epoch, built on the existing recovery, supersession, requeue and timeline services. Restart replays the idempotent obligation, so the queue no longer depends on a session being alive. It does not resolve content, edit Git, waive a gate or requeue a card on hold.</span></span></label>
   <label data-option-id="session" data-option-label="B &middot; Keep the session orchestrator as owner"><input type="radio" name="first-bounce-owner" value="session"><span><b>B &middot; Session orchestrator keeps it</b><span class="d">Adaptable and available today, but session availability is queue availability. On one night seventeen eligible cards accumulated because the session stopped.</span></span></label>
   <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
-  <p><b>Decision, 2026-09-25, operator: A.</b> A deterministic backend rule owns one idempotent round per operator review epoch.</p>
+  <p><b>Decision, 2026-09-25, operator: A.</b> A deterministic backend rule owns one idempotent round per operator review epoch. Its action receipt records the planned route before changing the task route, and replay completes the same obligation after a backend restart.</p>
 </div>
 
 <div class="decision" data-decision-id="guardian-trigger" data-decision-kind="single" data-decision-label="Guardian escalation trigger" data-decision-status="decided" data-selected-option-id="on-repeat">

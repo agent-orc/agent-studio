@@ -419,8 +419,11 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   the previous and selected model route, policy version, reason and pin state;
   recovery lowers thinking only when the model routing policy floor permits it
   and neither route field is explicitly pinned. The recovery service persists
-  that route and receipt before promoting the card to Ready, so the initial
-  Ready claim uses the recorded recovery route. Restart receipt repair never
+  the planned route receipt before changing the task's thinking level, then
+  applies that route before promoting the card to Ready. On restart, replay
+  accepts either the prior or selected route from that receipt and preserves
+  the original previous route. The initial Ready claim uses the recorded
+  recovery route. Restart receipt repair never
   changes a Ready card's route. The rail caps its interval at
   five minutes and its status endpoint reports
   `integration-bounce-worker-unavailable` when the pass is overdue.
