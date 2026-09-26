@@ -14,6 +14,21 @@ public sealed class RemoteChatWorkBrokerTests
         "develop");
 
     [Fact]
+    public void Local_turn_appears_in_live_usage_until_execution_ends()
+    {
+        var broker = new RemoteChatWorkBroker(NullLogger<RemoteChatWorkBroker>.Instance);
+        using (broker.TrackLocalTurn("Agent Studio", "studio-host"))
+        {
+            var live = Assert.Single(broker.UsageSnapshot());
+            Assert.Equal("studio-host", live.Host);
+            Assert.Equal(1, live.ActiveTurns);
+            Assert.True(live.HeavyAccountingUnknown);
+            Assert.True(live.CpuShareUnknown);
+        }
+        Assert.Empty(broker.UsageSnapshot());
+    }
+
+    [Fact]
     public async Task Assigned_runner_claims_turn_and_completion_preserves_exact_host_checkout()
     {
         var broker = new RemoteChatWorkBroker(NullLogger<RemoteChatWorkBroker>.Instance);
@@ -33,7 +48,14 @@ public sealed class RemoteChatWorkBrokerTests
         Assert.Equal(RemoteChatWorkClaimStatuses.Empty, wrongRunner.Status);
 
         var claim = broker.TryClaim(new RemoteChatWorkClaimRequest(
-            "runner-01", "agent-runner-01", "agent-runner-01"));
+            "runner-01", "agent-runner-01", "agent-runner-01"),
+            _ => new RemoteChatWorkClaimPreparation(true, IsHeavy: true, CpuShare: 0.5m));
+        var live = Assert.Single(broker.UsageSnapshot());
+        Assert.Equal("Agent Studio", live.Project);
+        Assert.Equal("agent-runner-01", live.Host);
+        Assert.Equal(1, live.ActiveTurns);
+        Assert.Equal(1, live.HeavyTurns);
+        Assert.Equal(0.5m, live.CpuShare);
         Assert.Equal(RemoteChatWorkClaimStatuses.Claimed, claim.Status);
         Assert.NotNull(claim.Work);
         Assert.Equal(Route.RepositoryUrl, claim.Work!.RepositoryUrl);
@@ -61,15 +83,20 @@ public sealed class RemoteChatWorkBrokerTests
             ModelIds.ClaudeOpus5,
             null,
             null,
-            context));
+            context,
+            Metadata: new ChatTurnMetadata(DateTime.UtcNow, DateTime.UtcNow,
+                DateTime.UtcNow, "agent-runner-01", "claude-session", ModelIds.ClaudeOpus5, "high")));
 
         Assert.True(accepted);
+        Assert.Empty(broker.UsageSnapshot());
         var result = await pending;
         Assert.True(result.Success);
         Assert.Contains(context.RepoPath!, result.ReplyText);
         Assert.Equal(CliTypes.Claude, result.CliType);
         Assert.Equal(ModelIds.Gpt56Sol, result.ConfiguredModel);
         Assert.Equal("codex weekly cap reached", result.QuotaFallbackReason);
+        Assert.True(result.Metadata?.IsHeavy);
+        Assert.Equal(0.5m, result.Metadata?.CpuShare);
         Assert.Equal(context, broker.GetContext(Route));
 
         var reassigned = Route with { RunnerId = "runner-02" };

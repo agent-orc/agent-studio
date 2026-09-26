@@ -146,6 +146,7 @@ export function buildOrchestratorConversationEvents(
   inlineEvents: readonly ChatEvent[],
   projectName: string | null,
   source: string,
+  showMetadata = true,
 ): ConversationEvent[] {
   const persisted = suppressLocalDuplicates(serverTurns, localTurns);
   const turns: readonly OptimisticOrchestratorChatTurn[] = [...persisted, ...localTurns];
@@ -162,9 +163,26 @@ export function buildOrchestratorConversationEvents(
     }));
     const attachments = localAttachments.length > 0 ? localAttachments : persistedAttachments;
     const error = turn.errorMessage?.trim();
-    const body = error
+    let body = error
       ? `${turn.text ? `${turn.text}\n\n` : ''}**Error:** ${error}`
       : turn.text;
+    if (showMetadata && turn.role === 'orchestrator' && turn.metadata) {
+      const meta = turn.metadata;
+      const usage = turn.tokenUsage;
+      const tokenCount = usage
+        ? usage.inputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheCreationTokens
+        : null;
+      const parts = [
+        meta.model && [meta.model, meta.effort].filter(Boolean).join(' · '),
+        tokenCount !== null && `${tokenCount.toLocaleString('en-US')} tokens`,
+        meta.cost != null && `est. ${meta.currency === 'USD' ? '$' : `${meta.currency ?? ''} `}${meta.cost.toFixed(4)}`,
+        `${(meta.totalLatencyMs / 1000).toFixed(1)}s total`,
+        meta.queueLatencyMs != null && `${(meta.queueLatencyMs / 1000).toFixed(1)}s queued`,
+        meta.host,
+        meta.providerSessionId && `session ${meta.providerSessionId.slice(0, 8)}`,
+      ].filter(Boolean);
+      body += `\n\n*${parts.join(' · ')}*`;
+    }
 
     projected.push({
       inputIndex: index,

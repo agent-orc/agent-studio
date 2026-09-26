@@ -1,6 +1,6 @@
 # Token pricing
 
-> **Status (2026-09-08):** Live on exactly pinned `TokenEconomy` 0.3.3,
+> **Status (2026-09-26):** Live on exactly pinned `TokenEconomy` 0.3.5,
 > including historical prices for the GPT-5.6 family, the GPT-5.5 family
 > (GPT-5.5, GPT-5.5 Pro, the GPT-5.5 Cyber preview), and the Claude 5 /
 > Sonnet 4.6 family. Studio contains no model rates.
@@ -14,7 +14,7 @@ in `backend/Features/Runner/TokenEconomyPriceProvider.cs` adapts
 
 The adapter is exposed through `ITokenPriceProvider`; the active
 `TokenPricing.Provider` configuration selects `TokenEconomyPriceProvider`, the
-package-specific implementation from the exactly pinned `TokenEconomy` 0.3.3
+package-specific implementation from the exactly pinned `TokenEconomy` 0.3.5
 dependency. Aggregators and frontend contracts do not depend on the provider
 package directly.
 
@@ -79,6 +79,15 @@ The shared adapter feeds:
 - ad-hoc/supporting usage summaries.
 - prompt-registry call history, where the rendered prompt's estimated input
   tokens are priced at the event timestamp and grouped by content hash.
+- orchestrator chat reply receipts and their session totals. The receipt stores
+  the amount, currency, and TokenEconomy package version at turn completion;
+  `chat-turn` ledger events keep this usage separate from coding agent calls.
+
+The project token usage summary exposes chat calls, tokens, and priced cost as
+its own category for lifetime, 24 hour, and 7 day windows. The workspace token
+timeline carries `chatTokens` in each project and time bucket. Its total is the
+sum of agent, supporting, orchestrator, and chat tokens. Live queue and claim
+occupancy is reported separately by the project chat broker.
 
 These surfaces may aggregate resolved costs, but an aggregate containing an
 unpriced call remains explicitly marked unavailable or incomplete according to

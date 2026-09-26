@@ -92,6 +92,28 @@ public sealed class WorkspaceTokensTimelineCategoryTests : IDisposable
     }
 
     [Fact]
+    public async Task Build_ChatClassDoesNotPresentPartialCostAsComplete()
+    {
+        var (bridge, store) = BuildStack();
+        var now = new DateTime(2026, 9, 26, 12, 0, 0, DateTimeKind.Utc);
+        await EmitAsync(bridge, store, "studio", "chat:codex",
+            Usage("gpt-5.6-sol", 100, 20), now.AddMinutes(-20));
+        await EmitAsync(bridge, store, "studio", "chat:codex",
+            Usage("unknown-model", 50, 10), now.AddMinutes(-15));
+
+        var timeline = BusBackedWorkspaceTimelineReader.BuildFromStore(
+            store, _workspace, [("studio", Path.Combine(_workspace, "studio"))],
+            windowHours: 24, bucketMinutes: 60, nowUtc: now);
+
+        var project = Assert.Single(timeline.Projects);
+        var cell = Assert.Single(timeline.Cells);
+        Assert.Equal(180, project.ChatTokens);
+        Assert.Equal(180, cell.ChatTokens);
+        Assert.Null(project.ChatCostUsd);
+        Assert.Null(cell.ChatCostUsd);
+    }
+
+    [Fact]
     public async Task Build_LastActivity_ReflectsNewestAgentRun_NotOnlyOrchestrator()
     {
         var (bridge, store) = BuildStack();

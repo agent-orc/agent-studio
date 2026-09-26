@@ -127,10 +127,13 @@ public class WorkspaceTokensTimelineService
                 {
                     bucket.Dollars = (bucket.Dollars ?? 0m) + cost.Total;
                     bucket.HasPricedCall = true;
+                    if (category == ProjectTokenCategory.Chat)
+                        bucket.ChatCostUsd = (bucket.ChatCostUsd ?? 0m) + cost.Total;
                 }
                 else
                 {
                     bucket.HasUnpricedCall = true;
+                    if (category == ProjectTokenCategory.Chat) bucket.ChatCostIncomplete = true;
                 }
 
                 var pt = projectTotals[project];
@@ -144,10 +147,13 @@ public class WorkspaceTokensTimelineService
                 {
                     pt.Dollars = (pt.Dollars ?? 0m) + cost.Total;
                     pt.HasPricedCall = true;
+                    if (category == ProjectTokenCategory.Chat)
+                        pt.ChatCostUsd = (pt.ChatCostUsd ?? 0m) + cost.Total;
                 }
                 else
                 {
                     pt.HasUnpricedCall = true;
+                    if (category == ProjectTokenCategory.Chat) pt.ChatCostIncomplete = true;
                 }
                 if (pt.PeakBucketTotal < (bucket.Input + bucket.Output + bucket.CacheRead + bucket.CacheWrite))
                 {
@@ -179,7 +185,9 @@ public class WorkspaceTokensTimelineService
                 AllModelsPriced: bucket.HasPricedCall && !bucket.HasUnpricedCall,
                 AgentTokens: bucket.AgentTokens,
                 SupportingTokens: bucket.SupportingTokens,
-                OrchestratorTokens: bucket.OrchestratorTokens));
+                OrchestratorTokens: bucket.OrchestratorTokens,
+                ChatTokens: bucket.ChatTokens,
+                ChatCostUsd: bucket.ChatCostIncomplete ? null : bucket.ChatCostUsd));
         }
 
         var projectsOut = projectTotals.Values
@@ -199,7 +207,9 @@ public class WorkspaceTokensTimelineService
                 LastActivity: p.LastActivity?.ToString("o"),
                 AgentTokens: p.AgentTokens,
                 SupportingTokens: p.SupportingTokens,
-                OrchestratorTokens: p.OrchestratorTokens))
+                OrchestratorTokens: p.OrchestratorTokens,
+                ChatTokens: p.ChatTokens,
+                ChatCostUsd: p.ChatCostIncomplete ? null : p.ChatCostUsd))
             .ToList();
 
         return new TokenTimeline(
@@ -251,6 +261,9 @@ public class WorkspaceTokensTimelineService
         public long AgentTokens;
         public long SupportingTokens;
         public long OrchestratorTokens;
+        public long ChatTokens;
+        public decimal? ChatCostUsd;
+        public bool ChatCostIncomplete;
 
         public Bucket(string project, DateTime start, DateTime end)
         {
@@ -266,6 +279,7 @@ public class WorkspaceTokensTimelineService
                 case ProjectTokenCategory.Job: AgentTokens += amount; break;
                 case ProjectTokenCategory.Supporting: SupportingTokens += amount; break;
                 case ProjectTokenCategory.Orchestrator: OrchestratorTokens += amount; break;
+                case ProjectTokenCategory.Chat: ChatTokens += amount; break;
             }
         }
     }
@@ -287,6 +301,9 @@ public class WorkspaceTokensTimelineService
         public long AgentTokens;
         public long SupportingTokens;
         public long OrchestratorTokens;
+        public long ChatTokens;
+        public decimal? ChatCostUsd;
+        public bool ChatCostIncomplete;
 
         public ProjectTotal(string project)
         {
@@ -300,6 +317,7 @@ public class WorkspaceTokensTimelineService
                 case ProjectTokenCategory.Job: AgentTokens += amount; break;
                 case ProjectTokenCategory.Supporting: SupportingTokens += amount; break;
                 case ProjectTokenCategory.Orchestrator: OrchestratorTokens += amount; break;
+                case ProjectTokenCategory.Chat: ChatTokens += amount; break;
             }
         }
     }
@@ -333,7 +351,8 @@ public sealed record TokenTimeline(
 /// when at least one call in the bucket used a model that is not in
 /// <see cref="TokenPricing.Catalog"/>; <see cref="Dollars"/> in that
 /// case covers only the priced subset. <see cref="AgentTokens"/> +
-/// <see cref="SupportingTokens"/> + <see cref="OrchestratorTokens"/> add
+/// <see cref="SupportingTokens"/> + <see cref="OrchestratorTokens"/> +
+/// <see cref="ChatTokens"/> add
 /// up to <see cref="Total"/>; the split lets the UI show the orchestrator
 /// share separately (AGT-2038).
 /// </summary>
@@ -351,12 +370,15 @@ public sealed record TokenTimelineCell(
     bool AllModelsPriced,
     long AgentTokens,
     long SupportingTokens,
-    long OrchestratorTokens);
+    long OrchestratorTokens,
+    long ChatTokens = 0,
+    decimal? ChatCostUsd = null);
 
 /// <summary>
 /// Per-project rollup over the full window. Drives the legend and the
 /// summary table under the chart. <see cref="AgentTokens"/> +
-/// <see cref="SupportingTokens"/> + <see cref="OrchestratorTokens"/> add
+/// <see cref="SupportingTokens"/> + <see cref="OrchestratorTokens"/> +
+/// <see cref="ChatTokens"/> add
 /// up to <see cref="Total"/> so the table can carry a Total / davon Agent
 /// / davon Orchestrator split (AGT-2038). <see cref="LastActivity"/> now
 /// reflects the newest real activity of any kind - an agent run counts,
@@ -377,4 +399,6 @@ public sealed record TokenTimelineProject(
     string? LastActivity,
     long AgentTokens,
     long SupportingTokens,
-    long OrchestratorTokens);
+    long OrchestratorTokens,
+    long ChatTokens = 0,
+    decimal? ChatCostUsd = null);

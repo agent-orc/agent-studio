@@ -13,17 +13,13 @@ public class TokenPricingTests
     private readonly ITokenPriceProvider _provider = new TokenEconomyPriceProvider();
 
     [Fact]
-    public void PublishedTokenEconomyPackage_IsConfiguredVersion()
+    public void PublishedTokenEconomyPackage_PinAndCatalogueVersionAgree()
     {
         var assembly = typeof(TokenEconomy.ModelPriceCatalog).Assembly;
-        var informationalVersion = assembly
-            .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), inherit: false)
-            .Cast<System.Reflection.AssemblyInformationalVersionAttribute>()
-            .Single()
-            .InformationalVersion;
-
         Assert.Equal("TokenEconomy", assembly.GetName().Name);
-        Assert.StartsWith(ConfiguredTokenEconomyVersion(), informationalVersion, StringComparison.Ordinal);
+        // Package 0.3.5 retains 0.3.4 in the assembly informational metadata.
+        // The exact NuGet pin and lockfile are the version authority here.
+        Assert.Equal($"TokenEconomy {ConfiguredTokenEconomyVersion()}", TokenPricing.CatalogueVersion);
     }
 
     [Fact]

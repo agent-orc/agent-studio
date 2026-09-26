@@ -326,6 +326,7 @@ public record OrchestratorChatTurn
     public string? ConfiguredModel { get; init; }
     public string? QuotaFallbackReason { get; init; }
     public OrchestratorTokenUsage? TokenUsage { get; init; }
+    public ChatTurnMetadata? Metadata { get; init; }
     public string? ErrorMessage { get; init; }
     /// <summary>
     /// Persisted transparency receipt for the context composed into this
@@ -471,6 +472,7 @@ public class OrchestratorChatService
     private readonly GitService? _git;
     private readonly OrchestratorTaskPromptContextComposer? _taskPromptContext;
     private readonly OrchestratorWorkbenchPromptContextComposer? _workbenchPromptContext;
+    private readonly AgentMessageBusBridge? _usageBus;
     private readonly IOrchestratorChatPersistence? _persistence;
     private readonly StartupExecutionAdmission? _executionAdmission;
     private readonly QuotaAdmissionService? _quotaAdmission;
@@ -510,7 +512,8 @@ public class OrchestratorChatService
         StartupExecutionAdmission? executionAdmission = null,
         QuotaAdmissionService? quotaAdmission = null,
         QuotaAdmissionRecorder? quotaAdmissionRecorder = null,
-        OrchestratorWorkbenchPromptContextComposer? workbenchPromptContext = null)
+        OrchestratorWorkbenchPromptContextComposer? workbenchPromptContext = null,
+        AgentMessageBusBridge? usageBus = null)
     {
         _chat = chat;
         _runner = runner;
@@ -530,6 +533,7 @@ public class OrchestratorChatService
         _quotaAdmission = quotaAdmission;
         _quotaAdmissionRecorder = quotaAdmissionRecorder;
         _workbenchPromptContext = workbenchPromptContext;
+        _usageBus = usageBus;
     }
 
     public List<OrchestratorChatTurn> Read(string watchPath) => _chat.Read(watchPath);
@@ -622,6 +626,8 @@ public class OrchestratorChatService
                 : req.ThinkingLevel.Trim();
             var workingDirectory = ResolveWorkingDirectory(projectName, watchPath);
             OrchestratorDecisionResult result;
+            ChatTurnMetadata? remoteMetadata = null;
+            var executionStartedAt = DateTime.UtcNow;
             try
             {
                 var fullPrompt = prompt;
@@ -672,6 +678,9 @@ public class OrchestratorChatService
                             CliTypes.Codex,
                             requestedModel,
                             quotaPlan?.IsFallback == true ? quotaPlan.Reason : null).ConfigureAwait(false);
+                        remoteMetadata = remote.Metadata is { } captured
+                            ? captured with { QueuedAt = queuedAt }
+                            : null;
                         result = new OrchestratorDecisionResult(
                             remote.Success,
                             remote.ReplyText,
@@ -689,6 +698,7 @@ public class OrchestratorChatService
                 }
                 else
                 {
+                    using var localActivity = _remoteWork?.TrackLocalTurn(projectName, Environment.MachineName);
                     result = await _runner.DecideCodexAsync(
                         fullPrompt,
                         requestedModel,
@@ -718,7 +728,10 @@ public class OrchestratorChatService
                     Text = "",
                     ErrorMessage = translation.FriendlyMessage,
                     ErrorDetail = translation.RawDetail,
-                    ContextReceipt = contextReceipt
+                    ContextReceipt = contextReceipt,
+                    Metadata = PriceChatMetadata(new ChatTurnMetadata(
+                        queuedAt, executionStartedAt, DateTime.UtcNow,
+                        Environment.MachineName, null, requestedModel, thinkingLevel), null)
                 };
                 await AppendTurnAsync(projectName, watchPath, context, failure, ct).ConfigureAwait(false);
                 return failure;
@@ -741,6 +754,12 @@ public class OrchestratorChatService
                     ConfiguredModel = result.ConfiguredModel,
                     QuotaFallbackReason = result.QuotaFallbackReason,
                     TokenUsage = result.TokenUsage,
+                    Metadata = PriceChatMetadata(remoteMetadata ?? new ChatTurnMetadata(
+                        queuedAt, executionStartedAt, DateTime.UtcNow,
+                        Environment.MachineName, result.CapturedSessionId, result.Model,
+                        result.ThinkingLevel ?? thinkingLevel,
+                        result.ParsedUsage?.ReasoningOutput is { } failureReasoning
+                            ? (int)Math.Clamp(failureReasoning, 0, int.MaxValue) : null), result.TokenUsage),
                     ErrorMessage = translation.FriendlyMessage,
                     ErrorDetail = translation.RawDetail,
                     ContextReceipt = contextReceipt
@@ -758,6 +777,12 @@ public class OrchestratorChatService
                 ConfiguredModel = result.ConfiguredModel,
                 QuotaFallbackReason = result.QuotaFallbackReason,
                 TokenUsage = result.TokenUsage,
+                Metadata = PriceChatMetadata(remoteMetadata ?? new ChatTurnMetadata(
+                    queuedAt, executionStartedAt, DateTime.UtcNow,
+                    Environment.MachineName, result.CapturedSessionId, result.Model,
+                    result.ThinkingLevel ?? thinkingLevel,
+                    result.ParsedUsage?.ReasoningOutput is { } replyReasoning
+                        ? (int)Math.Clamp(replyReasoning, 0, int.MaxValue) : null), result.TokenUsage),
                 ContextReceipt = contextReceipt
             };
             await AppendTurnAsync(projectName, watchPath, context, reply, ct).ConfigureAwait(false);
@@ -769,7 +794,22 @@ public class OrchestratorChatService
         }
     }
 
-    private Task AppendTurnAsync(
+    public static ChatTurnMetadata PriceChatMetadata(ChatTurnMetadata metadata, OrchestratorTokenUsage? usage)
+    {
+        if (usage is null) return metadata;
+        var cost = TokenPricing.Estimate(metadata.Model ?? usage.Model,
+            usage.InputTokens, usage.OutputTokens, usage.CacheReadTokens,
+            usage.CacheCreationTokens, metadata.FinishedAt);
+        if (!cost.ModelKnown) return metadata;
+        return metadata with
+        {
+            Cost = cost.Total,
+            Currency = cost.PriceBasis?.Currency,
+            PriceCatalogueVersion = TokenPricing.CatalogueVersion
+        };
+    }
+
+    private async Task AppendTurnAsync(
         string projectName,
         string watchPath,
         OrchestratorContextKey? context,
@@ -777,10 +817,27 @@ public class OrchestratorChatService
         CancellationToken ct)
     {
         if (_persistence is not null)
-            return _persistence.AppendAsync(projectName, watchPath, context, turn, ct);
-        if (!_chat.Append(watchPath, turn, context))
+            await _persistence.AppendAsync(projectName, watchPath, context, turn, ct);
+        else if (!_chat.Append(watchPath, turn, context))
             throw new IOException("The orchestrator chat turn could not be persisted.");
-        return Task.CompletedTask;
+        if (turn.Role == OrchestratorChatRoles.Orchestrator && turn.TokenUsage is { } usage && _usageBus is not null)
+        {
+            try
+            {
+                await _usageBus.EmitTokenUsageAsync(
+                    projectName,
+                    context?.Kind == OrchestratorContextKey.TaskKind ? context.TaskKey : null,
+                    $"chat:{turn.CliType ?? "codex"}",
+                    "chat-turn",
+                    usage with { ThinkingLevel = turn.Metadata?.Effort },
+                    turn.Metadata?.FinishedAt ?? turn.Ts,
+                    ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Chat usage bus mirror failed for turn {TurnId}", turn.Id);
+            }
+        }
     }
 
     private async Task<OrchestratorChatPromptComposition> BuildPromptAsync(

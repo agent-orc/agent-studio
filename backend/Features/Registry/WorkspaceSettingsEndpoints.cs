@@ -33,12 +33,24 @@ public static class WorkspaceSettingsEndpoints
                     .ResolveCliExecutionEngine(null, s).Source,
                 autonomyLevel = s.AutonomyLevel,
                 autoApplyModelMigrations = s.AutoApplyModelMigrations ?? true,
+                chatMetadataEnabled = s.ChatMetadataEnabled ?? true,
+                chatMetadataOverride = s.ChatMetadataEnabled,
                 // Platform fallbacks so the UI can render the effective "inherited"
                 // value without hardcoding it or a second round-trip.
                 defaultOrchestratorModel = OrchestratorRunner.DefaultModel,
                 defaultAutonomyLevel = 2,
                 defaultCliExecutionEngine = CliExecutionEngines.Default,
             });
+        });
+
+        app.MapPut("/api/workspaces/{id}/chat-metadata", (
+            string id, SetChatMetadataRequest req,
+            WorkspaceRegistry workspaces, WorkspaceSettingsService settings) =>
+        {
+            if (workspaces.Find(id) is null)
+                return Results.NotFound(new { error = $"Unknown workspaceId '{id}'" });
+            settings.SetChatMetadataEnabled(id, req.Enabled);
+            return Results.Ok(new { chatMetadataEnabled = settings.Get(id).ChatMetadataEnabled ?? true });
         });
 
         // AGT-2716: workspace-wide switch for automatic model-migration
@@ -137,6 +149,8 @@ public static class WorkspaceSettingsEndpoints
         });
     }
 }
+
+public sealed record SetChatMetadataRequest(bool? Enabled);
 
 /// <summary>Body for <c>PUT /api/workspaces/{id}/orchestrator-model</c>.</summary>
 public sealed record SetWorkspaceOrchestratorModelRequest

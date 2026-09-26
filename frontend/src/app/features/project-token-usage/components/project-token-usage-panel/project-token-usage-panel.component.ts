@@ -17,6 +17,7 @@ interface CardSpec {
   label: string;
   primary: number;
   secondary?: { label: string; value: number } | null;
+  costUsd?: number | null;
   category: ProjectTokenCategory | 'total';
 }
 
@@ -114,6 +115,14 @@ export class ProjectTokenUsagePanelComponent {
         primary: s.lifetimeOrchestratorTokens,
         secondary: { label: 'Last 24h', value: s.last24hOrchestratorTokens },
         category: 'orchestrator',
+      },
+      {
+        testid: 'token-usage-card-chat',
+        label: 'Chat turns',
+        primary: s.lifetimeChatTokens ?? 0,
+        secondary: { label: 'Last 24h', value: s.last24hChatTokens ?? 0 },
+        costUsd: s.lifetimeChatCostUsd,
+        category: 'chat',
       },
     ];
   });
@@ -293,6 +302,7 @@ export class ProjectTokenUsagePanelComponent {
       case 'job': return '●';
       case 'supporting': return '◐';
       case 'orchestrator': return '◇';
+      case 'chat': return '○';
     }
   }
 }

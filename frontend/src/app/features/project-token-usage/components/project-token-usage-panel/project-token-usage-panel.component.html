@@ -11,7 +11,7 @@
       }
     </div>
     <p class="tup__sub">
-      Inference spend by job, supporting runs, orchestrator turns, and time window.
+      Inference spend by job, supporting runs, orchestrator turns, chat, and time window.
     </p>
   </header>
 
@@ -63,6 +63,11 @@
               <span class="tup__card-detail-label">{{ s.label }}:</span>
               <span class="tup__card-detail-value">{{ formatTokens(s.value) }}</span>
             </p>
+          }
+          @if (card.costUsd != null) {
+            <p class="tup__card-detail" data-testid="token-usage-chat-cost">Estimated cost: ${{ card.costUsd.toFixed(4) }}</p>
+          } @else if (card.category === 'chat' && card.primary > 0) {
+            <p class="tup__card-detail" data-testid="token-usage-chat-cost">No price data</p>
           }
         </article>
       }

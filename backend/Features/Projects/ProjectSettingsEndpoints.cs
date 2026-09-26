@@ -187,6 +187,9 @@ public static class ProjectSettingsEndpoints
                     remoteExecutionEnabled = kv.Value.RemoteExecutionEnabled,
                     orchestratorModel = kv.Value.OrchestratorModel,
                     orchestratorThinkingLevel = kv.Value.OrchestratorThinkingLevel,
+                    chatMetadataEnabled = OrchestratorSettingsResolver.ResolveChatMetadata(
+                        kv.Value, defaults.WorkspaceForProject(kv.Key)),
+                    chatMetadataOverride = kv.Value.ChatMetadataEnabled,
                     cliExecutionEngine = defaults.ResolveCliExecutionEngine(kv.Key).ExecutionEngine,
                     cliExecutionEngineSource = defaults.ResolveCliExecutionEngine(kv.Key).Source,
                     cliExecutionEngineOverride = kv.Value.CliExecutionEngine,
@@ -1039,6 +1042,23 @@ public static class ProjectSettingsEndpoints
 
             settings.SetOrchestratorModel(projectName, req.Model, req.ThinkingLevel);
             return Results.Ok(settings.Get(projectName));
+        });
+
+        app.MapPut("/api/projects/{projectName}/chat-metadata", (string projectName, SetChatMetadataRequest req, ProjectSettingsService settings, TaskScannerService scanner, OrchestratorDefaultsProvider defaults) =>
+        {
+            var known = scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            settings.SetChatMetadataEnabled(projectName, req.Enabled);
+            return Results.Ok(new { chatMetadataEnabled = OrchestratorSettingsResolver.ResolveChatMetadata(
+                settings.Get(projectName), defaults.WorkspaceForProject(projectName)) });
+        });
+
+        app.MapGet("/api/projects/{projectName}/chat-metadata", (string projectName, ProjectSettingsService settings, TaskScannerService scanner, OrchestratorDefaultsProvider defaults) =>
+        {
+            var known = scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            return Results.Ok(new { chatMetadataEnabled = OrchestratorSettingsResolver.ResolveChatMetadata(
+                settings.Get(projectName), defaults.WorkspaceForProject(projectName)) });
         });
 
         // Epic decomposition (planning) run knobs (way 3): the model that

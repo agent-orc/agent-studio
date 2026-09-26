@@ -20,6 +20,37 @@ The pattern is clear: the user's feeling that a session is "still open" does not
 
 ## Product Shape
 
+### Turn usage receipt
+
+Each completed orchestrator reply keeps a metadata receipt in the same durable
+chat turn as its text. The receipt records queue, start, and finish times,
+executing host, provider session id, effective model and effort, and the
+available provider usage counters. Codex JSON turn completion frames report
+input, cached input, output, and sometimes reasoning tokens. Claude result
+frames report input, output, and cache reads and writes. A missing usage frame
+leaves token and cost values absent; duration remains available.
+
+The chat header shows totals, models, and provider session ids for the current
+task, project, or Dossier session.
+The usage line on each reply includes total elapsed time, including queue wait.
+The header toggle is saved per user. The workspace setting
+`chat.metadata.enabled` defaults to true, and a project can override it. These
+settings control visibility, not capture or pricing. The effective setting is
+read from `GET /api/projects/{projectName}/chat-metadata`; workspace and project
+overrides are written with their matching `PUT .../chat-metadata` routes.
+
+Chat calls emit token ledger events with the `chat-turn` topic and a `chat:`
+participant so project usage readers can distinguish them from coding agent
+and supporting calls. Cost is a historical API list price estimate; it is not
+a subscription invoice. A missing catalogue price remains absent.
+
+`GET /api/runner/project-chat/usage` groups queued remote and active local or
+remote chat turns by project and host. The remote heavy turn count and CPU share
+come from the claim admission decision. While admission does not report these
+values, the DTO
+marks their accounting as unknown rather than treating them as zero. The same
+nullable heavy and CPU share fields are retained on the completed turn.
+
 The app exposes **Orchestrator Chat** as an always-available project-level
 surface. Chat remains a resizable push-layout side sheet that can be pinned or
 hidden; it is not a new full-screen route and does not replace the Board,

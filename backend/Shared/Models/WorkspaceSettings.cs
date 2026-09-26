@@ -26,6 +26,8 @@ namespace AgentStudio.Shared;
 /// </summary>
 public record WorkspaceSettings
 {
+    /// <summary>Default visibility of chat usage metadata. Null uses the on platform default.</summary>
+    public bool? ChatMetadataEnabled { get; init; }
     /// <summary>
     /// Workspace-default orchestrator model. Null means "no workspace default";
     /// a project without its own <see cref="ProjectSettings.OrchestratorModel"/>

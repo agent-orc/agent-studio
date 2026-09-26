@@ -2,6 +2,8 @@ namespace AgentStudio.Shared;
 
 public record ProjectSettings
 {
+    /// <summary>Project override for chat usage visibility. Null inherits the workspace default.</summary>
+    public bool? ChatMetadataEnabled { get; init; }
     /// <summary>
     /// Maximum raw bytes retained for one remote-run result artifact. The
     /// server further clamps this against its advertised request-body budget so

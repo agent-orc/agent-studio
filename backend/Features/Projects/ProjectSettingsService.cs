@@ -727,6 +727,18 @@ public class ProjectSettingsService
         }
     }
 
+    public void SetChatMetadataEnabled(string projectName, bool? enabled)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var s) ? s : new ProjectSettings();
+            _cache[key] = current with { ChatMetadataEnabled = enabled };
+            Persist();
+        }
+    }
+
     /// <summary>
     /// Sets or clears the per-project local CLI execution-engine override.
     /// Blank clears the override; unknown non-blank values are rejected.

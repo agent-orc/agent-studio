@@ -2164,6 +2164,7 @@ export class TaskService {
           pickupMode: 'auto' | 'manual' | 'paused';
           executionLocation: string;
           orchestratorModel: string | null;
+          chatMetadataEnabled?: boolean;
           buildProfilePickupAllowed?: boolean;
           buildProfile?: { status?: string | null } | null;
           // F35: resolved per-lane sort strategy map (every lane key present).
@@ -2177,6 +2178,11 @@ export class TaskService {
         }
       >
     >(`${this.baseUrl}/projects/settings`);
+  }
+
+  getProjectChatMetadata(projectName: string) {
+    return this.http.get<{ chatMetadataEnabled: boolean }>(
+      `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/chat-metadata`);
   }
 
   /**

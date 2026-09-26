@@ -19,6 +19,9 @@ namespace AgentStudio.Registry;
 /// </summary>
 public static class OrchestratorSettingsResolver
 {
+    /// <summary>Project visibility override, then workspace, then on by default.</summary>
+    public static bool ResolveChatMetadata(ProjectSettings? project, WorkspaceSettings? workspace)
+        => project?.ChatMetadataEnabled ?? workspace?.ChatMetadataEnabled ?? true;
     public const string SourceEnvironment = "environment";
     public const string SourceProject = "project";
     public const string SourceWorkspace = "workspace";

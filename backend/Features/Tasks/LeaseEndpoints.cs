@@ -218,6 +218,9 @@ public static class LeaseEndpoints
                     : Results.Conflict(new { accepted = false, error = "stale project-chat claim" });
             }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Chat);
 
+        app.MapGet("/api/runner/project-chat/usage",
+            (RemoteChatWorkBroker broker) => Results.Ok(new { items = broker.UsageSnapshot() }));
+
         // Daemon pickup is selected server-side from the project record. The
         // gate makes scan + fenced lease + ready-to-progress move one claim
         // critical section for all remote contenders. The local runner reads

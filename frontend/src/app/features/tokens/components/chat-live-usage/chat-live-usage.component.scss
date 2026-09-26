@@ -1,0 +1,6 @@
+.chat-live { margin-top: var(--studio-spacing-4); color: var(--studio-fg); }
+.chat-live h3 { margin: 0 0 var(--studio-spacing-2); font-size: 0.85rem; color: var(--studio-fg-strong); }
+.chat-live p { margin: 0; color: var(--studio-fg-muted); font-size: 0.78rem; }
+.chat-live table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+.chat-live th, .chat-live td { padding: var(--studio-spacing-2); border-bottom: 1px solid var(--studio-border); text-align: left; }
+.chat-live td:nth-child(n + 3), .chat-live th:nth-child(n + 3) { text-align: right; font-variant-numeric: tabular-nums; }

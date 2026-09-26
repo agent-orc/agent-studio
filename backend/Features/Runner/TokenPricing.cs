@@ -47,6 +47,8 @@ public interface ITokenPriceProvider
 /// </summary>
 public static class TokenPricing
 {
+    /// <summary>Exactly pinned NuGet catalog version used by this build.</summary>
+    public const string CatalogueVersion = "TokenEconomy 0.3.5";
     private static readonly EconomyPricing.ModelPriceCatalog Source = EconomyPricing.ModelPriceCatalog.Default;
 
     /// <summary>

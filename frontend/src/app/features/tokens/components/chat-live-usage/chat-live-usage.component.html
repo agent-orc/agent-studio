@@ -1,0 +1,28 @@
+<section class="chat-live" data-testid="chat-live-usage" aria-label="Live chat capacity">
+  <h3>Live chat capacity</h3>
+  @if (unavailable()) {
+    <p>Live chat capacity unavailable.</p>
+  } @else if (activeRows().length === 0) {
+    <p>No queued or active chat turns.</p>
+  } @else {
+    <table>
+      <thead><tr><th>Project</th><th>Host</th><th>Queued</th><th>Active</th><th>Heavy</th><th>CPU share</th></tr></thead>
+      <tbody>
+        @for (row of activeRows(); track row.project + ':' + row.host) {
+          <tr>
+            <td>{{ row.project }}</td><td>{{ row.host }}</td>
+            <td>{{ row.queuedTurns }}</td><td>{{ row.activeTurns }}</td>
+            <td>
+              @if (row.heavyAccountingUnknown && row.heavyTurns === 0) { unknown }
+              @else { {{ row.heavyTurns }}@if (row.heavyAccountingUnknown) { + unknown } }
+            </td>
+            <td>
+              @if (row.cpuShareUnknown && row.cpuShare === 0) { unknown }
+              @else { {{ (row.cpuShare * 100).toFixed(0) }}%@if (row.cpuShareUnknown) { + unknown } }
+            </td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  }
+</section>

@@ -26,6 +26,8 @@
     [active]="sending() || activeRun() !== null"
     (chatsToggle)="toggleContextMenu()" />
 
+  <app-chat-usage-header [turns]="turns()" [enabled]="metadataPreferences.enabled()" (toggleRequested)="metadataPreferences.toggle()" />
+
   @if (contextKind() === 'task' && effectiveJobKey(); as taskKey) {
     <div class="sheet__task-context-note"
          role="note"

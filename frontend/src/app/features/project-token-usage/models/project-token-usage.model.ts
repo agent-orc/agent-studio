@@ -8,7 +8,7 @@
  * split (`job` / `supporting` / `orchestrator`) follows taxonomy.md.
  */
 
-export type ProjectTokenCategory = 'job' | 'supporting' | 'orchestrator';
+export type ProjectTokenCategory = 'job' | 'supporting' | 'orchestrator' | 'chat';
 
 export interface ProjectTokenDataFreshness {
   status: 'complete' | 'partial' | 'unavailable';
@@ -24,16 +24,23 @@ export interface ProjectTokenUsageSummary {
   lifetimeJobTokens: number;
   lifetimeSupportingTokens: number;
   lifetimeOrchestratorTokens: number;
+  lifetimeChatTokens?: number;
+  lifetimeChatCalls?: number;
+  lifetimeChatCostUsd?: number | null;
   lifetimeCalls: number;
   last24hTotalTokens: number;
   last24hJobTokens: number;
   last24hSupportingTokens: number;
   last24hOrchestratorTokens: number;
+  last24hChatTokens?: number;
+  last24hChatCostUsd?: number | null;
   last24hCalls: number;
   last7dTotalTokens: number;
   last7dJobTokens: number;
   last7dSupportingTokens: number;
   last7dOrchestratorTokens: number;
+  last7dChatTokens?: number;
+  last7dChatCostUsd?: number | null;
   last7dCalls: number;
   firstActivity: string | null;
   lastActivity: string | null;

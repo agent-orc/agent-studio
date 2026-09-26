@@ -38,6 +38,7 @@ import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.
 import { OrchestratorContextHeaderComponent } from '../orchestrator-context-header/orchestrator-context-header.component';
 import { ChatSwitcherRailComponent } from '../chat-switcher-rail/chat-switcher-rail.component';
 import { OrchestratorPanelHeaderComponent } from '../orchestrator-panel-header/orchestrator-panel-header.component';
+import { ChatUsageHeaderComponent } from '../chat-usage-header/chat-usage-header.component';
 import { OrchestratorJumpLatestComponent } from '../orchestrator-jump-latest/orchestrator-jump-latest.component';
 import { OrchestratorContextReceiptComponent } from '../orchestrator-context-receipt/orchestrator-context-receipt.component';
 import { OrchestratorContextPickerComponent } from '../orchestrator-context-picker/orchestrator-context-picker.component';
@@ -65,6 +66,7 @@ import {
 import { UiPreferencesService } from '../../../shell/state/ui-preferences.service';
 import { PlanStripComponent } from '../../../plan-strip';
 import { OrchestratorTaskPlanStore } from '../../state/orchestrator-task-plan.store';
+import { ChatMetadataPreferenceService } from '../../state/chat-metadata-preference.service';
 import { StudioTabStateService } from '../../../studio-shell/services/studio-tab-state.service';
 
 /**
@@ -85,13 +87,14 @@ import { StudioTabStateService } from '../../../studio-shell/services/studio-tab
     OrchestratorContextPickerComponent,
     ChatSwitcherRailComponent,
     OrchestratorPanelHeaderComponent,
+    ChatUsageHeaderComponent,
     OrchestratorJumpLatestComponent,
     PlanStripComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './orchestrator-side-sheet.component.html',
   styleUrl: './orchestrator-side-sheet.component.scss',
-  providers: [OrchestratorContextDigestService, OrchestratorTaskPlanStore],
+  providers: [OrchestratorContextDigestService, OrchestratorTaskPlanStore, ChatMetadataPreferenceService],
   host: {
     '[class.is-open]': 'open()',
     // When open, drive the host width from the persisted user choice so
@@ -377,6 +380,7 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
   readonly contextKey = computed<string | null>(() => this.contextResolution().key);
 
   readonly turns = signal<OrchestratorChatTurn[]>([], { equal: sameOrchestratorChatTurns });
+  readonly metadataPreferences = inject(ChatMetadataPreferenceService);
   readonly latestContextReceipt = computed(() =>
     [...this.turns()].reverse().find(turn => turn.role === 'orchestrator' && turn.contextReceipt)?.contextReceipt ?? null);
   readonly loading = signal(false);
@@ -471,6 +475,7 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
     this.events(),
     this.effectiveProject(),
     this.contextKey() ?? this.effectiveProject() ?? 'orchestrator-chat',
+    this.metadataPreferences.enabled(),
   ));
 
   readonly contextChipText = computed<string | null>(() => {
@@ -509,6 +514,7 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
     effect(() => {
       const proj = this.effectiveProject();
       const key = this.contextKey();
+      untracked(() => this.metadataPreferences.selectProject(proj));
       untracked(() => this.contextDigestState.selectContext(key));
       this.open();
       if (this.open() && key) {

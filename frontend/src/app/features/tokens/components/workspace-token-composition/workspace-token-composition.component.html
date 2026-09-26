@@ -1,0 +1,20 @@
+<div class="composition" data-testid="wtt-composition">
+  <div class="comp-bar" role="img" aria-label="Token split by category">
+    @for (category of categories; track category.key) {
+      <span class="comp-seg" [class]="category.cls" [style.width.%]="pct(amounts()[category.key])"></span>
+    }
+  </div>
+  <div class="comp-legend">
+    @for (category of categories; track category.key) {
+      <span class="cat-chip" [attr.data-testid]="'wtt-cat-' + category.key">
+        <span class="cat-dot" [class]="category.cls"></span>
+        <span class="cat-name">{{ category.label }}</span>
+        <span class="cat-num">{{ formatTokens(amounts()[category.key]) }}</span>
+      </span>
+    }
+    <span class="cat-total" data-testid="wtt-cat-total">
+      <span class="cat-name">Total</span>
+      <span class="cat-num">{{ formatTokens(total()) }}</span>
+    </span>
+  </div>
+</div>

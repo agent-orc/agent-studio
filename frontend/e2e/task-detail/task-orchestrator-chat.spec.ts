@@ -3,6 +3,8 @@ import { mkdirSync } from 'node:fs';
 import * as path from 'node:path';
 import { dismissDevErrorDialog, setTheme } from '../helpers/theme';
 
+test.use({ serviceWorkers: 'block' });
+
 const TASK_ID = 'task-orchestrator-chat-fixture';
 const TASK_KEY = 'AGT-2577';
 const PROJECT = 'Agent Studio';
@@ -14,6 +16,12 @@ interface ChatTurn {
   ts: string;
   role: 'user' | 'orchestrator';
   text: string;
+  tokenUsage?: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number };
+  metadata?: {
+    queuedAt: string; startedAt: string; finishedAt: string; host: string;
+    providerSessionId: string; model: string; effort: string; cost: number;
+    currency: string; totalLatencyMs: number; queueLatencyMs: number;
+  };
   contextReceipt?: {
     scope: 'task';
     contextKey: string;
@@ -84,6 +92,16 @@ async function installRoutes(
   chatPosts: { url: string; body: Record<string, unknown> }[],
 ): Promise<void> {
   const turns: ChatTurn[] = [];
+  await page.route('**/hubs/jobs/negotiate**', route => json(route, {
+    connectionId: 'task-chat-e2e', connectionToken: 'task-chat-e2e',
+    negotiateVersion: 1,
+    availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text', 'Binary'] }],
+  }));
+  await page.routeWebSocket('**/hubs/jobs**', socket => {
+    socket.onMessage(message => {
+      if (message.toString().includes('"protocol":"json"')) socket.send('{}\u001e');
+    });
+  });
   await page.route('**/api/**', async route => {
     const request = route.request();
     const pathname = decodeURIComponent(new URL(request.url()).pathname);
@@ -105,6 +123,13 @@ async function installRoutes(
         ts: now,
         role: 'orchestrator',
         text: `This answer is scoped to ${TASK_KEY}. The task agent remains unchanged.`,
+        tokenUsage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 80, cacheCreationTokens: 0 },
+        metadata: {
+          queuedAt: now, startedAt: now, finishedAt: now,
+          host: 'agent-runner-01', providerSessionId: 'abc123456789',
+          model: 'gpt-6-astra', effort: 'medium', cost: 0.0042,
+          currency: 'USD', totalLatencyMs: 4300, queueLatencyMs: 1200,
+        },
         contextReceipt: {
           scope: 'task',
           contextKey: CONTEXT_KEY,
@@ -122,6 +147,10 @@ async function installRoutes(
     if (pathname === '/api/watch-paths') {
       return json(route, [{ name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH }]);
     }
+    if (pathname === '/api/projects/settings')
+      return json(route, { [PROJECT]: { chatMetadataEnabled: true } });
+    if (pathname === `/api/projects/${PROJECT}/chat-metadata`)
+      return json(route, { chatMetadataEnabled: true });
     if (pathname === '/api/tasks/grouped') return json(route, EMPTY_GROUPED);
     if (pathname === '/api/tasks/archive') return json(route, { items: [], total: 0 });
     if (pathname === '/api/tasks/reference-status') return json(route, { items: [] });
@@ -236,6 +265,14 @@ test('Task detail uses the Orchestrator side sheet for task context without a Ch
   await sideSheet.getByTestId('chat-send').click();
   await expect.poll(() => chatPosts.length).toBe(1);
   await expect(sideSheet).toContainText(`This answer is scoped to ${TASK_KEY}.`);
+  await expect(sideSheet.getByTestId('orchestrator-conversation')).toContainText('200 tokens');
+  await expect(sideSheet.getByTestId('orchestrator-conversation')).toContainText('4.3s total');
+  await expect(sideSheet.getByTestId('orch-chat-session-total')).toContainText('$0.0042');
+  await expect(sideSheet.getByTestId('orch-chat-session-total')).toContainText('gpt-6-astra');
+  await expect(sideSheet.getByTestId('orch-chat-session-total')).toContainText('abc123456789');
+  await sideSheet.getByTestId('orch-chat-metadata-toggle').click();
+  await expect(sideSheet.getByTestId('orchestrator-conversation')).not.toContainText('200 tokens');
+  await sideSheet.getByTestId('orch-chat-metadata-toggle').click();
 
   const requestBody = chatPosts[0].body;
   expect(requestBody['navigationContext']).toMatchObject({

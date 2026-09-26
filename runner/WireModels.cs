@@ -353,7 +353,18 @@ public sealed record RemoteChatWorkCompletionRequest(
     string? CliType = null,
     string? ConfiguredCliType = null,
     string? ConfiguredModel = null,
-    string? QuotaFallbackReason = null);
+    string? QuotaFallbackReason = null,
+    ChatTurnMetadata? Metadata = null);
+
+public sealed record ChatTurnMetadata(
+    DateTime QueuedAt,
+    DateTime? StartedAt,
+    DateTime FinishedAt,
+    string? Host,
+    string? ProviderSessionId,
+    string? Model,
+    string? Effort,
+    int? ReasoningTokens = null);
 
 public sealed record OrchestratorTokenUsage
 {

@@ -203,10 +203,12 @@ export interface TokenTimelineCell {
   total: number;
   dollars: number | null;
   allModelsPriced: boolean;
-  /** Category split; agentTokens + supportingTokens + orchestratorTokens === total. */
+  /** Category split; agent, supporting, orchestrator, and chat tokens sum to total. */
   agentTokens: number;
   supportingTokens: number;
   orchestratorTokens: number;
+  chatTokens?: number;
+  chatCostUsd?: number | null;
 }
 
 export interface TokenTimelineProject {
@@ -231,6 +233,8 @@ export interface TokenTimelineProject {
   agentTokens: number;
   supportingTokens: number;
   orchestratorTokens: number;
+  chatTokens?: number;
+  chatCostUsd?: number | null;
 }
 
 export interface WorkspaceExpensiveJobsResponse {

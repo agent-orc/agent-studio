@@ -37,4 +37,29 @@ describe('WorkspaceTokenTimelineComponent (smoke)', () => {
     }
     expect(fixture.componentInstance).toBeTruthy();
   });
+
+  it('does not present a partial chat price as the total', async () => {
+    await TestBed.configureTestingModule({
+      imports: [WorkspaceTokenTimelineComponent],
+      providers: [
+        provideZonelessChangeDetection(), provideHttpClient(),
+        provideHttpClientTesting(), provideRouter([]),
+      ],
+    }).compileComponents();
+    const component = TestBed.createComponent(WorkspaceTokenTimelineComponent).componentInstance;
+    component.disabledProjects.set(new Set());
+    component.timeline.set({
+      windowStart: '', windowEnd: '', windowHours: 24, bucketMinutes: 60,
+      bucketCount: 1, cells: [], fetchedAt: '', disclaimer: '',
+      projects: [{
+        project: 'studio', calls: 2, input: 100, output: 20,
+        cacheRead: 0, cacheWrite: 0, total: 120, dollars: 0.01,
+        allModelsPriced: false, peakBucketStart: null, peakBucketTotal: 120,
+        lastActivity: null, agentTokens: 0, supportingTokens: 0,
+        orchestratorTokens: 0, chatTokens: 120, chatCostUsd: null,
+      }],
+    });
+    expect(component.tableTotals().chat).toBe(120);
+    expect(component.tableTotals().chatDollars).toBeNull();
+  });
 });

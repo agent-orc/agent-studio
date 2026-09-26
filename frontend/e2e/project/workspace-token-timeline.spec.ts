@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import { contrastRatio } from '../helpers/contrast';
 import { setTheme, dismissDevErrorDialog, sampleColours } from '../helpers/theme';
 
+test.use({ serviceWorkers: 'block' });
+
 /**
  * Workspace token timeline view (`#/workspace/tokens`). One central
  * timeline of orchestrator token spend across every watched project,
@@ -41,6 +43,8 @@ interface FakeCell {
   agentTokens: number;
   supportingTokens: number;
   orchestratorTokens: number;
+  chatTokens: number;
+  chatCostUsd: number;
 }
 
 interface FakeProject {
@@ -59,6 +63,8 @@ interface FakeProject {
   agentTokens: number;
   supportingTokens: number;
   orchestratorTokens: number;
+  chatTokens: number;
+  chatCostUsd: number;
 }
 
 function buildFakeTimeline(windowHours: number, bucketMinutes: number) {
@@ -89,6 +95,8 @@ function buildFakeTimeline(windowHours: number, bucketMinutes: number) {
       agentTokens: 0,
       supportingTokens: 0,
       orchestratorTokens: 0,
+      chatTokens: 0,
+      chatCostUsd: 0,
     };
   }
 
@@ -105,10 +113,11 @@ function buildFakeTimeline(windowHours: number, bucketMinutes: number) {
         const total = input + output;
         // Split each cell into the three categories so the composition bar,
         // legend chips, and table columns have real data to reconcile.
-        // Agent runs dominate (70%), supporting 10%, orchestrator 20%.
-        const agentTokens = Math.round(total * 0.7);
+        // Agent runs dominate; chat has its own 10% share.
+        const agentTokens = Math.round(total * 0.6);
         const supportingTokens = Math.round(total * 0.1);
-        const orchestratorTokens = total - agentTokens - supportingTokens;
+        const chatTokens = Math.round(total * 0.1);
+        const orchestratorTokens = total - agentTokens - supportingTokens - chatTokens;
         cells.push({
           project: p,
           bucketStart,
@@ -124,6 +133,8 @@ function buildFakeTimeline(windowHours: number, bucketMinutes: number) {
           agentTokens,
           supportingTokens,
           orchestratorTokens,
+          chatTokens,
+          chatCostUsd: 0.0001 * seed,
         });
         totals[p].calls += 1;
         totals[p].input += input;
@@ -132,6 +143,8 @@ function buildFakeTimeline(windowHours: number, bucketMinutes: number) {
         totals[p].agentTokens += agentTokens;
         totals[p].supportingTokens += supportingTokens;
         totals[p].orchestratorTokens += orchestratorTokens;
+        totals[p].chatTokens += chatTokens;
+        totals[p].chatCostUsd += 0.0001 * seed;
         totals[p].dollars = (totals[p].dollars ?? 0) + 0.001 * seed;
         if (total > totals[p].peakBucketTotal) {
           totals[p].peakBucketTotal = total;
@@ -191,6 +204,11 @@ async function stubBackgroundApis(page: Page) {
   await page.route('**/api/tasks/grouped', empty({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
   await page.route('**/api/watch-paths', empty([]));
   await page.route('**/api/runner/status', empty({ projects: {} }));
+  await page.route('**/api/runner/project-chat/usage', empty({ items: [
+    { project: 'bravo', host: 'agent-runner-01', queuedTurns: 0,
+      activeTurns: 1, heavyTurns: 0, heavyAccountingUnknown: true,
+      cpuShare: 0, cpuShareUnknown: true },
+  ] }));
   await page.route('**/api/runner/token-summary-aggregate*', empty({
     projects: 0, orchestratorEntries: 0, orchestratorLlmCalls: 0,
     totalInputTokens: 0, totalOutputTokens: 0, totalCacheReadTokens: 0, totalCacheCreationTokens: 0,
@@ -209,7 +227,7 @@ test.describe('Workspace token timeline', () => {
     await page.setViewportSize({ width: 1600, height: 900 });
     await stubBackgroundApis(page);
     await stubTimeline(page);
-    await page.goto('http://localhost:4010/#/workspace/tokens');
+    await page.goto('/#/workspace/tokens');
     await page.waitForLoadState('domcontentloaded');
   });
 
@@ -270,6 +288,9 @@ test.describe('Workspace token timeline', () => {
     await expect(page.getByTestId('wtt-cat-agent')).toContainText('Agent');
     await expect(page.getByTestId('wtt-cat-supporting')).toContainText('Supporting');
     await expect(page.getByTestId('wtt-cat-orchestrator')).toContainText('Orchestrator');
+    await expect(page.getByTestId('wtt-cat-chat')).toContainText('Chat');
+    await expect(page.getByTestId('chat-live-usage')).toContainText('agent-runner-01');
+    await expect(page.getByTestId('chat-live-usage')).toContainText('unknown');
     await expect(page.getByTestId('wtt-cat-total')).toContainText('Total');
 
     // Per-project summary table is populated, with the Agent / Supporting /

@@ -128,6 +128,8 @@ public class ProjectTokenUsageService
 
             var category = Categorize(entry, jobsById);
             lifetime.Add(category, total);
+            if (category == ProjectTokenCategory.Chat)
+                lifetime.AddChatCost(u, ts);
             lifetimeTotal += total;
             callsLifetime++;
             if (firstAt == null || ts < firstAt) firstAt = ts;
@@ -136,12 +138,14 @@ public class ProjectTokenUsageService
             if (ts >= since24h && ts <= now)
             {
                 last24h.Add(category, total);
+                if (category == ProjectTokenCategory.Chat) last24h.AddChatCost(u, ts);
                 last24hTotal += total;
                 callsLast24h++;
             }
             if (ts >= since7d && ts <= now)
             {
                 last7d.Add(category, total);
+                if (category == ProjectTokenCategory.Chat) last7d.AddChatCost(u, ts);
                 last7dTotal += total;
                 callsLast7d++;
             }
@@ -155,16 +159,23 @@ public class ProjectTokenUsageService
             LifetimeJobTokens = lifetime.Job,
             LifetimeSupportingTokens = lifetime.Supporting,
             LifetimeOrchestratorTokens = lifetime.Orchestrator,
+            LifetimeChatTokens = lifetime.Chat,
+            LifetimeChatCostUsd = lifetime.ChatCostResult,
+            LifetimeChatCalls = lifetime.ChatCalls,
             LifetimeCalls = callsLifetime,
             Last24hTotalTokens = last24hTotal,
             Last24hJobTokens = last24h.Job,
             Last24hSupportingTokens = last24h.Supporting,
             Last24hOrchestratorTokens = last24h.Orchestrator,
+            Last24hChatTokens = last24h.Chat,
+            Last24hChatCostUsd = last24h.ChatCostResult,
             Last24hCalls = callsLast24h,
             Last7dTotalTokens = last7dTotal,
             Last7dJobTokens = last7d.Job,
             Last7dSupportingTokens = last7d.Supporting,
             Last7dOrchestratorTokens = last7d.Orchestrator,
+            Last7dChatTokens = last7d.Chat,
+            Last7dChatCostUsd = last7d.ChatCostResult,
             Last7dCalls = callsLast7d,
             FirstActivity = firstAt?.ToString("o"),
             LastActivity = lastAt?.ToString("o"),
@@ -490,6 +501,8 @@ public class ProjectTokenUsageService
 
     public static string Categorize(OrchestratorLogEntry entry, IReadOnlyDictionary<string, TaskInfo> jobsById)
     {
+        if (entry.ParticipantId?.StartsWith("chat:", StringComparison.OrdinalIgnoreCase) == true)
+            return ProjectTokenCategory.Chat;
         if (TokenModelDisplay.IsAgentParticipant(entry.ParticipantId)) return ProjectTokenCategory.Job;
         if (TokenModelDisplay.IsSupportingParticipant(entry.ParticipantId)) return ProjectTokenCategory.Supporting;
         if (TokenModelDisplay.IsOrchestratorParticipant(entry.ParticipantId)) return ProjectTokenCategory.Orchestrator;
@@ -517,6 +530,7 @@ public class ProjectTokenUsageService
     private static int CategoryRank(string category) => category switch
     {
         ProjectTokenCategory.Job => 3,
+        ProjectTokenCategory.Chat => 4,
         ProjectTokenCategory.Supporting => 2,
         ProjectTokenCategory.Orchestrator => 1,
         _ => 0
@@ -539,6 +553,20 @@ public class ProjectTokenUsageService
         public long Job;
         public long Supporting;
         public long Orchestrator;
+        public long Chat;
+        public int ChatCalls;
+        public decimal ChatCost;
+        public bool ChatHasUnpriced;
+        public decimal? ChatCostResult => ChatCalls == 0 || ChatHasUnpriced ? null : ChatCost;
+
+        public void AddChatCost(OrchestratorTokenUsage usage, DateTime at)
+        {
+            ChatCalls++;
+            var cost = TokenPricing.Estimate(usage.Model, usage.InputTokens, usage.OutputTokens,
+                usage.CacheReadTokens, usage.CacheCreationTokens, at);
+            if (cost.ModelKnown) ChatCost += cost.Total;
+            else ChatHasUnpriced = true;
+        }
 
         public void Add(string category, long amount)
         {
@@ -547,6 +575,7 @@ public class ProjectTokenUsageService
                 case ProjectTokenCategory.Job: Job += amount; break;
                 case ProjectTokenCategory.Supporting: Supporting += amount; break;
                 case ProjectTokenCategory.Orchestrator: Orchestrator += amount; break;
+                case ProjectTokenCategory.Chat: Chat += amount; break;
             }
         }
     }
@@ -567,6 +596,7 @@ public class ProjectTokenUsageService
 /// <summary>String constants for the Token Usage category split.</summary>
 public static class ProjectTokenCategory
 {
+    public const string Chat = "chat";
     public const string Job = "job";
     public const string Supporting = "supporting";
     public const string Orchestrator = "orchestrator";
@@ -580,16 +610,23 @@ public sealed record ProjectTokenUsageSummary
     public long LifetimeJobTokens { get; init; }
     public long LifetimeSupportingTokens { get; init; }
     public long LifetimeOrchestratorTokens { get; init; }
+    public long LifetimeChatTokens { get; init; }
+    public int LifetimeChatCalls { get; init; }
+    public decimal? LifetimeChatCostUsd { get; init; }
     public int LifetimeCalls { get; init; }
     public long Last24hTotalTokens { get; init; }
     public long Last24hJobTokens { get; init; }
     public long Last24hSupportingTokens { get; init; }
     public long Last24hOrchestratorTokens { get; init; }
+    public long Last24hChatTokens { get; init; }
+    public decimal? Last24hChatCostUsd { get; init; }
     public int Last24hCalls { get; init; }
     public long Last7dTotalTokens { get; init; }
     public long Last7dJobTokens { get; init; }
     public long Last7dSupportingTokens { get; init; }
     public long Last7dOrchestratorTokens { get; init; }
+    public long Last7dChatTokens { get; init; }
+    public decimal? Last7dChatCostUsd { get; init; }
     public int Last7dCalls { get; init; }
     public string? FirstActivity { get; init; }
     public string? LastActivity { get; init; }

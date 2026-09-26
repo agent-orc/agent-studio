@@ -53,6 +53,23 @@ parser, remote project-chat runner, and remote review runner cannot diverge.
 Every pricing, receipt, ledger, export, and context-window consumer receives
 the normalized record rather than provider-native counters.
 
+## Chat turns as a usage class (2026-09-26)
+
+Orchestrator chat replies emit a `chat-turn` token bus event with a `chat:`
+participant after the durable turn append. The turn retains provider usage,
+queue/start/finish times, host, provider session id, model, effort, and a
+TokenEconomy 0.3.5 USD estimate. Chat capture uses the same OpenAI cache
+normalization above; a cache read is not counted again as normal input.
+Missing provider usage or an unknown catalogue model leaves cost absent.
+
+Project usage summaries and the workspace timeline expose chat tokens and
+chat cost separately from coding jobs, supporting calls, and orchestrator
+planning calls. The live chat capacity endpoint groups queued remote turns and
+active local or remote turns by project and host. It carries nullable heavy
+slot and CPU share accounting for the interactive admission policy; an unknown
+value must not be displayed as zero. Historical per-host token and cost totals
+remain outside the current usage response.
+
 ## OpenAI historical repair (2026-09-18)
 
 `OpenAiUsageHistoryRepair` is a one-time startup migration with completion
@@ -144,7 +161,7 @@ receipt writer at remote completion:
 | # | Service | Source file | Reads | Produces | Consumed by |
 |---|---------|-------------|-------|----------|-------------|
 | 1 | `AdHocUsageService` (read path) over `AdHocUsageRecorder` | `backend/Features/AdHoc/AdHocUsageService.cs`, `AdHocUsageRecorder.cs` | `adhoc-usage.jsonl` (workspace-wide) | Per-source / per-day / per-model rollup of one-shot Haiku calls | `GET /api/adhoc/usage` — ad-hoc usage chart in the status-bar modal |
-| 2 | `ProjectTokenUsageService` | `backend/Features/Runner/ProjectTokenUsageService.cs` | Historical token bus + durable task token receipts | Lifetime/24h summary with Job/Supporting/Orchestrator split; per-day × per-job heatmap; expensive-jobs top-N; per-job drill-down with deltas | `GET /api/projects/{project}/token-usage/*`: Project-Detail Token-Usage panel |
+| 2 | `ProjectTokenUsageService` | `backend/Features/Runner/ProjectTokenUsageService.cs` | Historical token bus + durable task token receipts | Lifetime/24h summary with Job/Supporting/Orchestrator/Chat split; per-day × per-job heatmap; expensive-jobs top-N; per-job drill-down with deltas | `GET /api/projects/{project}/token-usage/*`: Project-Detail Token-Usage panel |
 | 3 | `WorkspaceTokensTimelineService` | `backend/Features/Runner/WorkspaceTokensTimelineService.cs` | `orchestrator.jsonl` for *every* watched project | (project × time-bucket) cells with priced dollars | `GET /api/workspace/tokens` — `#/workspace/tokens` stacked timeline |
 | 4 | `TokenSummaryService` + `TokenSummary` | `backend/Features/Runner/TokenSummary.cs` | Historical token bus + durable task token receipts for canonical project/card reads | Per-project lifetime totals + per-model split + estimated dollars; aggregate across all projects | Project-card last-usage, status-bar usage modal, `TaskEndpointHelpers.WithRuntime` per-job rollups |
 | 5 | `BusAggregationCache` (the canonical one) | `backend/Features/Bus/BusAggregationCache.cs` | `logs/bus/*.jsonl` via `AgentMessageBusStore` | `byModel` / `byParticipant` / `byDay` totals plus context-window and latency awareness | `GET /api/bus/{project}/token-aggregate` |

@@ -27,6 +27,7 @@ public sealed record OrchestratorDecisionResult(
     public ParsedTurnUsage? ParsedUsage { get; init; }
     public AgentMessageLatency? Latency { get; init; }
     public string? CliType { get; init; }
+    public string? ThinkingLevel { get; init; }
     public string? ConfiguredModel { get; init; }
     public bool QuotaFallback { get; init; }
     public string? QuotaFallbackReason { get; init; }
@@ -203,12 +204,13 @@ public class OrchestratorRunner
                 result.ParsedText,
                 result.EffectiveModel ?? model,
                 result.Usage,
-                null,
+                CaptureChatSessionId(result.Stdout),
                 error)
             {
                 Latency = result.Latency,
                 ParsedUsage = result.RichUsage,
                 CliType = result.EffectiveCliType ?? CliTypes.Codex,
+                ThinkingLevel = result.EffectiveThinkingLevel ?? thinkingLevel,
                 ConfiguredModel = model,
                 QuotaFallback = result.QuotaAdmission?.IsFallback == true,
                 QuotaFallbackReason = result.QuotaAdmission?.IsFallback == true
@@ -223,12 +225,13 @@ public class OrchestratorRunner
             result.ParsedText,
             result.EffectiveModel ?? model,
             result.Usage,
-            null,
+            CaptureChatSessionId(result.Stdout),
             null)
         {
             Latency = result.Latency,
             ParsedUsage = result.RichUsage,
             CliType = result.EffectiveCliType ?? CliTypes.Codex,
+            ThinkingLevel = result.EffectiveThinkingLevel ?? thinkingLevel,
             ConfiguredModel = model,
             QuotaFallback = result.QuotaAdmission?.IsFallback == true,
             QuotaFallbackReason = result.QuotaAdmission?.IsFallback == true
@@ -236,6 +239,27 @@ public class OrchestratorRunner
                 : null,
             QuotaAdmission = result.QuotaAdmission,
         };
+    }
+
+    internal static string? CaptureChatSessionId(string stdout)
+    {
+        foreach (var line in stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(line);
+                var root = document.RootElement;
+                if (!root.TryGetProperty("type", out var type)) continue;
+                if (type.GetString() == "thread.started"
+                    && root.TryGetProperty("thread_id", out var thread))
+                    return thread.GetString();
+                if (type.GetString() == "result"
+                    && root.TryGetProperty("session_id", out var session))
+                    return session.GetString();
+            }
+            catch (JsonException ex) { SilentCatch.Note(ex, "Chat session id: skip non-JSON provider line."); }
+        }
+        return null;
     }
 
     /// <summary>

@@ -50,6 +50,18 @@ public sealed class WorkspaceSettingsService
         }
     }
 
+    public void SetChatMetadataEnabled(string workspaceId, bool? enabled)
+    {
+        if (string.IsNullOrWhiteSpace(workspaceId)) return;
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var current = _cache.TryGetValue(workspaceId, out var s) ? s : new WorkspaceSettings();
+            _cache[workspaceId] = current with { ChatMetadataEnabled = enabled };
+            Persist();
+        }
+    }
+
     public Dictionary<string, WorkspaceSettings> GetAll()
     {
         EnsureLoaded();

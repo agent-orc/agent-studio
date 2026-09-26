@@ -4,7 +4,7 @@
       <h2 class="wtt__title">Workspace token usage</h2>
       <p class="wtt__sub">
         All LLM token usage across every watched project - agent runs,
-        supporting loops, and orchestrator turns - bucketed on the wall clock.
+        supporting loops, orchestrator turns, and chat - bucketed on the wall clock.
         @if (timeline(); as t) {
           <span class="wtt__sub-stats">
             · {{ totalCalls() }} call{{ totalCalls() === 1 ? '' : 's' }}
@@ -38,31 +38,7 @@
   </header>
 
   @if (timeline() && grandTotalTokens() > 0) {
-    <div class="wtt__composition" data-testid="wtt-composition">
-      <div class="wtt__comp-bar"
-           role="img"
-           aria-label="Token split by category">
-        <span class="wtt__comp-seg wtt__cat--agent"
-              [style.width.%]="pct(categoryTotals().agent)"></span>
-        <span class="wtt__comp-seg wtt__cat--supporting"
-              [style.width.%]="pct(categoryTotals().supporting)"></span>
-        <span class="wtt__comp-seg wtt__cat--orchestrator"
-              [style.width.%]="pct(categoryTotals().orchestrator)"></span>
-      </div>
-      <div class="wtt__comp-legend">
-        @for (m of categoryMeta; track m.key) {
-          <span class="wtt__cat-chip" [attr.data-testid]="'wtt-cat-' + m.key">
-            <span class="wtt__cat-dot" [class]="m.cls"></span>
-            <span class="wtt__cat-name">{{ m.label }}</span>
-            <span class="wtt__cat-num">{{ formatTokens(categoryTotals()[m.key]) }}</span>
-          </span>
-        }
-        <span class="wtt__cat-total" data-testid="wtt-cat-total">
-          <span class="wtt__cat-name">Total</span>
-          <span class="wtt__cat-num">{{ formatTokens(grandTotalTokens()) }}</span>
-        </span>
-      </div>
-    </div>
+    <app-workspace-token-composition [projects]="timeline()!.projects" [disabled]="disabledProjects()" [total]="grandTotalTokens()" />
   }
 
   <div class="wtt__chart" data-testid="wtt-chart" (mouseleave)="hoverCell.set(null)">
@@ -140,6 +116,10 @@
             @if (c.orchestratorTokens > 0) {
               <div><span class="wtt__pop-lbl"><span class="wtt__pop-cat wtt__cat--orchestrator"></span>orchestrator</span><span class="wtt__pop-num">{{ formatTokens(c.orchestratorTokens) }}</span></div>
             }
+            @if ((c.chatTokens ?? 0) > 0) {
+              <div><span class="wtt__pop-lbl"><span class="wtt__pop-cat wtt__cat--chat"></span>chat</span><span class="wtt__pop-num">{{ formatTokens(c.chatTokens ?? 0) }}</span></div>
+              <div><span class="wtt__pop-lbl">chat cost</span><span class="wtt__pop-num">{{ c.chatCostUsd != null ? formatUsd(c.chatCostUsd) : 'no price data' }}</span></div>
+            }
             <div>
               <span class="wtt__pop-lbl">$ theoretical</span>
               <span class="wtt__pop-num">
@@ -193,6 +173,10 @@
           <th class="wtt__num wtt__col-cat">
             <span class="wtt__col-dot wtt__cat--orchestrator"></span>Orchestrator
           </th>
+          <th class="wtt__num wtt__col-cat">
+            <span class="wtt__col-dot wtt__cat--chat"></span>Chat
+          </th>
+          <th class="wtt__num">Chat cost</th>
           <th class="wtt__num">$ theoretical</th>
           <th>Last activity</th>
         </tr>
@@ -210,6 +194,8 @@
             <td class="wtt__num">{{ formatTokens(p.agentTokens) }}</td>
             <td class="wtt__num">{{ formatTokens(p.supportingTokens) }}</td>
             <td class="wtt__num">{{ formatTokens(p.orchestratorTokens) }}</td>
+            <td class="wtt__num">{{ formatTokens(p.chatTokens ?? 0) }}</td>
+            <td class="wtt__num">{{ p.chatCostUsd != null ? formatUsd(p.chatCostUsd) : 'n/a' }}</td>
             <td class="wtt__num">
               @if (p.dollars !== null) {
                 {{ formatUsd(p.dollars) }}
@@ -239,6 +225,8 @@
             <td class="wtt__num">{{ formatTokens(tableTotals().agent) }}</td>
             <td class="wtt__num">{{ formatTokens(tableTotals().supporting) }}</td>
             <td class="wtt__num">{{ formatTokens(tableTotals().orchestrator) }}</td>
+            <td class="wtt__num">{{ formatTokens(tableTotals().chat) }}</td>
+            <td class="wtt__num">{{ tableTotals().chatDollars != null ? formatUsd(tableTotals().chatDollars!) : 'n/a' }}</td>
             <td class="wtt__num">
               @if (tableTotals().dollars !== null) {
                 {{ formatUsd(tableTotals().dollars!) }}
@@ -255,6 +243,7 @@
       }
     </table>
 
+    <app-chat-live-usage />
     <app-better-candidate-usage-report [lines]="t.betterCandidateUsage ?? []" />
 
     <p class="wtt__disc">{{ t.disclaimer }}</p>

@@ -1,0 +1,15 @@
+:host { display: block; }
+.cat--agent { background: var(--severity-info); }
+.cat--supporting { background: var(--severity-pending); }
+.cat--orchestrator { background: var(--studio-accent-strong); }
+.cat--chat { background: var(--severity-success); }
+.composition { display: flex; flex-direction: column; gap: var(--studio-spacing-2); margin: var(--studio-spacing-2) 0 0; }
+.comp-bar { display: flex; width: 100%; height: 10px; border-radius: 999px; overflow: hidden; background: var(--studio-bg-hover); border: 1px solid var(--studio-border-strong); }
+.comp-seg { height: 100%; min-width: 0; transition: width 0.2s ease; }
+.comp-legend { display: flex; flex-wrap: wrap; align-items: center; gap: var(--studio-spacing-1) var(--studio-spacing-4); font-size: 0.78rem; }
+.cat-chip, .cat-total { display: inline-flex; align-items: center; gap: var(--studio-spacing-1); }
+.cat-total { margin-left: auto; padding-left: var(--studio-spacing-3); border-left: 1px solid var(--studio-border-strong); font-weight: 600; }
+.cat-dot { width: 10px; height: 10px; border-radius: 3px; flex: 0 0 auto; }
+.cat-name { color: var(--studio-fg-dim); }
+.cat-total .cat-name { color: var(--studio-fg); }
+.cat-num { color: var(--studio-fg-strong); font-variant-numeric: tabular-nums; }

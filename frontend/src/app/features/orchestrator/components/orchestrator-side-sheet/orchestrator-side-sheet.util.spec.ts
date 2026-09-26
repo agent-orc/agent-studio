@@ -116,6 +116,25 @@ describe('orchestrator-side-sheet.util', () => {
   });
 
   describe('buildOrchestratorConversationEvents', () => {
+    it('shows only reported usage and honors the visibility toggle', () => {
+      const turn: OrchestratorChatTurn = {
+        id: 'reply-1', ts: '2026-09-26T10:00:00Z', role: 'orchestrator', text: 'Done.',
+        tokenUsage: { model: 'gpt-6-astra', thinkingLevel: 'medium', inputTokens: 10,
+          outputTokens: 5, cacheReadTokens: 20, cacheCreationTokens: 0 },
+        metadata: {
+          queuedAt: '2026-09-26T09:59:55Z', startedAt: '2026-09-26T09:59:56Z',
+          finishedAt: '2026-09-26T10:00:00Z', model: 'gpt-6-astra', effort: 'medium',
+          host: 'agent-runner-01', providerSessionId: 'abc123456789',
+          cost: 0.0042, currency: 'USD', totalLatencyMs: 5000, queueLatencyMs: 1000,
+        },
+      };
+      const visible = buildOrchestratorConversationEvents([turn], [], [], 'demo', 'task:demo/AGT-1');
+      const hidden = buildOrchestratorConversationEvents([turn], [], [], 'demo', 'task:demo/AGT-1', false);
+      expect((visible[0] as { body: string }).body).toContain('35 tokens');
+      expect((visible[0] as { body: string }).body).toContain('5.0s total');
+      expect((hidden[0] as { body: string }).body).toBe('Done.');
+    });
+
     it('dedupes optimistic turns, resolves attachments, maps actors, and sorts the transcript', () => {
       const server: OrchestratorChatTurn[] = [
         {

@@ -1,0 +1,14 @@
+<div class="usage-header" data-testid="orch-chat-usage-header">
+  @if (enabled() && totals().turns > 0) {
+    <span data-testid="orch-chat-session-total">
+      {{ totals().turns }} turns · {{ totals().tokens }} tokens ·
+      @if (totals().withoutUsage === totals().turns) { no usage data }
+      @else if (totals().priced === 0) { no price data }
+      @else { est. ${{ totals().cost.toFixed(4) }}@if (totals().priced < totals().turns) { (partial) } }
+      · {{ (totals().durationMs / 1000).toFixed(1) }}s
+      @if (totals().models.length) { · {{ totals().models.join(', ') }} }
+      @if (totals().sessionIds.length) { · session {{ totals().sessionIds.join(', ') }} }
+    </span>
+  }
+  <button type="button" [attr.aria-pressed]="enabled()" (click)="toggleRequested.emit()" data-testid="orch-chat-metadata-toggle">Usage {{ enabled() ? 'on' : 'off' }}</button>
+</div>

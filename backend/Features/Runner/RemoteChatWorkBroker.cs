@@ -14,6 +14,7 @@ public sealed class RemoteChatWorkBroker
     private static readonly TimeSpan ClaimTtl = TimeSpan.FromMinutes(2);
     private readonly object _gate = new();
     private readonly List<PendingRemoteChatWork> _work = [];
+    private readonly Dictionary<string, (string Project, string Host)> _localActive = [];
     private readonly Dictionary<string, CachedChatExecutionContext> _contexts =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly ILogger<RemoteChatWorkBroker> _logger;
@@ -96,6 +97,54 @@ public sealed class RemoteChatWorkBroker
         }
     }
 
+    /// <summary>Live chat admission snapshot grouped by project and executing host.</summary>
+    public IReadOnlyList<ChatWorkUsage> UsageSnapshot()
+    {
+        lock (_gate)
+        {
+            RequeueExpiredClaimsLocked();
+            var remote = _work.Where(item => item.Kind == RemoteChatWorkKinds.Turn)
+                .Select(item => (
+                    Project: item.Route.ProjectName,
+                    Host: item.ClaimedHost ?? item.Route.RunnerId,
+                    Queued: item.State == PendingRemoteChatWorkState.Pending,
+                    Active: item.State == PendingRemoteChatWorkState.Claimed,
+                    item.IsHeavy,
+                    item.CpuShare));
+            var local = _localActive.Values.Select(item => (
+                item.Project, item.Host, Queued: false, Active: true,
+                IsHeavy: (bool?)null, CpuShare: (decimal?)null));
+            return remote.Concat(local)
+                .GroupBy(item => (item.Project, item.Host))
+                .Select(group => new ChatWorkUsage(
+                    group.Key.Project,
+                    group.Key.Host,
+                    group.Count(item => item.Queued),
+                    group.Count(item => item.Active),
+                    group.Count(item => item.Active && item.IsHeavy == true),
+                    group.Any(item => item.Active && item.IsHeavy is null),
+                    group.Where(item => item.Active)
+                        .Sum(item => item.CpuShare ?? 0m),
+                    group.Any(item => item.Active && item.CpuShare is null)))
+                .ToArray();
+        }
+    }
+
+    public IDisposable TrackLocalTurn(string project, string host)
+    {
+        var id = Guid.NewGuid().ToString("N");
+        lock (_gate) _localActive[id] = (project, host);
+        return new LocalTurnLease(this, id);
+    }
+
+    private sealed class LocalTurnLease(RemoteChatWorkBroker broker, string id) : IDisposable
+    {
+        public void Dispose()
+        {
+            lock (broker._gate) broker._localActive.Remove(id);
+        }
+    }
+
     public RemoteChatWorkClaimResponse TryClaim(
         RemoteChatWorkClaimRequest request,
         Func<RemoteChatWorkCandidate, RemoteChatWorkClaimPreparation>? prepare = null)
@@ -110,6 +159,7 @@ public sealed class RemoteChatWorkBroker
                 .ThenBy(candidate => candidate.CreatedAt)
                 .ToArray();
             PendingRemoteChatWork? item = null;
+            RemoteChatWorkClaimPreparation? selectedPreparation = null;
             string? deferredMessage = null;
             foreach (var candidate in candidates)
             {
@@ -125,6 +175,7 @@ public sealed class RemoteChatWorkBroker
                 }
 
                 item = candidate;
+                selectedPreparation = preparation;
                 break;
             }
             if (item == null)
@@ -136,6 +187,10 @@ public sealed class RemoteChatWorkBroker
 
             item.State = PendingRemoteChatWorkState.Claimed;
             item.ClaimedBy = request.RunnerId;
+            item.ClaimedHost = request.Hostname;
+            item.IsHeavy = selectedPreparation?.IsHeavy;
+            item.CpuShare = selectedPreparation?.CpuShare is { } share
+                ? Math.Clamp(share, 0m, 1m) : null;
             item.ClaimToken = Guid.NewGuid().ToString("N");
             item.ClaimExpiresAt = DateTime.UtcNow + ClaimTtl;
             return new RemoteChatWorkClaimResponse(
@@ -185,6 +240,9 @@ public sealed class RemoteChatWorkBroker
             _work.Remove(item);
         }
 
+        var metadata = request.Metadata is { } receipt
+            ? receipt with { IsHeavy = item.IsHeavy, CpuShare = item.CpuShare }
+            : null;
         var result = new RemoteChatWorkResult(
             request.Success,
             request.ReplyText ?? "",
@@ -195,7 +253,8 @@ public sealed class RemoteChatWorkBroker
             item.CliType,
             item.ConfiguredCliType,
             item.ConfiguredModel,
-            item.QuotaFallbackReason);
+            item.QuotaFallbackReason,
+            metadata);
         item.Completion.TrySetResult(result);
         _logger.LogInformation(
             "remote-chat-work-completed workId={WorkId} project={Project} runner={Runner} kind={Kind} success={Success} path={Path}",
@@ -255,6 +314,9 @@ public sealed class RemoteChatWorkBroker
         public required TaskCompletionSource<RemoteChatWorkResult> Completion { get; init; }
         public PendingRemoteChatWorkState State { get; set; }
         public string? ClaimedBy { get; set; }
+        public string? ClaimedHost { get; set; }
+        public bool? IsHeavy { get; set; }
+        public decimal? CpuShare { get; set; }
         public string? ClaimToken { get; set; }
         public DateTime? ClaimExpiresAt { get; set; }
 
@@ -330,7 +392,19 @@ public sealed record RemoteChatWorkCandidate(
 
 public sealed record RemoteChatWorkClaimPreparation(
     bool CanClaim,
-    string? Message = null);
+    string? Message = null,
+    bool? IsHeavy = null,
+    decimal? CpuShare = null);
+
+public sealed record ChatWorkUsage(
+    string Project,
+    string Host,
+    int QueuedTurns,
+    int ActiveTurns,
+    int HeavyTurns,
+    bool HeavyAccountingUnknown,
+    decimal CpuShare,
+    bool CpuShareUnknown);
 
 public sealed record RemoteChatWorkItem(
     string WorkId,
@@ -368,7 +442,8 @@ public sealed record RemoteChatWorkCompletionRequest(
     string? CliType = null,
     string? ConfiguredCliType = null,
     string? ConfiguredModel = null,
-    string? QuotaFallbackReason = null);
+    string? QuotaFallbackReason = null,
+    ChatTurnMetadata? Metadata = null);
 
 public sealed record RemoteChatWorkResult(
     bool Success,
@@ -380,7 +455,8 @@ public sealed record RemoteChatWorkResult(
     string? CliType = null,
     string? ConfiguredCliType = null,
     string? ConfiguredModel = null,
-    string? QuotaFallbackReason = null);
+    string? QuotaFallbackReason = null,
+    ChatTurnMetadata? Metadata = null);
 
 public sealed record ChatExecutionContext(
     string ExecutionKind,
