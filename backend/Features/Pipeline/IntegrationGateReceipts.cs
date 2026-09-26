@@ -67,7 +67,12 @@ public static class IntegrationGateReceipts
                 var reason = reasonLine.StartsWith("reason=", StringComparison.Ordinal)
                     ? reasonLine["reason=".Length..]
                     : "Recovered durable gate verdict.";
-                var provenanceLine = reader.ReadLine() ?? "";
+                // Older receipts put testSelectionAuditDigest directly after reason.
+                // Only the named provenance header may supply cache metadata.
+                var nextLine = reader.ReadLine();
+                var provenanceLine = nextLine?.StartsWith("verdictSource=", StringComparison.Ordinal) == true
+                    ? nextLine
+                    : string.Empty;
                 var cached = HeaderValue(provenanceLine, "verdictSource=") == nameof(GateVerdictSource.CacheHit);
                 var originalTime = DateTimeOffset.TryParse(
                     HeaderValue(provenanceLine, "originalCompletedAtUtc="), out var parsedTime)
