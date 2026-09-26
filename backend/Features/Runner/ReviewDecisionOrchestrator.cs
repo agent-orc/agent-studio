@@ -3783,6 +3783,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             ChangedFileStatuses = gateChanges?.ToDictionary(change => change.Path,
                 change => change.Status, StringComparer.OrdinalIgnoreCase),
             JobFolderPath = current.FolderPath,
+            PipelineDefinitionVersion = _pipelineLog?.Read(current.FolderPath)?.PipelineVersion
+                ?? PipelineCatalogue.Standard.Version,
             InfrastructureTimeout = TimeSpan.FromSeconds(Math.Max(1, infrastructureTimeoutSeconds)),
             QueueWaitTimeout = TimeSpan.FromSeconds(Math.Max(1, queueWaitTimeoutSeconds)),
             OnMachineGateWaiting = () => _statusSnapshot.SetCurrentStep(
@@ -3884,11 +3886,25 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             BuildTestGateVerdict.NotApplicable => "not-applicable",
             _ => "skipped",
         };
-        RecordBuildTestGateStep(current.FolderPath, status, result.DurationMs, verdictToken, result.Reason);
+        RecordBuildTestGateStep(current.FolderPath, status,
+            result.DurationMs, verdictToken, result.Reason, result);
+        if (result.VerdictSource == GateVerdictSource.CacheHit)
+            EmitVerdictTimeline(current.FolderPath, TimelineEventKinds.GateVerdictCacheHit,
+                TimelineActors.System,
+                $"Cached build/test gate {verdictToken} for {result.TestedSha}; original run {result.GateCompletedAtUtc:O}",
+                new Dictionary<string, string>
+                {
+                    ["testedSha"] = result.TestedSha ?? "",
+                    ["profileDigest"] = result.GateProfileDigest ?? "",
+                    ["originalRunId"] = result.GateRunId ?? "",
+                    ["originalCompletedAtUtc"] = result.GateCompletedAtUtc?.ToString("O") ?? "",
+                    ["originalEvidencePath"] = result.OriginEvidencePath ?? "",
+                });
 
         _logger.LogInformation(
-            "ReviewDecisionOrchestrator: build-test gate {Verdict} for {Project}/{JobId} in {DurationMs}ms (backend={Backend} frontend={Frontend} changedFiles={ChangedFiles})",
-            result.Verdict, entry.Name, current.Id, result.DurationMs,
+            "ReviewDecisionOrchestrator: build-test gate {Verdict} source={Source} for {Project}/{JobId} execution_duration_ms={DurationMs} (backend={Backend} frontend={Frontend} changedFiles={ChangedFiles})",
+            result.Verdict, result.VerdictSource, entry.Name, current.Id,
+            result.VerdictSource == GateVerdictSource.CacheHit ? 0 : result.DurationMs,
             result.RanBackendBuild, result.RanFrontendBuild,
             changedFiles?.Length.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unknown");
 
@@ -3945,21 +3961,13 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         PipelineStepStatus status,
         long durationMs,
         string verdictToken,
-        string reason)
+        string reason,
+        BuildTestGateResult? result = null)
     {
         if (_pipelineLog == null) return;
         var now = DateTime.UtcNow;
-        _pipelineLog.RecordStep(jobFolderPath, new PipelineStepExecution
-        {
-            StepId = PipelineCatalogue.BuildTestGateStepId,
-            Kind = StepKind.Tool,
-            Status = status,
-            StartedAt = now - TimeSpan.FromMilliseconds(durationMs),
-            CompletedAt = now,
-            DurationMs = durationMs,
-            Verdict = verdictToken,
-            Reason = string.IsNullOrWhiteSpace(reason) ? null : reason,
-        });
+        _pipelineLog.RecordStep(jobFolderPath,
+            BuildTestGateStepProjection.Create(status, durationMs, verdictToken, reason, result, now));
     }
 
     private void WriteBuildTestGateLog(
@@ -3986,7 +3994,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 new JsonSerializerOptions { WriteIndented = true });
             var body = $"verdict={result.Verdict} exit={result.ExitCode?.ToString() ?? "n/a"} signal={result.TerminationSignal ?? "n/a"} durationMs={result.DurationMs}\n" +
                        $"gateId={result.GateId} failureKind={result.FailureKind} failureFingerprint={result.FailureFingerprint ?? "n/a"}\n" +
-                       $"gateRunId={result.GateRunId ?? "n/a"} startedAtUtc={result.GateStartedAtUtc?.ToString("O") ?? "n/a"} completedAtUtc={result.GateCompletedAtUtc?.ToString("O") ?? "n/a"}\n" +
+                       $"gateRunId={result.GateRunId ?? "n/a"} startedAtUtc={result.GateStartedAtUtc?.ToString("O") ?? "n/a"} completedAtUtc={result.GateCompletedAtUtc?.ToString("O") ?? "n/a"} verdictSource={result.VerdictSource}\n" +
+                       $"profileDigest={result.GateProfileDigest ?? "n/a"} pipelineDefinitionVersion={result.PipelineDefinitionVersion?.ToString() ?? "n/a"} toolchainIdentity={result.ToolchainIdentity ?? "n/a"} originalEvidencePath={result.OriginEvidencePath ?? "n/a"}\n" +
                        $"collision={result.GateCollisionDetected} queueWaitMs={result.GateQueueWaitMs}\n" +
                        $"repository={result.Repository ?? "n/a"} expectedSha={result.ExpectedSha ?? "n/a"} testedSha={result.TestedSha ?? "n/a"}\n" +
                        $"attemptChainId={result.AttemptChainId ?? "n/a"} executor={result.Executor ?? "n/a"} workspace={result.Workspace ?? "n/a"}\n" +

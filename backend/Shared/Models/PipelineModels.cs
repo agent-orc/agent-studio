@@ -218,6 +218,11 @@ public sealed record PipelineExecutionRecord
 
 public sealed record PipelineStepExecution
 {
+    /// <summary>Executed gate or reused verdict; null for other steps and legacy rows.</summary>
+    public AgentStudio.Pipeline.GateVerdictSource? GateVerdictSource { get; init; }
+    /// <summary>Original gate evidence, even when this step used the cache.</summary>
+    public string? GateOriginEvidencePath { get; init; }
+    public DateTimeOffset? GateOriginCompletedAtUtc { get; init; }
     public string StepId { get; init; } = string.Empty;
     public StepKind Kind { get; init; }
     /// <summary>
