@@ -508,10 +508,7 @@ public sealed class RemoteRunnerDaemon
                 idleWatchdog.RecordPollStarted();
                 var claimedAny = false;
                 var inventorySnapshot = inventory.Snapshot();
-                var activeTaskKeys = inventorySnapshot.Processes
-                    .Select(process => process.TaskKey)
-                    .Distinct(StringComparer.Ordinal)
-                    .ToArray();
+                var activeTaskKeys = ActiveTaskKeys(inventorySnapshot, state);
                 var loadDecision = loadGate.Observe(
                     TakeTelemetry(),
                     DateTime.UtcNow);
@@ -600,10 +597,7 @@ public sealed class RemoteRunnerDaemon
                         $"threshold={_options.ClaimMaxLoadPerCore:0.00} " +
                         $"sustainedSeconds={loadDecision.SustainedFor.TotalSeconds:0} activeSlots={active.Count}");
                     inventorySnapshot = inventory.Snapshot();
-                    activeTaskKeys = inventorySnapshot.Processes
-                        .Select(process => process.TaskKey)
-                        .Distinct(StringComparer.Ordinal)
-                        .ToArray();
+                    activeTaskKeys = ActiveTaskKeys(inventorySnapshot, state);
                     if (!_client.UsesHostOrchestrator)
                     {
                         var response = await _client.ClaimAsync(new RunnerClaimRequest(
@@ -629,10 +623,7 @@ public sealed class RemoteRunnerDaemon
                 if (active.Count >= _client.HostMaxParallelism)
                 {
                     inventorySnapshot = inventory.Snapshot();
-                    activeTaskKeys = inventorySnapshot.Processes
-                        .Select(process => process.TaskKey)
-                        .Distinct(StringComparer.Ordinal)
-                        .ToArray();
+                    activeTaskKeys = ActiveTaskKeys(inventorySnapshot, state);
                     if (!_client.UsesHostOrchestrator)
                     {
                         var response = await _client.ClaimAsync(new RunnerClaimRequest(
@@ -715,10 +706,7 @@ public sealed class RemoteRunnerDaemon
                     }
 
                     inventorySnapshot = inventory.Snapshot();
-                    activeTaskKeys = inventorySnapshot.Processes
-                        .Select(process => process.TaskKey)
-                        .Distinct(StringComparer.Ordinal)
-                        .ToArray();
+                    activeTaskKeys = ActiveTaskKeys(inventorySnapshot, state);
                     var claim = await ClaimWithProjectPreflightAsync(new RunnerClaimRequest(
                         _options.RunnerId, _options.RunnerName, _options.Hostname,
                         Environment.ProcessId, _options.BackendName, _options.TtlSeconds,
@@ -987,6 +975,18 @@ public sealed class RemoteRunnerDaemon
         try { await Task.Delay(delay, shutdown); }
         catch (OperationCanceledException) { /* shutting down; the loop condition ends it */ }
     }
+
+    internal static string[] ActiveTaskKeys(
+        RunnerProcessInventory inventory,
+        RunnerStateStore state)
+        => inventory.Processes.Select(process => process.TaskKey)
+            // A terminal worker has no process, but its persisted result still
+            // owns the delivery. Reporting it absent would let the legacy
+            // Task Server requeue the card while finalization is being retried.
+            .Concat(RunnerActiveAttemptReporter.Coding(state.LoadAll())
+                .Select(attempt => attempt.TaskKey))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
 
     private void AcknowledgeInventory(
         RunnerProcessInventoryTracker inventory,

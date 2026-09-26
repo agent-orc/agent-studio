@@ -76,6 +76,8 @@ public static class ArtifactIngestionEndpoints
             AttemptAuthorityService authority,
             WorkspaceArtifactCommitService artifactCommits,
             RemoteResultFinalizationService finalization,
+            AgentStudio.Projects.ProjectSettingsService settings,
+            ArtifactRequestLimits requestLimits,
             ILoggerFactory loggerFactory) =>
         {
             var logger = loggerFactory.CreateLogger("AgentStudio.Diagnostics.ArtifactIngestionEndpoints");
@@ -89,6 +91,15 @@ public static class ArtifactIngestionEndpoints
                 return Results.NotFound(new ArtifactIngestResponse(req.TaskKey, 0, [], $"No task '{req.TaskKey}'."));
 
             req = req with { Artifacts = req.Artifacts ?? [] };
+            var limits = ArtifactTransferPolicy.Resolve(
+                requestLimits.MaxRequestBodyBytes,
+                settings.Get(task.ProjectName).ResultArtifactMaxFileBytes,
+                settings.Get(task.ProjectName).ResultArtifactMaxTotalBytes);
+            var oversized = req.Artifacts
+                .Select(artifact => ArtifactTransferPolicy.DecodedLength(artifact.ContentBase64))
+                .FirstOrDefault(size => size > limits.MaxFileBytes);
+            if (oversized > limits.MaxFileBytes)
+                return ArtifactRequestLimitMiddleware.Problem(limits.MaxFileBytes, oversized);
 
             var projection = authority.GetTaskProjection(req.TaskKey);
             AttemptWriteReference? write = null;
@@ -293,9 +304,17 @@ public sealed record ArtifactRequestLimits(long MaxRequestBodyBytes);
 
 public static class ArtifactTransferPolicy
 {
-    public const long DefaultMaxFileBytes = 20L * 1024 * 1024;
+    public const long DefaultMaxFileBytes = 8L * 1024 * 1024;
     public const long DefaultMaxTotalBytes = 100L * 1024 * 1024;
     private const long JsonEnvelopeReserveBytes = 64L * 1024;
+
+    public static long DecodedLength(string? contentBase64)
+    {
+        if (string.IsNullOrEmpty(contentBase64)) return 0;
+        var padding = contentBase64.EndsWith("==", StringComparison.Ordinal) ? 2
+            : contentBase64.EndsWith('=') ? 1 : 0;
+        return Math.Max(0, contentBase64.Length / 4L * 3 - padding);
+    }
 
     public static ArtifactTransferLimitsResponse Resolve(
         long maxRequestBodyBytes,

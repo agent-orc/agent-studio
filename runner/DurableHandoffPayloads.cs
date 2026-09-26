@@ -39,7 +39,9 @@ public sealed record DurableTerminalPayload(
 public sealed record ArtifactManifestEntry(
     string Path,
     string Sha256,
-    long SizeBytes);
+    long SizeBytes,
+    string? TransferStatus = null,
+    string? Reason = null);
 
 public sealed record DurableArtifactManifest(
     string Digest,

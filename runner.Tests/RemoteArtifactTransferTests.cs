@@ -1,9 +1,48 @@
 using Xunit;
+using System.Net;
+using System.Text;
+using System.Text.Json;
 
 namespace AgentRunner.Tests;
 
 public sealed class RemoteArtifactTransferTests
 {
+    [Fact]
+    public async Task Artifact_413_preserves_the_full_typed_problem_for_runner_logs()
+    {
+        var problem = JsonSerializer.Serialize(new
+        {
+            type = "artifact-request-too-large",
+            title = new string('x', 320),
+            status = 413,
+            limitBytes = 25L * 1024 * 1024,
+            receivedBytes = 30L * 1024 * 1024,
+        });
+        using var http = new HttpClient(new ArtifactLimitHandler(problem))
+        {
+            BaseAddress = new Uri("http://task-server"),
+        };
+        using var client = new TaskServerClient(http, "runner-under-test");
+
+        var error = await Assert.ThrowsAsync<TaskServerException>(() =>
+            client.UploadArtifactsAsync(new ArtifactIngestRequest(
+                "AGT-1", [new RunnerArtifactUpload("results/proof.txt", "cHJvb2Y=")]),
+                CancellationToken.None));
+
+        Assert.Equal(413, error.StatusCode);
+        Assert.Contains(problem, error.Message, StringComparison.Ordinal);
+    }
+
+    private sealed class ArtifactLimitHandler(string problem) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.RequestEntityTooLarge)
+            {
+                Content = new StringContent(problem, Encoding.UTF8, "application/problem+json"),
+            });
+    }
+
     [Fact]
     public void Oversized_and_build_output_files_are_skipped_but_bounded_files_are_selected()
     {
@@ -47,6 +86,42 @@ public sealed class RemoteArtifactTransferTests
         Assert.Contains(skipped, issue =>
             issue.Path.EndsWith("video.webm", StringComparison.Ordinal)
             && issue.Reason.Contains("video", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Thirty_mebibyte_trace_is_withheld_with_path_size_and_sha_in_manifest()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "artifact-policy-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var trace = Path.Combine(root, "playwright", "trace.zip");
+            Directory.CreateDirectory(Path.GetDirectoryName(trace)!);
+            await using (var stream = File.Create(trace))
+                stream.SetLength(30L * 1024 * 1024);
+            var limits = new ArtifactTransferLimitsResponse(
+                25L * 1024 * 1024, 8L * 1024 * 1024, 100L * 1024 * 1024);
+            var (selected, skipped) = ArtifactTransferPolicy.Select(
+                root, RemoteTaskRunner.ObserveResultFiles(root), limits);
+            Assert.Empty(selected);
+            var issue = Assert.Single(skipped);
+
+            var entries = await RemoteTaskRunner.BuildWithheldManifestEntriesAsync(
+                root, skipped, CancellationToken.None);
+            var entry = Assert.Single(entries);
+            Assert.Equal("results/playwright/trace.zip", entry.Path);
+            Assert.Equal(30L * 1024 * 1024, entry.SizeBytes);
+            Assert.Equal("withheld", entry.TransferStatus);
+            Assert.Matches("^[0-9a-f]{64}$", entry.Sha256);
+            using var manifest = JsonDocument.Parse(RemoteTaskRunner.BuildArtifactManifest(entries).Json);
+            Assert.Equal(entry.Sha256,
+                manifest.RootElement[0].GetProperty("sha256").GetString());
+            Assert.Equal(issue.Reason,
+                manifest.RootElement[0].GetProperty("reason").GetString());
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
     }
 
     [Fact]
