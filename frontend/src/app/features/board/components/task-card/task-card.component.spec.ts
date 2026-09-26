@@ -2121,6 +2121,33 @@ describe('TaskCardComponent external-done badge render', () => {
 });
 
 describe('TaskCardComponent NeedsInput wait reason', () => {
+  it.each(['6-completed', '7-archive'])('does not render a stale pending badge in %s', async (state) => {
+    await TestBed.configureTestingModule({
+      imports: [TaskCardComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(TaskCardComponent);
+    fixture.componentRef.setInput('job', makeJob({
+      state,
+      pendingIntent: {
+        version: 1,
+        mode: 'steer',
+        prompt: 'Stale prompt.',
+        savedAt: '2026-09-18T10:00:00Z',
+        savedReason: 'remote-execution',
+        savedAgainstActiveJobId: null,
+      },
+    }));
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('[data-testid="task-card-pending"]')).toBeNull();
+  });
+
   it('shows the persisted question, options, and queued steer answer on Ready', async () => {
     await TestBed.configureTestingModule({
       imports: [TaskCardComponent],

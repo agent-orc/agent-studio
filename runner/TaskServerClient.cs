@@ -772,13 +772,16 @@ public sealed class TaskServerClient : IDisposable
             RunId: claim.Run.RunId,
             LeaseInstanceId: RunnerInstanceId,
             ReconciliationActions: FromContract(claim.ReconciliationActions),
-            RunSpec: claim.ModelFallback is null
+            RunSpec: claim.ModelFallback is null && claim.FollowUp is null
                 ? null
                 : new RunSpecDto(
-                    claim.ModelFallback.CliType,
-                    claim.ModelFallback.To,
-                    claim.ModelFallback.ThinkingLevel,
-                    ContextMode: CodingAgentRunner.Model.CliContextModes.Clean),
+                    claim.ModelFallback?.CliType,
+                    claim.ModelFallback?.To,
+                    claim.ModelFallback?.ThinkingLevel,
+                    ContextMode: claim.ModelFallback is null
+                        ? null
+                        : CodingAgentRunner.Model.CliContextModes.Clean,
+                    FollowUp: claim.FollowUp),
             ContinuationBaseRef: claim.ContinuationBaseRef,
             ContinuationBaseSha: claim.ContinuationBaseSha);
     }
@@ -1161,7 +1164,8 @@ public sealed class TaskServerClient : IDisposable
                 req.LeaseId,
                 req.FencingToken,
                 req.RequestedTtlSeconds ?? 120,
-                ToContract(req.Inventory)),
+                ToContract(req.Inventory),
+                req.StartedPromptSha256),
             ct);
         if (response?.Lease is not null)
         {
