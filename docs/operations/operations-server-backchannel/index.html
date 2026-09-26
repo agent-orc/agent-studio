@@ -317,7 +317,7 @@
         <tr><td><b>Orchestration</b></td><td>Sessions, context digests, durable decisions, budgets, policy, event cursor, Engine commands.</td><td>Executes an explicitly admitted model or tool operation when host capability is required; cannot decide the task transition.</td><td>Engine for decisions; agent for executable work.</td></tr>
         <tr><td><b>Dev seat</b></td><td>Stores only durable references or results that belong to a task.</td><td>Files below declared roots, repository reads and writes, Git hygiene, CLI discovery and quota probes, launcher and URL actions, local previews.</td><td>Workstation Operations Agent, initially the Connector's local handler set.</td></tr>
         <tr><td><b>Host control</b></td><td>Runner identity, admission, task-run capacity policy, leases, task-linked health facts.</td><td>Service drain or restart request, connectivity probes, agent upgrade preparation, host diagnostics, operational command status.</td><td>Agent-only host under a host-scoped principal.</td></tr>
-        <tr><td><b>Dossiers</b></td><td>Task relationship, decision receipt, implementation card creation, durable evidence references.</td><td>Render, capture, validate links, inspect a repository checkout, and run bounded document tooling.</td><td>Workstation or quality-host Operations Agent.</td></tr>
+        <tr><td><b>Dossiers</b></td><td>Task relationship, decision receipt, implementation card creation, durable evidence references.</td><td>Render, capture, validate links, inspect a repository checkout, and run bounded document tooling.</td><td>Runner host or its local operations adapter; quality work is a pipeline-library step.</td></tr>
         <tr><td><b>Audit</b></td><td>Authoritative audit for task and policy mutations; records requested operation id and accepted result digest.</td><td>Operational attempt log with actor, agent principal, permit, timestamps, output bounds, result digest, and correlation id.</td><td>Both stores, joined by immutable ids.</td></tr>
       </tbody>
     </table>
@@ -335,7 +335,7 @@
     <figure class="breakout">
       <svg viewBox="0 0 1120 760" role="img" aria-labelledby="target-title target-desc">
         <title id="target-title">Target topology with Task Server and Operations Server</title>
-        <desc id="target-desc">Several frontend products use their own browser edge or local Connector. Those edges call the Task Server for durable task state and the Operations Server for executable operations. The Task Server controls the Orchestrator Engine and issues task-linked operation permits. The Operations Server sends commands over outbound authenticated channels to workstation, runner-host, and quality-host Operations Agents.</desc>
+        <desc id="target-desc">Several frontend products use their own browser edge or local Connector. Those edges call the Task Server for durable task state and the Operations Server for executable operations. The Task Server controls the Orchestrator Engine and issues task-linked operation permits. The proposed Operations Server sends commands over authenticated channels to operations adapters on one runner-host family, including a workstation host.</desc>
         <defs>
           <marker id="arrow-target" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="var(--article-link)"/></marker>
           <marker id="arrow-execution" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="var(--article-good)"/></marker>
@@ -400,16 +400,16 @@
         <text class="svg-sub" x="54" y="648">policy and decision evaluation</text>
         <text class="svg-tiny" x="54" y="675">Task Server client</text>
         <rect class="svg-execution" x="352" y="594" width="220" height="106" rx="9"/>
-        <text class="svg-label" x="372" y="624">Workstation Agent</text>
+        <text class="svg-label" x="372" y="624">Workstation runner host</text>
         <text class="svg-sub" x="372" y="648">files, Git, CLI, launchers</text>
         <text class="svg-tiny" x="372" y="675">outbound channel</text>
         <rect class="svg-execution" x="610" y="594" width="220" height="106" rx="9"/>
-        <text class="svg-label" x="630" y="624">Runner-host Agent</text>
+        <text class="svg-label" x="630" y="624">Runner host 2</text>
         <text class="svg-sub" x="630" y="648">fleet and host operations</text>
         <text class="svg-tiny" x="630" y="675">outbound channel</text>
         <rect class="svg-execution" x="868" y="594" width="218" height="106" rx="9"/>
-        <text class="svg-label" x="888" y="624">Quality-host Agent</text>
-        <text class="svg-sub" x="888" y="648">review, render, capture</text>
+        <text class="svg-label" x="888" y="624">Runner host N</text>
+        <text class="svg-sub" x="888" y="648">review, library steps</text>
         <text class="svg-tiny" x="888" y="675">outbound channel</text>
 
         <path class="svg-flow-target" d="M230 512 V554 H174 V594"/>
@@ -477,12 +477,13 @@
   <section id="deployment">
     <h2><span class="number">05</span> Deployment forms</h2>
     <p>The component set remains stable. Profiles decide which processes share a machine, which browser edge is active, and whether service hops use container networking or private TLS. Only one browser edge and one Task Server authority are active for a given installation.</p>
+    <p>The <a href="../deployment-story/index.html">deployment journey (AGT-W63, source AGT-2906)</a> treats the workstation as a one-box special case and an ordinary runner host in the same installation. The <a href="../../task-server-bus/index.html">accepted bus Dossier (AGT-W65, source AGT-2905)</a> owns the one runner-host family: coding and review may use separate role processes and budgets, while quality work is made of shared pipeline-library steps. The Operations Agent names below describe this Dossier's proposed operations boundary, not separate workstation or quality execution products. D1 to D4 below remain open and decision pending.</p>
     <table class="breakout">
       <thead><tr><th>Form</th><th>Placement and wiring</th><th>Listener policy</th><th>Use</th></tr></thead>
       <tbody>
-        <tr><td><b>Workstation</b><br><code>workstation</code></td><td>Web, local Connector, Task Server, Operations Server, Engine, and workstation Operations Agent on one developer machine. The Connector can initially host the local agent adapter in-process.</td><td>Browser and Connector remain loopback. Central services may use loopback or a private process boundary. No LAN listener.</td><td>Local development, a single operator, and Windows-integrated Git, CLI and launcher operations.</td></tr>
-        <tr><td><b>One-box Docker</b><br><code>one-box</code></td><td>Web edge, studio-bff, Task Server, Operations Server, Engine, and a container-capable Operations Agent in one Compose project. Host-native operations use a separately enrolled host agent instead of a Docker socket.</td><td>Only the HTTPS edge is published to the LAN. Task and Operations services remain private to the Compose network. LAN exposure is explicit and uses an Origin allowlist.</td><td><b>Recommended standard product deployment</b> after full route and security parity. It gives AGT-2736 and AGT-2738 one reproducible artifact family.</td></tr>
-        <tr><td><b>Distributed</b><br><code>distributed</code></td><td>Task Server, Operations Server and Engine may share <code>task-server-01</code> as separate containers initially; Runner and quality agents stay on separate hosts. Local Studio uses its loopback Connector. Other frontends use their own edge.</td><td>Private TLS on WireGuard. Agents connect outbound. Public interface exposes neither server. A compromised Runner remains outside the control-plane host boundary.</td><td>Phase B, agent-only hosts, independent frontend products, and later fleet growth.</td></tr>
+        <tr><td><b>Workstation</b><br><code>workstation</code></td><td>One-box placement on a developer machine: Web, local Connector, Task Server, proposed Operations Server, Engine, and an ordinary runner host. The Connector can initially host the local operations adapter in-process.</td><td>Browser and Connector remain loopback. Central services may use loopback or a private process boundary. No LAN listener.</td><td>Local development, a single operator, and Windows-integrated Git, CLI and launcher operations.</td></tr>
+        <tr><td><b>One-box Docker</b><br><code>one-box</code></td><td>Web edge, studio-bff, Task Server, proposed Operations Server, Engine, and the first runner host in one Compose installation. Host-native operations use a separately enrolled host adapter instead of a Docker socket.</td><td>Only the HTTPS edge is published to the LAN. Task and Operations services remain private to the Compose network. LAN exposure is explicit and uses an Origin allowlist.</td><td><b>Recommended standard product deployment</b> after full route and security parity. It gives AGT-2736 and AGT-2738 one reproducible artifact family.</td></tr>
+        <tr><td><b>Distributed</b><br><code>distributed</code></td><td>Task Server, Operations Server and Engine may share <code>task-server-01</code> as separate containers initially; Runner hosts join the same authority and run coding and pipeline-library quality steps within separate role budgets. Local Studio uses its loopback Connector. Other frontends use their own edge.</td><td>Private TLS on WireGuard. Agents connect outbound. Public interface exposes neither server. A compromised Runner remains outside the control-plane host boundary.</td><td>Phase B, agent-only hosts, independent frontend products, and later fleet growth.</td></tr>
       </tbody>
     </table>
     <div class="callout" data-tone="warn">
@@ -531,7 +532,7 @@
     <h2><span class="number">07</span> Recommendation</h2>
     <div class="callout" data-tone="good">
       <h3>Alternative D with a staged start</h3>
-      <p>Create a distinct Operations Server and an outbound Operations Agent protocol. Keep the Task Server as the durable authority and keep orchestration sessions there. Retain the Connector as the loopback Studio edge and first workstation-agent adapter. Use studio-bff as the browser edge for one-box and LAN deployments, not as the home of native operations.</p>
+      <p>Create a distinct Operations Server and an outbound Operations Agent protocol. Keep the Task Server as the durable authority and keep orchestration sessions there. Retain the Connector as the loopback Studio edge and first local operations adapter on an ordinary workstation runner host. Use studio-bff as the browser edge for one-box and LAN deployments, not as the home of native operations.</p>
     </div>
     <p>This recommendation deliberately changes the current three-component target architecture. The existing document says shared contracts are not a fourth runtime product. A separately deployable Operations Server would be a fourth runtime component, so approval requires an ADR and a coordinated update to the target architecture. It must not be introduced through an incidental Connector configuration change.</p>
     <p>The recommendation preserves the P0 to P3 investment. Durable task, host, operations and insight projections stay in the Task Server. Only executable commands and host capability state move behind the new boundary. Existing legacy paths can remain compatibility aliases at the edge while ownership changes behind them.</p>
