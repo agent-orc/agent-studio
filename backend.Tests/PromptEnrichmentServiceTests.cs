@@ -324,22 +324,35 @@ public sealed class PromptEnrichmentServiceTests : IDisposable
     }
 
     [Theory]
-    [InlineData("Voice Lint", "VL-POST-FIX")]
-    [InlineData("Token Economy", "TE-POST-FIX")]
-    [InlineData("Quality Studio", "QS-POST-FIX")]
+    [InlineData("Voice Lint", "enrichment-source-audit-agt-2908-vl")]
+    [InlineData("Token Economy", "enrichment-source-audit-agt-2908-te")]
+    [InlineData("Quality Studio", "enrichment-source-audit-agt-2908-qs")]
     public void Prepare_NewCardInOtherProject_AppendsOnlySourcesInThatRepository(
         string project, string cardId)
     {
         var evidenceDirectory = Environment.GetEnvironmentVariable("PROMPT_ENRICHMENT_EVIDENCE_DIR");
+        var realRepositories = Environment.GetEnvironmentVariable("PROMPT_ENRICHMENT_REAL_REPOS_DIR");
         var repository = Path.Combine(
-            string.IsNullOrWhiteSpace(evidenceDirectory) ? _root : Path.Combine(evidenceDirectory, "source-fixtures"),
+            !string.IsNullOrWhiteSpace(realRepositories) ? realRepositories
+                : string.IsNullOrWhiteSpace(evidenceDirectory) ? _root : Path.Combine(evidenceDirectory, "source-fixtures"),
             project.Replace(' ', '-'));
         var folder = Path.Combine(_root, cardId);
         Directory.CreateDirectory(folder);
-        WriteSource(repository, "AGENTS.md");
-        if (project == "Quality Studio")
-            WriteSource(repository, "docs/quality/project-guide.md");
-        var guides = project == "Quality Studio"
+        if (string.IsNullOrWhiteSpace(realRepositories))
+        {
+            WriteSource(repository, "AGENTS.md");
+            if (project == "Quality Studio")
+                WriteSource(repository, "docs/quality/project-guide.md");
+        }
+        else
+        {
+            Assert.True(Directory.Exists(Path.Combine(repository, ".git")), repository);
+        }
+        var guides = !string.IsNullOrWhiteSpace(realRepositories)
+            ? ProjectStyleGuideService.BuildCatalogue(
+                project == "Voice Lint" ? "PROJ-023" : project == "Token Economy" ? "PROJ-015" : "PROJ-016",
+                project, repository).Guides
+            : project == "Quality Studio"
             ? new List<ProjectStyleGuide>
             {
                 new("project-guide", "Own guide", "quality/project-guide.md", "Own rules",
@@ -351,13 +364,13 @@ public sealed class PromptEnrichmentServiceTests : IDisposable
         {
             Id = cardId, ProjectName = project, FolderPath = folder,
             State = TaskStates.Ready, Mode = TaskModes.Coding,
-            Title = "Update runner card UI"
+            Title = $"Prompt enrichment source audit for {project}"
         };
         var service = new PromptEnrichmentService(NullLogger<PromptEnrichmentService>.Instance);
 
-        var result = service.Prepare(task, "Update the runner card UI.", null,
+        var result = service.Prepare(task, $"Inspect repository instruction sources for {project}.", null,
             enabledOverride: true, guidesOverride: guides,
-            repositoryRootOverride: repository);
+            repositoryRootOverride: repository, agentStudioCatalogueOverride: false);
 
         Assert.All(result.Report.AppendedBlocks, block =>
         {
