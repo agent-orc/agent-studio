@@ -123,6 +123,9 @@ separate controls but still use conjunctive matching. Project-specific registry
 entries are loaded from `GET /api/projects/{project}/tags`. Cards, task list
 rows, Dossier rows, and wiki tree entries render registry labels and colours;
 retired ids remain readable as ghost chips.
+Only the active project's entries appear in its filter controls. Switching
+projects removes the previous project's entries and clears selected ids that
+are absent from the new effective registry after it loads.
 
 The wiki's Area glossaries view reads `GET /api/projects/{project}/areas` and
 `GET /api/projects/{project}/areas/{areaId}/glossary`. It shows definitions,

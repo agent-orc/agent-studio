@@ -13,7 +13,7 @@ import {
   viewChildren,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { TagFiltersComponent } from '../../../../components/tag-filters/tag-filters.component';
+import { WikiTagControlsComponent } from './wiki-tag-controls/wiki-tag-controls.component';
 import { TagChipsComponent } from '../../../../components/tag-chips/tag-chips.component';
 import { TagProposalsComponent } from '../../../../components/tag-proposals/tag-proposals.component';
 import { AreaGlossaryComponent } from './area-glossary/area-glossary.component';
@@ -34,7 +34,6 @@ import {
   WikiPulse,
   RelatedTaskReference,
   WikiSearchResult,
-  WikiSearchResponse,
   WikiTree,
   WikiTreeNode,
   WorkbenchListItem,
@@ -64,7 +63,11 @@ import {
   collectDocumentPaths,
   collectDirectDocumentNames,
   collectFolderIds,
+  filterWikiSearchByTags,
   filterWikiTree,
+  filterWikiTreeByTags,
+  findFirstWikiDocument,
+  findWikiNode,
   flattenWikiTree,
   nodeId,
   planWikiSiblingReorder,
@@ -91,6 +94,7 @@ import {
   wikiJoinRel,
   wikiParentDir,
 } from './wiki-path.util';
+import { wikiReadStoredExpandedIds, wikiSafeReportAnchor, wikiSafeViewerTab } from './wiki-state.util';
 import { WikiClassMeta, classificationBadges, classificationMeta } from './wiki-classification';
 import { withRouteSegment } from '../../../../services/url-hash.util';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
@@ -160,7 +164,7 @@ interface WikiResizeState {
   standalone: true,
   imports: [
     FormsModule,
-    TagFiltersComponent,
+    WikiTagControlsComponent,
     TagChipsComponent,
     TagProposalsComponent,
     AreaGlossaryComponent,
@@ -421,22 +425,9 @@ export class ProjectWikiSectionComponent implements OnDestroy {
 
   readonly roots = computed<WikiTreeNode[]>(() => this.tree()?.root ?? []);
   readonly selectedTagIds = this.tagFilters.activeTagFilter;
-  readonly tagFilteredRoots = computed<WikiTreeNode[]>(() => {
-    const ids = [...this.selectedTagIds()];
-    if (!ids.length) return this.roots();
-    const keep = (node: WikiTreeNode): WikiTreeNode | null => {
-      if (node.type !== 'folder') return ids.every(id => node.tags?.includes(id)) ? node : null;
-      const children = node.children.map(keep).filter((child): child is WikiTreeNode => child !== null);
-      return children.length ? { ...node, children } : null;
-    };
-    return this.roots().map(keep).filter((node): node is WikiTreeNode => node !== null);
-  });
-  readonly filteredSearchResponse = computed<WikiSearchResponse | null>(() => {
-    const response = this.searchResponse();
-    if (!response || !this.selectedTagIds().size) return response;
-    const paths = new Set(collectDocumentPaths(this.tagFilteredRoots()));
-    return { ...response, results: response.results.filter(hit => paths.has(hit.relPath)) };
-  });
+  readonly tagFilteredRoots = computed(() => filterWikiTreeByTags(this.roots(), this.selectedTagIds()));
+  readonly filteredSearchResponse = computed(() =>
+    filterWikiSearchByTags(this.searchResponse(), this.tagFilteredRoots(), this.selectedTagIds()));
   readonly wikiDocumentOrder = computed<string[]>(() => collectDocumentPaths(this.roots()));
   readonly selectedFolderDocumentOrder = computed<string[]>(() => {
     const rel = this.selectedFolderRel();
@@ -1808,11 +1799,7 @@ export class ProjectWikiSectionComponent implements OnDestroy {
     return `${WIKI_STATE_STORAGE_PREFIX}${encodeURIComponent(projectName)}`;
   }
 
-  private safeViewerTab(value: unknown): WikiViewerTab {
-    return value === 'source' || value === 'doc' || value === 'report' || value === 'edit'
-      ? value
-      : 'doc';
-  }
+  private readonly safeViewerTab = wikiSafeViewerTab;
 
   private reportHtmlForAnchor(html: string, anchor: string | null): string {
     const cleanAnchor = this.safeReportAnchor(anchor);
@@ -1825,11 +1812,7 @@ export class ProjectWikiSectionComponent implements OnDestroy {
     return injection + html;
   }
 
-  private safeReportAnchor(anchor: string | null): string | null {
-    if (!anchor) return null;
-    const clean = anchor.trim().toLowerCase();
-    return /^[a-z0-9-]+$/.test(clean) ? clean : null;
-  }
+  private readonly safeReportAnchor = wikiSafeReportAnchor;
 
   private applyPanelWidth(panel: WikiResizablePanel, width: number): void {
     if (panel === 'nav') {
@@ -1856,10 +1839,7 @@ export class ProjectWikiSectionComponent implements OnDestroy {
     return this.clampWidth(value, min, max);
   }
 
-  private readStoredExpandedIds(value: unknown): string[] | undefined {
-    if (!Array.isArray(value)) return undefined;
-    return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
-  }
+  private readonly readStoredExpandedIds = wikiReadStoredExpandedIds;
 
   // ---- path + node helpers ----
 
@@ -1869,23 +1849,8 @@ export class ProjectWikiSectionComponent implements OnDestroy {
   private readonly basename = wikiBasename;
   private readonly joinRel = wikiJoinRel;
 
-  private findNode(nodes: readonly WikiTreeNode[], id: string): WikiTreeNode | null {
-    for (const n of nodes) {
-      if (nodeId(n) === id) return n;
-      const hit = this.findNode(n.children, id);
-      if (hit) return hit;
-    }
-    return null;
-  }
-
-  private findFirstDoc(nodes: readonly WikiTreeNode[]): WikiTreeNode | null {
-    for (const node of nodes) {
-      if (node.type !== 'folder') return node;
-      const hit = this.findFirstDoc(node.children);
-      if (hit) return hit;
-    }
-    return null;
-  }
+  private readonly findNode = findWikiNode;
+  private readonly findFirstDoc = findFirstWikiDocument;
 
   private resolveLinkedWikiPage(link: WikiLinkedElement): string | null {
     const openedRel = this.openedRel();

@@ -20,7 +20,17 @@ export class TagFiltersComponent {
   readonly facets = computed(() => this.registry.tags().filter(tag => tag.kind !== 'area'));
   readonly area = computed(() => this.areas().find(tag => this.filters.activeTagFilter().has(tag.id))?.id ?? '');
   readonly facet = computed(() => this.facets().find(tag => this.filters.activeTagFilter().has(tag.id))?.id ?? '');
-  constructor() { effect(() => { const project = this.projectName(); if (project) this.registry.loadProject(project); }); }
+  constructor() {
+    effect(() => this.registry.loadProject(this.projectName()));
+    effect(() => {
+      if (!this.registry.activeProjectLoaded()) return;
+      const valid = new Set(this.registry.tags().map(tag => tag.id));
+      const selected = this.filters.activeTagFilter();
+      if ([...selected].some(id => !valid.has(id))) {
+        this.filters.setTagSelection(new Set([...selected].filter(id => valid.has(id))));
+      }
+    });
+  }
 
   select(kind: 'area' | 'facet', event: Event): void {
     const id = (event.target as HTMLSelectElement).value;
