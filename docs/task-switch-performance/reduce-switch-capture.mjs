@@ -38,6 +38,25 @@ for (const sample of capture.samples ?? []) {
 const reducePopulation = samples => {
   const successful = samples.filter(s => s.outcome === 'ok' && Number.isFinite(s.paintOpportunityMs));
   const joined = samples.flatMap(s => traces.get(s.switchId) ?? []);
+  const finite = values => values.filter(Number.isFinite);
+  const markdownBySwitch = successful.map(s => finite((s.markdownConversion ?? [])
+    .map(measure => measure.durationMs))).filter(values => values.length)
+    .map(values => values.reduce((sum, value) => sum + value, 0));
+  const stages = new Map();
+  for (const sample of samples) {
+    const perSwitch = new Map();
+    for (const request of traces.get(sample.switchId) ?? []) {
+      for (const [name, stage] of Object.entries(request.stages ?? {})) {
+        if (Number.isFinite(stage.ms))
+          perSwitch.set(name, (perSwitch.get(name) ?? 0) + stage.ms);
+      }
+    }
+    for (const [name, ms] of perSwitch) {
+      const values = stages.get(name) ?? [];
+      values.push(ms);
+      stages.set(name, values);
+    }
+  }
   return {
     sampleCount: samples.length, successful: successful.length,
     errors: samples.length - successful.length,
@@ -45,8 +64,19 @@ const reducePopulation = samples => {
     p95Ms: percentile(successful.map(s => s.paintOpportunityMs), 0.95),
     domReadyP50Ms: percentile(successful.map(s => s.domReadyMs), 0.5),
     domReadyP95Ms: percentile(successful.map(s => s.domReadyMs), 0.95),
-    gitSpawns: joined.reduce((sum, t) => sum + (t.gitSpawns ?? 0), 0),
-    gitTimeouts: joined.reduce((sum, t) => sum + (t.gitTimeouts ?? 0), 0),
+    domWorkSampleCount: finite(successful.map(s => s.domWorkMs)).length,
+    domWorkP50Ms: percentile(finite(successful.map(s => s.domWorkMs)), 0.5),
+    domWorkP95Ms: percentile(finite(successful.map(s => s.domWorkMs)), 0.95),
+    markdownSampleCount: markdownBySwitch.length,
+    markdownP50Ms: percentile(markdownBySwitch, 0.5),
+    markdownP95Ms: percentile(markdownBySwitch, 0.95),
+    stageStats: Object.fromEntries([...stages].map(([name, values]) => [name, {
+      sampleCount: values.length, p50Ms: percentile(values, 0.5),
+      p95Ms: percentile(values, 0.95),
+    }])),
+    // A Stable build without request traces has missing Git evidence, not zero spawns.
+    gitSpawns: joined.length ? joined.reduce((sum, t) => sum + (t.gitSpawns ?? 0), 0) : null,
+    gitTimeouts: joined.length ? joined.reduce((sum, t) => sum + (t.gitTimeouts ?? 0), 0) : null,
     tracedRequests: joined.length,
     aborted: joined.filter(t => t.outcome === 'aborted').length,
     timeouts: joined.filter(t => t.outcome === 'timeout').length,

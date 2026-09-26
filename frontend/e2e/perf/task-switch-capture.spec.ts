@@ -13,12 +13,19 @@ if (classes.length !== keys.length) throw Error('TASK_SWITCH_CLASSES must align 
 const taskClass = new Map(keys.map((key, index) => [key.toUpperCase(), classes[index]]));
 const boardKeys = keys.filter(key => taskClass.get(key.toUpperCase()) !== 'archived');
 if (!boardKeys.length) throw Error('At least one non-archived board key is required');
+const requiredClasses = ['small', 'long-history', 'active', 'archived'];
+const keysByClass = new Map(requiredClasses.map(name => [name,
+  keys.filter(key => taskClass.get(key.toUpperCase()) === name)]));
+for (const name of requiredClasses)
+  if (!keysByClass.get(name)?.length) throw Error(`At least one ${name} key is required`);
+const cohorts = ['board-click', 'pager', 'back-forward', 'deep-link',
+  ...requiredClasses.map(name => `class:${name}`)];
 const output = resolve(process.env.TASK_SWITCH_OUTPUT ?? 'docs/task-switch-performance/evidence/workstation-capture.json');
 const trace = process.env.TASK_SWITCH_TRACE === '1';
 
 test('capture real task switches', async ({ page, baseURL }) => {
   test.skip(!enabled, 'Read-only capture is opt-in');
-  test.setTimeout(30 * 60_000);
+  test.setTimeout(120 * 60_000);
   const report: Record<string, unknown> = {
     sourceRevision: 'unknown',
     runEnvironment: process.env.TASK_SWITCH_ENVIRONMENT ?? 'unspecified workstation',
@@ -75,13 +82,18 @@ test('capture real task switches', async ({ page, baseURL }) => {
     report.backendReadiness = 'ready before capture; process startup excluded';
     if (await page.getByTestId('crash-recovery-prompt-overlay').isVisible())
       throw Error('Shared crash recovery overlay obstructs navigation; no recovery action taken');
-    for (const cohort of ['board-click', 'pager', 'back-forward', 'deep-link']) {
+    for (const cohort of cohorts) {
       for (let i = 0; i < count; i++) {
         switchId = crypto.randomUUID();
+        const classCohort = cohort.startsWith('class:') ? cohort.slice('class:'.length) : null;
+        const classKeys = classCohort ? keysByClass.get(classCohort)! : null;
         const target = cohort === 'board-click'
-          ? boardKeys[i % boardKeys.length] : keys[i % keys.length];
+          ? boardKeys[i % boardKeys.length]
+          : classKeys ? classKeys[i % classKeys.length]
+            : keys[i % keys.length];
         const sample: Record<string, unknown> = {
           cohort, ordinal: i + 1, target, switchId,
+          navigation: classCohort ? 'deep-link' : cohort,
           sampleClass: taskClass.get(target.toUpperCase()) ?? 'unclassified',
         };
         try {
@@ -108,17 +120,21 @@ test('capture real task switches', async ({ page, baseURL }) => {
             await page.goto(`/?job=${encodeURIComponent(target)}`, { waitUntil: 'commit' });
           }
           sample.outcome = 'ok';
-          Object.assign(sample, await painted(page, cohort === 'deep-link', previousKey));
+          Object.assign(sample, await painted(page, cohort === 'deep-link' || classCohort !== null, previousKey));
           const observed = String(sample.key ?? '').toUpperCase();
+          if ((cohort === 'board-click' || cohort === 'deep-link' || classCohort !== null)
+              && !observed.includes(target.toUpperCase()))
+            throw Error('Rendered task identity did not match the selected target');
           sample.sampleClass = [...taskClass].find(([key]) => observed.includes(key))?.[1] ?? 'unclassified';
         } catch (error) {
           sample.outcome = 'error';
-          sample.error = String(error).slice(0, 300);
+          sample.error = (error instanceof Error ? error.message.split('\n')[0] : String(error)).slice(0, 300);
         }
         samples.push(sample);
-        if (sample.outcome === 'error') throw Error(`Capture stopped after ${cohort} switch ${i + 1}: ${sample.error}`);
       }
     }
+    const failed = samples.filter(sample => sample.outcome === 'error').length;
+    if (failed) throw Error(`${failed} of ${samples.length} task switches failed; inspect the capture report`);
   } catch (error) {
     report.failure = String(error).slice(0, 300);
     throw error;

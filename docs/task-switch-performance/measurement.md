@@ -89,6 +89,16 @@ correlation cannot support per-switch spawn counts under concurrent work.
   from initiators and identity before attributing them to the selected task.
   Requests started before a switch can finish during it. No aggregate Git
   counter subtraction can remove that ambiguity.
+- The reducer aggregates traced stage durations per switch before calculating
+  stage p50/p95. Each stage reports its own sample count; an absent stage is
+  not silently counted as zero. Markdown conversion and DOM work retain
+  separate sample counts and percentiles.
+- The read-only capture records every attempted switch, including a detail DOM
+  timeout, and fails the Playwright test after writing the complete report when
+  any attempt failed. The offline reducer reports null Git counts when no
+  correlated request trace exists; null means unmeasured, while zero requires
+  at least one traced request. A percentile from one successful proxy switch
+  is not a workstation cohort baseline.
 - The supplied old-log incident, live rolling telemetry, API replay and
   browser replay are separate populations. Clock offsets across hosts do not
   affect local monotonic durations, but prohibit timestamp-only causal joins.
@@ -116,7 +126,10 @@ not a performance saving; its enabled p95 overhead target is at most 1 ms.
 The read-only Playwright capture lives at
 `frontend/e2e/perf/task-switch-capture.spec.ts`. Run it with
 `PW_TARGET=stable TASK_SWITCH_CAPTURE=1` and set `TASK_SWITCH_OUTPUT` to a
-retained result path. `TASK_SWITCH_COUNT` defaults to 30 per navigation cohort.
+retained result path. `TASK_SWITCH_COUNT` defaults to 30 each for board click,
+pager, back/forward and deep-link navigation cohorts, plus separate small,
+long-history, active and archived task-class cohorts. The task-class cohorts
+use real deep links, and all eight populations retain separate counts.
 It uses actual click and history events, navigation timing, a DOM-ready mark,
 two animation frames, resource timings and existing markdown-conversion
 measures. DOM work is reported only when the older signal-assignment mark is

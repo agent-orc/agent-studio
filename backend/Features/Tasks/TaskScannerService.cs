@@ -828,19 +828,7 @@ public class TaskScannerService : ITaskScanner
             liveSnapshot = ScanAllJobs();
         }
 
-        using var lookupSpan = TaskSwitchTrace.Span("index.lookup");
-        var matches = liveSnapshot.Where(j => MatchesTaskIdentity(j, jobId));
-        if (!string.IsNullOrWhiteSpace(watchPath))
-        {
-            // Path-aware, OS-correct project match. A raw OrdinalIgnoreCase
-            // string compare 404'd a card whose stored WatchPath spelled the
-            // same directory differently (separator/trailing-slash) and, on
-            // Linux, matched the WRONG project when two paths differed only in
-            // case. See WatchPathComparison (AGT-1940).
-            matches = matches.Where(j => WatchPathComparison.PathsEqual(j.WatchPath, watchPath));
-        }
-
-        var resolved = matches.ToList();
+        var resolved = FindMatches(liveSnapshot, jobId, watchPath);
         if (resolved.Count == 1) return resolved[0];
         if (resolved.Count > 1)
         {
@@ -859,11 +847,7 @@ public class TaskScannerService : ITaskScanner
             // fall back to raw archive enumeration here: that path parsed every
             // archived folder for each archived detail lookup,
             // bypassing the cache on V1 review and task-reference requests.
-            resolved = archivedSnapshot!
-                .Where(j => MatchesTaskIdentity(j, jobId))
-                .Where(j => string.IsNullOrWhiteSpace(watchPath)
-                            || WatchPathComparison.PathsEqual(j.WatchPath, watchPath))
-                .ToList();
+            resolved = FindMatches(archivedSnapshot!, jobId, watchPath);
             if (resolved.Count == 1) return resolved[0];
             if (resolved.Count > 1)
             {
@@ -873,6 +857,18 @@ public class TaskScannerService : ITaskScanner
         }
 
         return null;
+    }
+
+    internal static List<TaskInfo> FindMatches(IEnumerable<TaskInfo> snapshot, string jobId, string? watchPath)
+    {
+        using var lookupSpan = TaskSwitchTrace.Span("index.lookup");
+        // Materialize while the span is active: Where only builds a deferred query.
+        // Path-aware comparison is required for cards whose stored path uses a
+        // different separator or trailing slash, and for case-sensitive hosts.
+        var matches = snapshot.Where(j => MatchesTaskIdentity(j, jobId));
+        if (!string.IsNullOrWhiteSpace(watchPath))
+            matches = matches.Where(j => WatchPathComparison.PathsEqual(j.WatchPath, watchPath));
+        return matches.ToList();
     }
 
     private static bool MatchesTaskIdentity(TaskInfo info, string identity)

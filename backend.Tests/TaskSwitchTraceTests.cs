@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AgentStudio.Tasks;
+using AgentStudio.Shared;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -46,6 +47,30 @@ public sealed class TaskSwitchTraceTests
         }
         finally { trace.Restore(); }
         Assert.Null(TaskSwitchTrace.Current);
+    }
+
+    [Fact]
+    public void FindMatches_EnumeratesDeferredSnapshotInsideLookupSpan()
+    {
+        static IEnumerable<TaskInfo> DeferredSnapshot()
+        {
+            TaskSwitchTrace.FileRead();
+            yield return new TaskInfo { Id = "other", WatchPath = "/repo" };
+            TaskSwitchTrace.FileRead();
+            yield return new TaskInfo { Id = "wanted", WatchPath = "/repo" };
+        }
+
+        var trace = TaskSwitchTrace.Begin(null, null);
+        try
+        {
+            var matches = TaskScannerService.FindMatches(DeferredSnapshot(), "wanted", "/repo");
+            Assert.Equal("wanted", Assert.Single(matches).Id);
+            using var summary = JsonDocument.Parse(trace.Summary("ok", 200, 0, null));
+            var lookup = summary.RootElement.GetProperty("stages").GetProperty("index.lookup");
+            Assert.Equal(1, lookup.GetProperty("count").GetInt32());
+            Assert.Equal(2, lookup.GetProperty("files").GetInt32());
+        }
+        finally { trace.Restore(); }
     }
 
     [Fact]

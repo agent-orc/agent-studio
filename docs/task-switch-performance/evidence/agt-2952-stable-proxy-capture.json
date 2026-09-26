@@ -1,0 +1,691 @@
+{
+  "sourceRevision": "b3692985f06d8113047b57052dec15f66cd41edb",
+  "runEnvironment": "Linux runner browser via forwarded Windows Stable; workstation paint unavailable",
+  "origin": "http://localhost:4011",
+  "startedAt": "2026-09-26T08:14:41.700Z",
+  "coldClient": true,
+  "backendReadiness": "ready before capture; process startup excluded",
+  "countPerCohort": 30,
+  "keys": [
+    "AGT-2797",
+    "AGT-2910",
+    "AGT-2736",
+    "AGT-2860"
+  ],
+  "classes": [
+    "small",
+    "long-history",
+    "active",
+    "archived"
+  ],
+  "samples": [
+    {
+      "cohort": "board-click",
+      "ordinal": 1,
+      "target": "AGT-2797",
+      "switchId": "83dcfeb1-2a16-4597-b512-1095070e54a4",
+      "sampleClass": "small",
+      "outcome": "ok",
+      "key": "AGT-2797",
+      "domReadyMs": 7690.099999427795,
+      "paintOpportunityMs": 7790.89999961853,
+      "resources": [
+        {
+          "path": "/api/clients/",
+          "startMs": -11646.800000190735,
+          "durationMs": 12219.5,
+          "ttfbMs": 2335.699999809265,
+          "decodedBytes": 32707,
+          "transferBytes": 33007,
+          "serverTiming": []
+        },
+        {
+          "path": "/api/environment",
+          "startMs": -11639.10000038147,
+          "durationMs": 16582.699999809265,
+          "ttfbMs": 2183.4000005722046,
+          "decodedBytes": 133,
+          "transferBytes": 433,
+          "serverTiming": []
+        },
+        {
+          "path": "/api/clients",
+          "startMs": -11585.800000190735,
+          "durationMs": 12274.800000190735,
+          "ttfbMs": 2335.199999809265,
+          "decodedBytes": 32707,
+          "transferBytes": 33007,
+          "serverTiming": []
+        },
+        {
+          "path": "/api/runner/auto-review-queue",
+          "startMs": -11584.900000572205,
+          "durationMs": 12208.400000572205,
+          "ttfbMs": 2269.199999809265,
+          "decodedBytes": 274,
+          "transferBytes": 574,
+          "serverTiming": []
+        },
+        {
+          "path": "/api/clients/local-default/defaults",
+          "startMs": -11581.70000076294,
+          "durationMs": 12271.60000038147,
+          "ttfbMs": 2318.300000190735,
+          "decodedBytes": 108,
+          "transferBytes": 408,
+          "serverTiming": []
+        },
+        {
+          "path": "/api/orchestrator/sessions",
+          "startMs": -11579.5,
+          "durationMs": 12297.29999923706,
+          "ttfbMs": 2317.300000190735,
+          "decodedBytes": 9644,
+          "transferBytes": 9944,
+          "serverTiming": []
+        },
+        {
+          "path": "/api/crash-recovery/pending",
+          "startMs": -11576.20000076294,
+          "durationMs": 12200,
+          "ttfbMs": 2222.5999994277954,
+          "decodedBytes": 14,
+          "transferBytes": 314,
+          "serverTiming": []
+        },
+        {
+          "path": "/api/workspaces",
+          "startMs": -11573.70000076294,
+          "durationMs": 16632.20000076294,
+          "ttfbMs": 2260.199999809265,
+          "decodedBytes": 15489,
+          "transferBytes": 15789,
+          "serverTiming": []
+        },
+        {
+          "path": "/api/projects",
+          "startMs": -11572.900000572205,
+          "durationMs": 14331.900000572205,
+          "ttfbMs": 2185.199999809265,
+          "decodedBytes": 15042,
+          "transferBytes": 15342,
+          "serverTiming": []
+        },
+        {
+          "path": "/api/cli/quota",
+          "startMs": -11540.400000572205,
+          "durationMs": 14337.699999809265,
+          "ttfbMs": 2172.5999994277954,
+          "decodedBytes": 3653,
+          "transferBytes": 3953,
+          "serverTiming": []
+        },
+        {
+          "path": "/api/runner/queue-starvation",
+          "startMs": -11517.60000038147,
+          "durationMs": 14500.800000190735,
+          "ttfbMs": 2354.9000005722046,
+          "decodedBytes": 355,
+          "transferBytes": 655,
+          "serverTiming": []
+        },
+        {
+          "path": "/api/pipeline/accepted-integration-alert",
+          "startMs": -11515.5,
+          "durationMs": 14474,
+          "ttfbMs": 2267.5,
+          "decodedBytes": 8643,
+          "transferBytes": 8943,
+          "serverTiming": []
+        },
+        {
+          "path": "/api/runner/status",
+          "startMs": -9042.10000038147,
+          "durationMs": 12150.89999961853,
+          "ttfbMs": 2417.5,
+          "decodedBytes": 9006,
+          "transferBytes": 9306,
+          "serverTiming": []
+        },
+        {
+          "path": "/api/cli/model-migrations",
+          "startMs": -1690,
+          "durationMs": 4594.39999961853,
+          "ttfbMs": 2185.699999809265,
+          "decodedBytes": 1056,
+          "transferBytes": 1356,
+          "serverTiming": []
+        },
+        {
+          "path": "/api/auto-review/status",
+          "startMs": -1372.4000005722046,
+          "durationMs": 6490.300000190735,
+          "ttfbMs": 2158.5,
+          "decodedBytes": 866,
+          "transferBytes": 1166,
+          "serverTiming": []
+        },
+        {
+          "path": "/api/tasks/archive",
+          "startMs": -767.6000003814697,
+          "durationMs": 880.3999996185303,
+          "ttfbMs": 0,
+          "decodedBytes": 0,
+          "transferBytes": 0,
+          "serverTiming": []
+        },
+        {
+          "path": "/api/runner/orchestrator-feed",
+          "startMs": -407.9000005722046,
+          "durationMs": 6659.5,
+          "ttfbMs": 2427.800000190735,
+          "decodedBytes": 330425,
+          "transferBytes": 330725,
+          "serverTiming": []
+        },
+        {
+          "path": "/api/tasks/implement-dossier-consolidation-and-area-tags/plan",
+          "startMs": 93.39999961853027,
+          "durationMs": 7079.699999809265,
+          "ttfbMs": 2225.5999994277954,
+          "decodedBytes": 132,
+          "transferBytes": 432,
+          "serverTiming": [
+            {
+              "name": "task-op",
+              "durationMs": 0.578
+            }
+          ]
+        },
+        {
+          "path": "/api/tasks/implement-dossier-consolidation-and-area-tags",
+          "startMs": 121.09999942779541,
+          "durationMs": 7306.5,
+          "ttfbMs": 2368,
+          "decodedBytes": 7430,
+          "transferBytes": 7730,
+          "serverTiming": [
+            {
+              "name": "task-op",
+              "durationMs": 225.735
+            }
+          ]
+        }
+      ],
+      "markdownConversion": [],
+      "domWorkMs": 260.80000019073486,
+      "paintWaitMs": 100.80000019073486
+    },
+    {
+      "cohort": "board-click",
+      "ordinal": 2,
+      "target": "AGT-2910",
+      "switchId": "04319c41-f2c8-4f0d-abd4-afdff6301594",
+      "sampleClass": "long-history",
+      "outcome": "error",
+      "error": "Error: page.evaluate: Error: Detail DOM did not become ready\n    at eval (eval at evaluate (:302:30), <anonymous>:18:317)\n    at async <anonymous>:328:30"
+    }
+  ],
+  "errors": [],
+  "requestEvents": [
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/environment",
+      "status": 200,
+      "at": "2026-09-26T08:15:01.714Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/v1/management/remote-hosts",
+      "status": 200,
+      "at": "2026-09-26T08:15:01.834Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/auth/status",
+      "status": 200,
+      "at": "2026-09-26T08:15:01.835Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/v1/management/links",
+      "status": 200,
+      "at": "2026-09-26T08:15:02.097Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/tags",
+      "status": 200,
+      "at": "2026-09-26T08:15:02.099Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/runner/orchestrator-feed",
+      "status": 200,
+      "at": "2026-09-26T08:15:02.099Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/cli/gemini/models",
+      "status": 200,
+      "at": "2026-09-26T08:15:04.035Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/projects/settings",
+      "status": 200,
+      "at": "2026-09-26T08:15:04.362Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/runner/status",
+      "status": 200,
+      "at": "2026-09-26T08:15:04.471Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/cli/codex/models",
+      "status": 200,
+      "at": "2026-09-26T08:15:05.257Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/tasks/grouped",
+      "status": 200,
+      "at": "2026-09-26T08:15:05.391Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/cli/claude/models",
+      "status": 200,
+      "at": "2026-09-26T08:15:12.958Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/watch-paths",
+      "status": 200,
+      "at": "2026-09-26T08:15:12.960Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/environment",
+      "status": 200,
+      "at": "2026-09-26T08:15:12.961Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/workspaces",
+      "status": 200,
+      "at": "2026-09-26T08:15:12.961Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/clients/",
+      "status": 200,
+      "at": "2026-09-26T08:15:14.082Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/runner/auto-review-queue",
+      "status": 200,
+      "at": "2026-09-26T08:15:14.130Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/crash-recovery/pending",
+      "status": 200,
+      "at": "2026-09-26T08:15:14.130Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/clients",
+      "status": 200,
+      "at": "2026-09-26T08:15:14.195Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/clients/local-default/defaults",
+      "status": 200,
+      "at": "2026-09-26T08:15:14.211Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/orchestrator/sessions",
+      "status": 200,
+      "at": "2026-09-26T08:15:14.224Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/projects",
+      "status": 200,
+      "at": "2026-09-26T08:15:16.264Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/cli/quota",
+      "status": 200,
+      "at": "2026-09-26T08:15:16.303Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/cli/model-migrations",
+      "status": 200,
+      "at": "2026-09-26T08:15:16.410Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/pipeline/accepted-integration-alert",
+      "status": 200,
+      "at": "2026-09-26T08:15:16.463Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/runner/queue-starvation",
+      "status": 200,
+      "at": "2026-09-26T08:15:16.493Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/runner/status",
+      "status": 200,
+      "at": "2026-09-26T08:15:16.613Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/environment",
+      "status": 200,
+      "at": "2026-09-26T08:15:18.449Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/workspaces",
+      "status": 200,
+      "at": "2026-09-26T08:15:18.564Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/auto-review/status",
+      "status": 200,
+      "at": "2026-09-26T08:15:18.624Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/runner/orchestrator-feed",
+      "status": 200,
+      "at": "2026-09-26T08:15:19.043Z",
+      "requestId": null
+    },
+    {
+      "switchId": "83dcfeb1-2a16-4597-b512-1095070e54a4",
+      "path": "/api/tasks/implement-dossier-consolidation-and-area-tags/plan",
+      "status": 200,
+      "at": "2026-09-26T08:15:20.679Z",
+      "requestId": null
+    },
+    {
+      "switchId": "83dcfeb1-2a16-4597-b512-1095070e54a4",
+      "path": "/api/tasks/implement-dossier-consolidation-and-area-tags",
+      "status": 200,
+      "at": "2026-09-26T08:15:20.975Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/tasks/grouped",
+      "status": 200,
+      "at": "2026-09-26T08:15:21.220Z",
+      "requestId": null
+    },
+    {
+      "switchId": "83dcfeb1-2a16-4597-b512-1095070e54a4",
+      "path": "/api/tasks/dossier-review-round-2-synthesis-into-agt-w53-north-star-map-and-archive-transitions",
+      "status": 200,
+      "at": "2026-09-26T08:15:26.282Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/git/summary",
+      "status": 200,
+      "at": "2026-09-26T08:15:30.798Z",
+      "requestId": null
+    },
+    {
+      "switchId": "83dcfeb1-2a16-4597-b512-1095070e54a4",
+      "path": "/api/clients/local-default/telemetry",
+      "status": 200,
+      "at": "2026-09-26T08:15:30.801Z",
+      "requestId": null
+    },
+    {
+      "switchId": "83dcfeb1-2a16-4597-b512-1095070e54a4",
+      "path": "/api/tasks/agent-studio-routing-on-the-gpt-6-ladder-policy-v1-tiers-codex-default-gpt-6-sol-fleet-migration-proposals-picker",
+      "status": 200,
+      "at": "2026-09-26T08:15:30.802Z",
+      "requestId": null
+    },
+    {
+      "switchId": "83dcfeb1-2a16-4597-b512-1095070e54a4",
+      "path": "/api/clients/agent-runner-01/telemetry",
+      "status": 200,
+      "at": "2026-09-26T08:15:30.900Z",
+      "requestId": null
+    },
+    {
+      "switchId": "83dcfeb1-2a16-4597-b512-1095070e54a4",
+      "path": "/api/v1/management/remote-hosts",
+      "status": 200,
+      "at": "2026-09-26T08:15:30.963Z",
+      "requestId": null
+    },
+    {
+      "switchId": "83dcfeb1-2a16-4597-b512-1095070e54a4",
+      "path": "/api/v1/management/links",
+      "status": 200,
+      "at": "2026-09-26T08:15:33.004Z",
+      "requestId": null
+    },
+    {
+      "switchId": "83dcfeb1-2a16-4597-b512-1095070e54a4",
+      "path": "/api/v1/management/host-releases",
+      "status": 200,
+      "at": "2026-09-26T08:15:33.006Z",
+      "requestId": null
+    },
+    {
+      "switchId": "83dcfeb1-2a16-4597-b512-1095070e54a4",
+      "path": "/api/orchestrator/sessions",
+      "status": 200,
+      "at": "2026-09-26T08:15:33.012Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/projects",
+      "status": 200,
+      "at": "2026-09-26T08:15:33.285Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/cli/quota",
+      "status": 200,
+      "at": "2026-09-26T08:15:33.285Z",
+      "requestId": null
+    },
+    {
+      "switchId": "83dcfeb1-2a16-4597-b512-1095070e54a4",
+      "path": "/api/v1/management/provider-refusals",
+      "status": 200,
+      "at": "2026-09-26T08:15:33.378Z",
+      "requestId": null
+    },
+    {
+      "switchId": "83dcfeb1-2a16-4597-b512-1095070e54a4",
+      "path": "/api/pipeline/accepted-integration-alert",
+      "status": 200,
+      "at": "2026-09-26T08:15:35.403Z",
+      "requestId": null
+    },
+    {
+      "switchId": "b39b2828-6bb5-411a-bc4b-8d9fc2679866",
+      "path": "/api/workspaces",
+      "status": 200,
+      "at": "2026-09-26T08:15:35.595Z",
+      "requestId": null
+    },
+    {
+      "switchId": "83dcfeb1-2a16-4597-b512-1095070e54a4",
+      "path": "/api/tasks/implement-dossier-consolidation-and-area-tags/code-review/list",
+      "status": 200,
+      "at": "2026-09-26T08:15:35.595Z",
+      "requestId": null
+    },
+    {
+      "switchId": "83dcfeb1-2a16-4597-b512-1095070e54a4",
+      "path": "/api/runner/queue-starvation",
+      "status": 200,
+      "at": "2026-09-26T08:15:35.896Z",
+      "requestId": null
+    },
+    {
+      "switchId": "83dcfeb1-2a16-4597-b512-1095070e54a4",
+      "path": "/api/runner/status",
+      "status": 200,
+      "at": "2026-09-26T08:15:35.896Z",
+      "requestId": null
+    },
+    {
+      "switchId": "83dcfeb1-2a16-4597-b512-1095070e54a4",
+      "path": "/api/tasks/implement-dossier-consolidation-and-area-tags/provenance",
+      "status": 200,
+      "at": "2026-09-26T08:15:36.078Z",
+      "requestId": null
+    },
+    {
+      "switchId": "83dcfeb1-2a16-4597-b512-1095070e54a4",
+      "path": "/api/tasks/implement-dossier-consolidation-and-area-tags/output",
+      "status": 200,
+      "at": "2026-09-26T08:15:37.609Z",
+      "requestId": null
+    },
+    {
+      "switchId": "83dcfeb1-2a16-4597-b512-1095070e54a4",
+      "path": "/api/git/hygiene",
+      "status": 200,
+      "at": "2026-09-26T08:15:37.978Z",
+      "requestId": null
+    },
+    {
+      "switchId": "83dcfeb1-2a16-4597-b512-1095070e54a4",
+      "path": "/api/tasks/implement-dossier-consolidation-and-area-tags/step-prompts",
+      "status": 200,
+      "at": "2026-09-26T08:15:37.978Z",
+      "requestId": null
+    },
+    {
+      "switchId": "83dcfeb1-2a16-4597-b512-1095070e54a4",
+      "path": "/api/tasks/implement-dossier-consolidation-and-area-tags/regression-radar",
+      "status": 200,
+      "at": "2026-09-26T08:15:38.079Z",
+      "requestId": null
+    },
+    {
+      "switchId": "83dcfeb1-2a16-4597-b512-1095070e54a4",
+      "path": "/api/tasks/implement-dossier-consolidation-and-area-tags/dependents",
+      "status": 200,
+      "at": "2026-09-26T08:15:38.080Z",
+      "requestId": null
+    },
+    {
+      "switchId": "83dcfeb1-2a16-4597-b512-1095070e54a4",
+      "path": "/api/projects/Agent%20Studio/workbenches",
+      "status": 200,
+      "at": "2026-09-26T08:15:38.278Z",
+      "requestId": null
+    },
+    {
+      "switchId": "04319c41-f2c8-4f0d-abd4-afdff6301594",
+      "path": "/api/auto-review/status",
+      "status": 200,
+      "at": "2026-09-26T08:15:39.792Z",
+      "requestId": null
+    },
+    {
+      "switchId": "04319c41-f2c8-4f0d-abd4-afdff6301594",
+      "path": "/api/tasks/concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path/plan",
+      "status": 200,
+      "at": "2026-09-26T08:15:40.206Z",
+      "requestId": null
+    },
+    {
+      "switchId": "04319c41-f2c8-4f0d-abd4-afdff6301594",
+      "path": "/api/runner/orchestrator-feed",
+      "status": 200,
+      "at": "2026-09-26T08:15:40.376Z",
+      "requestId": null
+    },
+    {
+      "switchId": "04319c41-f2c8-4f0d-abd4-afdff6301594",
+      "path": "/api/clients",
+      "status": 200,
+      "at": "2026-09-26T08:15:42.498Z",
+      "requestId": null
+    },
+    {
+      "switchId": "04319c41-f2c8-4f0d-abd4-afdff6301594",
+      "path": "/api/tasks/runner-host-stray-build-server-and-fixture-processes-outlive-workers-block-cgroup-delegation-and-exhaust-kernel-limits",
+      "status": 200,
+      "at": "2026-09-26T08:15:42.698Z",
+      "requestId": null
+    },
+    {
+      "switchId": "04319c41-f2c8-4f0d-abd4-afdff6301594",
+      "path": "/api/tasks/update-service-a-verification-step-that-needs-a-config-gate-db-touch-fails-only-after-the-restart-instead-of-in-the-preflight",
+      "status": 200,
+      "at": "2026-09-26T08:15:42.698Z",
+      "requestId": null
+    },
+    {
+      "switchId": "04319c41-f2c8-4f0d-abd4-afdff6301594",
+      "path": "/api/runner/auto-review-queue",
+      "status": 200,
+      "at": "2026-09-26T08:15:44.079Z",
+      "requestId": null
+    }
+  ],
+  "sourceVersion": "0.9.2",
+  "coldClientReadyMs": 31399,
+  "failure": "Error: Capture stopped after board-click switch 2: Error: page.evaluate: Error: Detail DOM did not become ready\n    at eval (eval at evaluate (:302:30), <anonymous>:18:317)\n    at async <anonymous>:328:30",
+  "finishedAt": "2026-09-26T08:15:44.380Z"
+}
