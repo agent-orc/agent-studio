@@ -599,8 +599,14 @@ public class TaskScannerService : ITaskScanner
                 return ApplyVolatileMarkers(live.Task, jobDir);
             }
 
-            var json = File.ReadAllText(jobJsonPath);
-            var raw = JsonSerializer.Deserialize<JsonElement>(json, TaskJsonFile.ReadOpts);
+            string json;
+            JsonElement raw;
+            using (TaskSwitchTrace.Span("task.json"))
+            {
+                json = File.ReadAllText(jobJsonPath);
+                TaskSwitchTrace.FileRead();
+                raw = JsonSerializer.Deserialize<JsonElement>(json, TaskJsonFile.ReadOpts);
+            }
 
             var folderId = Path.GetFileName(jobDir);
             var isFlatLayout = IsFlatLayoutJobDir(jobDir);
@@ -822,6 +828,7 @@ public class TaskScannerService : ITaskScanner
             liveSnapshot = ScanAllJobs();
         }
 
+        using var lookupSpan = TaskSwitchTrace.Span("index.lookup");
         var matches = liveSnapshot.Where(j => MatchesTaskIdentity(j, jobId));
         if (!string.IsNullOrWhiteSpace(watchPath))
         {
@@ -880,22 +887,22 @@ public class TaskScannerService : ITaskScanner
         if (info == null) return null;
 
         var dir = info.FolderPath;
-        var statusMd = ReadFileOrNull(Path.Combine(dir, "status.md"));
-        var generated = _fileGenerationIndex?.ReadForJob(dir)
-            ?? new Dictionary<string, FileGenerationMeta>(StringComparer.OrdinalIgnoreCase);
+        var statusMd = TaskSwitchTrace.Run("sidecar.status", () => ReadFileOrNull(Path.Combine(dir, "status.md")));
+        var generated = TaskSwitchTrace.Run("sidecar.other", () => _fileGenerationIndex?.ReadForJob(dir)
+            ?? new Dictionary<string, FileGenerationMeta>(StringComparer.OrdinalIgnoreCase));
         return new TaskDetail
         {
             Info = info,
-            PromptMarkdown = ReadFileOrNull(Path.Combine(dir, "prompt.md")),
-            EnrichmentReport = PromptEnrichmentService.ReadReport(dir),
-            PromptHistory = ReadPromptHistory(dir),
-            TitleHistory = TitleHistoryLog.Read(dir),
+            PromptMarkdown = TaskSwitchTrace.Run("sidecar.prompt", () => ReadFileOrNull(Path.Combine(dir, "prompt.md"))),
+            EnrichmentReport = TaskSwitchTrace.Run("sidecar.other", () => PromptEnrichmentService.ReadReport(dir)),
+            PromptHistory = TaskSwitchTrace.Run("sidecar.history", () => ReadPromptHistory(dir)),
+            TitleHistory = TaskSwitchTrace.Run("sidecar.history", () => TitleHistoryLog.Read(dir)),
             StatusMarkdown = statusMd,
             StatusGeneration = generated.GetValueOrDefault("status.md"),
-            ContextUsage = ReadContextUsage(dir),
-            Log = BuildLog(dir),
+            ContextUsage = TaskSwitchTrace.Run("sidecar.other", () => ReadContextUsage(dir)),
+            Log = TaskSwitchTrace.Run("sidecar.log", () => BuildLog(dir)),
             SummaryState = ResolveSummaryState(info.TaskKey, statusMd),
-            ReviewEvidence = ReviewEvidenceLog.ReadLatestPerId(dir, _logger)
+            ReviewEvidence = TaskSwitchTrace.Run("sidecar.evidence", () => ReviewEvidenceLog.ReadLatestPerId(dir, _logger))
         };
     }
 
@@ -1704,7 +1711,7 @@ public class TaskScannerService : ITaskScanner
             if (dash < 0 || dash >= name.Length - 1) continue;
             if (!int.TryParse(name[(dash + 1)..], out var index)) continue;
             string body;
-            try { body = File.ReadAllText(path); }
+            try { body = File.ReadAllText(path); TaskSwitchTrace.FileRead(); }
             catch { continue; }
             DateTime writtenAt;
             try { writtenAt = File.GetLastWriteTimeUtc(path); }
@@ -1823,8 +1830,14 @@ public class TaskScannerService : ITaskScanner
 
         try
         {
-            var json = File.ReadAllText(jobJsonPath);
-            var raw = JsonSerializer.Deserialize<JsonElement>(json, TaskJsonFile.ReadOpts);
+            string json;
+            JsonElement raw;
+            using (TaskSwitchTrace.Span("task.json"))
+            {
+                json = File.ReadAllText(jobJsonPath);
+                TaskSwitchTrace.FileRead();
+                raw = JsonSerializer.Deserialize<JsonElement>(json, TaskJsonFile.ReadOpts);
+            }
             if (!raw.TryGetProperty("contextUsage", out var contextUsage) || contextUsage.ValueKind != JsonValueKind.Object)
             {
                 return null;
@@ -2002,8 +2015,13 @@ public class TaskScannerService : ITaskScanner
         return string.Compare(keyA, keyB, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string? ReadFileOrNull(string path) =>
-        File.Exists(path) ? File.ReadAllText(path) : null;
+    private static string? ReadFileOrNull(string path)
+    {
+        if (!File.Exists(path)) return null;
+        var body = File.ReadAllText(path);
+        TaskSwitchTrace.FileRead();
+        return body;
+    }
 
     public (string? Path, string? ContentType) ResolveAttachment(string jobId, string fileName, string? watchPath = null)
         => ResolveJobBinaryFile(jobId, "attachments", fileName, watchPath);

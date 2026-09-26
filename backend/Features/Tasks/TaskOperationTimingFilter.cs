@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using AgentStudio.Git;
 
 namespace AgentStudio.Tasks;
 
@@ -25,14 +26,44 @@ internal sealed class TaskOperationTimingFilter : IEndpointFilter
         EndpointFilterDelegate next)
     {
         var sw = Stopwatch.StartNew();
+        var http = context.HttpContext;
+        var traceEnabled = http.Request.Headers["X-Task-Switch-Trace"] == "1"
+            && http.Request.Method == "GET"
+            && (http.GetEndpoint() as Microsoft.AspNetCore.Routing.RouteEndpoint)
+                ?.RoutePattern.RawText?.EndsWith("/{jobId}", StringComparison.Ordinal) == true;
+        var trace = traceEnabled ? TaskSwitchTrace.Begin(
+            http.Request.Headers["X-Task-Request-Id"],
+            http.Request.Headers["X-Task-Switch-Id"]) : null;
+        IDisposable? gitScope = null;
+        if (trace != null)
+        {
+            http.Response.Headers["X-Task-Request-Id"] = trace.RequestId;
+            http.Response.Headers["X-Task-Switch-Id"] = trace.SwitchId;
+            gitScope = GitProcessTelemetry.BeginRequest("tasks/detail", _logger, includeNested: true);
+        }
         try
         {
-            return await next(context);
+            var result = await next(context);
+            return trace != null && result is IResult inner
+                ? new TaskSwitchTracedResult(inner, trace, GitProcessTelemetry.CurrentTally(),
+                    GitProcessTelemetry.CurrentTimeouts(), _logger)
+                : result;
+        }
+        catch (Exception ex) when (trace != null)
+        {
+            _logger.LogInformation("task-switch-trace {Trace}",
+                trace.Summary(ex is OperationCanceledException
+                        ? (http.RequestAborted.IsCancellationRequested ? "aborted" : "timeout")
+                        : "error",
+                    http.Response.StatusCode, 0, GitProcessTelemetry.CurrentTally(),
+                    GitProcessTelemetry.CurrentTimeouts()));
+            throw;
         }
         finally
         {
+            gitScope?.Dispose();
+            trace?.Restore();
             sw.Stop();
-            var http = context.HttpContext;
             var operation = OperationName(http);
             var elapsedMs = sw.Elapsed.TotalMilliseconds;
 

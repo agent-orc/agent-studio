@@ -201,6 +201,7 @@ public sealed class TaskIndexCache
     /// </summary>
     private void EnsureFresh()
     {
+        using var lookupTrace = TaskSwitchTrace.Span("index.lookup");
         // Freeze the read-after-write target at reader entry. Comparing every
         // retry with the latest global generation turns continuous task churn
         // into a moving goalpost: waiters can be serialized behind one full
@@ -246,7 +247,8 @@ public sealed class TaskIndexCache
 
             if (coldStartRefresh != null)
             {
-                coldStartRefresh.GetAwaiter().GetResult();
+                using (TaskSwitchTrace.Span("index.wait"))
+                    coldStartRefresh.GetAwaiter().GetResult();
 
                 // The completed refresh may have published this reader's
                 // target while a later mutation dirtied the cache again. That
@@ -265,7 +267,8 @@ public sealed class TaskIndexCache
             }
 
             if (refresh == null) continue;
-            Refresh(refresh);
+            using (TaskSwitchTrace.Span("index.refresh"))
+                Refresh(refresh);
             return;
         }
     }
