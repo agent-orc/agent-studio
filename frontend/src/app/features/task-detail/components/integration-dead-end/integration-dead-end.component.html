@@ -1,0 +1,29 @@
+@if (model(); as deadEnd) {
+  <section class="dead-end" data-testid="integration-dead-end" [attr.data-kind]="deadEnd.kind" aria-label="Integration dead end">
+    <strong>{{ deadEnd.title }}</strong>
+    <span>Stage: {{ deadEnd.stage }}</span>
+    <p>{{ deadEnd.reason }}</p>
+    @if (deadEnd.evidence) {
+      <pre class="dead-end__evidence">{{ deadEnd.evidence }}</pre>
+    }
+    @if (deadEnd.files.length) {
+      <p>Files: {{ deadEnd.files.join(', ') }}</p>
+    }
+    @if (deadEnd.integrationTip) {
+      <p>Integration tip: <code>{{ deadEnd.integrationTip }}</code></p>
+    }
+    <div class="dead-end__actions">
+      @if (deadEnd.recheck) {
+        <button type="button" class="dead-end__primary" (click)="recheck()">Re-check integration</button>
+      } @else {
+        <button type="button" class="dead-end__primary" [disabled]="busy()" (click)="continueTask()">Continue the task with this context</button>
+      }
+      @if (deadEnd.retry) {
+        <button type="button" (click)="retry()">Retry integration</button>
+      }
+      @if (deadEnd.rebase) {
+        <button type="button" (click)="rebase()">Rebase and retry</button>
+      }
+    </div>
+  </section>
+}

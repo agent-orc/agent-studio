@@ -15,17 +15,18 @@ public enum RemoteIntegrationContinuationAction
 /// </summary>
 public static class RemoteIntegrationContinuationPolicy
 {
-    public const int MaxAutomaticAgentRounds = 2;
+    public const int MaxAutomaticAgentRounds = 1;
 
     public static RemoteIntegrationContinuationAction Decide(
         MergeIntoIntegrationOutcome outcome,
         int automaticAgentRoundsUsed,
         int maximumAgentRounds = MaxAutomaticAgentRounds)
     {
-        if (outcome != MergeIntoIntegrationOutcome.AgentRoundRequired)
+        if (outcome is not (MergeIntoIntegrationOutcome.AgentRoundRequired or MergeIntoIntegrationOutcome.Conflict))
             return RemoteIntegrationContinuationAction.None;
 
-        return Math.Max(0, automaticAgentRoundsUsed) < Math.Max(1, maximumAgentRounds)
+        return Math.Max(0, automaticAgentRoundsUsed) < Math.Min(MaxAutomaticAgentRounds,
+            Math.Max(1, maximumAgentRounds))
             ? RemoteIntegrationContinuationAction.StartAgentRound
             : RemoteIntegrationContinuationAction.LeaveForHumanReview;
     }
@@ -139,6 +140,7 @@ public sealed class IntegrationAgentRoundService
     public const string AttributionAmbiguousReason = "delivery-attribution-ambiguous";
 
     private readonly TaskScannerService _scanner;
+    private readonly ProjectSettingsService? _settings;
     private readonly TaskMutationService _mutations;
     private readonly TaskStateMachine _states;
     private readonly TimelineLog _timeline;
@@ -151,16 +153,19 @@ public sealed class IntegrationAgentRoundService
         TaskStateMachine states,
         TimelineLog timeline,
         ILogger<IntegrationAgentRoundService> logger,
-        IConfiguration? configuration = null)
+        IConfiguration? configuration = null,
+        ProjectSettingsService? settings = null)
     {
         _scanner = scanner;
+        _settings = settings;
         _mutations = mutations;
         _states = states;
         _timeline = timeline;
         _logger = logger;
         _maximumRecoveryRounds = configuration is null
             ? RemoteIntegrationContinuationPolicy.MaxAutomaticAgentRounds
-            : AcceptanceRailOptions.FromConfiguration(configuration).MaxRequeues;
+            : Math.Min(RemoteIntegrationContinuationPolicy.MaxAutomaticAgentRounds,
+                AcceptanceRailOptions.FromConfiguration(configuration).MaxRequeues);
     }
 
     public Task<IntegrationAgentRoundStartResult> TryStartAsync(
@@ -171,8 +176,16 @@ public sealed class IntegrationAgentRoundService
         if (job is null)
             return Task.FromResult(Failed("The task disappeared before its automatic integration recovery round could start."));
 
-        if (result.Outcome != MergeIntoIntegrationOutcome.AgentRoundRequired)
+        if (result.Outcome is not (MergeIntoIntegrationOutcome.AgentRoundRequired or MergeIntoIntegrationOutcome.Conflict))
             return Task.FromResult(Failed("The integration result does not require an agent continuation."));
+
+        if (_settings?.Get(job.ProjectName).AutomaticFailureContinuationsEnabled == false)
+        {
+            const string reason = "Automatic failure continuations are disabled for this project.";
+            RecordFailure(job.FolderPath, request, result, reason,
+                OperatorReviewRequeueService.ReadEpoch(job.FolderPath));
+            return Task.FromResult(Failed(reason));
+        }
 
         var epoch = OperatorReviewRequeueService.ReadEpoch(job.FolderPath);
         var subject = ReviewSubjectStore.Read(job.FolderPath);
@@ -323,18 +336,11 @@ public sealed class IntegrationAgentRoundService
         RemoteDeliveryIntegrationRequest request,
         MergeIntoIntegrationResult result)
     {
-        var conflictedFiles = result.ConflictReport?.ConflictedFiles.Count > 0
-            ? string.Join(", ", result.ConflictReport.ConflictedFiles)
-            : result.ConflictedFiles.Count > 0
-                ? string.Join(", ", result.ConflictedFiles)
-                : "none recorded";
-        return $"Automatic integration recovery for {job.Key ?? job.Id}. "
-            + $"The platform first tried a direct merge of delivery '{subject.ResultRef}' at {subject.ResultSha} into '{request.IntegrationBranch}', then a mechanical three-way/rerere merge, and only then a mechanical rebase. "
-            + "Produce a delivery state that integrates cleanly. Prefer merging the latest integration branch into the existing delivery branch and resolving conflicts there over rewriting delivery history. "
-            + $"Conflicted files from the integration report: {conflictedFiles}. "
-            + "If rewriting is unavoidable, retain a one-to-one delivery commit mapping: do not squash, split, drop, or combine delivery commits. "
-            + "Do not redo the feature work. Run the relevant tests and finish with the normal task terminal sentinel. "
-            + "Do not move or push the integration branch ref; publish only the updated delivery branch for a new delivery gate and review round.";
+        return IntegrationContinuationPrompt.Build(
+            job.Key ?? job.Id, subject.ResultRef, subject.ResultSha,
+            request.IntegrationBranch, "merge-into-develop",
+            result.Error ?? "Delivery attribution needs a new agent round.", result.ConflictReport,
+            conflictedFiles: result.ConflictedFiles);
     }
 
     private static IntegrationAgentRoundStartResult Failed(
