@@ -33,7 +33,10 @@ public static class TaskServerEndpoints
                 return Results.Forbid();
             return await InvokeAsync(() => store.RecordFailureFingerprintAsync(request, ct),
                 StatusCodes.Status201Created);
-        });
+        }).RequireAnyTaskServerScope(
+            TaskServerScopes.ReviewsWrite,
+            TaskServerScopes.RunsWrite,
+            TaskServerScopes.TasksWrite);
         api.MapPost("/protocol/compatibility", (ProtocolCompatibilityRequest request, TaskServerStore store) =>
         {
             var supported = TaskServerProtocol.Supports(request.ProtocolVersion)
