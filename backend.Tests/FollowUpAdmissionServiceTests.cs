@@ -405,6 +405,68 @@ public sealed class FollowUpAdmissionServiceTests : IDisposable
     }
 
     [Fact]
+    public void StartupReconciliation_RetriesStashedIntentAfterConfirmedStartHistoryWriteFailure()
+    {
+        const string slug = "local-start-history-failure";
+        WriteJob(slug, TaskStates.Progress);
+        var harness = Build();
+        var intent = harness.Mutations.SavePendingIntent(
+            slug, ContinueModes.Steer, "Keep the approved change.", "project-busy",
+            activeJobId: null, watchPath: _watchPath)!;
+        var folder = Path.Combine(_watchPath, TaskStates.Progress, slug);
+        var hash = AgentStudio.TaskServer.Contracts.FollowUpPromptDigest.Compute(intent.Prompt);
+        Assert.NotNull(harness.Mutations.ReadAndStashPendingIntent(folder));
+        Assert.True(harness.Sessions.AppendSessionEvent(slug, new SessionEvent
+        {
+            Ts = intent.SavedAt.AddSeconds(1),
+            Kind = "continue",
+            Cli = CliTypes.Claude,
+            StartedPromptSha256 = hash,
+        }, _watchPath));
+
+        var timelinePath = TaskPaths.TimelineLog(folder);
+        var originalTimeline = File.Exists(timelinePath) ? File.ReadAllText(timelinePath) : string.Empty;
+        if (File.Exists(timelinePath)) File.Delete(timelinePath);
+        Directory.CreateDirectory(timelinePath);
+        Assert.Equal(PendingIntentAcknowledgeResult.HistoryWriteFailed,
+            harness.Mutations.AcknowledgeStashedPendingIntent(folder, hash, "local-run"));
+
+        var failed = harness.Transitions.ReconcilePendingIntents();
+        Assert.Contains(failed.Failures, item => item.Contains("HistoryWriteFailed", StringComparison.Ordinal));
+        Assert.True(File.Exists(Path.Combine(folder, "pending-intent.consumed.json")));
+
+        Directory.Delete(timelinePath);
+        File.WriteAllText(timelinePath, originalTimeline);
+        var recovered = harness.Transitions.ReconcilePendingIntents();
+
+        Assert.Equal(1, recovered.Delivered);
+        Assert.Empty(recovered.Failures);
+        Assert.False(File.Exists(Path.Combine(folder, "pending-intent.consumed.json")));
+        Assert.Contains(harness.Timeline.ReadAll(folder), row =>
+            row.Kind == TimelineEventKinds.FollowUpConsumed
+            && row.Details!["promptSha256"] == hash);
+    }
+
+    [Fact]
+    public void StartupReconciliation_StashedIntentWithoutConfirmedStartRemainsUndecided()
+    {
+        const string slug = "unstarted-stash";
+        WriteJob(slug, TaskStates.Progress);
+        var harness = Build();
+        harness.Mutations.SavePendingIntent(
+            slug, ContinueModes.Steer, "Still waiting for a worker.", "remote-execution",
+            activeJobId: null, watchPath: _watchPath);
+        var folder = Path.Combine(_watchPath, TaskStates.Progress, slug);
+        Assert.NotNull(harness.Mutations.ReadAndStashPendingIntent(folder));
+
+        var outcome = harness.Transitions.ReconcilePendingIntents();
+
+        Assert.Equal(0, outcome.Delivered);
+        Assert.Single(outcome.Undecided);
+        Assert.True(File.Exists(Path.Combine(folder, "pending-intent.consumed.json")));
+    }
+
+    [Fact]
     public void StartupReconciliation_LegacyCodingRunWithTerminalOutcomeConvertsIntent()
     {
         WriteJob("legacy", TaskStates.HumanReview);

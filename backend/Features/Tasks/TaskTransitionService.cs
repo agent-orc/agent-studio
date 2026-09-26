@@ -920,12 +920,36 @@ public sealed class TaskTransitionService
                     continue;
                 }
 
-                // A current stash is owned by a live or recoverable claim. Only
-                // the prompt-hash acknowledgement or lease recovery may resolve
-                // it; startup history repair is for the old canonical-file bug.
+                // A stash can also remain after a confirmed local process start
+                // whose timeline acknowledgement failed. Resolve it only from a
+                // later coding run start carrying this exact prompt hash. A
+                // claim without a confirmed start remains recoverable by its
+                // lease owner and must not be consumed here.
                 if (intent is null)
                 {
-                    undecided.Add($"{task.TaskKey}: stashed intent awaits claim resolution");
+                    var startedRun = FindHashAcknowledgedRun(
+                        stashedIntent!,
+                        _sessions?.ReadSessionEvents(task.Id, task.WatchPath) ?? []);
+                    if (startedRun is null)
+                    {
+                        undecided.Add($"{task.TaskKey}: stashed intent awaits confirmed start or claim resolution");
+                        continue;
+                    }
+
+                    var startedRunId = startedRun.RunAttemptId
+                        ?? startedRun.CapturedSessionId
+                        ?? startedRun.InputSessionId
+                        ?? startedRun.Ts.ToString("O");
+                    var acknowledged = _mutations.AcknowledgeStashedPendingIntent(
+                        task.FolderPath,
+                        AgentStudio.TaskServer.Contracts.FollowUpPromptDigest.Compute(stashedIntent!.Prompt),
+                        startedRunId,
+                        source: "startup-reconciliation");
+                    if (acknowledged is PendingIntentAcknowledgeResult.Consumed
+                        or PendingIntentAcknowledgeResult.AlreadyResolved)
+                        delivered++;
+                    else
+                        failures.Add($"{task.TaskKey}: {acknowledged}");
                     continue;
                 }
 
@@ -1025,6 +1049,22 @@ public sealed class TaskTransitionService
             && evt.FinishedAt is DateTime finishedAt
             && finishedAt.ToUniversalTime() > evt.Ts.ToUniversalTime()
             && (!string.IsNullOrWhiteSpace(evt.Result) || !string.IsNullOrWhiteSpace(evt.Status)));
+    }
+
+    private static SessionEvent? FindHashAcknowledgedRun(
+        PendingIntent intent,
+        IEnumerable<SessionEvent> events)
+    {
+        var savedAt = intent.SavedAt.ToUniversalTime();
+        var promptHash = AgentStudio.TaskServer.Contracts.FollowUpPromptDigest.Compute(intent.Prompt);
+        return events
+            .Where(IsCodingRunStart)
+            .Where(evt => evt.Ts.ToUniversalTime() > savedAt)
+            .OrderBy(evt => evt.Ts)
+            .FirstOrDefault(evt => string.Equals(
+                evt.StartedPromptSha256,
+                promptHash,
+                StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool IsCodingRunStart(SessionEvent evt)
