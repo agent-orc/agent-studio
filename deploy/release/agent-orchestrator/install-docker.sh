@@ -87,6 +87,11 @@ generate_secret "$SECRETS_DIR/runner.token" "${RUNNER_AUTH_TOKEN:-}"
 if [ "${AGENT_ORCHESTRATOR_SKIP_USER_CREATE:-0}" != "1" ]; then
     chown -R "$SERVICE_USER:$SERVICE_USER" "$SECRETS_DIR" 2>/dev/null || true
 fi
+# Compose file-backed secrets keep their host ownership and mode when mounted.
+# The Task Server and Engine images run as uid 10001, so root-only 0600 files
+# would make both services fail at startup.
+chown 10001:10001 "$SECRETS_DIR/studio.token" "$SECRETS_DIR/engine.token" "$SECRETS_DIR/runner.token"
+chmod 0400 "$SECRETS_DIR/studio.token" "$SECRETS_DIR/engine.token" "$SECRETS_DIR/runner.token"
 
 log "Pulling images and starting the control plane."
 compose_cmd pull

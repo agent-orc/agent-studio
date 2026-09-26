@@ -42,13 +42,22 @@ trap 'finish $?' EXIT
 trap 'exit 130' HUP INT TERM
 
 mkdir -p "$secrets_dir" "$offhost_dir"
+# The parent temp directory remains owner-only; this lets the non-root backup
+# sidecar write test copies while the test owner can remove them on cleanup.
+chmod 0777 "$offhost_dir"
 umask 077
 openssl rand -hex 32 >"$secrets_dir/studio.token"
 openssl rand -hex 32 >"$secrets_dir/engine.token"
 openssl rand -hex 32 >"$secrets_dir/runner.token"
+runner_token="$(cat "$secrets_dir/runner.token")"
+# Match install-docker.sh's container-readable, owner-only secret files.
+docker run --rm -v "$secrets_dir:/secrets" --entrypoint /bin/sh \
+    mcr.microsoft.com/dotnet/sdk:10.0.301 -c \
+    'chown 10001:10001 /secrets/*.token && chmod 0400 /secrets/*.token'
 
 cat >"$env_file" <<EOF
 CONTROL_PLANE_VERSION=ci-test
+CONTROL_PLANE_BUILD_VERSION=$(cat "$repo_root/VERSION")
 CONTROL_PLANE_RUNNER_ID=ci-runner
 WG_ADDRESS=127.0.0.1
 CONTROL_PLANE_DOMAIN=localhost
@@ -63,8 +72,8 @@ down
 "${compose[@]}" up --build --wait --wait-timeout 180
 
 echo "== check: no listener outside the edge's published port =="
-test -z "$("${compose[@]}" port task-server 5071 2>/dev/null || true)"
-test -z "$("${compose[@]}" port orchestrator-engine 5071 2>/dev/null || true)"
+test -z "$(docker port "$("${compose[@]}" ps -q task-server)" 5071/tcp 2>/dev/null || true)"
+test -z "$(docker port "$("${compose[@]}" ps -q orchestrator-engine)" 5071/tcp 2>/dev/null || true)"
 edge_binding="$("${compose[@]}" port edge 443)"
 case "$edge_binding" in
     127.0.0.1:*) ;;
@@ -73,8 +82,12 @@ esac
 echo "OK: task-server and orchestrator-engine publish no host port; edge is bound to $edge_binding."
 
 echo "== check: health through the edge with the pinned certificate =="
-openssl s_client -connect 127.0.0.1:443 -servername localhost </dev/null 2>/dev/null \
-    | openssl x509 -outform pem >"$leaf_cert"
+deadline=$(($(date +%s) + 45))
+until openssl s_client -connect 127.0.0.1:443 -servername localhost </dev/null 2>/dev/null \
+    | openssl x509 -outform pem >"$leaf_cert" 2>/dev/null; do
+    [ "$(date +%s)" -le "$deadline" ] || { echo "FAIL: TLS leaf was not served within 45 seconds." >&2; exit 1; }
+    sleep 2
+done
 test -s "$leaf_cert"
 leaf_sha256="$(openssl x509 -in "$leaf_cert" -noout -fingerprint -sha256 \
     | cut -d= -f2 | tr -d ':' | tr 'A-F' 'a-f')"
@@ -98,7 +111,6 @@ client_id_only_status="$(curl --silent --output /dev/null --write-out '%{http_co
 test "$client_id_only_status" = "401"
 echo "OK: X-Client-Id without a bearer returned 401."
 
-runner_token="$(cat "$secrets_dir/runner.token")"
 runner_on_management_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
     --cacert "$leaf_cert" --resolve localhost:443:127.0.0.1 \
     -X PUT -H "Authorization: Bearer $runner_token" -H 'Content-Type: application/json' \
@@ -122,6 +134,12 @@ post_restart_health="$(curl --fail --silent --cacert "$leaf_cert" --resolve loca
     https://localhost/healthz)"
 test -n "$post_restart_health"
 echo "OK: orchestrator-engine restarted independently; task-server kept answering /healthz."
+sleep 2
+if "${compose[@]}" logs orchestrator-engine --no-color | grep -q 'orchestration loop failed'; then
+    echo "FAIL: orchestrator-engine reported claim or settlement errors." >&2
+    exit 1
+fi
+echo "OK: orchestrator-engine claim loops reported no errors."
 
 echo "== check: backup archive evidence =="
 deadline=$(($(date +%s) + 60))

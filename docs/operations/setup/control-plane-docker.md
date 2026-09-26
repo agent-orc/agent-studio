@@ -16,6 +16,13 @@ runs Task Server, Orchestrator Engine, a scheduled backup sidecar, and a
 private TLS edge behind WireGuard. It never serves Angular; Robert's Studio
 stays on Windows.
 
+The 2026-09-25 operator decision approves an interim single-host exception on
+`agent-runner-01` for the AGT-2737 rehearsal and later single-operator cutover.
+That deployment binds the edge to loopback and uses a supervised Windows
+forward after its own release checks. See the
+[single-host operations page](single-host-task-server.md). The dedicated VM
+layout remains the longer-term target.
+
 ## What this card prepares vs. what stays an operator action
 
 Everything in this document runs from a checkout of this repository once the
@@ -36,7 +43,7 @@ holds:
 
 | File | Purpose |
 |---|---|
-| `compose.yaml` | `task-server`, `orchestrator-engine`, `backup`, and `edge` services. |
+| `compose.yaml` | `volume-init` one-shot permission setup, then `task-server`, `orchestrator-engine`, `backup`, and `edge` services. |
 | `.env.example` | Every Compose variable, documented; copy to `.env` or let `install-docker.sh` write it. |
 | `Caddyfile` | Self-signed leaf via Caddy's internal CA. Default for first bootstrap and CI. |
 | `Caddyfile.private-ca` | Alternate edge config for an operator-issued private-CA certificate. |
@@ -75,8 +82,9 @@ Both paths:
    `/etc/agent-orchestrator/{docker.env,secrets/}`.
 3. Copy `deploy/compose/control-plane/` to
    `/opt/agent-orchestrator/compose/`.
-4. Generate `studio.token`, `engine.token`, and `runner.token` (mode `0600`)
-   under the configured secrets directory and mount them as Docker secrets;
+4. Generate `studio.token`, `engine.token`, and `runner.token` (mode `0400`,
+   owned by container uid 10001) under the restricted secrets directory and
+   mount them as Docker secrets;
    the containers never receive a credential as a plain environment value
    except the Engine, which reads its secret file into `CLIENT_CREDENTIAL` at
    container start because the Engine binary only accepts that variable
@@ -116,11 +124,12 @@ scripts never need a route to the WireGuard-only edge themselves.
 
 ## Backup and restore
 
-The `backup` service shares the `task-server` image and calls the same
-`task-server backup --name <name>` command the systemd timer uses
-([task-server.md, "Backup and restore rehearsal"](./task-server.md)): a
-consistent SQLite snapshot, an integrity check, an audit record, and a
-SHA-256 in the JSON result. It runs every `BACKUP_INTERVAL_SECONDS` (default
+The `backup` service shares the `task-server` image and calls the Task Server's
+authenticated management API to create a consistent SQLite snapshot, integrity
+check, audit record, and SHA-256
+([task-server.md, "Backup and restore rehearsal"](./task-server.md)). Only the
+Task Server writes the SQLite store; the sidecar reads the backup volume and
+copies it off host. It runs every `BACKUP_INTERVAL_SECONDS` (default
 300, matching the plan's five-minute maximum recovery point) and copies the
 verified archive to the off-host mount. Inspect its log:
 

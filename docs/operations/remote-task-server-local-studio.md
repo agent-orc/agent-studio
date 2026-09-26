@@ -1,11 +1,13 @@
 # Remote Task Server with local Agent Studio
 
-Status: Phase A architecture delivered. Phase B slice B2 principal and scope
-hardening was implemented by AGT-2730 on 2026-09-07. Phase B slice B4
-(Windows fallback and switch tooling) was implemented by AGT-2735 on
-2026-09-09; see the [Windows fallback runbook](setup/windows-fallback-runbook.md).
-Deployment and migration remain gated on the other Phase B slices and the
-full release-gate rehearsal.
+Status: the approved single-host rehearsal ran on 2026-09-25 and 2026-09-26
+under AGT-2737. Its signed evidence is in that task's `results/rehearsal-evidence.md`
+and in the rehearsal Task Server store's `migration-reports/` directory.
+The [daily operations page](setup/single-host-task-server.md) is the operator
+handoff. Production cutover is pending Robert's maintenance window and the open
+release gates below. Phase B slice B2 principal and scope hardening was
+implemented by AGT-2730 on 2026-09-07; B4 Windows fallback tooling was
+implemented by AGT-2735 on 2026-09-09.
 
 ## Purpose and scope
 
@@ -41,8 +43,14 @@ transport, fenced Runner authority, and no direct remote filesystem writer.
 | Authority | The remote Task Server is the sole writer after cutover. The copied workspace and Windows store remain frozen recovery material, never a second live Task Server. |
 | Fallback | Keep an exact-version Windows Task Server and Studio connector profile pre-installed, with a recent verified backup locally available. Rehearse the full switch back in less than 15 minutes before production cutover. |
 
-These decisions are a package. Co-hosting the control plane with the Runner or
-using one shared bearer token would invalidate the threat model below.
+The 2026-09-25 operator decision approves an interim exception to the dedicated
+VM and WireGuard rows: co-host the control plane with `agent-runner-01`, bind
+the TLS edge to loopback, and use a supervised, certificate-verified Windows
+forward. The existing reverse link alone does not provide that forward.
+Separate bearer credentials remain required. A shared-host compromise can
+reach both the Runner and Task Server; this accepted single-operator risk is
+revisited with Dossier AGT-W49. The dedicated-host design below remains the
+longer-term target.
 
 ## Why a dedicated VM
 
@@ -252,10 +260,10 @@ production evidence must be attached before cutover:
    The standalone CLI and management API now inventory and import canonical
    `task.json` data, use `job.json` only as a compatibility fallback, enforce
    exact post-import counts, retain orphaned history as reported degradation,
-   and persist signed import reports. The remaining acceptance step is an
-   operator-run inventory and import against a frozen copy of the Windows
-   workspace, followed by attaching both reports and their per-project and
-   per-state counts to the D7 cutover card.
+   and persist signed import reports. The 2026-09-25 frozen-copy rehearsal
+   imported both Git-only and evidence-overlay shapes with exact counts; its
+   signed reports and per-project/per-state summary are in AGT-2737 results.
+   The final Windows freeze and import on the exact release remain open.
 3. **Windows fallback artifact, closed by B4.** The control-plane release now
    also publishes a `win-x64` package (`publish-windows` in
    `.github/workflows/release.yml`) with a version-matched Windows service
@@ -663,7 +671,7 @@ concept.
 | B3 | Current-workspace migration and evidence | Implemented by AGT-2732: `task.json` with `job.json` fallback; canonical per-project and per-state inventory; archive, events, pointer-only artifacts, Git and authority evidence; counted orphan ledger; Maintenance-only idempotent import; signed reports; mismatch stops; and backup/restore inventory-hash continuity. The Windows operator still performs the frozen rehearsal and production cutover and attaches both reports to D7. | Complete 2026-09-11; operator cutover evidence pending |
 | B4 | Windows fallback and switch tooling | Implemented by AGT-2735 on 2026-09-09: version-matched Windows service for all three components; cross-platform full-backup restore with a case-collision guard; warm standby pull; atomic connector profile switch; scripted reverse-tunnel drill in both directions with a measured sub-15-minute report; Windows CI coverage. The timed real-infrastructure rehearsal remains a B6 operator drill. | Complete 2026-09-09 |
 | B5 | Private Hetzner foundation | Dedicated VM, WireGuard peers, private TLS, dual firewall, systemd packages, off-host backup, monitoring, and proof of no public API listener | 2 to 3 engineering days plus operator access |
-| B6 | Rehearsal and production cutover | Representative dry run, signed evidence, maintenance-window cutover, detached-Studio proof, rollback drill, and operator handoff | 2 to 4 engineering days plus one operator window |
+| B6 | Rehearsal and production cutover | Frozen-workspace Git-only and overlay imports, a detached Linux connector scenario, and an isolated two-store rollback drill ran on 2026-09-25 and 2026-09-26. The signed AGT-2737 report records remaining gates. Production cutover and physical Windows detach await the operator window. | Rehearsal executed; production pending |
 
 Expected total: 18 to 30 engineering days plus one to two operator days. The
 largest uncertainty is B1 because current Angular functionality still spans
@@ -673,6 +681,15 @@ remaining schedule is committed.
 ## Release gates
 
 Phase B is complete only when all of the following are true:
+
+The 2026-09-26 AGT-2737 evidence matrix records pass or fail for every gate.
+The rehearsal imported 2,494 tasks in each source shape with exact before and
+after inventories; the ignored evidence overlay added 27,263 task-associated
+artifacts. Its isolated rollback measured 31.639 seconds back and 0.101 seconds
+forward. These results do not close the physical Windows, off-host restore,
+full workflow, or production sole-writer gates. The route inventory guard also
+finds 420 current frontend operations against the 408-operation AGT-2835
+reference; reconcile that delta before cutover.
 
 - public connection attempts to every API and health port fail;
 - WireGuard clients can reach the private TLS origin and unregistered peers

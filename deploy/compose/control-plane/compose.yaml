@@ -15,9 +15,25 @@ x-logging: &bounded-logging
     max-file: "5"
 
 services:
+  volume-init:
+    image: ${TASK_SERVER_IMAGE:-ghcr.io/agent-orc/agent-studio-task-server}:${CONTROL_PLANE_VERSION:?set CONTROL_PLANE_VERSION}
+    user: "0:0"
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["chown 10001:10001 /var/lib/agent-orchestrator/store /var/lib/agent-orchestrator/backup"]
+    volumes:
+      - store:/var/lib/agent-orchestrator/store
+      - backup:/var/lib/agent-orchestrator/backup
+    networks:
+      - control-plane
+    logging: *bounded-logging
+
   task-server:
     image: ${TASK_SERVER_IMAGE:-ghcr.io/agent-orc/agent-studio-task-server}:${CONTROL_PLANE_VERSION:?set CONTROL_PLANE_VERSION}
     restart: unless-stopped
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
     networks:
       - control-plane
     volumes:
@@ -66,6 +82,7 @@ services:
     environment:
       SERVER_URL: http://task-server:5071
       CLIENT_ID: orchestrator-engine
+      ENGINE_ALLOW_INSECURE_HTTP: "1"
     secrets:
       - engine_token
     logging: *bounded-logging
@@ -78,6 +95,12 @@ services:
   backup:
     image: ${TASK_SERVER_IMAGE:-ghcr.io/agent-orc/agent-studio-task-server}:${CONTROL_PLANE_VERSION:?set CONTROL_PLANE_VERSION}
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/backup-last-success"]
+      interval: 30s
+      timeout: 3s
+      retries: 10
+      start_period: 60s
     depends_on:
       task-server:
         condition: service_healthy
@@ -85,15 +108,17 @@ services:
       - control-plane
     entrypoint: ["/bin/sh", "/opt/backup/backup-loop.sh"]
     volumes:
-      - store:/var/lib/agent-orchestrator/store:ro
-      - backup:/var/lib/agent-orchestrator/backup
+      - backup:/var/lib/agent-orchestrator/backup:ro
       - ${CONTROL_PLANE_OFFHOST_BACKUP_PATH:?set CONTROL_PLANE_OFFHOST_BACKUP_PATH to an off-host mounted destination}:/mnt/offhost-backup
       - ./backup-loop.sh:/opt/backup/backup-loop.sh:ro
     environment:
-      STORE_PATH: /var/lib/agent-orchestrator/store
       BACKUP_PATH: /var/lib/agent-orchestrator/backup
       BACKUP_OFFHOST_PATH: /mnt/offhost-backup
       BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-300}
+      TASK_SERVER_URL: http://task-server:5071
+      STUDIO_AUTH_TOKEN_FILE: /run/secrets/studio_token
+    secrets:
+      - studio_token
     logging: *bounded-logging
     deploy:
       resources:
@@ -121,7 +146,7 @@ services:
     environment:
       CONTROL_PLANE_DOMAIN: ${CONTROL_PLANE_DOMAIN:?set CONTROL_PLANE_DOMAIN, the private WireGuard-only DNS name}
     healthcheck:
-      test: ["CMD", "wget", "--no-check-certificate", "--quiet", "--output-document=-", "https://127.0.0.1:443/healthz"]
+      test: ["CMD", "wget", "--quiet", "--output-document=-", "http://task-server:5071/healthz"]
       interval: 5s
       timeout: 3s
       retries: 24

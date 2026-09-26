@@ -1,3 +1,5 @@
+using System.Net;
+using System.Text.Json;
 using AgentStudio.OrchestratorEngine;
 using AgentStudio.TaskServer;
 using AgentStudio.TaskServer.Contracts;
@@ -8,6 +10,28 @@ namespace OrchestratorEngine.Tests;
 
 public sealed class EngineContractTests
 {
+    [Fact]
+    public async Task Claim_request_uses_Task_Server_numeric_stage_wire_contract()
+    {
+        string? body = null;
+        using var http = new HttpClient(new CaptureHandler(async request =>
+        {
+            body = await request.Content!.ReadAsStringAsync();
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"status\":\"empty\"}"),
+            };
+        })) { BaseAddress = new Uri("http://localhost") };
+        using var client = new EngineTaskServerClient(http);
+
+        await client.ClaimAsync(new OrchestrationClaimRequest(
+            "engine-a", "instance-a", [OrchestrationStage.ReviewDecision]), default);
+
+        using var json = JsonDocument.Parse(Assert.IsType<string>(body));
+        Assert.Equal((int)OrchestrationStage.ReviewDecision,
+            json.RootElement.GetProperty("supportedStages")[0].GetInt32());
+    }
+
     [Fact]
     public void Engine_env_contract_resolves_identity_credential_and_stage_caps()
     {
@@ -392,6 +416,13 @@ public sealed class EngineContractTests
         private DateTimeOffset _now = now;
         public override DateTimeOffset GetUtcNow() => _now;
         public void Advance(TimeSpan duration) => _now += duration;
+    }
+
+    private sealed class CaptureHandler(
+        Func<HttpRequestMessage, Task<HttpResponseMessage>> respond) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken) => respond(request);
     }
 
     private sealed class TempDirectory : IDisposable

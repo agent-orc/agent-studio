@@ -5,17 +5,30 @@
 # by compose.yaml. See scripts/control-plane-topology-test.sh and
 # .github/workflows/control-plane-topology.yml.
 services:
+  volume-init:
+    build:
+      context: ../../..
+      dockerfile: task-server/Dockerfile
+      args:
+        VERSION: ${CONTROL_PLANE_BUILD_VERSION:?set CONTROL_PLANE_BUILD_VERSION}
+
   task-server:
     build:
       context: ../../..
       dockerfile: task-server/Dockerfile
+      args:
+        VERSION: ${CONTROL_PLANE_BUILD_VERSION:?set CONTROL_PLANE_BUILD_VERSION}
 
   orchestrator-engine:
     build:
       context: ../../..
       dockerfile: orchestrator-engine/Dockerfile
+      args:
+        VERSION: ${CONTROL_PLANE_BUILD_VERSION:?set CONTROL_PLANE_BUILD_VERSION}
 
   backup:
     build:
       context: ../../..
       dockerfile: task-server/Dockerfile
+      args:
+        VERSION: ${CONTROL_PLANE_BUILD_VERSION:?set CONTROL_PLANE_BUILD_VERSION}

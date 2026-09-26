@@ -147,9 +147,16 @@ wait_healthy()
 {
     deadline=$(( $(date +%s) + READY_TIMEOUT_SECONDS ))
     while [ "$(date +%s)" -le "$deadline" ]; do
-        total=$(compose_cmd ps --format json 2>/dev/null | grep -c '"Service":' || true)
-        healthy=$(compose_cmd ps --format json 2>/dev/null | grep -o '"Health":"healthy"' | wc -l || true)
-        if [ "$total" -gt 0 ] && [ "$healthy" -eq "$total" ]; then
+        task_id=$(compose_cmd ps -q task-server 2>/dev/null || true)
+        edge_id=$(compose_cmd ps -q edge 2>/dev/null || true)
+        engine_id=$(compose_cmd ps -q orchestrator-engine 2>/dev/null || true)
+        backup_id=$(compose_cmd ps -q backup 2>/dev/null || true)
+        if [ -n "$task_id" ] && [ -n "$edge_id" ] \
+            && [ -n "$engine_id" ] && [ -n "$backup_id" ] \
+            && [ "$(docker inspect -f '{{.State.Health.Status}}' "$task_id" 2>/dev/null)" = healthy ] \
+            && [ "$(docker inspect -f '{{.State.Health.Status}}' "$edge_id" 2>/dev/null)" = healthy ] \
+            && [ "$(docker inspect -f '{{.State.Status}}' "$engine_id" 2>/dev/null)" = running ] \
+            && [ "$(docker inspect -f '{{.State.Status}}' "$backup_id" 2>/dev/null)" = running ]; then
             return 0
         fi
         sleep 2
