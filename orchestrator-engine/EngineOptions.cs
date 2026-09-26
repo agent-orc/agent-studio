@@ -16,6 +16,7 @@ public sealed class EngineOptions
     public int PollSeconds { get; init; } = 2;
     public int LeaseSeconds { get; init; } = 120;
     public int HealthPort { get; init; } = EngineHealthProbe.DefaultPort;
+    public bool RemotePostBuildTestEnabled { get; init; }
 
     public static EngineOptions FromEnvironment()
         => Parse(Environment.GetEnvironmentVariable);
@@ -59,6 +60,7 @@ public sealed class EngineOptions
             PollSeconds = Number(value, "POLL_SECONDS", 2, 1, 60),
             LeaseSeconds = Number(value, "LEASE_SECONDS", 120, 30, 600),
             HealthPort = EngineHealthProbe.ResolvePort(value),
+            RemotePostBuildTestEnabled = OptIn(value("REMOTE_POST_BUILD_TEST_GATE_ENABLED")),
         };
     }
 
