@@ -1,5 +1,7 @@
 namespace AgentStudio.Registry;
 
+public sealed record SetWorkspaceUsageCalendarRequest(string TimeZone, string WeekStart);
+
 /// <summary>
 /// AGT-1812 — read/write surface for per-workspace default orchestrator settings
 /// (the workspace tier of the two-tier orchestrator config). The workspace
@@ -38,7 +40,29 @@ public static class WorkspaceSettingsEndpoints
                 defaultOrchestratorModel = OrchestratorRunner.DefaultModel,
                 defaultAutonomyLevel = 2,
                 defaultCliExecutionEngine = CliExecutionEngines.Default,
+                usageTimeZone = s.UsageTimeZone ?? "Etc/UTC",
+                usageWeekStart = (s.UsageWeekStart ?? DayOfWeek.Monday).ToString(),
             });
+        });
+
+        app.MapPut("/api/workspaces/{id}/usage-calendar", (
+            HttpContext context, string id, SetWorkspaceUsageCalendarRequest request,
+            WorkspaceRegistry workspaces, WorkspaceSettingsService settings) =>
+        {
+            if (context.Items[AgentStudio.Security.AccessSecurityMiddleware.HumanPrincipalItem]
+                is AgentStudio.Security.HumanPrincipal human
+                && human.User.Role != AgentStudio.Security.StudioRoles.Owner)
+                return Results.Forbid();
+            if (workspaces.Find(id) is null)
+                return Results.NotFound(new { error = $"Unknown workspaceId '{id}'" });
+            if (!Enum.TryParse<DayOfWeek>(request.WeekStart, true, out var weekStart)
+                || !Enum.IsDefined(weekStart))
+                return Results.BadRequest(new { error = "weekStart must be a weekday name." });
+            try { settings.SetUsageCalendar(id, request.TimeZone, weekStart); }
+            catch (TimeZoneNotFoundException) { return Results.BadRequest(new { error = "Unknown IANA time zone." }); }
+            catch (InvalidTimeZoneException) { return Results.BadRequest(new { error = "Invalid IANA time zone." }); }
+            catch (ArgumentException) { return Results.BadRequest(new { error = "A time zone is required." }); }
+            return Results.Ok(new { timeZone = request.TimeZone, weekStart = weekStart.ToString() });
         });
 
         // AGT-2716: workspace-wide switch for automatic model-migration

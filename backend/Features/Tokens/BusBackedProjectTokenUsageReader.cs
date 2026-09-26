@@ -38,7 +38,8 @@ public sealed class BusBackedProjectTokenUsageReader
     // snapshot generation: token numbers then lag by at most one generation
     // (mutation, watcher event, or the index safety TTL), which is acceptable
     // because receipts already lag the live bus.
-    private static readonly TimeSpan SnapshotTtl = TimeSpan.FromSeconds(60);
+    public const int SnapshotTtlSeconds = 60;
+    private static readonly TimeSpan SnapshotTtl = TimeSpan.FromSeconds(SnapshotTtlSeconds);
 
     private readonly AgentMessageBusStore _store;
     private readonly IConfiguration _config;

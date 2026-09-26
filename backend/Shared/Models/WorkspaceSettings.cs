@@ -26,6 +26,12 @@ namespace AgentStudio.Shared;
 /// </summary>
 public record WorkspaceSettings
 {
+    /// <summary>IANA calendar zone used for workspace usage costs. Null selects UTC.</summary>
+    public string? UsageTimeZone { get; init; }
+
+    /// <summary>First local weekday of the usage cost week. Null selects Monday.</summary>
+    public DayOfWeek? UsageWeekStart { get; init; }
+
     /// <summary>
     /// Workspace-default orchestrator model. Null means "no workspace default";
     /// a project without its own <see cref="ProjectSettings.OrchestratorModel"/>

@@ -82,6 +82,63 @@ applies the same safe normalization to legacy OpenAI rows before both the
 canonical token readers and `BusAggregationCache` fold them. This keeps bus
 history aligned with repaired task receipts without rewriting evidence logs.
 
+## Workspace usage cockpit read contract (HUC-S1)
+
+`GET /api/usage/cockpit?workspaceId={id}` returns a versioned, read-only
+snapshot for the named workspace. Omit `workspaceId` to select the default
+workspace. An optional `primaryCli` chooses which CLI is marked primary; it
+does not change routing. The route filters every project ledger and active run
+through normal project membership authorization. A scoped user with no visible
+project in the workspace receives 403. The response includes `generatedAt`,
+`snapshotVersion`, workspace ID, IANA zone, week start, and independent `sources`
+states for calendar, quota, cost, runs, and slots. A failed source reports
+`unavailable` while the other sources remain readable.
+
+`cost.calendar` contains local day and week `[start,end)` UTC instants. The
+workspace's `usageTimeZone` and `usageWeekStart` settings control these
+boundaries; unset values are UTC and Monday. Owners can set both through
+`PUT /api/workspaces/{id}/usage-calendar` with `{"timeZone":"Europe/Berlin",
+"weekStart":"Monday"}`. Local midnight is converted independently at both
+ends, so a daylight-saving day may have 23 or 25 hours. Changing workspaces
+recomputes the windows from that workspace's settings. Provider quota reset
+instants are passed through unchanged from the cached quota source.
+
+`cost.currency` is USD. `todayUsd` and `weekUsd` are decimal sums of the
+visible `projects` children, including the explicit `Unattributed` child.
+Projects with no covered data have null amounts and `unavailable` coverage;
+priced known subtotals with missing receipts, unpriced models, or unresolved
+legacy normalization carry `partial` coverage. A complete empty ledger may
+legitimately have zero. `observedAt` on a project cost row is the latest
+successful ledger observation, not the request time. `latestReceiptAt` on a
+project row and on `cost` is the newest durable task receipt timestamp.
+`dailyBudgetUsd` and
+`weeklyBudgetUsd` are null until a real workspace USD budget owner exists.
+The `ledgerEndpointTemplate` points to the existing project token report API.
+
+The cost reader consumes `BusBackedProjectTokenUsageReader.LoadSnapshot`, which
+already merges historical bus rows with durable task receipts by canonical
+token identity. Workspace-scoped token messages join a visible project when
+attributed to it. Projectless messages form `Unattributed` only in the default
+workspace for an owner or unscoped viewer; other workspace and scoped views
+mark any excluded projectless messages as partial rather than assign a shared
+bus row to two workspaces or reveal an unowned project cost.
+The projection prices normalized uncached `input` and `cacheRead` once through
+the historical Token Economy price catalog at the event timestamp. It never
+subtracts cache reads a second time. `pricingVersion` and
+`normalizationVersion` identify those boundaries. Active run provisional
+costs represent today's receipts from the same merged entries and set
+`includedInTotals: true`;
+clients must not add them to workspace totals again. Configured CLI/model/
+reasoning and observed effective route are separate fields; missing route
+evidence reads `Unknown`, never an inherited workspace default.
+
+`clis` contains cached provider windows, percentages, UTC resets, fetch time,
+TTL (600 seconds when omitted), probe and suspicious flags, and provider
+limit state. `slots` names remote host, review, and per-project auto pools with
+their own occupancy and capacity counters. These counters are not summed into
+active run totals. This endpoint does not probe a CLI or change quota admission,
+model pins, correctness floors, or routing policy.
+
 ## Why this document exists
 
 Five backend services compute token-spend aggregations independently, each
