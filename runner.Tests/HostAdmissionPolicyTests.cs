@@ -16,19 +16,23 @@ public sealed class HostAdmissionPolicyTests
         var admitted = HostAdmissionPolicy.Decide(
             permit,
             options,
-            new GitPushProbeResult(GitPushProbe.Ready, "push dry-run passed"));
+            new GitPushProbeResult(GitPushProbe.Ready, "push dry-run passed"),
+            runSpec: null);
         var readOnly = HostAdmissionPolicy.Decide(
             permit,
             options,
-            new GitPushProbeResult(GitPushProbe.ReadOnly, "permission denied"));
+            new GitPushProbeResult(GitPushProbe.ReadOnly, "permission denied"),
+            runSpec: null);
         var missingTool = HostAdmissionPolicy.Decide(
             permit,
             Options(Path.Combine(executable.Directory, "missing-cli")),
-            new GitPushProbeResult(GitPushProbe.Ready, "push dry-run passed"));
+            new GitPushProbeResult(GitPushProbe.Ready, "push dry-run passed"),
+            runSpec: null);
         var missingInput = HostAdmissionPolicy.Decide(
             Permit(body: null),
             options,
-            new GitPushProbeResult(GitPushProbe.Ready, "push dry-run passed"));
+            new GitPushProbeResult(GitPushProbe.Ready, "push dry-run passed"),
+            runSpec: null);
 
         Assert.True(admitted.Admitted);
         Assert.Contains("passed", admitted.Reason);
@@ -40,7 +44,26 @@ public sealed class HostAdmissionPolicyTests
         Assert.StartsWith("task-input-unavailable", missingInput.Reason);
     }
 
-    private static RunnerOptions Options(string cli)
+    [Fact]
+    public void Admission_checks_the_card_selected_provider_binary()
+    {
+        using var executable = new TemporaryExecutable();
+        var options = Options(
+            executable.Path,
+            Path.Combine(executable.Directory, "missing-codex"));
+        var git = new GitPushProbeResult(GitPushProbe.Ready, "push dry-run passed");
+        var permit = Permit("Run Codex on this card.");
+
+        var hostDefault = HostAdmissionPolicy.Decide(permit, options, git, runSpec: null);
+        var cardSelected = HostAdmissionPolicy.Decide(
+            permit, options, git, new RunSpecDto(CliType: CliSelection.CodexCli));
+
+        Assert.True(hostDefault.Admitted);
+        Assert.False(cardSelected.Admitted);
+        Assert.Contains("missing-codex", cardSelected.Reason);
+    }
+
+    private static RunnerOptions Options(string cli, string? codexCli = null)
         => new()
         {
             ServerUrl = "http://127.0.0.1:5071",
@@ -51,8 +74,8 @@ public sealed class HostAdmissionPolicyTests
             GitRemote = "https://example.test/repository.git",
             WorkDir = Path.GetTempPath(),
             BaseBranch = "develop",
-            CliBin = cli,
-            CliArgs = "-p",
+            ClaudeCliBin = cli,
+            CodexCliBin = codexCli ?? cli,
             TtlSeconds = 120,
             HeartbeatSeconds = 30,
             RunTimeoutSeconds = 300,

@@ -211,7 +211,6 @@ public sealed class CliExecutionStaleOrphanReaperTests : IDisposable
         {
             CliType = Type,
             GetCliPath = _ => "claude",
-            BuildStartInfo = (_, _, _, _, _, _, _, _) => throw new NotSupportedException(),
         };
 
         /// <summary>Seed the in-memory live-process map so the reaper treats this run as in-flight.</summary>

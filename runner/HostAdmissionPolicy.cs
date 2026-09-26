@@ -14,14 +14,18 @@ public static class HostAdmissionPolicy
     public static HostAdmissionDecision Decide(
         WorkPermitDto permit,
         RunnerOptions options,
-        GitPushProbeResult gitCapability)
+        GitPushProbeResult gitCapability,
+        RunSpecDto? runSpec)
     {
         if (!gitCapability.CanPush)
             return new(false, $"git-push-unavailable: {gitCapability.Detail}");
         if (string.IsNullOrWhiteSpace(options.GitRemote))
             return new(false, "repository-clone-unavailable: RUNNER_GIT_REMOTE is not configured.");
-        if (!ExecutableExists(options.CliBin))
-            return new(false, $"toolchain-unavailable: '{options.CliBin}' was not found on this host.");
+        // V1 permits do not yet carry card selection. Keep it explicit here so
+        // a future caller must supply the resolved spec when that contract lands.
+        var selected = CliSelection.Resolve(options, runSpec);
+        if (!ExecutableExists(selected.FileName))
+            return new(false, $"toolchain-unavailable: '{selected.FileName}' was not found on this host.");
         if (string.IsNullOrWhiteSpace(permit.Task.Body))
             return new(false, "task-input-unavailable: the permit has no executable task body.");
         return new(true, "host capability, repository, and toolchain checks passed.");

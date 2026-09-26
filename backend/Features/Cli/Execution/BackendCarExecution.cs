@@ -29,10 +29,6 @@ public partial class GenericCliExecutionService
     /// </summary>
     internal Action<Process>? CarAfterSpawnForTest { get; set; }
 
-    private bool SupportsCarExecution
-        => string.Equals(CliType, CliTypes.Claude, StringComparison.OrdinalIgnoreCase)
-           || string.Equals(CliType, CliTypes.Codex, StringComparison.OrdinalIgnoreCase);
-
     private async Task<(CliExecution? Execution, string? Error)> StartCarAsync(
         string jobId,
         string jobKey,
@@ -118,6 +114,9 @@ public partial class GenericCliExecutionService
                 ? GetCliPath()
                 : null,
             CodexPath = string.Equals(CliType, CliTypes.Codex, StringComparison.OrdinalIgnoreCase)
+                ? GetCliPath()
+                : null,
+            AntigravityPath = string.Equals(CliType, CliTypes.Antigravity, StringComparison.OrdinalIgnoreCase)
                 ? GetCliPath()
                 : null,
             // CAR-A: keep large prompts out of argv and process listings. CAR

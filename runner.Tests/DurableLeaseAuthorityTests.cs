@@ -253,8 +253,7 @@ public sealed class DurableLeaseAuthorityTests
         BackendName = "test",
         WorkDir = root,
         BaseBranch = "main",
-        CliBin = "/bin/sh",
-        CliArgs = "",
+        ClaudeCliBin = "/bin/sh",
         TtlSeconds = 900,
         HeartbeatSeconds = 60,
     };
