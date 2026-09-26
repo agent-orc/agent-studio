@@ -314,12 +314,14 @@ public sealed class GitStateIndexService : BackgroundService
 
     private void OnTaskSidecarChanged(string path)
     {
-        var name = Path.GetFileName(path);
-        if (!string.Equals(name, ReviewSubjectStore.FileName, StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(name, PipelineExecutionLog.FileName, StringComparison.OrdinalIgnoreCase)) return;
+        if (!IsGitRelevantSidecar(path)) return;
         if (!_projectionCache.MarkTaskInputChanged(path)) return;
         OnTaskChanged(path);
     }
+
+    internal static bool IsGitRelevantSidecar(string path)
+        => string.Equals(Path.GetFileName(path), ReviewSubjectStore.FileName,
+            StringComparison.OrdinalIgnoreCase);
 
     private static bool IsUnderWatchPath(string watchPath, string path)
     {
@@ -533,20 +535,22 @@ public sealed class GitStateIndexService : BackgroundService
 
     private RepoInput CaptureInput(RepoState state, TaskInfo[] tasks, string configSignature)
     {
-        var parts = new StringBuilder("schema=2;");
+        var taskSignature = CaptureTaskInputSignature(tasks, _projectionCache);
+        return new RepoInput(state.RepositoryPath, SafeCapture(state.RepositoryPath),
+            configSignature, _settingsVersion(state.ProjectName), taskSignature);
+    }
+
+    internal static string CaptureTaskInputSignature(TaskInfo[] tasks, TaskListGitProjectionCache cache)
+    {
+        var parts = new StringBuilder("schema=3;");
         foreach (var task in tasks.OrderBy(task => task.TaskKey, StringComparer.Ordinal))
         {
             parts.Append(task.TaskKey).Append(':').Append(TaskGitSignature.For(task)).Append(':');
             var subject = Path.Combine(task.FolderPath, ReviewSubjectStore.FileName);
-            var pipeline = Path.Combine(task.FolderPath, PipelineExecutionLog.FileName);
-            _projectionCache.SeedTaskInput(subject);
-            _projectionCache.SeedTaskInput(pipeline);
+            cache.SeedTaskInput(subject);
             AppendFileFact(parts, subject);
-            AppendFileFact(parts, pipeline);
         }
-        var taskSignature = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(parts.ToString())));
-        return new RepoInput(state.RepositoryPath, SafeCapture(state.RepositoryPath),
-            configSignature, _settingsVersion(state.ProjectName), taskSignature);
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(parts.ToString())));
     }
 
     private static void AppendFileFact(StringBuilder parts, string path)
@@ -570,7 +574,10 @@ public sealed class GitStateIndexService : BackgroundService
             state.Disposed = true;
             state.DebounceTimer?.Dispose();
             try { state.ActiveDeadline?.Cancel(); }
-            catch (ObjectDisposedException) { /* run already finished */ }
+            catch (ObjectDisposedException ex)
+            {
+                SilentCatch.Note(ex, "GitStateIndexService: run deadline already disposed");
+            }
         }
         foreach (var watcher in state.Watchers)
         {
@@ -607,7 +614,7 @@ public sealed class GitStateIndexService : BackgroundService
         string Config, string SettingsVersion, string Tasks)
     {
         public string Version => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
-            $"schema=2\0{RepositoryPath}\0{Refs}\0{Config}\0{SettingsVersion}\0{Tasks}")));
+            $"schema=3\0{RepositoryPath}\0{Refs}\0{Config}\0{SettingsVersion}\0{Tasks}")));
     }
 }
 
