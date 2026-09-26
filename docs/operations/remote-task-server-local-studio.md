@@ -4,8 +4,20 @@ Status: Phase A architecture delivered. Phase B slice B2 principal and scope
 hardening was implemented by AGT-2730 on 2026-09-07. Phase B slice B4
 (Windows fallback and switch tooling) was implemented by AGT-2735 on
 2026-09-09; see the [Windows fallback runbook](setup/windows-fallback-runbook.md).
-Deployment and migration remain gated on the other Phase B slices and the
-full release-gate rehearsal.
+The frozen-workspace rehearsal ran on 2026-09-25 and 2026-09-26. Its signed
+evidence is in the AGT-2737 task results and the rehearsal Task Server store
+at `/home/agent/rehearsal/agt2737-v2/overlay-store/migration-reports/agt2737-2026-09-26/rehearsal-evidence-2026-09-26.md`
+(SHA-256 `d7055425a25dd5870c9fc6285f7c2c843e309a7f8281525c9b7106a645bc1952`). Both
+Git-only and Git-plus-evidence imports matched their inventories. The
+production cutover has **not** run; the failed release gates below remain
+closed until the scheduled maintenance window. See the
+[single-host operator runbook](setup/single-host-task-server.md).
+
+Robert approved a single-host rehearsal on `agent-runner-01` using Docker and
+its existing reverse link. This is an explicit exception to the dedicated-VM
+and WireGuard target described below, not evidence that those network and
+host-isolation gates passed. A host outage takes Runner and Task Server down
+together. Revisit the host split when Dossier AGT-W49 is decided.
 
 ## Purpose and scope
 
@@ -304,6 +316,12 @@ satisfies the "classify every Studio route" half of gate 1 above. The 278
 needs the P0 **core-attach** bundle below; the other three bundles
 (`task-detail-and-hosts`, `operations-and-insight`,
 `administration-and-tail`) remain post-cutover work.
+
+On 2026-09-26 the inventory guard found 421 current frontend operations,
+13 more than the 408-operation AGT-2835 reference, with none removed. The
+exact added operation keys and call sites are in the AGT-2737 task result
+`route-inventory-delta.json`. Reconcile that delta against the AGT-2835
+classification before treating this entry gate as passed.
 
 #### Operations still blocking cutover
 
@@ -663,7 +681,7 @@ concept.
 | B3 | Current-workspace migration and evidence | Implemented by AGT-2732: `task.json` with `job.json` fallback; canonical per-project and per-state inventory; archive, events, pointer-only artifacts, Git and authority evidence; counted orphan ledger; Maintenance-only idempotent import; signed reports; mismatch stops; and backup/restore inventory-hash continuity. The Windows operator still performs the frozen rehearsal and production cutover and attaches both reports to D7. | Complete 2026-09-11; operator cutover evidence pending |
 | B4 | Windows fallback and switch tooling | Implemented by AGT-2735 on 2026-09-09: version-matched Windows service for all three components; cross-platform full-backup restore with a case-collision guard; warm standby pull; atomic connector profile switch; scripted reverse-tunnel drill in both directions with a measured sub-15-minute report; Windows CI coverage. The timed real-infrastructure rehearsal remains a B6 operator drill. | Complete 2026-09-09 |
 | B5 | Private Hetzner foundation | Dedicated VM, WireGuard peers, private TLS, dual firewall, systemd packages, off-host backup, monitoring, and proof of no public API listener | 2 to 3 engineering days plus operator access |
-| B6 | Rehearsal and production cutover | Representative dry run, signed evidence, maintenance-window cutover, detached-Studio proof, rollback drill, and operator handoff | 2 to 4 engineering days plus one operator window |
+| B6 | Rehearsal and production cutover | Frozen-copy imports and an isolated, signed rehearsal report exist as of 2026-09-26. The isolated rollback was under 15 minutes. The full representative workflow, physical Windows detach, Windows D6 switch, and production cutover remain open; see AGT-2737 results and the single-host operator runbook. | Rehearsal partial; production window pending |
 
 Expected total: 18 to 30 engineering days plus one to two operator days. The
 largest uncertainty is B1 because current Angular functionality still spans

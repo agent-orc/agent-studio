@@ -36,7 +36,7 @@ holds:
 
 | File | Purpose |
 |---|---|
-| `compose.yaml` | `task-server`, `orchestrator-engine`, `backup`, and `edge` services. |
+| `compose.yaml` | A one-shot `volume-init` service makes store and backup volumes writable by UID 10001; `task-server`, `orchestrator-engine`, `backup`, and `edge` are the long-running services. |
 | `.env.example` | Every Compose variable, documented; copy to `.env` or let `install-docker.sh` write it. |
 | `Caddyfile` | Self-signed leaf via Caddy's internal CA. Default for first bootstrap and CI. |
 | `Caddyfile.private-ca` | Alternate edge config for an operator-issued private-CA certificate. |
@@ -260,7 +260,7 @@ documented fallback, not a route kept live in parallel.
 
 ## Verify
 
-1. `docker compose ... ps` reports every service `healthy`.
+1. `docker compose ... ps --all` reports `volume-init` exited successfully and every long-running service healthy or running.
 2. From `agent-runner-01`, over WireGuard:
    `curl --cacert <pinned-or-trusted> https://task-server-01.wg.internal/healthz`
    returns `200`.
