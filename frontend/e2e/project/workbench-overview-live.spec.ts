@@ -18,6 +18,7 @@ const VISUAL_OVERVIEW = {
         title: 'Admin surface design language',
         summary: 'Define a calm, consistent visual grammar for dense operator surfaces and their decision queues.',
         status: 'decision-pending',
+        taggingStatus: 'tagged',
         phase: 'decision-ready',
         updatedAtUtc: '2026-08-11T12:25:00Z',
         entryPath: 'docs/operations/admin-design-guideline/index.html',
@@ -48,6 +49,7 @@ const VISUAL_OVERVIEW = {
         title: 'Conversation recovery contract',
         summary: 'Keep interrupted operator conversations resumable without duplicating settled work.',
         status: 'active',
+        taggingStatus: 'tags-proposed',
         phase: 'testing',
         updatedAtUtc: '2026-08-10T16:40:00Z',
         entryPath: 'docs/operations/conversation-recovery/index.html',
@@ -67,6 +69,7 @@ const VISUAL_OVERVIEW = {
         title: 'Runner host hardening',
         summary: 'The direction is accepted while the linked implementation cards move through delivery.',
         status: 'decided',
+        taggingStatus: 'future-status',
         phase: 'testing',
         updatedAtUtc: '2026-08-10T09:15:00Z',
         entryPath: 'docs/operations/runner-host-hardening/index.html',
@@ -215,7 +218,7 @@ test('captures the Dossier overview at wide and narrow widths in both themes', a
     contentType: 'application/json',
     body: JSON.stringify([]),
   }));
-  await page.route('**/api/tasks/grouped', route => route.fulfill({
+  await page.route('**/api/tasks/grouped**', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({
@@ -229,6 +232,12 @@ test('captures the Dossier overview at wide and narrow widths in both themes', a
   await expect(page.getByTestId('workbench-overview')).toBeVisible();
   await expect(page.getByTestId('workbench-overview-item-Agent Studio-admin-design-language'))
     .toBeVisible();
+  await expect(page.getByTestId('workbench-overview-item-Agent Studio-admin-design-language'))
+    .toContainText('Auto-tagged');
+  await expect(page.getByTestId('workbench-overview-item-Coding Agent Chat-conversation-recovery'))
+    .toContainText('Tags proposed');
+  await expect(page.getByTestId('workbench-overview-item-Agent Studio-runner-host-hardening')
+    .getByTestId('workbench-tagging-status')).toHaveCount(0);
 
   for (const [widthName, width] of [['wide', 1440], ['narrow', 760]] as const) {
     await page.setViewportSize({ width, height: 900 });
@@ -292,7 +301,8 @@ test('project and central overviews receive a newly created item without reloadi
     await proxyApi(page, devBackend.baseUrl);
     const hubConnected = page.waitForEvent('websocket', {
       predicate: socket => socket.url().includes('/hubs/jobs'),
-      timeout: 15_000,
+      // A cold dev-server bundle can take longer than the default navigation window.
+      timeout: 45_000,
     });
     await page.goto('/');
     await hubConnected;

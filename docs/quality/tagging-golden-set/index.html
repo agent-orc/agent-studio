@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Proposed auto-tagging reference set</title>
+  <style>
+    :root { color-scheme: light dark; --bg:#f7f8fb; --surface:#fff; --ink:#182033; --muted:#5d687d; --line:#d9dfeb; --accent:#2563eb; font-family: ui-sans-serif,system-ui,sans-serif; }
+    @media (prefers-color-scheme: dark) { :root { --bg:#15171c; --surface:#1d2027; --ink:#eef0f5; --muted:#a9b1c0; --line:#383e4a; --accent:#77a5ff; } }
+    * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--ink); line-height:1.55; }
+    main { width:min(1040px,calc(100% - 32px)); margin:auto; padding:40px 0; } h1 { font-size:clamp(2rem,5vw,3rem); line-height:1.1; margin:0 0 12px; }
+    .lede { color:var(--muted); max-width:760px; } .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:14px; margin-top:24px; }
+    section { background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:20px; } h2 { margin:0 0 10px; font-size:1.1rem; }
+    a { color:var(--accent); } code { background:var(--bg); padding:.1em .3em; border-radius:4px; }
+  </style>
+</head>
+<body>
+<main>
+  <p>Quality evidence · AGT-2804 · 25 September 2026</p>
+  <h1>Proposed auto-tagging reference set</h1>
+  <p class="lede">This is an operator approval proposal, not an approved ground truth. The classifier reports precision and recall against it with the proposed status visible. The operator can amend individual assignments and glossary terms before approval.</p>
+  <div class="grid">
+    <section>
+      <h2>Sample</h2>
+      <p>The <a href="items.json">item data</a> contains 60 Agent Studio cards and 20 Dossiers. Cards were sampled from the live Task API on 25 September 2026 across active, completed, and archive states and creation months May through September 2026. Dossiers came from repository <code>workbench.json</code> descriptors and include current and historical statuses. Each row preserves its title, bounded body or summary, lifecycle state, expected area and facet ids, source, and a short rationale.</p>
+    </section>
+    <section>
+      <h2>Vocabulary</h2>
+      <p>The <a href="glossaries.json">proposed glossary data</a> derives terms from the AGT-W55 area descriptions and the corresponding Dossier vocabulary. It covers all ten product areas. Runtime classification uses these terms only when an official area glossary is empty. Both files carry <code>status: proposed</code> and <code>approvedBy: null</code>.</p>
+    </section>
+    <section>
+      <h2>Measurement</h2>
+      <p>Tier 1 uses a Sonnet-class route at low thinking. The evaluator compares its closed-registry predictions with the 80 expected tag sets. If precision is below 0.9, tier 2 runs at high thinking and classification selects it automatically. The backfill dry-run report shows precision and recall for the measured tiers, area counts, and low-confidence proposals. The numbers describe agreement with this proposed sample until the operator approves it.</p>
+    </section>
+    <section>
+      <h2>Approval decision</h2>
+      <p>The linked decision card asks the operator to approve or amend this set and the proposed glossaries. Approval records the operator identity and date in the data; it does not silently change the expected tags. See the AGT-2804 delivery report for the card link.</p>
+    </section>
+  </div>
+</main>
+</body>
+</html>

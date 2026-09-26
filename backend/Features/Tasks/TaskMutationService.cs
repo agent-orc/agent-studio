@@ -1050,6 +1050,15 @@ public class TaskMutationService
         return Updated();
     }
 
+    public bool SetTaggingStatus(string jobId, string status, string? watchPath = null)
+    {
+        if (status is not ("tagged" or "tags-proposed")) return false;
+        var info = _scanner.FindJob(jobId, watchPath);
+        if (info == null) return false;
+        TaskJsonFile.UpdateField(info.FolderPath, "taggingStatus", status, _logger);
+        return Updated();
+    }
+
     /// <summary>Applies one audited incremental waits-on edit without replacing unrelated references.</summary>
     public bool EditTaskWaitsOn(
         string jobId,

@@ -739,6 +739,7 @@ public class TaskScannerService : ITaskScanner
                 NeedsInput = ReadNeedsInput(jobDir, resolvedState),
                 TaskType = ReadTaskType(raw),
                 Tags = ReadTags(raw),
+                TaggingStatus = ReadTaggingStatus(raw),
                 References = ReadReferences(raw),
                 Released = raw.TryGetProperty("released", out var released)
                     && released.ValueKind == JsonValueKind.True,
@@ -1271,6 +1272,14 @@ public class TaskScannerService : ITaskScanner
             if (!string.IsNullOrWhiteSpace(s)) list.Add(s!);
         }
         return list;
+    }
+
+    private static string? ReadTaggingStatus(JsonElement raw)
+    {
+        if (!raw.TryGetProperty("taggingStatus", out var value) || value.ValueKind != JsonValueKind.String)
+            return null;
+        var status = value.GetString();
+        return status is "tagged" or "tags-proposed" ? status : null;
     }
 
     /// <summary>

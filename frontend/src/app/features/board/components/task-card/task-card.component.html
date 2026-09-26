@@ -323,8 +323,14 @@
       }
     </div>
   }
-  @if (tagChips().length > 0) {
+  @if (tagChips().length > 0 || job().taggingStatus === 'tagged' || job().taggingStatus === 'tags-proposed') {
     <div class="task-card__tags" data-testid="task-card-tags">
+      @if (job().taggingStatus === 'tagged' || job().taggingStatus === 'tags-proposed') {
+        <span class="task-card__tag-chip" data-testid="task-card-tagging-status"
+              [style.--tag-color]="job().taggingStatus === 'tags-proposed' ? 'var(--studio-accent-warn)' : 'var(--studio-fg-dim)'" [cacTooltip]="job().taggingStatus === 'tags-proposed' ? 'Low-confidence tag suggestions are waiting for review.' : 'Tags assigned by auto-tag classification.'">
+          {{ job().taggingStatus === 'tags-proposed' ? 'Tags proposed' : 'Auto-tagged' }}
+        </span>
+      }
       @for (tg of tagChips(); track tg.id) {
         <span class="task-card__tag-chip"
               [class.task-card__tag-chip--ghost]="tg.ghost && !tg.concern && !tg.unparseable"
