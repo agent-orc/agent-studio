@@ -34,6 +34,8 @@ public record TaskTokenSummary
     public DateTime? LastUpdate { get; init; }
     /// <summary>Per-call rows for the popover, oldest first.</summary>
     public List<TaskTokenCall> Entries { get; init; } = [];
+    /// <summary>True when any persisted call ran on a model other than its pin.</summary>
+    public bool HasModelMismatch { get; init; }
 }
 
 /// <summary>
@@ -71,6 +73,10 @@ public record TaskTokenCall
     public decimal EstimatedApiCostUsd { get; init; }
     /// <summary>Whether the price catalog resolved the model at <see cref="Ts"/>.</summary>
     public bool ModelPriced { get; init; }
+    /// <summary>The model requested by the card for this run.</summary>
+    public string? PinnedModel { get; init; }
+    /// <summary>True when <see cref="Model"/> differs from <see cref="PinnedModel"/>.</summary>
+    public bool ModelMismatch { get; init; }
 }
 
 /// <summary>

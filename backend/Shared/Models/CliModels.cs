@@ -1,4 +1,6 @@
 using System.Text.RegularExpressions;
+using System.Text.Json.Serialization;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Shared;
 
@@ -100,11 +102,14 @@ public record PendingIntent
 }
 
 public sealed record ModelFallbackInfo(
-    string From,
-    string To,
-    string Reason,
-    string? CliType = null,
-    string? ThinkingLevel = null);
+    [property: JsonPropertyName("from")] string From,
+    [property: JsonPropertyName("to")] string To,
+    [property: JsonPropertyName("reason")] string Reason,
+    [property: JsonPropertyName("cliType")] string? CliType = null,
+    [property: JsonPropertyName("thinkingLevel")] string? ThinkingLevel = null,
+    [property: JsonPropertyName("window")] string? Window = null,
+    [property: JsonPropertyName("usedPct")] double? UsedPct = null,
+    [property: JsonPropertyName("catalogueVersion")] string? CatalogueVersion = null);
 
 /// <summary>
 /// String values accepted on <see cref="ContinueJobRequest.Mode"/>. Kept as
@@ -173,11 +178,7 @@ public static class ModelIds
     public const string Gpt56Terra = "gpt-5.6-terra";
     /// <summary>See <see cref="Gpt56Terra"/>.</summary>
     public const string Gpt56Luna = "gpt-5.6-luna";
-    /// <summary>Economy Codex model for bounded supporting-agent and pipeline work.
-    /// Registry-onboarded (AGT-2707 round 2) so a codex-cli that does not offer it
-    /// (observed on codex-cli 0.144.1, AGT-2707) renders it disabled with a reason
-    /// instead of leaving it invisible while <c>PipelineStepModelDefaults</c> and
-    /// friends keep requesting it by id.</summary>
+    /// <summary>Retired Codex model retained only for historical records.</summary>
     public const string Gpt54Mini = "gpt-5.4-mini";
     /// <summary>Onboarded OpenAI flagship of the gpt-6 generation. Unlike the
     /// gpt-5.6 family this one IS a registry entry, so the picker can show it
@@ -195,7 +196,7 @@ public static class ModelIds
 /// <summary>Model family ids used by <see cref="ModelFamilyResolver"/> to pick the
 /// newest available member of a generation lineage instead of a pinned literal.
 /// Only families that today have more than one generation, or are expected to
-/// gain one, are onboarded here (haiku/sonnet/opus for Claude, mini/flagship
+/// gain one, are onboarded here (haiku/sonnet/opus for Claude, economy/flagship
 /// for Codex). Fable and the non-tiered vendors have no family entry.</summary>
 public static class ModelFamilies
 {
@@ -222,15 +223,13 @@ public static class ModelFamilies
 /// </list>
 /// Gpt-flagship is a thin alias over the already-live <see cref="ModelMetadataRegistry.DefaultForCli"/>
 /// Codex detection layer, so it stays in lockstep with the existing gpt-5.6
-/// mechanism instead of duplicating it. Gpt-mini has exactly one member today
-/// (<see cref="ModelIds.Gpt54Mini"/>, not a static registry entry - "availability
-/// comes from live CLI discovery" per its declaration comment) and resolves to
-/// it directly until a second mini generation is onboarded.
+/// mechanism instead of duplicating it. The compatibility family id
+/// <c>gpt-mini</c> now resolves to Luna, which replaced retired GPT-5.4 Mini.
 /// </summary>
 public static class ModelFamilyResolver
 {
     /// <summary>Family members in declared (newest-first) order. Claude entries are
-    /// registry ids; gpt-mini's sole member is not a registry entry (see class doc).</summary>
+    /// registry ids; the compatibility gpt-mini family resolves to Luna.</summary>
     private static readonly IReadOnlyDictionary<string, string[]> StaticMembers =
         new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
         {
@@ -238,7 +237,7 @@ public static class ModelFamilyResolver
             [ModelFamilies.ClaudeSonnet] = [ModelIds.ClaudeSonnet5, ModelIds.ClaudeSonnet46, ModelIds.ClaudeSonnet45],
             [ModelFamilies.ClaudeOpus] =
                 [ModelIds.ClaudeOpus5, ModelIds.ClaudeOpus48, ModelIds.ClaudeOpus47, ModelIds.ClaudeOpus46, ModelIds.ClaudeOpus45],
-            [ModelFamilies.GptMini] = [ModelIds.Gpt54Mini],
+            [ModelFamilies.GptMini] = [ModelIds.Gpt56Luna],
         };
 
     private static readonly IReadOnlyDictionary<string, string> VendorForFamily =
@@ -312,19 +311,21 @@ public static class ModelMetadataRegistry
     private static readonly ModelMetadata[] Entries =
     [
         Claude(ModelIds.ClaudeOpus5, "Claude Opus 5", isDefault: true, context: 1_000_000,
-            thinkingLevels: ["low", "medium", "high", "xhigh", "max"], defaultThinkingLevel: "high"),
+            aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeOpus5),
+            thinkingLevels: ["low", "medium", "high", "xhigh", "max"], defaultThinkingLevel: "high",
+            minimumCliVersion: "2.1.281"),
         Claude(ModelIds.ClaudeFable51, "Claude Fable 5.1", context: 200_000,
-            aliases: ["claude-fable-5.1"],
+            aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeFable51),
             thinkingLevels: ["low", "medium", "high", "xhigh", "max"], defaultThinkingLevel: "high"),
         Claude(ModelIds.ClaudeSonnet5, "Claude Sonnet 5", context: 200_000),
-        Claude(ModelIds.ClaudeOpus48, "Claude Opus 4.8", context: 200_000, aliases: ["claude-opus-4.8"]),
-        Claude(ModelIds.ClaudeOpus47, "Claude Opus 4.7", context: 200_000, aliases: ["claude-opus-4.7"]),
-        Claude(ModelIds.ClaudeOpus46, "Claude Opus 4.6", context: 200_000, aliases: ["claude-opus-4.6"]),
-        Claude(ModelIds.ClaudeOpus45, "Claude Opus 4.5", context: 200_000, aliases: ["claude-opus-4.5"]),
-        Claude(ModelIds.ClaudeSonnet46, "Claude Sonnet 4.6", context: 200_000, aliases: ["claude-sonnet-4.6"]),
-        Claude(ModelIds.ClaudeSonnet45, "Claude Sonnet 4.5", context: 200_000, aliases: ["claude-sonnet-4.5"]),
+        Claude(ModelIds.ClaudeOpus48, "Claude Opus 4.8", context: 200_000, aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeOpus48)),
+        Claude(ModelIds.ClaudeOpus47, "Claude Opus 4.7", context: 200_000, aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeOpus47)),
+        Claude(ModelIds.ClaudeOpus46, "Claude Opus 4.6", context: 200_000, aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeOpus46)),
+        Claude(ModelIds.ClaudeOpus45, "Claude Opus 4.5", context: 200_000, aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeOpus45)),
+        Claude(ModelIds.ClaudeSonnet46, "Claude Sonnet 4.6", context: 200_000, aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeSonnet46)),
+        Claude(ModelIds.ClaudeSonnet45, "Claude Sonnet 4.5", context: 200_000, aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeSonnet45)),
         Claude(ModelIds.ClaudeHaiku45, "Claude Haiku 4.5", context: 200_000,
-            aliases: ["claude-haiku-4.5", "claude-haiku-4-5-20251001"]),
+            aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeHaiku45)),
         // gpt-5.5 is the current Codex/OpenAI default. codex-cli 0.143 on a
         // ChatGPT account rejects gpt-5-codex with a 400 invalid_request, so
         // the default must be the account-valid model (AGT-1941). Pricing is
@@ -362,14 +363,9 @@ public static class ModelMetadataRegistry
         // longer the default: a ChatGPT-account spawn rejects it outright.
         new(ModelIds.Gpt5Codex, "GPT-5 Codex", "openai", IsDefault: false, Deprecated: false, Available: true,
             ContextWindow: 272_000),
-        // gpt-5.4-mini backs bounded orchestrator/support steps
-        // (PipelineStepModelDefaults, ReviewDecisionOrchestrator, GitService
-        // commit summaries). Registry-onboarded (AGT-2707 round 2) so the picker
-        // disables it with a reason when the installed CLI does not offer it
-        // (2026-09-11 evidence: codex-cli 0.144.1 rejects it with HTTP 400 and
-        // omits it from `debug models`) instead of leaving it invisible while
-        // production code keeps requesting it by id.
-        new(ModelIds.Gpt54Mini, "GPT-5.4 Mini", "openai", IsDefault: false, Deprecated: false, Available: true,
+        // Retired 2026-09-11 after codex-cli 0.144.1 removed and rejects it.
+        // Keep the identity for historical receipts, but never offer or route it.
+        new(ModelIds.Gpt54Mini, "GPT-5.4 Mini", "openai", IsDefault: false, Deprecated: true, Available: false,
             ContextWindow: 272_000),
         new(ModelIds.Gpt41, "GPT-4.1", "openai", IsDefault: false, Deprecated: false, Available: true,
             ContextWindow: 1_000_000),
@@ -817,10 +813,12 @@ public static class ModelMetadataRegistry
         long context = 200_000,
         string[]? aliases = null,
         string[]? thinkingLevels = null,
-        string? defaultThinkingLevel = null)
+        string? defaultThinkingLevel = null,
+        string? minimumCliVersion = null)
         => new(id, label, "anthropic", isDefault, Deprecated: false, Available: true,
             ContextWindow: context, Aliases: aliases,
-            ThinkingLevels: thinkingLevels, DefaultThinkingLevel: defaultThinkingLevel);
+            ThinkingLevels: thinkingLevels, DefaultThinkingLevel: defaultThinkingLevel,
+            MinimumCliVersion: minimumCliVersion);
 
     private static string? VendorForCli(string? cliType)
     {

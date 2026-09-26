@@ -26,6 +26,8 @@ export interface TaskTokenBubbleEntry {
   total: number;
   /** Cost estimate priced at this entry's own timestamp, not today's rate. */
   costLabel: string;
+  pinnedModel: string | null;
+  modelMismatch: boolean;
 }
 
 export interface TaskTokenBubble {
@@ -43,6 +45,7 @@ export interface TaskTokenBubble {
   lastUpdate: string | null;
   tier: 'neutral' | 'blue' | 'mauve' | 'peach';
   entries: TaskTokenBubbleEntry[];
+  hasModelMismatch: boolean;
 }
 
 const FILE_LIST_MAX = 12;
@@ -269,6 +272,8 @@ export function buildTokenBubble(tokenSummary: TaskInfo['tokenSummary']): TaskTo
         totalTokens: entryTotal,
         unpricedRuns: entry.modelPriced ? 0 : 1,
       }),
+      pinnedModel: entry.pinnedModel ?? null,
+      modelMismatch: entry.modelMismatch === true,
     };
   });
   const unpricedRuns = (tokenSummary.entries ?? [])
@@ -293,6 +298,8 @@ export function buildTokenBubble(tokenSummary: TaskInfo['tokenSummary']): TaskTo
     lastUpdate: tokenSummary.lastUpdate ? formatShortTime(tokenSummary.lastUpdate) : null,
     tier,
     entries,
+    hasModelMismatch: tokenSummary.hasModelMismatch === true
+      || entries.some((entry) => entry.modelMismatch),
   };
 }
 
@@ -451,7 +458,10 @@ function buildModelTooltip(
     }
   }
   lines.push(`<b>Agent:</b> ${escapeHtml(job.agent || 'none')} <i>(pickup permission)</i>`);
-  if (source === 'fallback') lines.push(`<b>Reason:</b> quota (${escapeHtml(job.quotaFallback?.reason ?? 'cap reached')})`);
+  if (source === 'fallback') {
+    const fallbackReason = job.quotaFallback?.reason ?? 'quota cap reached';
+    lines.push(`<b>Reason:</b> ${escapeHtml(fallbackReason)}`);
+  }
 
   const ownerLabel = owner.displayName || owner.id;
   const defaultParts: string[] = [];

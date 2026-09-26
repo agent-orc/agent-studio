@@ -1437,6 +1437,7 @@ public static class V1ReviewPlaneEndpoints
             Model = lastSwitch.Model,
             ThinkingLevel = lastSwitch.ThinkingLevel,
             Reason = lastSwitch.Reason,
+            ModelFallback = lastSwitch.ModelFallback,
         });
         recorder.EmitFallbackActivated(
             task,
@@ -1449,7 +1450,8 @@ public static class V1ReviewPlaneEndpoints
                 true,
                 lastSwitch.Reason,
                 CapEvaluation.NotBlocked),
-            source: "review-claim");
+            source: "review-claim",
+            modelFallback: lastSwitch.ModelFallback);
         return subject with { Plan = subject.Plan with { Commands = resolvedCommands } };
     }
 
@@ -2244,7 +2246,8 @@ public sealed class V1ReviewExecutorRegistry
                     capability.LimitedUntil,
                     capability.CredentialModifiedAt,
                     capability.EvidenceId,
-                    capability.EvidenceExcerpt);
+                    capability.EvidenceExcerpt,
+                    capability.SupportedModels);
             })
             .GroupBy(capability => capability.Key, StringComparer.Ordinal)
             .Select(group => group.Last())
@@ -2830,6 +2833,34 @@ public sealed class V1ReviewExecutorRegistry
     }
 
     /// <summary>
+    /// Returns the model-admission evidence advertised by the current coding
+    /// runner instance. A null model list means discovery was inconclusive and
+    /// callers must leave the post-run mismatch guard responsible for safety.
+    /// </summary>
+    public CliModelCapability? CliModelCapabilityFor(
+        string runnerId,
+        string? instanceId,
+        string cliType)
+    {
+        var key = Contract.CapabilityProtocol.CliExecution(cliType);
+        lock (_gate)
+        {
+            if (string.IsNullOrWhiteSpace(instanceId)
+                || !_registrations.TryGetValue(runnerId, out var registration)
+                || !string.Equals(registration.InstanceId, instanceId, StringComparison.Ordinal)
+                || !_capabilityStates.TryGetValue(runnerId, out var state)
+                || !string.Equals(state.InstanceId, instanceId, StringComparison.Ordinal))
+                return null;
+
+            var capability = state.Capabilities.FirstOrDefault(item =>
+                string.Equals(item.Key, key, StringComparison.Ordinal));
+            return capability is null
+                ? null
+                : new CliModelCapability(capability.Version, capability.SupportedModels);
+        }
+    }
+
+    /// <summary>
     /// Test seam: backdates this runner's recorded capability failures so the
     /// cooldown-expiry path can be exercised without waiting out the real
     /// two-minute backoff. Never called in production.
@@ -3005,6 +3036,10 @@ public sealed class V1ReviewExecutorRegistry
             string message)
             => new(false, message, required);
     }
+
+    public sealed record CliModelCapability(
+        string? InstalledVersion,
+        IReadOnlyList<string>? SupportedModels);
 
     public sealed record ReviewExecutor(string HostId, IReadOnlySet<string> Capabilities);
 

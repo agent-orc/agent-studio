@@ -1,6 +1,6 @@
 # Model Routing Policy
 
-Version: 2026-09-18
+Version: 2026-09-19
 
 Status: Canonical policy, initial hypothesis based on the 2026-07-23 historical benchmark
 
@@ -27,7 +27,6 @@ should explain when a pin is below the policy floor.
 | `gpt-5.6-terra` / `medium` | Standard features, content, and reversible UI or service changes inside one subsystem. This is the default sweet spot when requirements and test seams are clear. | P0 work, fencing, distributed authority, data-loss paths, or changes that require broad architectural reconstruction. | The historical report contained eight Terra/medium records, but none had a known grade and none formed a trustworthy terminal cohort. Keep Terra as the working default, but promote on substantive reissue until controlled data validates it. |
 | `gpt-5.6-sol` / `medium` | Demanding implementation, investigation, or analysis with several interacting concepts, a broad context search, or two to three subsystems. | Correctness-critical control-plane work that meets a hard floor. | Sol/medium had seven standard chore/feature runs with zero reissues. Five had known grades and all five were A or B. This is the strongest favorable historical signal, although the sample is still small and observational. |
 | `gpt-5.6-sol` / `xhigh` | Correctness-critical work: P0, fencing, leases, distributed authority, security boundaries, destructive migrations, data-loss prevention, or subtle concurrent state machines. | Routine work merely because quota is available. More thinking is not a substitute for tighter scope or deterministic tests. | The xhigh cohort was heavily selected for difficult and incident-driven work: 78 runs, 32 reissued, with only 22 known grades. Its high reissue rate is a warning about cohort and pipeline churn, not proof that xhigh causes poor outcomes. This tier is selected by the correctness floor while controlled benchmarks remain open. |
-| `gpt-5.4-mini` / `high` | Bounded orchestrator and supporting-pipeline decisions over compact, structured evidence, with a deterministic output contract. Examples: aspect verdicts, the final route decision, and post-abort classification. | Core code implementation, open-ended architecture, ambiguous product decisions, or a context set too large to fit in the bounded decision prompt. | The historical task benchmark had only two Mini/medium task records, both grade B and neither reissued. That does not validate Mini for core tasks. The `high` pipeline route instead follows the existing bounded-support contract in `PipelineStepModelDefaults`; use a stronger tier when the decision itself is correctness-critical or unbounded. |
 
 The task Result `summary` step is a deliberate bounded-output exception to the
 Mini support default. It uses `gpt-5.6-luna` / `medium` by default because it
@@ -48,14 +47,13 @@ in the benchmark below. Whether it becomes a tier or the default is a separate
 operator decision; until then it is selectable only as an explicit pin, and an
 explicit pin is not evidence that it clears any correctness floor.
 
-`gpt-5.6-luna`, `gpt-5.6-terra`, and `gpt-5.4-mini` above were already this
-policy's routing tiers, but until AGT-2707 round 2 they had no
+`gpt-5.6-luna` and `gpt-5.6-terra` above were already this policy's routing
+tiers, but until AGT-2707 round 2 they had no
 `ModelMetadataRegistry` entry, so a codex-cli that did not offer one left it
 silently invisible in the picker instead of disabled-with-a-reason. They are
 now registry entries for that catalog-visibility reason only: their routing
-tiers, reasoning ladders, and defaults above are unchanged, and (unlike
-`gpt-5.4-mini`) `gpt-5.6-luna`/`gpt-5.6-terra`'s registry `Available` baseline
-is deliberately false so a total CLI-probe failure still never assumes a
+tiers, reasoning ladders, and defaults above are unchanged. Their registry
+`Available` baseline is deliberately false so a total CLI-probe failure never assumes a
 gpt-5.6 model is offered - the same detection-only posture `gpt-5.6-sol` keeps
 by having no registry entry at all (AGT-2025).
 
@@ -84,9 +82,10 @@ For core task execution, map the total to the ladder:
 | `51-69` | Sol / medium |
 | `70-100` | Sol / xhigh |
 
-The Mini route is a role exception, not the bottom rung of the core-task
-ladder. Select it only when the call is a bounded pipeline decision with
-structured evidence and a parseable output contract.
+Luna/high is a role exception for bounded pipeline decisions with structured
+evidence and a parseable output contract. It is not the bottom rung of the
+core-task ladder. GPT-5.4 Mini was retired on 2026-09-11 and is retained only
+as a historical identifier.
 
 ### Automated card convention
 
@@ -126,6 +125,16 @@ to never return a null thinking level. Haiku-class models remain in use only
 on the separate pipeline-support/classification path
 (`ModelFamilyResolver`/`PipelineStepModelDefaults`), which never calls this
 registry.
+
+An explicit pin is also an execution constraint, not a preference. Before a
+local process starts, Studio checks a Claude pin against the model registry's
+minimum CLI version and a Codex pin against the installed CLI's live model
+catalogue. Remote claim admission applies the same policy to the Runner's
+advertised CLI version and Codex catalogue. An unsupported pin stays Ready and
+gets the durable `model-unsupported` dispatch reason. For example,
+`claude-opus-5-5` requires Claude Code 2.1.281; a host on 2.1.270 reports
+`model unsupported by installed CLI 2.1.270 (minimum 2.1.281)` and does not
+spawn the CLI.
 
 The create-task UI shows the recommendation, policy version, task type, tier,
 and whether economy mode caused a safe one-step downgrade. Choosing a model or
@@ -234,7 +243,7 @@ Available/Deprecated flags when discovery has not run yet:
 | `claude-haiku` | claude-haiku-4-5 | claude-haiku-4-5 |
 | `claude-sonnet` | claude-sonnet-5, claude-sonnet-4-6, claude-sonnet-4-5 | claude-sonnet-5 |
 | `claude-opus` | claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-opus-4-5 | claude-opus-5 |
-| `gpt-mini` | gpt-5.4-mini | gpt-5.4-mini |
+| `gpt-mini` compatibility id | gpt-5.6-luna | gpt-5.6-luna |
 | `gpt-flagship` | detected gpt-5.6-\* else gpt-5.5 | alias of the existing Codex detection layer (`ModelMetadataRegistry.DefaultForCli`) |
 
 Every former hardcoded `ModelIds.ClaudeHaiku45` / `ModelIds.Gpt54Mini` runtime
@@ -245,15 +254,16 @@ default (`OrchestratorRunner.DefaultModel`,
 `WikiMaintenanceModelService.DefaultModel`, `PipelineStepModelDefaults.SupportModel`,
 `DriftPostStepRunner.DefaultModel`, `GitService`'s commit-message model, and both
 Codex supporting-call defaults in `ReviewDecisionOrchestrator`) now resolves
-through this family layer instead of a pinned literal. Configuration keys
-still win when an operator sets one - a
+through this family layer instead of a pinned literal. The `gpt-mini`
+compatibility family now resolves to Luna, so no runtime default selects the
+retired Mini model. Configuration keys
+(e.g. `ClaudeCli:SummaryModel`) still win when an operator sets one - a
 configuration pin is an explicit choice and is never overridden.
 
-There is deliberately no Haiku-5 or newer gpt-mini entry: the 2026-09-06 fact
-check against the installed Claude Code 2.1.263 `/model` picker found no
-Haiku generation beyond 4.5, and whether a cheap pipeline step should leave
-the gpt-mini family for Sonnet is a Token Economy cost decision, not a
-family-generation rule.
+There is deliberately no Haiku-5 entry: the 2026-09-06 fact check against the
+installed Claude Code 2.1.263 `/model` picker found no Haiku generation beyond
+4.5. GPT-5.6 Luna replaced GPT-5.4 Mini for cheap supporting calls on
+2026-09-11.
 
 ### Migration catalog
 
@@ -263,7 +273,7 @@ the versioned list of known-safe "from model -> to model" replacements: same
 family, newer generation, `safeAuto: true` when the orchestrator may apply it
 without operator confirmation. Today it holds exactly the superseded Opus and
 Sonnet generations pointing at `claude-opus-5` / `claude-sonnet-5`; it holds no
-Haiku or gpt-mini entry for the reason above.
+Haiku entry. Retired GPT-5.4 Mini is not a migration target or route.
 
 This catalog is currently an interim Studio-owned copy, following the same
 replaceable-seam posture as `IModelEconomyAdvisor` and the TokenEconomy pricing
@@ -349,7 +359,7 @@ silently used to rewrite the initial estimate.
 | AGT-2182, persist restart-safe RunAttempt and ReviewAttempt fencing | 35 | 20 | 20 | 10 | 10 | 5 | `100`, Sol/xhigh | P0 distributed authority, stale-write rejection, leases, idempotency, restart behavior, and many interacting runtime paths trigger the hard floor independently of quota. |
 
 For every one of these cards, bounded supporting aspect and orchestrator calls
-may still use Mini/high. The table selects the core implementation route.
+may still use Luna/high. The table selects the core implementation route.
 
 ## Quota and provider handling
 
@@ -380,18 +390,52 @@ path-to-test map is the CLI domain's
 load-bearing boundary is recorded in
 [ADR-0069](../architecture/decisions/adr-archive.md#adr-0069---quota-admission-is-one-run-scoped-boundary-for-every-cli-execution-path-2026-09-08).
 
-The interim equivalence table covers only the tiers already named above: Codex
-Sol/high with Claude Opus 5/high, and Codex Mini/high with Claude Sonnet
-5/medium. If quota fallback is needed, an explicit model or thinking pin that
-has no exact cross-family equivalence does not fall through to a weaker route;
-admission waits. Explicit operator fallback overrides remain available and win
-over the derived table.
-Token Economy's `model-migration-catalog-safe-auto-rules` is the eventual
-system of record for equivalence tiers. A nearby quota reset is only worth a
-quiet wait when the run is cheap, with no explicit
-`high`/`xhigh`/`ultra`/`max` reasoning pin. An expensive run switches
-immediately when the equivalent provider has headroom, and waits when no route
-can preserve its floor.
+The equivalence adapter reads Token Economy's published, embedded model-routing
+knowledge base and price catalogue from the exactly pinned NuGet package. It
+selects another provider only within the same capability class, excludes
+unqualified and retired routes, preserves a supported explicit thinking level,
+and chooses the cheapest remaining comparable route. The package version and
+its independent routing-policy version are recorded together. Admission makes
+no network call. An operator-configured pair remains an explicit override and
+wins over catalogue selection.
+
+With the current catalogue, Claude Opus 5/high maps to Sol/high, Claude Sonnet
+5 with no stronger pin maps to Sol/medium, and the Haiku class maps to
+Luna/medium. GPT-6 Astra remains unqualified for automatic selection under this
+policy. GPT-5.4 Mini is retired and never appears as a route. If no candidate
+preserves the capability and thinking floor, admission follows the existing
+wait policy instead of downgrading.
+
+The per-CLI **prefer fallback now** switch is a runtime admission input. It
+routes only new runs, continuations, remote claims, review commands, chats, and
+one-shots; it never interrupts running work. The preference expires at the next
+known reset for that CLI. A hard cap triggers the same selection automatically.
+Every switch emits the shared `modelFallback` receipt:
+
+```json
+{
+  "from": "claude-opus-5 high",
+  "to": "gpt-5.6-sol high",
+  "reason": "quota-cap",
+  "window": "Weekly",
+  "usedPct": 98,
+  "catalogueVersion": "TokenEconomy 0.3.4; routing 2026-07-24"
+}
+```
+
+`reason` is `quota-cap`, `operator-preference`, or `provider-rejection`.
+`catalogueVersion` is set only for catalogue-selected routes; operator overrides
+leave it null so their receipts do not claim catalogue provenance.
+Provider-rejection continuations use the same record type. Remote runners never
+select a fallback independently: the task server records the admission decision
+and returns the effective CLI, model, and thinking level in the claim plan.
+
+The provider quota probe is the only listed non-reroutable caller. It runs the
+provider's native introspection command and does not invoke a model. All model
+calls, including summaries, enrichment, drift, pipeline/review aspects, local
+and remote task execution, and orchestrator chat, pass through
+`QuotaAdmissionService` directly or through the quota-aware `ICliOneShot`
+registry.
 
 ### Provider request refusals
 

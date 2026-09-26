@@ -90,7 +90,8 @@ async function installCompletedJobMocks(
 test.describe('Protocol pane - verdict chip + interim status', () => {
   test.use({ serviceWorkers: 'block' });
 
-  test('verdict chip renders for any reachable job', async ({ page }) => {
+  test('verdict chip renders for any reachable job', async ({ page, devBackend }) => {
+    void devBackend;
     await page.setViewportSize({ width: 1600, height: 1100 });
 
     const jobs = await listJobs();
@@ -390,7 +391,8 @@ test.describe('Protocol pane - verdict chip + interim status', () => {
     });
   });
 
-  test('review activity without a verdict stays actionable from Result', async ({ page }, testInfo) => {
+  test('review activity without a verdict stays actionable from Result', async ({ page, devBackend }, testInfo) => {
+    void devBackend;
     await page.setViewportSize({ width: 1600, height: 1100 });
 
     const jobs = await listJobs();
@@ -462,7 +464,8 @@ test.describe('Protocol pane - verdict chip + interim status', () => {
     await request;
   });
 
-  test('interim endpoint returns the precondition error when cli-output.log is missing', async ({ page }) => {
+  test('interim endpoint returns the precondition error when cli-output.log is missing', async ({ page, devBackend }) => {
+    void devBackend;
     const watchPaths = await api<WatchPathEntry[]>('/api/watch-paths');
     test.skip(watchPaths.length === 0, 'No watch paths configured');
     const watchPath = watchPaths[0].path;
@@ -504,7 +507,8 @@ test.describe('Protocol pane - verdict chip + interim status', () => {
    * (a long reason or raw signals), which is a property of the job, not of
    * this spec.
    */
-  test('the status line is the only disclosure control of the result header', async ({ page }) => {
+  test('the status line is the only disclosure control of the result header', async ({ page, devBackend }) => {
+    void devBackend;
     await page.setViewportSize({ width: 1600, height: 1100 });
 
     const jobs = await listJobs();
