@@ -134,7 +134,10 @@ synonyms, and links to matching wiki pages, Dossiers, and current cards.
 The proposal marker uses the typed `TagProposalsService`. Until the AGT-2804
 proposal decision endpoints are integrated, `USE_TAG_PROPOSAL_MOCK` is true and
 the service reads optional `tagProposalsMock` fixture data from local storage.
-The marker handles each pending proposal independently. The planned real calls
+The marker handles each pending proposal independently. Proposal identity is
+the project name plus proposal id; accepting or rejecting a proposal preserves
+same-id proposals in other projects, including their subject, tags, and state.
+The planned real calls
 are `GET /api/projects/{project}/tag-proposals` and
 `POST /api/projects/{project}/tag-proposals/{id}/decision` with an `accept` or
 `reject` choice; switching the service to HTTP is a one-line flag change once
