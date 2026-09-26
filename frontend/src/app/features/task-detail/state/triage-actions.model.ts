@@ -104,10 +104,8 @@ export const LANE_ACTIONS: Record<string, TriageButton[]> = {
     { id: 'reissue',      label: 'Reissue (→ Progress)',          variant: 'secondary', intent: { kind: 'move', targetState: TaskState.Progress } },
   ],
   [TaskState.HumanReview]: [
-    // "Merge into Develop" is the operator acceptance signal: it accepts the
-    // task into 6-completed (the "Delivered" lane), which is the trigger the
-    // deferred Merge-into-Develop post-step hooks into.
-    { id: 'mark-done',          label: 'Merge into Develop',                        variant: 'primary',   intent: { kind: 'move', targetState: TaskState.Completed } },
+    // Acceptance only completes a delivery already proven integrated.
+    { id: 'mark-done',          label: 'Accept',                        variant: 'primary',   intent: { kind: 'move', targetState: TaskState.Completed } },
     { id: 'send-back-to-ready', label: 'Send back to Ready (re-do)',                variant: 'secondary', intent: { kind: 'move', targetState: TaskState.Ready } },
     SEND_TO_BACKLOG,
   ],
@@ -244,15 +242,10 @@ export function primaryActionFor(state: string): TriageButton | null {
 }
 
 /**
- * State-dependent presentation for the `5-human-review` acceptance primary
- * (`mark-done`, labelled "Merge into Develop"). The button literally offers a
- * merge, but a parallel-worktree run is auto-integrated into develop *before*
- * it lands in human-review (ADR-0052), so by the time the operator sees the
- * card the work has often already merged. Offering "Merge into Develop" then
- * lies. When the work has already landed, the header shows a read-only landed
- * status and relabels the button to a plain "Accept" - accepting the
- * already-merged work into Delivered, not triggering a merge. When nothing has
- * landed yet, the offer stays "Merge into Develop".
+ * State-dependent presentation for the `5-human-review` acceptance primary.
+ * The label always says "Accept" because acceptance only completes a delivery
+ * already proven integrated. Git membership still determines the landed
+ * status and whether acceptance can complete.
  */
 export interface MergeAcceptView {
   /** True once the work is on develop (or further); drives status + relabel. */
@@ -307,7 +300,7 @@ export function mergeAcceptViewFor(
     return {
       landed: false,
       landedState: 'on-branch-only',
-      acceptLabel: 'Merge into Develop',
+      acceptLabel: 'Accept',
       statusLabel: null,
       statusTooltip: null,
     };
