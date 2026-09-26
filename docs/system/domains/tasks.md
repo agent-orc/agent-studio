@@ -1016,7 +1016,9 @@ their authoritative checks; display state never grants permission to mutate.
 - **Change-driven, not request-driven.** Each repository is watched with a
   `FileSystemWatcher` on `.git/HEAD`, `refs/`, `packed-refs`, config, worktree
   Git files and the common Git directory, plus task metadata and review-subject
-  events. A
+  events. The sweep also compares the task input signature, including the
+  review-subject content hash, so a missed event or a same-size rewrite with a
+  preserved timestamp converges, while a same-content touch does not reindex. A
   debounce (default 400 ms) coalesces a burst of events into one run per
   repository; a slow periodic sweep (default 45 s) re-checks a cheap
   ref signature and Git-resolved effective configuration as a safety net for

@@ -537,10 +537,90 @@ public sealed class GitStateIndexServiceTests : IDisposable
             Assert.Equal(0, cache.SubjectVersion(folder));
         }
 
-        var subject = Path.Combine(folder, ReviewSubjectStore.FileName);
+        var subject = ReviewSubjectStore.PathFor(folder);
+        Directory.CreateDirectory(Path.GetDirectoryName(subject)!);
         File.WriteAllText(subject, "new review subject");
         Assert.True(GitStateIndexService.IsGitRelevantSidecar(subject));
         Assert.NotEqual(before, GitStateIndexService.CaptureTaskInputSignature([task], cache));
+    }
+
+    [Fact]
+    public void SameLengthReviewSubjectRewrite_WithPreservedTimestamp_ChangesInputGeneration()
+    {
+        var jobsPath = NewRepoWatchPath("proj");
+        var folder = Path.Combine(jobsPath, "task-1");
+        Directory.CreateDirectory(folder);
+        var task = new TaskInfo
+        {
+            Id = "task-1", TaskKey = "task-1", ProjectName = "proj",
+            WatchPath = jobsPath, FolderPath = folder,
+        };
+        var subject = ReviewSubjectStore.PathFor(folder);
+        Directory.CreateDirectory(Path.GetDirectoryName(subject)!);
+        File.WriteAllText(subject, "old");
+        var originalTime = File.GetLastWriteTimeUtc(subject);
+        var cache = new TaskListGitProjectionCache();
+        var before = GitStateIndexService.CaptureTaskInputSignature([task], cache);
+
+        File.SetLastWriteTimeUtc(subject, originalTime.AddMinutes(1));
+        Assert.False(cache.MarkTaskInputChanged(subject));
+        Assert.Equal(before, GitStateIndexService.CaptureTaskInputSignature([task], cache));
+
+        File.WriteAllText(subject, "new");
+        File.SetLastWriteTimeUtc(subject, originalTime);
+        Assert.True(cache.MarkTaskInputChanged(subject));
+        Assert.Equal(1, cache.SubjectVersion(folder));
+        Assert.NotEqual(before, GitStateIndexService.CaptureTaskInputSignature([task], cache));
+        Assert.False(cache.MarkTaskInputChanged(subject));
+    }
+
+    [Fact]
+    public async Task MissedReviewSubjectEvent_IsRecoveredBySafetySweep()
+    {
+        var jobsPath = NewRepoWatchPath("proj");
+        var repoPath = Path.Combine(Path.GetDirectoryName(jobsPath)!, "repo");
+        var folder = Path.Combine(jobsPath, TaskStates.Progress, "task-1");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "task.json"),
+            "{\"id\":\"task-1\",\"state\":\"3-progress\",\"title\":\"Task\"}");
+        var subject = ReviewSubjectStore.PathFor(folder);
+        Directory.CreateDirectory(Path.GetDirectoryName(subject)!);
+        File.WriteAllText(subject, "old");
+        var originalTime = File.GetLastWriteTimeUtc(subject);
+
+        var scanner = BuildScanner("proj", jobsPath, repoPath);
+        var cache = new TaskListGitProjectionCache();
+        var calls = 0;
+        Task<TaskListGitProjection> Build(IReadOnlyCollection<TaskInfo> tasks)
+        {
+            Interlocked.Increment(ref calls);
+            return Task.FromResult(TaskListGitProjection.Empty with
+            {
+                Signatures = tasks.ToDictionary(task => task.TaskKey, TaskGitSignature.For),
+                SubjectVersions = tasks.ToDictionary(task => task.TaskKey,
+                    task => cache.SubjectVersion(task.FolderPath)),
+            });
+        }
+        using var service = new GitStateIndexService(scanner, BuildWatcher(scanner), cache,
+            Build, _ => { }, NullLogger.Instance,
+            FastOptions() with { SweepInterval = TimeSpan.FromMilliseconds(100) }, TimeProvider.System);
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            await WaitUntilAsync(() => Volatile.Read(ref calls) >= 1 && !service.IsRunning("proj"));
+            var task = Assert.Single(scanner.ScanAllJobsRaw());
+            Assert.Equal("ready", cache.ReadTask(task).State);
+            var originalGeneration = cache.ReadTask(task).Generation;
+
+            // The task watcher is deliberately not started. The sweep must
+            // recover the change even when size and timestamp are unchanged.
+            File.WriteAllText(subject, "new");
+            File.SetLastWriteTimeUtc(subject, originalTime);
+            await WaitUntilAsync(() => Volatile.Read(ref calls) >= 2
+                && cache.ReadTask(task).Generation > originalGeneration
+                && cache.ReadTask(task).State == "ready");
+        }
+        finally { await service.StopAsync(CancellationToken.None); }
     }
 
     [Fact]
