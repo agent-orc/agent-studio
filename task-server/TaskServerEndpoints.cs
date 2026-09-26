@@ -550,6 +550,32 @@ public static class TaskServerEndpoints
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
             .RequireTaskServerScope(TaskServerScopes.OrchestrationWrite);
 
+        var steering = api.MapGroup("/steering/projects/{projectId}/tasks/{taskIdentity}")
+            .RequireTaskServerScope(TaskServerScopes.OrchestrationWrite);
+        steering.MapPost("/actions", async (
+            HttpContext context, string projectId, string taskIdentity,
+            SteeringActionRequest request, TaskServerStore store, CancellationToken ct) =>
+        {
+            var principal = context.TaskServerPrincipal();
+            return principal?.Kind == TaskServerPrincipalKinds.Engine
+                ? await InvokeAsync(() => store.ApplySteeringActionAsync(
+                    projectId, taskIdentity, request, principal.PrincipalId, ct), StatusCodes.Status201Created)
+                : Results.Json(new ApiError("engine-principal-required", "An authenticated Engine principal is required."),
+                    statusCode: StatusCodes.Status403Forbidden);
+        })
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
+        steering.MapGet("/actions/{commandId}", async (
+            HttpContext context, string projectId, string taskIdentity, string commandId,
+            TaskServerStore store, CancellationToken ct) =>
+        {
+            var principal = context.TaskServerPrincipal();
+            return principal?.Kind == TaskServerPrincipalKinds.Engine
+                ? await InvokeNullableAsync(() => store.GetSteeringActionAsync(
+                    projectId, taskIdentity, commandId, ct))
+                : Results.Json(new ApiError("engine-principal-required", "An authenticated Engine principal is required."),
+                    statusCode: StatusCodes.Status403Forbidden);
+        });
+
         var management = api.MapGroup("/management")
             .RequireTaskServerScope(TaskServerScopes.Management);
         management.MapGet("/principals", async (TaskServerStore store, CancellationToken ct)

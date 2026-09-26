@@ -13,6 +13,59 @@ namespace TaskServer.Tests;
 public sealed class TaskServerStoreTests
 {
     [Fact]
+    public async Task Steering_rejects_stale_generation_without_mutation_and_preserves_actor_reason()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        var accepted = await store.ApplySteeringActionAsync(project.ProjectId, task.TaskId,
+            new SteeringActionRequest(1, "park-1", "park", task.Version, 0, "operator hold"),
+            "engine-a", default);
+        Assert.Equal("0-backlog", accepted.ResultState);
+        Assert.Equal("engine-a", accepted.Actor);
+        Assert.Equal("operator hold", accepted.Reason);
+        Assert.Equal(accepted, await store.GetSteeringActionAsync(project.ProjectId, task.TaskId, "park-1", default));
+
+        var stale = await Assert.ThrowsAsync<TaskServerConflictException>(() =>
+            store.ApplySteeringActionAsync(project.ProjectId, task.TaskId,
+                new SteeringActionRequest(1, "queue-stale", "queue", task.Version, 0, "old view"),
+                "engine-a", default));
+        Assert.Equal("steering-generation-stale", stale.Code);
+        var current = await store.GetTaskAsync(project.ProjectId, task.TaskId, default);
+        Assert.Equal("0-backlog", current!.State);
+        Assert.Equal(task.Version + 1, current.Version);
+        Assert.Null(await store.GetSteeringActionAsync(project.ProjectId, task.TaskId, "queue-stale", default));
+
+        var replay = await store.ApplySteeringActionAsync(project.ProjectId, task.TaskId,
+            new SteeringActionRequest(1, "park-1", "park", task.Version, 0, "operator hold"),
+            "engine-a", default);
+        Assert.Equal(accepted, replay);
+
+        await store.ApplySteeringActionAsync(project.ProjectId, task.TaskId,
+            new SteeringActionRequest(1, "queue-1", "queue", current.Version, 0, "resume"),
+            "engine-a", default);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "runner-a", default);
+        Assert.Equal("claimed", claim.Status);
+        var duringRun = await store.GetTaskAsync(project.ProjectId, task.TaskId, default);
+        var beforeHistory = await store.GetTaskHistoryAsync(project.ProjectId, task.TaskId, 0, default);
+        var staleFence = await Assert.ThrowsAsync<TaskServerConflictException>(() =>
+            store.ApplySteeringActionAsync(project.ProjectId, task.TaskId,
+                new SteeringActionRequest(1, "park-old-fence", "park", duringRun!.Version, 0, "stale fence"),
+                "engine-a", default));
+        Assert.Equal("steering-generation-stale", staleFence.Code);
+        var active = await Assert.ThrowsAsync<TaskServerConflictException>(() =>
+            store.ApplySteeringActionAsync(project.ProjectId, task.TaskId,
+                new SteeringActionRequest(1, "park-active", "park", duringRun!.Version, claim.Lease!.Fence, "active run"),
+                "engine-a", default));
+        Assert.Equal("task-attempt-active", active.Code);
+        Assert.Equal(duringRun, await store.GetTaskAsync(project.ProjectId, task.TaskId, default));
+        var afterHistory = await store.GetTaskHistoryAsync(project.ProjectId, task.TaskId, 0, default);
+        Assert.Equal(beforeHistory!.Runs, afterHistory!.Runs);
+    }
+
+    [Fact]
     public async Task Releasing_a_dead_runner_attempt_returns_its_progress_task_to_ready()
     {
         using var temp = new TempDirectory();

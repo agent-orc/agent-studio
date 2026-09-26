@@ -51,6 +51,24 @@ public sealed class EngineTaskServerClient : IDisposable
             request,
             ct);
 
+    public Task<SteeringActionReceipt> ApplySteeringActionAsync(
+        string projectId, string taskId, SteeringActionRequest request, CancellationToken ct)
+        => PostAsync<SteeringActionRequest, SteeringActionReceipt>(
+            $"/api/v1/steering/projects/{Uri.EscapeDataString(projectId)}/tasks/{Uri.EscapeDataString(taskId)}/actions",
+            request, ct);
+
+    public async Task<SteeringActionReceipt> GetSteeringActionAsync(
+        string projectId, string taskId, string commandId, CancellationToken ct)
+    {
+        var path = $"/api/v1/steering/projects/{Uri.EscapeDataString(projectId)}/tasks/{Uri.EscapeDataString(taskId)}/actions/{Uri.EscapeDataString(commandId)}";
+        using var response = await _http.GetAsync(path, ct);
+        var content = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            throw new EngineTaskServerException((int)response.StatusCode, content);
+        return JsonSerializer.Deserialize<SteeringActionReceipt>(content, Json)
+            ?? throw new EngineTaskServerException((int)response.StatusCode, "Task Server returned an empty steering receipt.");
+    }
+
     public Task<OrchestrationRunDto> CompleteStageAsync(
         string runId,
         CompleteOrchestrationStageRequest request,

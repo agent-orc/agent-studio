@@ -44,6 +44,16 @@ transport, fenced Runner authority, and no direct remote filesystem writer.
 These decisions are a package. Co-hosting the control plane with the Runner or
 using one shared bearer token would invalidate the threat model below.
 
+For D5 deployment, select exactly one authority backend. In the remote profile,
+the standalone Task Server SQLite database is authoritative; point the Engine,
+Studio connector, and all runner hosts at its authenticated `/api/v1` routes.
+Keep the local `OrchestratorApi` task runner disabled against those same task
+identities. A local compatibility deployment instead uses the file-backed
+Task Server and its shared run lease for local and remote execution. Do not
+dual-write SQLite and `task.json` as peer stores. Cutover requires the existing
+inventory, backup, freeze, import, and rollback gates; this slice does not
+assert that a production cutover has occurred.
+
 ## Why a dedicated VM
 
 A compromised Runner is an explicit threat, not only an availability failure.
