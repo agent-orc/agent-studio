@@ -12,6 +12,7 @@ an agent CLI, first tasks, and troubleshooting.
 | File | Use it when |
 |---|---|
 | [getting-started.md](./getting-started.md) | The single new-user installation path: Docker Compose prerequisites, one start command, health checks, persistence, and troubleshooting - start here. |
+| [docker.md](./docker.md) | One-box Docker Compose installation and operations: source build, published images, credentials, backup, update, and network binding. |
 | [contributor-setup.md](./contributor-setup.md) | Source-build workflow for contributors who need to edit, test, or debug Agent Studio itself. Not a product installation path. |
 | [onboard-a-project.md](./onboard-a-project.md) | Product workflow for project creation through the UI or API, central task-store rules, runtime activation, and troubleshooting. |
 | [onboard-an-agent-cli.md](./onboard-an-agent-cli.md) | A new CLI (Claude, Codex, Copilot, Gemini) needs to be installed and made auto-runnable on this machine. Includes the load-bearing **Codex on Windows sandbox quirk**. |
@@ -26,7 +27,7 @@ an agent CLI, first tasks, and troubleshooting.
 | [remote-compose-test-harness.md](./remote-compose-test-harness.md) | Run the isolated Task Server, Agent Runner, and Studio Compose acceptance harness on a remote Docker host, with deterministic partitions, rolling replacements, evidence export, and identity-scoped cleanup. |
 | [presentation-capture.md](./presentation-capture.md) | Regenerating deterministic presentation stills and recording safe silent loops or narrated backup footage against the ADR-0056 demo workspace. |
 | [hosted-wiki-publication.md](./hosted-wiki-publication.md) | Publishing the accepted documentation revision to the hosted Wiki: published-revision rules, freshness SLO, read-only fetch credentials, scheduled and forced triggers, atomic promotion, typed deployment failures, and the rehearsed rollback drill. |
-| [docker-compose-connector-gap.md](./docker-compose-connector-gap.md) | Open gap, needs a decision: why the Connector (D4b) cannot be the root compose's LAN-reachable Studio backend as built, and the three options for the next Docker-deployable card. |
+| [docker-compose-connector-gap.md](./docker-compose-connector-gap.md) | Option C decision and the remaining Connector route-coverage limit for the one-box deployment. |
 
 ## Related references
 

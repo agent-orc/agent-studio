@@ -42,6 +42,21 @@ public sealed class EngineOptions
                 + "container network.");
 
         var credential = value("CLIENT_CREDENTIAL")?.Trim();
+        var credentialFile = value("CLIENT_CREDENTIAL_FILE")?.Trim();
+        if (!string.IsNullOrWhiteSpace(credential) && !string.IsNullOrWhiteSpace(credentialFile))
+            throw new ArgumentException("Configure only one of CLIENT_CREDENTIAL or CLIENT_CREDENTIAL_FILE.");
+        if (!string.IsNullOrWhiteSpace(credentialFile))
+        {
+            if (!File.Exists(credentialFile))
+                throw new ArgumentException($"CLIENT_CREDENTIAL_FILE does not exist: {credentialFile}");
+            if (!OperatingSystem.IsWindows())
+            {
+                var mode = File.GetUnixFileMode(credentialFile);
+                if ((mode & (UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.OtherRead | UnixFileMode.OtherWrite)) != 0)
+                    throw new ArgumentException("CLIENT_CREDENTIAL_FILE must be owner-readable only.");
+            }
+            credential = File.ReadAllText(credentialFile).Trim();
+        }
         if (!isLoopback && string.IsNullOrWhiteSpace(credential))
             throw new ArgumentException("CLIENT_CREDENTIAL is required for a non-loopback SERVER_URL.");
 

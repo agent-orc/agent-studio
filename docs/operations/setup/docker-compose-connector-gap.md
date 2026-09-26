@@ -1,6 +1,6 @@
 # Gap: the Connector (D4b) cannot be the root compose's Studio backend
 
-Status: open, needs a decision. Written while working AGT-2736 ("Agent Studio
+Status: option C selected by the operator on 2026-09-25. Written while working AGT-2736 ("Agent Studio
 Docker-deployable: one compose file runs the complete product from published
 images"). Not itself a decision dossier; it exists so the next card does not
 re-derive this from scratch.
@@ -72,25 +72,16 @@ component is both today.
    `orchestrator-api` proxy) as-is, accept its `/api/v1`-only coverage as a
    known limitation, and defer full route parity to a later card.
 
-This note takes no position between the three; it only establishes that one
-of them is required before item 1 and item 7 can be implemented.
+The operator selected option C for the one-box delivery. The distributed
+Task Server and Engine are the standard Compose deployment, with `/api/v1`
+covered through the Studio API proxy. Connector-equivalent dev-seat route
+coverage remains a documented limitation pending the operations topology work.
 
-## What AGT-2736 shipped instead
+## What AGT-2736 ships under option C
 
-Scoped to what does not depend on this decision:
-
-- Fixed a real regression where a bare `docker compose up` (no profile, no
-  `.env`) failed unconditionally interpolating `DISTRIBUTED_ENGINE_TOKEN`,
-  even though `orchestrator-engine` is gated behind the `distributed`/`dev`
-  profiles and was not being started.
-- Added `scripts/compose-distributed-bootstrap.sh`, which mints the three
-  distributed-profile principal tokens into `.env` on first run (never
-  overwriting an existing value), removing the manual-token-generation step
-  for that profile.
-- Verified the existing `scripts/compose-runner-bootstrap.sh` /
-  `runner.env.template` pair (already shipped) still makes
-  `docker compose --profile runner` usable from a fresh clone, and extended
-  `scripts/compose-smoke-test.sh` with a fourth scenario that exercises it in
-  CI.
-- Documented both bootstrap scripts in
-  [getting-started.md](./getting-started.md).
+The root Compose file starts the distributed Task Server, Engine, Studio API
+proxy, web UI, and agent host as one stack. A one-shot service creates
+principal credentials in a persistent named volume without operator token
+handling. The source-built path is the verified install path for this checkout;
+the published-image path is checked after release. See
+[Docker operations](./docker.md) for the commands and the route coverage limit.

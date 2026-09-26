@@ -1,6 +1,7 @@
 name: Onboarding smoke
 
 on:
+  pull_request:
   push:
     branches:
       - main
@@ -31,8 +32,8 @@ jobs:
 
       - name: Validate container image contracts
         run: |
-          scripts/compose-smoke-version.test.sh
-          scripts/container-image-contracts.test.sh
+          bash scripts/compose-smoke-version.test.sh
+          bash scripts/container-image-contracts.test.sh
 
       - name: Build, start, and verify onboarding stack
         run: scripts/compose-smoke-test.sh
