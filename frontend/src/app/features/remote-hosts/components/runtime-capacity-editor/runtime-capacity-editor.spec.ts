@@ -44,6 +44,42 @@ const HOST: RemoteHost = {
 };
 
 describe('RuntimeCapacityEditorComponent', () => {
+  it('shows light chat separately and a heavy chat as borrowed coding capacity', async () => {
+    await TestBed.configureTestingModule({
+      imports: [RuntimeCapacityEditorComponent],
+      providers: [provideZonelessChangeDetection()],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(RuntimeCapacityEditorComponent);
+    fixture.componentRef.setInput('host', { ...HOST, runtimeCapacity: {
+      ...HOST.runtimeCapacity!, maxParallelism: 5,
+    } });
+    fixture.componentRef.setInput('boardActiveSlots', 4);
+    fixture.componentRef.setInput('chatUsage', [{
+      hostName: 'Runner A', projectName: 'Agent Studio', activeTurns: 1,
+      heavyTurns: 0, cpuPercent: 12, tokens: 100, costUsd: 0.01,
+    }]);
+    fixture.detectChanges();
+    expect(fixture.componentInstance.freeSlots()).toBe(1);
+    expect(fixture.nativeElement.querySelector('[data-testid="remote-host-chat-summary"]')?.textContent)
+      .toContain('1 active chat turn,');
+
+    fixture.componentRef.setInput('chatUsage', [{
+      hostName: 'Runner A', projectName: 'Agent Studio', activeTurns: 1,
+      heavyTurns: 1, cpuPercent: 82, tokens: 100, costUsd: 0.01,
+    }]);
+    fixture.detectChanges();
+    expect(fixture.componentInstance.freeSlots()).toBe(0);
+    expect(fixture.nativeElement.querySelector('[data-testid="remote-host-slots"]')?.textContent)
+      .toContain('5 slots, 4 coding, 1 taken by a heavy chat turn');
+    expect(fixture.nativeElement.querySelector('[data-testid="remote-host-chat-usage"]')?.textContent)
+      .toContain('CPU 82%');
+    fixture.componentRef.setInput('boardActiveSlots', 5);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="remote-host-slots"]')?.textContent)
+      .toContain('5 coding, 1 heavy chat turn running alongside, 0 free');
+    fixture.destroy();
+  });
+
   it('shows the central total and emits a validated capacity update', async () => {
     await TestBed.configureTestingModule({
       imports: [RuntimeCapacityEditorComponent],

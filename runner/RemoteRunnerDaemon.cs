@@ -384,6 +384,8 @@ public sealed class RemoteRunnerDaemon
         }
         var consecutiveFaults = 0;
         var cliUpdateAttempted = false;
+        var interactiveChat = new InteractiveChatAdmission(_options, _client, _log);
+        var interactivePoll = interactiveChat.PollAsync(shutdown);
         while (!shutdown.IsCancellationRequested)
         {
             idleWatchdog.RecordActiveSlots(active.Count);
@@ -545,7 +547,8 @@ public sealed class RemoteRunnerDaemon
                         ],
                         effectiveCapacity: loadDecision.Throttle
                             ? active.Count
-                            : _client.HostMaxParallelism,
+                            : Math.Max(active.Count,
+                                _client.HostMaxParallelism - interactiveChat.HeavyCount),
                         occupiedCapacity: active.Count);
                     hostReport = await _client.ReportHostAsync(report, shutdown);
                     hostJournal.AcknowledgeReport(hostReport.AcceptedSequence);
@@ -564,7 +567,9 @@ public sealed class RemoteRunnerDaemon
 
                     var availableQueueSlots = Math.Max(
                         0,
-                        _client.HostMaxParallelism - active.Count - hostJournal.QueuedCount);
+                        InteractiveChatAdmission.FreeCodingSlots(
+                            _client.HostMaxParallelism, active.Count,
+                            interactiveChat.HeavyCount) - hostJournal.QueuedCount);
                     if (!loadDecision.Throttle && availableQueueSlots > 0)
                     {
                         foreach (var permit in hostReport.AvailableWork.Take(availableQueueSlots))
@@ -626,7 +631,9 @@ public sealed class RemoteRunnerDaemon
                     }
                     continue;
                 }
-                if (active.Count >= _client.HostMaxParallelism)
+                if (InteractiveChatAdmission.FreeCodingSlots(
+                        _client.HostMaxParallelism, active.Count,
+                        interactiveChat.HeavyCount) == 0)
                 {
                     inventorySnapshot = inventory.Snapshot();
                     activeTaskKeys = inventorySnapshot.Processes
@@ -646,27 +653,11 @@ public sealed class RemoteRunnerDaemon
                         AcknowledgeInventory(inventory, inventorySnapshot, response);
                     }
                 }
-                while (active.Count < _client.HostMaxParallelism && !shutdown.IsCancellationRequested)
+                while (InteractiveChatAdmission.FreeCodingSlots(
+                           _client.HostMaxParallelism, active.Count,
+                           interactiveChat.HeavyCount) > 0
+                       && !shutdown.IsCancellationRequested)
                 {
-                    var chatClaim = await _client.ClaimProjectChatWorkAsync(
-                        new RemoteChatWorkClaimRequest(
-                            _options.RunnerId, _options.RunnerName, _options.Hostname),
-                        shutdown);
-                    if (chatClaim.Status == RemoteChatWorkClaimStatuses.Claimed
-                        && chatClaim.Work is not null)
-                    {
-                        claimedAny = true;
-                        _log(
-                            $"claimed project chat {chatClaim.Work.ProjectName}/{chatClaim.Work.Kind} " +
-                            $"into slot {active.Count + 1}/{_client.HostMaxParallelism}");
-                        active.Add(new ActiveSlot(
-                            null,
-                            new RemoteProjectChatRunner(_options, _client, _log)
-                                .RunAsync(chatClaim.Work, shutdown)));
-                        idleWatchdog.RecordActiveSlots(active.Count);
-                        continue;
-                    }
-
                     if (_client.UsesHostOrchestrator)
                     {
                         var acceptance = hostJournal.TryStartNext();
@@ -723,7 +714,9 @@ public sealed class RemoteRunnerDaemon
                         _options.RunnerId, _options.RunnerName, _options.Hostname,
                         Environment.ProcessId, _options.BackendName, _options.TtlSeconds,
                         TakeTelemetry(),
-                        AvailableSlots: _client.HostMaxParallelism - active.Count,
+                        AvailableSlots: InteractiveChatAdmission.FreeCodingSlots(
+                            _client.HostMaxParallelism, active.Count,
+                            interactiveChat.HeavyCount),
                         ActiveSlots: active.Count,
                         IdempotencyKey: $"claim:{_options.RunnerId}:{Guid.NewGuid():N}",
                         ActiveTaskKeys: activeTaskKeys,
@@ -861,6 +854,10 @@ public sealed class RemoteRunnerDaemon
             .ToArray();
         if (codingHandoffs.Length > 0)
             await Task.WhenAll(codingHandoffs);
+        await interactivePoll;
+        try { await interactiveChat.DrainAsync(); }
+        catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { }
+        catch (Exception ex) { _log($"interactive chat drain ended with error: {ex.Message}"); }
         _log($"daemon drain complete; leaving {active.Count} detached job(s) for startup reattach");
         if (idleWatchdog.Tripped)
             throw new InvalidOperationException(
