@@ -42,6 +42,9 @@ Claude contributes every `modelUsage` key and Codex contributes the model on
 its terminal result frame. If an observed model differs from the effective
 pinned model, the decision carries `ModelMismatch { PinnedModel,
 ObservedModels }` and cannot become `SuccessfulCompletion`.
+The runner and backend use the same Claude alias table from
+`ExecutionModelIdentity`; canonical ids, registered aliases, and dated
+provider ids compare as one model.
 
 Review infrastructure recovery is constrained by an immutable
 `RepositoryIdentity + ResultSha|ArtifactDigest` subject and can only select

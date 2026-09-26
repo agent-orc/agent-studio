@@ -2343,7 +2343,8 @@ public sealed class RemoteTaskRunner
         int SameSessionResumeAttempts = 0,
         string? EffectiveCliType = null,
         string? EffectiveModel = null,
-        string? EffectiveThinkingLevel = null)
+        string? EffectiveThinkingLevel = null,
+        IReadOnlyList<string>? ObservedModels = null)
         => Facts(
             lease,
             workspace,
@@ -2359,7 +2360,8 @@ public sealed class RemoteTaskRunner
             SameSessionResumeAttempts: SameSessionResumeAttempts,
             EffectiveCliType: EffectiveCliType,
             EffectiveModel: EffectiveModel,
-            EffectiveThinkingLevel: EffectiveThinkingLevel);
+            EffectiveThinkingLevel: EffectiveThinkingLevel,
+            ObservedModels: ObservedModels);
 
     private static ExecutionRawFacts Facts(
         RunLeaseInfoDto lease,

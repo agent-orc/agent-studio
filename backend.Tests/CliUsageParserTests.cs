@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts;
 
 using Xunit;
 
@@ -13,6 +14,21 @@ namespace AgentStudio.Tests;
 public class CliUsageParserTests
 {
     private static readonly CliModelRegistry Registry = new();
+
+    [Theory]
+    [InlineData("claude-opus-5-5", "claude-opus-5")]
+    [InlineData("claude-opus-5-5", "claude-opus-5-20260925")]
+    [InlineData("claude-opus-4.8", "claude-opus-4-8")]
+    [InlineData("claude-haiku-4.5", "claude-haiku-4-5-20251001")]
+    public void Usage_attribution_shares_registry_alias_identity_with_outcome(
+        string pinned,
+        string observed)
+    {
+        Assert.False(ModelAttribution.IsMismatch(pinned, observed));
+        Assert.Equal(
+            ModelMetadataRegistry.Find(pinned)?.Id,
+            ExecutionModelIdentity.Normalize(observed));
+    }
 
     [Fact]
     public void ClaudeParser_ExtractsTokensAndContextWindow()

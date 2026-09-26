@@ -265,17 +265,7 @@ public static class ModelAttribution
     public static bool IsMismatch(string? pinnedModel, string? observedModel)
     {
         if (string.IsNullOrWhiteSpace(pinnedModel) || string.IsNullOrWhiteSpace(observedModel)) return false;
-        var pinned = ModelMetadataRegistry.Find(pinnedModel)?.Id ?? StripDatedClaudeSuffix(pinnedModel.Trim());
-        var observed = ModelMetadataRegistry.Find(observedModel)?.Id ?? StripDatedClaudeSuffix(observedModel.Trim());
-        return !string.Equals(pinned, observed, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static string StripDatedClaudeSuffix(string model)
-    {
-        var separator = model.LastIndexOf('-');
-        if (separator <= 0) return model;
-        var suffix = model[(separator + 1)..];
-        return suffix.Length == 8 && suffix.All(char.IsDigit) ? model[..separator] : model;
+        return !ExecutionModelIdentity.Equivalent(pinnedModel, observedModel);
     }
 }
 

@@ -423,12 +423,7 @@ public static class ExecutionOutcomeAdapter
     }
 
     private static bool ModelsEquivalent(string pinned, string observed)
-    {
-        if (string.Equals(pinned, observed, StringComparison.OrdinalIgnoreCase)) return true;
-        if (!observed.StartsWith(pinned + "-", StringComparison.OrdinalIgnoreCase)) return false;
-        var suffix = observed[(pinned.Length + 1)..];
-        return suffix.Length == 8 && suffix.All(char.IsDigit);
-    }
+        => ExecutionModelIdentity.Equivalent(pinned, observed);
 
     private static ExecutionRecoveryAction SelectRecovery(
         ExecutionRawFacts facts,

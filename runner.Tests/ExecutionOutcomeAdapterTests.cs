@@ -624,6 +624,28 @@ public sealed class ExecutionOutcomeAdapterTests
         Assert.Equal(["claude-haiku-4-5-20251001"], result.ModelMismatch.ObservedModels);
     }
 
+    [Theory]
+    [InlineData("claude-opus-5-5", "claude-opus-5")]
+    [InlineData("claude-opus-5-5", "claude-opus-5-20260925")]
+    [InlineData("claude-opus-4.8", "claude-opus-4-8")]
+    [InlineData("claude-haiku-4.5", "claude-haiku-4-5-20251001")]
+    public void Registry_alias_and_canonical_observation_are_equivalent(
+        string pinned,
+        string observed)
+    {
+        var result = ExecutionOutcomeAdapter.Classify(Coding(
+            ProviderTerminalEvent: """{"type":"result","subtype":"success"}""",
+            FinalAssistantOutput: "ok [[TASK_DONE]]",
+            ExitCode: 0,
+            EffectiveCliType: "claude",
+            EffectiveModel: pinned,
+            ObservedModels: [observed]));
+
+        Assert.Equal(ExecutionOutcomeKind.SuccessfulCompletion, result.Outcome);
+        Assert.Null(result.ModelMismatch);
+        Assert.Null(result.ProviderRejection);
+    }
+
     [Fact]
     public void Durable_salvage_changes_provider_rejection_recovery_without_restoring_raw_provider_output()
     {
