@@ -44,8 +44,10 @@ public sealed class AutoTaggingOrchestrationTests : IDisposable
         var areas = new AreaRegistryService(new TagRegistryService(NullLogger<TagRegistryService>.Instance, _config), _settings);
         _docs = new ProjectDocsService(_scanner, registry, NullLogger<ProjectDocsService>.Instance,
             fileWriter: _writer);
+        var git = new GitService(NullLogger<GitService>.Instance, _scanner, _config);
+        var catalogue = new WorkbenchCatalogueService(_scanner, registry, git, configuration: _config);
         var persistence = new TagMaintenanceWorkspace(_scanner, _mutations, null!, areas, null!,
-            null!, null!, _docs);
+            catalogue, new WorkbenchTagService(catalogue, areas, git), _docs);
         _workspace.Writer = persistence.Write;
         _service = new AutoTaggingService(_workspace, _classifier,
             new TagGoldenSetEvaluator(new FakeGoldenClassifier(), _config), _settings, _scanner,
@@ -245,6 +247,186 @@ public sealed class AutoTaggingOrchestrationTests : IDisposable
         Assert.Equal("tagged", _scanner.FindJob("status-write", Watch())!.TaggingStatus);
     }
 
+    [Theory]
+    [InlineData("card", "timeline", 0.95)]
+    [InlineData("card", "timeline", 0.4)]
+    [InlineData("card", "state", 0.95)]
+    [InlineData("card", "activity", 0.95)]
+    [InlineData("card", "report", 0.95)]
+    [InlineData("wiki", "state", 0.95)]
+    [InlineData("wiki", "activity", 0.95)]
+    [InlineData("wiki", "report", 0.95)]
+    [InlineData("wiki", "report", 0.4)]
+    [InlineData("dossier", "state", 0.95)]
+    [InlineData("dossier", "activity", 0.95)]
+    [InlineData("dossier", "report", 0.95)]
+    [InlineData("dossier", "report", 0.4)]
+    public async Task PostWriteFailureResumesAfterRestartWithoutReclassificationOrDuplicateEvents(
+        string kind, string boundary, double confidence)
+    {
+        var id = kind == "card" ? "recover-card" : kind == "dossier" ? "recover-dossier" : "recover-wiki.md";
+        if (kind == "card") AddCard(id);
+        else if (kind == "dossier") AddDossier(id);
+        else AddWiki(id);
+        _classifier.Confidence[id] = confidence;
+        var state = Path.Combine(_root, "auto-tag", TagMaintenancePolicy.Fingerprint(Project) + ".json");
+        var task = kind == "card" ? _scanner.FindJob(id, Watch()) : null;
+        var blocked = boundary switch
+        {
+            "timeline" => Path.Combine(task!.FolderPath, "logs", "timeline.jsonl"),
+            "activity" => Path.Combine(Watch(), ".orchestrator", "orchestrator.jsonl"),
+            "report" => Path.ChangeExtension(state, ".report.json"),
+            _ => state,
+        };
+        _workspace.BeforeWrite = () => Directory.CreateDirectory(blocked);
+
+        await Assert.ThrowsAnyAsync<Exception>(() =>
+            _service.BackfillAsync(Project, apply: true, CancellationToken.None));
+        Assert.Single(_workspace.Writes);
+        var calls = _classifier.Calls.Count;
+        Directory.Delete(blocked);
+        _workspace.BeforeWrite = null;
+
+        // A fresh coordinator has no in-memory knowledge of the failed call.
+        var resumed = NewService();
+        var report = await resumed.BackfillAsync(Project, apply: true, CancellationToken.None);
+        Assert.Equal(calls, _classifier.Calls.Count);
+        Assert.Single(report.Items);
+        Assert.Equal(confidence < 0.8 ? "tags-proposed" : "tagged", report.Items[0].Status);
+        Assert.Equal(report.Items[0].Status, Assert.Single(resumed.Read(Project)).Status);
+        Assert.Single(resumed.ReadReport(Project)!.Items);
+        Assert.False(resumed.HasPendingApply(Project));
+        Assert.Single(new OrchestratorLog(NullLogger<OrchestratorLog>.Instance).Read(Watch()));
+        if (task != null)
+            Assert.Single(new TimelineLog(NullLogger<TimelineLog>.Instance).ReadAll(task.FolderPath));
+    }
+
+    [Fact]
+    public async Task FailedPendingRecordPreventsEveryItemWrite()
+    {
+        AddCard("unstarted");
+        File.WriteAllText(Path.Combine(_root, "auto-tag"), "blocked directory");
+        await Assert.ThrowsAnyAsync<IOException>(() =>
+            _service.BackfillAsync(Project, apply: true, CancellationToken.None));
+        Assert.Empty(_workspace.Writes);
+        Assert.Null(_scanner.FindJob("unstarted", Watch())!.TaggingStatus);
+        Assert.Empty(new OrchestratorLog(NullLogger<OrchestratorLog>.Instance).Read(Watch()));
+    }
+
+    [Fact]
+    public async Task CrashAfterItemReplacementReplaysTheSavedBatchAndPreservesItsReport()
+    {
+        AddCard("first");
+        AddWiki("second.md");
+        _workspace.AfterWrite = () => throw new IOException("Crash immediately after replacement.");
+        await Assert.ThrowsAsync<IOException>(() =>
+            _service.BackfillAsync(Project, apply: true, CancellationToken.None));
+        Assert.Single(_workspace.Writes);
+        Assert.Empty(_service.Read(Project));
+        Assert.True(_service.HasPendingApply(Project));
+        var calls = _classifier.Calls.Count;
+        _workspace.AfterWrite = null;
+        var resumed = NewService();
+        var report = await resumed.BackfillAsync(Project, apply: true, CancellationToken.None);
+        Assert.Equal(calls, _classifier.Calls.Count);
+        Assert.Equal(2, _workspace.Writes.Count);
+        Assert.Equal(2, report.Classified);
+        Assert.Equal(2, report.CountsPerArea["execution-and-runner"]);
+        Assert.Equal(2, resumed.Read(Project).Count);
+        Assert.Equal(2, new OrchestratorLog(NullLogger<OrchestratorLog>.Instance).Read(Watch()).Count);
+        Assert.False(resumed.HasPendingApply(Project));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CreationSweepRecoversPendingBookkeepingAndHonorsOptOut(bool existedAtBaseline)
+    {
+        if (existedAtBaseline) AddCard("pending");
+        await NewWorker().ScanOnceAsync(CancellationToken.None);
+        if (!existedAtBaseline) AddCard("pending");
+        var blocked = Path.Combine(Watch(), ".orchestrator", "orchestrator.jsonl");
+        _workspace.BeforeWrite = () => Directory.CreateDirectory(blocked);
+        await Assert.ThrowsAsync<IOException>(() =>
+            _service.BackfillAsync(Project, apply: true, CancellationToken.None));
+        var calls = _classifier.Calls.Count;
+        _workspace.BeforeWrite = null;
+        Directory.Delete(blocked);
+        var resumed = NewService();
+        var worker = new AutoTagCreationWorker(resumed, _workspace, _scanner, _config,
+            NullLogger<AutoTagCreationWorker>.Instance);
+        _settings.SetAutoTag(Project, false);
+        await worker.ScanOnceAsync(CancellationToken.None);
+        Assert.True(resumed.HasPendingApply(Project));
+        Assert.Empty(new OrchestratorLog(NullLogger<OrchestratorLog>.Instance).Read(Watch()));
+        _settings.SetAutoTag(Project, true);
+        await worker.ScanOnceAsync(CancellationToken.None);
+        await worker.ScanOnceAsync(CancellationToken.None);
+        Assert.False(resumed.HasPendingApply(Project));
+        Assert.Equal(calls, _classifier.Calls.Count);
+        Assert.Single(resumed.ReadReport(Project)!.Items);
+        Assert.False(resumed.HasPendingApply(Project));
+        Assert.Single(new OrchestratorLog(NullLogger<OrchestratorLog>.Instance).Read(Watch()));
+    }
+
+    [Fact]
+    public async Task DryRunLeavesPendingApplyUntouched()
+    {
+        AddCard("pending");
+        var task = _scanner.FindJob("pending", Watch())!;
+        var blocked = Path.Combine(task.FolderPath, "logs", "timeline.jsonl");
+        _workspace.BeforeWrite = () => Directory.CreateDirectory(blocked);
+        await Assert.ThrowsAsync<IOException>(() =>
+            _service.BackfillAsync(Project, apply: true, CancellationToken.None));
+        var pending = Path.Combine(_root, "auto-tag", TagMaintenancePolicy.Fingerprint(Project) + ".pending.json");
+        var saved = File.ReadAllText(pending);
+        _workspace.BeforeWrite = null;
+        Directory.Delete(blocked);
+        await NewService().BackfillAsync(Project, apply: false, CancellationToken.None);
+        Assert.Equal(saved, File.ReadAllText(pending));
+        Assert.Empty(_service.Read(Project));
+        Assert.Empty(new TimelineLog(NullLogger<TimelineLog>.Instance).ReadAll(task.FolderPath));
+        Assert.Empty(new OrchestratorLog(NullLogger<OrchestratorLog>.Instance).Read(Watch()));
+        Assert.Single((await NewService().BackfillAsync(Project, apply: true, CancellationToken.None)).Items);
+    }
+
+    [Fact]
+    public async Task RecoveryRefusesToOverwriteInterveningTagEdits()
+    {
+        AddCard("edited");
+        _workspace.RejectWrites = true;
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _service.BackfillAsync(Project, apply: true, CancellationToken.None));
+        _workspace.RejectWrites = false;
+        _mutations.SetJobTags("edited", ["security"], Watch());
+        _workspace.Items[0] = _workspace.Items[0] with { Tags = ["security"] };
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            NewService().BackfillAsync(Project, apply: true, CancellationToken.None));
+        Assert.Equal(["security"], _scanner.FindJob("edited", Watch())!.Tags);
+        Assert.Empty(_service.Read(Project));
+        Assert.True(_service.HasPendingApply(Project));
+        Assert.Single(_classifier.Calls);
+    }
+
+    private AutoTaggingService NewService() => new(_workspace, _classifier,
+        new TagGoldenSetEvaluator(new FakeGoldenClassifier(), _config), _settings, _scanner,
+        new AreaRegistryService(new TagRegistryService(NullLogger<TagRegistryService>.Instance, _config), _settings),
+        new TimelineLog(NullLogger<TimelineLog>.Instance),
+        new OrchestratorLog(NullLogger<OrchestratorLog>.Instance), _config);
+
+    private void AddDossier(string id)
+    {
+        var dir = Path.Combine(Watch(), "docs", "operations", id);
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "index.html"), "<h1>Classification Dossier</h1>");
+        File.WriteAllText(Path.Combine(dir, "workbench.json"), TagMaintenancePolicy.Encode(new
+        {
+            schemaVersion = 1, id, title = "Classification Dossier", summary = "Classification context",
+            entrypoint = "index.html", status = "active", phase = "testing", updatedAt = "2026-09-13T10:00:00Z",
+        }));
+        _workspace.Items.Add(new(Project, "dossier", id, "Classification Dossier", [], "Context", true));
+    }
+
     private void AddWiki(string id)
     {
         Directory.CreateDirectory(Path.Combine(Watch(), "docs"));
@@ -295,12 +477,14 @@ public sealed class AutoTaggingOrchestrationTests : IDisposable
         public List<TagMaintenanceChange> Writes { get; } = [];
         public bool RejectWrites { get; set; }
         public Action? BeforeWrite { get; set; }
+        public Action? AfterWrite { get; set; }
         public Func<TagMaintenanceChange, string?, bool> Writer { get; set; } = null!;
         public IReadOnlyList<string> Projects() => [Project];
         public TagMaintenanceSnapshot Capture(string project) => new([], ["execution-and-runner"],
             new() { ["execution-and-runner"] = [] }, Items.ToList());
         public string CreateCard(string project, TagMaintenanceDecision decision) => throw new NotSupportedException();
-        public string Read(TagMaintenanceChange change) => throw new NotSupportedException();
+        public string Read(TagMaintenanceChange change) => TagMaintenancePolicy.Encode(
+            Items.Single(i => i.Kind == change.Kind && i.Id == change.Id).Tags);
         public bool Write(TagMaintenanceChange change, string? taggingStatus = null)
         {
             BeforeWrite?.Invoke();
@@ -309,6 +493,7 @@ public sealed class AutoTaggingOrchestrationTests : IDisposable
             Writes.Add(change);
             var index = Items.FindIndex(x => x.Kind == change.Kind && x.Id == change.Id);
             Items[index] = Items[index] with { Tags = System.Text.Json.JsonSerializer.Deserialize<string[]>(change.After)! };
+            AfterWrite?.Invoke();
             return true;
         }
     }

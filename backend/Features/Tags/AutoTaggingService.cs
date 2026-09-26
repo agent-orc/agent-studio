@@ -18,6 +18,8 @@ public sealed record AutoTagResult(string Kind, string Id, string Status, string
 public sealed record AutoTagReport(string Project, bool Applied, int Eligible, int AlreadyTagged, int Classified,
     Dictionary<string, int> CountsPerArea, List<AutoTagResult> LowConfidence,
     TagGoldenSetReport GoldenSet, List<AutoTagResult> Items);
+internal sealed record AutoTagPendingApply(AutoTagReport Report, List<TagMaintenanceChange> Changes);
+
 public sealed record AutoTagBackfillJob(string Id, string Project, bool Apply, string Status,
     DateTimeOffset CreatedAt, DateTimeOffset? CompletedAt = null, string? Error = null);
 
@@ -163,6 +165,74 @@ public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAuto
             ? JsonSerializer.Deserialize<AutoTagReport>(File.ReadAllText(path), TagMaintenancePolicy.Json)
             : null;
     }
+    private string PendingPath(string project) => Path.ChangeExtension(StatePath(project), ".pending.json");
+    public bool HasPendingApply(string project) => File.Exists(PendingPath(project));
+
+    private void SavePending(string project, AutoTagPendingApply pending) =>
+        new AtomicJsonFileWriter().Write(PendingPath(project), TagMaintenancePolicy.Encode(pending));
+
+    // Replay the saved batch, including already tagged items. The item mutation is
+    // atomic; its preimage/result and the event identities make every later effect retryable.
+    private AutoTagReport CompletePending(string project, CancellationToken ct)
+    {
+        var path = PendingPath(project);
+        var pending = JsonSerializer.Deserialize<AutoTagPendingApply>(File.ReadAllText(path), TagMaintenancePolicy.Json)
+            ?? throw new InvalidOperationException("Auto-tag pending apply record is empty.");
+        var watchPath = scanner.GetWatchPaths().Single(p => p.Name == project).Path;
+        var prior = Read(project).ToDictionary(x => (x.Kind, x.Id));
+        foreach (var change in pending.Changes)
+        {
+            ct.ThrowIfCancellationRequested();
+            var result = pending.Report.Items.Single(x => x.Kind == change.Kind && x.Id == change.Id);
+            var current = workspace.Read(change);
+            // Equal before/after is a proposal: replay its status-only atomic write.
+            if (current != change.After || change.Before == change.After)
+            {
+                if (current != change.Before)
+                    throw new InvalidOperationException($"Auto-tag recovery conflicts with changed tags: {change.Kind}/{change.Id}.");
+                if (!workspace.Write(change, result.Status))
+                    throw new InvalidOperationException($"Auto-tag {change.Kind} write did not apply: {change.Id}.");
+            }
+            var accepted = result.Status == "tagged";
+            var timestamp = result.At.UtcDateTime;
+            var eventId = TagMaintenancePolicy.Fingerprint(TagMaintenancePolicy.Encode(result));
+            if (change.Kind == "card")
+            {
+                var task = scanner.FindJob(change.Id, watchPath)
+                    ?? throw new InvalidOperationException("Auto-tag card disappeared before timeline persistence.");
+                if (!timeline.ReadAll(task.FolderPath).Any(e => e.Kind == AutoTagClassifier.StepId
+                    && e.Details?.GetValueOrDefault("autoTagOperationId") == eventId)
+                    && !timeline.Append(task.FolderPath, new TimelineEvent
+                    {
+                        Ts = timestamp, Kind = AutoTagClassifier.StepId, Actor = "system",
+                        Summary = accepted ? $"Auto-tagged: {string.Join(", ", result.Tags)}"
+                            : $"Tags proposed: {string.Join(", ", result.Tags)}",
+                        Details = new() { ["autoTagOperationId"] = eventId },
+                    }))
+                    throw new IOException("Auto-tag timeline write failed.");
+            }
+            prior[(result.Kind, result.Id)] = result;
+            Save(project, prior.Values.OrderBy(x => x.Kind).ThenBy(x => x.Id).ToList());
+            var entry = new OrchestratorLogEntry
+            {
+                Ts = timestamp,
+                Kind = accepted ? OrchestratorLogKinds.Action : OrchestratorLogKinds.Observation,
+                Topic = AutoTagClassifier.StepId,
+                Summary = accepted
+                    ? $"Auto-tagged {result.Kind} {result.Id}: {string.Join(", ", result.Tags)}"
+                    : $"Tags proposed for {result.Kind} {result.Id}: {string.Join(", ", result.Tags)}",
+                JobId = result.Kind == "card" ? result.Id : null,
+            };
+            if (!activity.Read(watchPath).Any(e => e.Topic == entry.Topic && e.Ts == timestamp
+                && e.Summary == entry.Summary && e.JobId == entry.JobId)
+                && !activity.Append(watchPath, entry))
+                throw new IOException("Auto-tag activity write failed.");
+        }
+        SaveReport(project, pending.Report);
+        File.Delete(path);
+        return pending.Report;
+    }
+
     public async Task<AutoTagReport> BackfillAsync(string project, bool apply, CancellationToken ct,
         IReadOnlySet<string>? onlyKeys = null)
     {
@@ -170,6 +240,7 @@ public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAuto
         await gate.WaitAsync(ct);
         try
         {
+            if (apply && HasPendingApply(project)) return CompletePending(project, ct);
             var snapshot = ProposedGlossaryContext.Apply(project, workspace.CaptureForClassification(project));
             if (!_goldenReports.TryGetValue(project, out var golden))
             {
@@ -192,7 +263,7 @@ public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAuto
             var counts = new Dictionary<string, int>(StringComparer.Ordinal);
             var low = new List<AutoTagResult>();
             var areas = areaRegistry.List(project).Select(a => a.Id).ToHashSet(StringComparer.Ordinal);
-            var watchPath = apply ? scanner.GetWatchPaths().Single(p => p.Name == project).Path : null;
+            var changes = new List<TagMaintenanceChange>();
             foreach (var existing in eligible)
                 foreach (var area in existing.Tags.Where(areas.Contains))
                     counts[area] = counts.GetValueOrDefault(area) + 1;
@@ -220,36 +291,18 @@ public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAuto
                 if (accepted)
                     foreach (var area in prediction.Tags.Where(areas.Contains))
                         counts[area] = counts.GetValueOrDefault(area) + 1;
-                if (!apply) continue;
-                // Tags and their status share one checked write. A failure leaves no
-                // tags-only item that the next scan would incorrectly skip.
-                var change = new TagMaintenanceChange(item.Kind, project, item.Id,
-                    TagMaintenancePolicy.Encode(item.Tags),
-                    TagMaintenancePolicy.Encode(accepted ? prediction.Tags : item.Tags));
-                if (!workspace.Write(change, result.Status))
-                    throw new InvalidOperationException($"Auto-tag {item.Kind} write did not apply: {item.Id}.");
-                prior[(item.Kind, item.Id)] = result;
-                if (item.Kind == "card")
-                {
-                    var task = scanner.FindJob(item.Id, watchPath);
-                    if (task != null)
-                        timeline.Append(task.FolderPath, "auto-tag", "system",
-                            accepted ? $"Auto-tagged: {string.Join(", ", prediction.Tags)}" :
-                                $"Tags proposed: {string.Join(", ", prediction.Tags)}");
-                }
-                Save(project, prior.Values.OrderBy(x => x.Kind).ThenBy(x => x.Id).ToList());
-                activity.Append(watchPath!, new OrchestratorLogEntry
-                {
-                    Kind = accepted ? OrchestratorLogKinds.Action : OrchestratorLogKinds.Observation,
-                    Topic = AutoTagClassifier.StepId,
-                    Summary = accepted
-                        ? $"Auto-tagged {item.Kind} {item.Id}: {string.Join(", ", prediction.Tags)}"
-                        : $"Tags proposed for {item.Kind} {item.Id}: {string.Join(", ", prediction.Tags)}",
-                    JobId = item.Kind == "card" ? item.Id : null,
-                });
+                if (apply)
+                    changes.Add(new TagMaintenanceChange(item.Kind, project, item.Id,
+                        TagMaintenancePolicy.Encode(item.Tags),
+                        TagMaintenancePolicy.Encode(accepted ? prediction.Tags : item.Tags)));
             }
             var report = new AutoTagReport(project, apply, eligible.Count,
                 eligible.Count(i => i.Tags.Length > 0), candidates.Count, counts, low, golden, results);
+            if (apply)
+            {
+                SavePending(project, new(report, changes));
+                return CompletePending(project, ct);
+            }
             SaveReport(project, report);
             return report;
         }
@@ -359,6 +412,8 @@ public sealed class AutoTagCreationWorker(AutoTaggingService service, ITagMainte
             if (!service.Enabled(project)) continue;
             try
             {
+                if (service.HasPendingApply(project))
+                    await service.BackfillAsync(project, apply: true, ct);
                 // A durable baseline keeps a deployment from silently applying a full backfill.
                 var root = configuration["TaskRepository"];
                 if (string.IsNullOrWhiteSpace(root)) continue;
@@ -379,8 +434,11 @@ public sealed class AutoTagCreationWorker(AutoTaggingService service, ITagMainte
                 var previous = JsonSerializer.Deserialize<HashSet<string>>(File.ReadAllText(path), TagMaintenancePolicy.Json) ?? [];
                 if (now.Except(previous).Any())
                 {
-                    await service.BackfillAsync(project, apply: true, ct,
-                        now.Except(previous).ToHashSet(StringComparer.Ordinal));
+                    var recorded = service.Read(project).Select(result => result.Kind + ":" + result.Id)
+                        .ToHashSet(StringComparer.Ordinal);
+                    var newKeys = now.Except(previous).Except(recorded).ToHashSet(StringComparer.Ordinal);
+                    if (newKeys.Count > 0)
+                        await service.BackfillAsync(project, apply: true, ct, newKeys);
                     File.WriteAllText(path, TagMaintenancePolicy.Encode(now));
                 }
             }

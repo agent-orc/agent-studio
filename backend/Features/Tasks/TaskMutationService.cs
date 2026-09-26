@@ -1071,7 +1071,7 @@ public class TaskMutationService
         if (info == null) return false;
         if (!TaskJsonFile.UpdateField(info.FolderPath, "taggingStatus", status, _logger, _keyFileWriter))
             return false;
-        return Updated();
+        return Updated(info);
     }
 
     /// <summary>Applies one audited incremental waits-on edit without replacing unrelated references.</summary>

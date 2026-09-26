@@ -45,7 +45,11 @@ golden set. The step writes project activity-feed lines for applied tags and
 proposals on all three item kinds, plus card timeline lines. The per-project
 workspace setting `AutoTag` is true by default; the
 `PUT /api/projects/{project}/auto-tag` endpoint changes it. The active v1
-project definition has no `tagging.autoTag` key.
+project definition has no `tagging.autoTag` key. Apply batches retain a durable
+pending record until item writes, timeline, state, activity, and report are
+complete. Apply retries and enabled creation sweeps recover that record without
+reclassification, including already tagged items; dry runs do not mutate it.
+See [auto-tag apply recovery](areas-and-tags.md#auto-tag-apply-recovery).
 
 - [Model Routing Policy](./model-routing-policy.md) is the canonical model and
   thinking-level selection policy, including weighted criteria, correctness
