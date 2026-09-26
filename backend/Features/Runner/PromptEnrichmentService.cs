@@ -22,7 +22,7 @@ public sealed record PromptEnrichmentPreparation(
 public sealed class PromptEnrichmentService
 {
     public const string ReportFileName = "enrichment-report.json";
-    public const string PolicyVersion = "1";
+    public const string PolicyVersion = "2";
     private const string Tokenizer = "character-estimate-v1";
 
     private static readonly JsonSerializerOptions Json = new()
@@ -63,7 +63,9 @@ public sealed class PromptEnrichmentService
         string? downstreamModel,
         bool? enabledOverride = null,
         IReadOnlyList<ProjectStyleGuide>? guidesOverride = null,
-        string? styleGuideSnapshotOverride = null)
+        string? styleGuideSnapshotOverride = null,
+        string? repositoryRootOverride = null,
+        bool? agentStudioCatalogueOverride = null)
     {
         ArgumentNullException.ThrowIfNull(task);
         ArgumentNullException.ThrowIfNull(authoredPrompt);
@@ -73,24 +75,35 @@ public sealed class PromptEnrichmentService
         var step = PipelineCatalogue.Standard.Pre.Single(candidate =>
             string.Equals(candidate.Id, PipelineCatalogue.PromptEnrichmentStepId, StringComparison.Ordinal));
         var projectEnabled = enabledOverride
-                             ?? (settings is null || PipelineStepConfigResolver.IsEnabled(settings, step));
+                             ?? (settings is null || PipelineStepConfigResolver.IsEnabled(
+                                 PipelineTypeSettings.ForTask(settings, task), step));
         var applyEnrichment = projectEnabled;
         var warnings = new List<string>();
 
         IntakeEnrichmentManifest manifest;
+        var repositoryRoot = string.Empty;
         try
         {
             var catalogue = guidesOverride is not null
                 ? null
                 : _styleGuides?.GetCatalogue(task.ProjectName);
             var guides = guidesOverride ?? catalogue?.Guides;
-            var snapshot = styleGuideSnapshotOverride ?? catalogue?.SnapshotId;
+            var snapshot = styleGuideSnapshotOverride
+                           ?? (catalogue?.Guides.Count > 0 ? catalogue.SnapshotId : null);
+            repositoryRoot = repositoryRootOverride
+                             ?? _styleGuides?.GetRepositoryRoot(task.ProjectName)
+                             ?? string.Empty;
             if (catalogue?.Warnings.Count > 0)
             {
                 warnings.AddRange(catalogue.Warnings.Select(warning =>
                     $"{warning.RelPath}: {warning.Message}"));
             }
-            manifest = IntakeRunner.BuildEnrichmentManifest(task, authoredPrompt, guides, snapshot);
+            manifest = IntakeRunner.BuildEnrichmentManifest(
+                task, authoredPrompt, guides, snapshot, repositoryRoot,
+                agentStudioCatalogueOverride
+                ?? string.Equals(catalogue?.ProjectKey, "PROJ-002", StringComparison.OrdinalIgnoreCase),
+                PipelineTypeSettings.ForTask(settings, task)?.PipelineSteps?
+                    .GetValueOrDefault(PipelineCatalogue.PromptEnrichmentStepId)?.EnrichmentBlockIds);
         }
         catch (Exception ex)
         {
@@ -123,6 +136,7 @@ public sealed class PromptEnrichmentService
             launchPrompt,
             downstreamModel,
             manifest,
+            repositoryRoot,
             projectEnabled,
             applyEnrichment,
             status,
@@ -228,6 +242,7 @@ public sealed class PromptEnrichmentService
         string launchPrompt,
         string? downstreamModel,
         IntakeEnrichmentManifest manifest,
+        string repositoryRoot,
         bool projectEnabled,
         bool applyEnrichment,
         string status,
@@ -244,6 +259,9 @@ public sealed class PromptEnrichmentService
                 Id = constraint.Id,
                 Title = constraint.Title,
                 Source = constraint.Source,
+                Project = task.ProjectName,
+                Repository = repositoryRoot,
+                SourceVerification = constraint.SourceVerification,
                 Revision = constraint.Revision,
                 DigestSha256 = Sha256(exact),
                 Tier = constraint.Tier,
@@ -268,17 +286,27 @@ public sealed class PromptEnrichmentService
                 EstimatedTokens = IntakeRunner.EstimateTokens(
                     IntakeRunner.RenderConstraintMarkdown(constraint).Length),
             })
-            .Concat(manifest.Omissions.Select(omission =>
+            .Concat(manifest.SourceRejections.Concat(manifest.Omissions.Where(omission =>
+                !manifest.SourceRejections.Any(rejection => rejection.Id == omission.Id)))
+                .Select(omission =>
                 new PromptEnrichmentCandidate
                 {
                     Id = omission.Id,
                     Title = omission.Title,
                     Source = omission.Source,
                     Signals = manifest.Areas,
-                    Decision = applyEnrichment ? "rejected-budget" : "rejected-project-disabled",
+                    Decision = applyEnrichment
+                        ? omission.Reason switch
+                        {
+                            "source-missing" => "rejected-source-missing",
+                            "project-catalogue-mismatch" => "rejected-project-catalogue",
+                            _ => "rejected-budget"
+                        }
+                        : "rejected-project-disabled",
                     Reason = applyEnrichment
-                        ? omission.Reason
+                        ? omission.MissingPath ?? omission.Reason
                         : projectEnabled ? "selector-fallback" : "project-step-disabled",
+                    MissingPath = omission.MissingPath,
                     EstimatedTokens = omission.EstimatedTokens,
                 }))
             .ToList();

@@ -2183,8 +2183,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Equal("claude", claim.RunSpec!.CliType);
         Assert.Equal("claude-opus-4-8", claim.RunSpec.Model);
         Assert.Equal("max", claim.RunSpec.ThinkingLevel);
-        Assert.Contains("## Prompt enrichment", claim.RunSpec.ModeFraming);
-        Assert.Contains("repo-instructions-source", claim.RunSpec.ModeFraming);
+        Assert.DoesNotContain("## Prompt enrichment", claim.RunSpec.ModeFraming);
+        Assert.DoesNotContain("repo-instructions-source", claim.RunSpec.ModeFraming);
         // Both modes resolve from live project settings, so they are always
         // stated; the runner transports them but does not yet build flags.
         Assert.False(string.IsNullOrWhiteSpace(claim.RunSpec.PermissionMode));
@@ -2216,7 +2216,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Equal("AGT-SPEC-CODEX", codexClaim.JobId);
         Assert.Equal("codex", codexClaim.RunSpec!.CliType);
         Assert.Equal("gpt-5.6-codex", codexClaim.RunSpec.Model);
-        Assert.Contains("## Prompt enrichment", codexClaim.RunSpec.ModeFraming);
+        Assert.DoesNotContain("## Prompt enrichment", codexClaim.RunSpec.ModeFraming);
         // Codex has no "max" rung; the server resolves the card's request against
         // the model's ladder rather than shipping an invalid selector.
         Assert.Equal("medium", codexClaim.RunSpec.ThinkingLevel);

@@ -41,8 +41,16 @@ pipeline view.
   card, selects curated versioned project/style/delegation blocks, appends at
   most two optional blocks within a 1,500-token budget, and persists
   `enrichment-report.json` before dispatch. Failure to persist the report blocks
-  dispatch. The step is default-on and can be disabled through the normal
-  per-project `PipelineSteps` convention.
+  dispatch. Built-in Agent Studio blocks apply only to Agent Studio; every
+  cited source must exist in the target repository before a block is selected.
+  Projects without their own style-guide catalogue get only their own root
+  instructions, when present. A project can explicitly adopt built-in block
+  ids through the `pre-prompt-enrichment` pipeline step's
+  `enrichmentBlockIds` setting when those block sources exist in its repository.
+  The report records `rejected-source-missing`
+  with the missing path, and each appended block records its project,
+  repository, and source verification mode. The step is default-on and can be
+  disabled through the normal per-project `PipelineSteps` convention.
 - `backend/Features/Pipeline/PipelineStepEconomyAdvisor.cs`: opt-in automated
   recommendation layer for cheap pipeline work. It passes only live-discovered
   Spark candidates to `IModelEconomyAdvisor`, preserves explicit step pins, and
@@ -815,7 +823,8 @@ steer the pipeline in this policy version.
   describe selector work only, which is zero in the deterministic
   implementation. Appended prompt tokens are attributed in
   `enrichment-report.json` and remain part of CORE input, so pipeline cost
-  totals do not count them twice.
+  totals do not count them twice. Shared runner prompts do not name Agent
+  Studio policy files for tasks in other repositories.
 - Cheap-model routing is explicit and reversible. `PipelineStepSetting` owns the
   `(cliType, model, thinkingLevel)` override per project and step; absent fields
   preserve the current runtime default. Aspect reviews and abort review honor

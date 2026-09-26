@@ -573,6 +573,8 @@ public record PipelineStepCondition
 /// </summary>
 public record PipelineStepSetting
 {
+    /// <summary>Built-in prompt-enrichment block ids explicitly adopted by this project.</summary>
+    public List<string>? EnrichmentBlockIds { get; init; }
     /// <summary>
     /// Optional bounded iteration count for steps that own an iterative loop.
     /// Today this is consumed by the UI-pipeline routing step. Null preserves

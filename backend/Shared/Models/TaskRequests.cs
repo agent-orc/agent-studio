@@ -713,6 +713,7 @@ public record SetPipelineStepRequest
     public string StepId { get; init; } = "";
     public bool? Enabled { get; init; }
     public bool? EconomyModel { get; init; }
+    public List<string>? EnrichmentBlockIds { get; init; }
     /// <summary>Bounded loop cap for steps that expose iteration semantics.</summary>
     public int? MaxIterations { get; init; }
     public string? Mode { get; init; }
