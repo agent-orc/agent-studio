@@ -88,6 +88,8 @@ public class ProjectDocsService
     private readonly ConcurrentDictionary<string, (long Mtime, long Size, string? Title, string[] Tags, string? TaggingStatus)> _titleCache =
         new(StringComparer.OrdinalIgnoreCase);
 
+    private readonly IAtomicJsonFileWriter _fileWriter;
+
     public ProjectDocsService(
         TaskScannerService scanner,
         ProjectRegistry registry,
@@ -95,8 +97,10 @@ public class ProjectDocsService
         GitService? git = null,
         WorkbenchCatalogueService? workbenches = null,
         WikiAgentReadStore? agentReads = null,
-        WikiPublicationService? publication = null)
+        WikiPublicationService? publication = null,
+        IAtomicJsonFileWriter? fileWriter = null)
     {
+        _fileWriter = fileWriter ?? new AtomicJsonFileWriter();
         _scanner = scanner;
         _registry = registry;
         _git = git;
@@ -337,7 +341,7 @@ public class ProjectDocsService
         var before = File.ReadAllText(full);
         if (string.Equals(before, content, StringComparison.Ordinal))
             return WikiSaveResult.Ok(full, changed: false);
-        File.WriteAllText(full, content);
+        _fileWriter.ReplaceExisting(full, content);
         InvalidateWikiContent(projectName);
         return WikiSaveResult.Ok(full, changed: true);
     }
