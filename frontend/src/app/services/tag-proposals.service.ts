@@ -57,6 +57,7 @@ export class TagProposalsService {
   seedMock(items: TagProposal[]): void { if (USE_TAG_PROPOSAL_MOCK) this.proposals.set(items); }
 
   private replace(updated: TagProposal): void {
-    this.proposals.update(items => items.map(item => item.id === updated.id ? updated : item));
+    this.proposals.update(items => items.map(item =>
+      item.projectName === updated.projectName && item.id === updated.id ? updated : item));
   }
 }
