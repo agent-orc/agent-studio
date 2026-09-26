@@ -29,7 +29,8 @@ public sealed partial class TaskServerStore
     // per-host model minimum alerts.
     // The migration block is idempotent; the number guards downgrades from
     // binaries that do not know this state.
-    public const int CurrentSchemaVersion = 19;
+    // 20 adds versioned engine steering receipts.
+    public const int CurrentSchemaVersion = 20;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -3239,6 +3240,20 @@ public sealed partial class TaskServerStore
                 task_id TEXT PRIMARY KEY REFERENCES tasks(id),
                 last_fence INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS steering_actions(
+                command_id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL REFERENCES projects(id),
+                task_id TEXT NOT NULL REFERENCES tasks(id),
+                action TEXT NOT NULL,
+                expected_task_version INTEGER NOT NULL,
+                expected_generation INTEGER NOT NULL,
+                result_task_version INTEGER NOT NULL,
+                result_state TEXT NOT NULL,
+                actor TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                accepted_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ix_steering_actions_task ON steering_actions(task_id, accepted_at);
             CREATE TABLE IF NOT EXISTS leases(
                 task_id TEXT NOT NULL REFERENCES tasks(id),
                 lease_id TEXT PRIMARY KEY,

@@ -70,6 +70,7 @@ public sealed class PrincipalAuthenticationTests
             (studio, HttpMethod.Post, "/api/v1/reviews/attempts/attempt-a/report", TaskServerScopes.ReviewsWrite),
             (studio, HttpMethod.Post, "/api/v1/orchestration/claims", TaskServerScopes.OrchestrationClaim),
             (studio, HttpMethod.Post, "/api/v1/orchestration/runs/run-a/stages/complete", TaskServerScopes.OrchestrationWrite),
+            (studio, HttpMethod.Post, "/api/v1/steering/projects/project-a/tasks/task-a/actions", TaskServerScopes.OrchestrationWrite),
             (studio, HttpMethod.Post, "/api/v1/runs/run-a/events", TaskServerScopes.EventsWrite),
             (readOnlyRunner, HttpMethod.Get, "/api/v1/management/status", TaskServerScopes.Management),
         };
