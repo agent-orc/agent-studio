@@ -5,6 +5,8 @@ import {
   collectFolderIds,
   collectDocumentPaths,
   filterWikiTree,
+  filterWikiTreeByTags,
+  filterWikiSearchByTags,
   flattenWikiTree,
   nodeId,
   planWikiSiblingReorder,
@@ -25,6 +27,26 @@ const folder = (relPath: string, children: WikiTreeNode[], title = relPath): Wik
   relPath,
   type: 'folder',
   children,
+});
+
+describe('wiki tag filtering', () => {
+  it('keeps matching pages with their parent folders and filters search hits to the same pages', () => {
+    const tagged = { ...file('concepts/a.md'), tags: ['execution-and-runner', 'decision'] };
+    const other = { ...file('concepts/b.md'), tags: ['decision'] };
+    const roots = [folder('concepts', [tagged, other])];
+    const filtered = filterWikiTreeByTags(roots, new Set(['execution-and-runner', 'decision']));
+    expect(collectDocumentPaths(filtered)).toEqual(['concepts/a.md']);
+    expect(roots[0].children).toHaveLength(2);
+    const response = {
+      query: 'concepts', semanticUsed: false, expandedTerms: [], durationMs: 1,
+      results: [tagged, other].map(node => ({
+        relPath: node.relPath!, title: node.title, kind: 'md', snippet: '', score: 1, updatedAt: null,
+      })),
+    };
+    expect(filterWikiSearchByTags(response, filtered, new Set(['execution-and-runner']))?.results.map(hit => hit.relPath))
+      .toEqual(['concepts/a.md']);
+    expect(filterWikiTreeByTags(roots, new Set(['missing']))).toEqual([]);
+  });
 });
 
 describe('flattenWikiTree', () => {
