@@ -570,7 +570,6 @@
                 </div>
               </div>
               <app-tag-filters />
-
               <div class="task-nav__groups">
                 @for (group of focusGroups(); track group.state) {
                   <section class="task-nav__group" [class.task-nav__group--collapsed]="isGroupCollapsed(group.state)">
@@ -585,7 +584,6 @@
                       </span>
                       <span class="task-nav__count">{{ group.jobs.length }}</span>
                     </div>
-
                     @if (group.jobs.length > 0 && !isGroupCollapsed(group.state)) {
                       <div class="task-nav__items">
                         @for (job of group.jobs; track job.taskKey) {
@@ -740,12 +738,10 @@
         (uxuiActionQueued)="onUxuiActionQueued($event)"
         (openTask)="onOpenTaskFromReel($event)" />
 
-
       <app-workspace-overlays [watchPaths]="watchPaths()"
                               (openTask)="onOpenTaskFromReel($event)"
                               (openProjectSettings)="onOpenProjectSettingsFromUsage($event)"
                               (openJobDetail)="onOpenTaskFromSession($event)" />
-
 
       @if (showCreate()) {
         <app-create-job-dialog
