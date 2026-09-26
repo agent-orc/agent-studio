@@ -205,7 +205,10 @@ public sealed class TaskListGitProjectionCacheTests
         {
             var task = Job("task-1", "watch-a") with { FolderPath = folder };
             var cache = new TaskListGitProjectionCache();
-            var subject = Path.Combine(folder, ReviewSubjectStore.FileName);
+            var subject = ReviewSubjectStore.PathFor(folder);
+            Directory.CreateDirectory(Path.GetDirectoryName(subject)!);
+            File.WriteAllText(subject, "old");
+            var originalTime = File.GetLastWriteTimeUtc(subject);
             cache.SeedTaskInput(subject);
             cache.SetSnapshot(task.WatchPath, ProjectionFor(task, "task/old") with
             {
@@ -213,7 +216,8 @@ public sealed class TaskListGitProjectionCacheTests
                 SubjectVersions = new Dictionary<string, long> { [task.TaskKey] = cache.SubjectVersion(folder) },
             }, DateTimeOffset.UtcNow);
             Assert.Equal("ready", cache.ReadTask(task).State);
-            File.WriteAllText(subject, "new review subject");
+            File.WriteAllText(subject, "new");
+            File.SetLastWriteTimeUtc(subject, originalTime);
             Assert.True(cache.MarkTaskInputChanged(subject));
             Assert.False(cache.MarkTaskInputChanged(subject));
             Assert.Equal("stale", cache.ReadTask(task).State);

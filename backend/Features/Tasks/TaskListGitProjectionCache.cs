@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
+using System.Security.Cryptography;
 
 namespace AgentStudio.Tasks;
 
@@ -34,7 +35,7 @@ public sealed class TaskListGitProjectionCache
         new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, long> _subjectVersions =
         new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, (long Ticks, long Length)> _sidecarStamps =
+    private readonly ConcurrentDictionary<string, (bool Exists, string? Hash)> _sidecarStamps =
         new(StringComparer.OrdinalIgnoreCase);
 
     private long _generation;
@@ -217,7 +218,7 @@ public sealed class TaskListGitProjectionCache
 
     internal void SeedTaskInput(string path)
     {
-        _sidecarStamps.TryAdd(NormalizePath(path), SidecarStamp(path));
+        _sidecarStamps.GetOrAdd(NormalizePath(path), static (_, source) => SidecarStamp(source), path);
     }
 
     internal bool MarkTaskInputChanged(string path)
@@ -226,16 +227,21 @@ public sealed class TaskListGitProjectionCache
         var next = SidecarStamp(path);
         if (_sidecarStamps.TryGetValue(key, out var previous) && previous == next) return false;
         _sidecarStamps[key] = next;
-        _subjectVersions.AddOrUpdate(NormalizePath(Path.GetDirectoryName(path) ?? path),
+        // ReviewSubjectStore writes under <task>/logs/. The version belongs to
+        // the task folder used by ReadTask and the indexer's input signature.
+        var taskFolder = Path.GetDirectoryName(Path.GetDirectoryName(path) ?? path) ?? path;
+        _subjectVersions.AddOrUpdate(NormalizePath(taskFolder),
             1, (_, version) => version + 1);
         Interlocked.Increment(ref _generation);
         return true;
     }
 
-    private static (long Ticks, long Length) SidecarStamp(string path)
+    private static (bool Exists, string? Hash) SidecarStamp(string path)
     {
         var file = new FileInfo(path);
-        return file.Exists ? (file.LastWriteTimeUtc.Ticks, file.Length) : default;
+        if (!file.Exists) return default;
+        using var stream = file.OpenRead();
+        return (true, Convert.ToHexString(SHA256.HashData(stream)));
     }
 
     /// <summary>One atomic, cache-only task Git read. Incompatible task facts are withheld.</summary>
