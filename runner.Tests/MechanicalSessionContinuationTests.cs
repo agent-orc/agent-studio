@@ -93,7 +93,7 @@ public sealed class MechanicalSessionContinuationTests
     }
 
     [Fact]
-    public void Worker_evidence_keeps_the_session_id_and_counts_both_process_generations()
+    public void Worker_evidence_keeps_the_session_id_but_counts_only_the_current_generation()
     {
         var directory = Path.Combine(Path.GetTempPath(), "mechanical-evidence-" + Guid.NewGuid().ToString("N"));
         var resumed = Path.Combine(directory, "resume-1");
@@ -111,10 +111,13 @@ public sealed class MechanicalSessionContinuationTests
             [
                 JsonSerializer.Serialize(new DetachedJobLogLine(1, DateTime.UtcNow, "stdout",
                     "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":50,\"output_tokens\":10}}")),
+                JsonSerializer.Serialize(new DetachedJobLogLine(2, DateTime.UtcNow, "stdout",
+                    "{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":150,\"output_tokens\":30}}}")),
             ]);
-            var evidence = SessionContinuationEvidence.ReadWorkerEvidence(resumed);
+            var evidence = SessionContinuationEvidence.ReadWorkerEvidence(resumed, priorSessionTokens: 120);
             Assert.Equal("session-1", evidence.SessionId);
-            Assert.Equal(180, evidence.TotalTokens);
+            Assert.Equal(60, evidence.TotalTokens);
+            Assert.Equal(120, SessionContinuationEvidence.ReadWorkerEvidence(directory).TotalTokens);
         }
         finally { Directory.Delete(directory, recursive: true); }
     }

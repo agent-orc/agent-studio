@@ -34,4 +34,20 @@ public sealed class SessionContinuationLedgerStoreTests
         }
         finally { Directory.Delete(folder, recursive: true); }
     }
+
+    [Fact]
+    public void Resumed_generation_does_not_inherit_a_cross_generation_token_receipt()
+    {
+        var entry = new SessionContinuationLedgerEntry(
+            "attempt-2", "AGT-1", "codex", "repo", "/work", "branch",
+            "refs/heads/result", new string('a', 40), "host|home", "session-1",
+            "session-1", "resumed", null, true, 1,
+            null, null, null, 60, 4, DateTime.UtcNow);
+
+        Assert.Equal(60, SessionContinuationLedgerStore.WithReceiptFallback(entry, 180).TotalTokens);
+        Assert.Null(SessionContinuationLedgerStore.WithReceiptFallback(
+            entry with { TotalTokens = null }, 180).TotalTokens);
+        Assert.Equal(180, SessionContinuationLedgerStore.WithReceiptFallback(
+            entry with { InputSessionId = null, TotalTokens = null }, 180).TotalTokens);
+    }
 }

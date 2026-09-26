@@ -38,7 +38,7 @@ internal static class SessionContinuationEvidence
             teardown.ResultSha,
             hasHome ? host + "|" + home : null,
             slot.InputSessionId,
-            usage.SessionId,
+            usage.SessionId ?? slot.InputSessionId,
             slot.ResumeDecision ?? "fresh-run",
             slot.ResumeRejectionReason,
             slot.MechanicalDelta is not null,
@@ -54,9 +54,8 @@ internal static class SessionContinuationEvidence
     internal static (string? SessionId, long? TotalTokens) ReadWorkerEvidence(
         string workerDirectory, long? priorSessionTokens = 0)
     {
-        var root = Path.GetFileName(workerDirectory).StartsWith("resume-", StringComparison.Ordinal)
-            ? Path.GetDirectoryName(workerDirectory)! : workerDirectory;
-        if (!Directory.Exists(root)) return (null, null);
+        var logPath = Path.Combine(workerDirectory, "output.jsonl");
+        if (!File.Exists(logPath)) return (ReadParentSessionId(workerDirectory), null);
         string? sessionId = null;
         long turns = 0;
         long cumulative = 0;
@@ -64,9 +63,7 @@ internal static class SessionContinuationEvidence
         var observed = false;
         try
         {
-            foreach (var path in Directory.EnumerateFiles(root, "output.jsonl", SearchOption.AllDirectories)
-                         .OrderBy(path => path, StringComparer.Ordinal))
-            foreach (var line in File.ReadLines(path))
+            foreach (var line in File.ReadLines(logPath))
             {
                 try
                 {
@@ -87,8 +84,37 @@ internal static class SessionContinuationEvidence
                 catch (JsonException) { /* An incomplete final line cannot create usage. */ }
             }
         }
-        catch (IOException) { return (sessionId, observed ? Math.Max(turns, cumulative) : null); }
-        catch (UnauthorizedAccessException) { return (sessionId, observed ? Math.Max(turns, cumulative) : null); }
-        return (sessionId, observed ? Math.Max(turns, cumulative) : null);
+        catch (IOException) { /* Keep evidence from complete lines. */ }
+        catch (UnauthorizedAccessException) { /* Keep evidence from complete lines. */ }
+        return (sessionId ?? ReadParentSessionId(workerDirectory),
+            observed ? Math.Max(turns, cumulative) : null);
+    }
+
+    private static string? ReadParentSessionId(string workerDirectory)
+    {
+        if (!Path.GetFileName(workerDirectory).StartsWith("resume-", StringComparison.Ordinal))
+            return null;
+        var parent = Path.GetDirectoryName(workerDirectory);
+        if (parent is null) return null;
+        var logPath = Path.Combine(parent, "output.jsonl");
+        if (!File.Exists(logPath)) return null;
+        string? sessionId = null;
+        try
+        {
+            foreach (var line in File.ReadLines(logPath))
+            {
+                try
+                {
+                    var output = JsonSerializer.Deserialize<DetachedJobLogLine>(line,
+                        new JsonSerializerOptions(JsonSerializerDefaults.Web));
+                    if (output?.Stream == "stdout")
+                        sessionId = ProviderOutputEvidenceExtractor.Extract(output.Text).SessionId ?? sessionId;
+                }
+                catch (JsonException) { /* Ignore an incomplete final line. */ }
+            }
+        }
+        catch (IOException) { /* Keep the session id already read. */ }
+        catch (UnauthorizedAccessException) { /* Keep the session id already read. */ }
+        return sessionId;
     }
 }

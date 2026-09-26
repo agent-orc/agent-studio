@@ -12,6 +12,16 @@ public static class SessionContinuationLedgerStore
     public const string FreshReasonFileName = "session-continuation-fresh-reason.txt";
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
+    public static SessionContinuationLedgerEntry WithReceiptFallback(
+        SessionContinuationLedgerEntry entry, long? receiptTotalTokens)
+        => entry with
+        {
+            // The task log receipt can span process generations. A resumed
+            // generation must only use usage measured from its own worker log.
+            TotalTokens = entry.TotalTokens
+                ?? (entry.InputSessionId is null ? receiptTotalTokens : null),
+        };
+
     public static SessionContinuationLedgerEntry? Latest(string folder)
     {
         var path = Path.Combine(folder, LedgerFileName);
