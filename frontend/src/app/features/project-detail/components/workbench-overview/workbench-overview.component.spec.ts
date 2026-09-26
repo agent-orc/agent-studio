@@ -301,6 +301,7 @@ describe('WorkbenchOverviewComponent', () => {
       '[data-testid="workbench-overview-decision-toggle"]')?.getAttribute('aria-expanded')).toBe('true');
     expect(reloaded.nativeElement.querySelector('#workbench-overview-decision-list')?.textContent)
       .toContain('fresh');
+    http.expectOne('/api/projects/Demo/tags').flush({ items: [] });
     http.verify();
   });
 
@@ -390,6 +391,7 @@ describe('WorkbenchOverviewComponent', () => {
       fixture.detectChanges();
 
       expect(fixture.nativeElement.textContent).toContain('new-item');
+      http.expectOne('/api/projects/Demo/tags').flush({ items: [] });
       http.verify();
     } finally {
       vi.useRealTimers();
