@@ -136,6 +136,9 @@ public static class ProjectSnapshotEndpoints
                     // integration gate actually applies.
                     integrationGateReviewReuse = settings.IntegrationGateReviewReuse,
                     integrationGateReviewReuseEffective = IntegrationGateReusePolicy.IsEnabled(settings),
+                    maxReviewConcernRounds = settings.MaxReviewConcernRounds,
+                    scopedReviewAfterFinding = settings.ScopedReviewAfterFinding,
+                    scopedReviewMaximumDeltaFiles = settings.ScopedReviewMaximumDeltaFiles,
                     // F35: every lane resolved to its effective strategy.
                     // The kanban renders the lane-header icon and the
                     // drag-disabled hint from this map.
