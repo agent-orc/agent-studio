@@ -168,8 +168,12 @@ steer the pipeline in this policy version.
   workspace namespace and executes only the frozen plan. The Engine dispatches
   the post-build-test plan through the public Task API when
   `REMOTE_POST_BUILD_TEST_GATE_ENABLED=1`; the switch defaults off, leaving the
-  existing backend gate active. A lost lease waits for positive host cleanup
-  attestation before a higher-fence retry and otherwise ends as GateInfra.
+  existing backend gate active. Review plans carry each verify command's working
+  subdirectory as a typed field. The Review Executor resolves it inside the
+  candidate and baseline workspaces, and the gate dispatcher preserves it for
+  the Gate Executor's exact-subject run. A lost lease waits for
+  positive host cleanup attestation before a higher-fence retry and otherwise
+  ends as GateInfra.
   `GET /api/v1/projects/{projectId}/tasks/{taskIdentity}/gates` exposes the
   Studio read model from Task Server facts. Host snapshots and Studio client
   summaries derive `activeGateCount` from claimed, materializing, running,

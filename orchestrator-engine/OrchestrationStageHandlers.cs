@@ -215,7 +215,7 @@ public sealed class GateDispatchLoop : IOrchestrationStageHandler
                         command.Arguments, Math.Clamp(command.TimeoutSeconds, 1, 7200), command.WorkingSubdir))
                     .Concat(verify.Select(command => new GateCommand(command.StepId,
                         command.FileName, command.Arguments,
-                        Math.Clamp(command.TimeoutSeconds, 1, 7200))))
+                        Math.Clamp(command.TimeoutSeconds, 1, 7200), command.WorkingSubdir)))
                     .ToArray();
                 var commandText = string.Join(' ', commands.SelectMany(command =>
                     new[] { command.FileName }.Concat(command.Arguments))).ToLowerInvariant();

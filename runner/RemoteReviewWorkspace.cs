@@ -718,7 +718,7 @@ public sealed class RemoteReviewWorkspace
             command.FileName,
             command.Arguments,
             command.TimeoutSeconds,
-            workingDirectory,
+            ResolveWorkingDirectory(workingDirectory, command.WorkingSubdir),
             ct,
             environment);
 
@@ -1361,7 +1361,7 @@ public sealed class RemoteReviewWorkspace
             && !candidate.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
             throw new ReviewInfrastructureException(
                 "PreparationPathInvalid",
-                $"Dependency preparation directory escaped the immutable workspace: {workingSubdir}");
+                $"Command directory escaped the immutable workspace: {workingSubdir}");
         return candidate;
     }
 
@@ -2300,6 +2300,7 @@ public sealed class RemoteReviewWorkspace
         var text = new StringBuilder(command.FileName);
         foreach (var argument in command.Arguments)
             text.Append('\0').Append(argument);
+        text.Append('\0').Append(command.WorkingSubdir);
         // The comparison mode decides what the cached baseline entry means
         // (failure names versus exit status only), so it belongs in the key.
         text.Append('\0').Append(command.BaselineMode);

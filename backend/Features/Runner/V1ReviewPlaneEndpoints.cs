@@ -1528,9 +1528,6 @@ public static class V1ReviewPlaneEndpoints
         var commands = verify.Commands
             .Select((command, index) =>
             {
-                var shellCommand = string.IsNullOrWhiteSpace(command.WorkingSubdir)
-                    ? command.Command
-                    : $"cd -- {ShellQuote(command.WorkingSubdir)} && {command.Command}";
                 // AGT-2446 root cause: the contract default of 1800s starved
                 // dotnet build/test on the review host once several attempts ran
                 // in parallel - the killed process surfaced as
@@ -1548,12 +1545,13 @@ public static class V1ReviewPlaneEndpoints
                     $"verify-{index + 1}",
                     command.Kind == VerifyCommandKind.Lint ? "lint" : "build-tests",
                     "sh",
-                    ["-lc", shellCommand],
+                    ["-lc", command.Command],
                     TimeoutSeconds: 7200,
                     CompareToBaseline: true,
                     BaselineMode: command.Kind == VerifyCommandKind.Test
                         ? Contract.ReviewBaselineModes.TestFailures
-                        : Contract.ReviewBaselineModes.ExitStatus);
+                        : Contract.ReviewBaselineModes.ExitStatus,
+                    WorkingSubdir: command.WorkingSubdir);
             })
             .ToList();
         if (commands.Count == 0)
@@ -1954,9 +1952,6 @@ public static class V1ReviewPlaneEndpoints
     private static bool RunnerMatches(HttpContext context, string runnerId)
         => context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is not RunnerPrincipal principal
            || string.Equals(principal.RunnerId, runnerId, StringComparison.Ordinal);
-
-    private static string ShellQuote(string value)
-        => "'" + value.Replace("'", "'\"'\"'", StringComparison.Ordinal) + "'";
 
     private static string? ReviewArtifactTail(
         IReadOnlyList<Contract.ReviewArtifactEvidenceDto> artifacts,

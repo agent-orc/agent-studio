@@ -16,7 +16,8 @@ public sealed class GateDispatchRestartTests
             "repo-1", "https://example.invalid/repo.git", new string('a', 40),
             "refs/agent-studio/results/source-run-1", null, null, null, "policy-v1",
             new ReviewPlanDto(
-                [new ReviewCommandDto("verify-1", "build-tests", "sh", ["-lc", "dotnet test"])],
+                [new ReviewCommandDto("verify-1", "build-tests", "sh", ["-lc", "dotnet test"],
+                    WorkingSubdir: "backend")],
                 ["build-tests"]), DateTime.UtcNow);
         var requests = new List<CreateGateSubjectRequest>();
         var handler = new GateApiHandler(source, requests);
@@ -47,6 +48,8 @@ public sealed class GateDispatchRestartTests
         Assert.Equal("source-run-1", requests[0].SourceRunId);
         Assert.Equal(source.ExpectedResultSha, requests[0].ExpectedSha);
         Assert.Contains(CapabilityProtocol.DotNet, requests[0].Plan.RequiredCapabilities);
+        Assert.Equal("backend", Assert.Single(requests[0].Plan.Commands).WorkingSubdirectory);
+        Assert.Equal(["-lc", "dotnet test"], Assert.Single(requests[0].Plan.Commands).Arguments);
         Assert.Equal(stageReadyAt.AddMinutes(15), requests[0].DispatchDeadline);
     }
 

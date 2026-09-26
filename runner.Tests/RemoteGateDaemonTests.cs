@@ -47,6 +47,23 @@ public sealed class RemoteGateDaemonTests
     }
 
     [Fact]
+    public async Task Executor_runs_a_verification_command_in_its_declared_subdirectory()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        using var fixture = new GateFixture();
+        var sha = fixture.CreateRepository();
+        var subject = fixture.Subject(sha, "refs/heads/main", "test -f ../proof.txt",
+            workingSubdir: "frontend");
+        var server = new GateServer(subject, fixture.Attempt, fixture.Lease);
+        using var client = fixture.Client(server);
+
+        Assert.True(await new RemoteGateDaemon(fixture.Options, client, _ => { })
+            .ExecuteAsync(subject, fixture.Attempt, fixture.Lease, default));
+
+        Assert.Equal(GateStates.Passed, Assert.Single(server.Reports).Report.Outcome);
+    }
+
+    [Fact]
     public async Task Missing_declared_snapshot_reports_infrastructure_failure()
     {
         if (!OperatingSystem.IsLinux()) return;
@@ -193,20 +210,24 @@ public sealed class RemoteGateDaemonTests
             Git("-C", Repository, "config", "user.email", "gate@example.invalid");
             Git("-C", Repository, "config", "user.name", "Gate Test");
             File.WriteAllText(Path.Combine(Repository, "proof.txt"), "exact subject\n");
-            Git("-C", Repository, "add", "proof.txt");
+            Directory.CreateDirectory(Path.Combine(Repository, "frontend"));
+            File.WriteAllText(Path.Combine(Repository, "frontend", ".keep"), "");
+            Git("-C", Repository, "add", "proof.txt", "frontend/.keep");
             Git("-C", Repository, "commit", "-m", "fixture");
             return Git("-C", Repository, "rev-parse", "HEAD").Trim();
         }
 
         public GateSubject Subject(string sha, string resultRef, string command,
-            int commandTimeout = 1, int overallTimeout = 15)
+            int commandTimeout = 1, int overallTimeout = 15,
+            string workingSubdir = "")
         {
             var url = Repository;
             return new GateSubject("subject-1", "AGT-test", "run-1",
                 RepositoryIdentityContract.FromUrl(url)!, url, sha, resultRef,
                 null, null, "plan-hash", "policy-hash", "version", "selection",
                 new GatePlan("post-build-test-gate", 1,
-                    [new GateCommand("verify", "/bin/sh", ["-c", command], commandTimeout)],
+                    [new GateCommand("verify", "/bin/sh", ["-c", command],
+                        commandTimeout, workingSubdir)],
                     "", overallTimeout, [], 1024, "remove"),
                 DateTime.UtcNow, DateTime.UtcNow.AddMinutes(5), 2);
         }
