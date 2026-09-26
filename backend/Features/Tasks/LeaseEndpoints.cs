@@ -1451,7 +1451,8 @@ public static class LeaseEndpoints
             {
                 AgentStudio.Runner.SessionContinuationLedgerStore.Append(
                     task.FolderPath,
-                    completedSession with { TotalTokens = tokenReceipt.TotalTokens ?? completedSession.TotalTokens });
+                    AgentStudio.Runner.SessionContinuationLedgerStore.WithReceiptFallback(
+                        completedSession, tokenReceipt.TotalTokens));
                 if (!string.IsNullOrWhiteSpace(completedSession.CapturedSessionId))
                     sessions.BackfillLatestSessionEventCapturedId(task.Id, completedSession.CapturedSessionId, task.WatchPath);
             }
