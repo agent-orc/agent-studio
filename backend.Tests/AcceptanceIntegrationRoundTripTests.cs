@@ -1951,7 +1951,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
                 Executor = "agent-runner-01",
                 LeaseId = sourceRun.Lease.LeaseId,
                 FencingToken = sourceRun.LastFence,
-                ImmutableResultRef = DeliveryRef,
+                ImmutableResultRef = $"refs/heads/{DeliveryRef}",
                 IntegrationBranch = recordedIntegrationBranch,
                 CompletedAtUtc = DateTimeOffset.UtcNow,
             });
