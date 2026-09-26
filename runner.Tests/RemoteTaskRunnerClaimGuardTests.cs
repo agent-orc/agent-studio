@@ -27,8 +27,7 @@ public sealed class RemoteTaskRunnerClaimGuardTests : IDisposable
             GitPushRemote = "git@github.com-agentstudio:agent-orc/agent-studio.git",
             WorkDir = _workDir,
             BaseBranch = "main",
-            CliBin = "test",
-            CliArgs = "",
+            ClaudeCliBin = "test",
         }, client, logs.Add);
         var lease = new RunLeaseInfoDto(
             "QS-42", "runner-test", "runner-test", "test-host", 123, "test",

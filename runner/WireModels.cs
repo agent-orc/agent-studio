@@ -239,8 +239,8 @@ public enum RunnerClaimStatus { Claimed, Empty, PreflightRequired, PreflightFail
 /// <summary>
 /// T0b — the claimed card's execution specification (CAR migration plan §3 T0b).
 /// The server states which CLI, model and reasoning level the <b>card</b> chose;
-/// <see cref="RunnerOptions.CliBin"/> / <see cref="RunnerOptions.CliArgs"/> stop
-/// being the truth and become the fallback for whatever the spec leaves open.
+/// The provider-specific host paths fill only the binary location when the spec
+/// leaves the provider open. CAR remains the sole argv and launch authority.
 ///
 /// <para>
 /// Every field is optional. A server that predates T0b sends no spec at all, and

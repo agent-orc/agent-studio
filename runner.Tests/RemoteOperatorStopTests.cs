@@ -154,9 +154,9 @@ public sealed class RemoteOperatorStopTests : IDisposable
         WorkDir = Path.Combine(_root, "work"),
         StateDir = Path.Combine(_root, "state"),
         BaseBranch = "main",
-        ExecEngine = RunnerOptions.ExecEngineLegacy,
-        CliBin = PosixShell.RequirePath(),
-        CliArgs = "-c \"printf 'half finished\\n' > stopped-work.txt; sleep 300\"",
+        ClaudeCliBin = CarStubCli.Write(
+            Path.Combine(_root, "stubs"),
+            "printf 'half finished\\n' > stopped-work.txt; sleep 300"),
         TtlSeconds = 300,
         // The renewal is the stop channel, so the run must heartbeat often
         // enough for the test to stay inside its own deadline.

@@ -1,6 +1,6 @@
 ---
 name: cli-overview
-description: Cross-cutting reference for the Claude, Codex, and Antigravity integrations. Use it with the per-CLI skills when changing backend/Features/Cli, the CAR host bridge, quota probes, the Activity Log parser, or any consumer of CLI output. Covers engine rollout, callback ordering, session capture, durable output, and host-owned lifecycle policy.
+description: Cross-cutting reference for the Claude, Codex, and Antigravity integrations. Use it with the per-CLI skills when changing backend/Features/Cli, the CAR host bridge, quota probes, the Activity Log parser, or any consumer of CLI output. Covers the single CAR execution layer, callback ordering, session capture, durable output, and host-owned lifecycle policy.
 sentinel: TASKBOARD-CLI-SKILL-OVERVIEW-2026
 ---
 
@@ -8,7 +8,7 @@ sentinel: TASKBOARD-CLI-SKILL-OVERVIEW-2026
 
 # CLI integrations: cross-cutting reference
 
-This project drives **three** coding-agent integrations from one backend: Claude Code, OpenAI Codex, and Antigravity through `agentapi`. Antigravity retains the persisted CLI type `gemini` for compatibility. The integrations share Studio lifecycle and output contracts, but Claude and Codex use CodingAgentRunner while Antigravity remains on the explicit legacy adapter.
+This project drives **three** coding-agent integrations from one backend: Claude Code, OpenAI Codex, and Antigravity through `agentapi`. Antigravity retains the persisted CLI type `gemini` for compatibility. All card runs use CodingAgentRunner and share Studio lifecycle and output contracts.
 
 > **GitHub Copilot was removed.** Its driver (`CopilotCliService`) predated the shared base class and couldn't share the hardened spawn/stream path cleanly. References below to slug session ids survive only as the reason `IsCompatibleSessionName` still rejects them.
 
@@ -31,24 +31,16 @@ This project drives **three** coding-agent integrations from one backend: Claude
 ```text
 ProjectRunner
   |
-  +-- resolve local engine: `RUNNER_EXEC_ENGINE` > project > workspace > `car`
-  |
   +-- GenericCliExecutionService
         |
-        +-- Claude or Codex, engine `car`
-        |     |
-        |     +-- CAR ICliDriver: descriptor, argv, process lifecycle, typed events
-        |     +-- CarCallbackBridge: raw metadata first, matching typed events second
-        |
-        +-- engine `legacy`, or Antigravity `agentapi`
-              |
-              +-- explicit Studio legacy launch adapter
+        +-- CAR ICliDriver: descriptor, argv, process lifecycle, typed events
+        +-- CarCallbackBridge: raw metadata first, matching typed events second
 
-Both branches -> Studio output mirror -> marker renderer -> SignalR -> Activity Log
-              -> Studio session, quota, usage, ledger, sentinel and reaper policy
+CAR -> Studio output mirror -> marker renderer -> SignalR -> Activity Log
+    -> Studio session, quota, usage, ledger, sentinel and reaper policy
 ```
 
-[`GenericCliExecutionService`](../../../../backend/Features/Cli/Execution/CliExecutionServiceBase.cs) is the shared Studio host adapter. Its effective engine is resolved from the process environment override `RUNNER_EXEC_ENGINE`, then a project override, then a workspace default, then the platform default `car`. Every configurable tier accepts `car` and `legacy`; `legacy` is the rollback path until T4. Antigravity uses legacy regardless of that setting because its `agentapi` conversation protocol does not match CAR 0.7.0's Antigravity stream and permission contract.
+[`GenericCliExecutionService`](../../../../backend/Features/Cli/Execution/CliExecutionServiceBase.cs) is the shared Studio host adapter. It always creates a typed CAR request. Engine rollout settings and the raw-spawn rollback were removed in AGT-2373.
 
 ## Session model invariants
 
@@ -149,8 +141,8 @@ The CLI frame catalogues diverge enough that a shared base switch would be a lea
 
 ## Lifecycle invariants
 
-1. **CAR is the local default for Claude and Codex.** Engine resolution is `RUNNER_EXEC_ENGINE`, then project override, then workspace default, then platform `car`. `legacy` is the explicit rollback. Antigravity remains legacy because of its `agentapi` protocol.
-2. **CAR owns launch mechanics for CAR-backed runs.** Descriptor argv, permission flags, common thinking normalization, UTF-8 environment, process lifecycle, process-tree stop, typed events, and Claude npm-shim healing stay in the library.
+1. **CAR is the only card-run execution layer.** Backend and Runner do not expose an engine selector or raw-spawn rollback.
+2. **CAR owns launch mechanics.** Descriptor argv, permission flags, common thinking normalization, UTF-8 environment, process lifecycle, process-tree stop, typed events, and Claude npm-shim healing stay in the library.
 3. **Claude prompts use CAR-A stdin.** CAR writes and closes the one-shot prompt stream before the turn. The prompt is not an argv value, and the deterministic gate covers at least 200 KiB.
 4. **Raw metadata precedes matching typed events.** `CarCallbackBridge` buffers CAR events until Studio has persisted and parsed the corresponding raw line. This is mandatory for the synchronous usage ledger.
 5. **Persist before notifying.** Studio writes the raw line to its per-stream JSONL mirror before invoking UI subscribers. Subscriber exceptions are isolated.
@@ -162,7 +154,11 @@ The CLI frame catalogues diverge enough that a shared base switch would be a lea
 
 ## CAR 0.7.0 public API boundaries
 
-The bespoke Studio `WindowsHandleScrubSpawner` was removed. CAR owns npm healing for CAR-backed agent runs. Because CAR 0.7.0 keeps its healer internal, the existing Studio `NpmShimHealer` remains a temporary exception for the explicit legacy rollback and non-agent `ClaudeOneShot` only; T4 removes it with those paths. Studio uses the public `ICliProcessSpawner` seam for host bookkeeping and the Claude rules-file overlay. Do not copy CAR's internal Windows helpers into the backend.
+The bespoke Studio `WindowsHandleScrubSpawner` and legacy card-run healer call
+were removed. CAR owns npm healing for agent runs. Studio's `NpmShimHealer`
+remains only for the bounded non-card `ClaudeOneShot` operator utility. Studio
+uses the public `ICliProcessSpawner` seam for host bookkeeping and the Claude
+rules-file overlay. Do not copy CAR's internal Windows helpers into the backend.
 
 Four PROJ-011 cards track the seams still needed for a cleaner integration:
 

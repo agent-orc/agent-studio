@@ -67,17 +67,11 @@ internal static class RunnerCapabilityProbe
                         ? GitPushProbe.Ready
                         : GitPushProbe.ReadyNoWorkflowScope,
                 gitDetail));
-            // T1 canary mechanism (car-migration-plan §4): a CAR-engined host says
-            // so, and the canary cards request exactly this key through their
-            // RequiredCapabilities - cohorts 1 -> 5 -> default, no special path.
-            if (options.ExecEngine == RunnerOptions.ExecEngineCar)
-            {
-                list.Add(Capability(
-                    "exec-engine:car",
-                    "executor",
-                    typeof(CodingAgentRunner.CliRunner).Assembly.GetName().Version?.ToString(),
-                    options.ExecEngine));
-            }
+            list.Add(Capability(
+                "exec-engine:car",
+                "executor",
+                typeof(CodingAgentRunner.CliRunner).Assembly.GetName().Version?.ToString(),
+                "car"));
         }
         else
         {
@@ -102,8 +96,8 @@ internal static class RunnerCapabilityProbe
         => new[]
         {
             CapabilityProtocol.CodingExecutor,
-            CapabilityProtocol.CliExecution(AgentCliProcess.ConfiguredCliType(options)),
-            CapabilityProtocol.ProviderAuthentication(AgentCliProcess.ConfiguredCliType(options)),
+            CapabilityProtocol.CliExecution(options.CliType),
+            CapabilityProtocol.ProviderAuthentication(options.CliType),
             CapabilityProtocol.GitFetch,
             CapabilityProtocol.RepositoryAccess,
             CapabilityProtocol.Disk,
@@ -242,7 +236,7 @@ internal static class RunnerCapabilityProbe
             var auth = providerAuth.Current(binary);
             var binaryAvailable = ProviderAuthProbe.ExecutableExists(binary);
             var installation = binaryAvailable ? InspectCli(binary) : null;
-            var supportedModels = string.Equals(cliType, AgentCliProcess.CodexCli, StringComparison.OrdinalIgnoreCase)
+            var supportedModels = string.Equals(cliType, CliSelection.CodexCli, StringComparison.OrdinalIgnoreCase)
                 && installation is not null
                 ? CodexModels(installation)
                 : null;
@@ -275,22 +269,11 @@ internal static class RunnerCapabilityProbe
     internal static IReadOnlyList<(string CliType, string Binary)> CodingCliBinaries(
         RunnerOptions options)
     {
-        var configuredType = AgentCliProcess.ConfiguredCliType(options);
-        var binaries = new List<(string CliType, string Binary)>
+        return new List<(string CliType, string Binary)>
         {
-            (configuredType, options.CliBin),
+            (CliSelection.ClaudeCli, options.ClaudeCliBin),
+            (CliSelection.CodexCli, options.CodexCliBin),
         };
-        if (configuredType != AgentCliProcess.ClaudeCli
-            && !string.IsNullOrWhiteSpace(options.ClaudeCliBin))
-        {
-            binaries.Add((AgentCliProcess.ClaudeCli, options.ClaudeCliBin));
-        }
-        if (configuredType != AgentCliProcess.CodexCli
-            && !string.IsNullOrWhiteSpace(options.CodexCliBin))
-        {
-            binaries.Add((AgentCliProcess.CodexCli, options.CodexCliBin));
-        }
-        return binaries;
     }
 
     private static AdvertisedCapabilityDto Capability(

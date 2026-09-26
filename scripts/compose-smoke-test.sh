@@ -257,7 +257,8 @@ services:
       RUNNER_STATE_DIR: /fixtures/state
       RUNNER_GIT_REMOTE: file:///fixtures/origin.git
       RUNNER_GIT_PUSH_REMOTE: file:///fixtures/origin.git
-      RUNNER_CLI_BIN: /fixtures/topology-agent.sh
+      RUNNER_CLI_TYPE: claude
+      RUNNER_CLAUDE_CLI_BIN: /fixtures/topology-agent.sh
       RUNNER_TTL_SECONDS: "60"
       RUNNER_MAX_PARALLELISM: "1"
       RUNNER_POLL_SECONDS: "1"

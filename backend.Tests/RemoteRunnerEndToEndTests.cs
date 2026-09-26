@@ -2061,7 +2061,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Equal("codex", codex.RunSpec!.CliType);
         var claimedClaudeSpec = claude.RunSpec with { ContextMode = "shared" };
 
-        var invocation = Runner::AgentRunner.AgentCliProcess.Resolve(
+        var invocation = Runner::AgentRunner.CliSelection.Resolve(
             runnerOptions,
             claimedClaudeSpec);
         Assert.Equal(claudeBinary, invocation.FileName);
@@ -2080,7 +2080,6 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             results,
             runSpec: claimedClaudeSpec,
             runId: claude.RunId);
-        Assert.Equal(ROptions.ExecEngineCar, persistedSpec.Engine);
         Assert.Equal("claude", persistedSpec.CliType);
         Assert.Equal(claudeBinary, persistedSpec.FileName);
 
@@ -2241,10 +2240,11 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.False(string.IsNullOrWhiteSpace(claim.RunSpec.PermissionMode));
         Assert.False(string.IsNullOrWhiteSpace(claim.RunSpec.ContextMode));
 
-        var claudeInvocation = Runner::AgentRunner.AgentCliProcess.Resolve(
+        var claudeInvocation = Runner::AgentRunner.CliSelection.Resolve(
             RunnerOptions("claude"), claim.RunSpec);
         Assert.Equal("claude", claudeInvocation.FileName);
-        Assert.Equal(["--model", "claude-opus-4-8", "--effort", "max"], claudeInvocation.Arguments);
+        Assert.Equal("claude-opus-4-8", claudeInvocation.Model);
+        Assert.Equal("max", claudeInvocation.ThinkingLevel);
 
         // The host-capacity contract admits one slot for this fixture. Release
         // the first lease before probing the second card's independent RunSpec.
@@ -2272,14 +2272,12 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         // the model's ladder rather than shipping an invalid selector.
         Assert.Equal("medium", codexClaim.RunSpec.ThinkingLevel);
 
-        // The card routes to the other CLI, so RUNNER_CLI_BIN / RUNNER_CLI_ARGS
-        // stop being the truth: the codex binary and its minimal headless form win.
-        var codexInvocation = Runner::AgentRunner.AgentCliProcess.Resolve(
+        // The card routes to the other provider-specific binary. CAR owns argv.
+        var codexInvocation = Runner::AgentRunner.CliSelection.Resolve(
             RunnerOptions("claude"), codexClaim.RunSpec);
         Assert.Equal("codex", codexInvocation.FileName);
-        Assert.Equal(
-            ["exec", "--experimental-json", "-m", "gpt-5.6-codex", "-c", "model_reasoning_effort=\"medium\"", "-"],
-            codexInvocation.Arguments);
+        Assert.Equal("gpt-5.6-codex", codexInvocation.Model);
+        Assert.Equal("medium", codexInvocation.ThinkingLevel);
     }
 
     [Fact]
@@ -2323,15 +2321,13 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             WorkDir = runnerWork,
             StateDir = Path.Combine(runnerWork, ".runner-state"),
             BaseBranch = "main",
-            CliBin = cli,
+            ClaudeCliBin = cli,
             CodexCliBin = cli,
-            CliArgs = "",
             TtlSeconds = 120,
             HeartbeatSeconds = 30,
             RunTimeoutSeconds = 30,
             HostMaxParallelism = 1,
             PollSeconds = 1,
-            ExecEngine = ROptions.ExecEngineLegacy,
         };
         var taskRunner = new RTaskRunner(options, client, _ => { });
         var exit = await taskRunner.RunClaimedAsync(
@@ -3579,9 +3575,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         WorkDir = Path.Combine(_workspace, "remote-runner-work"),
         StateDir = Path.Combine(_workspace, "remote-runner-work", ".runner-state"),
         BaseBranch = "main",
-        CliBin = cliBin,
-        ClaudeCliBin = claudeCliBin ?? "claude",
-        CliArgs = "",
+        CliType = cliBin.Contains("codex", StringComparison.OrdinalIgnoreCase) ? "codex" : "claude",
+        ClaudeCliBin = claudeCliBin ?? cliBin,
         TtlSeconds = 120,
         HeartbeatSeconds = 30,
         RunTimeoutSeconds = 30,
@@ -4459,8 +4454,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         ReviewWorkDir = Path.Combine(_workspace, "review-work"),
         StateDir = Path.Combine(_workspace, "review-state"),
         BaseBranch = "main",
-        CliBin = "unused",
-        CliArgs = string.Empty,
+        ClaudeCliBin = "unused",
         CodexCliBin = codexCliBin ?? "codex",
         TtlSeconds = 120,
         HeartbeatSeconds = 1,

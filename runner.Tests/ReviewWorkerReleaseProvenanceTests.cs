@@ -287,8 +287,7 @@ public sealed class ReviewWorkerReleaseProvenanceTests : IDisposable
         ReviewWorkDir = _root,
         StateDir = Path.Combine(_root, "state"),
         BaseBranch = "main",
-        CliBin = "test",
-        CliArgs = "",
+        ClaudeCliBin = "test",
         TtlSeconds = 120,
         // An hour of heartbeat silence: every renewal is an adoption check.
         HeartbeatSeconds = 3600,

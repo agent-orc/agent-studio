@@ -138,9 +138,10 @@ public sealed class CodingDaemonRestartTests : IDisposable
         WorkDir = Path.Combine(_root, "work"),
         StateDir = Path.Combine(_root, "state"),
         BaseBranch = "main",
-        ExecEngine = RunnerOptions.ExecEngineLegacy,
-        CliBin = PosixShell.RequirePath(),
-        CliArgs = $"-c \"printf 'before-restart\\n'; while [ ! -f '{continueFile}' ]; do sleep 0.05; done; printf 'after-restart\\n[[TASK_DONE]]\\n'\"",
+        ClaudeCliBin = CarStubCli.Write(
+            Path.Combine(_root, "stubs"),
+            $"printf 'before-restart\\n'; while [ ! -f '{continueFile}' ]; do sleep 0.05; done; "
+            + "printf 'after-restart\\n[[TASK_DONE]]\\n'"),
         // The ordinary lease is deliberately inside the startup safety margin.
         // Only a shutdown handoff renewal gives the replacement time to adopt.
         TtlSeconds = 4,

@@ -209,7 +209,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             TimeoutSeconds: 30,
             ExecutionKind: ReviewCommandKinds.AgentAspect,
             Prompt: "Inspect the exact result and return the required aspect sentinel.",
-            CliType: AgentCliProcess.CodexCli,
+            CliType: CliSelection.CodexCli,
             Model: "gpt-5.4-mini",
             ThinkingLevel: "high");
         var (workspace, _) = Workspace(
@@ -266,7 +266,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
                 TimeoutSeconds: 30,
                 ExecutionKind: ReviewCommandKinds.AgentAspect,
                 Prompt: $"Grade aspect {index}.",
-                CliType: AgentCliProcess.CodexCli,
+                CliType: CliSelection.CodexCli,
                 Model: "gpt-5.4-mini",
                 ThinkingLevel: "high"))
             .ToArray();
@@ -330,7 +330,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             TimeoutSeconds: 30,
             ExecutionKind: ReviewCommandKinds.AgentAspect,
             Prompt: "Review documentation impact.",
-            CliType: AgentCliProcess.CodexCli,
+            CliType: CliSelection.CodexCli,
             Model: "gpt-5.4-mini",
             ThinkingLevel: "high");
         var (workspace, _) = Workspace(
@@ -1679,8 +1679,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             WorkDir = Path.Combine(_root, "coding"),
             ReviewWorkDir = _reviewRoot,
             BaseBranch = "main",
-            CliBin = "unused",
-            CliArgs = "",
+            ClaudeCliBin = "unused",
             CodexCliBin = codexCliBin ?? "codex",
             TtlSeconds = 120,
             HeartbeatSeconds = 30,

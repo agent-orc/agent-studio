@@ -40,7 +40,10 @@ Each capability has: a contract, the code that implements it, and the test that 
 
 **Code.** [`GenericCliExecutionService`](../../../backend/Features/Cli/Execution/CliExecutionServiceBase.cs) is the Studio host adapter. [`BuiltInCliBehaviors`](../../../backend/Features/Cli/Execution/BuiltInCliBehaviors.cs) contains CLI-specific parsing and host behavior. Claude and Codex launch through CodingAgentRunner's `ICliDriver`; CAR owns their descriptors, argv, common normalization, process lifecycle, and typed events. Studio retains the output mirror, Activity Log rendering, session and usage capture, cancellation policy, active-job registry, and terminal classification.
 
-The local engine is rollout-gated. Resolution order is the process environment override `RUNNER_EXEC_ENGINE`, then project override, then workspace default, then the platform default `car`. Each configurable tier accepts `car` or `legacy`; `legacy` is the explicit rollback until the migration chain removes it. Antigravity always selects its legacy adapter even when the effective setting is `car`, because its current `agentapi` protocol is not CAR-compatible.
+CAR is the only card-run execution engine. Backend and Runner host adapters pass
+typed requests to `ICliDriver`; CAR owns descriptor argv, process lifecycle, and
+typed events for Claude, Codex, and Antigravity. There is no engine setting or
+legacy raw-spawn fallback.
 
 The local backend does not reattach after a restart. `ReattachOnStartup` is intentionally an orphan reaper: it validates PID identity, kills a surviving process tree, and relies on the runner recovery path to demote or reissue the interrupted task. The remote runner's detached-worker reattach contract is separate.
 
@@ -155,7 +158,7 @@ the host and only ever streams a public verification URL (plus, for Codex, a
 one-time code) back to Studio.
 
 **Remote coding hosts.** The standalone host keeps one primary
-`RUNNER_CLI_BIN` plus `RUNNER_CLAUDE_CLI_BIN` and `RUNNER_CODEX_CLI_BIN`.
+`RUNNER_CLI_TYPE` plus `RUNNER_CLAUDE_CLI_BIN` and `RUNNER_CODEX_CLI_BIN`.
 Capability probing tests binary presence and provider authentication for each
 configured provider before the first advertisement. On Linux, the status command
 runs through `nice -n 10` with a 30-second timeout so review load does not look
@@ -252,7 +255,7 @@ Context mode resolution remains task override, then project setting, then the `c
 
 CAR 0.7.0 raises typed events before the matching raw-output callback. Studio must parse raw usage and session metadata before subscribers handle `TurnCompleted`, so [`CarCallbackBridge`](../../../backend/Features/Cli/Execution/BackendCarExecution.cs) buffers each typed batch, handles the raw line, and then publishes its events. This ordering is part of the token and cost ledger contract.
 
-The old Studio-local `WindowsHandleScrubSpawner` no longer exists. CAR owns npm-shim healing for CAR-backed Claude launches. CAR 0.7.0 keeps its healer internal, so the existing Studio `NpmShimHealer` remains temporarily for the explicit legacy rollback and non-agent `ClaudeOneShot` only; T4 removes it with those paths. Studio uses the public `ICliProcessSpawner` seam only to attach host bookkeeping and the Claude rules-file overlay. The remaining public API gaps are tracked in PROJ-011 as `public-clean-context-lease`, `public-hardened-spawner-composition`, `public-cli-launch-overlay`, and `public-pre-spawn-health`. Do not solve CAR's internal Windows process helpers by copying them back into this repository.
+The old Studio-local `WindowsHandleScrubSpawner` no longer exists. CAR owns npm-shim healing for agent launches. Studio's `NpmShimHealer` remains only for the bounded non-card `ClaudeOneShot` utility. Studio uses the public `ICliProcessSpawner` seam only to attach host bookkeeping and the Claude rules-file overlay. The remaining public API gaps are tracked in PROJ-011 as `public-clean-context-lease`, `public-hardened-spawner-composition`, `public-cli-launch-overlay`, and `public-pre-spawn-health`. Do not solve CAR's internal Windows process helpers by copying them back into this repository.
 
 ---
 
@@ -262,7 +265,7 @@ The old Studio-local `WindowsHandleScrubSpawner` no longer exists. CAR owns npm-
 
 | Aspect | Status |
 |--------|--------|
-| Execution engine | CAR 0.7.0 by default; explicit `legacy` rollback |
+| Execution engine | CAR 0.7.0 only |
 | Process lifecycle | CAR Claude descriptor through `ICliDriver`; stream-json output; permission mode supplied from Studio's resolved local run configuration |
 | Session model | UUIDs only; resume through the CAR request; the CLI assigns the fresh session id |
 | Model selection | Studio catalog and qualification, then CAR model and thinking normalization |
@@ -273,8 +276,8 @@ The old Studio-local `WindowsHandleScrubSpawner` no longer exists. CAR owns npm-
 | Session storage | `~/.claude/projects/<encoded-cwd>/<uuid>.jsonl` |
 
 **Quirks.**
-- The CAR path uses the CAR-A one-shot stdin prompt transport and closes stdin immediately after the full prompt is flushed. This keeps prompts of at least 200 KiB out of argv and process listings without leaving an interactive pipe open. The temporary `legacy` rollback retains the older argv transport from ADR-0014.
-- CAR performs its built-in npm-shim healing before a CAR-backed Claude launch. The explicit legacy rollback and non-agent one-shot paths retain the pre-existing Studio healer until T4 because CAR 0.7.0 exposes no public repair API. CAR-backed agent runs never call the Studio healer.
+- CAR uses the CAR-A one-shot stdin prompt transport and closes stdin immediately after the full prompt is flushed. This keeps prompts of at least 200 KiB out of argv and process listings without leaving an interactive pipe open.
+- CAR performs its built-in npm-shim healing before a Claude agent launch. The non-card one-shot path retains the pre-existing Studio healer because CAR 0.7.0 exposes no public repair API.
 - Studio adds its centrally managed rules file through the narrow launch decorator until PROJ-011 `public-cli-launch-overlay` is available.
 - Claude Code 2.1.202 renders `/usage` as a tabbed `Settings / Status / Config / Usage / Stats` view. API-billed accounts can show only session cost and token counts there, with no subscription utilization percentage. The probe recognizes that exact PTY shape and returns `Quota: Unknown` instead of an empty/error snapshot. Older `Current session` and `Current week` text remains supported.
 - Rate-limit frames accept both the original camelCase keys and forgiving snake_case aliases. Unknown fields and optional fields with unexpected types are ignored so telemetry drift cannot break the CLI output loop.
@@ -283,7 +286,7 @@ The old Studio-local `WindowsHandleScrubSpawner` no longer exists. CAR owns npm-
 
 | Aspect | Status |
 |--------|--------|
-| Execution engine | CAR 0.7.0 by default; explicit `legacy` rollback |
+| Execution engine | CAR 0.7.0 only |
 | Process lifecycle | CAR Codex descriptor through `ICliDriver`; JSON event stream with prompt on stdin |
 | Session model | UUIDs only; captured from `thread.started`, with legacy `session_meta` accepted; resume through the CAR request |
 | Model selection | Live `CodexModelDiscovery`, Studio qualification, then CAR model and thinking normalization |
@@ -302,13 +305,13 @@ The old Studio-local `WindowsHandleScrubSpawner` no longer exists. CAR owns npm-
 
 | Aspect | Status |
 |--------|--------|
-| Execution engine | Legacy adapter only, including when the effective rollout setting is `car` |
-| Process lifecycle | `agentapi new-conversation [--model=<id>] <prompt>` or `agentapi send-message <uuid> <prompt>` |
+| Execution engine | CAR 0.7.0 only |
+| Process lifecycle | CAR Antigravity descriptor through `ICliDriver` |
 | Session model | UUID conversation id captured from `agentapi` JSON; resume with `send-message` |
 | Model selection | Static `flash`, `pro`, and `flash_lite` mapping |
 | Quota probe | No local numeric surface; reports that quota is managed by the IDE session |
 | Logging | `agentapi` JSON rendered to the shared marker-line vocabulary; typed compatibility events use the existing adapter |
-| Cancellation | Studio legacy process-tree cancellation |
+| Cancellation | CAR process-tree stop plus Studio terminal classification |
 | Availability | `agentapi --version`, accepting its usage response when that flag is not implemented |
 | Context mode | Shared only |
 
