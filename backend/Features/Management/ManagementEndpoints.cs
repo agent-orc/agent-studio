@@ -1,3 +1,6 @@
+using AgentStudio.Shared;
+using AgentStudio.Tasks;
+
 namespace AgentStudio.Management;
 
 public static class ManagementEndpoints
@@ -26,6 +29,23 @@ public static class ManagementEndpoints
             context.Response.Headers.CacheControl = "no-store";
             if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
             return Results.Ok(registry.ListCapabilitySnapshots());
+        });
+        group.MapGet("/runner-infrastructure-failures", (
+            HttpContext context,
+            TaskScannerService scanner,
+            IConfiguration configuration) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
+            return Results.Ok(scanner.ScanAllJobs()
+                .Where(task => task.State == TaskStates.Escalated
+                    && task.RemoteClaimFailure is { Attempts: >= 3 })
+                .Select(task => new AgentStudio.TaskServer.Contracts.RunnerInfrastructureFailureDto(
+                    task.Key ?? task.Id,
+                    task.RemoteClaimFailure!.Attempts,
+                    task.RemoteClaimFailure.Fingerprint ?? "unknown",
+                    task.RemoteClaimFailure.Host ?? "unknown",
+                    task.RemoteClaimFailure.Reason)));
         });
         // AGT-2826: one authoritative comparison for Execution Hosts and for the
         // operator-feed alarm, so the page can never disagree with the alarm.

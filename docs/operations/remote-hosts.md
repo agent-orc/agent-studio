@@ -4,6 +4,33 @@ This runbook is the operator path for adding, connecting, draining, retiring,
 reviving, and permanently removing a remote agent host. The detailed Linux
 installation reference remains [linux-runner-host.md](setup/linux-runner-host.md).
 
+## Prelaunch infrastructure failures
+
+The Task Server counts consecutive infrastructure failures per card and failure
+fingerprint. Environment preparation, salvage, and results handling report a
+typed lease release. A release with one of these codes settles immediately;
+the 120 second silence grace applies to a lease that lost authority mid-run.
+The default budget is three identical consecutive failures. The durable Task
+Server accepts `TaskServer:RunnerInfrastructureFailureBudget` from 1 to 20. On
+the legacy runner API, set `Runner:RemoteClaimFailureBudget` to the same value.
+At the default budget, the first two return the card to Ready. The third parks
+it in Escalated with
+`runner-environment-broken`, the fingerprint, last error, host, and a recovery
+hint. A different fingerprint starts a new count; an operator move from
+Escalated to Ready resets the spent budget. Execution Hosts lists parked cards
+and their fingerprints. The activity record is emitted once on escalation.
+
+On preparation, a worktree directory without its `.git` metadata is moved to
+`$RUNNER_STATE_DIR/quarantine/<task>/` and pruned from the shared repository's
+worktree registration. The runner lists the task's origin salvage refs in its
+log, then creates a fresh worktree. The quarantined files remain available for
+inspection. On result-file permission errors, the runner calls the allowlisted
+`sudo -n /usr/local/sbin/agent-runner-deploy chown-results <task>` helper once
+and retries the operation. The helper only accepts a task key under the Coding
+results root, rejects symbolic links, and restores ownership to the runner
+user. If it cannot repair ownership, the error names the path and owner so an
+operator can repair it before moving the card to Ready.
+
 ## Add a host
 
 Open **Workspace Settings > Execution Hosts > Add execution host**. The wizard introduced in

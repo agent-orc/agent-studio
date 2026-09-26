@@ -5,6 +5,7 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 readonly service_user="agent"
 readonly service_group="agent"
+readonly coding_results_root="/var/lib/agent-runner/work/tasks"
 readonly deploy_root="/var/lib/agent-runner/deploy"
 readonly incoming_root="$deploy_root/incoming"
 readonly accepted_root="$deploy_root/accepted"
@@ -42,6 +43,20 @@ review_guard_main_pid=""
 die() {
   printf 'agent-runner-deploy: %s\n' "$*" >&2
   exit 2
+}
+
+chown_results() {
+  local task="${1:-}"
+  [[ "$task" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "invalid task key"
+  local task_dir="$coding_results_root/$task"
+  local path="$task_dir/results"
+  [[ -d "$coding_results_root" && ! -L "$coding_results_root" ]] || die "coding results root is missing or linked"
+  [[ -d "$task_dir" && ! -L "$task_dir" ]] || die "task directory is missing or linked"
+  [[ -d "$path" && ! -L "$path" ]] || die "task results directory is missing or linked"
+  [[ -z "$(find "$path" -type l -print -quit)" ]] || die "results contain a symbolic link"
+  chown -R -P -- "$service_user:$service_group" "$path"
+  logger -p authpriv.notice -t agent-runner-deploy "chown-results task=$task path=$path"
+  printf 'agent-runner-deploy: repaired result ownership for %s\n' "$task"
 }
 
 # The busy-slot policy lives in the runner binary, not here, so the deploy
@@ -995,6 +1010,9 @@ main() {
     1:drain)
       drain_review_unit
       ;;
+    2:chown-results)
+      chown_results "$2"
+      ;;
     1:restart-review)
       restart_review_unit
       ;;
@@ -1015,7 +1033,7 @@ main() {
       configure_role "$2" "$3" "$4"
       ;;
     *)
-      die "usage: agent-runner-deploy [--force|--restart-review-drain] | drain | restart-review [--force] | update-clis <codex-version> <claude-version> | config <coding|review> RUNNER_MAX_PARALLELISM <1-6> [--force]"
+      die "usage: agent-runner-deploy [--force|--restart-review-drain] | drain | restart-review [--force] | chown-results <task> | update-clis <codex-version> <claude-version> | config <coding|review> RUNNER_MAX_PARALLELISM <1-6> [--force]"
       ;;
   esac
 }

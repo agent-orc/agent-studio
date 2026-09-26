@@ -29,6 +29,13 @@ public sealed record TaskDto(
     string? ArchiveState = null,
     DateTime? ArchivedAt = null);
 
+public sealed record RunnerInfrastructureFailureDto(
+    string TaskKey,
+    int Attempts,
+    string Fingerprint,
+    string Host,
+    string LastError);
+
 public sealed record RunDto(
     string RunId,
     string TaskId,

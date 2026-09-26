@@ -48,6 +48,19 @@
       </button>
     }
   </div>
+  @if (brokenRunnerTasks().length > 0) {
+    <section class="rh__candidates" data-testid="execution-host-runner-failures">
+      <h3 class="rh__candidates-title">Runner environment failures</h3>
+      @for (task of brokenRunnerTasks(); track task.taskKey) {
+        <p data-testid="execution-host-runner-failure">
+          <strong>{{ task.taskKey }}</strong>:
+          {{ task.attempts }} failures on {{ task.host }}
+          (fingerprint <code>{{ task.fingerprint }}</code>).
+          {{ task.lastError }}
+        </p>
+      }
+    </section>
+  }
   @if (readyCandidateTasks().length > 0) {
     <section class="rh__candidates" data-testid="execution-host-candidates">
       <h3 class="rh__candidates-title">Ready routes with benchmark candidates</h3>

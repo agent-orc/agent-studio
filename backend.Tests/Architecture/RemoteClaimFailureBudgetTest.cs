@@ -45,6 +45,27 @@ public sealed class RemoteClaimFailureBudgetTest
         }
     }
 
+    [Fact]
+    public void Different_fingerprint_resets_consecutive_count_and_preserves_host()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "remote-claim-budget-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "task.json"), "{}");
+        var task = new TaskInfo { Id = "AGT-1", FolderPath = folder };
+        try
+        {
+            var budget = NewBudget();
+            budget.Record(task, "fatal: not a git repository", "runner-environment-preparation-failed", "host-a");
+            budget.Record(task, "fatal: not a git repository", "runner-environment-preparation-failed", "host-a");
+            var changed = budget.Record(task, "permission denied", "runner-results-handling-failed", "host-b");
+            Assert.Equal(1, changed.Attempt);
+            var state = budget.GetState(task)!;
+            Assert.Equal("host-b", state.Host);
+            Assert.Equal(RemoteClaimFailureBudget.Fingerprint("runner-results-handling-failed", "permission denied"), state.Fingerprint);
+        }
+        finally { Directory.Delete(folder, true); }
+    }
+
     private static RemoteClaimFailureBudget NewBudget()
         => new(NullLogger<RemoteClaimFailureBudget>.Instance);
 }

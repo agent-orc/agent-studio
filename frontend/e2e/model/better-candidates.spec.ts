@@ -1,6 +1,7 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { setTheme } from '../helpers/theme';
 
 const PROJECT = 'Agent Studio';
 const WATCH_PATH = '/tmp/agent-studio';
@@ -51,10 +52,29 @@ const TASK = {
   references: { dependsOn: [], relatedTo: [], blockedBy: [], supersedes: [], workbenches: [] },
 };
 
+const BROKEN_TASK = {
+  ...TASK,
+  id: 'broken-runner-task',
+  key: 'AGT-2736',
+  displayKey: 'AGT-2736',
+  taskKey: `${WATCH_PATH}::broken-runner-task`,
+  title: 'Broken runner worktree',
+  state: '5e-escalated',
+  folderPath: `${WATCH_PATH}/5e-escalated/broken-runner-task`,
+  betterCandidates: null,
+  remoteClaimFailure: {
+    attempts: 3,
+    fingerprint: '48c9f04a9955a23e',
+    reason: 'fatal: not a git repository',
+    cause: 'runner-environment-preparation-failed',
+    host: 'agent-runner-01',
+  },
+};
+
 const GROUPED = {
   backlog: [], preparation: [], orchestratorPrep: [], ready: [TASK], progress: [],
   failedPickup: [], codeNotComplete: [], autoReview: [], review: [], humanReview: [],
-  escalated: [], completed: [], archive: [],
+  escalated: [BROKEN_TASK], completed: [], archive: [],
 };
 
 async function stubApis(page: Page): Promise<void> {
@@ -87,7 +107,7 @@ async function stubApis(page: Page): Promise<void> {
       }]);
     }
     if (url.pathname === '/api/tasks/grouped') return json(GROUPED);
-    if (url.pathname === '/api/tasks') return json([TASK]);
+    if (url.pathname === '/api/tasks') return json([TASK, BROKEN_TASK]);
     if (url.pathname === `/api/tasks/${TASK_REFERENCE}` || url.pathname === `/api/tasks/${TASK_ID}`) {
       return json({
         info: TASK,
@@ -109,6 +129,13 @@ async function stubApis(page: Page): Promise<void> {
     if (url.pathname === '/api/runner/status') return json({ projects: {} });
     if (url.pathname === '/api/runner/queue-starvation') return json({ active: false, items: [] });
     if (url.pathname === '/api/v1/management/remote-hosts') return json([]);
+    if (url.pathname === '/api/v1/management/runner-infrastructure-failures') return json([{
+      taskKey: BROKEN_TASK.key,
+      attempts: BROKEN_TASK.remoteClaimFailure.attempts,
+      fingerprint: BROKEN_TASK.remoteClaimFailure.fingerprint,
+      host: BROKEN_TASK.remoteClaimFailure.host,
+      lastError: BROKEN_TASK.remoteClaimFailure.reason,
+    }]);
     if (url.pathname === '/api/v1/management/links') return json([]);
     if (url.pathname.includes('/auto-review-queue')) return json({
       queueDepth: 0, activeJobs: 0, isStagnant: false, stagnantSince: null,
@@ -155,4 +182,12 @@ test('shows the same informational candidate on the Ready card and in Execution 
   await expect(hosts).toContainText(TASK_REFERENCE);
   await expect(hosts).toContainText('gpt-6-astra');
   await hosts.screenshot({ path: join(RESULTS, 'better-candidate-execution-hosts--mocked.png') });
+  const failure = page.getByTestId('execution-host-runner-failure');
+  await expect(failure).toContainText('AGT-2736');
+  await expect(failure).toContainText('3 failures on agent-runner-01');
+  await expect(failure).toContainText('48c9f04a9955a23e');
+  await failure.screenshot({ path: join(RESULTS, 'runner-environment-failure-execution-hosts--mocked.png') });
+  await setTheme(page, 'dark');
+  await expect(failure).toBeVisible();
+  await failure.screenshot({ path: join(RESULTS, 'runner-environment-failure-execution-hosts-dark--mocked.png') });
 });

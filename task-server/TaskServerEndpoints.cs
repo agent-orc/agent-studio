@@ -603,6 +603,8 @@ public static class TaskServerEndpoints
             => await InvokeAsync(() => store.GetInvariantRegistryAsync(ct)));
         management.MapGet("/remote-hosts", async (TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.ListRunnerCapabilitySnapshotsAsync(ct)));
+        management.MapGet("/runner-infrastructure-failures", async (TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.ListRunnerInfrastructureFailuresAsync(ct)));
         management.MapGet("/provider-refusals", async (
             int? days,
             TaskServerStore store,

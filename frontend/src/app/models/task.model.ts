@@ -454,6 +454,13 @@ export interface TaskInfo {
   displayKey?: string | null;
   title: string;
   state: string;
+  remoteClaimFailure?: {
+    attempts: number;
+    fingerprint?: string | null;
+    reason: string;
+    cause?: string | null;
+    host?: string | null;
+  } | null;
   archiveState?: string | null;
   /** Explicit content approval used only by dependsOn edges with releaseGate=true. */
   released?: boolean;

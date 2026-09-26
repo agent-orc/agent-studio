@@ -1214,7 +1214,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
 
         var escalated = Path.Combine(_watchPath, TaskStates.Escalated, TaskKey);
         var status = File.ReadAllText(Path.Combine(escalated, "status.md"));
-        Assert.Contains("remote-claim-environment", status);
+        Assert.Contains("runner-environment-broken", status);
         Assert.Contains("3/3", status);
         Assert.Contains("clone failed: 403 agent-orc/website", status);
 
@@ -1222,6 +1222,51 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             RunnerId, ProjectName, "hetzner-test", 4242, "remote-runner"),
             CancellationToken.None);
         Assert.Equal(RClaimStatus.Empty, noFourthClaim.Status);
+    }
+
+    [Fact]
+    public async Task Infrastructure_release_retries_immediately_then_escalates_without_grace()
+    {
+        SeedTask(TaskStates.Ready, TaskKey, "Broken worktree", "Prompt.");
+        using var factory = BuildFactory(remoteRequeueGraceSeconds: 900);
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/agent-orc/agent-studio.git");
+
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            var claim = attempt == 1
+                ? await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+                    RunnerId, ProjectName, "host", 1, "remote-runner", ActiveTaskKeys: []))
+                : await client.ClaimAsync(new RClaim(
+                    RunnerId, ProjectName, "host", 1, "remote-runner", ActiveTaskKeys: []), CancellationToken.None);
+            Assert.Equal(RClaimStatus.Claimed, claim.Status);
+            await client.ReleaseLeaseAsync(new RRelease(
+                claim.TaskKey!, claim.Lease!.LeaseId, claim.Lease.FencingToken, RunnerId,
+                claim.Lease.AttemptId, claim.Lease.AuthorityEpoch,
+                $"release:broken-worktree:{attempt}",
+                Outcome: "runner-environment-preparation-failed",
+                Detail: "fatal: not a git repository"), CancellationToken.None);
+            var lane = attempt == 3 ? TaskStates.Escalated : TaskStates.Ready;
+            Assert.True(Directory.Exists(Path.Combine(_watchPath, lane, TaskKey)));
+        }
+
+        var status = File.ReadAllText(Path.Combine(_watchPath, TaskStates.Escalated, TaskKey, "status.md"));
+        Assert.Contains("runner-environment-broken", status);
+        Assert.Contains("fingerprint=", status);
+        using var management = factory.CreateClient();
+        management.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var visible = await management.GetFromJsonAsync<Contract.RunnerInfrastructureFailureDto[]>(
+            "/api/v1/management/runner-infrastructure-failures", ApiJson);
+        var failure = Assert.Single(visible!);
+        Assert.Equal(3, failure.Attempts);
+        Assert.Equal("host", failure.Host);
+        Assert.Equal(16, failure.Fingerprint.Length);
+        var next = await client.ClaimAsync(new RClaim(
+            RunnerId, ProjectName, "host", 1, "remote-runner", ActiveTaskKeys: []), CancellationToken.None);
+        Assert.Equal(RClaimStatus.Empty, next.Status);
     }
 
     [Fact]
