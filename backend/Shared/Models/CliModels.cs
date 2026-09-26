@@ -90,6 +90,8 @@ public record PendingIntent
     /// when a stopped run's unconsumed follow-up was written back.
     /// </summary>
     public string SavedReason { get; init; } = FollowUpQueueReasons.ProjectBusy;
+    /// <summary>The actor that authored or generated the follow-up.</summary>
+    public string? Author { get; init; }
     /// <summary>Diagnostic only: which job was active when this was saved.</summary>
     public string? SavedAgainstActiveJobId { get; init; }
     /// <summary>

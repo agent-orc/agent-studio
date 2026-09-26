@@ -27,9 +27,11 @@ public sealed partial class TaskServerStore
     // counts for the 24-hour execution-host projection.
     // 19 persists host CLI update state, target drift age, and deduplicated
     // per-host model minimum alerts.
+    // 20 adds transactional queued-follow-up claim, start acknowledgement,
+    // rollback, and terminal supersession state.
     // The migration block is idempotent; the number guards downgrades from
     // binaries that do not know this state.
-    public const int CurrentSchemaVersion = 19;
+    public const int CurrentSchemaVersion = 20;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -553,6 +555,8 @@ public sealed partial class TaskServerStore
                 ("$version", updated.Version), ("$updated", Iso(now)), ("$id", updated.TaskId), ("$expected", request.ExpectedVersion));
             if (updated.State is "6-completed" or "7-archive")
             {
+                await SupersedePendingFollowUpAsync(
+                    connection, transaction, updated.TaskId, actorId, ct);
                 await SupersedeUnclaimableReviewAttemptsAsync(
                     connection,
                     transaction,
@@ -1381,6 +1385,10 @@ public sealed partial class TaskServerStore
             var leaseId = $"lse_{Guid.NewGuid():N}";
             var now = UtcNow;
             var expires = now.AddSeconds(NormalizeTtl(request.RequestedTtlSeconds));
+            var followUp = await ReadPendingFollowUpAsync(
+                connection, transaction, task.TaskId, ct);
+            if (followUp is not null)
+                followUp = followUp with { ClaimId = runId };
             await ExecuteAsync(connection, """
                 INSERT INTO runs(
                     id, task_id, status, runner_id, fence, created_at, started_at,
@@ -1390,6 +1398,9 @@ public sealed partial class TaskServerStore
                     $requiredCapabilities, $canaryCapabilities);
                 INSERT INTO leases(task_id, lease_id, run_id, runner_id, instance_id, fence, acquired_at, expires_at, status)
                 VALUES ($task, $lease, $run, $runner, $instance, $fence, $now, $expires, 'active');
+                UPDATE pending_follow_ups
+                   SET state = 'stashed', run_id = $run
+                 WHERE task_id = $task AND state = 'queued';
                 UPDATE tasks SET state = '3-progress', version = version + 1, updated_at = $now WHERE id = $task;
                 """, ct, transaction,
                 ("$run", runId), ("$task", task.TaskId), ("$runner", request.RunnerId), ("$instance", request.InstanceId),
@@ -1427,7 +1438,8 @@ public sealed partial class TaskServerStore
                 RuntimeCapacity: runtimeCapacity,
                 ModelFallback: providerContinuation?.Fallback,
                 ContinuationBaseRef: providerContinuation?.BaseRef,
-                ContinuationBaseSha: providerContinuation?.BaseSha);
+                ContinuationBaseSha: providerContinuation?.BaseSha,
+                FollowUp: followUp);
         }, ct);
         return response!;
     }
@@ -1454,6 +1466,62 @@ public sealed partial class TaskServerStore
             if (lease.ExpiresAt <= UtcNow)
             {
                 throw new TaskServerConflictException("lease-expired-process-unknown", "Lease expired. Positive containment proof is required before recovery.");
+            }
+            if (!string.IsNullOrWhiteSpace(request.StartedPromptSha256))
+            {
+                FollowUpDeliveryDto? reservedFollowUp = null;
+                string? followUpRunId = null;
+                await using (var command = Command(connection, """
+                    SELECT prompt, mode, prompt_sha256, saved_at, saved_reason, author, run_id
+                      FROM pending_follow_ups
+                     WHERE task_id = $task AND state = 'stashed';
+                    """, transaction, ("$task", lease.TaskId)))
+                await using (var reader = await command.ExecuteReaderAsync(ct))
+                {
+                    if (await reader.ReadAsync(ct))
+                    {
+                        reservedFollowUp = new FollowUpDeliveryDto(
+                            reader.GetString(0),
+                            reader.GetString(1),
+                            reader.GetString(2),
+                            Parse(reader.GetString(3)),
+                            reader.GetString(4),
+                            reader.IsDBNull(5) ? null : reader.GetString(5));
+                        followUpRunId = reader.IsDBNull(6) ? null : reader.GetString(6);
+                    }
+                }
+                if (reservedFollowUp is not null
+                    && (!string.Equals(reservedFollowUp.PromptSha256, request.StartedPromptSha256, StringComparison.OrdinalIgnoreCase)
+                        || !string.Equals(followUpRunId, runId, StringComparison.Ordinal)))
+                {
+                    throw new TaskServerConflictException(
+                        "follow-up-prompt-mismatch",
+                        "The worker-start prompt hash does not match the follow-up reserved by this run.");
+                }
+                if (reservedFollowUp is not null)
+                {
+                    await ExecuteAsync(connection,
+                        "DELETE FROM pending_follow_ups WHERE task_id = $task AND run_id = $run;",
+                        ct, transaction, ("$task", lease.TaskId), ("$run", runId));
+                    await AuditAsync(
+                        connection,
+                        transaction,
+                        actorId,
+                        "follow-up.delivered",
+                        "run",
+                        runId,
+                        JsonSerializer.Serialize(new
+                        {
+                            taskId = lease.TaskId,
+                            reservedFollowUp.Mode,
+                            reservedFollowUp.Author,
+                            reservedFollowUp.SavedAt,
+                            reservedFollowUp.SavedReason,
+                            reservedFollowUp.PromptSha256,
+                            state = "delivered",
+                        }),
+                        ct);
+                }
             }
             var expires = UtcNow.AddSeconds(NormalizeTtl(request.RequestedTtlSeconds));
             await ExecuteAsync(connection, "UPDATE leases SET expires_at = $expires WHERE run_id = $run;", ct, transaction,
@@ -1486,6 +1554,9 @@ public sealed partial class TaskServerStore
                 UPDATE runs SET status = $outcome, finished_at = $now WHERE id = $run;
                 UPDATE tasks SET state = '2-ready', version = version + 1, updated_at = $now
                  WHERE id = $task AND state = '3-progress';
+                UPDATE pending_follow_ups
+                   SET state = 'queued', run_id = NULL
+                 WHERE task_id = $task AND state = 'stashed' AND run_id = $run;
                 UPDATE work_permits SET status = 'released'
                  WHERE run_id = $run AND status = 'accepted';
                 """, ct, transaction, ("$run", runId), ("$outcome", request.Outcome),
@@ -2269,6 +2340,9 @@ public sealed partial class TaskServerStore
                 UPDATE leases SET status = 'fenced' WHERE run_id = $run;
                 UPDATE runs SET status = 'interrupted', finished_at = $now WHERE id = $run;
                 UPDATE tasks SET state = $state, version = version + 1, updated_at = $now WHERE id = $task;
+                UPDATE pending_follow_ups
+                   SET state = 'queued', run_id = NULL
+                 WHERE task_id = $task AND state = 'stashed' AND run_id = $run;
                 UPDATE work_permits SET status = 'fenced'
                  WHERE run_id = $run AND status = 'accepted';
                 """, ct, transaction, ("$run", runId), ("$now", Iso(UtcNow)), ("$state", targetState), ("$task", lease.TaskId));
@@ -3234,6 +3308,17 @@ public sealed partial class TaskServerStore
                 created_at TEXT NOT NULL,
                 started_at TEXT,
                 finished_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS pending_follow_ups(
+                task_id TEXT PRIMARY KEY REFERENCES tasks(id),
+                state TEXT NOT NULL,
+                prompt TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                prompt_sha256 TEXT NOT NULL,
+                saved_at TEXT NOT NULL,
+                saved_reason TEXT NOT NULL,
+                author TEXT,
+                run_id TEXT REFERENCES runs(id)
             );
             CREATE TABLE IF NOT EXISTS fence_counters(
                 task_id TEXT PRIMARY KEY REFERENCES tasks(id),

@@ -13,6 +13,114 @@ namespace TaskServer.Tests;
 public sealed class TaskServerStoreTests
 {
     [Fact]
+    public async Task Follow_up_is_reserved_on_claim_and_consumed_only_after_worker_start_acknowledgement()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        const string prompt = "Apply the operator's final correction.";
+        await store.ContinueTaskAsync(
+            project.ProjectId,
+            task.TaskId,
+            new ContinueTaskRequest(prompt, Mode: "steer"),
+            "human:owner",
+            default);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+
+        var claim = await store.ClaimAsync(
+            new ClaimRequest("runner-a", "instance-a"), "test", default);
+
+        Assert.Equal("claimed", claim.Status);
+        Assert.Equal(prompt, claim.FollowUp!.Prompt);
+        Assert.Equal("steer", claim.FollowUp.Mode);
+        Assert.Equal(FollowUpPromptDigest.Compute(prompt), claim.FollowUp.PromptSha256);
+        Assert.Equal(claim.Run!.RunId, claim.FollowUp.ClaimId);
+
+        await store.RenewLeaseAsync(
+            claim.Run!.RunId,
+            new LeaseRenewRequest(
+                "runner-a",
+                "instance-a",
+                claim.Lease!.LeaseId,
+                claim.Lease.Fence,
+                StartedPromptSha256: claim.FollowUp.PromptSha256),
+            "runner-a",
+            default);
+
+        var history = await store.GetTaskHistoryAsync(project.ProjectId, task.TaskId, 0, default);
+        var delivered = Assert.Single(history!.Audit, row => row.Action == "follow-up.delivered");
+        Assert.Equal(claim.Run.RunId, delivered.TargetId);
+        Assert.Contains(claim.FollowUp.PromptSha256, delivered.DetailJson, StringComparison.Ordinal);
+        Assert.Contains("steer", delivered.DetailJson, StringComparison.Ordinal);
+        Assert.Contains("human:owner", delivered.DetailJson, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Follow_up_is_restored_when_claimed_worker_is_lost_before_start()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        const string prompt = "Retry this exact follow-up.";
+        await store.ContinueTaskAsync(
+            project.ProjectId,
+            task.TaskId,
+            new ContinueTaskRequest(prompt),
+            "human:owner",
+            default);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var first = await store.ClaimAsync(
+            new ClaimRequest("runner-a", "instance-a"), "test", default);
+
+        await store.ReleaseLeaseAsync(
+            first.Run!.RunId,
+            new LeaseReleaseRequest(
+                "runner-a", "instance-a", first.Lease!.LeaseId, first.Lease.Fence,
+                "runner-process-missing"),
+            "runner-a",
+            default);
+        var retry = await store.ClaimAsync(
+            new ClaimRequest("runner-a", "instance-a"), "test", default);
+
+        Assert.Equal("claimed", retry.Status);
+        Assert.Equal(prompt, retry.FollowUp!.Prompt);
+        Assert.Equal(FollowUpPromptDigest.Compute(prompt), retry.FollowUp.PromptSha256);
+        Assert.Equal(retry.Run!.RunId, retry.FollowUp.ClaimId);
+        Assert.NotEqual(first.FollowUp!.ClaimId, retry.FollowUp.ClaimId);
+    }
+
+    [Fact]
+    public async Task Terminal_move_supersedes_a_queued_follow_up()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.ContinueTaskAsync(
+            project.ProjectId,
+            task.TaskId,
+            new ContinueTaskRequest("No longer needed."),
+            "human:owner",
+            default);
+
+        await store.MoveTaskAsync(
+            project.ProjectId,
+            task.TaskId,
+            new MoveTaskRequest("6-completed"),
+            "human:owner",
+            default);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var claim = await store.ClaimAsync(
+            new ClaimRequest("runner-a", "instance-a"), "test", default);
+
+        Assert.Equal("empty", claim.Status);
+        var history = await store.GetTaskHistoryAsync(project.ProjectId, task.TaskId, 0, default);
+        Assert.Contains(history!.Audit, row => row.Action == "follow-up.superseded");
+    }
+
+    [Fact]
     public async Task Releasing_a_dead_runner_attempt_returns_its_progress_task_to_ready()
     {
         using var temp = new TempDirectory();

@@ -2430,10 +2430,8 @@ public class ProjectRunner
         var processStartConfirmed = false;
         string? acquiredPickupLockFolder = null;
         // Set only when THIS call stashed a saved follow-up. Every rollback is
-        // gated on it: pending-intent.consumed.json now survives a successful
-        // run as consumption evidence (AGT-2747), so an unrelated later failure
-        // must not move that stale copy back into pending-intent.json and replay
-        // a follow-up an agent already acted on.
+        // gated on it so an unrelated later failure cannot restore an intent
+        // owned by another pickup.
         PendingIntent? consumedIntent = null;
         try
         {
@@ -3265,6 +3263,9 @@ public class ProjectRunner
                     LeaseState = "local-process",
                     TrustReason = "Captured from the local pickup owner and worktree at confirmed CLI process start.",
                 },
+                StartedPromptSha256 = consumedIntent is null
+                    ? null
+                    : AgentStudio.TaskServer.Contracts.FollowUpPromptDigest.Compute(consumedIntent.Prompt),
                 InputSessionId = effSessionToResume,
                 CapturedSessionId = null,
                 Cwd = runWorkingDir,
@@ -3290,27 +3291,19 @@ public class ProjectRunner
                 });
 
             // Spawn succeeded, so the saved follow-up is now this run's prompt.
-            // The stash stays on disk as pending-intent.consumed.json: it is the
-            // operator's proof that a queued steer actually reached an agent,
-            // paired with a ledger row naming the run that took it (AGT-2747).
+            // Delete the replayable stash only after this confirmed start; the
+            // timeline receipt is the durable operator proof from here on.
             if (consumedIntent is not null)
             {
+                var consumedRunId = effSessionToResume ?? execution.StartedAt.ToString("O");
                 _logger.LogInformation(
                     "follow-up-consumed job={JobId} project={Project} mode={Mode} savedReason={SavedReason} run={RunId}",
-                    jobId, ProjectName, consumedIntent.Mode, consumedIntent.SavedReason, effSessionToResume ?? "<new-session>");
-                _timeline?.Append(
+                    jobId, ProjectName, consumedIntent.Mode, consumedIntent.SavedReason, consumedRunId);
+                _mutations.AcknowledgeStashedPendingIntent(
                     info.FolderPath,
-                    TimelineEventKinds.FollowUpConsumed,
-                    TimelineActors.System,
-                    summary: $"Follow-up consumed by this run ({consumedIntent.Mode}).",
-                    runId: effSessionToResume,
-                    details: new()
-                    {
-                        ["mode"] = consumedIntent.Mode,
-                        ["savedReason"] = consumedIntent.SavedReason,
-                        ["savedAt"] = consumedIntent.SavedAt.ToString("O"),
-                        ["evidence"] = "pending-intent.consumed.json",
-                    });
+                    AgentStudio.TaskServer.Contracts.FollowUpPromptDigest.Compute(consumedIntent.Prompt),
+                    consumedRunId,
+                    source: "local-process-start");
             }
             // Only a confirmed process start ends a visible no-slot wait. Early
             // admission/quota/spawn failures intentionally leave the wait visible.

@@ -82,6 +82,13 @@ internal static class TaskEndpointHelpers
         MoveJobStatus.NotFound => Results.NotFound(),
         MoveJobStatus.TargetFolderExists => Results.Conflict(new { error = outcome.Message }),
         MoveJobStatus.IntegrationFailed => Results.Conflict(new { error = outcome.Message }),
+        MoveJobStatus.PendingIntentSupersedeFailed => Results.Json(
+            new
+            {
+                error = "pending-intent-supersede-failed",
+                message = outcome.Message,
+            },
+            statusCode: StatusCodes.Status500InternalServerError),
         MoveJobStatus.DirectoryLocked => Results.Json(
             new { error = outcome.Message ?? "Task folder is temporarily locked by another process. Retry after the active process releases its file handles." },
             statusCode: StatusCodes.Status423Locked),
