@@ -796,6 +796,7 @@ public static class TaskCrudEndpoints
             ModelRoutingPolicyRegistry modelRouting,
             IModelRoutingModeProvider routingMode,
             CliRouter cliRouter,
+            AgentStudio.Tags.AutoTagCreationWorker autoTag,
             CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(req.Title))
@@ -910,6 +911,7 @@ public static class TaskCrudEndpoints
             }
 
             var jobId = mutations.CreateJob(req);
+            if (jobId is not null) autoTag.Wake();
             return jobId is null
                 ? Results.Conflict("Job already exists or invalid input")
                 : Results.Ok(new { id = jobId, routing = resolvedRouting });
