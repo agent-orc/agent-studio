@@ -438,25 +438,34 @@ public sealed class ProjectPreparationTests : IDisposable
     public async Task Two_concurrent_runs_that_find_one_broken_entry_both_continue()
     {
         WriteRestoringDotNetRepository();
-        var cache = Path.Combine(_root, "product-cache");
-        var first = await PrepareAsync(cache, "broken-seed.json");
-        var entry = Assert.Single(first.Manifest!.Caches).EntryPath;
-        var manifest = Path.Combine(entry, "manifest.json");
-        File.WriteAllText(
-            manifest,
-            File.ReadAllText(manifest).Replace(
-                $"\"sizeBytes\": {Assert.Single(first.Manifest.Caches).ContentBytes}",
-                "\"sizeBytes\": 5000", StringComparison.Ordinal));
+        // Keep the shared cache outside the scanned repository: concurrent staging
+        // cleanup must not appear as a disappearing repository input directory.
+        var cache = Path.Combine(Path.GetTempPath(), "project-preparation-cache-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var first = await PrepareAsync(cache, "broken-seed.json");
+            var entry = Assert.Single(first.Manifest!.Caches).EntryPath;
+            var manifest = Path.Combine(entry, "manifest.json");
+            File.WriteAllText(
+                manifest,
+                File.ReadAllText(manifest).Replace(
+                    $"\"sizeBytes\": {Assert.Single(first.Manifest.Caches).ContentBytes}",
+                    "\"sizeBytes\": 5000", StringComparison.Ordinal));
 
-        var runs = await Task.WhenAll(
-            PrepareAsync(cache, "broken-concurrent-a.json"),
-            PrepareAsync(cache, "broken-concurrent-b.json"));
+            var runs = await Task.WhenAll(
+                PrepareAsync(cache, "broken-concurrent-a.json"),
+                PrepareAsync(cache, "broken-concurrent-b.json"));
 
-        Assert.All(runs, run => Assert.True(run.Succeeded, run.Output));
-        Assert.Contains(runs.SelectMany(run => run.Manifest!.Caches), cacheEntry =>
-            cacheEntry.Recovery == "evicted-incomplete");
-        var after = await PrepareAsync(cache, "broken-concurrent-hit.json");
-        Assert.True(after.CacheHit);
+            Assert.All(runs, run => Assert.True(run.Succeeded, run.Output));
+            Assert.Contains(runs.SelectMany(run => run.Manifest!.Caches), cacheEntry =>
+                cacheEntry.Recovery == "evicted-incomplete");
+            var after = await PrepareAsync(cache, "broken-concurrent-hit.json");
+            Assert.True(after.CacheHit);
+        }
+        finally
+        {
+            try { Directory.Delete(cache, recursive: true); } catch { }
+        }
     }
 
     [Fact]
