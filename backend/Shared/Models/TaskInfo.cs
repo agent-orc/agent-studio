@@ -332,10 +332,12 @@ public record TaskInfo
     /// for each id come from the workspace-level <c>tags.json</c> registry
     /// served at <c>GET /api/tags</c>. Unknown ids (registry entries that
     /// were soft-deleted) render as a faint "ghost" chip on the card so the
-    /// user can clear the stale reference. Stored in <c>job.json</c> as
+    /// user can clear the stale reference. Stored in <c>task.json</c> as
     /// <c>"tags"</c>; absent or null on disk means an empty list.
     /// </summary>
     public List<string> Tags { get; init; } = [];
+    /// <summary>Auto-tag classification state from task.json: tagged or tags-proposed; unknown values read as null.</summary>
+    public string? TaggingStatus { get; init; }
 
     /// <summary>
     /// F34: structured cross-references to other tasks, keyed by F33 stable

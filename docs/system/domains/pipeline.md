@@ -29,6 +29,24 @@ pipeline view.
 
 ## Key Code
 
+The creation-time `auto-tag` step (AGT-2804) is separate from the card's coding
+run pipeline. `AutoTagCreationWorker` detects newly created active cards,
+Dossiers, and wiki articles in each project; `AutoTaggingService` classifies
+them against the project's closed registry and area glossaries, writes tags
+only at confidence 0.8 or higher, and stores lower-confidence suggestions as
+`tags-proposed`. Existing non-archived items use
+`POST /api/projects/{project}/auto-tag/backfill-jobs?apply=false` for a queued
+dry run and `apply=true` for writes. `GET .../backfill-jobs/{id}` exposes the
+job status; interrupted jobs resume after restart, and `GET .../report`
+returns the last report. A direct `POST .../backfill` also returns the report
+synchronously for a bounded inspection. Reports include area counts,
+low-confidence items, and tier precision and recall against the proposed
+golden set. The step writes project activity-feed lines for applied tags and
+proposals on all three item kinds, plus card timeline lines. The per-project
+workspace setting `AutoTag` is true by default; the
+`PUT /api/projects/{project}/auto-tag` endpoint changes it. The active v1
+project definition has no `tagging.autoTag` key.
+
 - [Model Routing Policy](./model-routing-policy.md) is the canonical model and
   thinking-level selection policy, including weighted criteria, correctness
   floors, benchmark confidence, quota handling, and reissue promotion.

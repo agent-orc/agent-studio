@@ -1,5 +1,6 @@
 using AgentStudio.Areas;
 using AgentStudio.Docs;
+using AgentStudio.Tags;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -47,6 +48,35 @@ public class WikiArticleTagsTests
     {
         Assert.Empty(ProjectDocsService.FrontmatterTags("# A page\n\ntags: [observation]\n"));
         Assert.Empty(ProjectDocsService.FrontmatterTags("---\ntitle: A page\n---\n"));
+    }
+
+    [Fact]
+    public void AutoTagWriterAddsTagsToMarkdownWithoutFrontmatter()
+    {
+        var updated = TagMaintenanceWorkspace.RewriteFrontmatter("# Article\n\nBody", ["observation"]);
+        Assert.Equal(["observation"], ProjectDocsService.FrontmatterTags(updated));
+        Assert.EndsWith("# Article\n\nBody", updated);
+    }
+
+    [Fact]
+    public void AutoTagWriterAndReaderHandleHtmlArticleMetadata()
+    {
+        var source = "<!doctype html><html><head><title>Article</title></head><body>Body</body></html>";
+        var tagged = TagMaintenanceWorkspace.RewriteFrontmatter(source, ["delivery-chain", "evidence"]);
+        Assert.Equal(["delivery-chain", "evidence"], ProjectDocsService.FrontmatterTags(tagged));
+        Assert.Contains("<title>Article</title>", tagged);
+        var replaced = TagMaintenanceWorkspace.RewriteFrontmatter(tagged, ["observation"]);
+        Assert.Equal(["observation"], ProjectDocsService.FrontmatterTags(replaced));
+    }
+
+    [Fact]
+    public void AutoTagStatusRoundTripsWithoutApplyingProposalTags()
+    {
+        var markdown = TagMaintenanceWorkspace.RewriteTaggingStatus("# Article\n", "tags-proposed");
+        Assert.Equal("tags-proposed", ProjectDocsService.ReadTaggingStatus(markdown));
+        Assert.Empty(ProjectDocsService.FrontmatterTags(markdown));
+        var html = TagMaintenanceWorkspace.RewriteTaggingStatus("<html><head></head><body></body></html>", "tagged");
+        Assert.Equal("tagged", ProjectDocsService.ReadTaggingStatus(html));
     }
 
     [Fact]
