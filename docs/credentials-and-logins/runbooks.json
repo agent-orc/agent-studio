@@ -1,0 +1,280 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "credential-incident-runbooks",
+  "status": "design-data-not-executable",
+  "sourceTaskKey": "AGT-2968",
+  "recordContract": {
+    "id": "stable ID",
+    "version": "positive integer pinned in operation",
+    "credentialKinds": "CredentialKind[]",
+    "provenance": "operator-reported or verified receipt, with dates and evidence availability",
+    "whatHappened": "factual attributed summary",
+    "howDistinguished": "ordered evidence predicates",
+    "historicalResolution": "status plus what is known, not assumed recovery",
+    "trigger": "validated condition",
+    "authority": "required scoped grants",
+    "humanRequirement": "explicit human step or none",
+    "steps": "typed id/actor/action/precondition/idempotencyBoundary/receipt records",
+    "rollback": "last safe state and limits",
+    "verification": "check predicates",
+    "completionPredicate": "machine-consumable predicate description",
+    "automation": "permitted automatic or single-action behavior"
+  },
+  "executorRules": [
+    "Only versioned allowlisted adapters execute actions; prose is never evaluated as shell.",
+    "Persist step receipt before advancing; replay uses operation/step/generation identity.",
+    "Browser URL/code never reaches ordinary logs, task files or audit history.",
+    "A changed expectedGeneration rejects the operation without overwriting newer secrets."
+  ],
+  "runbooks": [
+    {
+      "id": "RB-CLAUDE-LINEAGE",
+      "version": 1,
+      "title": "Claude copied refresh lineage and active-source drift",
+      "credentialKinds": [
+        "claude-oauth-token",
+        "claude-native-login"
+      ],
+      "provenance": {
+        "class": "operator-reported",
+        "sourceTaskKey": "AGT-2968",
+        "dates": [
+          "2026-09-07",
+          "2026-09-08",
+          "2026-09-26"
+        ],
+        "rawEvidenceAvailable": false
+      },
+      "whatHappened": "A workstation credential copy reportedly worked for about eight hours before refresh-token rotation broke both sides. The host now reportedly uses a setup token in runner.env; a native credentials file dated 8 September is a dead copy.",
+      "howDistinguished": [
+        "Resolve effective CLAUDE_CODE_OAUTH_TOKEN and unit environment precedence without returning values.",
+        "Treat native-file timestamps as shadowed evidence when env token is active.",
+        "Check provider incident and network evidence before claiming any new 401 means token expiry."
+      ],
+      "historicalResolution": {
+        "status": "reported-remedy",
+        "detail": "Host-owned headless OAuth token provisioning replaced copying workstation credentials. The 26 September renewal has not been executed in this concept."
+      },
+      "trigger": "Confirmed credential-unavailable or authorised proactive renewal with active source resolved.",
+      "authority": [
+        "provider account custodian",
+        "credential.renew-own-host",
+        "fixed privileged host install adapter"
+      ],
+      "humanRequirement": "Human completes host setup-token browser authorisation.",
+      "steps": [
+        {
+          "id": "resolve",
+          "actor": "platform",
+          "action": "Resolve source and current consumer generations.",
+          "precondition": "Authorised target host and credential.",
+          "idempotencyBoundary": "operationId + stepId + expectedGeneration",
+          "receipt": "Metadata-only source receipt."
+        },
+        {
+          "id": "authorise",
+          "actor": "human",
+          "action": "Complete host setup-token browser session.",
+          "precondition": "Bounded operation session and official provider URL.",
+          "idempotencyBoundary": "operationId + stepId + expectedGeneration",
+          "receipt": "Authorisation completed; URL discarded."
+        },
+        {
+          "id": "stage",
+          "actor": "platform",
+          "action": "Stage token and issuance metadata locally; verify a real call.",
+          "precondition": "Host-local secret store available.",
+          "idempotencyBoundary": "operationId + stepId + expectedGeneration",
+          "receipt": "Scrubbed call result and expiry provenance."
+        },
+        {
+          "id": "adopt",
+          "actor": "platform",
+          "action": "Install provider-auth.env; pause new affected claims; replace Coding and guarded Review.",
+          "precondition": "Reattachment supported; Review drain guard respected.",
+          "idempotencyBoundary": "operationId + stepId + expectedGeneration",
+          "receipt": "Per-consumer effective generation and real-call receipt."
+        },
+        {
+          "id": "close",
+          "actor": "platform",
+          "action": "Remove legacy duplicate after adoption; close matched warning and resume.",
+          "precondition": "All installed consumers accounted for; newer capability accepted.",
+          "idempotencyBoundary": "operationId + stepId + expectedGeneration",
+          "receipt": "Renewed-by actor, generation, time and closure."
+        }
+      ],
+      "rollback": "Use old token only if still valid. Never restore shared workstation lineage. Busy Review stays adoption-pending; failed or invalid old token leaves affected provider parked.",
+      "verification": [
+        "Fresh status and real clean-context call with new generation.",
+        "No secret in logs, card, operation or artifact.",
+        "Active worker identity/fence preserved or safely drained."
+      ],
+      "completionPredicate": "Every installed consumer adopted the verified generation and the Task Server accepted fresh capability evidence.",
+      "automation": "One scoped renewal start; browser step remains explicit."
+    },
+    {
+      "id": "RB-CODEX-INCIDENT",
+      "version": 1,
+      "title": "Codex 401 during provider incident",
+      "credentialKinds": [
+        "codex-chatgpt-login"
+      ],
+      "provenance": {
+        "class": "operator-reported",
+        "sourceTaskKey": "AGT-2968",
+        "dates": [
+          "2026-09-26"
+        ],
+        "rawEvidenceAvailable": false,
+        "officialIncidentId": null,
+        "officialIncidentUrl": null
+      },
+      "whatHappened": "Repeated 401 incorrect-key failures were classified ProviderUnauthorized; claims were rejected. The operator reports roughly forty minutes to recognise a provider incident.",
+      "howDistinguished": [
+        "A status command recognising a ChatGPT login is not a real-call result.",
+        "A relevant active official status incident or an independent recently successful credential producing the same normalised failure supports provider-incident.",
+        "No incident evidence or spare credential means indeterminate, not proven expiry."
+      ],
+      "historicalResolution": {
+        "status": "diagnosis-reported-recovery-unverified",
+        "detail": "The operator says status.openai.com supplied decisive incident evidence. No exact incident record, recovery time or successful post-incident call was supplied. Provider recovery, not credential replacement, is the proposed resolution condition."
+      },
+      "trigger": "Auth-shaped real request failure with a selected ChatGPT credential.",
+      "authority": [
+        "host provider diagnostics",
+        "Task Server claim policy",
+        "allowlisted status-feed reader"
+      ],
+      "humanRequirement": "None for a corroborated incident; diagnostics item only if cause remains unconfirmed for ten minutes.",
+      "steps": [
+        {
+          "id": "observe",
+          "actor": "platform",
+          "action": "Record scrubbed error signature and pause new affected claims as indeterminate.",
+          "precondition": "Genuine provider refusal, not quoted task content or intentional stop.",
+          "idempotencyBoundary": "operationId + stepId + expectedGeneration",
+          "receipt": "Host, generation, endpoint, signature and timestamp."
+        },
+        {
+          "id": "correlate",
+          "actor": "platform",
+          "action": "Read relevant official status evidence or request independent host-local comparison.",
+          "precondition": "Feed is fresh and service-relevant; comparator has independent lineage and recent success.",
+          "idempotencyBoundary": "operationId + stepId + expectedGeneration",
+          "receipt": "Incident evidence references; no copied credential."
+        },
+        {
+          "id": "pause",
+          "actor": "platform",
+          "action": "Publish provider-incident and schedule 30/60/120-second elected canaries.",
+          "precondition": "Corroboration met; credential not independently missing/revoked.",
+          "idempotencyBoundary": "operationId + stepId + expectedGeneration",
+          "receipt": "Policy revision, incident scope, next probe; no renewal operator item."
+        },
+        {
+          "id": "recover",
+          "actor": "platform",
+          "action": "Require two successful canaries 30 seconds apart, then resume gradually and verify each host.",
+          "precondition": "Successful real calls with current source generation.",
+          "idempotencyBoundary": "operationId + stepId + expectedGeneration",
+          "receipt": "Recovery receipt; stale matching auth latch reconciled."
+        }
+      ],
+      "rollback": "If incident evidence becomes stale, return to indeterminate diagnostics and re-evaluate. A genuinely missing/revoked source still gets a renewal item. Never delete auth.json in response to this runbook.",
+      "verification": [
+        "No unnecessary browser re-login or token rotation.",
+        "No task retry-budget burn during provider pause.",
+        "Other providers and credential-free review remain eligible.",
+        "No success inferred solely from green status page or login status."
+      ],
+      "completionPredicate": "Real-call recovery accepted for affected scope, matching claim pause cleared and each resumed host verified.",
+      "automation": "Automatic incident discrimination and recovery; optional Recheck provider action."
+    },
+    {
+      "id": "RB-GITHUB-WORKSPACE",
+      "version": 1,
+      "title": "Private workspace repository lacks host access",
+      "credentialKinds": [
+        "github-deploy-key",
+        "github-oauth-token",
+        "github-token"
+      ],
+      "provenance": {
+        "class": "operator-reported",
+        "sourceTaskKey": "AGT-2968",
+        "dates": [
+          "2026-09-26"
+        ],
+        "rawEvidenceAvailable": false
+      },
+      "whatHappened": "The host could push product repositories through HTTPS but could not reach the private workspace repository.",
+      "howDistinguished": [
+        "Resolve exact workspace origin and effective credential identity without secrets in URL.",
+        "Compare repository-specific read/write grants; product repo success does not establish workspace permission.",
+        "Separate GitHub/network incident from repository authorisation failure."
+      ],
+      "historicalResolution": {
+        "status": "reported-fix",
+        "detail": "An ed25519 key was generated on the host and its public key registered through GitHub using the workstation stored OAuth credential. Exact key ID, path and push proof were not supplied."
+      },
+      "trigger": "Confirmed missing access to exact registered workspace repository.",
+      "authority": [
+        "workspace repository administrator",
+        "credential.manage-repository-key",
+        "platform Git publisher"
+      ],
+      "humanRequirement": "Repository administrator authorisation or OAuth reauthorisation if existing registration credential lacks scope.",
+      "steps": [
+        {
+          "id": "scope",
+          "actor": "platform",
+          "action": "Verify repository identity and requested write scope.",
+          "precondition": "Authorised project/host and credential-free origin.",
+          "idempotencyBoundary": "operationId + stepId + expectedGeneration",
+          "receipt": "Repository and grant receipt."
+        },
+        {
+          "id": "generate",
+          "actor": "platform",
+          "action": "Generate new host-local ed25519 key.",
+          "precondition": "Protected key directory; no existing operation generation.",
+          "idempotencyBoundary": "operationId + stepId + expectedGeneration",
+          "receipt": "Public fingerprint and local secret handle only."
+        },
+        {
+          "id": "register",
+          "actor": "platform",
+          "action": "Register public key through authorised GitHub adapter; record issuer lineage.",
+          "precondition": "Valid repository administrator authority.",
+          "idempotencyBoundary": "operationId + stepId + expectedGeneration",
+          "receipt": "GitHub key ID, read_only value and issuerCredentialRef."
+        },
+        {
+          "id": "verify",
+          "actor": "platform",
+          "action": "Prove read plus permitted temporary-ref write or fenced publication.",
+          "precondition": "Correct SSH identity and platform-owned Git operation.",
+          "idempotencyBoundary": "operationId + stepId + expectedGeneration",
+          "receipt": "Scrubbed Git read/write receipt; canary ref cleaned up."
+        },
+        {
+          "id": "switch",
+          "actor": "platform",
+          "action": "Switch effective identity and publish capability; retire replaced key after adoption.",
+          "precondition": "New key verified and consumer generation adopted.",
+          "idempotencyBoundary": "operationId + stepId + expectedGeneration",
+          "receipt": "Access verification and bounded old-key retirement receipt."
+        }
+      ],
+      "rollback": "Keep existing product Git credentials intact. On registration/verification failure remove only the new unused public key by its ID. Do not revoke the OAuth issuer until dependent deploy-key effects are resolved.",
+      "verification": [
+        "Workspace access proved independently from product repository access.",
+        "Private key never leaves host; OAuth credential never reaches runner.",
+        "Write permission verified by platform operation rather than ls-remote alone."
+      ],
+      "completionPredicate": "Exact workspace repository operations succeed using intended host key; issuer dependency and owner are recorded.",
+      "automation": "One scoped Grant workspace access operation when administrator authority is already available."
+    }
+  ]
+}

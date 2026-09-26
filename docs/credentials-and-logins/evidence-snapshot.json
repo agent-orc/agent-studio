@@ -1,0 +1,171 @@
+{
+  "schemaVersion": 1,
+  "sourceTaskKey": "AGT-2968",
+  "asOf": "2026-09-26",
+  "repositoryRevision": "3088b4269d9b4c6b3b376339602f012236296618",
+  "scope": "Local checkout source inspection and supplied operator incident narrative. No remote fetch or live host probe.",
+  "files": [
+    {
+      "path": "docs/app/templates/article-document-v2.html",
+      "sha256": "511d9ec7ec115dbc1f17ca670e96a9fc005e8cc6168dcb3203afa76154dc9f24"
+    },
+    {
+      "path": "docs/deployment-story/index.html",
+      "sha256": "10381f1005bde1eb170491b091f9b8fb8aab5a1c9d27ea81d420e2feb3282802"
+    },
+    {
+      "path": "docs/deployment-story/workbench.json",
+      "sha256": "f16f431904302ed7d594f0fd95c321dba956f3a5c07e7c76678306f32d327d53"
+    },
+    {
+      "path": "docs/task-server-bus/index.html",
+      "sha256": "e01fcb99692cd52bbf92498a82e28d74f497e41eae5fa080ff4c98eb98f0c398"
+    },
+    {
+      "path": "docs/task-server-bus/workbench.json",
+      "sha256": "7cd000740e4f7272aecdf6137b69aa3f36117f1051ae75127ff917cb6f7e7f0d"
+    },
+    {
+      "path": "runner/ProviderCredentialMonitor.cs",
+      "sha256": "9ca4057222108b5210fd21aea8371a32ee5e9e3139518ba8a9a38360c65b4f87"
+    },
+    {
+      "path": "runner/RunnerCapabilityProbe.cs",
+      "sha256": "39785f0516f305413840555f0b15d8d84a0e2971847152e4323a8337dc16e09f"
+    },
+    {
+      "path": "runner/ProviderAuthEnvironment.cs",
+      "sha256": "1827b676919930b3fc7b3c3b3ef23957b91946be2d2fb353bc7e8489eb620ee8"
+    },
+    {
+      "path": "contracts/TaskServer.Contracts/ProviderAccessClassifier.cs",
+      "sha256": "17ded7fee328de50bf21c86ca4ea2d0e62e91c429cc37e0b02f13793d1ebf33c"
+    },
+    {
+      "path": "runner/TaskServerConnectivityMonitor.cs",
+      "sha256": "347211c10c28328eef74999b36474be0e44a5eeedbd9622895d730cdc16f2870"
+    },
+    {
+      "path": "backend/Features/Management/ProviderAuthProvisioning.cs",
+      "sha256": "8794def525e8a826af68f96453a06c65ce163bfd3520664e484d7956fc0033ba"
+    },
+    {
+      "path": "backend/Features/Management/ClaudeSignIn.cs",
+      "sha256": "bb5915f0c5be2d2987456e04548bdf4a23a27c6d03c4f4bb3f006f2b4599268f"
+    },
+    {
+      "path": "backend/Features/Management/CodexSignIn.cs",
+      "sha256": "d8c07d7866f02e5eb2a91f1c234a53a95b2bd6be6a963880b2cc0896472b7e3d"
+    },
+    {
+      "path": "task-server/TaskServerPrincipalStore.cs",
+      "sha256": "c0642c3bf8f0484e81b0712d8f5e30333ccae2648bd4b44bc7e9141455aa72a7"
+    },
+    {
+      "path": "task-server/TaskServerOptions.cs",
+      "sha256": "11d7b38da64b82388ce7954908947bd76066627f9a46ec1d8a820d6b5f21f216"
+    },
+    {
+      "path": "task-server/TaskServerCapabilityStore.cs",
+      "sha256": "11c8c2ef2161bf6cbcbccfa3ddecddda5d8c78ecd46b6f41fb68b9a2522cfe18"
+    },
+    {
+      "path": "docs/operations/setup/linux-runner-host.md",
+      "sha256": "e0af5a236ab2c01cd09b473cebd9ebc96d0431b84afcf613393887e97562b09c"
+    },
+    {
+      "path": "docs/operations/setup/cli-relogin-runbook.md",
+      "sha256": "02b8c6c14d383873689761c4e2e70a49e5064a1f044f01ae23e2c489cffa31fb"
+    },
+    {
+      "path": "docs/operations/setup/control-plane-docker.md",
+      "sha256": "e4f0ca0a7a8ff1daf9341aa182f5a18337629a2795a82c6149626eade0d57ee8"
+    },
+    {
+      "path": "docker-compose.yml",
+      "sha256": "03f42cfc7ab3fd3307a8a085bc339ba01255c7e29a9202339321368bd0bab762"
+    },
+    {
+      "path": "backend/Features/Pipeline/ConceptWorkbenchContract.cs",
+      "sha256": "7df6c93e44442c409345d05f2bcfdbd0e731f5ba54658cf0cb1ac254efd8904c"
+    },
+    {
+      "path": "backend/Features/Pipeline/ConceptDecisionAssumptions.cs",
+      "sha256": "a32f3a3f7f5a4995b89b66c4e32a0cdc57cd00fe89a638b8a4e21b07f4768050"
+    }
+  ],
+  "operatorReports": [
+    {
+      "id": "E1-Claude",
+      "dates": [
+        "2026-09-07",
+        "2026-09-08",
+        "2026-09-26"
+      ],
+      "claims": [
+        "Workstation copy worked about eight hours before refresh rotation broke both sides.",
+        "Active headless token reportedly in runner.env; native credential file dated 8 September is a dead copy."
+      ],
+      "unverified": [
+        "Actual current effective environment",
+        "Token expiry",
+        "Renewal performed on 26 September"
+      ]
+    },
+    {
+      "id": "E1-Codex",
+      "dates": [
+        "2026-09-26"
+      ],
+      "claims": [
+        "auth.json hard-linked into 62 clean-context homes; CLI refreshes access token.",
+        "Repeated 401 classified ProviderUnauthorized and claims rejected.",
+        "Operator identified provider incident through status.openai.com after about forty minutes."
+      ],
+      "unverified": [
+        "Official incident ID and historical URL",
+        "Independent known-good comparison",
+        "Exact outage and recovery times"
+      ]
+    },
+    {
+      "id": "E1-GitHub",
+      "dates": [
+        "2026-09-26"
+      ],
+      "claims": [
+        "Product Git uses HTTPS credential in runner home.",
+        "Private workspace access fixed by host ed25519 key registered with workstation OAuth credential."
+      ],
+      "unverified": [
+        "Key path and GitHub key ID",
+        "Write permission and real push receipt",
+        "Registration token expiry"
+      ]
+    }
+  ],
+  "officialSources": [
+    {
+      "url": "https://learn.chatgpt.com/docs/auth#login-on-headless-devices",
+      "consultedAt": "2026-09-26",
+      "supports": "Host-side device login, human browser consent and native-store behavior."
+    },
+    {
+      "url": "https://code.claude.com/docs/en/env-vars",
+      "consultedAt": "2026-09-26",
+      "supports": "Environment credential sources; actual installed CLI precedence must be verified."
+    },
+    {
+      "url": "https://docs.github.com/en/rest/deploy-keys/deploy-keys",
+      "consultedAt": "2026-09-26",
+      "supports": "Repository key registration and issuer-token revocation dependency."
+    },
+    {
+      "url": "https://docs.github.com/en/authentication/connecting-to-github-with-ssh/managing-deploy-keys",
+      "consultedAt": "2026-09-26",
+      "supports": "Single-repository deploy keys and no intrinsic expiry."
+    }
+  ],
+  "visibleProductClaims": [],
+  "screenshotRequirement": "No current rendered-surface assertions. I08 owns future product screenshot evidence. The inline diagram is explicitly proposed ownership."
+}

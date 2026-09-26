@@ -1,0 +1,558 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Credentials and logins | Article document</title>
+  <style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #7c7a74;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main,
+    .article {
+      width: min(70ch, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 0 0 80px;
+    }
+    header.page {
+      margin-bottom: 12px;
+      padding: 48px 0 28px;
+      border-bottom: 1px solid var(--article-line);
+    }
+    h1,
+    h2,
+    h3,
+    h4,
+    .kicker,
+    .meta,
+    .number,
+    nav,
+    table,
+    figcaption,
+    .box,
+    .callout,
+    .evidence-figure,
+    .variant-grid,
+    .evidence-list {
+      font-family: var(--article-sans);
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      margin: 56px 0 10px;
+      font-size: 1.55rem;
+      line-height: 1.25;
+    }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker,
+    .number {
+      margin: 0 0 12px;
+      color: var(--article-faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code {
+      padding: 0.08em 0.34em;
+      border-radius: 4px;
+      background: var(--article-surface-strong);
+      font: 0.84em/1.5 var(--article-mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    pre code { padding: 0; background: transparent; }
+    ul,
+    ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+    th,
+    td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box,
+    .callout {
+      margin: 24px 0;
+      padding: 18px 22px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+    .box.accent,
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .box.good,
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .box.warn,
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .box.bad,
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    figure { margin: 30px 0; }
+    figure > img,
+    figure > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .evidence-figure { margin-top: 38px; margin-bottom: 38px; }
+    .evidence-captures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+      gap: 12px;
+    }
+    .evidence-capture {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    .evidence-capture > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .capture-theme,
+    .figure-annotation {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--article-line);
+      border-radius: 999px;
+      background: var(--article-surface);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      line-height: 1.35;
+    }
+    .capture-theme {
+      top: 10px;
+      left: 10px;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+    .figure-annotation {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(28ch, calc(100% - 24px));
+      padding: 5px 10px;
+      border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line));
+      background: var(--article-link-soft);
+      color: var(--article-link);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .figure-claim { display: block; color: var(--article-ink); font-size: 0.84rem; }
+    .figure-as-of {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 14px;
+      margin-top: 6px;
+      color: var(--article-faint);
+      font-size: 0.72rem;
+    }
+    .breakout,
+    .media-breakout {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .variant-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0; }
+    .variant {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    .variant h3 { margin: 0 0 8px; }
+    .variant img,
+    .variant svg { display: block; width: 100%; height: auto; margin-top: 12px; }
+    [data-document-pattern="ui"] .variant-grid {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    [data-document-pattern="ui"] .mockup { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--article-line);
+      border-radius: 9px;
+      background: var(--article-surface);
+      color: var(--article-ink);
+      text-decoration: none;
+    }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .dim { color: var(--article-muted); }
+
+    @media (max-width: 760px) {
+      main,
+      .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout,
+      .media-breakout,
+      [data-document-pattern="ui"] .variant-grid,
+      [data-document-pattern="ui"] .mockup { width: calc(100vw - 20px); }
+      [data-document-pattern="ui"] .variant-grid { grid-template-columns: 1fr; }
+      .evidence { grid-template-columns: 1fr; }
+      .evidence-captures { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+  </style>
+</head>
+<body>
+<main class="article">
+  <header class="page">
+    <p class="kicker">Operations · Concept Dossier · AGT-2968</p>
+    <h1>Credentials and logins</h1>
+    <p class="lede">Host-owned credentials, evidence-based provider health, and renewals that leave a verified receipt.</p>
+    <div class="meta"><span><b>Status</b> Decision pending</span><span><b>Phase</b> Decision ready</span><span><b>As of</b> 26 September 2026</span></div>
+  </header>
+  <p>The operator direction is to make recurring host login work a managed product process. The recommendation is a metadata registry in the Task Server, secrets on their owning host, and a bounded renewal operation that the operator or an authorised agent can start. A browser step remains human work when the provider requires it.</p>
+  <p>This concept changes no credentials or product code. Its canonical path is <code>docs/credentials-and-logins/index.html</code>, following the card's single-directory delivery contract. Publication under <code>docs/operations/credentials-and-logins/</code> and a documentation-index entry belong to later platform integration. Human sight review remains open.</p>
+  <nav aria-label="Contents"><a href="#alternatives">Alternatives</a> · <a href="#recommendation">Recommendation</a> · <a href="#inventory">Inventory</a> · <a href="#probes">Probes</a> · <a href="#renewal">Renewal</a> · <a href="#storage">Storage</a> · <a href="#runbooks">Runbooks</a> · <a href="#evidence">Evidence</a> · <a href="#open-decisions">Open decisions</a> · <a href="#implementation">Implementation</a></nav>
+
+  <section id="alternatives" data-concept-section="alternatives">
+    <h2>Alternatives</h2>
+    <div class="variant-grid">
+      <article class="variant"><h3>Runbooks and manual tracking</h3><p>Keep current sign-in tools and add an operator spreadsheet. Low implementation cost, but no source-aware expiry, automatic incident discrimination, or proof that every daemon adopted a replacement.</p></article>
+      <article class="variant"><h3>Central secret broker</h3><p>Store and distribute every provider login centrally. This expands the compromise boundary and can copy refresh-token lineage between hosts. A broker cannot invent provider-supported renewal or remove browser consent.</p></article>
+      <article class="variant"><h3>Host custody and central process</h3><p><b>Recommended.</b> The Task Server records identity, evidence and operations; each host owns its provider and Git secrets. Existing login and restart adapters carry out typed steps. The cost is a small durable operation protocol and source-specific probes.</p></article>
+      <article class="variant"><h3>API credentials for all providers</h3><p>A deliberate future deployment choice, subject to provider contracts and billing. It is not an automatic substitute for the subscriptions in use. Existing API-key configurations can be inventoried without changing the account or purchase model.</p></article>
+    </div>
+  </section>
+
+  <section id="recommendation" data-concept-section="recommendation">
+    <h2>Recommendation</h2>
+    <div class="callout" data-tone="accent"><p>Keep credentials local to their consumer. Centralise metadata, lifecycle receipts and claim policy. Distinguish <b>credential unavailable</b>, <b>provider incident</b>, <b>quota exhausted</b>, and <b>network failure</b> before selecting the fleet reaction. Preserve an explicit indeterminate result when the evidence cannot decide.</p></div>
+    <p>The <a href="../deployment-story/index.html">deployment-story Dossier, AGT-W63 (source AGT-2906)</a> owns the one-box to distributed deployment ladder. The <a href="../task-server-bus/index.html">bus Dossier, AGT-W65 (source AGT-2905)</a> owns authority, claims and replay. This proposal adds credential metadata and maintenance operations to that authority. It introduces neither a second task store nor a separate message broker.</p>
+    <figure class="media-breakout">
+      <svg viewBox="0 0 960 290" role="img" aria-labelledby="flow-title flow-desc">
+        <title id="flow-title">Credential process ownership</title>
+        <desc id="flow-desc">The operator starts a scoped renewal through the Task Server. The host performs the operation and sends metadata and verification receipts back. The human browser authorises directly with the provider. Secret values remain in the host store.</desc>
+        <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M1 1 L9 5 L1 9" fill="none" stroke="var(--article-muted)"/></marker></defs>
+        <g fill="var(--article-surface)" stroke="var(--article-line)"><rect x="24" y="35" width="235" height="88" rx="8"/><rect x="362" y="35" width="235" height="88" rx="8"/><rect x="700" y="35" width="235" height="88" rx="8"/><rect x="362" y="190" width="235" height="74" rx="8"/></g>
+        <g font-family="var(--article-sans)" font-size="18" fill="var(--article-ink)"><text x="44" y="68">Operator or agent</text><text x="382" y="68">Task Server</text><text x="720" y="68">Host adapter</text><text x="382" y="224">Provider browser</text></g>
+        <g font-family="var(--article-sans)" font-size="14" fill="var(--article-muted)"><text x="44" y="98">Scoped renewal request</text><text x="382" y="98">Registry + operation journal</text><text x="720" y="98">Local secret + real probe</text><text x="382" y="248">Human authorisation</text><text x="283" y="57">Intent</text><text x="610" y="57">Claim</text><text x="617" y="156">Receipt, no secret</text></g>
+        <g fill="none" stroke="var(--article-muted)" stroke-width="1.5" marker-end="url(#arrow)"><path d="M259 79 H362"/><path d="M597 79 H700"/><path d="M815 123 V149 H480 V123"/><path d="M142 123 V227 H362"/><path d="M597 227 H815 V123"/></g>
+      </svg>
+      <figcaption><b>Proposed ownership.</b> The browser authorises the host's login session. The return arrow carries a verification receipt, never a reusable credential. Concept diagram, 26 September 2026; not product screenshot evidence.</figcaption>
+    </figure>
+  </section>
+
+  <section id="inventory">
+    <h2>Inventory</h2>
+    <p>The registry is metadata, not a vault. Its key is <code>installationId + hostId + credentialId</code>; <code>generation</code> identifies each replacement. Provider, account alias, repository and role scope are separate fields. One host can have several accounts and principals. Coding and Review advertise their own adoption of a shared credential generation.</p>
+    <p><a href="registry-design.json">Registry design and initial observations</a> provides typed fields, enumerations and secret-free seed records. Reported values are not live discovery. Unknown creation, expiry, owner identity and verification dates stay <code>null</code> with an explicit reason. File modification time is not creation time or successful verification.</p>
+    <table>
+      <thead><tr><th>Field group</th><th>Contract</th></tr></thead>
+      <tbody>
+        <tr><td>Identity and scope</td><td><code>credentialId, generation, hostId, kind, provider, accountRef, scopes[], consumers[], ownerRef</code>. Scope includes exact repository, principal grants or WireGuard peer route; owner is an accountable human or team, not merely a Unix uid.</td></tr>
+        <tr><td>Location and selection</td><td><code>sourceKind, localLocator, secretRef, authorityState, supersedes, issuerCredentialRef</code>. Locators describe files, env-variable names or native-store slots without values. Shadowed copies are retained as drift evidence and excluded from health.</td></tr>
+        <tr><td>Time and expiry</td><td><code>createdAt, discoveredAt, lastVerifiedAt, expiresAt, expiryState, expirySource, accessTokenExpiresAt, rotationDueAt</code>. Distinguish unknown, no intrinsic expiry, observed deadline and CLI-managed refresh.</td></tr>
+        <tr><td>Renewal and audit</td><td><code>renewalMethod, runbookId, lastRenewedAt, lastRenewedBy, operationId, desiredGeneration, adoptedGenerationByConsumer</code>. Immutable metadata receipts record actor, scope, before/after generation, checks and result.</td></tr>
+        <tr><td>Health and evidence</td><td><code>credentialState, serviceState, reasonCode, observedAt, validUntil, evidenceRefs[], confidence, nextProbeAt</code>. Provider availability never rewrites a credential as expired. Revocation remains distinct from a provider outage.</td></tr>
+      </tbody>
+    </table>
+    <h3>Credential kinds</h3>
+    <table>
+      <thead><tr><th>Kind and placement</th><th>Scope and owner</th><th>Renewal and verification</th></tr></thead>
+      <tbody>
+        <tr><td><b>Claude OAuth token</b><br>Reported on agent-runner-01 in <code>/etc/agent-runner/runner.env</code>, inherited as <code>CLAUDE_CODE_OAUTH_TOKEN</code> by both units. Target: shared <code>provider-auth.env</code>.</td><td>Host-owned Claude login, approved provider account, Coding and authorised Review processes. Owner: provider account custodian, to resolve.</td><td><a href="#claude-renewal">Host setup-token flow</a>; human browser, local install, guarded adoption and real call. Expiry unknown until issuance metadata establishes it. The 2026-09-08 native file is reported shadowed, not active.</td></tr>
+        <tr><td><b>Codex ChatGPT login</b><br>Reported <code>~/.codex/auth.json</code>, hard-linked into 62 clean-context homes.</td><td>Host-owned ChatGPT account; aliases are consumers of one lineage, not 62 logins. Owner: provider account custodian.</td><td><a href="#codex-renewal">Device login on the host</a>; CLI manages access refresh. Verify native-store selection, link write-through after replacement, status and real call. Session expiry may be unknown.</td></tr>
+        <tr><td><b>GitHub HTTPS token</b><br>Reported runner-user <code>~/.git-credentials</code> through Git's helper.</td><td>Product repository URLs and explicit read/write grants. Token subtype and issuer not established. Owner: repository administrator.</td><td><a href="#github-renewal">Issue replacement token</a>, verify exact repository access, switch helper, revoke old after adoption. Record issuer deadline when available; never infer infinite validity.</td></tr>
+        <tr><td><b>GitHub OAuth registration credential</b><br>Reported workstation stored OAuth credential; exact store unverified.</td><td>Authority to register workspace deploy keys. Separate from runner Git access. Owner: GitHub account custodian.</td><td>Human reauthorises issuer application when needed. An authorised adapter registers only a public key. Track keys created by this token before revoking it.</td></tr>
+        <tr><td><b>GitHub deploy key</b><br>Reported ed25519 private key generated on agent-runner-01; actual private-key path unrecorded. GitHub holds public key.</td><td>One workspace repository, with write access only if publication requires it. Owner: workspace repository administrator.</td><td>Generate a second host-local key, register, prove repository operations, switch identity, then remove old public key. No intrinsic expiry; separate rotation due date. Never reuse it for another repository.</td></tr>
+        <tr><td><b>Task Server principals</b><br>Standalone Studio, Engine and Runner bearer files; server stores credential hashes. Host-specific client files and Compose secret mounts.</td><td>Separate grants and principal IDs for each role and enrolled host. Owner: installation administrator.</td><td><a href="#principal-renewal">Existing principal rotation with overlap</a>, client adoption, authenticated request and lease continuity. Known expiry for retired generation; current generation can have no intrinsic expiry.</td></tr>
+        <tr><td><b>Legacy enrolled Runner credential</b><br><code>RUNNER_AUTH_TOKEN_FILE</code>, including documented <code>rnr.*</code> enrolment on the file-backed backend.</td><td>Runner identity bound to host and project grants. Not assumed interchangeable with a standalone principal.</td><td>Use the owning enrolment API; stage and verify replacement. If its version lacks overlapping credentials, drain new claims before replacement. Migration requires an explicit compatibility adapter.</td></tr>
+        <tr><td><b>WireGuard peer key</b><br>Documented Linux <code>/etc/wireguard/wg0.conf</code> or protected Windows tunnel store; task-server-01, agent-runner-01 and windows-studio are deployment templates, not live attestations.</td><td>One private key per peer; public key, endpoint and exact <code>AllowedIPs</code> in peer records. Owner: network administrator.</td><td><a href="#wireguard-renewal">Coordinated peer rotation</a>; no intrinsic key expiry. Verify handshake and authenticated Task Server reachability. A backup route is required for unattended changes to the management route.</td></tr>
+        <tr><td><b>SSH management key</b><br>Protected operator/controller store; host authorised public key and known-host fingerprint.</td><td>Specific remote service account, host and restricted maintenance actions. Owner: host administrator.</td><td>Add a second public key, prove a fresh host-key-verified session, switch controller identity, remove old key. Preserve access until the new session succeeds; account policy can impose expiry.</td></tr>
+      </tbody>
+    </table>
+    <p>Discovery also records configured provider API keys, TLS certificates and archive-object-store credentials through the same envelope. They are documented deployment options, not asserted live secrets in this incident inventory. Their renewal adapters are specified in the data file: issuer replacement or certificate renewal, consumer adoption and a scoped real operation. Unsupported kinds remain visible as unmanaged with a manual runbook.</p>
+    <h3>Source authority</h3>
+    <p>The resolver inspects effective daemon configuration and the CLI's selected authentication method without exposing values. For Claude, an active environment token must not inherit expiry from a native file. Conflicting provider variables require an explicit source check. For Codex, use the effective config home and native store, not an assumed global path. Record every alias and verify whether CLI atomic replacement changed its inode; hard-link count alone is not proof of refresh propagation.</p>
+    <h3>Host advertisement</h3>
+    <p>Extend <code>provider-auth:&lt;provider&gt;</code> with a versioned <code>credentialHealth</code> payload: credential ID and generation, consumer adoption, expiry semantics, last real verification, observation deadline, reason, retry time and runbook reference. Local secret locators stay on the host or in an authorised detail projection. Advertise Git, principal and transport health under their own capability families; a provider failure must not drain unrelated work.</p>
+    <p>The Task Server validates authenticated host ownership, monotonic generation and sequence, timestamps and a bounded TTL. Late observations cannot overwrite a renewed generation. Coalesce repeated Coding/Review observations of the same account into one incident while retaining per-consumer adoption. New fields require a protocol version; old producers remain visibly unverified. Old claim consumers receive a conservative legacy unavailable/limited projection with a typed reason. Roll out server admission support before enabling new producers.</p>
+    <h3>Execution Hosts</h3>
+    <p><b>Proposed product contract.</b> Execution Hosts receives a flat credential list per host: provider/kind, scope, owner, source alias, last verified, expiry or “Unknown”, current reason and next action. Details disclose the last renewal receipt and adopted generations. “Renew”, “Verify” and “Rotate” start the same typed operations available to an authorised agent. An incident row says when the next check is due; it does not offer renewal as the default action.</p>
+    <p>This is a target interaction, not a claim about a rendered current surface. No product screenshot is presented as evidence here. I08 requires real light/dark captures of the implemented states, using the canonical full-bleed evidence figure and per-image provenance.</p>
+  </section>
+
+  <section id="probes">
+    <h2>Probes</h2>
+    <p>A local login-status answer proves a stored session is recognised; it does not prove a provider request will succeed. Combine source metadata, the existing cheap status command, bounded real-call evidence, provider status evidence and connectivity evidence. Preserve their independent timestamps and scopes.</p>
+    <table>
+      <thead><tr><th>Outcome</th><th>Required evidence</th><th>Fleet reaction</th></tr></thead>
+      <tbody>
+        <tr><td><b>A · Credential missing or expired</b><br><code>credential-unavailable</code></td><td>Selected source absent/unreadable, known non-refreshable deadline passed, explicit revocation, or two independent explicit login failures after incident checks. An expired access token with a usable refresh path is insufficient.</td><td>Park new claims that need this host/account/provider. Open one deduplicated operator item with owner, evidence and the exact renewal runbook. Allow unrelated providers and credential-free review. Recover only after a fresh real verification of the selected generation.</td></tr>
+        <tr><td><b>B · Provider incident</b><br><code>provider-incident</code></td><td>A current official incident overlaps the affected service, endpoint and time; <em>or</em> the same minimal request produces the same normalised failure using an independently authenticated credential that recently succeeded, with CLI/config and network faults excluded.</td><td>Pause matching claims for the evidenced scope. Retry one elected canary at 30, 60, then 120 seconds with jitter and a 120-second cap. No action-required operator item. Record a quiet incident event and affected scope. Do not rotate credentials or spend task retry budgets.</td></tr>
+        <tr><td><b>C · Quota exhausted</b><br><code>quota-exhausted</code></td><td>Explicit provider refusal identifying quota/account/rate limit and reset or retry guidance. HTTP 429 alone, allowed quota telemetry and terminated processes are insufficient.</td><td>Use existing account/model quota policy and bounded reset. No credential renewal item. With no reset use the current bounded unknown-limit retry, then re-probe. A healthy authorised alternative is subject to the canonical routing policy and its correctness floors.</td></tr>
+        <tr><td><b>D · Network failure</b><br><code>network-failure</code></td><td>DNS, TLS, route or connection evidence, correlated across provider and Task Server reachability. A timeout is a symptom until the layer is known.</td><td>Use <code>TaskServerConnectivityMonitor</code> and connectivity backoff. Park only affected destinations; loss of Task Server authority follows existing lease rules. Persistent route faults go to the connectivity owner, never to provider sign-in. Stale host evidence cannot declare an account expired.</td></tr>
+      </tbody>
+    </table>
+    <p><b>Healthy</b> and <b>indeterminate</b> complete the state space. A bare 401, malformed output, unavailable status feed or probe timeout enters indeterminate investigation, not forced expiry. After a failure, pause new affected claims while evidence is collected, retain last-good data with its age, and retry diagnostics at 30/60/120 seconds. At ten minutes unresolved, create one diagnostic operator item with “cause unconfirmed”, not a renewal demand. A routine probe timeout with no failed request can retain readiness only until its five-minute evidence deadline. No infinite last-good latch.</p>
+    <h3>Decision order</h3>
+    <ol>
+      <li><b>Resolve.</b> Select the effective source and generation. Check host time and consumer adoption. A proved absent or revoked credential remains unavailable even during an incident; track both facts.</li>
+      <li><b>Observe.</b> Run <code>claude auth status --text</code> or <code>codex login status</code> in the same identity/environment as the consumer. Keep the existing bounded timeout, low priority and single-flight cache. Record process signals and intentional stops separately.</li>
+      <li><b>Verify.</b> Reuse a successful provider exchange from an authorised run in the last five minutes, tied to account, endpoint and generation. Otherwise make a minimal provider call with no repository access or tools, a 30-second bound and a configured spend ceiling. After renewal require a new call through the production launcher, including the clean-context credential path. A process merely being alive is not successful-request evidence.</li>
+      <li><b>Correlate.</b> On an auth-shaped failure, fetch the allowlisted official status feed from the control plane; require a relevant active component incident, retrieval time and a five-minute freshness limit. A green page is not proof of credential failure. If needed, ask an already enrolled independent host to run the identical canary locally. Never ship its credential to the failing host. No spare credential is a valid missing-evidence state.</li>
+      <li><b>Decide.</b> Match the normalised signature (provider, endpoint class, status, provider error code and scrubbed message template), not raw secrets or request IDs. A second host with the same refreshed lineage is not independent. Common proxy, CLI-version or request-configuration errors remain diagnostic uncertainty. Request entitlement/model refusals stay <code>ProviderRejectedRequest</code>, outside the four outage causes.</li>
+      <li><b>Publish.</b> Persist observation and policy revision before changing claim admission. One incident ID links capabilities, run evidence and recovery. Existing active leases continue under their authority; a failed in-flight request ends through existing outcome handling and awaits recovery without repeating completed side effects.</li>
+    </ol>
+    <p>Normal real-call verification runs at most once per host/account per five minutes, using recent successful runs where possible. Incident checks elect one canary per affected service scope to prevent a fleet stampede. Status evidence alone cannot clear an outage: require two successful canaries at least 30 seconds apart, then resume gradually and verify each host's credential. An old signed-out latch is reconciled only for the matching generation.</p>
+    <h3>26 September example</h3>
+    <p>The operator reports Codex returning <code>401 Incorrect API key provided: [redacted]</code> across runs on agent-runner-01, followed by <code>ProviderUnauthorized</code> and rejected claims. The reported decisive evidence was an OpenAI status incident, found after about forty minutes. No incident ID, timestamps or known-good comparison were supplied; this Dossier does not invent them.</p>
+    <p>Under this proposal the first 401 records an auth-shaped request failure with the host's ChatGPT source, then starts indeterminate investigation. A relevant active status incident moves service state to <code>provider-incident</code>; credential state retains its last verified value and age. Claims pause with the short canary cadence and no renewal item. If status evidence is unavailable and no independent credential exists, the outcome remains indeterminate. A demonstrated missing source still gets its own renewal item. Recovery requires real-call success, not another <code>codex login status</code> alone.</p>
+    <h3>Existing components</h3>
+    <table>
+      <thead><tr><th>Component</th><th>Disposition</th></tr></thead>
+      <tbody>
+        <tr><td><a href="../../runner/ProviderCredentialMonitor.cs">ProviderCredentialMonitor</a></td><td><b>Extend.</b> Retain metadata-only reads and quiet unknown-format handling. Replace fixed home-file selection and recursive earliest-expiry interpretation with typed source adapters. Separate access-token refresh from renewal expiry and add 14/7/1-day thresholds.</td></tr>
+        <tr><td><a href="../../runner/RunnerCapabilityProbe.cs">RunnerCapabilityProbe / ProviderAuthProbe</a></td><td><b>Keep and extend.</b> Retain CLI/toolchain discovery, cache, timeout, low priority and logout confirmations. Add source-generation binding and real verification. Move incident correlation into a shared evidence policy; a status command is no longer the sole readiness authority.</td></tr>
+        <tr><td><code>provider-auth</code> capability</td><td><b>Keep and version.</b> Extend its payload and server admission consumer. Replace the ambiguous “unavailable means renew” decision with typed reason and scope; preserve compatibility for old participants without mislabelling incidents.</td></tr>
+        <tr><td><a href="../../contracts/TaskServer.Contracts/ProviderAccessClassifier.cs">ProviderAccessClassifier</a></td><td><b>Keep as a signal extractor.</b> Its authentication, quota, refusal and transient classifications remain evidence. Replace direct conversion of an isolated 401 into a fleet credential verdict with the correlated policy. Keep signal/stop and model-refusal exclusions.</td></tr>
+        <tr><td><a href="../../backend/Features/Management/ProviderAuthProvisioning.cs">ProviderAuthProvisioning</a> and host sign-in adapters</td><td><b>Keep.</b> Wrap host-local sign-in, SSH-stdin fallback, redaction and guarded Review replacement in the durable renewal operation. Add real-call completion and per-consumer adoption receipts.</td></tr>
+        <tr><td><a href="../../task-server/TaskServerPrincipalStore.cs">TaskServerPrincipalStore</a></td><td><b>Extend existing rotation.</b> Keep hashed credentials, scoped principals, revocation and overlap. Add client acknowledgement and recovery orchestration; do not create a second principal issuer.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="renewal">
+    <h2>Renewal</h2>
+    <p>A typed operation has <code>operationId, actor, targetHost, credentialId, expectedGeneration, authorisedScope, deadline, idempotencyKey</code> and a step journal. States are <code>requested → preflight → awaiting-human → staged → verified → adopting → committed → retiring-old → complete</code>; optional human and retirement steps may be skipped. <code>failed</code>, <code>cancelled</code>, <code>rollback-pending</code> and <code>revocation-pending</code> preserve the last safe boundary. A renewable host lease and generation comparison allow only one writer per credential.</p>
+    <p>The platform journals secret references and receipts, never token bytes. Commands and receipts travel over the authenticated host polling channel; no inbound runner listener. Keep the current SSH adapter during migration and use it as a separately authorised recovery route if a Runner principal is broken. Provider login sessions are bounded to 15 minutes. Browser URL/code are sensitive, temporary fields delivered only to the initiating authorised session; never ordinary logs, card text, bus history or screenshots.</p>
+    <h3 id="claude-renewal">Claude</h3>
+    <ol>
+      <li><b>Platform:</b> inspect the effective source and service drop-in precedence. Record any active token in legacy <code>runner.env</code> and any shadowed native file. Check host ownership, free disk and reattachment capability without printing values.</li>
+      <li><b>Human:</b> authorise the URL from host-side <code>claude setup-token</code>. An agent can start and supervise this flow; it cannot manufacture browser consent. With no host-side flow, the authorised operator can use the existing protected stdin provisioning adapter for a separately issued token.</li>
+      <li><b>Platform:</b> stage the token locally and capture any issuer-provided expiry. If opaque with no deadline, persist unknown. Merge into <code>/etc/agent-runner/provider-auth.env</code>, preserving other providers; use a same-directory temporary file, owner <code>root:agent</code>, mode <code>0640</code>, flush and atomic rename. The staged environment must pass a real call before consumer adoption.</li>
+      <li><b>Platform:</b> pause new affected claims, preserve existing workers, replace Coding through its lifecycle helper and use <code>agent-runner-deploy restart-review</code>. Busy Review remains adoption-pending until guarded drain completes. Do not force-kill detached workers. Retain the established recovery state and fences.</li>
+      <li><b>Platform:</b> verify each new daemon's effective generation and startup identity, then make a clean-context real call and publish a newer capability receipt. Remove the duplicate legacy variable only after adoption, keeping unrelated runner configuration intact. Retire the unused native copy through a separately audited cleanup. Complete only when every installed consumer is accounted for.</li>
+    </ol>
+    <p>Rollback selects the previous still-valid generation if the new call or adoption fails. Browser OAuth issuance may invalidate earlier credentials; no seamless overlap is promised for provider-owned login lineage. If the old token is already invalid, preserve the staged operation and keep only that provider parked.</p>
+    <h3 id="codex-renewal">Codex</h3>
+    <ol>
+      <li><b>Platform:</b> resolve the host's native credential store and all clean-context consumers. Pause new Codex starts and let refresh-writing sessions drain, unless the installed CLI has a verified shared-store concurrency contract. An application mutex alone cannot control an already running CLI.</li>
+      <li><b>Human:</b> complete the host's <code>codex login --device-auth</code> browser step, when enabled for the account. If unavailable, use the documented host login with a protected callback tunnel. Do not copy the workstation refresh lineage.</li>
+      <li><b>Platform:</b> allow the CLI to write the selected host store. Check linked consumers after CLI atomic replacement and repair aliases while quiescent. Test that a refresh reaches later launches; do not overwrite a refreshed file with an older backup or start a second refresh writer to “repair” it.</li>
+      <li><b>Platform:</b> check login status, make a real call through the production clean-context launcher, refresh both daemon advertisements and resume claims. Restart only consumers that require it, using the same Coding/Review guards. Record host generation and renewed-by actor; access-token expiry alone does not schedule a human login.</li>
+    </ol>
+    <p>The official <a href="https://learn.chatgpt.com/docs/auth#login-on-headless-devices">OpenAI authentication guide</a> supports device-code login and describes native credential storage. This Dossier chooses host-owned sessions as product policy because the reported fleet has already experienced copied refresh-lineage failures.</p>
+    <h3 id="github-renewal">GitHub</h3>
+    <p><b>Deploy keys:</b> the host generates a new ed25519 private key in its protected store. The authorised GitHub adapter registers only the public key against the exact repository and records returned key ID, fingerprint and registration credential lineage. Prove read access with the intended SSH identity; prove write permission through the platform's permitted temporary-ref canary or a fenced publication receipt. A dry-run or <code>ls-remote</code> alone does not prove push permission. Switch new Git processes to the new key, let old operations finish, then remove the old public key. A failed registration leaves current access intact.</p>
+    <p><b>HTTPS tokens:</b> a human issues a replacement if the issuer offers no delegated issuance API. The platform stages it in a protected helper, verifies each granted repository, switches the helper and tracks adoption before revocation. The existing plaintext <code>~/.git-credentials</code> is an import source with restrictive permissions, not a registry export. Use credential-free remote URLs. The workstation OAuth credential used for registration remains on its owning controller; it must not become a runner-wide administrator token.</p>
+    <p>GitHub deploy keys have no intrinsic expiry and apply to one repository. The <a href="https://docs.github.com/en/rest/deploy-keys/deploy-keys">deploy-key API</a> also documents that revoking an OAuth registration token can delete its deploy keys. Record this dependency before revocation; recreate and verify dependent keys under an approved independent issuer first. Overlap is guaranteed only when the issuer and repository policy permit two usable credentials. See <a href="https://docs.github.com/en/authentication/connecting-to-github-with-ssh/managing-deploy-keys">GitHub's deploy-key constraints</a>.</p>
+    <h3 id="principal-renewal">Task Server principals</h3>
+    <p>The standalone server already has hashed credentials and a default five-minute overlap, capped at one hour. Extend the existing rotate API with a durable operation ID and adoption receipt. Issue a new generation, deliver it to the owning client file over the authenticated management channel, reload the consumer, and prove an authenticated request and the next active lease heartbeat. Retire the previous generation only when all named consumers acknowledge and its bounded grace permits it.</p>
+    <p>The current API starts the old credential's expiry clock when it issues the replacement. Preflight reachable consumers before invoking it. For a reliable zero-downtime process, I06 must stage issuance and explicitly begin retirement after adoption, with a maximum grace deadline; lost acknowledgements cannot extend validity indefinitely. If a client is offline, defer planned rotation. Compromise revocation overrides availability and may require re-enrolment via a separately authenticated administrator. Never rely exclusively on a credential being replaced to recover from its failure.</p>
+    <h3 id="wireguard-renewal">WireGuard and management access</h3>
+    <p>Generate the new private key on its peer; distribute only the public key and intended route to the network controller. Verify independent SSH/console access first. Stage a second tunnel/address or another management route, update both ends, test handshake and an authenticated Task Server call, switch routing, then remove old peer trust. Do not assign overlapping <code>AllowedIPs</code> to parallel peers on one interface as an assumed seamless cutover. Without a secondary route, require an attended maintenance window and timed rollback. No provider renewal action can fix a failed tunnel.</p>
+    <p>For SSH management keys, add the replacement public key before switching the controller, verify a fresh connection with the pinned host identity, and remove the old key only afterward. Host-key changes require an independently verified fingerprint. These transport operations run through restricted host/network adapters, not general shell text from a task card.</p>
+    <h3>Warnings and receipts</h3>
+    <p>Evaluate deadlines hourly in UTC. At 14, 7 and 1 days remaining, emit one durable threshold event per credential generation, with owner, affected hosts and renewal action. A host returning after several thresholds gets one item at the highest urgency, with missed thresholds recorded. A successful replacement closes the prior generation's warnings. Expired credentials park claims immediately. Unknown expiry stays “Unknown”; request one metadata completion action rather than inventing a deadline.</p>
+    <p>Refreshable access-token deadlines trigger local refresh verification, not 14/7/1-day human alerts. No-expiry deploy keys, principals and WireGuard keys use a separately labelled policy rotation date. D5 recommends a configurable 90-day initial rotation interval for platform-controlled keys, subject to adoption and recovery capability. The product must never display that date as a provider-imposed expiry.</p>
+  </section>
+
+  <section id="storage">
+    <h2>Storage and transport</h2>
+    <table>
+      <thead><tr><th>Deployment</th><th>Secret custody</th><th>Transport and recovery</th></tr></thead>
+      <tbody>
+        <tr><td>Existing Linux host</td><td>Keep the documented provider env file as a compatibility adapter. Native Codex files remain CLI-writable, runner-only, with protected directories. Git private keys and helper stores are scoped to the runner. A local secret-store adapter can materialise only what a CLI consumes.</td><td>SSH stdin with host-key verification for the current provisioning path. Future host claims deliver operation metadata and public material. A host-local privileged helper allows fixed writes and lifecycle actions only; it cannot accept arbitrary file paths or commands.</td></tr>
+        <tr><td>One-box Docker, AGT-W63</td><td>Separate role credentials even when co-located. Task Server stores registry metadata and principal hashes. Private client files are mounted read-only at <code>/run/secrets/...</code>. Provider login state is in a persistent runner-owned volume with CLI refresh write access, never the image.</td><td>Bootstrap generates distinct Studio/Engine/Runner credentials without copying operator logins. Use private Compose routing; co-location does not remove authentication. Replace mounted directories or recreate consumers as required by actual mount semantics, then require adoption receipts.</td></tr>
+        <tr><td>Distributed Task Server</td><td>Protected control-plane host directory, documented as <code>/etc/agent-orchestrator/secrets/</code>, backs Docker secrets. Provider and Git secrets stay on runner hosts; per-host Runner principals live with their clients. No provider token needs to reach the Task Server.</td><td>Private HTTPS over the deployment's WireGuard route, with distinct principals; VPN identity is not API authorisation. Maintenance polling survives transient disconnect through a fenced, replayable journal. Host-local secret checkpoints and central metadata reconcile after reconnect.</td></tr>
+      </tbody>
+    </table>
+    <p>The root Compose profile currently declares some secrets from bootstrap environment variables, while the control-plane deployment runbook describes protected files. These are separate existing profiles, not proof of one uniform secret store. I07 reconciles them around file inputs and documented ownership without reopening the AGT-W63 deployment ladder. Compose secret mounts alone do not encrypt host files at rest.</p>
+    <p><b>Recommended storage boundary:</b> define a narrow secret-reference interface now, retain protected files for the first rollout, and permit OS/systemd or external-vault adapters later. Encryption keys must live outside the data they protect. Neither the registry, SQLite metadata backup, bus nor task artifact system accepts secret values. Secret-bearing requests disable body capture, tracing and crash-dump inclusion; provider errors are scrubbed before hashing or persistence.</p>
+    <p>Back up provider state only into a separately encrypted and access-controlled recovery set if policy permits it. Never restore old OAuth refresh material over a newer live lineage or clone one login to another host. Restore metadata, re-enrol principals as necessary, reauthorise provider sessions and verify real calls before claims resume. The deployment recovery set also covers Git access, TLS and optional archive-store keys. Audit reads, renewals, adoption, rollback and revocation with actor and correlation IDs; secret bytes and browser codes have no audit retention.</p>
+    <p>Security roles separate <code>credential.read-metadata</code>, <code>renew-own-host</code>, <code>rotate-principal</code>, <code>manage-repository-key</code> and <code>manage-network-peer</code>. A Runner cannot renew another host or grant itself projects. An agent may execute an already authorised runbook within its operation scope; browser consent and issuer privilege still belong to their human or service owner.</p>
+  </section>
+
+  <section id="runbooks">
+    <h2>Runbooks</h2>
+    <p><a href="runbooks.json">Three typed incident runbooks</a> preserve evidence provenance, discriminators, authority, ordered steps, rollback, verification and completion predicates. They are design data for a future allowlisted executor, not executable shell payloads. Each action has an idempotency boundary and a human/platform owner.</p>
+    <table>
+      <thead><tr><th>Incident</th><th>Discrimination and reported fix</th><th>Product action</th></tr></thead>
+      <tbody>
+        <tr><td><code>RB-CLAUDE-LINEAGE</code><br>7 September copied-login failure; 8 September stale copy; 26 September renewal request.</td><td>Copied workstation credentials reportedly worked for roughly eight hours, then both sides failed during refresh rotation. The host's active headless env token and stale native file are distinct sources. Host-owned token provisioning is the established remedy; this run did not renew it.</td><td>“Renew Claude on this host” resolves source, starts browser authorisation, stages token, adopts safely and verifies a real call. Never copy the workstation credential file.</td></tr>
+        <tr><td><code>RB-CODEX-INCIDENT</code><br>26 September 401 cluster.</td><td>Login-status recognition did not explain repeated request failures. The operator reports an OpenAI incident as decisive. Credential rotation was not established as the fix; provider recovery and a fresh real call are the required completion evidence.</td><td>Automatic status correlation and canary pause. No renewal operator item for a confirmed incident. “Recheck provider” is optional; task retries wait for recovery.</td></tr>
+        <tr><td><code>RB-GITHUB-WORKSPACE</code><br>26 September private workspace access.</td><td>Product repository HTTPS access did not grant workspace-repository access. A new host ed25519 deploy key was reportedly registered through GitHub using the workstation OAuth credential.</td><td>“Grant this host workspace access” verifies repository authority, creates local key, registers its public key, tests read/write scope and records issuer dependency. Runner code does not manage task Git.</td></tr>
+      </tbody>
+    </table>
+    <p>“One-step action” means one scoped start with visible progress and resumable state. It does not hide a required browser login, repository administrator approval or a safe network maintenance window. Runbook versions are pinned into receipts so a later edit cannot change an in-flight operation.</p>
+  </section>
+
+  <section id="evidence" data-concept-section="evidence">
+    <h2>Evidence</h2>
+    <p><a href="evidence-snapshot.json">Evidence manifest</a> records the inspected repository revision, file hashes and claim boundaries. No live host secret was read, no remote login was attempted, and no product UI was captured. Dates and outcomes from the card are operator reports, not newly reproduced incidents.</p>
+    <div class="evidence-list">
+      <a class="evidence" href="evidence-snapshot.json"><span class="evidence-class" data-evidence-class="observed">Reported</span><span><b>E1 · Operator incident account</b><small>AGT-2968 supplied 7, 8 and 26 September facts, the 62 Codex aliases and the approximately forty-minute diagnosis. Missing logs, incident ID, exact expiry and key path remain unknown.</small></span></a>
+      <a class="evidence" href="../../runner/ProviderCredentialMonitor.cs"><span class="evidence-class" data-evidence-class="observed">Source</span><span><b>E2 · Metadata and status probes</b><small>The monitor uses fixed native paths and a 14-day window; ProviderAuthProbe executes status commands and consumes process evidence. Source inspection supports the design gap, not a claim about current screen rendering.</small></span></a>
+      <a class="evidence" href="../operations/setup/linux-runner-host.md"><span class="evidence-class" data-evidence-class="observed">Source</span><span><b>E3 · Runner operations</b><small>Host-owned sign-in, provider-auth.env, clear credential boundaries and guarded Review restart are documented. The reported runner.env placement needs source discovery and migration, not a silent assumption that the docs match that host.</small></span></a>
+      <a class="evidence" href="../operations/setup/cli-relogin-runbook.md"><span class="evidence-class" data-evidence-class="observed">Source</span><span><b>E4 · Existing renewal runbook</b><small>Keep its bounded host login and verification path; add incident discrimination, source-aware expiry and durable consumer adoption. Historical token-refresh concept text is superseded where this current runbook and source differ.</small></span></a>
+      <a class="evidence" href="../operations/setup/control-plane-docker.md"><span class="evidence-class" data-evidence-class="observed">Source</span><span><b>E5 · Docker and network boundary</b><small>Protected client files, Compose mounts and WireGuard peer templates define the deployment adapters. These docs do not attest that every described peer or optional store is currently deployed.</small></span></a>
+      <a class="evidence" href="#probes"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b>E6 · Source mismatch and ambiguous 401</b><small>A stale file cannot establish an env token's expiry; recognising a stored login cannot rule out a provider incident. These are design conclusions from E1 to E4.</small></span></a>
+      <a class="evidence" href="#open-decisions"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b>E7 · Policy and product behavior</b><small>Registry, correlation, warning thresholds, operation journal and Execution Hosts projection require implementation and human decision review.</small></span></a>
+    </div>
+    <p>Official references consulted on 26 September 2026: <a href="https://code.claude.com/docs/en/env-vars">Claude environment authentication</a>, <a href="https://learn.chatgpt.com/docs/auth#login-on-headless-devices">Codex headless authentication</a>, and <a href="https://docs.github.com/en/rest/deploy-keys/deploy-keys">GitHub deploy-key API</a>. Provider documentation can change; implementation must pin and test the installed CLI adapters. The reported OpenAI incident has no supplied archived status URL, so the historical diagnosis remains attributed to the operator.</p>
+  </section>
+
+  <section id="open-decisions" data-concept-section="open-decisions">
+    <h2>Open decisions</h2>
+    <p>Each default below is a recommendation, not an approval receipt. Promotion can carry recommended working assumptions under the existing concept contract; it must preserve any recorded operator choice.</p>
+    <article class="box" id="D1" data-decision-id="D1" data-decision-kind="single" data-decision-label="Credential custody">
+      <h3>D1 · Credential custody</h3><p><b>Recommendation:</b> A. Host custody prevents cross-host refresh-lineage sharing and keeps the control plane free of provider tokens.</p>
+      <p data-option-id="A" data-option-label="Host custody and central metadata (recommended)">A · Host custody and central metadata (recommended).</p><p data-option-id="B" data-option-label="Central provider secret broker">B · Central provider secret broker, with a larger compromise boundary.</p><p>Delivery: I01, I04, I07.</p>
+    </article>
+    <article class="box" id="D2" data-decision-id="D2" data-decision-kind="single" data-decision-label="Incident evidence and retry">
+      <h3>D2 · Incident evidence</h3><p><b>Recommendation:</b> A. Use relevant official status evidence or an independent known-good comparison, short capped retries and no incident renewal item. Retain indeterminate when neither is available.</p>
+      <p data-option-id="A" data-option-label="Correlated incident policy with bounded canaries (recommended)">A · Correlated incident policy with bounded canaries (recommended).</p><p data-option-id="B" data-option-label="Manual incident confirmation for every authentication-shaped failure">B · Manual incident confirmation for every authentication-shaped failure.</p><p>Delivery: I02, I03. Default investigation escalation: ten minutes. Canary spend ceiling must be configured before live probes.</p>
+    </article>
+    <article class="box" id="D3" data-decision-id="D3" data-decision-kind="single" data-decision-label="Renewal authority and transport">
+      <h3>D3 · Renewal authority</h3><p><b>Recommendation:</b> A. A narrowly authorised operation can be driven by an agent, with human browser steps explicit. Migrate from current SSH adapters to host polling without an inbound host listener.</p>
+      <p data-option-id="A" data-option-label="Scoped platform renewal with human provider consent (recommended)">A · Scoped platform renewal with human provider consent (recommended).</p><p data-option-id="B" data-option-label="Manual host administration for all renewals">B · Manual host administration for all renewals.</p><p>Delivery: I04, I05, I06, I08. Assign real provider, repository and network owners during enrolment.</p>
+    </article>
+    <article class="box" id="D4" data-decision-id="D4" data-decision-kind="single" data-decision-label="Secret storage rollout">
+      <h3>D4 · Secret storage</h3><p><b>Recommendation:</b> A. Preserve compatible protected files and native stores behind a secret-reference adapter; migrate Compose bootstrap inputs to protected files. An external vault can be an optional deployment adapter.</p>
+      <p data-option-id="A" data-option-label="Protected files and native stores behind adapters (recommended)">A · Protected files and native stores behind adapters (recommended).</p><p data-option-id="B" data-option-label="Mandatory external vault before credential management">B · Mandatory external vault before credential management.</p><p>Delivery: I01, I07. Document at-rest protection and recovery separately from Docker secret mounts.</p>
+    </article>
+    <article class="box" id="D5" data-decision-id="D5" data-decision-kind="single" data-decision-label="Expiry and rotation policy">
+      <h3>D5 · Expiry and rotation</h3><p><b>Recommendation:</b> A. Warn at 14/7/1 days for real renewal deadlines. Use a configurable 90-day initial rotation due date for platform-controlled no-expiry keys and principals, with adoption before retirement. Provider refresh semantics remain separate.</p>
+      <p data-option-id="A" data-option-label="14/7/1 warnings and staged policy rotation (recommended)">A · 14/7/1 warnings and staged policy rotation (recommended).</p><p data-option-id="B" data-option-label="Expiry warnings with operator-scheduled rotation only">B · Expiry warnings with operator-scheduled rotation only.</p><p>Delivery: I01, I05, I06, I07. Unattended WireGuard rotation needs a proved alternate route; otherwise it is attended.</p>
+    </article>
+  </section>
+
+  <!-- agent-studio:implementation-section:start -->
+  <section id="implementation" data-document-section="implementation">
+    <h2>Implementation</h2>
+    <p><a href="workbench.json">Promotion-ready implementation tasks</a> contain bounded prompts, dependencies and acceptance scope. They select no model or thinking level. Any later selection follows <a href="../system/domains/model-routing-policy.md">the canonical routing policy</a>. These cards have not been created or executed.</p>
+    <table><thead><tr><th>Slice</th><th>Boundary and dependencies</th></tr></thead><tbody>
+      <tr><td>I01 · Registry and expiry</td><td>Metadata, effective source, generation and 14/7/1 warnings. Independent foundation.</td></tr>
+      <tr><td>I02 · Provider evidence</td><td>Real probes and four-cause policy; consumes I01 identity and source.</td></tr>
+      <tr><td>I03 · Fleet admission</td><td>Capability version, both server paths, retry/canary and incident lifecycle. Depends on I01 and I02.</td></tr>
+      <tr><td>I04 · Provider renewal</td><td>Durable maintenance operations, existing Claude/Codex adapters and adoption. Depends on I01 to I03.</td></tr>
+      <tr><td>I05 · GitHub access</td><td>Key/token overlap, issuer dependency and repository verification. Depends on I01 and I04 operation contract.</td></tr>
+      <tr><td>I06 · Principal rotation</td><td>Existing issuer extension, adoption acknowledgement, heartbeat continuity. Depends on I01 and I04; separate legacy adapter.</td></tr>
+      <tr><td>I07 · Deployment custody</td><td>Protected stores/mounts, network and recovery adapters for AGT-W63. Depends on I01, I04 and I06; optional TLS/archive adapters follow configured inventory.</td></tr>
+      <tr><td>I08 · Execution Hosts</td><td>Flat metadata/health projection and guided operations, with screenshots. Depends on I03 to I07.</td></tr>
+      <tr><td>I09 · Incident replay and rollout</td><td>Versioned runbooks, three incident replays, live proof and recovery gate. Depends on I01 to I08.</td></tr>
+    </tbody></table>
+    <p>Roll out inventory in observe-only mode first. Compare source selection and classification with actual evidence; enable admission changes only after incident replay passes. Keep renewal and rotation behind independently enabled adapters. Restore the previous admission policy on a regression without deleting the new metadata or rotating credentials. Publication updates the docs index and current runbook only after behavior is verified.</p>
+    <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+    </ol>
+  </section>
+  <!-- agent-studio:implementation-section:end -->
+</main>
+</body>
+</html>

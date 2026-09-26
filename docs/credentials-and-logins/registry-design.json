@@ -1,0 +1,1101 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "credential-registry-design",
+  "status": "proposed",
+  "sourceTaskKey": "AGT-2968",
+  "asOf": "2026-09-26",
+  "secretValuesAllowed": false,
+  "key": [
+    "installationId",
+    "hostId",
+    "credentialId"
+  ],
+  "recordFields": {
+    "credentialId": "string: stable opaque ID, unique within installation and host",
+    "generation": "integer >= 1: replacement sequence, never derived from secret bytes",
+    "hostId": "string: enrolled host or control-plane owner; templates must be marked",
+    "kind": "CredentialKind enum",
+    "provider": "string: provider or authority name",
+    "accountRef": "string|null: non-secret account alias, not a bearer",
+    "scopes": "string[]: exact repositories, role grants or peer routes",
+    "consumers": "string[]: service/role identities; aliases are consumers, not credentials",
+    "ownerRef": "string|null: accountable person/team ID",
+    "ownerRole": "string: required custodian role until ownerRef resolved",
+    "sourceKind": "SourceKind enum",
+    "localLocator": "string|null: host-only location without credential values",
+    "secretRef": "string|null: local resolver handle, never dereferenceable by Studio",
+    "authorityState": "active|shadowed|unresolved|revoked|template",
+    "supersedes": "credentialId|null",
+    "issuerCredentialRef": "credentialId|null: issuer dependency, especially GitHub registration",
+    "createdAt": "UTC timestamp|null: issuer or creation receipt only",
+    "discoveredAt": "UTC timestamp|null: actual host discovery, not document authorship",
+    "lastVerifiedAt": "UTC timestamp|null: real operation succeeded with this generation",
+    "expiresAt": "UTC timestamp|null: hard credential/session deadline, not access-token refresh time",
+    "expiryState": "known|unknown|no-intrinsic-expiry|refresh-managed",
+    "expirySource": "issuer|verified-metadata|operator-attested|none",
+    "accessTokenExpiresAt": "UTC timestamp|null: CLI refresh hint only",
+    "rotationDueAt": "UTC timestamp|null: separately labelled local policy date",
+    "renewalMethod": "RenewalMethod enum",
+    "runbookId": "string|null: incident or routine procedure ID",
+    "lastRenewedAt": "UTC timestamp|null",
+    "lastRenewedBy": "actor ID|null",
+    "operationId": "string|null",
+    "desiredGeneration": "integer|null",
+    "adoptedGenerationByConsumer": "map<string,integer>: effective adoption, not file installation",
+    "credentialState": "unknown|usable|refresh-pending|missing|expired|revoked|unreadable",
+    "serviceState": "unknown|healthy|provider-incident|quota-exhausted|network-failure|indeterminate",
+    "reasonCode": "string|null",
+    "observedAt": "UTC timestamp|null",
+    "validUntil": "UTC timestamp|null",
+    "evidenceRefs": "string[]: scrubbed bounded evidence IDs",
+    "confidence": "unknown|reported|observed|corroborated",
+    "nextProbeAt": "UTC timestamp|null",
+    "unknownReasons": "map<field,string>",
+    "provenance": "object: class, source, asOf; separates report from live verification",
+    "installationId": "string: authoritative installation ID; never copied to a second authority"
+  },
+  "enums": {
+    "CredentialKind": [
+      "claude-oauth-token",
+      "claude-native-login",
+      "codex-chatgpt-login",
+      "github-token",
+      "github-oauth-token",
+      "github-deploy-key",
+      "task-server-principal",
+      "runner-enrolment-token",
+      "wireguard-peer",
+      "ssh-management-key",
+      "provider-api-key",
+      "tls-certificate",
+      "object-store-credential"
+    ],
+    "SourceKind": [
+      "environment-file",
+      "native-cli-store",
+      "git-credential-helper",
+      "native-secret-store",
+      "ssh-private-key",
+      "mounted-secret-file",
+      "protected-token-file",
+      "wireguard-store"
+    ],
+    "RenewalMethod": [
+      "claude-setup-token",
+      "codex-device-login",
+      "issuer-token-replacement",
+      "issuer-browser-reauthorisation",
+      "github-deploy-key-overlap",
+      "principal-overlap",
+      "runner-reenrolment",
+      "wireguard-staged-cutover",
+      "ssh-key-overlap",
+      "tls-certificate-renewal",
+      "archive-key-overlap"
+    ]
+  },
+  "invariants": [
+    "No secret values, raw auth output, browser URL/code or credential-bearing remote URLs in registry or artifacts.",
+    "Unknown timestamps remain null; reported dates and file mtime do not become createdAt or lastVerifiedAt.",
+    "A secret generation is adopted per consumer, not merely written to disk.",
+    "Provider incident and credential state are separate dimensions.",
+    "Access-token expiry is separate from human renewal deadline.",
+    "Shadowed credential files cannot set effective-source health.",
+    "Issuer credential lineage is recorded before rotation/revocation.",
+    "Records marked template are not live host inventory."
+  ],
+  "initialRecords": [
+    {
+      "credentialId": "claude-headless",
+      "generation": 1,
+      "hostId": "agent-runner-01",
+      "kind": "claude-oauth-token",
+      "provider": "anthropic",
+      "accountRef": null,
+      "scopes": [
+        "host-owned Claude account"
+      ],
+      "consumers": [
+        "agent-runner.service",
+        "agent-runner-review.service"
+      ],
+      "ownerRef": null,
+      "ownerRole": "provider-account-custodian",
+      "sourceKind": "environment-file",
+      "localLocator": "/etc/agent-runner/runner.env#CLAUDE_CODE_OAUTH_TOKEN",
+      "secretRef": null,
+      "authorityState": "active",
+      "supersedes": null,
+      "issuerCredentialRef": null,
+      "createdAt": null,
+      "discoveredAt": null,
+      "lastVerifiedAt": null,
+      "expiresAt": null,
+      "expiryState": "unknown",
+      "expirySource": "none",
+      "accessTokenExpiresAt": null,
+      "rotationDueAt": null,
+      "renewalMethod": "claude-setup-token",
+      "runbookId": "RB-CLAUDE-LINEAGE",
+      "lastRenewedAt": null,
+      "lastRenewedBy": null,
+      "operationId": null,
+      "desiredGeneration": null,
+      "adoptedGenerationByConsumer": {},
+      "credentialState": "unknown",
+      "serviceState": "unknown",
+      "reasonCode": null,
+      "observedAt": null,
+      "validUntil": null,
+      "evidenceRefs": [
+        "E1"
+      ],
+      "confidence": "reported",
+      "nextProbeAt": null,
+      "unknownReasons": {
+        "createdAt": "Not supplied by issuer or an operation receipt.",
+        "lastVerifiedAt": "No real host probe was performed for this concept.",
+        "ownerRef": "Accountable owner identity must be assigned at discovery.",
+        "expiresAt": "Active env token is not described by the stale native credential file.",
+        "generation": "Seed number for the design example, not a discovered runtime generation."
+      },
+      "provenance": {
+        "class": "operator-reported",
+        "source": "AGT-2968 operator account",
+        "asOf": "2026-09-26"
+      },
+      "installationId": "example-installation-unverified"
+    },
+    {
+      "credentialId": "claude-native-shadow",
+      "generation": 1,
+      "hostId": "agent-runner-01",
+      "kind": "claude-native-login",
+      "provider": "anthropic",
+      "accountRef": null,
+      "scopes": [],
+      "consumers": [],
+      "ownerRef": null,
+      "ownerRole": "provider-account-custodian",
+      "sourceKind": "native-cli-store",
+      "localLocator": "~/.claude/.credentials.json",
+      "secretRef": null,
+      "authorityState": "shadowed",
+      "supersedes": null,
+      "issuerCredentialRef": null,
+      "createdAt": null,
+      "discoveredAt": null,
+      "lastVerifiedAt": null,
+      "expiresAt": null,
+      "expiryState": "unknown",
+      "expirySource": "none",
+      "accessTokenExpiresAt": null,
+      "rotationDueAt": null,
+      "renewalMethod": "claude-setup-token",
+      "runbookId": "RB-CLAUDE-LINEAGE",
+      "lastRenewedAt": null,
+      "lastRenewedBy": null,
+      "operationId": null,
+      "desiredGeneration": null,
+      "adoptedGenerationByConsumer": {},
+      "credentialState": "unknown",
+      "serviceState": "unknown",
+      "reasonCode": null,
+      "observedAt": null,
+      "validUntil": null,
+      "evidenceRefs": [
+        "E1"
+      ],
+      "confidence": "reported",
+      "nextProbeAt": null,
+      "unknownReasons": {
+        "createdAt": "Reported dead-copy date is not an issuer creation date.",
+        "lastVerifiedAt": "No real host probe was performed for this concept.",
+        "ownerRef": "Accountable owner identity must be assigned at discovery.",
+        "expiresAt": "No reliable deadline supplied; consult expiryState before interpreting null.",
+        "generation": "Seed number for the design example, not a discovered runtime generation."
+      },
+      "provenance": {
+        "class": "operator-reported",
+        "source": "AGT-2968 operator account",
+        "asOf": "2026-09-26",
+        "reportedFileDate": "2026-09-08"
+      },
+      "installationId": "example-installation-unverified"
+    },
+    {
+      "credentialId": "codex-chatgpt",
+      "generation": 1,
+      "hostId": "agent-runner-01",
+      "kind": "codex-chatgpt-login",
+      "provider": "openai",
+      "accountRef": null,
+      "scopes": [
+        "host-owned ChatGPT account"
+      ],
+      "consumers": [
+        "coding clean-context homes",
+        "authorised review clean-context homes"
+      ],
+      "ownerRef": null,
+      "ownerRole": "provider-account-custodian",
+      "sourceKind": "native-cli-store",
+      "localLocator": "~/.codex/auth.json",
+      "secretRef": null,
+      "authorityState": "active",
+      "supersedes": null,
+      "issuerCredentialRef": null,
+      "createdAt": null,
+      "discoveredAt": null,
+      "lastVerifiedAt": null,
+      "expiresAt": null,
+      "expiryState": "refresh-managed",
+      "expirySource": "none",
+      "accessTokenExpiresAt": null,
+      "rotationDueAt": null,
+      "renewalMethod": "codex-device-login",
+      "runbookId": "RB-CODEX-INCIDENT",
+      "lastRenewedAt": null,
+      "lastRenewedBy": null,
+      "operationId": null,
+      "desiredGeneration": null,
+      "adoptedGenerationByConsumer": {},
+      "credentialState": "unknown",
+      "serviceState": "unknown",
+      "reasonCode": null,
+      "observedAt": null,
+      "validUntil": null,
+      "evidenceRefs": [
+        "E1"
+      ],
+      "confidence": "reported",
+      "nextProbeAt": null,
+      "unknownReasons": {
+        "createdAt": "Not supplied by issuer or an operation receipt.",
+        "lastVerifiedAt": "No real host probe was performed for this concept.",
+        "ownerRef": "Accountable owner identity must be assigned at discovery.",
+        "expiresAt": "No reliable deadline supplied; consult expiryState before interpreting null.",
+        "generation": "Seed number for the design example, not a discovered runtime generation."
+      },
+      "provenance": {
+        "class": "operator-reported",
+        "source": "AGT-2968 operator account",
+        "asOf": "2026-09-26",
+        "reportedAliasCount": 62
+      },
+      "installationId": "example-installation-unverified"
+    },
+    {
+      "credentialId": "github-product-https",
+      "generation": 1,
+      "hostId": "agent-runner-01",
+      "kind": "github-token",
+      "provider": "github",
+      "accountRef": null,
+      "scopes": [
+        "product repositories: resolve exact registry URLs and write permissions"
+      ],
+      "consumers": [
+        "platform Git publisher"
+      ],
+      "ownerRef": null,
+      "ownerRole": "repository-administrator",
+      "sourceKind": "git-credential-helper",
+      "localLocator": "~/.git-credentials",
+      "secretRef": null,
+      "authorityState": "active",
+      "supersedes": null,
+      "issuerCredentialRef": null,
+      "createdAt": null,
+      "discoveredAt": null,
+      "lastVerifiedAt": null,
+      "expiresAt": null,
+      "expiryState": "unknown",
+      "expirySource": "none",
+      "accessTokenExpiresAt": null,
+      "rotationDueAt": null,
+      "renewalMethod": "issuer-token-replacement",
+      "runbookId": null,
+      "lastRenewedAt": null,
+      "lastRenewedBy": null,
+      "operationId": null,
+      "desiredGeneration": null,
+      "adoptedGenerationByConsumer": {},
+      "credentialState": "unknown",
+      "serviceState": "unknown",
+      "reasonCode": null,
+      "observedAt": null,
+      "validUntil": null,
+      "evidenceRefs": [
+        "E1"
+      ],
+      "confidence": "reported",
+      "nextProbeAt": null,
+      "unknownReasons": {
+        "createdAt": "Not supplied by issuer or an operation receipt.",
+        "lastVerifiedAt": "No real host probe was performed for this concept.",
+        "ownerRef": "Accountable owner identity must be assigned at discovery.",
+        "expiresAt": "No reliable deadline supplied; consult expiryState before interpreting null.",
+        "generation": "Seed number for the design example, not a discovered runtime generation."
+      },
+      "provenance": {
+        "class": "operator-reported",
+        "source": "AGT-2968 operator account",
+        "asOf": "2026-09-26"
+      },
+      "installationId": "example-installation-unverified"
+    },
+    {
+      "credentialId": "github-registration-oauth",
+      "generation": 1,
+      "hostId": "operator-workstation",
+      "kind": "github-oauth-token",
+      "provider": "github",
+      "accountRef": null,
+      "scopes": [
+        "workspace repository deploy-key registration"
+      ],
+      "consumers": [
+        "authorised GitHub registration adapter"
+      ],
+      "ownerRef": null,
+      "ownerRole": "github-account-custodian",
+      "sourceKind": "native-secret-store",
+      "localLocator": null,
+      "secretRef": null,
+      "authorityState": "active",
+      "supersedes": null,
+      "issuerCredentialRef": null,
+      "createdAt": null,
+      "discoveredAt": null,
+      "lastVerifiedAt": null,
+      "expiresAt": null,
+      "expiryState": "unknown",
+      "expirySource": "none",
+      "accessTokenExpiresAt": null,
+      "rotationDueAt": null,
+      "renewalMethod": "issuer-browser-reauthorisation",
+      "runbookId": "RB-GITHUB-WORKSPACE",
+      "lastRenewedAt": null,
+      "lastRenewedBy": null,
+      "operationId": null,
+      "desiredGeneration": null,
+      "adoptedGenerationByConsumer": {},
+      "credentialState": "unknown",
+      "serviceState": "unknown",
+      "reasonCode": null,
+      "observedAt": null,
+      "validUntil": null,
+      "evidenceRefs": [
+        "E1"
+      ],
+      "confidence": "reported",
+      "nextProbeAt": null,
+      "unknownReasons": {
+        "createdAt": "Not supplied by issuer or an operation receipt.",
+        "lastVerifiedAt": "No real host probe was performed for this concept.",
+        "ownerRef": "Accountable owner identity must be assigned at discovery.",
+        "expiresAt": "No reliable deadline supplied; consult expiryState before interpreting null.",
+        "generation": "Seed number for the design example, not a discovered runtime generation."
+      },
+      "provenance": {
+        "class": "operator-reported",
+        "source": "AGT-2968 operator account",
+        "asOf": "2026-09-26"
+      },
+      "installationId": "example-installation-unverified"
+    },
+    {
+      "credentialId": "github-workspace-key",
+      "generation": 1,
+      "hostId": "agent-runner-01",
+      "kind": "github-deploy-key",
+      "provider": "github",
+      "accountRef": null,
+      "scopes": [
+        "private workspace repository: exact URL and granted mode to discover"
+      ],
+      "consumers": [
+        "platform workspace Git publisher"
+      ],
+      "ownerRef": null,
+      "ownerRole": "workspace-repository-administrator",
+      "sourceKind": "ssh-private-key",
+      "localLocator": null,
+      "secretRef": null,
+      "authorityState": "active",
+      "supersedes": null,
+      "issuerCredentialRef": "github-registration-oauth",
+      "createdAt": null,
+      "discoveredAt": null,
+      "lastVerifiedAt": null,
+      "expiresAt": null,
+      "expiryState": "no-intrinsic-expiry",
+      "expirySource": "none",
+      "accessTokenExpiresAt": null,
+      "rotationDueAt": null,
+      "renewalMethod": "github-deploy-key-overlap",
+      "runbookId": "RB-GITHUB-WORKSPACE",
+      "lastRenewedAt": null,
+      "lastRenewedBy": null,
+      "operationId": null,
+      "desiredGeneration": null,
+      "adoptedGenerationByConsumer": {},
+      "credentialState": "unknown",
+      "serviceState": "unknown",
+      "reasonCode": null,
+      "observedAt": null,
+      "validUntil": null,
+      "evidenceRefs": [
+        "E1"
+      ],
+      "confidence": "reported",
+      "nextProbeAt": null,
+      "unknownReasons": {
+        "createdAt": "Date reported, precise creation receipt unavailable.",
+        "lastVerifiedAt": "No real host probe was performed for this concept.",
+        "ownerRef": "Accountable owner identity must be assigned at discovery.",
+        "expiresAt": "No reliable deadline supplied; consult expiryState before interpreting null.",
+        "generation": "Seed number for the design example, not a discovered runtime generation."
+      },
+      "provenance": {
+        "class": "operator-reported",
+        "source": "AGT-2968 operator account",
+        "asOf": "2026-09-26",
+        "reportedCreationDate": "2026-09-26"
+      },
+      "installationId": "example-installation-unverified"
+    },
+    {
+      "credentialId": "principal-studio",
+      "generation": 1,
+      "hostId": "task-server-01",
+      "kind": "task-server-principal",
+      "provider": "task-server",
+      "accountRef": null,
+      "scopes": [
+        "role grants and exact principal ID to discover"
+      ],
+      "consumers": [
+        "Studio edge client"
+      ],
+      "ownerRef": null,
+      "ownerRole": "installation-administrator",
+      "sourceKind": "mounted-secret-file",
+      "localLocator": "/run/secrets/studio_token",
+      "secretRef": null,
+      "authorityState": "template",
+      "supersedes": null,
+      "issuerCredentialRef": null,
+      "createdAt": null,
+      "discoveredAt": null,
+      "lastVerifiedAt": null,
+      "expiresAt": null,
+      "expiryState": "no-intrinsic-expiry",
+      "expirySource": "none",
+      "accessTokenExpiresAt": null,
+      "rotationDueAt": null,
+      "renewalMethod": "principal-overlap",
+      "runbookId": null,
+      "lastRenewedAt": null,
+      "lastRenewedBy": null,
+      "operationId": null,
+      "desiredGeneration": null,
+      "adoptedGenerationByConsumer": {},
+      "credentialState": "unknown",
+      "serviceState": "unknown",
+      "reasonCode": null,
+      "observedAt": null,
+      "validUntil": null,
+      "evidenceRefs": [
+        "E5"
+      ],
+      "confidence": "unknown",
+      "nextProbeAt": null,
+      "unknownReasons": {
+        "createdAt": "Not supplied by issuer or an operation receipt.",
+        "lastVerifiedAt": "No real host probe was performed for this concept.",
+        "ownerRef": "Accountable owner identity must be assigned at discovery.",
+        "expiresAt": "No reliable deadline supplied; consult expiryState before interpreting null.",
+        "generation": "Seed number for the design example, not a discovered runtime generation."
+      },
+      "provenance": {
+        "class": "documented-template",
+        "source": "Repository operations documentation; deployment not attested",
+        "asOf": "2026-09-26"
+      },
+      "installationId": "example-installation-unverified"
+    },
+    {
+      "credentialId": "principal-engine",
+      "generation": 1,
+      "hostId": "task-server-01",
+      "kind": "task-server-principal",
+      "provider": "task-server",
+      "accountRef": null,
+      "scopes": [
+        "role grants and exact principal ID to discover"
+      ],
+      "consumers": [
+        "orchestrator engine"
+      ],
+      "ownerRef": null,
+      "ownerRole": "installation-administrator",
+      "sourceKind": "mounted-secret-file",
+      "localLocator": "/run/secrets/engine_token",
+      "secretRef": null,
+      "authorityState": "template",
+      "supersedes": null,
+      "issuerCredentialRef": null,
+      "createdAt": null,
+      "discoveredAt": null,
+      "lastVerifiedAt": null,
+      "expiresAt": null,
+      "expiryState": "no-intrinsic-expiry",
+      "expirySource": "none",
+      "accessTokenExpiresAt": null,
+      "rotationDueAt": null,
+      "renewalMethod": "principal-overlap",
+      "runbookId": null,
+      "lastRenewedAt": null,
+      "lastRenewedBy": null,
+      "operationId": null,
+      "desiredGeneration": null,
+      "adoptedGenerationByConsumer": {},
+      "credentialState": "unknown",
+      "serviceState": "unknown",
+      "reasonCode": null,
+      "observedAt": null,
+      "validUntil": null,
+      "evidenceRefs": [
+        "E5"
+      ],
+      "confidence": "unknown",
+      "nextProbeAt": null,
+      "unknownReasons": {
+        "createdAt": "Not supplied by issuer or an operation receipt.",
+        "lastVerifiedAt": "No real host probe was performed for this concept.",
+        "ownerRef": "Accountable owner identity must be assigned at discovery.",
+        "expiresAt": "No reliable deadline supplied; consult expiryState before interpreting null.",
+        "generation": "Seed number for the design example, not a discovered runtime generation."
+      },
+      "provenance": {
+        "class": "documented-template",
+        "source": "Repository operations documentation; deployment not attested",
+        "asOf": "2026-09-26"
+      },
+      "installationId": "example-installation-unverified"
+    },
+    {
+      "credentialId": "principal-runner",
+      "generation": 1,
+      "hostId": "agent-runner-01",
+      "kind": "task-server-principal",
+      "provider": "task-server",
+      "accountRef": null,
+      "scopes": [
+        "role grants and exact principal ID to discover"
+      ],
+      "consumers": [
+        "enrolled Runner role"
+      ],
+      "ownerRef": null,
+      "ownerRole": "installation-administrator",
+      "sourceKind": "mounted-secret-file",
+      "localLocator": "/run/secrets/runner_token",
+      "secretRef": null,
+      "authorityState": "template",
+      "supersedes": null,
+      "issuerCredentialRef": null,
+      "createdAt": null,
+      "discoveredAt": null,
+      "lastVerifiedAt": null,
+      "expiresAt": null,
+      "expiryState": "no-intrinsic-expiry",
+      "expirySource": "none",
+      "accessTokenExpiresAt": null,
+      "rotationDueAt": null,
+      "renewalMethod": "principal-overlap",
+      "runbookId": null,
+      "lastRenewedAt": null,
+      "lastRenewedBy": null,
+      "operationId": null,
+      "desiredGeneration": null,
+      "adoptedGenerationByConsumer": {},
+      "credentialState": "unknown",
+      "serviceState": "unknown",
+      "reasonCode": null,
+      "observedAt": null,
+      "validUntil": null,
+      "evidenceRefs": [
+        "E5"
+      ],
+      "confidence": "unknown",
+      "nextProbeAt": null,
+      "unknownReasons": {
+        "createdAt": "Not supplied by issuer or an operation receipt.",
+        "lastVerifiedAt": "No real host probe was performed for this concept.",
+        "ownerRef": "Accountable owner identity must be assigned at discovery.",
+        "expiresAt": "No reliable deadline supplied; consult expiryState before interpreting null.",
+        "generation": "Seed number for the design example, not a discovered runtime generation."
+      },
+      "provenance": {
+        "class": "documented-template",
+        "source": "Repository operations documentation; deployment not attested",
+        "asOf": "2026-09-26"
+      },
+      "installationId": "example-installation-unverified"
+    },
+    {
+      "credentialId": "runner-enrolment-legacy",
+      "generation": 1,
+      "hostId": "agent-runner-01",
+      "kind": "runner-enrolment-token",
+      "provider": "file-backed-backend",
+      "accountRef": null,
+      "scopes": [
+        "host identity and project grants"
+      ],
+      "consumers": [
+        "installed runner roles"
+      ],
+      "ownerRef": null,
+      "ownerRole": "installation-administrator",
+      "sourceKind": "protected-token-file",
+      "localLocator": "RUNNER_AUTH_TOKEN_FILE (resolve path)",
+      "secretRef": null,
+      "authorityState": "template",
+      "supersedes": null,
+      "issuerCredentialRef": null,
+      "createdAt": null,
+      "discoveredAt": null,
+      "lastVerifiedAt": null,
+      "expiresAt": null,
+      "expiryState": "unknown",
+      "expirySource": "none",
+      "accessTokenExpiresAt": null,
+      "rotationDueAt": null,
+      "renewalMethod": "runner-reenrolment",
+      "runbookId": null,
+      "lastRenewedAt": null,
+      "lastRenewedBy": null,
+      "operationId": null,
+      "desiredGeneration": null,
+      "adoptedGenerationByConsumer": {},
+      "credentialState": "unknown",
+      "serviceState": "unknown",
+      "reasonCode": null,
+      "observedAt": null,
+      "validUntil": null,
+      "evidenceRefs": [
+        "E5"
+      ],
+      "confidence": "unknown",
+      "nextProbeAt": null,
+      "unknownReasons": {
+        "createdAt": "Not supplied by issuer or an operation receipt.",
+        "lastVerifiedAt": "No real host probe was performed for this concept.",
+        "ownerRef": "Accountable owner identity must be assigned at discovery.",
+        "expiresAt": "No reliable deadline supplied; consult expiryState before interpreting null.",
+        "generation": "Seed number for the design example, not a discovered runtime generation."
+      },
+      "provenance": {
+        "class": "documented-template",
+        "source": "Repository operations documentation; deployment not attested",
+        "asOf": "2026-09-26"
+      },
+      "installationId": "example-installation-unverified"
+    },
+    {
+      "credentialId": "wireguard-task-server-01",
+      "generation": 1,
+      "hostId": "task-server-01",
+      "kind": "wireguard-peer",
+      "provider": "private-network",
+      "accountRef": null,
+      "scopes": [
+        "exact peer /32 routes from deployment manifest"
+      ],
+      "consumers": [
+        "host private route"
+      ],
+      "ownerRef": null,
+      "ownerRole": "network-administrator",
+      "sourceKind": "wireguard-store",
+      "localLocator": "/etc/wireguard/wg0.conf",
+      "secretRef": null,
+      "authorityState": "template",
+      "supersedes": null,
+      "issuerCredentialRef": null,
+      "createdAt": null,
+      "discoveredAt": null,
+      "lastVerifiedAt": null,
+      "expiresAt": null,
+      "expiryState": "no-intrinsic-expiry",
+      "expirySource": "none",
+      "accessTokenExpiresAt": null,
+      "rotationDueAt": null,
+      "renewalMethod": "wireguard-staged-cutover",
+      "runbookId": null,
+      "lastRenewedAt": null,
+      "lastRenewedBy": null,
+      "operationId": null,
+      "desiredGeneration": null,
+      "adoptedGenerationByConsumer": {},
+      "credentialState": "unknown",
+      "serviceState": "unknown",
+      "reasonCode": null,
+      "observedAt": null,
+      "validUntil": null,
+      "evidenceRefs": [
+        "E5"
+      ],
+      "confidence": "unknown",
+      "nextProbeAt": null,
+      "unknownReasons": {
+        "createdAt": "Not supplied by issuer or an operation receipt.",
+        "lastVerifiedAt": "No real host probe was performed for this concept.",
+        "ownerRef": "Accountable owner identity must be assigned at discovery.",
+        "expiresAt": "No reliable deadline supplied; consult expiryState before interpreting null.",
+        "generation": "Seed number for the design example, not a discovered runtime generation."
+      },
+      "provenance": {
+        "class": "documented-template",
+        "source": "Repository operations documentation; deployment not attested",
+        "asOf": "2026-09-26"
+      },
+      "installationId": "example-installation-unverified"
+    },
+    {
+      "credentialId": "wireguard-agent-runner-01",
+      "generation": 1,
+      "hostId": "agent-runner-01",
+      "kind": "wireguard-peer",
+      "provider": "private-network",
+      "accountRef": null,
+      "scopes": [
+        "exact peer /32 routes from deployment manifest"
+      ],
+      "consumers": [
+        "host private route"
+      ],
+      "ownerRef": null,
+      "ownerRole": "network-administrator",
+      "sourceKind": "wireguard-store",
+      "localLocator": "/etc/wireguard/wg0.conf",
+      "secretRef": null,
+      "authorityState": "template",
+      "supersedes": null,
+      "issuerCredentialRef": null,
+      "createdAt": null,
+      "discoveredAt": null,
+      "lastVerifiedAt": null,
+      "expiresAt": null,
+      "expiryState": "no-intrinsic-expiry",
+      "expirySource": "none",
+      "accessTokenExpiresAt": null,
+      "rotationDueAt": null,
+      "renewalMethod": "wireguard-staged-cutover",
+      "runbookId": null,
+      "lastRenewedAt": null,
+      "lastRenewedBy": null,
+      "operationId": null,
+      "desiredGeneration": null,
+      "adoptedGenerationByConsumer": {},
+      "credentialState": "unknown",
+      "serviceState": "unknown",
+      "reasonCode": null,
+      "observedAt": null,
+      "validUntil": null,
+      "evidenceRefs": [
+        "E5"
+      ],
+      "confidence": "unknown",
+      "nextProbeAt": null,
+      "unknownReasons": {
+        "createdAt": "Not supplied by issuer or an operation receipt.",
+        "lastVerifiedAt": "No real host probe was performed for this concept.",
+        "ownerRef": "Accountable owner identity must be assigned at discovery.",
+        "expiresAt": "No reliable deadline supplied; consult expiryState before interpreting null.",
+        "generation": "Seed number for the design example, not a discovered runtime generation."
+      },
+      "provenance": {
+        "class": "documented-template",
+        "source": "Repository operations documentation; deployment not attested",
+        "asOf": "2026-09-26"
+      },
+      "installationId": "example-installation-unverified"
+    },
+    {
+      "credentialId": "wireguard-windows-studio",
+      "generation": 1,
+      "hostId": "windows-studio",
+      "kind": "wireguard-peer",
+      "provider": "private-network",
+      "accountRef": null,
+      "scopes": [
+        "exact peer /32 routes from deployment manifest"
+      ],
+      "consumers": [
+        "host private route"
+      ],
+      "ownerRef": null,
+      "ownerRole": "network-administrator",
+      "sourceKind": "wireguard-store",
+      "localLocator": "protected Windows WireGuard tunnel store",
+      "secretRef": null,
+      "authorityState": "template",
+      "supersedes": null,
+      "issuerCredentialRef": null,
+      "createdAt": null,
+      "discoveredAt": null,
+      "lastVerifiedAt": null,
+      "expiresAt": null,
+      "expiryState": "no-intrinsic-expiry",
+      "expirySource": "none",
+      "accessTokenExpiresAt": null,
+      "rotationDueAt": null,
+      "renewalMethod": "wireguard-staged-cutover",
+      "runbookId": null,
+      "lastRenewedAt": null,
+      "lastRenewedBy": null,
+      "operationId": null,
+      "desiredGeneration": null,
+      "adoptedGenerationByConsumer": {},
+      "credentialState": "unknown",
+      "serviceState": "unknown",
+      "reasonCode": null,
+      "observedAt": null,
+      "validUntil": null,
+      "evidenceRefs": [
+        "E5"
+      ],
+      "confidence": "unknown",
+      "nextProbeAt": null,
+      "unknownReasons": {
+        "createdAt": "Not supplied by issuer or an operation receipt.",
+        "lastVerifiedAt": "No real host probe was performed for this concept.",
+        "ownerRef": "Accountable owner identity must be assigned at discovery.",
+        "expiresAt": "No reliable deadline supplied; consult expiryState before interpreting null.",
+        "generation": "Seed number for the design example, not a discovered runtime generation."
+      },
+      "provenance": {
+        "class": "documented-template",
+        "source": "Repository operations documentation; deployment not attested",
+        "asOf": "2026-09-26"
+      },
+      "installationId": "example-installation-unverified"
+    },
+    {
+      "credentialId": "ssh-controller",
+      "generation": 1,
+      "hostId": "operator-workstation",
+      "kind": "ssh-management-key",
+      "provider": "host-management",
+      "accountRef": null,
+      "scopes": [
+        "specific runner user and pinned host identity"
+      ],
+      "consumers": [
+        "existing SSH provisioning/sign-in adapters"
+      ],
+      "ownerRef": null,
+      "ownerRole": "host-administrator",
+      "sourceKind": "native-secret-store",
+      "localLocator": null,
+      "secretRef": null,
+      "authorityState": "template",
+      "supersedes": null,
+      "issuerCredentialRef": null,
+      "createdAt": null,
+      "discoveredAt": null,
+      "lastVerifiedAt": null,
+      "expiresAt": null,
+      "expiryState": "no-intrinsic-expiry",
+      "expirySource": "none",
+      "accessTokenExpiresAt": null,
+      "rotationDueAt": null,
+      "renewalMethod": "ssh-key-overlap",
+      "runbookId": null,
+      "lastRenewedAt": null,
+      "lastRenewedBy": null,
+      "operationId": null,
+      "desiredGeneration": null,
+      "adoptedGenerationByConsumer": {},
+      "credentialState": "unknown",
+      "serviceState": "unknown",
+      "reasonCode": null,
+      "observedAt": null,
+      "validUntil": null,
+      "evidenceRefs": [
+        "E5"
+      ],
+      "confidence": "unknown",
+      "nextProbeAt": null,
+      "unknownReasons": {
+        "createdAt": "Not supplied by issuer or an operation receipt.",
+        "lastVerifiedAt": "No real host probe was performed for this concept.",
+        "ownerRef": "Accountable owner identity must be assigned at discovery.",
+        "expiresAt": "No reliable deadline supplied; consult expiryState before interpreting null.",
+        "generation": "Seed number for the design example, not a discovered runtime generation."
+      },
+      "provenance": {
+        "class": "documented-template",
+        "source": "Repository operations documentation; deployment not attested",
+        "asOf": "2026-09-26"
+      },
+      "installationId": "example-installation-unverified"
+    }
+  ],
+  "supplementalRenewalProcedures": [
+    {
+      "id": "issuer-token-replacement",
+      "kinds": [
+        "github-token",
+        "provider-api-key"
+      ],
+      "human": "Issue a scoped replacement if issuer has no delegated issuance API. Preserve billing/account selection.",
+      "platform": [
+        "Stage through protected stdin or local store adapter.",
+        "Verify exact API or repository operations without logging token.",
+        "Switch consumers; require adoption and one real operation.",
+        "Revoke old only after issuer-compatible overlap and dependency checks."
+      ],
+      "failure": "Retain valid old generation; if revocation already occurred, park only affected scope and request issuer recovery."
+    },
+    {
+      "id": "issuer-browser-reauthorisation",
+      "kinds": [
+        "github-oauth-token"
+      ],
+      "human": "Reauthorise the issuer application in its official browser flow.",
+      "platform": [
+        "Record permissions and registered deploy-key dependencies.",
+        "Verify replacement can perform the narrowly required registration operation.",
+        "Re-register dependent keys under approved independent issuer before revoking an OAuth token that would delete them."
+      ],
+      "failure": "Do not revoke registration credential while dependent repository access is unproved."
+    },
+    {
+      "id": "runner-reenrolment",
+      "kinds": [
+        "runner-enrolment-token"
+      ],
+      "human": "Installation administrator authorises host identity and existing project grants.",
+      "platform": [
+        "Use owning backend enrolment API, not standalone principal endpoints by assumption.",
+        "Stage host token file; verify fresh authenticated capability and lease traffic.",
+        "Use proven overlap; otherwise drain new claims and use bounded maintenance."
+      ],
+      "failure": "Recover via independently authenticated management route; never grant broader projects to bypass failed enrolment."
+    },
+    {
+      "id": "ssh-key-overlap",
+      "kinds": [
+        "ssh-management-key"
+      ],
+      "human": "Host administrator authorises target and pinned host identity.",
+      "platform": [
+        "Generate private key in controller store.",
+        "Add new public key with existing restrictions.",
+        "Open fresh host-key-verified connection.",
+        "Switch identity, wait for adoption, remove old public key."
+      ],
+      "failure": "Keep old management access until new session proof; independently verify any host-key change."
+    },
+    {
+      "id": "tls-certificate-renewal",
+      "kinds": [
+        "tls-certificate"
+      ],
+      "human": "Domain or private-CA owner authorises initial issuance or changed trust.",
+      "platform": [
+        "Use configured issuer renewal path; private key stays with TLS terminator.",
+        "Stage certificate and chain; validate name, chain and issuer expiry.",
+        "Reload edge gracefully and verify real TLS plus authenticated Task Server request from runner.",
+        "Retain prior valid material through bounded rollback window."
+      ],
+      "failure": "Restore previous valid certificate; do not disable TLS verification."
+    },
+    {
+      "id": "archive-key-overlap",
+      "kinds": [
+        "object-store-credential"
+      ],
+      "human": "Storage administrator issues scoped replacement unless delegated issuer is configured.",
+      "platform": [
+        "Stage protected archive credential JSON file without output capture.",
+        "Verify write, read and delete on a dedicated canary object under permitted prefix.",
+        "Replace mounted secret and restart/reload archive consumer as required.",
+        "Prove backup/archive receipt, then revoke previous key."
+      ],
+      "failure": "Preserve old valid key; surface archive connectivity/access separately from provider login."
+    }
+  ],
+  "policyDefaults": {
+    "expiryWarningDays": [
+      14,
+      7,
+      1
+    ],
+    "evaluationCadenceMinutes": 60,
+    "platformControlledRotationDays": 90,
+    "deduplicationKey": [
+      "credentialId",
+      "generation",
+      "threshold"
+    ],
+    "unknownExpiryAction": "One metadata-completion item; never invent expiry.",
+    "missedThresholds": "Emit highest applicable urgency once; retain missed thresholds in same receipt."
+  },
+  "probeObservationContract": {
+    "identity": [
+      "observationId",
+      "installationId",
+      "hostId",
+      "consumerId",
+      "credentialId",
+      "generation",
+      "provider",
+      "accountRef",
+      "endpointClass",
+      "cliVersion"
+    ],
+    "timing": [
+      "observedAt",
+      "validUntil",
+      "nextProbeAt"
+    ],
+    "evidence": [
+      "sourceSelectionRef",
+      "statusProbeRef",
+      "realCallRef",
+      "statusIncidentRef",
+      "comparisonRef",
+      "networkRef"
+    ],
+    "result": [
+      "credentialState",
+      "serviceState",
+      "outcome",
+      "reasonCode",
+      "confidence"
+    ],
+    "outcomes": [
+      "healthy",
+      "credential-unavailable",
+      "provider-incident",
+      "quota-exhausted",
+      "network-failure",
+      "indeterminate"
+    ],
+    "failureSignature": [
+      "provider",
+      "endpointClass",
+      "httpStatus",
+      "providerErrorCode",
+      "scrubbedMessageTemplate"
+    ],
+    "privacy": "Never include raw token, browser code, full response body or credential-bearing URL."
+  }
+}
