@@ -49,4 +49,11 @@
       <p class="claim__reason" data-testid="delivery-claim-override-reason">{{ reason }}</p>
     }
   </section>
+  <app-integration-dead-end
+    [status]="job().integration"
+    [review]="job().reviewProjection"
+    [jobId]="job().id"
+    [watchPath]="job().watchPath"
+    [containmentUnknown]="answer()?.containmentStatus === 'unknown'"
+    (recheckRequested)="recheckIntegration()" />
 }

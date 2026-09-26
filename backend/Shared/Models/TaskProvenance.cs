@@ -269,6 +269,9 @@ public record TaskIntegrationStatus
     /// </summary>
     public string? Detail { get; init; }
 
+    /// <summary>Git reach could not be read, so pending is not a negative containment verdict.</summary>
+    public bool ReachUnavailable { get; init; }
+
     /// <summary>
     /// Typed current failure projected from the durable integration pipeline
     /// step. Null unless <see cref="Status"/> is
@@ -329,6 +332,8 @@ public sealed record TaskIntegrationFailure
     public string Code { get; init; } = "integration-error";
     public string Label { get; init; } = "Integration failed";
     public string Reason { get; init; } = "Integration failed without a diagnostic.";
+    public string? Stage { get; init; }
+    public string? EvidenceExcerpt { get; init; }
     public bool RebaseRecoveryAvailable { get; init; }
 
     /// <summary>

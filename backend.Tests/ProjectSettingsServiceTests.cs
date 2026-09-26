@@ -28,6 +28,7 @@ public sealed class ProjectSettingsServiceTests : IDisposable
         var settings = svc.Get("new-project");
 
         Assert.True(settings.AutoCommit);
+        Assert.True(settings.AutomaticFailureContinuationsEnabled);
         Assert.Equal(AutoPushStrategies.AlwaysImmediate, settings.AutoPushStrategy);
     }
 
@@ -75,6 +76,16 @@ public sealed class ProjectSettingsServiceTests : IDisposable
 
         svc.SetAutoCommit("demo", true);
         Assert.True(svc.Get("demo").AutoCommit);
+    }
+
+    [Fact]
+    public void AutomaticFailureContinuationSetting_PersistsPerProject()
+    {
+        var svc = Build();
+        svc.SetAutomaticFailureContinuationsEnabled("demo", false);
+
+        Assert.False(Build().Get("demo").AutomaticFailureContinuationsEnabled);
+        Assert.True(Build().Get("other").AutomaticFailureContinuationsEnabled);
     }
 
     [Fact]

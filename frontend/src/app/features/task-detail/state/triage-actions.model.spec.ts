@@ -204,7 +204,7 @@ describe('primaryActionFor — Enter-bound primary per source lane', () => {
     const primary = primaryActionFor('5-human-review');
     expect(primary).not.toBeNull();
     expect(primary!.id).toBe('mark-done');
-    expect(primary!.label).toBe('Merge into Develop');
+    expect(primary!.label).toBe('Accept');
     expect(primary!.intent).toEqual({ kind: 'move', targetState: '6-completed' });
   });
 
@@ -269,7 +269,7 @@ describe('mergeAcceptViewFor — state-dependent Human Review acceptance primary
   it('keeps the "Merge into Develop" offer when nothing has landed yet', () => {
     const view = mergeAcceptViewFor(reviewJob(mergedProvenance(null)));
     expect(view.landed).toBe(false);
-    expect(view.acceptLabel).toBe('Merge into Develop');
+    expect(view.acceptLabel).toBe('Accept');
     expect(view.statusLabel).toBeNull();
     expect(view.landedState).toBe('on-branch-only');
   });
@@ -309,7 +309,7 @@ describe('mergeAcceptViewFor — state-dependent Human Review acceptance primary
   it('does not treat a recorded merge attempt as target-branch proof', () => {
     const view = mergeAcceptViewFor(reviewJob(mergedProvenance('ddddddd9abc')));
     expect(view.landed).toBe(false);
-    expect(view.acceptLabel).toBe('Merge into Develop');
+    expect(view.acceptLabel).toBe('Accept');
   });
 
   it('uses canonical membership evidence in the status label', () => {
@@ -337,7 +337,7 @@ describe('mergeAcceptViewFor — state-dependent Human Review acceptance primary
   it('does not land purely on the live hint when canonical status is absent', () => {
     const view = mergeAcceptViewFor(reviewJob(mergedProvenance(null)), 'merged-to-develop');
     expect(view.landed).toBe(false);
-    expect(view.acceptLabel).toBe('Merge into Develop');
+    expect(view.acceptLabel).toBe('Accept');
   });
 
   it('never lets a stale on-branch-only hint mask canonical membership', () => {
@@ -352,12 +352,12 @@ describe('mergeAcceptViewFor — state-dependent Human Review acceptance primary
   it('ignores a blank/whitespace merge commit string', () => {
     const view = mergeAcceptViewFor(reviewJob(mergedProvenance('   ')));
     expect(view.landed).toBe(false);
-    expect(view.acceptLabel).toBe('Merge into Develop');
+    expect(view.acceptLabel).toBe('Accept');
   });
 
   it('stays an offer for a legacy card with no provenance at all', () => {
     const view = mergeAcceptViewFor(reviewJob(null));
     expect(view.landed).toBe(false);
-    expect(view.acceptLabel).toBe('Merge into Develop');
+    expect(view.acceptLabel).toBe('Accept');
   });
 });

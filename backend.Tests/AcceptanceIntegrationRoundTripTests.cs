@@ -334,7 +334,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var job = deps.Scanner.FindJob(Slug, _watchPath)!;
         var subject = ReviewSubjectStore.Read(job.FolderPath)!;
         var deliveryChainId = IntegrationRecoveryBudget.DeliveryChainId(subject);
-        for (var attempt = 1; attempt <= 2; attempt++)
+        for (var attempt = 1; attempt <= 1; attempt++)
         {
             deps.Timeline.Append(
                 job.FolderPath,
@@ -366,10 +366,10 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
 
         Assert.False(started.Started);
         Assert.True(started.BudgetExhausted);
-        Assert.Equal(2, started.BudgetUsed);
-        Assert.Equal(2, started.BudgetLimit);
+        Assert.Equal(1, started.BudgetUsed);
+        Assert.Equal(1, started.BudgetLimit);
         Assert.Equal(
-            $"automatic recovery budget used: 2/2 for delivery {deliverySha[..12]}",
+            $"automatic recovery budget used: 1/1 for delivery {deliverySha[..12]}",
             started.Reason);
         Assert.Equal(TaskStates.AutoReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
     }
@@ -467,6 +467,75 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Null(stillReviewed.Phase);
         Assert.False(queue.Reader.TryRead(out _));
         Assert.False(gate.Entered.IsCompleted);
+    }
+
+    [Fact]
+    public async Task FailureContinueHttp_ExtendsSameCardWithPinsAndTimelineEvidence()
+    {
+        var deliverySha = PublishDelivery("continuation.txt", "pending delivery\n");
+        var deps = Build(deliverySha);
+        deps.Mutations.SetJobModel(Slug, "pinned-model", _watchPath);
+        deps.Mutations.SetJobThinkingLevel(Slug, "high", _watchPath);
+        var folder = Path.Combine(_watchPath, TaskStates.HumanReview, Slug);
+        File.WriteAllText(Path.Combine(folder, "prompt.md"), "Original task direction.\n");
+        File.WriteAllText(Path.Combine(folder, PipelineExecutionLog.FileName),
+            JsonSerializer.Serialize(new PipelineExecutionRecord
+            {
+                PipelineId = PipelineCatalogue.Standard.Id,
+                JobId = Slug,
+                StartedAt = DateTime.UtcNow,
+                Steps = [new PipelineStepExecution
+                {
+                    StepId = "review-aspects",
+                    Status = PipelineStepStatus.Failed,
+                    Verdict = "block",
+                    VerdictSummary = "Correct the continuation guard.",
+                    CompletedAt = DateTime.UtcNow.AddSeconds(1),
+                }],
+            }));
+
+        using var factory = new WebApplicationFactory<Program>()
+            .WithWebHostBuilder(builder =>
+            {
+                builder.UseEnvironment("Test");
+                builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                    new Dictionary<string, string?>
+                    {
+                        ["TaskRepository"] = _tempDir,
+                        ["WatchPaths:0:Name"] = Project,
+                        ["WatchPaths:0:Path"] = _watchPath,
+                        ["WatchPaths:0:RootPath"] = _repo,
+                        ["WatchPaths:0:RepositoryPath"] = _repo,
+                        ["Runner:Role"] = "test-subject",
+                        ["ClaudeCli:Path"] = Path.Combine(_tempDir, "cli-not-installed"),
+                    }));
+                builder.ConfigureTestServices(services =>
+                {
+                    services.RemoveAll<IHostedService>();
+                    services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<TaskRunnerService>());
+                });
+            });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+
+        using var response = await client.PostAsJsonAsync(
+            $"/api/tasks/{Slug}/failure/continue?watchPath={Uri.EscapeDataString(_watchPath)}",
+            new { }).WaitAsync(AsyncTestDeadline);
+
+        Assert.True(response.StatusCode == HttpStatusCode.Accepted,
+            $"Expected 202 but got {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
+        var queued = factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(Slug, _watchPath);
+        Assert.NotNull(queued);
+        Assert.Equal(TaskKey, queued!.Key);
+        Assert.Equal(TaskStates.Ready, queued.State);
+        Assert.Equal("pinned-model", queued.Model);
+        Assert.Equal("high", queued.ThinkingLevel);
+        Assert.Equal("codex", queued.CliType);
+        Assert.Contains("review-aspects", File.ReadAllText(Path.Combine(queued.FolderPath, "prompt-1.md")));
+        Assert.Contains(factory.Services.GetRequiredService<TimelineLog>().ReadAll(queued.FolderPath),
+            entry => entry.Kind == TimelineEventKinds.IntegrationRecoveryQueued
+                && entry.Details?.GetValueOrDefault("failureStage") == "review-aspects");
     }
 
     [Fact]

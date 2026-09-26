@@ -32,6 +32,9 @@ public record ProjectSettings
     /// </summary>
     public bool CrashRecoveryEnabled { get; init; } = true;
 
+    /// <summary>Allow bounded automatic failure continuations for this project's integration and review gates.</summary>
+    public bool AutomaticFailureContinuationsEnabled { get; init; } = true;
+
     /// <summary>
     /// Controls when the platform pushes runner-owned commits. Default is
     /// <see cref="AutoPushStrategies.AlwaysImmediate"/> so every platform-owned
