@@ -81,6 +81,7 @@ public sealed class RemoteChatWorkBrokerTests
         Assert.Equal(ModelIds.Gpt56Sol, result.ConfiguredModel);
         Assert.Equal("codex weekly cap reached", result.QuotaFallbackReason);
         Assert.Equal(context, broker.GetContext(Route));
+        Assert.Null(broker.GetStatus(Route.ProjectName, contextKey: null));
 
         var reassigned = Route with { RunnerId = "runner-02" };
         Assert.Null(broker.GetContext(reassigned));
