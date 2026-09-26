@@ -112,6 +112,13 @@ Readers treat missing and unrecognized values as no status marker; they do
 not infer successful tagging from an unknown value. Archived items are not
 classified.
 
+For cards and wiki articles, applying a classification persists the tags and
+`taggingStatus` together in one atomic file replacement. A proposal writes the
+status while retaining the existing tags. A rejected or failed replacement
+leaves the original file intact and fails the run before recording completion
+or success activity, so a subsequent creation scan or backfill can retry the
+untagged item. Dossiers use the existing combined descriptor writer.
+
 ## API
 
 | Route | Purpose |
