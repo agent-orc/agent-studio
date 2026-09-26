@@ -464,7 +464,9 @@ public sealed class TaskServerClient : IDisposable
             RepositoryUrl: options.GitRemote,
             DefaultBranch: options.BaseBranch,
             RunId: acceptance.Run.RunId,
-            LeaseInstanceId: acceptance.Lease.InstanceId);
+            LeaseInstanceId: acceptance.Lease.InstanceId,
+            PreviousSession: acceptance.PreviousSession,
+            MechanicalDelta: acceptance.MechanicalDelta);
     }
 
     public async Task ReconcileHostRunAsync(
@@ -780,7 +782,9 @@ public sealed class TaskServerClient : IDisposable
                     claim.ModelFallback.ThinkingLevel,
                     ContextMode: CodingAgentRunner.Model.CliContextModes.Clean),
             ContinuationBaseRef: claim.ContinuationBaseRef,
-            ContinuationBaseSha: claim.ContinuationBaseSha);
+            ContinuationBaseSha: claim.ContinuationBaseSha,
+            PreviousSession: claim.PreviousSession,
+            MechanicalDelta: claim.MechanicalDelta);
     }
 
     private void AdoptRuntimeCapacity(Contract.RuntimeCapacitySettingsDto? capacity)
@@ -1546,7 +1550,8 @@ public sealed class TaskServerClient : IDisposable
                 SalvageCommitSha: req.SalvageRecoveryCommitSha ?? req.SalvageCommitSha,
                 // AGT-2820: gate items are not legacy-only. A completion that
                 // names an incident must name it on both planes.
-                GateItems: req.GateItems),
+                GateItems: req.GateItems,
+                SessionContinuation: req.SessionContinuation),
             ct);
         return new RemoteRunCompletionResponse(req.TaskKey, typedOutcome, "4-auto-review");
     }
@@ -1635,7 +1640,8 @@ public sealed class TaskServerClient : IDisposable
                         payload.NeedsInputMessage,
                         payload.SalvageBranch,
                         payload.SalvageCommitSha,
-                        payload.GateItems),
+                        payload.GateItems,
+                        payload.SessionContinuation),
                     ct);
                 return;
             }

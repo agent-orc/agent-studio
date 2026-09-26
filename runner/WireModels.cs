@@ -292,7 +292,10 @@ public sealed record RunnerClaimResponse(
     // agent reads its finishing instruction.
     string? ContinuationBaseRef = null,
     string? ContinuationBaseSha = null,
-    IReadOnlyList<string>? ReprobeCapabilities = null);
+    IReadOnlyList<string>? ReprobeCapabilities = null,
+    AgentStudio.TaskServer.Contracts.SessionContinuationLedgerEntry? PreviousSession = null,
+    AgentStudio.TaskServer.Contracts.MechanicalRoundDelta? MechanicalDelta = null,
+    string? FreshRunReason = null);
 
 public static class RemoteChatWorkKinds
 {
@@ -422,7 +425,8 @@ public sealed record RemoteRunCompletionRequest(
     string? ImmutableResultRef = null,
     string? ArtifactManifestDigest = null,
     string? IntegrationBranch = null,
-    string? NeedsInputMessage = null);
+    string? NeedsInputMessage = null,
+    AgentStudio.TaskServer.Contracts.SessionContinuationLedgerEntry? SessionContinuation = null);
 
 public sealed record RemoteRunCompletionResponse(
     string TaskKey,

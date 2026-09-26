@@ -116,7 +116,9 @@ public sealed record WorkPermitAcceptanceDto(
     TaskDto Task,
     LeaseDto Lease,
     DateTime OfflineAuthorityDeadline,
-    IReadOnlyList<PostStepPlanDto> PostProcessingPlan);
+    IReadOnlyList<PostStepPlanDto> PostProcessingPlan,
+    SessionContinuationLedgerEntry? PreviousSession = null,
+    MechanicalRoundDelta? MechanicalDelta = null);
 
 public sealed record RunReconcileRequest(
     string SchemaVersion,

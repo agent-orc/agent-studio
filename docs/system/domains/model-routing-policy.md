@@ -88,6 +88,20 @@ Its `version` must match this page. The registry owns tier ids, concrete Codex
 routes, task-type intake defaults, and correctness floors; appsettings must not
 redefine them.
 
+A fresh coding claim after a resumed mechanical integration round is qualified
+again when the round found a semantic conflict or the deterministic gate failed.
+An integration recovery claim with a pending mechanical delta is qualified before
+admission at the stronger of its correctness floor and Terra/medium. This also
+covers a fresh run when the runner rejects the resume for a missing or stale
+session, changed provider, or lineage mismatch after claim. A resumed round may
+therefore use the same qualified route. Explicit operator pins retain their
+existing policy treatment.
+The claim keeps a route that clears the policy floor; otherwise it selects the
+registry's provider route at the stronger of the task's correctness floor and
+Sol/medium for a semantic conflict, or Terra/medium for a gate failure. The
+fresh-run reason is visible in the task's continuation ledger; the selected
+model is visible in the run-session event.
+
 When a new task has no explicit model pin (`modelExplicit=false`), model
 qualification starts from this convention:
 
