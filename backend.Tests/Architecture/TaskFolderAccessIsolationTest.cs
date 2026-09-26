@@ -124,6 +124,8 @@ public class TaskFolderAccessIsolationTest
                 "Git worktree cleanup under configured worktree roots, not task storage.",
             ["backend/Features/Pipeline/GateDependencyCache.cs"] =
                 "Moves and replaces dependency caches under the OS review-workspace temp root, never task storage.",
+            ["backend/Features/Pipeline/GateResultCache.cs"] =
+                "Deletes only the hashed per-project gate-result cache under local application data, never task storage.",
 
             // Re-added after the structure migration folded the src/ executor
             // projects back into backend/ (the scan covers them again):
