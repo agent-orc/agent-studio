@@ -36,7 +36,7 @@ public sealed class RunnerOptions
     public required string BackendName { get; init; }
 
     /// <summary>
-    /// Service role. Coding and review use different registered identities,
+    /// Service role. Coding, review, and gate use different registered identities,
     /// daemon loops, workspace roots, credentials, and server-side claims.
     /// </summary>
     public string Role { get; init; } = "coding";
