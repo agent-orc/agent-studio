@@ -443,27 +443,11 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             $"/api/attempts/reviews/{completion.ReviewAttemptId}/settle",
             new SettleReviewAttemptRequest(reviewWrite, "61306343", ReviewTerminalOutcome.Pass), ct);
         Assert.Equal(System.Net.HttpStatusCode.Conflict, mismatchResponse.StatusCode);
-        var mismatch = await mismatchResponse.Content.ReadFromJsonAsync<AttemptWriteResult>(ApiJson, ct);
-        Assert.Equal(AttemptWriteStatus.SubjectMismatch, mismatch!.Status);
-        Assert.Equal("immutable-result-mismatch", mismatch.ReviewAttempt!.FailureClassification);
-        Assert.Equal(ReviewTerminalOutcome.InfrastructureFailure, mismatch.ReviewAttempt.Outcome);
-
-        var retryResponse = await http.PostAsJsonAsync(
-            "/api/attempts/reviews",
-            new CreateReviewAttemptRequest(
-                TaskKey,
-                mismatch.ReviewAttempt.RepositoryId,
-                mismatch.ReviewAttempt.Subject.ExpectedResultSha,
-                mismatch.ReviewAttempt.SourceRunAttemptId,
-                mismatch.ReviewAttempt.Subject.TaskRequirementsHash,
-                mismatch.ReviewAttempt.Subject.ReviewPolicyHash,
-                mismatch.ReviewAttempt.Subject.EvidenceDigestInputs,
-                "retry-review-same-subject",
-                mismatch.ReviewAttempt.AttemptId), ct);
-        retryResponse.EnsureSuccessStatusCode();
-        var retry = await retryResponse.Content.ReadFromJsonAsync<AttemptWriteResult>(ApiJson, ct);
-        Assert.NotEqual(mismatch.ReviewAttempt.AttemptId, retry!.ReviewAttempt!.AttemptId);
-        Assert.Equal(mismatch.ReviewAttempt.Subject.SubjectId, retry.ReviewAttempt.Subject.SubjectId);
+        using (var refused = JsonDocument.Parse(await mismatchResponse.Content.ReadAsStringAsync(ct)))
+            Assert.Equal("review-delivery-required", refused.RootElement.GetProperty("code").GetString());
+        var stillPending = await http.GetFromJsonAsync<AttemptAuthorityProjection>(
+            $"/api/attempts/tasks/{TaskKey}", ApiJson, ct);
+        Assert.Equal(AttemptLifecycleState.Leased, stillPending!.CurrentReviewAttempt!.State);
         var moved = Path.Combine(_watchPath, TaskStates.AutoReview, TaskKey);
         Assert.True(Directory.Exists(moved));
         Assert.Equal(

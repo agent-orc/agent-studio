@@ -1,6 +1,6 @@
 # Tasks Domain Map
 
-Version: 2026-09-15
+Version: 2026-09-26
 Status: System-of-record map for task storage, lanes, and API mutation changes.
 
 Use this when a change touches job folders, lane states, task metadata,
@@ -76,6 +76,37 @@ or commit attribution.
   written to disk, so a rejected continue leaves no trace on the card.
 
 ## Entry Points
+
+### Engine steering boundary (AGT-2933, D5)
+
+The standalone Engine uses its scoped bearer principal to submit
+`POST /api/v1/steering/projects/{projectId}/tasks/{taskId}/actions` to the
+Task Server. Contract version 1 accepts `queue` and `park` with a unique
+`commandId`, the expected task version, the expected run generation (the last
+issued fence), and a nonempty reason. The authenticated principal is the
+recorded actor. The Task Server validates eligibility and current authority in
+one transaction, changes the lane, and stores a receipt. Replaying an identical
+command returns that receipt; conflicting reuse and stale versions return 409.
+`GET .../actions/{commandId}` reads back the accepted actor and reason. A
+rejected command changes neither the lane nor attempt authority.
+
+`queue` admits backlog, Human Review, or escalated tasks to Ready; `park` moves
+only an unclaimed Ready task to Backlog. Neither command grants execution.
+Runner hosts use the existing claim, lease, heartbeat, and completion paths.
+The file-backed local ProjectRunner books the same `RunLeaseService` authority
+as the remote claim path before CLI spawn, renews while running, and releases
+after the run. This adapter is for the monolith compatibility deployment;
+standalone SQLite and file-backed `task.json` are separate authority stores.
+
+The low-level `/api/attempts/reviews/{attemptId}/settle` route now refuses
+delivery. A runner must submit the fenced review report through the review
+plane so integration and lane settlement can run. An authority record alone
+does not prove reviewed, integrated delivery.
+The monolith review report path retains its file-backed delivery workflow for
+compatibility; it is not mounted as an authority beside the standalone SQLite
+Task Server in the remote profile. Policy selection for standalone engine
+actions stays in the Engine. The server only checks action eligibility and
+fenced state.
 
 - [docs/system/contracts/filesystem.md](../contracts/filesystem.md) defines the durable
   job-folder layout, lane catalog, and state strings.
