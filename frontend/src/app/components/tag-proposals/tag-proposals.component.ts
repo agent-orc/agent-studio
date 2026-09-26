@@ -24,8 +24,12 @@ export class TagProposalsComponent {
   readonly statusWithoutDetails = computed(() => this.taggingStatus() === 'tags-proposed'
     && !this.service.proposals().some(item => item.projectName === this.projectName()
       && item.subjectKind === this.subjectKind() && item.subjectId === this.subjectId()));
-  constructor() { effect(() => this.service.load(this.projectName())); }
-  label(id: string): string { return this.registry.byId().get(id)?.label ?? id; }
+  constructor() { effect(() => {
+    const project = this.projectName();
+    this.service.load(project);
+    if (this.pending().length) this.registry.ensureProject(project);
+  }); }
+  label(id: string): string { return this.registry.byIdForProject(this.projectName()).get(id)?.label ?? id; }
   labels(ids: readonly string[]): string { return ids.map(id => this.label(id)).join(', '); }
   decide(id: string, choice: 'accept' | 'reject'): void {
     this.busy.set(id); this.error.set(null);

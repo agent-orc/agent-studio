@@ -220,7 +220,7 @@
                   </span>
                   <span class="pwiki__label-copy">
                     <span class="pwiki__label-text">{{ row.node.title }}</span>
-                    <app-tag-chips [ids]="row.node.tags ?? []" />
+                    <app-tag-chips [ids]="row.node.tags ?? []" [projectName]="projectName()" />
                     <app-tag-proposals [projectName]="projectName()" subjectKind="wiki" [subjectId]="row.node.relPath ?? ''" [taggingStatus]="row.node.taggingStatus ?? null" />
                     <span class="pwiki__metric-strip"
                           [attr.data-testid]="'project-wiki-ratings-' + row.node.relPath">
