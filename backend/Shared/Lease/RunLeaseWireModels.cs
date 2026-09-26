@@ -45,7 +45,8 @@ public sealed record RunLeaseHeartbeatRequest(
     int? RequestedTtlSeconds = null,
     string? AttemptId = null,
     long? AuthorityEpoch = null,
-    string? IdempotencyKey = null);
+    string? IdempotencyKey = null,
+    string? StartedPromptSha256 = null);
 
 /// <summary>
 /// Release: drops the lease only for the matching current holder; the fencing
@@ -195,7 +196,8 @@ public sealed record RunSpecDto(
     string? ThinkingLevel = null,
     string? PermissionMode = null,
     string? ContextMode = null,
-    string? ModeFraming = null);
+    string? ModeFraming = null,
+    AgentStudio.TaskServer.Contracts.FollowUpDeliveryDto? FollowUp = null);
 
 /// <summary>Result of one daemon pickup poll.</summary>
 public sealed record RunnerClaimResponse(

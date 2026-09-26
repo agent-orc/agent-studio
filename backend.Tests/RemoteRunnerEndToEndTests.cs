@@ -136,6 +136,146 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     }
 
     [Fact]
+    public async Task Remote_claim_stashes_follow_up_and_start_hash_consumes_it_into_run_history()
+    {
+        const string prompt = "Continue with the operator-approved recovery.";
+        SeedTask(TaskStates.Ready, TaskKey, "Remote follow-up", "Original prompt.");
+        var readyFolder = Path.Combine(_watchPath, TaskStates.Ready, TaskKey);
+        File.WriteAllText(
+            Path.Combine(readyFolder, "pending-intent.json"),
+            JsonSerializer.Serialize(new PendingIntent
+            {
+                Prompt = prompt,
+                Mode = ContinueModes.Steer,
+                SavedAt = DateTime.UtcNow.AddMinutes(-1),
+                SavedReason = FollowUpQueueReasons.RemoteExecution,
+                Author = "human:owner",
+            }));
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/example/follow-up.git");
+
+        var claim = await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+            RunnerId, ProjectName, "host", 1, "remote-runner"));
+
+        Assert.Equal(RClaimStatus.Claimed, claim.Status);
+        Assert.Equal(prompt, claim.RunSpec!.FollowUp!.Prompt);
+        Assert.Equal(claim.Lease!.AttemptId, claim.RunSpec.FollowUp.ClaimId);
+        var progressFolder = Path.Combine(_watchPath, TaskStates.Progress, TaskKey);
+        Assert.False(File.Exists(Path.Combine(progressFolder, "pending-intent.json")));
+        Assert.True(File.Exists(Path.Combine(progressFolder, "pending-intent.consumed.json")));
+
+        var renew = await client.RenewLeaseAsync(new RHeartbeat(
+            TaskKey,
+            claim.Lease!.LeaseId,
+            claim.Lease.FencingToken,
+            RunnerId,
+            AttemptId: claim.Lease.AttemptId,
+            AuthorityEpoch: claim.Lease.AuthorityEpoch,
+            IdempotencyKey: $"worker-start:{claim.Lease.AttemptId}",
+            StartedPromptSha256: claim.RunSpec.FollowUp.PromptSha256), CancellationToken.None);
+
+        Assert.True(renew.Granted, renew.Message);
+        Assert.False(File.Exists(Path.Combine(progressFolder, "pending-intent.consumed.json")));
+        var startedRun = Assert.Single(
+            factory.Services.GetRequiredService<TaskSessionLog>()
+                .ReadSessionEvents(TaskKey, _watchPath),
+            row => row.RunAttemptId == claim.Lease.AttemptId);
+        Assert.Equal(claim.RunSpec.FollowUp.PromptSha256, startedRun.StartedPromptSha256);
+        var timeline = factory.Services.GetRequiredService<TimelineLog>().ReadAll(progressFolder);
+        var delivered = Assert.Single(
+            timeline,
+            row => row.Kind == TimelineEventKinds.FollowUpConsumed);
+        Assert.Equal(claim.Lease.AttemptId, delivered.RunId);
+        Assert.Equal("steer", delivered.Details!["mode"]);
+        Assert.Equal("human:owner", delivered.Details["author"]);
+    }
+
+    [Fact]
+    public async Task Remote_claim_transition_failure_rolls_follow_up_back_for_retry()
+    {
+        const string prompt = "Do not lose this failed claim prompt.";
+        SeedTask(TaskStates.Ready, TaskKey, "Failed remote claim", "Original prompt.");
+        var readyFolder = Path.Combine(_watchPath, TaskStates.Ready, TaskKey);
+        File.WriteAllText(
+            Path.Combine(readyFolder, "pending-intent.json"),
+            JsonSerializer.Serialize(new PendingIntent
+            {
+                Prompt = prompt,
+                Mode = ContinueModes.Continue,
+                SavedAt = DateTime.UtcNow,
+                SavedReason = FollowUpQueueReasons.RemoteExecution,
+            }));
+        // A non-directory target is the state machine's explicit, recoverable
+        // lane-transition refusal. It occurs after lease acquisition and intent
+        // reservation, which exercises the claim rollback boundary.
+        File.WriteAllText(Path.Combine(_watchPath, TaskStates.Progress, TaskKey), "blocked");
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/example/follow-up-rollback.git");
+
+        var claim = await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+            RunnerId, ProjectName, "host", 1, "remote-runner"));
+
+        Assert.Equal(RClaimStatus.Empty, claim.Status);
+        Assert.Contains("claim move refused", claim.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(File.Exists(Path.Combine(readyFolder, "pending-intent.json")));
+        Assert.False(File.Exists(Path.Combine(readyFolder, "pending-intent.consumed.json")));
+    }
+
+    [Fact]
+    public async Task Lost_remote_worker_before_start_restores_follow_up_for_the_next_claim()
+    {
+        const string prompt = "Retry after the lost worker.";
+        SeedTask(TaskStates.Ready, TaskKey, "Lost remote worker", "Original prompt.");
+        var readyFolder = Path.Combine(_watchPath, TaskStates.Ready, TaskKey);
+        File.WriteAllText(
+            Path.Combine(readyFolder, "pending-intent.json"),
+            JsonSerializer.Serialize(new PendingIntent
+            {
+                Prompt = prompt,
+                Mode = ContinueModes.Continue,
+                SavedAt = DateTime.UtcNow,
+                SavedReason = FollowUpQueueReasons.RemoteExecution,
+            }));
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/example/follow-up-retry.git");
+
+        var claim = await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+            RunnerId, ProjectName, "host", 1, "remote-runner"));
+        Assert.Equal(RClaimStatus.Claimed, claim.Status);
+        Assert.Equal(claim.Lease!.AttemptId, claim.RunSpec!.FollowUp!.ClaimId);
+
+        var release = await client.ReleaseLeaseAsync(new RRelease(
+            TaskKey,
+            claim.Lease.LeaseId,
+            claim.Lease.FencingToken,
+            RunnerId,
+            claim.Lease.AttemptId,
+            claim.Lease.AuthorityEpoch,
+            $"lost-before-start:{claim.Lease.AttemptId}"), CancellationToken.None);
+
+        Assert.Equal("Released", release.Outcome);
+        var task = factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(TaskKey, _watchPath);
+        Assert.NotNull(task);
+        Assert.Equal(prompt, task!.PendingIntent!.Prompt);
+        Assert.True(File.Exists(Path.Combine(task.FolderPath, "pending-intent.json")));
+        Assert.False(File.Exists(Path.Combine(task.FolderPath, "pending-intent.consumed.json")));
+
+    }
+
+    [Fact]
     public async Task Runner_drives_one_task_end_to_end_through_the_server_api()
     {
         SeedTask(TaskStates.Progress, TaskKey, "Remote runner smoke",
