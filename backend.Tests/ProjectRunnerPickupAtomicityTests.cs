@@ -156,6 +156,40 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
     }
 
     [Fact]
+    public async Task LocalConfirmedStart_ReportsFailedFollowUpAcknowledgement_AndKeepsRecoverableStash()
+    {
+        const string slug = "follow-up-ack-failure";
+        WriteJob(TaskStates.Ready, slug);
+        var readyFolder = Path.Combine(_watchPath, TaskStates.Ready, slug);
+        const string prompt = "Use the approved branch.";
+        File.WriteAllText(Path.Combine(readyFolder, "pending-intent.json"), JsonSerializer.Serialize(new PendingIntent
+        {
+            Prompt = prompt,
+            Mode = ContinueModes.Steer,
+            SavedAt = DateTime.UtcNow.AddMinutes(-1),
+            SavedReason = FollowUpQueueReasons.ProjectBusy,
+        }));
+        var timelinePath = TaskPaths.TimelineLog(readyFolder);
+        Directory.CreateDirectory(Path.GetDirectoryName(timelinePath)!);
+        Directory.CreateDirectory(timelinePath); // A directory at the file path makes both receipt attempts fail.
+
+        var logger = new CapturingLogger<ProjectRunner>();
+        var runner = BuildRunner(new ImmediateFinishCliService(finishImmediately: false), logger: logger);
+        runner.SetMode("auto-continuous");
+
+        await runner.TickAsync(CancellationToken.None);
+
+        var progressFolder = Path.Combine(_watchPath, TaskStates.Progress, slug);
+        Assert.True(File.Exists(Path.Combine(progressFolder, "pending-intent.consumed.json")));
+        Assert.False(File.Exists(Path.Combine(progressFolder, "pending-intent.json")));
+        Assert.Contains(logger.Entries, entry => entry.Any(item =>
+            item.Key == "{OriginalFormat}"
+            && item.Value?.ToString()?.Contains("pending-intent-acknowledgement-failed", StringComparison.Ordinal) == true));
+        var start = Assert.Single(File.ReadLines(TaskPaths.SessionEventsLog(progressFolder)));
+        Assert.Contains(AgentStudio.TaskServer.Contracts.FollowUpPromptDigest.Compute(prompt), start, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ProviderLimit_HoldsWithoutEscalation_ThenProbeResumesSameCard()
     {
         WriteJob(TaskStates.Ready, "job-provider-limit");
@@ -311,7 +345,8 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         ICliExecutionService cli,
         string? executionEngine = null,
         ProviderLimitRegistry? providerLimits = null,
-        IReadOnlyList<IQuotaProbe>? quotaProbes = null)
+        IReadOnlyList<IQuotaProbe>? quotaProbes = null,
+        Microsoft.Extensions.Logging.ILogger<ProjectRunner>? logger = null)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -335,12 +370,14 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
         var states = new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance);
+        var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
         var mutations = new TaskMutationService(
             scanner,
             new ClientIdentityStore(config, NullLogger<ClientIdentityStore>.Instance),
             new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance),
             new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance),
-            NullLogger<TaskMutationService>.Instance);
+            NullLogger<TaskMutationService>.Instance,
+            timeline);
         var sessions = new TaskSessionLog(scanner, NullLogger<TaskSessionLog>.Instance);
         var prompts = new RuntimePromptService(config, NullLogger<RuntimePromptService>.Instance);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
@@ -382,7 +419,7 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
 
         return new ProjectRunner(
             ProjectName, entry,
-            NullLogger<ProjectRunner>.Instance,
+            logger ?? NullLogger<ProjectRunner>.Instance,
             scanner, states, sessions, router,
             summary, prompts, transitions, chatLog, mutations,
             orchestratorLog, orchestratorRunner, orchestratorSessions,
@@ -390,6 +427,7 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
             bus: null,
             pickupLock: pickupLock,
             pickupLockOwner: pickupLockOwner,
+            timeline: timeline,
             providerLimits: providerLimits);
     }
 
@@ -485,6 +523,8 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
 
     private sealed class ImmediateFinishCliService : ICliExecutionService
     {
+        private readonly bool _finishImmediately;
+        public ImmediateFinishCliService(bool finishImmediately = true) => _finishImmediately = finishImmediately;
         public string CliType => CliTypes.Claude;
         public TaskCompletionSource FinishRaised { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -523,6 +563,7 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
                 ThinkingLevel = thinkingLevel,
             };
             OnStarted?.Invoke(jobKey, started);
+            if (!_finishImmediately) return (started, null);
             OnFinished?.Invoke(jobKey, started with
             {
                 Status = RunStatuses.Stopped,

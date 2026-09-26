@@ -3299,11 +3299,22 @@ public class ProjectRunner
                 _logger.LogInformation(
                     "follow-up-consumed job={JobId} project={Project} mode={Mode} savedReason={SavedReason} run={RunId}",
                     jobId, ProjectName, consumedIntent.Mode, consumedIntent.SavedReason, consumedRunId);
-                _mutations.AcknowledgeStashedPendingIntent(
+                var promptHash = AgentStudio.TaskServer.Contracts.FollowUpPromptDigest.Compute(consumedIntent.Prompt);
+                var acknowledgement = _mutations.AcknowledgeStashedPendingIntent(
                     info.FolderPath,
-                    AgentStudio.TaskServer.Contracts.FollowUpPromptDigest.Compute(consumedIntent.Prompt),
+                    promptHash,
                     consumedRunId,
                     source: "local-process-start");
+                if (acknowledgement == PendingIntentAcknowledgeResult.HistoryWriteFailed)
+                    acknowledgement = _mutations.AcknowledgeStashedPendingIntent(
+                        info.FolderPath,
+                        promptHash,
+                        consumedRunId,
+                        source: "local-process-start-retry");
+                if (acknowledgement != PendingIntentAcknowledgeResult.Consumed)
+                    _logger.LogError(
+                        "pending-intent-acknowledgement-failed job={JobId} run={RunId} result={Result}; confirmed start retains the stash for startup reconciliation",
+                        jobId, consumedRunId, acknowledgement);
             }
             // Only a confirmed process start ends a visible no-slot wait. Early
             // admission/quota/spawn failures intentionally leave the wait visible.

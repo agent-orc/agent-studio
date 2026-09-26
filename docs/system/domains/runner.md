@@ -1501,6 +1501,11 @@ terminal transition is refused with `pending-intent-supersede-failed`; startup
 reconciliation retains the intent, reports the same failure, and retries on
 the next pass. Startup reconciliation applies the same history conversion when
 a later coding-run start acknowledges the exact prompt hash.
+If the local process starts but its timeline receipt fails, pickup retries the
+receipt once and logs `pending-intent-acknowledgement-failed` if it still fails.
+The stash stays recoverable. Startup reconciliation uses the local session
+start's matching prompt hash to write the receipt and clear that stash; a stash
+without a confirmed start remains undecided.
 For legacy rows without a hash, it requires a later coding-run start and a
 terminal outcome from that same run. Review, lane, heartbeat, summary, and
 aborted-claim activity does not prove delivery; those intents remain queued and
