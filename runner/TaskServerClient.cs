@@ -25,9 +25,10 @@ public sealed class TaskServerClient : IDisposable
     private readonly string? _configuredClientId;
     private readonly string? _runnerInstanceIdOverride;
     private readonly RunnerOptions? _options;
-    // Per-run caches, evicted on completion/release so the long-lived daemon does
-    // not retain every claimed task's lease and full prompt body for its lifetime.
+    // Per-run caches, evicted on release after post-completion evidence transport
+    // so the long-lived daemon does not retain every claimed task's lease and prompt.
     private readonly ConcurrentDictionary<string, (string RunId, RunLeaseInfoDto Lease, string InstanceId)> _v1Leases = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, string> _v1CompletedLeases = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, string> _v1TaskBodies = new(StringComparer.OrdinalIgnoreCase);
     private bool _useV1;
     private bool _supportsCapabilityAdvertisement;
@@ -1280,6 +1281,15 @@ public sealed class TaskServerClient : IDisposable
         if (!_useV1)
             return await PostJsonAsync<RunLeaseReleaseRequest, RunLeaseResponse>("/api/runner/lease/release", req, ct)
                    ?? new RunLeaseResponse("Invalid", false, null, "Empty release response.");
+        if (_v1CompletedLeases.TryGetValue(req.TaskKey, out var completedLeaseId)
+            && _v1Leases.TryGetValue(req.TaskKey, out var completedAuthority)
+            && string.Equals(completedLeaseId, req.LeaseId, StringComparison.Ordinal)
+            && string.Equals(completedAuthority.Lease.RunnerId, req.RunnerId, StringComparison.Ordinal)
+            && completedAuthority.Lease.FencingToken == req.FencingToken)
+        {
+            ForgetCompletedLease(req.TaskKey, req.LeaseId);
+            return new RunLeaseResponse("Released", false, null, "Run already completed by Task Server.");
+        }
         if (!_v1Leases.TryGetValue(req.TaskKey, out var cached))
         {
             _v1TaskBodies.TryRemove(req.TaskKey, out _);
@@ -1307,6 +1317,17 @@ public sealed class TaskServerClient : IDisposable
         _v1TaskBodies.TryRemove(req.TaskKey, out _);
         _hostAcceptedWork.TryRemove(req.TaskKey, out _);
         return new RunLeaseResponse(response?.Status ?? "Released", false, authority.Lease, response?.Message);
+    }
+
+    internal void ForgetCompletedLease(string taskKey, string leaseId)
+    {
+        if (!_v1Leases.TryGetValue(taskKey, out var authority)
+            || !string.Equals(authority.Lease.LeaseId, leaseId, StringComparison.Ordinal))
+            return;
+        _v1CompletedLeases.TryRemove(taskKey, out _);
+        _v1Leases.TryRemove(taskKey, out _);
+        _v1TaskBodies.TryRemove(taskKey, out _);
+        _hostAcceptedWork.TryRemove(taskKey, out _);
     }
 
     public async Task<LogIngestResponse?> IngestLogsAsync(LogIngestRequest req, CancellationToken ct)
@@ -1548,6 +1569,7 @@ public sealed class TaskServerClient : IDisposable
                 // names an incident must name it on both planes.
                 GateItems: req.GateItems),
             ct);
+        _v1CompletedLeases[req.TaskKey] = req.LeaseId;
         return new RemoteRunCompletionResponse(req.TaskKey, typedOutcome, "4-auto-review");
     }
 
