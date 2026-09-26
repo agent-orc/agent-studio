@@ -95,6 +95,41 @@ correlation cannot support per-switch spawn counts under concurrent work.
 
 ## Stage capture contract
 
+### Opt-in detail trace (AGT-2952)
+
+Send `X-Task-Switch-Trace: 1` on a detail GET. The caller may send UUIDs in
+`X-Task-Request-Id` and `X-Task-Switch-Id`; the server returns canonical UUIDs
+in the same response headers and generates either ID when the input is invalid.
+Each browser switch reuses one switch ID across its API requests and gives each
+request a distinct request ID. The detail request logs one `task-switch-trace`
+JSON record after its response write. It contains outcome, status, wall time,
+written bytes, exclusive named stage milliseconds, invocation counts and
+scanner-owned file-open counts, Git spawn count,
+summed Git time and Git timeouts. No task body, prompt, filesystem path or secret
+is serialized into this record. The `task-op` Server-Timing metric remains the
+endpoint-filter duration, before serialization. Missing stage entries mean no
+recorded operation; a measured zero is represented by a present entry. The
+existing `git-index-run` scope is background work and must not be joined to a
+detail request without a matching correlation ID. The trace is diagnostic,
+not a performance saving; its enabled p95 overhead target is at most 1 ms.
+
+The read-only Playwright capture lives at
+`frontend/e2e/perf/task-switch-capture.spec.ts`. Run it with
+`PW_TARGET=stable TASK_SWITCH_CAPTURE=1` and set `TASK_SWITCH_OUTPUT` to a
+retained result path. `TASK_SWITCH_COUNT` defaults to 30 per navigation cohort.
+It uses actual click and history events, navigation timing, a DOM-ready mark,
+two animation frames, resource timings and existing markdown-conversion
+measures. DOM work is reported only when the older signal-assignment mark is
+present; absent values stay null. `TASK_SWITCH_TRACE=1` injects correlation
+headers using Playwright request continuation and should be declared as a
+distinct instrumentation run. Reduce a capture offline with
+`node docs/task-switch-performance/reduce-switch-capture.mjs CAPTURE [TRACE_LOG] [SUMMARY]`.
+The reducer retains every attempt in the sample count, reports errors and
+percentiles over successful paint samples, and keeps Git counts separate from
+browser durations. A forwarded Linux browser is a remote diagnostic run, not
+the required designated-workstation baseline. The later acceptance gate still
+requires 100 measured switches per cohort after warmups.
+
 The future harness must carry `switchId`, `requestId`, task/project identity,
 core and resource generation, revision, timestamps, outcome and sample class.
 Record these stages with explicit zero versus missing semantics:

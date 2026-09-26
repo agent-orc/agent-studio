@@ -353,44 +353,45 @@ public static class TaskCrudEndpoints
             // Fold the reconstructed task-branch history into TaskInfo.Commits so
             // the git-pane chain + header badge show the full history, not one
             // commit. No-op for any other lane / an already-populated chain.
-            detail = JobCommitsAggregation.WithReconstructedInProgressCommits(detail, sessions, watchPath, git);
-            var tokenLookup = BuildTokenLookup(new[] { detail.Info }, tokens);
-            var verdictLookup = BuildOrchestratorVerdictLookup(new[] { detail.Info }, configuration);
+            using (TaskSwitchTrace.Span("commits"))
+                detail = JobCommitsAggregation.WithReconstructedInProgressCommits(detail, sessions, watchPath, git);
+            var tokenLookup = TaskSwitchTrace.Run("tokens", () => BuildTokenLookup(new[] { detail.Info }, tokens));
+            var verdictLookup = TaskSwitchTrace.Run("runtime", () => BuildOrchestratorVerdictLookup(new[] { detail.Info }, configuration));
             var eligibleWaiters = ProjectAccessAuthorization
                 .FilterTasks(context, scanner.ScanAllJobs(), projects)
                 .Where(job => !job.Fixture);
-            var dependencyLookups = BuildDependencyGraphLookups(new[] { detail.Info }, scanner, eligibleWaiters, attemptAuthority);
+            var dependencyLookups = TaskSwitchTrace.Run("dependencies", () => BuildDependencyGraphLookups(new[] { detail.Info }, scanner, eligibleWaiters, attemptAuthority));
             var withRuntime = WithRuntime(detail, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters);
-            withRuntime = withRuntime with
+            withRuntime = TaskSwitchTrace.Run("runtime", () => withRuntime with
             {
                 Info = betterCandidates.Attach(withRuntime.Info, projectSettings.Get(withRuntime.Info.ProjectName)),
-            };
-            var liveLookup = liveStatus.BuildLookup(new[] { withRuntime.Info });
+            });
+            var liveLookup = TaskSwitchTrace.Run("runtime", () => liveStatus.BuildLookup(new[] { withRuntime.Info }));
             if (liveLookup.TryGetValue(withRuntime.Info.TaskKey, out var currentLiveStatus))
                 withRuntime = withRuntime with { Info = withRuntime.Info with { LiveStatus = currentLiveStatus } };
             // AGT-2046: fold the batched merge signal onto the detail's info too, so
             // a card opened from the board keeps the same [develop|main] indicator.
-            var mergeLookup = mergeStatus.BuildLookup(new[] { withRuntime.Info });
+            var mergeLookup = TaskSwitchTrace.Run("merge", () => mergeStatus.BuildLookup(new[] { withRuntime.Info }));
             if (mergeLookup.TryGetValue(withRuntime.Info.TaskKey, out var signal))
                 withRuntime = withRuntime with { Info = withRuntime.Info with { MergeSignal = signal } };
             // AGT-2202: fold the integration verdict so a completed/archived card
             // opened from the board keeps the same "integrated / not integrated"
             // badge as its board card.
-            var integrationLookup = integrationStatus.BuildLookup(new[] { withRuntime.Info });
+            var integrationLookup = TaskSwitchTrace.Run("integration", () => integrationStatus.BuildLookup(new[] { withRuntime.Info }));
             if (integrationLookup.TryGetValue(withRuntime.Info.TaskKey, out var integration))
                 withRuntime = withRuntime with { Info = withRuntime.Info with { Integration = integration } };
             // PUB-1: fold the per-task publish chip signal so a completed card opened
             // from the board shows "publishable: npm, website" in its detail too.
-            var publishLookup = publishStatus.BuildLookup(new[] { withRuntime.Info });
+            var publishLookup = TaskSwitchTrace.Run("publish", () => publishStatus.BuildLookup(new[] { withRuntime.Info }));
             if (publishLookup.TryGetValue(withRuntime.Info.TaskKey, out var publishSignal))
                 withRuntime = withRuntime with { Info = withRuntime.Info with { PublishSignal = publishSignal } };
-            var testRunLookup = testRuns.BuildLookup(new[] { withRuntime.Info });
+            var testRunLookup = TaskSwitchTrace.Run("tests", () => testRuns.BuildLookup(new[] { withRuntime.Info }));
             if (testRunLookup.TryGetValue(withRuntime.Info.TaskKey, out var testEvidence))
                 withRuntime = withRuntime with { Info = withRuntime.Info with { TestEvidence = testEvidence } };
             // AGT-2717: fold the canonical review projection so the escalation
             // banner, Evidence tab, Result header, and board chip all read the
             // same rounds/outcome/blocking-aspect facts from one card open.
-            withRuntime = withRuntime with { Info = withRuntime.Info with { ReviewProjection = reviewProjection.Read(withRuntime.Info) } };
+            withRuntime = withRuntime with { Info = withRuntime.Info with { ReviewProjection = TaskSwitchTrace.Run("review", () => reviewProjection.Read(withRuntime.Info)) } };
             return Results.Ok(withRuntime);
         });
 
