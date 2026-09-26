@@ -126,6 +126,11 @@ retired ids remain readable as ghost chips.
 Only the active project's entries appear in its filter controls. Switching
 projects removes the previous project's entries and clears selected ids that
 are absent from the new effective registry after it loads.
+A failed project registry request leaves the registry incomplete and preserves
+selected ids and their URL state. A subsequent load retries the request; only a
+successful response permits pruning ids absent from the effective registry.
+The workspace view preserves project-specific selections while a project route
+resolves, since workspace tags alone cannot validate tags from other projects.
 
 The wiki's Area glossaries view reads `GET /api/projects/{project}/areas` and
 `GET /api/projects/{project}/areas/{areaId}/glossary`. It shows definitions,

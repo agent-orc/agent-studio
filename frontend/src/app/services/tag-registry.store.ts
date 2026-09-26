@@ -52,7 +52,8 @@ export class TagRegistryStore {
         },
         error: () => {
           this.pendingProjects.delete(projectName);
-          if (this.activeProject() === projectName) this.activeProjectLoaded.set(this.workspaceLoaded);
+          // Workspace tags cannot validate project selections after an incomplete load.
+          if (this.activeProject() === projectName) this.activeProjectLoaded.set(false);
         },
       });
   }

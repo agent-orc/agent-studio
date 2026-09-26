@@ -4,10 +4,45 @@ import path from 'node:path';
 
 const resultsDir = path.resolve(process.env['JOB_RESULTS_DIR'] ?? 'test-results');
 const slug = (value: string) => value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-test.use({ serviceWorkers: 'block' });
+test.use({ serviceWorkers: 'block', trace: 'off', video: 'off' });
+test.setTimeout(240_000);
+
+test('a failed project registry preserves saved tags until a successful reload', async ({ page, devBackend }) => {
+  const watchPaths = await (await fetch(`${devBackend.baseUrl}/api/watch-paths`)).json() as { name: string }[];
+  const project = watchPaths[0].name;
+  let unavailable = true;
+  await page.route('**/api/projects/*/tags', route => route.fulfill({
+    status: unavailable ? 503 : 200,
+    contentType: 'application/json',
+    body: JSON.stringify(unavailable ? { error: 'Registry temporarily unavailable' } : { items: [
+      { id: 'project-only', label: 'Project only', color: '#777', description: '', kind: 'facet' },
+    ] }),
+  }));
+  await page.route('**/api/crash-recovery/pending**', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ pending: [] }),
+  }));
+  await page.addInitScript(() => {
+    // Seed once so reload exercises the state left by the failed request.
+    if (!sessionStorage.getItem('tag-filter-seeded')) {
+      localStorage.setItem('sharedTagFilters', JSON.stringify(['project-only']));
+      sessionStorage.setItem('tag-filter-seeded', 'true');
+    }
+  });
+  const failed = page.waitForResponse(response => response.url().includes('/tags') && response.status() === 503,
+    { timeout: 60_000 });
+  await page.goto(`/#/projects/${slug(project)}/workbenches`,
+    { waitUntil: 'domcontentloaded', timeout: 45_000 });
+  await failed;
+  const filters = page.getByTestId('workbench-overview').getByTestId('shared-tag-filters');
+  await expect(filters).toBeVisible();
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('sharedTagFilters') ?? '[]'))).toEqual(['project-only']);
+  unavailable = false;
+  await page.reload();
+  await expect(filters.getByTestId('shared-facet-filter')).toHaveValue('project-only');
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('sharedTagFilters') ?? '[]'))).toEqual(['project-only']);
+});
 
 test('area and facet selection follows board, Dossier list and wiki at desktop and phone width', async ({ page, devBackend }) => {
-  test.setTimeout(180_000);
   const watchPaths = await (await fetch(`${devBackend.baseUrl}/api/watch-paths`)).json() as { name: string }[];
   expect(watchPaths.length).toBeGreaterThan(0);
   const project = watchPaths[0].name;
