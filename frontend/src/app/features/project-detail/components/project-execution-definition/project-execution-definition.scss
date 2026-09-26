@@ -100,13 +100,31 @@ textarea {
 }
 
 .execution__manifest ul,
-.execution__issues {
+.execution__issues,
+.execution__warnings {
   display: flex;
   flex-direction: column;
   gap: var(--studio-spacing-1);
   margin: var(--studio-spacing-2) 0 0;
   padding: 0;
   list-style: none;
+}
+
+.execution__warnings {
+  padding: var(--studio-spacing-3);
+  background: color-mix(in srgb, var(--studio-warn) 12%, var(--studio-bg-elevated));
+  color: var(--studio-fg);
+  font-size: 0.8rem;
+}
+
+.execution__warnings li {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-1);
+}
+
+.execution__warnings strong {
+  color: var(--severity-warn);
 }
 
 .execution__manifest li {

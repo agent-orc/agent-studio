@@ -12,6 +12,16 @@ interface CacheManifest {
   block: string;
   key: string;
   state: string;
+  unusedRunCount?: number;
+  warning?: string | null;
+  recovery?: string | null;
+}
+
+interface PreparationWarning {
+  code: string;
+  block: string;
+  consecutiveRuns: number;
+  message: string;
 }
 
 interface PreparationManifest {
@@ -33,6 +43,7 @@ interface ExecutionDefinitionResponse {
   definitionSha256?: string | null;
   valid: boolean;
   issues: DefinitionIssue[];
+  preparationWarnings?: PreparationWarning[];
   lastManifest?: PreparationManifest | null;
   override?: DefinitionOverride | null;
   source: string;

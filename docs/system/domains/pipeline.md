@@ -638,13 +638,17 @@ steer the pipeline in this policy version.
   restore never wrote to (NETSDK1064, TE-52). The folder is released when the
   gate finishes or the run's slot is freed; an unreleased folder is reclaimed by
   age after 24 hours.
-- A published preparation block is validated before the gate copies it into its
-  private run directory. A NuGet block is reusable only when every
-  `<package>/<version>` directory contains NuGet's `.nupkg.metadata` extraction
-  marker. A missing marker, missing content directory, or empty content tree is
-  logged with the block key, atomically evicted, and handled as a cache miss so
-  preparation restores a fresh block. A successful prepare that leaves a block
-  empty records that block as `unused` and does not publish it.
+- Empty preparation blocks remain misses and are never published. Lookup and
+  publication share one validity rule for non-empty entries: manifest and
+  content exist, identity matches, recorded size equals content size, and NuGet
+  packages have extraction metadata for every package version. A successful
+  preparation records `published` only after the entry is installed; lock timeout
+  and publication validation failures retain distinct states. Lookup atomically
+  quarantines an incomplete entry under a per-entry lock, logs
+  `evicted-incomplete`, and continues as a miss. A cache-class preparation failure
+  stays `Environment` and receives one clean integration-gate retry; the receipt
+  and card timeline say what happened. Three consecutive successful runs with an
+  unused binding add a definition warning to the project's Execution status.
 - Immutable Remote Review plans carry that same preparation command, lockfile
   scopes, and preserve globs to the Review Executor. Preparation runs before
   verification in both the candidate and any materialized baseline workspace.
