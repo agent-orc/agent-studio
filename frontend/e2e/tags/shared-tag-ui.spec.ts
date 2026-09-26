@@ -4,8 +4,10 @@ import path from 'node:path';
 
 const resultsDir = path.resolve(process.env['JOB_RESULTS_DIR'] ?? 'test-results');
 const slug = (value: string) => value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+test.use({ serviceWorkers: 'block' });
 
 test('area and facet selection follows board, Dossier list and wiki at desktop and phone width', async ({ page, devBackend }) => {
+  test.setTimeout(180_000);
   const watchPaths = await (await fetch(`${devBackend.baseUrl}/api/watch-paths`)).json() as { name: string }[];
   expect(watchPaths.length).toBeGreaterThan(0);
   const project = watchPaths[0].name;
@@ -35,7 +37,7 @@ test('area and facet selection follows board, Dossier list and wiki at desktop a
     visit(body.root ?? []);
     await route.fulfill({ response, contentType: 'application/json', body: JSON.stringify(body) });
   });
-  await page.route('**/api/projects/*/areas/execution-and-runner/glossary', route => route.fulfill({
+  await page.route(/\/api\/projects\/[^/]+\/areas\/execution-and-runner\/glossary$/, route => route.fulfill({
     status: 200, contentType: 'application/json', body: JSON.stringify({
       areaId: 'execution-and-runner', label: 'Execution and runner', path: 'docs/areas/execution-and-runner/glossary.md',
       exists: true, terms: [{ term: 'Runner', definition: 'The service that drives a task to a terminal outcome.', synonyms: ['run loop'] }],
@@ -49,7 +51,11 @@ test('area and facet selection follows board, Dossier list and wiki at desktop a
     localStorage.setItem('tagProposalsMock', JSON.stringify([{ id: 'mock-tag-proposal', projectName,
       subjectKind: 'dossier', subjectId: dossierId, tagIds: ['decision'], confidence: 0.7, state: 'pending' }]));
   }, { projectName: project, dossierId: featured!.id });
-  await page.goto('/#/board');
+  await page.goto('/#/board', { waitUntil: 'domcontentloaded', timeout: 45_000 });
+  // The isolated static proxy does not carry the live hub; keep its banner out of tag screenshots.
+  if (process.env['TAG_UI_STATIC_PROXY'] === '1') {
+    await page.addStyleTag({ content: 'app-offline-banner { display: none !important; }' });
+  }
   const closeOverlay = page.locator('app-orchestrator-side-sheet [data-testid="sidesheet-close"]');
   if (await closeOverlay.isVisible()) await closeOverlay.click({ force: true });
   const boardFilters = page.getByTestId('shared-tag-filters').first();

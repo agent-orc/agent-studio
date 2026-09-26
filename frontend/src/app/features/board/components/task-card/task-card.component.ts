@@ -121,10 +121,10 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   private readonly gitSummary = inject(GitSummaryService);
   private readonly clients = inject(ClientService);
   private readonly tagRegistry = inject(TagRegistryStore);
+  private readonly projectTagsEffect = effect(() => { if (this.job().tags?.length) this.tagRegistry.ensureProject(this.job().projectName); });
   private readonly codeReviewActivity = inject(CodeReviewActivityStore);
   private readonly providerAuthStatus = inject(ProviderAuthStatusService); readonly codexSignIn = inject(CodexSignInDialogService); readonly claudeSignIn = inject(ClaudeSignInDialogService);
   private stopPolling: (() => void) | null = null;
-
   readonly taskTypeChip = computed(() => buildTaskTypeChip(this.job().taskType));
   taskTypeIconName(kind: string): StudioIconName {
     if (kind === 'bug') return 'warn';
@@ -141,7 +141,7 @@ export class TaskCardComponent implements OnInit, OnDestroy {
    */
   readonly modeBadge = computed(() => buildModeBadge(this.job().mode));
 
-  readonly tagChips = computed(() => buildTagChips(this.job().tags, this.tagRegistry.byId(), this.job().state));
+  readonly tagChips = computed(() => buildTagChips(this.job().tags, this.tagRegistry.byIdForProject(this.job().projectName), this.job().state));
 
   readonly publishableChip = computed(() => {
     if (this.job().state !== TaskState.Completed) return null;

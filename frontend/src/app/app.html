@@ -593,7 +593,7 @@
                                   [style.--project-on]="identityFor(job.projectName).onColor"
                                   (click)="openDetail(job)">
                             <span class="task-nav__item-title">{{ job.title || job.id }}</span>
-                            <app-tag-chips [ids]="job.tags ?? []" />
+                            <app-tag-chips [ids]="job.tags ?? []" [projectName]="job.projectName" />
                             <span class="task-nav__item-meta">
                               <span class="task-nav__item-project">
                                 <span class="task-nav__item-disk" aria-hidden="true">{{ identityFor(job.projectName).initial }}</span>

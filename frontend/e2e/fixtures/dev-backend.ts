@@ -94,7 +94,7 @@ function runScript(cmd: 'start' | 'stop' | 'status'): { code: number; stdout: st
       } : {}),
     },
     encoding: 'utf8',
-    timeout: 60_000,
+    timeout: 200_000, // api.sh allows 180 seconds for a cold backend build.
   });
   return {
     code: result.status ?? 1,
