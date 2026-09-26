@@ -118,6 +118,7 @@ scenario_compose_json="$(
     SCENARIO_BUILD_SHA=scenario-contract \
     SCENARIO_TASK_SERVER_IMAGE=scenario-contract-task-server:local \
     SCENARIO_STUDIO_BFF_IMAGE=scenario-contract-studio-bff:local \
+    SCENARIO_ORCHESTRATOR_ENGINE_IMAGE=scenario-contract-engine:local \
     SCENARIO_AGENT_HOST_IMAGE=scenario-contract-agent-host:local \
     DISTRIBUTED_STUDIO_TOKEN=scenario-contract-studio-token \
     DISTRIBUTED_ENGINE_TOKEN=scenario-contract-engine-token \
@@ -141,6 +142,10 @@ const expected = {
   "studio-bff": {
     image: "scenario-contract-studio-bff:local",
     dockerfile: "studio-bff/Dockerfile",
+  },
+  "orchestrator-engine": {
+    image: "scenario-contract-engine:local",
+    dockerfile: "orchestrator-engine/Dockerfile",
   },
   "agent-host-distributed": {
     image: "scenario-contract-agent-host:local",

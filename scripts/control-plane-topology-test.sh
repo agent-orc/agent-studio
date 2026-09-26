@@ -79,6 +79,13 @@ if [ "${CONTROL_PLANE_SKIP_BUILD:-0}" = 1 ]; then
 fi
 "${compose[@]}" up "$build_option" --wait --wait-timeout 180 task-server orchestrator-engine edge
 "${compose[@]}" up --detach --no-deps backup
+backup_container="$("${compose[@]}" ps -q backup)"
+if docker inspect -f '{{range .Mounts}}{{println .Destination}}{{end}}' "$backup_container" \
+    | grep -qx '/var/lib/agent-orchestrator/store'; then
+    echo 'FAIL: backup sidecar can open the live SQLite store' >&2
+    exit 1
+fi
+echo 'OK: backup sidecar has no live store mount.'
 
 echo "== check: no listener outside the edge's published port =="
 task_binding="$("${compose[@]}" port task-server 5071 2>/dev/null || true)"
@@ -160,7 +167,7 @@ while [ "$(date +%s)" -le "$deadline" ]; do
     sleep 3
 done
 test "$found" -eq 1
-"${compose[@]}" logs backup --no-color | grep -qi 'sha256'
+"${compose[@]}" logs backup --no-color | grep -qi 'Off-host copy complete: backupId=.*sha256='
 echo "OK: the backup sidecar produced a verified archive and copied it to the off-host mount."
 
 echo "control-plane-topology=passed"

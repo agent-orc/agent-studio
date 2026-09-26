@@ -31,8 +31,8 @@ deeper release gate.
 | 2 | Register runner | smoke | A real runner binary registers against the Task Server. |
 | 3 | Create task | smoke | The seeded workspace/project/task exist in `2-ready`. |
 | 4 | Claim task | smoke | The runner claims the task under a fenced lease. |
-| 5 | Run with the fake CLI | smoke | The runner drives a fake coding CLI that runs the fixture's known-passing and known-failing checks, commits, and pushes; the task reaches `4-auto-review`. |
-| 6 | Auto-review | smoke | A review subject is claimed, reported, and cleaned up; the queued orchestration run is settled; the task reaches `5-human-review`. |
+| 5 | Run with the fake CLI | smoke | The runner drives a fake coding CLI that runs the fixture's known-passing and known-failing checks, commits, and pushes; the task reaches `4-auto-review` with an immutable result handoff. In Compose, Studio BFF is stopped before the run is released. |
+| 6 | Auto-review | smoke | The same run's review subject is claimed, reported, and cleaned up; the task reaches `5-human-review`. In Compose, the real Engine executes all five decision stages while Studio BFF stays stopped, then Studio BFF is restarted. |
 | 7 | Orchestrator chat turn with context receipt | full | A chat turn round-trips with a persisted context receipt (token budget, sources). |
 | 8 | Backup | full | `POST /api/v1/management/backups` returns a file digest. |
 | 9 | Restore into an empty store, inventory hash equality | full | A second, empty Task Server instance restores that backup and reports the same SHA-256 (the most direct "before vs. after" equality check the store exposes today; see "Known gaps"). |
@@ -56,7 +56,7 @@ scripts/scenario.sh --target remote --level smoke --remote-url https://... --rem
 - **`compose`** at `--level smoke` delegates to the folded
   `scripts/compose-smoke-test.sh` check for the default `orchestrator-api` and
   `frontend` stack. At `--level full`, it builds the `task-server`,
-  `studio-bff`, and `agent-host-distributed` services from the development
+  `studio-bff`, `orchestrator-engine`, and `agent-host-distributed` services from the development
   checkout with the `distributed` and `runner` profiles, applies
   `testsupport/scenario/docker-compose.scenario.yml`, and runs the same nine
   typed steps as `inproc`. The override uses
@@ -159,20 +159,6 @@ Found while building this scenario; each is a real, current limitation of the
 distributed Task Server / Studio BFF / Runner topology, not a shortcut taken
 by the scenario itself.
 
-- **A CLI-driven run's result SHA never reaches the run row.** The runner
-  completes with the outcome string `"SuccessfulCompletion"`
-  (`ExecutionOutcomeKind.ToString()`), but
-  `TaskServerStore.RequiresResultEnvelope` only recognizes the legacy
-  `"success"`/`"done"`/`"noop"`/`"no-op"` strings. So a real coding run's
-  `result_sha`/`repository_id` stay `null` on the `runs` row, and
-  `POST /api/v1/reviews/subjects` can never reference it (its `RepositoryId`
-  is non-nullable in the request but must equal that `null` column, an
-  impossible match). Step 6 (auto-review) works around this today by
-  completing a *second*, purpose-built coding attempt with the literal
-  outcome `"success"` purely to exercise the review/orchestration wiring; it
-  does not review the same run step 5 produced. After outcome-string
-  reconciliation lands, step 6 should point back at the fixture task's real
-  run.
 - **No dossier / decision-gate concept in this topology.** `docs/concepts/`
   and the fixture's `dossier` section describe "one dossier with a decision
   gate," but that concept exists only in the separate backend monolith
@@ -187,6 +173,11 @@ by the scenario itself.
   driving a real run needs a runner already attached to that specific
   deployment, which a scenario script visiting from outside cannot provision
   without becoming a deployment tool itself.
+- **The Engine post-processing stage is still a decision loop.** It does not
+  execute `post-build-test-gate`; that checkout-bound step still belongs to
+  the local backend pipeline. The Compose scenario proves Runner completion
+  and review without Studio BFF, but cannot prove that gate or physical
+  Windows sleep until the planned host-capable gate migration lands.
 
 ## See also
 

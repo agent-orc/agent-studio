@@ -1769,8 +1769,10 @@ public sealed class TaskServerStoreTests
         Assert.Equal("acknowledged", ack.State);
     }
 
-    [Fact]
-    public async Task Successful_completion_requires_the_matching_durable_envelope()
+    [Theory]
+    [InlineData("success")]
+    [InlineData("SuccessfulCompletion")]
+    public async Task Successful_completion_requires_the_matching_durable_envelope(string outcome)
     {
         using var temp = new TempDirectory();
         var store = Store(temp.Path);
@@ -1782,7 +1784,7 @@ public sealed class TaskServerStoreTests
         var conflict = await Assert.ThrowsAsync<TaskServerConflictException>(() => store.CompleteRunAsync(
             claim.Run!.RunId,
             new CompleteRunRequest(
-                "runner-a", "instance-a", claim.Lease!.LeaseId, claim.Lease.Fence, "success",
+                "runner-a", "instance-a", claim.Lease!.LeaseId, claim.Lease.Fence, outcome,
                 ResultEnvelopeDigest: new string('a', 64),
                 IdempotencyKey: $"completion:{claim.Run.RunId}",
                 Sequence: 2),

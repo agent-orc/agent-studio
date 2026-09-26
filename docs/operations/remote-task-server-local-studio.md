@@ -9,7 +9,11 @@ evidence is in the AGT-2737 task results and the rehearsal Task Server store
 at `/home/agent/rehearsal/agt2737-v2/overlay-store/migration-reports/agt2737-2026-09-26/rehearsal-evidence-2026-09-26.md`
 (SHA-256 `d7055425a25dd5870c9fc6285f7c2c843e309a7f8281525c9b7106a645bc1952`). Both
 Git-only and Git-plus-evidence imports matched their inventories. The
-production cutover has **not** run; the failed release gates below remain
+same-run fake CLI and review scenario passed with Studio BFF stopped on Linux
+in the 2026-09-26 review round; see the task result `compose-full/scenario-compose-full.md`.
+The review-round release matrix and remaining gates are in the signed task
+result `review-fix-report.md`.
+The production cutover has **not** run; the failed release gates below remain
 closed until the scheduled maintenance window. See the
 [single-host operator runbook](setup/single-host-task-server.md).
 
@@ -681,7 +685,7 @@ concept.
 | B3 | Current-workspace migration and evidence | Implemented by AGT-2732: `task.json` with `job.json` fallback; canonical per-project and per-state inventory; archive, events, pointer-only artifacts, Git and authority evidence; counted orphan ledger; Maintenance-only idempotent import; signed reports; mismatch stops; and backup/restore inventory-hash continuity. The Windows operator still performs the frozen rehearsal and production cutover and attaches both reports to D7. | Complete 2026-09-11; operator cutover evidence pending |
 | B4 | Windows fallback and switch tooling | Implemented by AGT-2735 on 2026-09-09: version-matched Windows service for all three components; cross-platform full-backup restore with a case-collision guard; warm standby pull; atomic connector profile switch; scripted reverse-tunnel drill in both directions with a measured sub-15-minute report; Windows CI coverage. The timed real-infrastructure rehearsal remains a B6 operator drill. | Complete 2026-09-09 |
 | B5 | Private Hetzner foundation | Dedicated VM, WireGuard peers, private TLS, dual firewall, systemd packages, off-host backup, monitoring, and proof of no public API listener | 2 to 3 engineering days plus operator access |
-| B6 | Rehearsal and production cutover | Frozen-copy imports and an isolated, signed rehearsal report exist as of 2026-09-26. The isolated rollback was under 15 minutes. The full representative workflow, physical Windows detach, Windows D6 switch, and production cutover remain open; see AGT-2737 results and the single-host operator runbook. | Rehearsal partial; production window pending |
+| B6 | Rehearsal and production cutover | Frozen-copy imports and a signed rehearsal report exist as of 2026-09-26. The isolated rollback was under 15 minutes. A real fake CLI run and same-run review pass with Studio BFF stopped on Linux. Integration, completion, dossier decision, Engine `post-build-test-gate`, physical Windows detach, Windows D6 switch, and production cutover remain open; see AGT-2737 results and the single-host operator runbook. | Rehearsal partial; production window pending |
 
 Expected total: 18 to 30 engineering days plus one to two operator days. The
 largest uncertainty is B1 because current Angular functionality still spans

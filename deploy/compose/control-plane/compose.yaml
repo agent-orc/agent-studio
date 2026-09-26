@@ -102,18 +102,15 @@ services:
       - control-plane
     entrypoint: ["/bin/sh", "/opt/backup/backup-loop.sh"]
     volumes:
-      # The backup command writes its audit record and SQLite journal.
-      - store:/var/lib/agent-orchestrator/store
+      # The serving Task Server creates the snapshot under its write gate.
+      # This service never mounts the live store.
       - backup:/var/lib/agent-orchestrator/backup
       - ${CONTROL_PLANE_OFFHOST_BACKUP_PATH:?set CONTROL_PLANE_OFFHOST_BACKUP_PATH to an off-host mounted destination}:/mnt/offhost-backup
       - ./backup-loop.sh:/opt/backup/backup-loop.sh:ro
     environment:
-      STORE_PATH: /var/lib/agent-orchestrator/store
       BACKUP_PATH: /var/lib/agent-orchestrator/backup
       BACKUP_OFFHOST_PATH: /mnt/offhost-backup
       BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-300}
-      AUTH: bearer
-      STUDIO_AUTH_TOKEN_FILE: /run/secrets/studio_token
     secrets:
       - studio_token
     logging: *bounded-logging

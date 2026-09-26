@@ -3939,7 +3939,8 @@ public sealed partial class TaskServerStore
     }
 
     private static bool RequiresResultEnvelope(string outcome)
-        => outcome.Trim().ToLowerInvariant() is "success" or "done" or "noop" or "no-op";
+        => outcome.Trim().ToLowerInvariant() is "success" or "done" or "noop" or "no-op"
+            or "successfulcompletion";
 
     private static void ValidateImmutableSource(
         string runId,

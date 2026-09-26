@@ -37,7 +37,6 @@ public sealed class ScenarioContext : IDisposable
     private string _studioBffUrl = "";
     private ManagedProcess _server = null!;
     private HttpClient _serverClient = null!;
-    private HttpClient? _reviewSourceClient;
     private HttpClient? _reviewExecutorClient;
     private HttpClient? _engineClient;
     private string _dataDirectory = "";
@@ -205,16 +204,6 @@ public sealed class ScenarioContext : IDisposable
             Assert.Equal(TaskServerPrincipalKinds.Runner, principal.Kind);
             Assert.Equal(CodingRunnerId, principal.RunnerId);
 
-            var reviewSourceCredential = await ReadAsync<IssuedPrincipalCredential>(
-                await _serverClient.PostAsJsonAsync(
-                    "/api/v1/management/principals",
-                    new CreatePrincipalRequest(
-                        "runner:scenario-review-source-runner",
-                        TaskServerPrincipalKinds.Runner,
-                        RunnerId: "scenario-review-source-runner")));
-            _reviewSourceClient = ProtocolClient(_serverUrl, reviewSourceCredential.Credential);
-            _disposables.Add(_reviewSourceClient);
-
             var reviewExecutorCredential = await ReadAsync<IssuedPrincipalCredential>(
                 await _serverClient.PostAsJsonAsync(
                     "/api/v1/management/principals",
@@ -227,7 +216,7 @@ public sealed class ScenarioContext : IDisposable
 
             _engineClient = ProtocolClient(_serverUrl, RequiredEnvironment("SCENARIO_ENGINE_TOKEN"));
             _disposables.Add(_engineClient);
-            return $"bootstrapped coding, review-source, review-executor, and engine principals; Studio BFF is healthy";
+            return $"bootstrapped coding, review-executor, and engine principals; Studio BFF is healthy";
         }
 
         var response = await _serverClient.PostAsJsonAsync(
@@ -326,6 +315,14 @@ public sealed class ScenarioContext : IDisposable
     private async Task<string?> RunCodingAttemptAsync()
     {
         var beforeCommits = await CountCommitsAsync(_bareRepositoryPath);
+        if (IsCompose)
+        {
+            // Keep the Studio process down for the entire runner completion and
+            // review orchestration. Task Server remains the sole authority.
+            await RunDockerComposeAsync("stop", "studio-bff");
+            using var probe = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+            await Assert.ThrowsAnyAsync<Exception>(() => probe.GetAsync(_studioBffUrl + "/healthz"));
+        }
         await File.WriteAllTextAsync(_fakeCliReleaseFile, "continue");
         await WaitForAuditCountAsync(_serverClient, "run.completed", 1, _runner!, TimeSpan.FromSeconds(30));
         await WaitForTaskStateAsync(
@@ -335,6 +332,7 @@ public sealed class ScenarioContext : IDisposable
             $"/api/v1/projects/{_project.ProjectId}/tasks/{_task.TaskKey}/history");
         Assert.NotNull(history);
         _codingRun = Assert.Single(history.Runs);
+        Assert.False(string.IsNullOrWhiteSpace(_codingRun.ResultSha));
         // Since AGT-2890 the runner publishes the Git result and the fenced
         // completion first and uploads the bounded result evidence afterwards,
         // so the artifact can land after the task has already reached
@@ -358,22 +356,15 @@ public sealed class ScenarioContext : IDisposable
         var afterCommits = await CountCommitsAsync(_bareRepositoryPath);
         Assert.True(afterCommits > beforeCommits, "The coding attempt did not push a new commit to the seeded repository.");
 
-        return $"task reached 4-auto-review; {afterCommits - beforeCommits} new commit(s) pushed to run {_codingRun.RunId}";
+        return $"task reached 4-auto-review with Studio disconnected; {afterCommits - beforeCommits} new commit(s) pushed to run {_codingRun.RunId}";
     }
 
     private async Task<string?> AutoReviewAsync()
     {
-        // Known gap found while building this scenario (tracked in
-        // docs/operations/testing/deployment-scenario.md): the runner completes
-        // with outcome "SuccessfulCompletion" (ExecutionOutcomeKind.ToString()),
-        // but TaskServerStore.RequiresResultEnvelope only recognizes the legacy
-        // "success"/"done"/"noop"/"no-op" strings, so a real CLI-driven run's
-        // result SHA is never copied onto the run row and a review subject can't
-        // reference it. Until that's reconciled, this step proves the review and
-        // orchestration wiring against a purpose-built coding attempt (its own
-        // task/runner identity, completed with the literal outcome the store
-        // requires) instead of the fixture task's real run from the previous step.
-        var (reviewTask, reviewRun, reviewResultRef) = await CreateReviewableCodingRunAsync();
+        var reviewTask = _task;
+        var reviewRun = _codingRun;
+        var reviewResultRef = FencedGitRefs.ImmutableResult(
+            reviewRun.RunId, reviewRun.Fence!.Value, reviewRun.ResultSha!);
 
         var plan = new ReviewPlanDto(
             [new ReviewCommandDto("step-completion", "completion", "true", [])],
@@ -384,7 +375,7 @@ public sealed class ScenarioContext : IDisposable
                 reviewTask.TaskId,
                 reviewRun.RunId,
                 reviewRun.RepositoryId!,
-                _bareRepositoryPath,
+                IsCompose ? "/scenario/origin.git" : _bareRepositoryPath,
                 reviewRun.ResultSha!,
                 reviewResultRef,
                 null,
@@ -437,69 +428,38 @@ public sealed class ScenarioContext : IDisposable
 
         await WaitForTaskStateAsync(
             _serverClient, reviewTask.ProjectId, reviewTask.TaskKey, "5-human-review", _runner!, TimeSpan.FromSeconds(20));
-        return $"review/orchestration wiring proof: subject {subject.SubjectId} reported Pass; probe task {reviewTask.TaskKey} reached 5-human-review";
-    }
-
-    private async Task<(TaskDto Task, RunDto Run, string ResultRef)> CreateReviewableCodingRunAsync()
-    {
-        const string runnerId = "scenario-review-source-runner";
-        const string instanceId = "review-source-instance";
-        var reviewSourceClient = _reviewSourceClient ?? _serverClient;
-        await PutAsync(
-            reviewSourceClient,
-            $"/api/v1/runners/{runnerId}",
-            new RegisterRunnerRequest(
-                runnerId, CodingHostId, instanceId, "1.0.0", TaskServerProtocol.Current,
-                [ReviewCapabilities.CodingExecutor]));
-
-        var workspace = await PostAsync<CreateWorkspaceRequest, WorkspaceDto>(
-            "/api/v1/workspaces", new CreateWorkspaceRequest("Review wiring probe"));
-        var project = await PostAsync<CreateProjectRequest, ProjectDto>(
-            "/api/v1/projects", new CreateProjectRequest(workspace.WorkspaceId, "Review Wiring Probe", "RVW"));
-        var task = await PostAsync<CreateTaskRequest, TaskDto>(
-            $"/api/v1/projects/{project.ProjectId}/tasks",
-            new CreateTaskRequest(
-                "Review wiring probe",
-                "Synthetic coding attempt used only to exercise the review/orchestration HTTP contract " +
-                "(see the known gap noted in AutoReviewAsync).",
-                "2-ready"));
-
-        var claimResponse = await reviewSourceClient.PostAsJsonAsync(
-            $"/api/v1/runners/{runnerId}/claims", new ClaimRequest(runnerId, instanceId));
-        var claim = await ReadAsync<ClaimResponse>(claimResponse);
-        Assert.Equal("claimed", claim.Status);
-        var run = claim.Run!;
-        var lease = claim.Lease!;
-
-        var resultSha = Sha256Of("scenario-review-probe-result")[..40];
-        var resultRef = $"refs/heads/agent-studio/results/{run.RunId}/fence-{lease.Fence}/{resultSha}";
-        var envelope = new ImmutableResultEnvelope(
-            "scenario-fixture-repo",
-            run.RunId,
-            Sha256Of("scenario-review-probe-base")[..40],
-            resultSha,
-            resultRef,
-            null,
-            Sha256Of("scenario-review-probe-artifact-manifest"),
-            RepositoryUrl: _bareRepositoryPath);
-        var digest = ResultEnvelopeDigest.Compute(envelope);
-        var handoffResponse = await reviewSourceClient.PutAsJsonAsync(
-            $"/api/v1/runs/{run.RunId}/result-handoff",
-            new ResultHandoffRequest(runnerId, instanceId, lease.LeaseId, lease.Fence, 1, $"handoff:{run.RunId}", digest, envelope));
-        await ReadAsync<ResultHandoffAck>(handoffResponse);
-
-        var completeResponse = await reviewSourceClient.PostAsJsonAsync(
-            $"/api/v1/runs/{run.RunId}/completion",
-            new CompleteRunRequest(
-                runnerId, instanceId, lease.LeaseId, lease.Fence,
-                "success", "scenario review/orchestration wiring probe", digest, $"completion:{run.RunId}", 2));
-        var completedRun = await ReadAsync<RunDto>(completeResponse);
-        return (task, completedRun, resultRef);
+        if (IsCompose)
+        {
+            await RunDockerComposeAsync("start", "studio-bff");
+            var binding = (await RunDockerComposeAsync("port", "studio-bff", "5072")).Trim();
+            _studioBffUrl = $"http://127.0.0.1:{binding[(binding.LastIndexOf(':') + 1)..]}";
+            await WaitForHttpAsync(_studioBffUrl + "/healthz", _server);
+        }
+        return $"subject {subject.SubjectId} for real run {reviewRun.RunId} reported Pass; task {reviewTask.TaskKey} reached 5-human-review while Studio was detached";
     }
 
     private async Task SettleOrchestrationAsync(TaskDto task)
     {
         var engineClient = _engineClient ?? _serverClient;
+        if (IsCompose)
+        {
+            OrchestrationRunDto? completed = null;
+            await WaitForConditionAsync(
+                async () =>
+                {
+                    var runs = await engineClient.GetFromJsonAsync<List<OrchestrationRunDto>>(
+                        $"/api/v1/orchestration/runs?projectId={task.ProjectId}");
+                    completed = runs?.FirstOrDefault(candidate =>
+                        candidate.TaskId == task.TaskId && candidate.Status == "completed");
+                    return completed is not null;
+                },
+                _runner!,
+                TimeSpan.FromSeconds(40),
+                "the real Engine completed the reviewed task while Studio BFF was stopped");
+            Assert.Contains(completed!.StageResults!, result =>
+                result.Stage == OrchestrationStage.PostProcessing);
+            return;
+        }
         OrchestrationRunDto? run = null;
         await WaitForConditionAsync(
             async () =>
@@ -842,6 +802,25 @@ public sealed class ScenarioContext : IDisposable
             "--profile", "runner",
             .. command,
         ];
+
+    private async Task<string> RunDockerComposeAsync(params string[] command)
+    {
+        var start = new System.Diagnostics.ProcessStartInfo("docker")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        foreach (var argument in ComposeArguments(command))
+            start.ArgumentList.Add(argument);
+        using var process = System.Diagnostics.Process.Start(start)!;
+        var output = await process.StandardOutput.ReadToEndAsync();
+        var error = await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        Assert.True(process.ExitCode == 0,
+            $"docker compose {string.Join(' ', command)} exited {process.ExitCode}: {output} {error}");
+        return output;
+    }
 
     private static string RequiredEnvironment(string name)
         => Environment.GetEnvironmentVariable(name) is { Length: > 0 } value
