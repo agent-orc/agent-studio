@@ -71,6 +71,7 @@ compose_json="$(
         --project-directory "$config_root" \
         -f "$repo_root/docker-compose.yml" \
         --profile dev \
+        --profile ops \
         config --format json
 )"
 
@@ -98,10 +99,24 @@ for (const [service, dependency] of [["task-server", "bootstrap"], ["task-server
   if (services[service].depends_on?.[dependency]?.condition !== "service_completed_successfully")
     throw new Error(`${service} must wait for credential bootstrap`);
 }
+for (const [web, bff] of [["web", "studio-bff"], ["web-dev", "studio-bff-dev"]]) {
+  if (services[web].environment?.STUDIO_BFF_UPSTREAM !== `${bff}:5072` ||
+      services[web].depends_on?.[bff]?.condition !== "service_healthy")
+    throw new Error(`${web} must route distributed traffic to a healthy ${bff}`);
+}
+for (const [manager, server] of [["credential-manager", "task-server"], ["credential-manager-dev", "task-server-dev"]]) {
+  if (!services[manager].profiles?.includes(manager.endsWith("-dev") ? "dev" : "ops") ||
+      services[manager].entrypoint?.[1] !== "/opt/compose-rotate-credentials.sh" ||
+      secretMount(manager)?.read_only === true)
+    throw new Error(`${manager} must own a writable secret mount and be opt-in`);
+}
 for (const service of ["task-server", "task-server-dev", "web", "web-dev"]) {
   if (services[service].ports?.[0]?.host_ip !== "127.0.0.1")
     throw new Error(`${service} must bind to loopback by default`);
 }
 ' "$compose_json"
+
+grep -F '@distributed path /api/v1 /api/v1/*' "$repo_root/deploy/compose/Caddyfile" >/dev/null
+grep -F 'reverse_proxy {$STUDIO_BFF_UPSTREAM:studio-bff:5072}' "$repo_root/deploy/compose/Caddyfile" >/dev/null
 
 printf 'Container image user, health, and entrypoint contracts passed.\n'

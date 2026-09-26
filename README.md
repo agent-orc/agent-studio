@@ -41,7 +41,7 @@ docker compose --profile dev up --build --wait task-server-dev orchestrator-engi
 
 Open [http://localhost:4011](http://localhost:4011). This source-built Compose
 path is the verified installation path for this checkout. The one-box stack
-starts the Task Server, Engine, Studio API proxy, web UI, and an agent host.
+starts the Task Server, Engine, Studio BFF, compatibility API, web UI, and an agent host.
 It creates restricted principal credentials in a named volume on first start
 and reuses them on later starts. Coding tasks additionally need provider and
 Git credentials mounted into the agent host.
@@ -51,7 +51,8 @@ To run a published release after its images pass post-release CI, copy
 and run `docker compose up -d --wait`. The default UI listens only on loopback;
 LAN exposure is an explicit `.env` setting. See the
 [Docker operations guide](./docs/operations/setup/docker.md) for updates,
-backups, credential mounts, and the current `/api/v1` route coverage limit.
+backups, product-managed credential rotation, credential mounts, and the current
+route coverage limit beyond `/api/v1`.
 
 ## Testing
 

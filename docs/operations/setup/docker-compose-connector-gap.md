@@ -74,7 +74,7 @@ component is both today.
 
 The operator selected option C for the one-box delivery. The distributed
 Task Server and Engine are the standard Compose deployment, with `/api/v1`
-covered through the Studio API proxy. Connector-equivalent dev-seat route
+covered through the Studio BFF. Connector-equivalent dev-seat route
 coverage remains a documented limitation pending the operations topology work.
 
 ## What AGT-2736 ships under option C

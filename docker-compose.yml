@@ -101,6 +101,7 @@ x-web: &web
     - "${STUDIO_UI_BIND:-127.0.0.1}:${STUDIO_UI_PORT:-4011}:8080"
   environment:
     STUDIO_API_UPSTREAM: orchestrator-api:5031
+    STUDIO_BFF_UPSTREAM: studio-bff:5072
   networks: [control]
   mem_limit: 512m
   cpus: 1
@@ -167,6 +168,19 @@ services:
     <<: *task-server
     image: ghcr.io/agent-orc/agent-task-server:v${AGENT_STUDIO_VERSION:-0.9.1}
 
+  credential-manager:
+    image: ghcr.io/agent-orc/agent-task-server:v${AGENT_STUDIO_VERSION:-0.9.1}
+    profiles: [ops]
+    user: "0:0"
+    entrypoint: ["/bin/sh", "/opt/compose-rotate-credentials.sh"]
+    volumes:
+      - secrets:/run/agent-studio-secrets
+      - ./scripts/compose-rotate-credentials.sh:/opt/compose-rotate-credentials.sh:ro
+    networks: [control]
+    mem_limit: 128m
+    cpus: 0.5
+    logging: *bounded-logs
+
   orchestrator-engine:
     <<: *engine
     image: ghcr.io/agent-orc/agent-orchestrator-engine:v${AGENT_STUDIO_VERSION:-0.9.1}
@@ -190,6 +204,7 @@ services:
     image: ghcr.io/agent-orc/agent-studio-web:v${AGENT_STUDIO_VERSION:-0.9.1}
     depends_on:
       orchestrator-api: {condition: service_healthy}
+      studio-bff: {condition: service_healthy}
 
   agent-host-distributed:
     <<: *runner
@@ -222,6 +237,21 @@ services:
     depends_on:
       bootstrap-dev: {condition: service_completed_successfully}
     profiles: [dev]
+
+  credential-manager-dev:
+    build: {context: ., dockerfile: task-server/Dockerfile, args: {VERSION: "${AGENT_STUDIO_VERSION:-0.0.0-dev}"}}
+    profiles: [dev]
+    user: "0:0"
+    entrypoint: ["/bin/sh", "/opt/compose-rotate-credentials.sh"]
+    environment:
+      TASK_SERVER_URL: http://task-server-dev:5071
+    volumes:
+      - secrets:/run/agent-studio-secrets
+      - ./scripts/compose-rotate-credentials.sh:/opt/compose-rotate-credentials.sh:ro
+    networks: [control]
+    mem_limit: 128m
+    cpus: 0.5
+    logging: *bounded-logs
 
   bootstrap-dev:
     build: {context: ., dockerfile: task-server/Dockerfile, args: {VERSION: "${AGENT_STUDIO_VERSION:-0.0.0-dev}"}}
@@ -280,8 +310,10 @@ services:
     build: {context: ., dockerfile: frontend/Dockerfile, args: {VERSION: "${AGENT_STUDIO_VERSION:-0.0.0-dev}"}}
     environment:
       STUDIO_API_UPSTREAM: orchestrator-api-dev:5031
+      STUDIO_BFF_UPSTREAM: studio-bff-dev:5072
     depends_on:
       orchestrator-api-dev: {condition: service_healthy}
+      studio-bff-dev: {condition: service_healthy}
     profiles: [dev]
 
   agent-host-distributed-dev:
