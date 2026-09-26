@@ -1,6 +1,6 @@
 # Tasks Domain Map
 
-Version: 2026-09-15
+Version: 2026-09-26
 Status: System-of-record map for task storage, lanes, and API mutation changes.
 
 Use this when a change touches job folders, lane states, task metadata,
@@ -1051,6 +1051,41 @@ path.
   `GET /api/admin/git-telemetry` can report p50/p95 and spawns/minute per
   endpoint alongside each repository's index age, with a warning when
   `tasks/grouped` p95 exceeds 1 s or total spawns exceed 20/min.
+
+## Bounded task core read (AGT-2953)
+
+`GET /api/tasks/{jobId}/core?project=PROJ-002` is an additive task-switch
+contract. The existing `GET /api/tasks/{jobId}` remains the full-detail route
+during migration. The `project` handle is required and resolved against the
+registry before a scoped principal can see a core. An unknown project or a
+known, indexed-but-absent task returns `404` with `state=missing`; an identity
+whose index is still hydrating returns `202` with `state=warming`. A known
+record whose sidecar refresh or safety sweep is pending returns `state=stale`.
+Durable deletion tombstones known core aliases immediately, so a deleted task
+does not reappear or wait for hydration to return `missing`.
+
+`TaskIndexCache.GetCore` is keyed and cache-only. It never calls `EnsureFresh`,
+`FindJob`, Git, token aggregation, review readers, or a filesystem search.
+The index producer reads `status.md`, `prompt.md`, and `logs/timeline.jsonl`
+outside the request, publishing UTF-8-safe heads with original lengths and
+SHA-256 hashes. Status text is capped at 1 KiB, prompt text at 2 KiB, and the
+last five timeline events at 2 KiB total. The whole JSON body is capped at
+16 KiB. Missing sidecars are explicit. The prompt exposes its full-document
+link, and the timeline exposes a sequence cursor for older events. No model
+summarizes these fields. The route reads runtime and lease facts from memory,
+and its ETag combines per-task core and runtime versions without Git state.
+API field writes and lane moves publish the changed core after the durable
+write. Dependency-affecting writes also rebuild the core reference graph from
+resident task facts and republish dependent blocker fields and core versions
+before acknowledgment. This includes release, reference edits, moves and
+deletion; an unrelated dirty task does not force a core request to scan. The
+sidecar watcher refreshes changed heads outside HTTP requests.
+
+This contract is the D1 and D3 recommendation in
+[the task-switch performance dossier](../../task-switch-performance/index.html).
+Its legacy-handler 486 ms p50 and 2,183 ms p95 are the measured comparison
+baseline. The proposed core p95 of at most 30 ms is an acceptance target,
+not an observed saving or a frontend saving.
 
 ## Conditional board reads (AGT-2703)
 
