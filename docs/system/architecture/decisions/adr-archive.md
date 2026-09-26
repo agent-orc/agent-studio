@@ -1788,3 +1788,53 @@ The standalone Linux Runner owns one clean checkout per project and executor. It
 **Implementation pointers.** Pure decision layer and accepted-ref rules: [`WikiPublicationPolicy.cs`](../../../../backend/Features/Docs/Publication/WikiPublicationPolicy.cs). Coordination, promotion, rollback, retention, and diagnostics: [`WikiPublicationService.cs`](../../../../backend/Features/Docs/Publication/WikiPublicationService.cs). Records, typed failures, and clamped options: [`WikiPublishedRevision.cs`](../../../../backend/Features/Docs/Publication/WikiPublishedRevision.cs). Scheduled trigger: [`WikiPublicationSyncService.cs`](../../../../backend/Features/Docs/Publication/WikiPublicationSyncService.cs). Operator endpoints: [`WikiPublicationEndpoints.cs`](../../../../backend/Features/Docs/Publication/WikiPublicationEndpoints.cs). Staged materialization and SHA-pinned snapshots: `MaterializeWikiSnapshot` and `GetWikiSnapshotForShaCached` in [`GitService.cs`](../../../../backend/Features/Git/GitService.cs). Read-side pinning: [`ProjectWikiSourceResolver.cs`](../../../../backend/Features/Docs/ProjectWikiSourceResolver.cs). Operational contract: [`hosted-wiki-publication.md`](../../../operations/setup/hosted-wiki-publication.md). Read model: [`wiki-tree.md`](../../contracts/wiki-tree.md).
 
 **Status.** Accepted.
+
+---
+
+## ADR-0075 - Operations Server brokers host execution beside Task Server authority (2026-09-25)
+
+**Status.** Accepted architecture from AGT-W49 D1, D2 and D4. Implementation is
+staged in AGT-2907. Deployment promotion remains gated on route and security
+parity. The 2026-09-26 operator instruction resolves delivery ownership below.
+
+**Decision.** Add Operations Server as a fourth independently deployable runtime
+role beside Studio, Task Server, and the execution plane. Outbound Operations
+Agents execute declared capabilities. Operations Server accepts audience-bound
+service principals, never browser cookies, sessions, or credentialed CORS.
+Each frontend backend has its own principal. The Connector retains its exact
+loopback Host, Origin, CSRF, allowlist and credential-injection boundary. A LAN
+browser uses a separate HTTPS edge, with independent Task and Operations
+credentials held on that edge.
+
+Task Server retains tasks, runs, reviews, workspace identity, orchestration
+sessions, context, budgets, accepted responses, decisions, leases, fences and
+lane transitions. Operations Server stores bounded commands, attempts and
+operational evidence only. A Task Server permit binds executable task-linked
+work to a current subject and fence. Operations credentials cannot issue such a
+permit or mutate task state. No operation result causes a task transition by
+itself. Standalone host maintenance requires an explicit separate scope.
+
+One-box Docker is the selected standard after full parity: only the HTTPS edge
+is published, host-native operations use an enrolled agent, and no Docker socket
+is mounted. Workstation and distributed WireGuard deployments use the same
+contracts with different placement and listeners. Public demo has no executable
+Operations credential. No service failure permits fallback to another task
+authority, and no partially sent mutation is retried against another upstream.
+
+**Consequences.** This amends ADR-0063's three-component target. The original
+Task Server route migration remains valid. Native handlers move to agents;
+Studio and BFF remain browser edges. Agent loss expires authority and retains
+uncertain evidence. Mutating work cannot be reassigned without fence advancement
+and positive no-overlap proof. Closing Studio does not own any service lifetime.
+
+**D3 staged delivery.** The operator resolved the card ownership on 2026-09-26:
+AGT-2736 delivers bounded Option C without scope extension. AGT-2907 owns D3's
+Operations Server expansion above that compatible transitional baseline. Its
+first accepted stage is the Task Server contract and outbound Operations Agent
+channel. Full catalogue, Connector/BFF adapter migration with review permits,
+and deployment parity are typed follow-up stages. D1, D2 and D4 remain selected;
+one-box production parity cannot be claimed from the foundation stage.
+
+**Contract and delivery evidence.** See
+[Operations backchannel contract](../../contracts/operations-backchannel.md) and
+[the source dossier](../../../operations/operations-server-backchannel/index.html).
