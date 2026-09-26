@@ -5,6 +5,7 @@
 **/*.env
 **/*.token
 **/.git-credentials
+**/git-credentials
 !**/*.env.template
 !**/*.env.example
 !**/*.token.template
@@ -24,5 +25,7 @@ artifacts
 docs/**
 !docs/app/
 !docs/app/**
+!docs/studio-route-ownership/
+!docs/studio-route-ownership/routes.json
 **/*.log
 **/cli-output.log

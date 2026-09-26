@@ -57,6 +57,35 @@ public sealed class EngineContractTests
     }
 
     [Fact]
+    public void Engine_reads_owner_only_credential_file_and_rejects_exposed_or_ambiguous_input()
+    {
+        using var temp = new TempDirectory();
+        var file = Path.Combine(temp.Path, "engine.token");
+        File.WriteAllText(file, "file-secret\n");
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(file, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        var values = new Dictionary<string, string?>
+        {
+            ["SERVER_URL"] = "http://task-server:5071",
+            ["CLIENT_ID"] = "engine-a",
+            ["ENGINE_ALLOW_INSECURE_HTTP"] = "1",
+            ["CLIENT_CREDENTIAL_FILE"] = file,
+        };
+
+        Assert.Equal("file-secret", EngineOptions.Parse(key => values.GetValueOrDefault(key)).ClientCredential);
+        values["CLIENT_CREDENTIAL"] = "other-secret";
+        Assert.Contains("only one", Assert.Throws<ArgumentException>(
+            () => EngineOptions.Parse(key => values.GetValueOrDefault(key))).Message);
+        values.Remove("CLIENT_CREDENTIAL");
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(file, UnixFileMode.UserRead | UnixFileMode.GroupRead);
+            Assert.Contains("owner-readable", Assert.Throws<ArgumentException>(
+                () => EngineOptions.Parse(key => values.GetValueOrDefault(key))).Message);
+        }
+    }
+
+    [Fact]
     public void Insecure_http_requires_explicit_opt_in_and_never_admits_another_scheme()
     {
         var values = new Dictionary<string, string?>
@@ -360,7 +389,9 @@ public sealed class EngineContractTests
             Assert.DoesNotContain("TaskScanner", text);
             Assert.DoesNotContain("TaskServerStore", text);
             Assert.DoesNotContain("Microsoft.Data.Sqlite", text);
-            Assert.DoesNotContain("File.", text);
+            // EngineOptions reads one owner-only principal credential file at startup.
+            if (Path.GetFileName(source) != "EngineOptions.cs")
+                Assert.DoesNotContain("File.", text);
             Assert.DoesNotContain("Directory.", text);
         }
     }
