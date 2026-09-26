@@ -20,6 +20,9 @@ public static class ReviewReportDiagnosisPolicy
             && command.WorkspaceRole == "candidate"
             && command.ExitCode != 0
             && !ReviewCommandKinds.IsAgent(command.ExecutionKind)).ToArray();
+        string? unproven = null;
+        string? nonProduct = null;
+        var confirmedProduct = false;
         foreach (var command in failed)
         {
             var clean = request.Commands.FirstOrDefault(repeat => repeat.StepId == command.StepId
@@ -27,17 +30,32 @@ public static class ReviewReportDiagnosisPolicy
             if (command.Diagnosis is null
                 || command.BaselineExitCode is null
                 || clean is null)
-                return request with { Outcome = "ReviewInfra", FailureClassification = "DiagnosisMissing" };
+            {
+                unproven ??= "DiagnosisMissing";
+                continue;
+            }
             if (command.Diagnosis.ChargesCard
                 && (command.BaselineExitCode != 0 || clean.ExitCode == 0))
-                return request with { Outcome = "ReviewInfra", FailureClassification = "DiagnosisEvidenceInvalid" };
-            if (!command.Diagnosis.ChargesCard)
-                return request with
-                {
-                    Outcome = "ReviewInfra",
-                    FailureClassification = command.Diagnosis.Classification,
-                };
+            {
+                unproven ??= "DiagnosisEvidenceInvalid";
+                continue;
+            }
+            if (command.Diagnosis.ChargesCard)
+                confirmedProduct = true;
+            else
+                nonProduct ??= command.Diagnosis.Classification;
         }
+        // Every failed command must be diagnosed before the report may charge a card.
+        if (unproven is not null)
+            return request with { Outcome = "ReviewInfra", FailureClassification = unproven };
+        if (confirmedProduct)
+            return request with
+            {
+                Outcome = "ProductFailure",
+                FailureClassification = DeliveryFailureDiagnosis.Product,
+            };
+        if (nonProduct is not null)
+            return request with { Outcome = "ReviewInfra", FailureClassification = nonProduct };
         if (string.Equals(request.Outcome, "ProductFailure", StringComparison.OrdinalIgnoreCase)
             && failed.Length == 0
             && ReviewGradingPolicy.Grade(verdicts

@@ -1,6 +1,6 @@
 # Tasks Domain Map
 
-Version: 2026-09-15
+Version: 2026-09-26
 Status: System-of-record map for task storage, lanes, and API mutation changes.
 
 Use this when a change touches job folders, lane states, task metadata,
@@ -91,6 +91,22 @@ or commit attribution.
 - [docs/operations/setup/task-server.md#legacy-single-writer-migration](../../operations/setup/task-server.md#legacy-single-writer-migration)
   is the operator sequence for inventorying, freezing, importing, proving, and
   cutting over a legacy workspace.
+
+## Task Server failure fingerprint API
+
+The Task Server owns append-only fingerprint observations. All three routes use
+Bearer principal authentication on `/api/v1`:
+
+| Route | Scope | Request and response |
+|---|---|---|
+| `GET /api/v1/failure-fingerprints` | `tasks:read` | Optional `fingerprint` exact-match string and `sinceUtc` UTC timestamp query parameters. Returns an array of `FailureFingerprintHistoryDto` summaries. Gate and review reporters use `sinceUtc` for the previous 24 hours. |
+| `POST /api/v1/failure-fingerprints` | Any of `reviews:write`, `runs:write`, or `tasks:write` | JSON `RecordFailureFingerprintRequest` with nonempty `fingerprint`, `cardKey`, `executor`, `source`, and idempotent `reportKey`. Returns `201` with the updated `FailureFingerprintHistoryDto`. Reusing a report key with different evidence is rejected. |
+| `GET /api/v1/management/failure-fingerprints` | `management` | The same optional query parameters and summary array as the reporter read route. This is the management read surface; there is no UI. |
+
+Each summary has `fingerprint`, `firstSeen`, `lastSeen`, `count`, distinct
+`executors`, and distinct `cardKeys`. A `sinceUtc` filter applies to events
+before aggregation, so all summary fields describe that window. The POST
+source identifies the reporter, currently `gate` or `review`.
 
 ## Result history
 

@@ -114,6 +114,54 @@ public sealed class DeliveryFailureDiagnosisTests
         Assert.Null(report.FailureClassification);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Mixed_deterministic_failures_charge_when_any_is_confirmed_product(bool productFirst)
+    {
+        var product = FailedCommand("product", DeliveryFailureDiagnosis.Product, true);
+        var environment = FailedCommand("environment", DeliveryFailureDiagnosis.Environment, false);
+        var ordered = productFirst ? new[] { product, environment } : [environment, product];
+        var report = EmptyReport("ReviewInfra") with
+        {
+            FailureClassification = DeliveryFailureDiagnosis.Environment,
+            Commands = ordered.SelectMany(command => new[]
+            {
+                command,
+                command with { Phase = "clean-repeat", WorkspaceRole = "clean-repeat",
+                    ExitCode = command.Diagnosis!.ChargesCard ? 1 : 0 },
+            }).ToArray(),
+        };
+
+        var normalized = ReviewReportDiagnosisPolicy.Normalize(report, new ReviewPlanDto([], []));
+
+        Assert.Equal("ProductFailure", normalized.Outcome);
+        Assert.Equal(DeliveryFailureDiagnosis.Product, normalized.FailureClassification);
+    }
+
+    [Fact]
+    public void Mixed_failure_with_missing_diagnosis_cannot_charge()
+    {
+        var product = FailedCommand("product", DeliveryFailureDiagnosis.Product, true);
+        var missing = FailedCommand("missing", DeliveryFailureDiagnosis.Environment, false)
+            with { Diagnosis = null };
+        var report = EmptyReport("ProductFailure") with
+        {
+            Commands =
+            [
+                product,
+                product with { Phase = "clean-repeat", WorkspaceRole = "clean-repeat" },
+                missing,
+                missing with { Phase = "clean-repeat", WorkspaceRole = "clean-repeat" },
+            ],
+        };
+
+        var normalized = ReviewReportDiagnosisPolicy.Normalize(report, new ReviewPlanDto([], []));
+
+        Assert.Equal("ReviewInfra", normalized.Outcome);
+        Assert.Equal("DiagnosisMissing", normalized.FailureClassification);
+    }
+
     [Fact]
     public void Semantic_block_without_diff_evidence_cannot_charge_as_product_failure()
     {
@@ -144,4 +192,12 @@ public sealed class DeliveryFailureDiagnosisTests
             new ReviewEnvironmentDto("host", "executor", "instance", "Linux", "x64", "10",
                 new Dictionary<string, string>(), new Dictionary<string, string>()),
             [], [], []);
+
+    private static ReviewCommandEvidenceDto FailedCommand(
+        string step, string classification, bool chargesCard)
+        => new(step, "build-tests", "sh", [], "sha", "sha", "tree",
+            DateTime.UtcNow, DateTime.UtcNow, 1, null, "stdout", "stderr",
+            BaselineExitCode: 0,
+            Diagnosis: new DeliveryFailureDiagnosisResult(classification, 1,
+                [chargesCard ? "confirmed regression" : "environment fault"]));
 }
