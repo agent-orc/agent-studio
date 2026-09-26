@@ -46,6 +46,9 @@ capabilities. Admission requires a free gate slot. The Engine switch
 `REMOTE_POST_BUILD_TEST_GATE_ENABLED=0` keeps the backend gate active by default;
 the operator enables it only for a bounded canary. An eligible replacement
 Agent Host is the only retry target. A spent budget becomes `GateInfra`.
+Deploy the updated Review Executor with the backend before issuing new review
+plans: verify commands now carry a typed working subdirectory, which older
+executors would ignore.
 
 The public `/api/v1/gates` Task API has these operations:
 

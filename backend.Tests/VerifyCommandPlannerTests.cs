@@ -392,6 +392,8 @@ public sealed class VerifyCommandPlannerTests : IDisposable
         var lint = Assert.Single(plan.Commands.Where(command => command.Aspect == "lint"));
         Assert.Equal(ReviewBaselineModes.ExitStatus, lint.BaselineMode);
         Assert.Contains("npm run lint", string.Join(' ', lint.Arguments), StringComparison.Ordinal);
+        Assert.Equal("frontend", lint.WorkingSubdir);
+        Assert.DoesNotContain("cd --", string.Join(' ', lint.Arguments), StringComparison.Ordinal);
         Assert.All(
             plan.Commands.Where(command => command.Aspect == "build-tests"
                 && string.Join(' ', command.Arguments).Contains("test", StringComparison.Ordinal)),
