@@ -418,7 +418,10 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   operator while retaining deferred obligations. The action receipt records
   the previous and selected model route, policy version, reason and pin state;
   recovery lowers thinking only when the model routing policy floor permits it
-  and neither route field is explicitly pinned. The rail caps its interval at
+  and neither route field is explicitly pinned. The recovery service persists
+  that route and receipt before promoting the card to Ready, so the initial
+  Ready claim uses the recorded recovery route. Restart receipt repair never
+  changes a Ready card's route. The rail caps its interval at
   five minutes and its status endpoint reports
   `integration-bounce-worker-unavailable` when the pass is overdue.
   `GET /api/pipeline/integration-bounce/metrics` reports durable eligible,
