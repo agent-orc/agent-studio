@@ -81,7 +81,11 @@ internal static class TaskEndpointHelpers
         MoveJobStatus.Success => Results.Ok(),
         MoveJobStatus.NotFound => Results.NotFound(),
         MoveJobStatus.TargetFolderExists => Results.Conflict(new { error = outcome.Message }),
-        MoveJobStatus.IntegrationFailed => Results.Conflict(new { error = outcome.Message }),
+        MoveJobStatus.IntegrationFailed => Results.Conflict(new
+        {
+            error = outcome.Message,
+            code = "integration-dead-end",
+        }),
         MoveJobStatus.PendingIntentSupersedeFailed => Results.Json(
             new
             {

@@ -71,6 +71,53 @@ public sealed class BuildTestGatePreparationBindingTests : IDisposable
     }
 
     [Fact]
+    public async Task Cache_failure_quarantines_entries_and_the_gate_retries_once()
+    {
+        Assert.Equal(BuildTestGateVerdict.Ok, (await RunGateAsync()).Verdict);
+        Write(".agent-studio/prepare", """
+            #!/bin/sh
+            set -eu
+            if [ ! -f cache-retry-attempted ]; then
+              touch cache-retry-attempted
+              printf 'EINTEGRITY cached package mismatch\n' >&2
+              exit 1
+            fi
+            mkdir -p "$NUGET_PACKAGES/xunit.analyzers/1.4.0"
+            printf nupkg > "$NUGET_PACKAGES/xunit.analyzers/1.4.0/xunit.analyzers.nupkg"
+            printf metadata > "$NUGET_PACKAGES/xunit.analyzers/1.4.0/.nupkg.metadata"
+            mkdir -p "$NPM_CONFIG_CACHE/_cacache"
+            printf cache > "$NPM_CONFIG_CACHE/_cacache/marker"
+            """);
+
+        var result = await RunGateAsync();
+
+        Assert.Equal(BuildTestGateVerdict.Ok, result.Verdict);
+        Assert.Equal(BuildTestGateFailureKind.None, result.FailureKind);
+        Assert.True(result.PreparationCacheRetryPerformed);
+        Assert.Contains("integration gate retried once", result.Reason);
+        Assert.All(result.PreparationManifest!.Caches, cache => Assert.Equal("published", cache.State));
+    }
+
+    [Fact]
+    public async Task Persistent_cache_failure_is_environment_and_spends_only_one_retry()
+    {
+        Write(".agent-studio/prepare", """
+            #!/bin/sh
+            set -eu
+            printf 'attempt\n' >> cache-attempts.txt
+            printf 'EINTEGRITY cached package mismatch\n' >&2
+            exit 1
+            """);
+
+        var result = await RunGateAsync();
+
+        Assert.Equal(BuildTestGateVerdict.Fail, result.Verdict);
+        Assert.Equal(BuildTestGateFailureKind.Environment, result.FailureKind);
+        Assert.True(result.PreparationCacheRetryPerformed);
+        Assert.Equal(2, File.ReadAllLines(Path.Combine(Repository, "cache-attempts.txt")).Length);
+    }
+
+    [Fact]
     public async Task Torn_nuget_run_failure_is_environmental_and_evicts_the_published_block()
     {
         var seeded = await RunGateAsync();

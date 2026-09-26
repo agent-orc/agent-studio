@@ -210,11 +210,8 @@ export class TriageController {
     // pager snapshot (the lane iteration the user opened detail in)
     // and the prefetch cache, so the new panel paints without a
     // roundtrip.
-    let advanced = false;
-    if (this.jobSelection.advanceAfterMutation(info.taskKey)) {
-      advanced = true;
-    } else if (this.advanceToNextInLane(lane, info.taskKey, peers)) {
-      advanced = true;
+    if (!this.jobSelection.advanceAfterMutation(info.taskKey)) {
+      this.advanceToNextInLane(lane, info.taskKey, peers);
     }
 
     let persistResolve!: () => void;
@@ -255,8 +252,16 @@ export class TriageController {
         // Optimistic navigation must roll back too: the user clicked
         // Accept on `info`, the move failed, the only sensible landing
         // spot is the job they tried to act on.
-        if (advanced) this.jobSelection.openDetail(info);
+        this.jobSelection.openDetail(info);
         this.clearActing();
+        if (ev.targetState === '6-completed'
+            && err?.status === 409
+            && (err?.error?.code === 'integration-dead-end'
+              || (typeof err?.error?.error === 'string'
+                && /integrat|delivery|containment/i.test(err.error.error)))) {
+          this.jobService.refresh(true);
+          return;
+        }
         this.errorDialog.show(err, {
           title: 'Failed to move task',
           fallbackMessage: 'Failed to move task',

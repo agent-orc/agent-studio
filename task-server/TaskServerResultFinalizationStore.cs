@@ -25,12 +25,8 @@ public sealed partial class TaskServerStore
         {
             var lease = await ReadLeaseAsync(connection, transaction, runId, ct)
                         ?? throw new KeyNotFoundException("Run lease was not found.");
-            ValidateLeaseReference(
-                lease,
-                request.RunnerId,
-                request.InstanceId,
-                request.LeaseId,
-                request.Fence);
+            if (lease.Fence != request.Fence)
+                throw new TaskServerConflictException("stale-fence", "Result-finalization fence does not match the run authority.");
             await EnsureOutboxLeaseCurrentAsync(
                 connection,
                 transaction,
@@ -38,7 +34,8 @@ public sealed partial class TaskServerStore
                 request.RunnerId,
                 request.InstanceId,
                 request.LeaseId,
-                ct);
+                ct,
+                allowCompleted: true);
 
             var existing = await ReadResultFinalizationAsync(
                 connection,

@@ -2002,6 +2002,7 @@ export interface ProjectSnapshot {
   settings: {
     autoCommit: boolean;
     crashRecoveryEnabled: boolean;
+    automaticFailureContinuationsEnabled?: boolean;
     autoPushStrategy: 'never' | 'on-completed' | 'always-immediate';
     runnerMode: string | null;
     orchestratorModel: string | null;

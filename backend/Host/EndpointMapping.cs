@@ -39,6 +39,7 @@ public static class EndpointMapping
         tasks.MapTaskDeliveryClaimEndpoint();
         tasks.MapTaskIntegrationRecoveryEndpoints();
         tasks.MapTaskIntegrationRetryEndpoints();
+        tasks.MapTaskFailureContinuationEndpoints();
 
         app.MapEpicEndpoints();
         app.MapCompletedLaneAuditEndpoints();

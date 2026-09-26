@@ -762,6 +762,8 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         Assert.Contains("conflict.txt", status.Detail);
         Assert.Equal(AcceptedIntegrationFailureCodes.MergeConflict, status.Failure?.Code);
         Assert.True(status.Failure?.RebaseRecoveryAvailable);
+        Assert.Equal(PipelineCatalogue.MergeIntoDevelopStepId, status.Failure?.Stage);
+        Assert.Contains("conflict.txt", status.Failure?.EvidenceExcerpt);
     }
 
     [Fact]
@@ -826,6 +828,8 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
             prov: Prov(branch: "task/gate-environment"));
 
         log.EnsureRun(job.FolderPath, PipelineCatalogue.Standard, project, job.Id);
+        File.WriteAllText(Path.Combine(job.FolderPath, "gate-output.txt"),
+            "Foo.Bar failed: expected 2, got 1");
         log.RecordStep(job.FolderPath, new PipelineStepExecution
         {
             StepId = PipelineCatalogue.MergeIntoDevelopStepId,
@@ -836,6 +840,7 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
                 + "(testCaseInsensitiveFS). develop was rolled back and nothing was pushed; "
                 + "gate environment: the build/test gate failed before verification could run and will be retried.",
             FailureCode = AcceptedIntegrationFailureCodes.GateEnvironmentFailure,
+            EvidenceRef = "gate-output.txt",
         });
 
         var status = svc.BuildLookup(new[] { job })[job.TaskKey];
@@ -844,6 +849,8 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         Assert.StartsWith("gate environment:", status.Detail);
         Assert.Equal(AcceptedIntegrationFailureCodes.GateEnvironmentFailure, status.Failure?.Code);
         Assert.False(status.Failure?.RebaseRecoveryAvailable);
+        Assert.Equal(PipelineCatalogue.MergeIntoDevelopStepId, status.Failure?.Stage);
+        Assert.Contains("Foo.Bar failed", status.Failure?.EvidenceExcerpt);
     }
 
     [Fact]
@@ -1009,6 +1016,29 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         Assert.Equal(IntegrationStatuses.NoBranch, status.Status);
         Assert.Null(status.DeliveryRef);
         Assert.Null(status.Sha);
+    }
+
+    [Fact]
+    public void BuildLookup_UnreachableIntegrationBranch_MarksPendingAsUnanswered()
+    {
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q -b task/unreachable");
+        File.WriteAllText(Path.Combine(repo, "work.txt"), "delivery");
+        Commit(repo, "feat: delivery");
+        var sha = RunGit(repo, "rev-parse HEAD").Out.Trim();
+        RunGit(repo, "checkout -q --detach main");
+        RunGit(repo, "branch -D develop");
+        RunGit(repo, "branch -D main");
+
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job("unreachable", "AGT-2909", project, repo, log,
+            commits: [Commit(sha)]);
+
+        var status = svc.BuildLookup([job])[job.TaskKey];
+
+        Assert.Equal(IntegrationStatuses.Pending, status.Status);
+        Assert.True(status.ReachUnavailable);
+        Assert.Contains("Re-check", status.Detail);
     }
 
     /// <summary>

@@ -243,6 +243,7 @@ steer the pipeline in this policy version.
   pipeline history. `operatorOverride: true` is the explicit,
   target-Completed-only exception; no-branch task metadata is exempt without an
   override.
+
   `DeliveryRefResolver` chooses the immutable result ref first, then an
   attributed commit branch, then `runner/<runner>/<task-key>`, with
   `task/<slug>` only as the legacy local fallback. Remote delivery is fetched
@@ -538,6 +539,53 @@ steer the pipeline in this policy version.
 - `frontend/src/app/features/task-pipeline/` and the task-detail Overview:
   pipeline presentation.
 
+### Failure continuation on the same card
+
+`POST /api/tasks/{jobId}/failure/continue` reads the current integration
+projection, review subject, and latest failed pipeline step. It builds an
+`extend` follow-up on the existing card, with the failed stage, reason, delivery
+ref and SHA, integration branch tip, the three conflict stages and files when
+recorded, and the step's verdict summary. It passes no model, CLI, or thinking
+override, so the card's pins remain authoritative. The normal continuation
+admission queues a review-lane card in Ready, and the task timeline receives an
+`integration_recovery_queued` event with the source, failed stage, and evidence
+reference. The prompt is retained as `prompt-N.md` in the card history and asks
+the new delivery report to cite the failure evidence it resolved.
+An integrated delivery is refused before pipeline history is considered.
+For a pending delivery, only a step completed after the current review subject
+may supply failure context; an older failed step cannot revive a prior delivery.
+
+`IntegrationContinuationPrompt.Build` is the shared prompt text for this
+operator action, the automatic remote conflict or attribution agent round, the
+existing operator rebase recovery, the council review finding round, and the
+solution-quality review concern reissue. The mechanical gate-environment retry
+first reuses the unchanged delivery and its passed review. When that retry
+budget parks the delivery, it uses the same builder to queue one automatic
+agent continuation for that delivery; a later repeat of the same delivery parks
+with the card action. A new delivery receives its own one-round budget. The
+existing automatic budgets remain in their respective
+policies (`IntegrationRecoveryBudget`, solution-quality reissue policy, and
+`GateEnvironmentRetryPolicy`), with `GateEnvironmentContinuationPolicy` limiting
+the parked gate continuation to one. The council review finding round is capped
+at one automatic reissue before it parks for operator review.
+
+`ProjectSettings.AutomaticFailureContinuationsEnabled` controls automatic
+integration and review continuations and the automatic gate-environment retry
+sweep for each project. The Settings page exposes it; the operator action on a
+parked card remains available when it is off. Existing projects default to on,
+and each automatic mechanism still applies its own durable round budget.
+
+The task-detail delivery panel presents the exact failed stage and recorded
+files or bounded gate evidence excerpt, plus the continuation as its primary
+action. A containment answer of
+`unknown`, or an integration projection with `reachUnavailable=true`, presents
+a re-check action. The projection keeps `pending` for wire compatibility but
+marks the failed Git reach explicitly; the completion contract interprets it
+as unknown, so acceptance does not claim the delivery is absent. Human
+acceptance still only moves an already integrated card; a 409 for an
+unintegrated delivery returns to this panel instead of opening the generic
+move-error dialog.
+
 ## Invariants
 
 - Pipeline settings are resolved from the card before enablement, ordering,
@@ -638,13 +686,17 @@ steer the pipeline in this policy version.
   restore never wrote to (NETSDK1064, TE-52). The folder is released when the
   gate finishes or the run's slot is freed; an unreleased folder is reclaimed by
   age after 24 hours.
-- A published preparation block is validated before the gate copies it into its
-  private run directory. A NuGet block is reusable only when every
-  `<package>/<version>` directory contains NuGet's `.nupkg.metadata` extraction
-  marker. A missing marker, missing content directory, or empty content tree is
-  logged with the block key, atomically evicted, and handled as a cache miss so
-  preparation restores a fresh block. A successful prepare that leaves a block
-  empty records that block as `unused` and does not publish it.
+- Empty preparation blocks remain misses and are never published. Lookup and
+  publication share one validity rule for non-empty entries: manifest and
+  content exist, identity matches, recorded size equals content size, and NuGet
+  packages have extraction metadata for every package version. A successful
+  preparation records `published` only after the entry is installed; lock timeout
+  and publication validation failures retain distinct states. Lookup atomically
+  quarantines an incomplete entry under a per-entry lock, logs
+  `evicted-incomplete`, and continues as a miss. A cache-class preparation failure
+  stays `Environment` and receives one clean integration-gate retry; the receipt
+  and card timeline say what happened. Three consecutive successful runs with an
+  unused binding add a definition warning to the project's Execution status.
 - Immutable Remote Review plans carry that same preparation command, lockfile
   scopes, and preserve globs to the Review Executor. Preparation runs before
   verification in both the candidate and any materialized baseline workspace.
@@ -1228,7 +1280,7 @@ operator changes cause the step to fail before its writer runs.
   intent, supersedes the current delivery generation, moves the card to the
   front of Ready, and writes `Automatically started a new agent round to
   preserve unambiguous delivery SHA attribution.` to the timeline. This loop is
-  limited to two automatic rounds per fenced delivery chain. Re-reviewing one
+  limited to one automatic round per fenced delivery chain. Re-reviewing one
   delivery shares the budget across review epochs; a newly published delivery
   starts a fresh budget. Repetition reaches Human Review with the failed step
   and conflicted files visible. Every
@@ -1329,9 +1381,9 @@ broken. An operator had to requeue every one by hand.
   own `requeued-infrastructure` timeline receipts so the rail and the card
   projection agree on the retry number.
 - **Integration recovery round.** `RemoteIntegrationContinuationPolicy.Decide`
-  (`backend/Features/Pipeline/IntegrationAgentRoundService.cs`) opens at most two
-  automatic steer rounds per fenced delivery chain when the merge-first
-  integrator returns `AgentRoundRequired`, then leaves a repeat for Human Review.
+  (`backend/Features/Pipeline/IntegrationAgentRoundService.cs`) opens at most one
+  automatic steer round per fenced delivery chain when the merge-first
+  integrator returns `AgentRoundRequired` or `Conflict`, then leaves a repeat for Human Review.
   The round saves a `steer` pending intent, retains the ambiguous delivery as
   superseded history, queues the card at the front of Ready, and states itself as
   `integration_recovery_queued` with `automatic=true` and the persisted
