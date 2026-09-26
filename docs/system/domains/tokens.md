@@ -44,7 +44,7 @@ The canonical stored dimensions always mean:
 | CLI/provider frame | Raw semantics | Boundary mapping | Context used |
 |---|---|---|---|
 | Codex / OpenAI `turn.completed.usage` | `input_tokens` includes `cached_input_tokens`; cached is a subset. | `input = max(0, input_tokens - cached_input_tokens)`, `cacheRead = cached_input_tokens`, `inputIncludesCached = true`. | Raw `input_tokens`, equivalently normalized `input + cacheRead`. |
-| Claude `result.usage` | `input_tokens` excludes `cache_read_input_tokens`; the fields are separate. | Values pass through unchanged with `inputIncludesCached = false`. | `input_tokens + cache_read_input_tokens`. |
+| Claude `result.usage` plus `modelUsage` | `input_tokens` excludes `cache_read_input_tokens`; the fields are separate. `modelUsage` identifies the model or models that incurred them. | Values pass through unchanged with `inputIncludesCached = false`; one receipt is emitted per `modelUsage` entry and retains the card's pinned model separately. | `input_tokens + cache_read_input_tokens`. |
 | Gemini CLI `result.stats` | Current `StreamStats` reports `input_tokens` plus its explicit breakdown `cached` and `input` (uncached), with `output_tokens`, totals, and per-model rows. | Studio's deprecated Gemini adapter currently renders these stats into the completion message but has no registered `ICliUsageParser`, so it does not persist or price a canonical usage record. `GeminiEventAdapterTests.ResultSuccess_EmitsTurnCompleted_WithUsageStats` pins the emitted shape, including both `cached` and uncached `input`. | Not recorded until a canonical Gemini usage parser is introduced. |
 
 The arithmetic lives in
@@ -123,6 +123,11 @@ receipt writer at remote completion:
   preserving input, output, cache-read, and cache-creation categories. Attempt-
   scoped participant ids make completion replay idempotent and prevent a later
   continuation from counting an earlier attempt twice.
+- The observed provider model is authoritative for each receipt and for
+  pricing. The card pin never overwrites it. A differing pin is retained as
+  `pinnedModel`, the receipt sets `modelMismatch`, and the task summary sets
+  `hasModelMismatch`; the card token popover shows the observed model and the
+  mismatch instead of attributing the call to the pin.
 - Historical bus entries remain in the aggregate. Receipt calls are merged by
   task, timestamp, and token dimensions with multiset deduplication, so an
   overlap does not count twice and the pre-July lifetime is retained.

@@ -118,6 +118,7 @@ public class ProjectRunner
     private readonly FailureInterventionService? _failureInterventions;
     private readonly IReadOnlyList<ProjectUrlRecord> _projectUrls;
     private readonly AgentStudio.Registry.IProjectUrlPortInspector? _projectUrlPortInspector;
+    private readonly RemoteDispatchRejectionStore? _dispatchRejections;
     private readonly CliRouter _router;
     private readonly SummaryGenerationService _summaryService;
     private readonly RuntimePromptService _prompts;
@@ -479,7 +480,8 @@ public class ProjectRunner
         AgentStudio.Pipeline.ModelMigrationCatalogRegistry? modelMigrationCatalog = null,
         FailureInterventionService? failureInterventions = null,
         IReadOnlyList<ProjectUrlRecord>? projectUrls = null,
-        AgentStudio.Registry.IProjectUrlPortInspector? projectUrlPortInspector = null)
+        AgentStudio.Registry.IProjectUrlPortInspector? projectUrlPortInspector = null,
+        RemoteDispatchRejectionStore? dispatchRejections = null)
     {
         ProjectName = projectName;
         Entry = entry;
@@ -532,6 +534,7 @@ public class ProjectRunner
         _failureInterventions = failureInterventions;
         _projectUrls = projectUrls ?? [];
         _projectUrlPortInspector = projectUrlPortInspector;
+        _dispatchRejections = dispatchRejections;
         _postAbortReview = postAbortReview;
         _sessionInspector = sessionInspector;
 
@@ -1345,17 +1348,28 @@ public class ProjectRunner
         // conflicts with an active task, the loop may continue to the next
         // non-conflicting candidate and records that deviation in
         // _lastPickReason.
+        var rejectedThisTick = new HashSet<string>(StringComparer.Ordinal);
         while (_activeRuns.HasFreeSlot(slotMax))
         {
-            var nextJob = PickNextDisplayedCandidate(slotMax);
+            var nextJob = PickNextDisplayedCandidateExcluding(slotMax, rejectedThisTick);
             if (nextJob == null)
             {
-                if (_mode == "auto-single" && !HasProjectRunInFlightForAutoSingle())
+                if (_mode == "auto-single"
+                    && rejectedThisTick.Count == 0
+                    && !HasProjectRunInFlightForAutoSingle())
                     SetMode("manual", "auto-single revert: pickup queue empty");
                 break;
             }
 
-            await RunCliAsync(nextJob.Id, RunIntent.AutoPickup, followupPrompt: null, reissueAttempt: 0, mode: null, ct);
+            var outcome = await RunCliAsync(
+                nextJob.Id,
+                RunIntent.AutoPickup,
+                followupPrompt: null,
+                reissueAttempt: 0,
+                mode: null,
+                ct);
+            if (outcome.Rejection is not null)
+                rejectedThisTick.Add(nextJob.Id);
             var graceRunsRemaining = _projectSettings.ConsumeBuildProfileRevalidationGraceRun(ProjectName);
             if (graceRunsRemaining is not null)
             {
@@ -1390,6 +1404,11 @@ public class ProjectRunner
     }
 
     private TaskInfo? PickNextDisplayedCandidate(int slotMax)
+        => PickNextDisplayedCandidateExcluding(slotMax, new HashSet<string>(StringComparer.Ordinal));
+
+    private TaskInfo? PickNextDisplayedCandidateExcluding(
+        int slotMax,
+        IReadOnlySet<string> excludedJobIds)
     {
         RelocateStrayHumanDecisionCards();
         var skippedForConflict = new List<string>();
@@ -1398,6 +1417,7 @@ public class ProjectRunner
         {
             if (_mode is "manual" or "paused") return null;
             if (candidate.Info == null) continue;
+            if (excludedJobIds.Contains(candidate.Info.Id)) continue;
 
             // Never double-claim a folder already occupying a slot. This is not
             // a visible-order deviation; the card is already running.
@@ -2498,6 +2518,33 @@ public class ProjectRunner
                     Message: admissionPlan.Reason));
             }
 
+            var cli = route == null ? GetCliFor(info) : _router.Get(route.CliType);
+            var modelAdmission = await EvaluateModelPinAdmissionAsync(
+                cli,
+                route?.Model ?? info.Model,
+                info.ModelExplicit && route?.IsFallback != true,
+                ct);
+            if (!modelAdmission.IsAllowed)
+            {
+                _dispatchRejections?.Record(
+                    info,
+                    _pickupLockOwner?.BackendName ?? "local",
+                    _pickupLockOwner?.Hostname ?? Environment.MachineName,
+                    modelAdmission.Code ?? ModelPinAdmissionPolicy.RejectionCode,
+                    modelAdmission.Reason);
+                _logger.LogWarning(
+                    "local-pickup-rejected-model project={Project} task={TaskKey} cli={Cli} model={Model} reason={Reason}",
+                    ProjectName,
+                    info.Key ?? info.TaskKey ?? info.Id,
+                    cli.CliType,
+                    route?.Model ?? info.Model,
+                    modelAdmission.Reason);
+                return RunOutcome.Reject(new RunRejection(
+                    RunRejectReason.ModelUnsupported,
+                    modelAdmission.Reason));
+            }
+            _dispatchRejections?.Clear(info);
+
             // Auto-pickup consumes a saved pending-intent if there is one,
             // turning what would have been a fresh-start run into a
             // UserContinue with the saved prompt + mode. This is the runtime
@@ -2518,8 +2565,6 @@ public class ProjectRunner
                     consumedIntent = stashed;
                 }
             }
-
-            var cli = route == null ? GetCliFor(info) : _router.Get(route.CliType);
             ClearQuotaWait(info);
             var initialState = info.State;
             var promptPath = Path.Combine(info.FolderPath, "prompt.md");
@@ -3391,6 +3436,44 @@ public class ProjectRunner
         }
     }
 
+    private static async Task<ModelPinAdmissionDecision> EvaluateModelPinAdmissionAsync(
+        ICliExecutionService cli,
+        string? model,
+        bool explicitlyPinned,
+        CancellationToken ct)
+    {
+        if (!explicitlyPinned || string.IsNullOrWhiteSpace(model))
+            return ModelPinAdmissionDecision.Allowed;
+
+        var probe = cli.TestCliPath();
+        IReadOnlyCollection<string>? supportedModels = null;
+        if (string.Equals(cli.CliType, CliTypes.Codex, StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var catalog = await cli.GetModelCatalogAsync(forceRefresh: false, ct);
+                supportedModels = catalog.Models
+                    .Where(item => item.Available)
+                    .Select(item => item.Id)
+                    .ToArray();
+            }
+            catch (Exception ex)
+            {
+                // Discovery failures are already visible through the catalogue
+                // source. Fail open here and let post-run observation catch a
+                // provider substitution rather than falsely rejecting a pin.
+                SilentCatch.Note(ex, "ProjectRunner: model catalogue unavailable during pin admission");
+            }
+        }
+
+        return ModelPinAdmissionPolicy.Evaluate(
+            cli.CliType,
+            model,
+            explicitlyPinned,
+            probe.Version,
+            supportedModels);
+    }
+
     private static RunPlan RebindPlanJobPaths(RunPlan plan, string promptPath, string jobFolder)
     {
         if (plan.PromptVariables.Count == 0) return plan;
@@ -3802,9 +3885,9 @@ public class ProjectRunner
         // CORE agent run is usually claude, so omitting it here was the
         // "no token activity recorded" symptom. Any other CLI stays a clean
         // no-op until its adapter moves onto the shared parser.
-        var snapshot = cli.GetLastParsedTurnUsage(jobKey);
+        var snapshot = cli.GetLastParsedTurnUsages(jobKey);
         if (snapshot is null) return;
-        var (usage, observedAt, startedAt) = snapshot.Value;
+        var (usages, observedAt, startedAt) = snapshot.Value;
 
         var latency = new AgentMessageLatency(
             RequestedAt: startedAt,
@@ -3821,15 +3904,18 @@ public class ProjectRunner
         // every coding turn (AGT-2811); null stays "level unknown".
         var thinkingLevel = cli.GetExecution(jobKey)?.ThinkingLevel;
 
-        _ = _bus.EmitTokenUsageRichAsync(
-            ProjectName,
-            jobId,
-            runId,
-            participantId,
-            topic,
-            usage,
-            latency,
-            thinkingLevel: thinkingLevel);
+        foreach (var usage in usages)
+        {
+            _ = _bus.EmitTokenUsageRichAsync(
+                ProjectName,
+                jobId,
+                runId,
+                participantId,
+                topic,
+                usage,
+                latency,
+                thinkingLevel: thinkingLevel);
+        }
     }
 
     /// <summary>
@@ -5508,18 +5594,23 @@ public class ProjectRunner
         string jobKey,
         SessionUsage? footerUsage)
     {
-        var parsed = cli.GetLastParsedTurnUsage(jobKey);
+        var parsed = cli.GetLastParsedTurnUsages(jobKey);
         if (parsed is { } snapshot)
         {
-            var u = snapshot.Usage;
+            var rows = snapshot.Usages;
+            var observedModels = rows
+                .Select(row => row.Model)
+                .Where(model => !string.IsNullOrWhiteSpace(model))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
             return new CoreAgentUsage(
-                u.Model,
-                u.Input,
-                u.Output,
-                u.CacheRead,
-                u.CacheWrite,
+                observedModels.Length == 1 ? observedModels[0] : null,
+                rows.Sum(row => row.Input),
+                rows.Sum(row => row.Output),
+                rows.Sum(row => row.CacheRead),
+                rows.Sum(row => row.CacheWrite),
                 AgentCliFooterUsageSource,
-                u.InputIncludesCached);
+                rows.Any(row => row.InputIncludesCached));
         }
 
         return TryParseFooterUsage(footerUsage?.Tokens, model: null, AgentCliFooterUsageSource);

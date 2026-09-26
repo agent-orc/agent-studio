@@ -97,12 +97,12 @@ public sealed partial class TaskServerStore
                         runner_id, capability_key, category, schema_version,
                         advertised_status, health_state, reason, version,
                         identity_value, detail, signal, credential_expires_at,
-                        limited_until, credential_modified_at, evidence_id, evidence_excerpt, advertised_at, fresh_until,
+                        limited_until, credential_modified_at, evidence_id, evidence_excerpt, supported_models_json, advertised_at, fresh_until,
                         generation, recovery_history_json, updated_at)
                     VALUES (
                         $runner, $key, $category, $schema, $status, 'healthy',
                         NULL, $version, $identity, $detail, $signal, $expires,
-                        $limited, $credential_modified, $evidence_id, $evidence_excerpt, $advertised,
+                        $limited, $credential_modified, $evidence_id, $evidence_excerpt, $supported_models, $advertised,
                         $fresh, $generation, $history, $updated)
                     ON CONFLICT(runner_id, capability_key) DO UPDATE SET
                         category = excluded.category,
@@ -124,6 +124,7 @@ public sealed partial class TaskServerStore
                         credential_modified_at = excluded.credential_modified_at,
                         evidence_id = excluded.evidence_id,
                         evidence_excerpt = excluded.evidence_excerpt,
+                        supported_models_json = excluded.supported_models_json,
                         advertised_at = excluded.advertised_at,
                         fresh_until = excluded.fresh_until,
                         generation = excluded.generation,
@@ -147,6 +148,7 @@ public sealed partial class TaskServerStore
                     ("$credential_modified", capability.CredentialModifiedAt is null ? null : Iso(capability.CredentialModifiedAt.Value.ToUniversalTime())),
                     ("$evidence_id", capability.EvidenceId),
                     ("$evidence_excerpt", capability.EvidenceExcerpt),
+                    ("$supported_models", capability.SupportedModels is null ? null : JsonSerializer.Serialize(capability.SupportedModels)),
                     ("$advertised", Iso(advertisedAt)),
                     ("$fresh", Iso(freshUntil)),
                     ("$generation", request.Generation),
@@ -420,7 +422,7 @@ public sealed partial class TaskServerStore
                        last_failure_at, cooldown_until, canary_claim_id,
                        consecutive_failures, version, identity_value, detail,
                        recovery_history_json, signal, credential_expires_at,
-                       limited_until, credential_modified_at, evidence_id, evidence_excerpt
+                       limited_until, credential_modified_at, evidence_id, evidence_excerpt, supported_models_json
                   FROM runner_capabilities
                  WHERE runner_id = $runner
                  ORDER BY category, capability_key;
@@ -455,7 +457,8 @@ public sealed partial class TaskServerStore
                         reader.IsDBNull(18) ? null : Parse(reader.GetString(18)),
                         reader.IsDBNull(19) ? null : Parse(reader.GetString(19)),
                         reader.IsDBNull(20) ? null : reader.GetString(20),
-                        reader.IsDBNull(21) ? null : reader.GetString(21)));
+                        reader.IsDBNull(21) ? null : reader.GetString(21),
+                        reader.IsDBNull(22) ? null : JsonSerializer.Deserialize<string[]>(reader.GetString(22))));
                 }
             }
             HostTelemetrySnapshotDto? telemetry = null;
@@ -775,7 +778,7 @@ public sealed partial class TaskServerStore
                    last_failure_at, cooldown_until, canary_claim_id,
                    consecutive_failures, recovery_history_json, signal,
                    credential_expires_at, limited_until, credential_modified_at,
-                   evidence_id, evidence_excerpt
+                   evidence_id, evidence_excerpt, supported_models_json
               FROM runner_capabilities
              WHERE runner_id = $runner AND canary_claim_id = $claim;
             """, transaction, ("$runner", runnerId), ("$claim", claimId)))
@@ -872,7 +875,7 @@ public sealed partial class TaskServerStore
                    last_failure_at, cooldown_until, canary_claim_id,
                    consecutive_failures, recovery_history_json, signal,
                    credential_expires_at, limited_until, credential_modified_at,
-                   evidence_id, evidence_excerpt
+                   evidence_id, evidence_excerpt, supported_models_json
               FROM runner_capabilities
              WHERE runner_id = $runner AND capability_key = $key;
             """, transaction, ("$runner", runnerId), ("$key", key));
@@ -900,7 +903,8 @@ public sealed partial class TaskServerStore
             reader.IsDBNull(15) ? null : Parse(reader.GetString(15)),
             reader.IsDBNull(16) ? null : Parse(reader.GetString(16)),
             reader.IsDBNull(17) ? null : reader.GetString(17),
-            reader.IsDBNull(18) ? null : reader.GetString(18));
+            reader.IsDBNull(18) ? null : reader.GetString(18),
+            reader.IsDBNull(19) ? null : JsonSerializer.Deserialize<string[]>(reader.GetString(19)));
 
     private async Task<RemoteHostAdmissionDto> ReadHostAdmissionAsync(
         SqliteConnection connection,
@@ -1053,7 +1057,8 @@ public sealed partial class TaskServerStore
         DateTime? LimitedUntil,
         DateTime? CredentialModifiedAt,
         string? EvidenceId,
-        string? EvidenceExcerpt);
+        string? EvidenceExcerpt,
+        IReadOnlyList<string>? SupportedModels);
 }
 
 internal static class ProviderAuthProbeStatuses

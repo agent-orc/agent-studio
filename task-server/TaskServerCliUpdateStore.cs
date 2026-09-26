@@ -10,6 +10,7 @@ public sealed partial class TaskServerStore
     private static readonly (string Model, string Cli, string Minimum)[] ModelCliMinimums =
     [
         ("gpt-6-astra", "codex", "0.153.0"),
+        ("claude-opus-5", "claude", "2.1.281"),
     ];
 
     private async Task EvaluateHostCliPolicyAsync(string runnerId, string actorId, CancellationToken ct)
