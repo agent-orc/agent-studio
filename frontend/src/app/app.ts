@@ -1253,6 +1253,11 @@ export class App implements OnInit, OnDestroy {
     if (!p || p.id !== 'mark-done') return false;
     return this.jobDetailSig()?.gitInfoLoading() ?? false;
   });
+  readonly studioPrimaryBlockedByIntegration = computed(() => {
+    if (this.studioTriagePrimary()?.id !== 'mark-done') return false;
+    const status = this.selectedJob()?.info.integration?.status;
+    return status !== 'integrated' && status !== 'not-applicable';
+  });
   readonly studioTriageHasActions = computed(
     () => this.studioTriagePrimary() !== null || this.studioTriageOverflow().length > 0 || this.studioCommitActionsAvailable(),
   );
@@ -1284,6 +1289,7 @@ export class App implements OnInit, OnDestroy {
         ? 'Checking git status — action available once loaded.'
         : `${this.studioMergeAcceptView()?.statusTooltip || label} (Enter)`,
       awaitingGit: this.studioPrimaryAwaitingGit(),
+      blockedByIntegration: this.studioPrimaryBlockedByIntegration(),
       actingId: this.studioTriageActingId(),
       menuItems: this.studioTriageMenuItems(),
     };
@@ -1338,7 +1344,7 @@ export class App implements OnInit, OnDestroy {
     if (!sel || !p) return;
     // Hold git-dependent acceptance until the branch/merge status has loaded, so
     // a click cannot trigger a merge while the label is still a guess (AGT-2006).
-    if (this.studioPrimaryAwaitingGit()) return;
+    if (this.studioPrimaryAwaitingGit() || this.studioPrimaryBlockedByIntegration()) return;
     this.dispatchStudioTriage(sel.info, p);
   }
 

@@ -31,6 +31,7 @@ public sealed class ManagementService
     private readonly ProjectRegistry _projects;
     private readonly MigrationStateStore _migrations;
     private readonly ReviewAttemptTaskLifecycleService? _reviewAttemptLifecycle;
+    private readonly TaskIntegrationStatusService? _integrationStatus;
     private readonly object _gate = new();
 
     public ManagementService(
@@ -41,7 +42,8 @@ public sealed class ManagementService
         AccessSecurityStore security,
         ProjectRegistry projects,
         MigrationStateStore migrations,
-        ReviewAttemptTaskLifecycleService? reviewAttemptLifecycle = null)
+        ReviewAttemptTaskLifecycleService? reviewAttemptLifecycle = null,
+        TaskIntegrationStatusService? integrationStatus = null)
     {
         _configuration = configuration;
         _scanner = scanner;
@@ -51,6 +53,7 @@ public sealed class ManagementService
         _projects = projects;
         _migrations = migrations;
         _reviewAttemptLifecycle = reviewAttemptLifecycle;
+        _integrationStatus = integrationStatus;
     }
 
     private string Root => Path.GetFullPath(_configuration["TaskRepository"]
@@ -218,6 +221,29 @@ public sealed class ManagementService
     {
         var candidates = _scanner.ScanAllAutomationJobs().Where(x => x.State == TaskStates.Completed).ToArray();
         var affected = 0;
+        var blocked = new List<object>();
+        var guarded = _configuration.GetValue("DeliveryChain:Guarded", true);
+        var statuses = guarded ? _integrationStatus?.BuildLookup(candidates) : null;
+        if (dry)
+            foreach (var item in candidates)
+            {
+                if (!guarded) continue;
+                TaskIntegrationStatus? status = null;
+                statuses?.TryGetValue(item.TaskKey, out status);
+                var decision = DeliveryLanePolicy.Decide(item.State, TaskStates.Archive,
+                    AcceptanceIntegrationPolicy.IsIntegrationRequired(item), status?.Status);
+                if (!decision.Allowed)
+                    blocked.Add(new { taskKey = item.TaskKey, category = decision.Category,
+                        recoveryAction = decision.RecoveryAction });
+                else if (AcceptanceIntegrationPolicy.IsIntegrationRequired(item)
+                    && (item.CompletionClaim?.Basis != CompletionClaimBases.IntegratedDelivery
+                        || string.IsNullOrWhiteSpace(item.CompletionClaim.ResultSha)
+                        || string.IsNullOrWhiteSpace(item.CompletionClaim.DeliveryEpoch)
+                        || !string.Equals(item.CompletionClaim.TargetRefFingerprint,
+                            status?.TargetRefFingerprint, StringComparison.Ordinal)))
+                    blocked.Add(new { taskKey = item.TaskKey, category = "stale-acceptance",
+                        recoveryAction = "Repeat human review for the current delivery epoch and target ref." });
+            }
         if (!dry)
             foreach (var item in candidates)
             {
@@ -235,9 +261,13 @@ public sealed class ManagementService
                         TaskStates.Archive,
                         MoveCore);
                 if (moved.Status == MoveJobStatus.Success) affected++;
+                else blocked.Add(new { taskKey = item.TaskKey, category = moved.Status.ToString(),
+                    recoveryAction = moved.Message });
             }
         return Result("archive-sweep", dry, candidates.Length, affected,
-            dry ? $"{candidates.Length} completed tasks would be archived." : $"Archived {affected} completed tasks.", actor, key);
+            dry ? $"{candidates.Length - blocked.Count} completed tasks would be archived; {blocked.Count} blocked."
+                : $"Archived {affected} completed tasks; {blocked.Count} blocked.",
+            actor, key, new { blocked });
     }
 
     private ManagementCommandResult SweepOrphans(bool dry, string actor, string key)

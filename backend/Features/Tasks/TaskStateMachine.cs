@@ -38,6 +38,8 @@ public class TaskStateMachine
     // this move path. Optional for the same test-compat reason as the others;
     // when null the move still lands, just without an evidence nudge.
     private readonly AgentStudio.Pipeline.WorkspaceEvidenceQueue? _evidenceQueue;
+    private readonly TaskIntegrationStatusService? _integrationStatus;
+    private readonly bool _guardedDelivery;
 
     public TaskStateMachine(
         TaskScannerService scanner,
@@ -46,7 +48,9 @@ public class TaskStateMachine
         TaskChangeNotifier? notifier = null,
         ProjectRegistry? projectRegistry = null,
         TimelineLog? timeline = null,
-        AgentStudio.Pipeline.WorkspaceEvidenceQueue? evidenceQueue = null)
+        AgentStudio.Pipeline.WorkspaceEvidenceQueue? evidenceQueue = null,
+        TaskIntegrationStatusService? integrationStatus = null,
+        IConfiguration? configuration = null)
     {
         _scanner = scanner;
         _logger = logger;
@@ -58,6 +62,8 @@ public class TaskStateMachine
         _projectRegistry = projectRegistry;
         _timeline = timeline;
         _evidenceQueue = evidenceQueue;
+        _integrationStatus = integrationStatus;
+        _guardedDelivery = configuration?.GetValue("DeliveryChain:Guarded", true) ?? true;
     }
 
     /// <summary>
@@ -110,7 +116,9 @@ public class TaskStateMachine
         string? expectedSourceState = null,
         string? reason = null,
         string? transitionCause = null,
-        string? transitionDetail = null)
+        string? transitionDetail = null,
+        bool archiveOverride = false,
+        bool archiveOverrideRollback = false)
     {
         if (!TaskStates.All.Contains(targetState))
             return new MoveJobOutcome(MoveJobStatus.Failure, $"Invalid state: {targetState}");
@@ -152,6 +160,62 @@ public class TaskStateMachine
                 $"Expected source state {expectedSourceState}, current state is {recheck.State}.");
         }
         if (recheck.State == targetState) return new MoveJobOutcome(MoveJobStatus.Success, NewFolderPath: recheck.FolderPath);
+
+        if (archiveOverrideRollback && (recheck.State != TaskStates.Archive
+            || targetState != TaskStates.Completed))
+            return new MoveJobOutcome(MoveJobStatus.Failure,
+                "Archive override rollback is valid only from Archive to Completed.");
+
+        if (_guardedDelivery && _integrationStatus is not null && !archiveOverrideRollback)
+        {
+            var status = _integrationStatus.BuildLookup([recheck]).GetValueOrDefault(recheck.TaskKey);
+            var admission = DeliveryLanePolicy.Decide(recheck.State, targetState,
+                AcceptanceIntegrationPolicy.IsIntegrationRequired(recheck), status?.Status, archiveOverride);
+            if (!admission.Allowed)
+            {
+                if (recheck.State == TaskStates.AutoReview && targetState == TaskStates.HumanReview)
+                {
+                    TaskJsonFile.UpdateField(recheck.FolderPath, "phase", LifecyclePhases.Integrating, _logger);
+                    _scanner.InvalidateCache();
+                }
+                return new MoveJobOutcome(MoveJobStatus.IntegrationFailed,
+                    $"{admission.Category}: {admission.RecoveryAction} Current status: {status?.Status ?? "unknown"}.");
+            }
+            if (targetState == TaskStates.Archive && !archiveOverride
+                && AcceptanceIntegrationPolicy.IsIntegrationRequired(recheck)
+                && recheck.CompletionClaim is not { Basis: CompletionClaimBases.IntegratedDelivery })
+                return new MoveJobOutcome(MoveJobStatus.IntegrationFailed,
+                    "The card has no accepted delivery epoch and result SHA. Complete human review before archiving.");
+            if (targetState == TaskStates.Archive && !archiveOverride
+                && recheck.CompletionClaim is { Basis: CompletionClaimBases.IntegratedDelivery } claim)
+            {
+                var currentSubject = TaskIntegrationStatusService.CurrentReviewSubject(recheck);
+                var latestCommit = recheck.Commits.Where(TaskCommitSupersession.IsEffectiveDelivery)
+                    .OrderBy(commit => commit.DeliveryGeneration ?? 0)
+                    .ThenBy(commit => commit.At)
+                    .LastOrDefault();
+                var currentResult = currentSubject?.ResultSha
+                    ?? latestCommit?.ResultSha ?? latestCommit?.Sha;
+                var currentEpoch = currentSubject?.RunAttemptId ?? latestCommit?.RunAttemptId
+                    ?? latestCommit?.DeliveryGeneration?.ToString() ?? latestCommit?.Sha;
+                if (string.IsNullOrWhiteSpace(claim.ResultSha)
+                    || string.IsNullOrWhiteSpace(claim.DeliveryEpoch)
+                    || !string.Equals(claim.ResultSha, currentResult, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(claim.DeliveryEpoch, currentEpoch, StringComparison.Ordinal)
+                    || !string.Equals(claim.IntegrationBranch, status?.IntegrationBranch, StringComparison.OrdinalIgnoreCase)
+                    || (!string.IsNullOrWhiteSpace(claim.TargetRefFingerprint)
+                        && !string.Equals(claim.TargetRefFingerprint, status?.TargetRefFingerprint,
+                            StringComparison.Ordinal)))
+                    return new MoveJobOutcome(MoveJobStatus.IntegrationFailed,
+                        "The accepted delivery or target branch changed after human review. Reintegrate and review the current delivery.");
+            }
+            if (archiveOverride && (recheck.State != TaskStates.Completed
+                || targetState != TaskStates.Archive
+                || !TimelineActors.IsHuman(cause)
+                || !CompletionContractPolicy.IsUsableReason(reason?.Trim())))
+                return new MoveJobOutcome(MoveJobStatus.Failure,
+                    "Archive override requires a human actor and a written reason for this card.");
+        }
 
         // BP-03: Ready opens a reissue generation and Progress opens an
         // execution generation. A folder-scoped remote review subject belongs
@@ -208,6 +272,8 @@ public class TaskStateMachine
                 if (result.Changed)
                 {
                     TaskJsonFile.UpdateField(recheck.FolderPath, "enteredLaneAt", DateTime.UtcNow.ToString("o"), _logger);
+                    if (recheck.State == TaskStates.Completed && targetState != TaskStates.Archive)
+                        TaskJsonFile.RemoveField(recheck.FolderPath, "completionClaim", _logger);
                     ClearIncompatiblePhase(recheck.FolderPath, targetState);
                     RecordLaneChange(recheck.FolderPath, recheck.State, targetState, cause, authorityWrite, reason,
                         transitionCause, transitionDetail);
@@ -270,6 +336,8 @@ public class TaskStateMachine
             // re-stamp its entry time. Drives the lane-entry default sort
             // (newest entry on top). Migration paths deliberately skip this.
             TaskJsonFile.UpdateField(targetDir, "enteredLaneAt", DateTime.UtcNow.ToString("o"), _logger);
+            if (recheck.State == TaskStates.Completed && targetState != TaskStates.Archive)
+                TaskJsonFile.RemoveField(targetDir, "completionClaim", _logger);
             ClearIncompatiblePhase(targetDir, targetState);
             // T2b: write the lane-change ledger row to the *new* folder (the
             // source folder is gone after the move above).

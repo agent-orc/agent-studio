@@ -422,6 +422,7 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
                         ["WatchPaths:0:Path"] = _workspaceProjectRoot,
                         ["WatchPaths:0:RootPath"] = _codeRoot,
                         ["WatchPaths:0:RepositoryPath"] = _codeRoot,
+                        ["DeliveryChain:Guarded"] = "false",
                     });
                 });
             });

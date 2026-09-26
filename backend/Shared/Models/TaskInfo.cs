@@ -110,6 +110,8 @@ public record TaskInfo
     /// expectation rather than an operator override.
     /// </summary>
     public bool NoBranchExpected { get; init; }
+    /// <summary>Optional delivery class. Repository changes always require integration regardless of this value.</summary>
+    public bool? RequiresIntegration { get; init; }
     /// <summary>
     /// Whether the agent may use web search / fetch for this run. Default off for
     /// coding/planning, on for research (set at create time). See decision 2 in

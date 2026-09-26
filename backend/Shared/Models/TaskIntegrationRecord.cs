@@ -4,9 +4,9 @@ namespace AgentStudio.Shared;
 
 /// <summary>
 /// Append-only application-owned integration bookkeeping for one task. Live
-/// acceptance continues to use pipeline and timeline facts; these records add
-/// a durable classification for historical cards whose acceptance predates
-/// that recording contract.
+/// acceptance continues to use pipeline and timeline facts. Historical rows
+/// classify older cards; curated mappings bind a current source SHA to a
+/// published integration SHA for rewritten deliveries.
 /// </summary>
 public sealed record TaskIntegrationRecord
 {
@@ -36,6 +36,17 @@ public sealed record TaskIntegrationRecord
 
     [JsonPropertyName("evidence")]
     public string Evidence { get; init; } = "";
+
+    /// <summary>Immutable result or attributed commit represented by a curated merge.</summary>
+    [JsonPropertyName("sourceSha")]
+    public string? SourceSha { get; init; }
+
+    /// <summary>Commit on the published integration branch that contains that source.</summary>
+    [JsonPropertyName("integrationSha")]
+    public string? IntegrationSha { get; init; }
+
+    [JsonPropertyName("deliveryEpoch")]
+    public string? DeliveryEpoch { get; init; }
 }
 
 /// <summary>Durable classifications produced by the historical integration sweep.</summary>
@@ -47,6 +58,7 @@ public static class IntegrationRecordClasses
     public const string NoAttributionLegacy = "no-attribution-legacy";
     public const string ContentOnFence = "content-on-fence";
     public const string GenuinelyMissing = "genuinely-missing";
+    public const string CuratedMapping = "curated-mapping";
 
     public static readonly string[] All =
     [
@@ -56,6 +68,7 @@ public static class IntegrationRecordClasses
         NoAttributionLegacy,
         ContentOnFence,
         GenuinelyMissing,
+        CuratedMapping,
     ];
 
     public static bool IsOperatorVisible(string? classification)

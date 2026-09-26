@@ -48,6 +48,52 @@ public sealed class TaskIntegrationRecordEndpointTests : IDisposable
     }
 
     [Fact]
+    public void AppendPolicy_CuratedMappingRequiresExactShaPairAndEpochInAutoReview()
+    {
+        var mapping = Request() with
+        {
+            Classification = IntegrationRecordClasses.CuratedMapping,
+            SourceSha = new string('a', 40),
+            IntegrationSha = new string('b', 40),
+            DeliveryEpoch = "run-current",
+        };
+        Assert.True(TaskIntegrationRecordAppendPolicy.Validate(TaskStates.AutoReview, mapping).Allowed);
+        Assert.False(TaskIntegrationRecordAppendPolicy.Validate(TaskStates.AutoReview,
+            mapping with { IntegrationSha = "abc1234" }).Allowed);
+        Assert.False(TaskIntegrationRecordAppendPolicy.Validate(TaskStates.AutoReview,
+            mapping with { DeliveryEpoch = null }).Allowed);
+        Assert.False(TaskIntegrationRecordAppendPolicy.Validate(TaskStates.AutoReview,
+            mapping with { Classification = IntegrationRecordClasses.IntegratedVerified }).Allowed);
+    }
+
+    [Fact]
+    public async Task AppendCuratedMapping_PersistsSourceAndIntegrationShaInAutoReview()
+    {
+        WriteTask(TaskStates.AutoReview);
+        await using var factory = BuildFactory(guarded: false);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var path = $"/api/tasks/{TaskKey}/integration-records?watchPath={Uri.EscapeDataString(_watchPath)}";
+        var request = Request() with
+        {
+            Classification = IntegrationRecordClasses.CuratedMapping,
+            SourceSha = new string('a', 40), IntegrationSha = new string('b', 40),
+            DeliveryEpoch = "run-current",
+        };
+        using var response = await client.PostAsJsonAsync(path, request);
+        response.EnsureSuccessStatusCode();
+        using var detailResponse = await client.GetAsync(
+            $"/api/tasks/{TaskKey}?watchPath={Uri.EscapeDataString(_watchPath)}");
+        detailResponse.EnsureSuccessStatusCode();
+        using var detail = JsonDocument.Parse(await detailResponse.Content.ReadAsStringAsync());
+        var record = Assert.Single(detail.RootElement.GetProperty("info")
+            .GetProperty("integrationRecords").EnumerateArray());
+        Assert.Equal(request.SourceSha, record.GetProperty("sourceSha").GetString());
+        Assert.Equal(request.IntegrationSha, record.GetProperty("integrationSha").GetString());
+        Assert.Equal("run-current", record.GetProperty("deliveryEpoch").GetString());
+    }
+
+    [Fact]
     public async Task AppendIntegrationRecord_IsAppendOnlyIdempotent_AndDoesNotMoveTask()
     {
         WriteTask(TaskStates.HumanReview);
@@ -149,7 +195,7 @@ public sealed class TaskIntegrationRecordEndpointTests : IDisposable
         Evidence = "GPT-reviewed Git ancestry confirms the accepted content is on main.",
     };
 
-    private WebApplicationFactory<Program> BuildFactory() =>
+    private WebApplicationFactory<Program> BuildFactory(bool guarded = true) =>
         new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
@@ -161,6 +207,7 @@ public sealed class TaskIntegrationRecordEndpointTests : IDisposable
                     ["WatchPaths:0:Path"] = _watchPath,
                     ["WatchPaths:0:RootPath"] = _workspace,
                     ["ProjectSettings:integration-record-test:IntegrationBranch"] = "main",
+                    ["DeliveryChain:Guarded"] = guarded.ToString(),
                 }));
         });
 

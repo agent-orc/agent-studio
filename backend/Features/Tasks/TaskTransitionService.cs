@@ -11,6 +11,7 @@ public sealed class TaskTransitionService
 {
     internal const string ResultScaffoldMarker = "<!-- agent-studio:result-scaffold -->";
     private const string OperatorBackfillMarker = "<!-- agent-studio:operator-result-backfill -->";
+    private static readonly object ArchiveOverrideEvidenceLock = new();
     private static readonly HashSet<string> ResultRequiredStates = new(StringComparer.Ordinal)
     {
         TaskStates.AutoReview,
@@ -41,6 +42,7 @@ public sealed class TaskTransitionService
     private readonly ResultVersionStore? _resultVersions;
     private readonly BranchReclaimTriggerService? _branchReclaim;
     private readonly TimeProvider _time;
+    private readonly bool _guardedDelivery;
     private long _resultScaffoldCreatedCount;
 
     /// <summary>
@@ -85,7 +87,8 @@ public sealed class TaskTransitionService
         ReviewAttemptTaskLifecycleService? reviewAttemptLifecycle = null,
         ResultVersionStore? resultVersions = null,
         BranchReclaimTriggerService? branchReclaim = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IConfiguration? configuration = null)
     {
         _scanner = scanner;
         _states = states;
@@ -109,6 +112,7 @@ public sealed class TaskTransitionService
         _resultVersions = resultVersions;
         _branchReclaim = branchReclaim;
         _time = timeProvider ?? TimeProvider.System;
+        _guardedDelivery = configuration?.GetValue("DeliveryChain:Guarded", true) ?? true;
     }
 
     /// <summary>
@@ -138,7 +142,8 @@ public sealed class TaskTransitionService
         bool suppressIntegrationTrigger = false,
         bool operatorOverride = false,
         string? transitionCause = null,
-        string? transitionDetail = null)
+        string? transitionDetail = null,
+        bool archiveOverride = false)
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return new MoveJobOutcome(MoveJobStatus.NotFound);
@@ -148,6 +153,12 @@ public sealed class TaskTransitionService
                 MoveJobStatus.Failure,
                 "operatorOverride is valid only for a move to 6-completed.");
         }
+        if (archiveOverride && (info.State != TaskStates.Completed
+            || targetState != TaskStates.Archive
+            || !TimelineActors.IsHuman(cause)
+            || !CompletionContractPolicy.IsUsableReason(reason?.Trim())))
+            return new MoveJobOutcome(MoveJobStatus.Failure,
+                "Archive override requires a human actor and a written reason.");
 
         var settledRunRecovery = PrepareSettledRunRecovery(info, targetState, cause);
         if (settledRunRecovery.Error is not null)
@@ -235,10 +246,9 @@ public sealed class TaskTransitionService
         // Coding deliveries must already be present in the effective integration
         // branch. This check retains current-attempt lineage validation and
         // refuses a stale, failed, or pending delivery without invoking Git.
-        if (!suppressIntegrationTrigger
-            && !suppressProductExecution
+        if ((_guardedDelivery || !suppressIntegrationTrigger
+                && !suppressProductExecution && !operatorOverride)
             && integrationRequired
-            && !operatorOverride
             && fromState == TaskStates.HumanReview
             && targetState == TaskStates.Completed)
         {
@@ -259,15 +269,13 @@ public sealed class TaskTransitionService
         // AGT-2817 - the completion contract. Entering the delivered lane is
         // the moment the card starts claiming a delivery, so this is where the
         // claim is checked and recorded: a delivery contained in the
-        // integration branch, a named deliverable without code, or an operator
-        // override carrying a written reason. Operator-initiated moves are
-        // refused when none holds; automated paths record the claim they can
-        // prove and never block on it.
+        // published integration branch, or a named deliverable without code.
+        // The same rule applies to operator and automated moves.
         CompletionContractDecision? completionContract = null;
         TaskIntegrationStatus? completionIntegrationStatus = null;
         if (targetState == TaskStates.Completed
             && fromState != TaskStates.Completed
-            && !suppressProductExecution)
+            && (_guardedDelivery || !suppressProductExecution))
         {
             completionIntegrationStatus = _integrationStatus?.BuildLookup([info])
                 .GetValueOrDefault(info.TaskKey);
@@ -279,13 +287,10 @@ public sealed class TaskTransitionService
                 reason,
                 cause,
                 completionIntegrationStatus);
-            // The refusal stops a person, never an automated path. Pipeline
-            // completions that already decided integration pass
-            // suppressIntegrationTrigger and are recorded, not gated - the
-            // deferred worker moves the card only after its merge succeeded.
+            // A suppressIntegrationTrigger caller cannot bypass this contract.
             if (!completionContract.Accepted
-                && !suppressIntegrationTrigger
-                && TimelineActors.IsHuman(cause))
+                && (_guardedDelivery || !suppressIntegrationTrigger
+                    && TimelineActors.IsHuman(cause)))
             {
                 return new MoveJobOutcome(
                     MoveJobStatus.IntegrationFailed,
@@ -293,6 +298,16 @@ public sealed class TaskTransitionService
                     info.FolderPath);
             }
         }
+
+        var boundCompletionClaim = completionContract?.Claim is null
+            ? null : BindCompletionClaim(info, completionContract.Claim);
+        if (_guardedDelivery && targetState == TaskStates.Completed && integrationRequired
+            && (boundCompletionClaim?.Basis != CompletionClaimBases.IntegratedDelivery
+                || string.IsNullOrWhiteSpace(boundCompletionClaim.ResultSha)
+                || string.IsNullOrWhiteSpace(boundCompletionClaim.DeliveryEpoch)
+                || string.IsNullOrWhiteSpace(boundCompletionClaim.TargetRefFingerprint)))
+            return new MoveJobOutcome(MoveJobStatus.IntegrationFailed,
+                "The integrated delivery cannot be bound to a result SHA, delivery epoch and target ref. Recover its delivery evidence before acceptance.");
 
         ReleaseCliOutputResourcesBeforeMove(info);
         MoveJobOutcome MoveCore() => _states.MoveJob(
@@ -303,12 +318,48 @@ public sealed class TaskTransitionService
                 authorityWrite,
                 expectedSourceState,
                 reason,
-                transitionCause,
-                transitionDetail);
+            transitionCause,
+            transitionDetail,
+            archiveOverride);
         var outcome = _reviewAttemptLifecycle is not null
                       && targetState is TaskStates.Completed or TaskStates.Archive
             ? _reviewAttemptLifecycle.ExecuteTerminalTransition(info, targetState, MoveCore)
             : MoveCore();
+        if (archiveOverride && outcome.Status == MoveJobStatus.Success)
+        {
+            lock (ArchiveOverrideEvidenceLock)
+            {
+                var archived = _scanner.FindJob(jobId, watchPath)
+                    ?? info with { FolderPath = outcome.NewFolderPath ?? info.FolderPath };
+                var timelinePath = TaskPaths.TimelineLog(archived.FolderPath);
+                var auditPath = Path.Combine(archived.WatchPath, ".audit", "archive-overrides.jsonl");
+                var timelineLength = File.Exists(timelinePath) ? new FileInfo(timelinePath).Length : 0;
+                var auditLength = File.Exists(auditPath) ? new FileInfo(auditPath).Length : 0;
+                var evidenceWritten = RecordArchiveOverride(archived, archived.FolderPath, cause!, reason!)
+                    && WriteArchiveOverrideAudit(archived, cause!, reason!);
+                if (!evidenceWritten)
+                {
+                    // The override is a condition of the move. A failed evidence
+                    // write must leave the card in Completed and must not leave a
+                    // surviving override claim in either append-only ledger.
+                    TruncateOverrideEvidence(timelinePath, timelineLength);
+                    TruncateOverrideEvidence(auditPath, auditLength);
+                    var restored = _states.MoveJob(archived.Id, TaskStates.Completed,
+                        archived.WatchPath, "system", expectedSourceState: TaskStates.Archive,
+                        archiveOverrideRollback: true);
+                    if (restored.Status == MoveJobStatus.Success)
+                        _scanner.InvalidateCache();
+                    else
+                        _logger.LogCritical("archive-override-rollback-failed task={TaskKey} status={Status}",
+                            info.TaskKey, restored.Status);
+                    return new MoveJobOutcome(MoveJobStatus.Failure,
+                        restored.Status == MoveJobStatus.Success
+                            ? "Archive override evidence could not be persisted; the card remains completed."
+                            : "Archive override evidence failed and the archive rollback needs operator recovery.",
+                        restored.NewFolderPath ?? archived.FolderPath);
+                }
+            }
+        }
         var operatorRequeue = outcome.Status == MoveJobStatus.Success
             && OperatorReviewRequeueService.IsOperatorRequeue(fromState, targetState, cause);
         var supersedeFailedDelivery = operatorRequeue && HasFailedIntegrationRound(
@@ -515,11 +566,11 @@ public sealed class TaskTransitionService
             // "delivered" can be read back as a checkable statement. Writing
             // it after the move keeps the claim with the folder's new location
             // and can never undo the transition.
-            if (completionContract?.Claim is not null)
+            if (boundCompletionClaim is not null)
                 RecordCompletionClaim(
                     jobId,
                     watchPath,
-                    completionContract.Claim,
+                    boundCompletionClaim,
                     completionIntegrationStatus);
 
             // ASS-1724: the ONE commit-provenance recording hook. Anchor the
@@ -1162,7 +1213,7 @@ public sealed class TaskTransitionService
         TaskInfo reviewed,
         ProjectSettings settings)
     {
-        var reviewSubject = AgentStudio.Pipeline.ReviewSubjectStore.Read(reviewed.FolderPath);
+        var reviewSubject = TaskIntegrationStatusService.CurrentReviewSubject(reviewed);
         if (reviewSubject is not null
             && _attemptAuthority is not null
             && !AgentStudio.Pipeline.ReviewSubjectStore.TryValidateCurrentAttempt(
@@ -1221,7 +1272,7 @@ public sealed class TaskTransitionService
             DeliverablePath: deliverable.Path,
             DeliverableKey: deliverable.Key,
             Actor: actor);
-        return CompletionContractPolicy.Decide(facts);
+        return CompletionContractPolicy.Decide(facts, _guardedDelivery);
     }
 
     /// <summary>
@@ -1252,6 +1303,90 @@ public sealed class TaskTransitionService
 
         if (stamped.Basis != CompletionClaimBases.IntegratedDelivery) return;
         ResolveContainedSupersessionPlaceholders(moved, integrationStatus);
+    }
+
+    private TaskCompletionClaim BindCompletionClaim(TaskInfo reviewed, TaskCompletionClaim claim)
+    {
+        var subject = TaskIntegrationStatusService.CurrentReviewSubject(reviewed);
+        var status = _integrationStatus?.BuildLookup([reviewed]).GetValueOrDefault(reviewed.TaskKey);
+        var latest = reviewed.Commits
+            .Where(TaskCommitSupersession.IsEffectiveDelivery)
+            .OrderBy(commit => commit.DeliveryGeneration ?? 0)
+            .ThenBy(commit => commit.At)
+            .LastOrDefault();
+        return claim with
+        {
+            ResultSha = subject?.ResultSha ?? latest?.ResultSha ?? latest?.Sha,
+            DeliveryEpoch = subject?.RunAttemptId ?? latest?.RunAttemptId
+                ?? latest?.DeliveryGeneration?.ToString() ?? latest?.Sha,
+            TargetRefFingerprint = status?.TargetRefFingerprint,
+        };
+    }
+
+    private bool WriteArchiveOverrideAudit(TaskInfo card, string actor, string reason)
+    {
+        try
+        {
+            var status = _integrationStatus?.BuildLookup([card]).GetValueOrDefault(card.TaskKey);
+            var subject = AgentStudio.Pipeline.ReviewSubjectStore.Read(card.FolderPath);
+            var path = Path.Combine(card.WatchPath, ".audit", "archive-overrides.jsonl");
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            var row = new
+            {
+                taskKey = card.TaskKey,
+                reason = reason.Trim(),
+                actor,
+                at = _time.GetUtcNow(),
+                deliveryEpoch = subject?.RunAttemptId ?? card.CompletionClaim?.DeliveryEpoch,
+                resultSha = subject?.ResultSha ?? card.CompletionClaim?.ResultSha,
+                targetBranch = status?.IntegrationBranch ?? card.IntegrationBranch,
+                targetRefFingerprint = status?.TargetRefFingerprint,
+                integrationStatus = status?.Status ?? "unknown",
+                recoveryReference = status?.DeliveryRef,
+            };
+            using var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);
+            using var writer = new StreamWriter(stream);
+            writer.WriteLine(System.Text.Json.JsonSerializer.Serialize(row));
+            writer.Flush();
+            stream.Flush(flushToDisk: true);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "archive-override-audit-failed task={TaskKey}", card.TaskKey);
+            return false;
+        }
+    }
+
+    private bool RecordArchiveOverride(TaskInfo card, string folder, string actor, string reason)
+    {
+        var status = _integrationStatus?.BuildLookup([card]).GetValueOrDefault(card.TaskKey);
+        return _timeline?.Append(folder, "archive_override", actor,
+            "Owner requested a written archive override for this card.",
+            details: new Dictionary<string, string>
+            {
+                ["reason"] = reason.Trim(),
+                ["deliveryEpoch"] = card.CompletionClaim?.DeliveryEpoch ?? "unknown",
+                ["resultSha"] = card.CompletionClaim?.ResultSha ?? "unknown",
+                ["targetBranch"] = status?.IntegrationBranch ?? "unknown",
+                ["integrationStatus"] = status?.Status ?? "unknown",
+                ["recoveryReference"] = status?.DeliveryRef ?? "unknown",
+            }) == true;
+    }
+
+    private void TruncateOverrideEvidence(string path, long originalLength)
+    {
+        try
+        {
+            if (!File.Exists(path)) return;
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.Read);
+            stream.SetLength(originalLength);
+            stream.Flush(flushToDisk: true);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogCritical(ex, "archive-override-evidence-rollback-failed path={Path}", path);
+        }
     }
 
     /// <summary>
@@ -1307,7 +1442,9 @@ public sealed class TaskTransitionService
         // back to Human Review - its badge says merged-locally until the push
         // lands, which is exactly the honesty this distinction is for.
         return lookup.TryGetValue(job.TaskKey, out var status)
-               && IntegrationStatuses.IsMerged(status.Status);
+               && (_guardedDelivery
+                   ? status.Status == IntegrationStatuses.Integrated
+                   : IntegrationStatuses.IsMerged(status.Status));
     }
 
     private string ResolveIntegrationBranch(TaskInfo job, ProjectSettings settings)

@@ -169,7 +169,7 @@
                 [attr.data-git-loading]="primaryAwaitingGit() ? 'true' : null"
                 [class.detail__triage-primary--acting]="triageActingId() === primary.id"
                 [class.detail__triage-primary--loading]="primaryAwaitingGit()"
-                [disabled]="mutationsBlocked() || triageActingId() !== null || primaryAwaitingGit()"
+                [disabled]="mutationsBlocked() || triageActingId() !== null || primaryAwaitingGit() || primaryBlockedByIntegration()"
                 [appPendingButton]="triageActingId() === primary.id" [pendingLabel]="primaryLabel() + '…'"
                 [cacTooltip]="primaryTooltip()"
                 (click)="onPrimaryClick()">
