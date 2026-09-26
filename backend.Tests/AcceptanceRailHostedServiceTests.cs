@@ -262,21 +262,68 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
     public async Task RestartRepairsReceiptAfterReadyPromotion()
     {
         var stack = Build();
-        var sha = CreateUnintegratedDelivery("partial-receipt");
-        SeedTask(stack, "partial-receipt", sha, conflict: true);
+        var sha = CreateUnintegratedDelivery("route-false-false");
+        var folder = SeedTask(stack, "route-false-false", sha, conflict: true);
+        TaskJsonFile.UpdateField(folder, "model", "gpt-5.6-sol", NullLogger.Instance);
+        TaskJsonFile.UpdateField(folder, "thinkingLevel", "xhigh", NullLogger.Instance);
+        TaskJsonFile.UpdateField(folder, "modelExplicit", false, NullLogger.Instance);
+        TaskJsonFile.UpdateField(folder, "thinkingLevelExplicit", false, NullLogger.Instance);
+        stack.Scanner.InvalidateCache();
         Assert.Equal(1, (await stack.Rail.RunOnceAsync()).Requeued);
-        var ready = stack.Scanner.FindJob("partial-receipt", _watchPath)!;
+        var ready = stack.Scanner.FindJob("route-false-false", _watchPath)!;
         var path = Assert.Single(Directory.GetFiles(
             Path.Combine(ready.FolderPath, "logs", "integration-bounce"), "*.json"));
         var queued = IntegrationBounceObligationStore.Read(path)!;
+        Assert.Equal("gpt-5.6-sol/xhigh", queued.PreviousRoute);
+        Assert.Equal("gpt-5.6-sol/low", queued.SelectedRoute);
         IntegrationBounceObligationStore.Update(ready.FolderPath,
             queued with { State = "proposed", ClaimedAtUtc = null });
 
         await Build().Rail.RunOnceAsync();
 
         Assert.Equal("queued", IntegrationBounceObligationStore.Read(path)!.State);
+        Assert.Equal(queued.PreviousRoute, IntegrationBounceObligationStore.Read(path)!.PreviousRoute);
+        Assert.Equal(queued.SelectedRoute, IntegrationBounceObligationStore.Read(path)!.SelectedRoute);
         Assert.Single(stack.Timeline.ReadAll(ready.FolderPath),
             entry => entry.Kind == TimelineEventKinds.IntegrationRecoveryQueued);
+    }
+
+    [Fact]
+    public async Task RestartAfterRouteWrite_KeepsOriginalReceiptBeforeReadyPromotion()
+    {
+        var stack = Build();
+        var id = "route-false-false";
+        var folder = SeedTask(stack, id, CreateUnintegratedDelivery(id), conflict: true);
+        TaskJsonFile.UpdateField(folder, "model", "gpt-5.6-sol", NullLogger.Instance);
+        TaskJsonFile.UpdateField(folder, "thinkingLevel", "low", NullLogger.Instance);
+        TaskJsonFile.UpdateField(folder, "modelExplicit", false, NullLogger.Instance);
+        TaskJsonFile.UpdateField(folder, "thinkingLevelExplicit", false, NullLogger.Instance);
+        stack.Scanner.InvalidateCache();
+        var job = stack.Scanner.FindJob(id, _watchPath)!;
+        var status = stack.Integration.BuildLookup([job])[job.TaskKey];
+        var subject = ReviewSubjectStore.Read(folder)!;
+        var proposal = IntegrationBounceObligationStore.Project(job, subject, status,
+            epoch: 0, roundCount: 0, holdState: "none", routeDecision: "automatic",
+            attemptReason: status.Failure?.Reason);
+        IntegrationBounceObligationStore.Ensure(folder, proposal with
+        {
+            PreviousRoute = "gpt-5.6-sol/xhigh",
+            SelectedRoute = "gpt-5.6-sol/low",
+            RouteReason = "mechanical recovery within policy floor",
+            PolicyVersion = new ModelRoutingPolicyRegistry().Policy.Version,
+        });
+
+        var restarted = Build();
+        Assert.Equal(1, (await restarted.Rail.RunOnceAsync()).Requeued);
+
+        var ready = restarted.Scanner.FindJob(id, _watchPath)!;
+        Assert.Equal(TaskStates.Ready, ready.State);
+        Assert.Equal("low", ready.ThinkingLevel);
+        var path = Assert.Single(Directory.GetFiles(
+            Path.Combine(ready.FolderPath, "logs", "integration-bounce"), "*.json"));
+        var receipt = IntegrationBounceObligationStore.Read(path)!;
+        Assert.Equal("gpt-5.6-sol/xhigh", receipt.PreviousRoute);
+        Assert.Equal("gpt-5.6-sol/low", receipt.SelectedRoute);
     }
 
     [Fact]
@@ -320,9 +367,14 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
         var path = Assert.Single(Directory.GetFiles(
             Path.Combine(ready.FolderPath, "logs", "integration-bounce"), "*.json"));
         var receipt = IntegrationBounceObligationStore.Read(path)!;
+        Assert.Equal("gpt-5.6-sol/xhigh", receipt.PreviousRoute);
         Assert.Equal($"gpt-5.6-sol/{expectedLevel}", receipt.SelectedRoute);
         Assert.Equal(pinned, receipt.OperatorPinPresent);
         Assert.NotEmpty(receipt.PolicyVersion!);
+        var recoveryEvent = Assert.Single(stack.Timeline.ReadAll(ready.FolderPath),
+            entry => entry.Kind == TimelineEventKinds.IntegrationRecoveryQueued);
+        Assert.Equal(receipt.PreviousRoute, recoveryEvent.Details?.GetValueOrDefault("previousRoute"));
+        Assert.Equal(receipt.SelectedRoute, recoveryEvent.Details?.GetValueOrDefault("selectedRoute"));
     }
 
     [Fact]
