@@ -226,6 +226,42 @@ public sealed class TaskListGitProjectionCacheTests
         finally { Directory.Delete(folder, recursive: true); }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ReviewSubjectWatcherReadFailure_InvalidatesFactAndRetainsStampForRetry(bool denied)
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "git-subject-" + Guid.NewGuid().ToString("N"));
+        var task = Job("task-1", "watch-a") with { FolderPath = folder };
+        var subject = ReviewSubjectStore.PathFor(task.FolderPath);
+        (bool Exists, string? Hash) stamp = (true, "first");
+        Exception? readFailure = null;
+        var cache = new TaskListGitProjectionCache(_ =>
+        {
+            if (readFailure is not null) throw readFailure;
+            return stamp;
+        });
+        cache.SeedTaskInput(subject);
+        cache.SetSnapshot(task.WatchPath, ProjectionFor(task, "task/first") with
+        {
+            Signatures = new Dictionary<string, string> { [task.TaskKey] = TaskGitSignature.For(task) },
+            SubjectVersions = new Dictionary<string, long> { [task.TaskKey] = 0 },
+        }, DateTimeOffset.UtcNow);
+        Assert.Equal("ready", cache.ReadTask(task).State);
+
+        readFailure = denied ? new UnauthorizedAccessException() : new IOException();
+        Assert.True(cache.MarkTaskInputChanged(subject));
+        Assert.Equal(1, cache.SubjectVersion(task.FolderPath));
+        Assert.Equal("stale", cache.ReadTask(task).State);
+        Assert.Null(cache.ReadTask(task).Data);
+
+        readFailure = null;
+        Assert.False(cache.MarkTaskInputChanged(subject));
+        stamp = (true, "second");
+        Assert.True(cache.MarkTaskInputChanged(subject));
+        Assert.Equal(2, cache.SubjectVersion(task.FolderPath));
+    }
+
     [Fact]
     public async Task BuildProjectionAsync_StartsAllLookupsBeforeWaitingForCompletion()
     {

@@ -31,6 +31,7 @@ namespace AgentStudio.Tasks;
 /// </summary>
 public sealed class TaskListGitProjectionCache
 {
+    private readonly Func<string, (bool Exists, string? Hash)> _sidecarStamp;
     private readonly ConcurrentDictionary<string, RepoEntry> _entries =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, long> _subjectVersions =
@@ -39,6 +40,11 @@ public sealed class TaskListGitProjectionCache
         new(StringComparer.OrdinalIgnoreCase);
 
     private long _generation;
+
+    public TaskListGitProjectionCache() : this(SidecarStamp) { }
+
+    internal TaskListGitProjectionCache(Func<string, (bool Exists, string? Hash)> sidecarStamp)
+        => _sidecarStamp = sidecarStamp;
 
     /// <summary>
     /// Monotonic version of the merged snapshot store. Every indexer write -
@@ -218,15 +224,25 @@ public sealed class TaskListGitProjectionCache
 
     internal void SeedTaskInput(string path)
     {
-        _sidecarStamps.GetOrAdd(NormalizePath(path), static (_, source) => SidecarStamp(source), path);
+        _sidecarStamps.GetOrAdd(NormalizePath(path), _sidecarStamp);
     }
 
     internal bool MarkTaskInputChanged(string path)
     {
         var key = NormalizePath(path);
-        var next = SidecarStamp(path);
-        if (_sidecarStamps.TryGetValue(key, out var previous) && previous == next) return false;
-        _sidecarStamps[key] = next;
+        try
+        {
+            var next = _sidecarStamp(path);
+            if (_sidecarStamps.TryGetValue(key, out var previous) && previous == next) return false;
+            _sidecarStamps[key] = next;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // A writer may still hold the subject file when its watcher event
+            // arrives. Keep the old stamp so the next event can retry, but
+            // invalidate the published fact and queue a background refresh.
+            SilentCatch.Note(ex, "TaskListGitProjectionCache: review subject temporarily unreadable");
+        }
         // ReviewSubjectStore writes under <task>/logs/. The version belongs to
         // the task folder used by ReadTask and the indexer's input signature.
         var taskFolder = Path.GetDirectoryName(Path.GetDirectoryName(path) ?? path) ?? path;
