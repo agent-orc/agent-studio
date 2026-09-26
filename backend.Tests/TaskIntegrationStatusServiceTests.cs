@@ -63,6 +63,25 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
     }
 
     [Fact]
+    public void BuildLookup_ResolvesOriginOnceForManyAttributedTasksInOneRepository()
+    {
+        var repo = SeedDevelopMainRepo();
+        var sha = RunGit(repo, "rev-parse develop").Out.Trim();
+        var reads = 0;
+        var service = BuildService(repo, out var project, out var log,
+            _ => { Interlocked.Increment(ref reads); return null; });
+        var jobs = Enumerable.Range(0, 68)
+            .Select(i => Job($"origin-{i}", $"OR-{i}", project, repo, log,
+                commits: [Commit(sha)]))
+            .ToArray();
+
+        var statuses = service.BuildLookup(jobs);
+
+        Assert.Equal(68, statuses.Count);
+        Assert.Equal(1, Volatile.Read(ref reads));
+    }
+
+    [Fact]
     public void BuildLookup_AttemptArtifactsDoNotOverrideMissingCommitPresence()
     {
         // The curated integrator lands the work under a merge(KEY) commit on
@@ -1201,7 +1220,8 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
 
     // --- helpers -----------------------------------------------------------
 
-    private TaskIntegrationStatusService BuildService(string repo, out string projectName, out PipelineExecutionLog log)
+    private TaskIntegrationStatusService BuildService(string repo, out string projectName,
+        out PipelineExecutionLog log, Func<string, string?>? readOriginUrl = null)
     {
         projectName = "Fixture";
         var config = ConfigFor(repo, projectName);
@@ -1212,7 +1232,8 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         settings.SetIntegrationBranch(projectName, "develop");
         log = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
         return new TaskIntegrationStatusService(
-            git, settings, log, NullLogger<TaskIntegrationStatusService>.Instance);
+            git, settings, log, NullLogger<TaskIntegrationStatusService>.Instance,
+            TimeProvider.System, readOriginUrl: readOriginUrl);
     }
 
     private (TaskIntegrationStatusService Service, string Project, PipelineExecutionLog Log)

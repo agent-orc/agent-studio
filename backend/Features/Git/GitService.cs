@@ -6319,6 +6319,7 @@ public class GitService
     public string? ReadOriginUrlAt(string root)
     {
         if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root)) return null;
+        if (GitConfigScope.TryReadOrigin(root, out var indexedOrigin)) return indexedOrigin;
         var (output, _, code) = RunGitArgs(root, "config", "--get", "remote.origin.url");
         if (code != 0) return null;
         var url = output.Trim();
@@ -7716,11 +7717,14 @@ public class GitService
         string? stdin,
         CancellationToken cancellationToken)
     {
+        using var processSlot = GitProcessBudget.Acquire();
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken, GitProcessBudget.Token);
         var result = GitNetworkProcessRunner.Run(
             psi,
             stdin,
             GitNetworkProcessRunner.DefaultTimeout,
-            cancellationToken);
+            linked.Token);
         return (result.StandardOutput, result.StandardError, result.ExitCode);
     }
 

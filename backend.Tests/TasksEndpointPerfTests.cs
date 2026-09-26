@@ -303,6 +303,7 @@ public class JobsEndpointPerfTests : IDisposable
                 expectedCount: 1,
                 timeout.Token);
             Assert.True(initialIndexRun[0].Spawns > 0);
+            Assert.Contains("configx1=", initialIndexRun[0].Breakdown);
 
             var stopwatch = Stopwatch.StartNew();
             using var response = await client.GetAsync("/api/tasks", timeout.Token);
@@ -355,6 +356,20 @@ public class JobsEndpointPerfTests : IDisposable
             Assert.True(DateTimeOffset.TryParse(groupedGitStateAt.GetString(), out _));
             Assert.True(groupedBody.TryGetProperty("stale", out var groupedStale));
             Assert.False(groupedStale.GetBoolean());
+
+            using var gitResource = await client.GetAsync(
+                "/api/tasks/task-1/details/git", timeout.Token);
+            gitResource.EnsureSuccessStatusCode();
+            var resourceBody = await gitResource.Content.ReadFromJsonAsync<JsonElement>(timeout.Token);
+            Assert.Contains(resourceBody.GetProperty("state").GetString(),
+                new[] { "ready", "stale" });
+            Assert.True(resourceBody.GetProperty("generation").GetInt64() > 0);
+            Assert.False(string.IsNullOrWhiteSpace(resourceBody.GetProperty("resourceVersion").GetString()));
+
+            using var detailResponse = await client.GetAsync("/api/tasks/task-1", timeout.Token);
+            detailResponse.EnsureSuccessStatusCode();
+            Assert.Equal(0, Assert.Single(telemetry.Rollups("tasks/detail/git")).Spawns);
+            Assert.Equal(0, Assert.Single(telemetry.Rollups("tasks/detail")).Spawns);
         }
         finally
         {
@@ -604,7 +619,8 @@ public class JobsEndpointPerfTests : IDisposable
     }
 }
 
-internal sealed record StructuredTelemetryRollup(string Label, int Spawns, long GitMs, long WallMs);
+internal sealed record StructuredTelemetryRollup(string Label, int Spawns, long GitMs,
+    long WallMs, string Breakdown);
 
 internal sealed class StructuredTelemetryLoggerProvider : ILoggerProvider
 {
@@ -653,7 +669,8 @@ internal sealed class StructuredTelemetryLoggerProvider : ILoggerProvider
                 label,
                 Convert.ToInt32(Field(fields, "Spawns")),
                 Convert.ToInt64(Field(fields, "GitMs")),
-                Convert.ToInt64(Field(fields, "WallMs"))));
+                Convert.ToInt64(Field(fields, "WallMs")),
+                Field(fields, "Breakdown")?.ToString() ?? ""));
         }
 
         private static object? Field(IReadOnlyList<KeyValuePair<string, object?>> fields, string name)

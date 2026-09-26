@@ -1002,18 +1002,28 @@ as `acceptance-rail-run`.
 
 ## Board state source (AGT-2726)
 
-Git-derived board state (merge signal, integration status, publish signal,
-test-run evidence, and the Git inventory below) is owned by one background
-index per repository, `GitStateIndexService`, not computed on any request
-path.
+Git-derived board and task-detail state (merge signal, integration status,
+publish signal, test-run evidence, review projection, reconstructed progress
+commits, and the Git inventory below) is owned by one background index per
+repository, `GitStateIndexService`. Detail and `GET
+/api/tasks/{jobId}/details/git` read the latest completed snapshot only.
+They do not start Git or wait for a refresh. The resource returns task and
+project identity, input and resource versions, `computedAt`, a bounded reason
+code, and `warming`, `ready`, `stale`, or `unavailable` state. An incompatible
+task generation has no Git facts. Acceptance and integration mutations keep
+their authoritative checks; display state never grants permission to mutate.
 
 - **Change-driven, not request-driven.** Each repository is watched with a
-  `FileSystemWatcher` on `.git/HEAD`, `refs/`, `packed-refs`, and worktree
-  `HEAD` files, plus the Task Server's own `TaskWatcherService.OnJobChanged`
-  event (a task-folder write is itself an integration/delivery signal). A
+  `FileSystemWatcher` on `.git/HEAD`, `refs/`, `packed-refs`, config, worktree
+  Git files and the common Git directory, plus task metadata and review-subject
+  events. A
   debounce (default 400 ms) coalesces a burst of events into one run per
   repository; a slow periodic sweep (default 45 s) re-checks a cheap
-  `GitRefSignature` as a safety net for anything the watcher missed. This
+  ref signature and Git-resolved effective configuration as a safety net for
+  anything the watcher missed, including external config includes. Git itself
+  interprets includes and worktree configuration. An unchanged task write can
+  queue an input check but cannot force full Git recomputation. Runtime logs
+  do not queue it. This
   replaced the previous design, where every list/grouped poll landing more
   than a fixed TTL after the last refresh queued a whole-board recompute -
   structurally proportional to request traffic rather than to actual repo
@@ -1023,6 +1033,17 @@ path.
   start a second one; it marks exactly one rerun for after the current run
   finishes. `GitStateIndex:MaxConcurrentRepos` (default 2) bounds how many
   repositories index at once process-wide.
+- **Versioned publication.** Repository path, ref and effective-config
+  signatures, settings version, task commit/review generation and schema
+  version key an immutable snapshot. An input change during computation
+  discards the result and queues one rerun. A failed run retains the last
+  successful snapshot, marked stale with a bounded reason. Git children have
+  deadlines and are killed on timeout; failed runs back off with at most five
+  automatic retries. A repository computation runs at most four Git children
+  at once. One Git config command per index run supplies both the effective
+  config signature and primary origin. The 45 s sweep checks effective config
+  separately. `TaskIntegrationStatusService` also memoizes origin once per
+  repository in authoritative action lookups, using Git's own config semantics.
 - **`RequestRefresh(projectName, trigger)` primes a repository immediately.** A
   mutation path that already knows it just changed a repository's ref state
   does not have to wait for the debounced watcher or the periodic sweep;
