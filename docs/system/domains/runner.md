@@ -39,13 +39,22 @@ state.
   `task-server/TaskServerEndpoints.cs`: post-delivery
   result evidence transport. Git result or salvage publication and fenced
   completion happen first. The server advertises its base64-safe request
-  budget plus project file and total caps; the runner selects bounded files,
-  excludes Playwright traces, videos, dependency trees, and build output,
-  then uploads one manifest-bound file per request. Deterministic skips are
+  budget plus project file and total caps (8 MiB per file by default); the
+  runner selects bounded files, excludes Playwright traces, videos, dependency
+  trees, and build output,
+  then uploads one manifest-bound file per request. The attempt-scoped host
+  evidence copy survives a later task results reset. Deterministic skips are
   written to `results/deliverables.md` before the manifest is created. A later
   HTTP 413/507 never rewrites a manifested file; it is recorded as the
   non-fatal `ArtifactTooLarge` / `artifacts: partial` board fact instead. The
-  Task Server's global request-body denial-of-service bound is not raised.
+  artifact routes return HTTP 413 as `application/problem+json` with the
+  machine-readable `type: "artifact-request-too-large"`, the applicable
+  `limitBytes`, and `receivedBytes`. At the request-body ceiling these sizes
+  describe the HTTP body; at the per-file ceiling they describe decoded file
+  bytes. `receivedBytes` is `null` if the server cannot determine the body
+  length. The runner logs the complete response body so operators can compare
+  the attempted transfer with the advertised limit. The Task Server's global
+  request-body denial-of-service bound is not raised.
 - `backend/Services/TaskRunnerService.cs`: project runner ownership and public
   start, stop, continue, and mode surface.
 - `runner/FinalizationRetryPolicy.cs`, `runner/CodingFinalizationReconciler.cs`,

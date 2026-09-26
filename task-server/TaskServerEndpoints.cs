@@ -412,8 +412,24 @@ public static class TaskServerEndpoints
             => await InvokeAsync(() => store.ListEventsAsync(runId, after ?? 0, ct)))
             .RequireTaskServerScope(TaskServerScopes.TasksRead);
         runs.MapPost("/{runId}/artifacts", async (
-            HttpContext context, string runId, ArtifactIngestRequest request, TaskServerStore store, CancellationToken ct)
-            => await InvokeAsync(() => store.IngestArtifactAsync(runId, request, Actor(context), ct), StatusCodes.Status201Created));
+            HttpContext context, string runId, ArtifactIngestRequest request, TaskServerStore store,
+            IOptions<TaskServerOptions> configured, CancellationToken ct) =>
+        {
+            var options = configured.Value;
+            var reserve = Math.Min(64L * 1024, options.MaxRequestBodyBytes / 4);
+            var requestSafeBytes = Math.Max(1, (options.MaxRequestBodyBytes - reserve) / 4 * 3);
+            var limit = Math.Min(
+                Math.Min(Math.Max(1, options.ResultArtifactMaxFileBytes), requestSafeBytes),
+                Math.Max(1, options.ResultArtifactMaxTotalBytes));
+            var encoded = request.ContentBase64 ?? string.Empty;
+            var padding = encoded.EndsWith("==", StringComparison.Ordinal) ? 2
+                : encoded.EndsWith('=') ? 1 : 0;
+            var received = Math.Max(0, encoded.Length / 4L * 3 - padding);
+            if (received > limit)
+                return ArtifactRequestLimitMiddleware.Problem(limit, received);
+            return await InvokeAsync(() => store.IngestArtifactAsync(runId, request, Actor(context), ct),
+                StatusCodes.Status201Created);
+        });
         runs.MapGet("/{runId}/artifacts", async (string runId, TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.ListArtifactsAsync(runId, ct)))
             .RequireTaskServerScope(TaskServerScopes.TasksRead);

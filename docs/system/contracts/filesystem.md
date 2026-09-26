@@ -51,6 +51,17 @@ by Studio, and is reset before every integration; deleting it is safe and the
 next integration recreates it. See
 [operations/git/integration-worktree.md](../../operations/git/integration-worktree.md).
 
+### Remote runner attempt evidence
+
+After a remote worker finishes, the runner snapshots its result files under
+`<RUNNER_WORKDIR>/evidence/<task-key>/<attempt-id>/results/` before publishing
+the delivery ref. The attempt directory is host-local and separate from the
+central `TaskRepository` and the task-scoped runner `results/` directory.
+Later attempts may clear the task-scoped directory but do not alter the
+attempt evidence copy. The artifact manifest records paths, sizes, and SHA-256
+digests for transported and withheld files. The runner replays failed uploads
+from this copy under the original run fence.
+
 ### Project + workspace registry (ADR-0042)
 
 In parallel with the legacy `<projectKey>` slug layout above, projects also

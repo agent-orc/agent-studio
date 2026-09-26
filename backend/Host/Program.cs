@@ -1156,6 +1156,7 @@ if (SecurityProfiles.IsLocal(app.Configuration)) app.UseCors();
 // boundary. X-Client-Id remains attribution only and is never consulted as a
 // credential. Local development retains the legacy attribution middleware.
 app.UseAccessSecurity();
+app.UseMiddleware<AgentStudio.Diagnostics.ArtifactRequestLimitMiddleware>();
 
 // The local profile's X-Client-Id registration boundary rejects mutations from
 // unregistered identities and stamps lastSeenAt on known ones. This is local

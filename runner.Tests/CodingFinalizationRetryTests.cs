@@ -63,6 +63,9 @@ public sealed class CodingFinalizationRetryTests : IDisposable
         Assert.Equal(1, deferred.Finalization!.Attempts);
         Assert.False(string.IsNullOrWhiteSpace(deferred.Finalization.LastReason));
         Assert.Equal(0, server.CompletionCount);
+        Assert.Contains(lease.TaskKey, RemoteRunnerDaemon.ActiveTaskKeys(
+            new RunnerProcessInventory(DateTime.UtcNow, []),
+            new RunnerStateStore(options.StateDir)));
         // The delivery was already secured before completion failed. The retry
         // uses the persisted teardown facts and does not need the worktree.
         Assert.True(File.Exists(Path.Combine(
@@ -278,7 +281,69 @@ public sealed class CodingFinalizationRetryTests : IDisposable
             server.ArtifactManifestDigests);
     }
 
-    private RunnerOptions Options(string origin) => new()
+    [SkippableFact]
+    [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
+    public async Task Thirty_megabyte_results_are_delivered_with_a_withheld_trace()
+    {
+        PlatformGate.LinuxOnly("the detached worker and Git delivery use Linux process boundaries");
+        var origin = Path.Combine(_root, "origin-large.git");
+        await CreateOriginAsync(origin, Path.Combine(_root, "seed-large"));
+        var options = Options(origin, includeOversizedTrace: true);
+        var lease = Lease(options) with
+        {
+            TaskKey = "AGT-LARGE-EVIDENCE",
+            LeaseId = "lease-large-evidence",
+            AttemptId = "attempt-large-evidence",
+        };
+        var server = new RestartingTaskServer(lease, refuseCompletions: 0);
+        var logs = new ConcurrentQueue<string>();
+        using var client = Client(server, options);
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        var run = new RemoteRunnerDaemon(options, client, logs.Enqueue).RunAsync(stop.Token);
+
+        await AwaitCompletionAsync(server, logs, TimeSpan.FromSeconds(60));
+        await WaitForLogAsync(logs,
+            line => line.Contains("artifacts=partial", StringComparison.Ordinal), stop.Token);
+        await stop.CancelAsync();
+        try { await run.WaitAsync(TimeSpan.FromSeconds(20)); }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
+
+        Assert.Equal(1, server.CompletionCount);
+        Assert.Contains("Done", server.CompletedOutcomes);
+        Assert.True(server.PartialArtifactReports > 0);
+        Assert.DoesNotContain(logs, line => line.Contains("slot failed", StringComparison.Ordinal));
+        var results = Path.Combine(options.WorkDir, "tasks", lease.TaskKey, "results");
+        Assert.Equal(30L * 1024 * 1024,
+            new FileInfo(Path.Combine(results, "playwright", "trace.zip")).Length);
+        var preserved = RemoteTaskRunner.AttemptEvidenceDir(
+            options.WorkDir, lease.TaskKey, lease.AttemptId!);
+        Assert.Equal(30L * 1024 * 1024,
+            new FileInfo(Path.Combine(preserved, "playwright", "trace.zip")).Length);
+        Assert.Contains("results/playwright/trace.zip",
+            await File.ReadAllTextAsync(Path.Combine(results, "deliverables.md")));
+        var limits = new ArtifactTransferLimitsResponse(
+            25L * 1024 * 1024, 18L * 1024 * 1024, 100L * 1024 * 1024);
+        var (selected, skipped) = ArtifactTransferPolicy.Select(
+            preserved, RemoteTaskRunner.ObserveResultFiles(preserved), limits);
+        var manifestEntries = new List<ArtifactManifestEntry>();
+        foreach (var file in selected)
+        {
+            var bytes = await File.ReadAllBytesAsync(file.FullPath);
+            manifestEntries.Add(new ArtifactManifestEntry(file.RelativePath,
+                Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes))
+                    .ToLowerInvariant(), bytes.LongLength));
+        }
+        manifestEntries.AddRange(await RemoteTaskRunner.BuildWithheldManifestEntriesAsync(
+            preserved, skipped, CancellationToken.None));
+        Assert.Contains(RemoteTaskRunner.BuildArtifactManifest(manifestEntries).Digest,
+            server.ArtifactManifestDigests);
+        var refs = await ProcessRunner.RunAsync("git", ["ls-remote", "--heads", origin], _root,
+            ct: CancellationToken.None);
+        Assert.True(refs.Success, refs.StdErr);
+        Assert.Contains("runner/", refs.StdOut);
+    }
+
+    private RunnerOptions Options(string origin, bool includeOversizedTrace = false) => new()
     {
         ServerUrl = "http://task-server",
         RunnerId = "finalization-retry-runner",
@@ -298,6 +363,9 @@ public sealed class CodingFinalizationRetryTests : IDisposable
             "-c \"printf 'delivered\\n' > delivered.txt; "
             + "printf 'delivered\\n' > $JOB_RESULTS_DIR/deliverables.md; "
             + "printf 'evidence\\n' > $JOB_RESULTS_DIR/evidence.txt; "
+            + (includeOversizedTrace
+                ? "mkdir -p $JOB_RESULTS_DIR/playwright; truncate -s 30M $JOB_RESULTS_DIR/playwright/trace.zip; "
+                : string.Empty)
             + "printf 'delivered\\n[[TASK_DONE]]\\n'\"",
         TtlSeconds = 120,
         HeartbeatSeconds = 30,
@@ -421,8 +489,10 @@ public sealed class CodingFinalizationRetryTests : IDisposable
         public List<string> CompletionIdempotencyKeys { get; } = [];
         public List<string> ArtifactManifestDigests { get; } = [];
         public List<string> ResultShas { get; } = [];
+        public List<string> CompletedOutcomes { get; } = [];
         public ConcurrentQueue<string> RequestOrder { get; } = new();
         public int CompletionCount { get; private set; }
+        public int PartialArtifactReports { get; private set; }
         public int ReleaseCount => Volatile.Read(ref _releaseCount);
 
         protected override async Task<HttpResponseMessage> SendAsync(
@@ -477,7 +547,7 @@ public sealed class CodingFinalizationRetryTests : IDisposable
                     18L * 1024 * 1024,
                     100L * 1024 * 1024),
                 "/api/runner/artifacts" => Artifacts(body),
-                "/api/runner/artifacts/outcome" => new { status = "partial" },
+                "/api/runner/artifacts/outcome" => ReportPartialArtifacts(),
                 "/api/runner/completion" => Complete(body),
                 "/api/runner/lease/release" => Release(),
                 _ => throw new InvalidOperationException(
@@ -540,6 +610,12 @@ public sealed class CodingFinalizationRetryTests : IDisposable
                 ResultDocumentStatus: "generated");
         }
 
+        private object ReportPartialArtifacts()
+        {
+            PartialArtifactReports++;
+            return new { status = "partial" };
+        }
+
         private RemoteRunCompletionResponse Complete(string body)
         {
             using var document = JsonDocument.Parse(body);
@@ -556,6 +632,7 @@ public sealed class CodingFinalizationRetryTests : IDisposable
                     null,
                     HttpStatusCode.ServiceUnavailable);
             CompletionCount++;
+            CompletedOutcomes.Add(Text(root, "outcome"));
             Completion.TrySetResult();
             return new RemoteRunCompletionResponse(
                 TaskKey: initialLease.TaskKey,
