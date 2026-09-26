@@ -88,6 +88,37 @@ public sealed class IntegrationWorktreeProviderTests : IDisposable
         Assert.False(File.Exists(Path.Combine(second.Path!, "stray.txt")));
     }
 
+    [Fact]
+    public void Resolve_RemovesOldOwnedIndexLockAndResetsToCurrentIntegrationTip()
+    {
+        var repo = SeedRepo("stale-index-lock");
+        RunGit(repo, "checkout -q -b develop");
+        var provider = Provider(repo);
+        var first = provider.Resolve(repo, "develop");
+        Assert.True(first.Success, first.Error);
+
+        File.WriteAllText(Path.Combine(repo, "README.md"), "new integration tip");
+        RunGit(repo, "add -A");
+        RunGit(repo, "commit -q -m advance");
+        var pointer = File.ReadAllText(Path.Combine(first.Path!, ".git")).Trim()[7..].Trim();
+        var gitDir = Path.IsPathRooted(pointer)
+            ? pointer
+            : Path.GetFullPath(Path.Combine(first.Path!, pointer));
+        var lockPath = Path.Combine(gitDir, "index.lock");
+        File.WriteAllText(lockPath, "orphaned reset");
+        File.SetLastWriteTimeUtc(lockPath, DateTime.UtcNow.AddMinutes(-2));
+        File.WriteAllText(Path.Combine(gitDir, IntegrationWorktreeProvider.LastIntegrationMarker),
+            DateTimeOffset.UtcNow.ToString("O"));
+
+        var second = provider.Resolve(repo, "develop");
+
+        Assert.True(second.Success, second.Error);
+        Assert.False(File.Exists(lockPath));
+        Assert.Equal(RunGit(repo, "rev-parse develop").Out.Trim(),
+            RunGit(second.Path!, "rev-parse HEAD").Out.Trim());
+        Assert.Equal(string.Empty, RunGit(second.Path!, "status --porcelain").Out.Trim());
+    }
+
     /// <summary>
     /// A crashed integration leaves a conflicted merge in the worktree. The next
     /// integration must not inherit it: git would refuse to switch while the
