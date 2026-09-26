@@ -1,7 +1,8 @@
 # One-box installation: Task Server is the only task authority. Run
 # scripts/compose-distributed-bootstrap.sh before the first `docker compose up`.
-# The legacy API and runner pair remain available only with --profile legacy
-# while older UI routes migrate to the standalone Task Server.
+# The legacy API proxy remains available only with --profile legacy while
+# older UI routes migrate to the standalone Task Server. Legacy runner routes
+# are intentionally unavailable because this proxy rejects non-v1 routes.
 # --profile dev:            source-built "-dev" siblings of every service
 #                          above, for contributors iterating on this checkout.
 #                          Build is intentionally never wired to the default,
@@ -56,37 +57,6 @@ x-frontend: &frontend
     timeout: 3s
     retries: 12
     start_period: 5s
-  logging: *bounded-logs
-
-x-agent-host-coding: &agent-host-coding
-  restart: unless-stopped
-  env_file:
-    - path: ./runner.env
-      required: true
-  environment:
-    RUNNER_SERVER_URL: http://orchestrator-api:5031
-    RUNNER_ROLE: coding
-    # Compose-internal network: plain HTTP is an explicit, contained opt-in.
-    RUNNER_ALLOW_INSECURE_HTTP: "1"
-    RUNNER_AUTH_TOKEN_FILE: /run/secrets/runner.token
-  volumes:
-    - runner-coding:/var/lib/agent-host
-    - ./runner.token:/run/secrets/runner.token:ro
-  logging: *bounded-logs
-
-x-agent-host-review: &agent-host-review
-  restart: unless-stopped
-  env_file:
-    - path: ./runner.env
-      required: true
-  environment:
-    RUNNER_SERVER_URL: http://orchestrator-api:5031
-    RUNNER_ROLE: review
-    RUNNER_ALLOW_INSECURE_HTTP: "1"
-    RUNNER_AUTH_TOKEN_FILE: /run/secrets/runner.token
-  volumes:
-    - runner-review:/var/lib/agent-host
-    - ./runner.token:/run/secrets/runner.token:ro
   logging: *bounded-logs
 
 x-task-server: &task-server
@@ -230,52 +200,6 @@ services:
     depends_on:
       studio-bff-dev:
         condition: service_healthy
-    profiles: ["dev"]
-
-  agent-host-coding:
-    <<: *agent-host-coding
-    image: ghcr.io/agent-orc/agent-host:${AGENT_STUDIO_IMAGE_TAG:-unpublished}
-    profiles: ["legacy"]
-    depends_on:
-      - orchestrator-api
-
-  agent-host-coding-dev:
-    <<: *agent-host-coding
-    build:
-      context: .
-      dockerfile: runner/Dockerfile
-      args:
-        VERSION: ${AGENT_STUDIO_VERSION:-0.0.0-dev}
-    environment:
-      RUNNER_SERVER_URL: http://orchestrator-api-dev:5031
-      RUNNER_ROLE: coding
-      RUNNER_ALLOW_INSECURE_HTTP: "1"
-      RUNNER_AUTH_TOKEN_FILE: /run/secrets/runner.token
-    depends_on:
-      - orchestrator-api-dev
-    profiles: ["dev"]
-
-  agent-host-review:
-    <<: *agent-host-review
-    image: ghcr.io/agent-orc/agent-host:${AGENT_STUDIO_IMAGE_TAG:-unpublished}
-    profiles: ["legacy"]
-    depends_on:
-      - orchestrator-api
-
-  agent-host-review-dev:
-    <<: *agent-host-review
-    build:
-      context: .
-      dockerfile: runner/Dockerfile
-      args:
-        VERSION: ${AGENT_STUDIO_VERSION:-0.0.0-dev}
-    environment:
-      RUNNER_SERVER_URL: http://orchestrator-api-dev:5031
-      RUNNER_ROLE: review
-      RUNNER_ALLOW_INSECURE_HTTP: "1"
-      RUNNER_AUTH_TOKEN_FILE: /run/secrets/runner.token
-    depends_on:
-      - orchestrator-api-dev
     profiles: ["dev"]
 
   task-server:
@@ -425,8 +349,6 @@ services:
 volumes:
   workspace:
   projects:
-  runner-coding:
-  runner-review:
   orchestrator-data:
 
 secrets:

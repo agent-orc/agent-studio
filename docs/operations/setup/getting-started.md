@@ -90,13 +90,15 @@ Compose access.
 | Unknown `/api/*` | BFF returns 404 | None |
 | `/healthz`, `/readyz` | Caddy to BFF | No task writes |
 
-The old `orchestrator-api` and its coding/review runners are under
-`--profile legacy` and are not part of this installation. The image service
+The old `orchestrator-api` proxy is under `--profile legacy` and is not part
+of this installation. The image service
 has no task workspace mount and is fixed to the same Task Server. Only
 `/api/v1/*` is forwarded; other `/api/*` routes return 404 instead of writing
-a local task repository. Do not mix legacy runner services into the standalone
-installation. Source-only `orchestrator-api-dev` can still run in local mode
-for compatibility tests; setting an invalid `TASK_SERVER_BASE_URL` now fails
+a local task repository. The legacy runner services were removed because the
+proxy rejects their protocol routes. The old `compose-runner-bootstrap.sh`
+command now invokes the one-box bootstrap. Source-only `orchestrator-api-dev`
+can still run in local mode for compatibility tests; setting an invalid
+`TASK_SERVER_BASE_URL` now fails
 startup instead of silently selecting that mode.
 
 ## Data, restart and host extension
@@ -113,8 +115,8 @@ Register projects through the Task Server API with a canonical, credential-free
 Git URL. Prove fetch and permitted push from each eligible runner host. A new
 host receives its own principal, token file, state root, probed capabilities
 and finite coding/review budget; it connects to this Task Server through
-private HTTPS, or through the supervised reverse SSH transition. The existing
-`runner` profile uses the legacy API and is not a host join procedure.
+private HTTPS, or through the supervised reverse SSH transition. The removed
+legacy runner profile was not a host join procedure.
 
 The first box remains the authority as hosts are added. Moving authority,
 N-1 upgrade, full recovery rehearsal and detached canonical publication are
@@ -131,9 +133,10 @@ drives a fake-CLI runner claim. Run the typed full scenario with:
 scripts/scenario.sh --target compose --level full --report-dir "$JOB_RESULTS_DIR"
 ```
 
-The scenario uses a fixture coding agent. A deployment acceptance canary
-also needs a real provider, review of the immutable subject, exact canonical
-Git ref publication and a separate empty-target recovery rehearsal. Save
+The scenario uses a fixture coding agent and a separate synthetic review run;
+it does not review that coding result. A deployment acceptance canary also
+needs a real provider, review of the same immutable coding subject, exact
+canonical Git ref publication and a separate empty-target recovery rehearsal. Save
 published-image pull evidence apart from source-built evidence. Fresh Ubuntu
 VM, Windows/macOS Docker Desktop, N-1 upgrade and provider-authenticated
 canary evidence require their named hosts and credentials; no local source

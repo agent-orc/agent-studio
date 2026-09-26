@@ -36,7 +36,7 @@ WORKDIR /opt/agent-host
 COPY --from=build /app ./
 # Variable names follow deploy/release/agent-host/runner.env.template; identity,
 # tokens, and git remotes come from the compose env file, never from the image.
-ENV RUNNER_SERVER_URL=http://orchestrator-api:5031 \
+ENV RUNNER_SERVER_URL=http://task-server:5071 \
     RUNNER_ROLE=coding \
     RUNNER_WORKDIR=/var/lib/agent-host/runner-work \
     RUNNER_STATE_DIR=/var/lib/agent-host/state \
