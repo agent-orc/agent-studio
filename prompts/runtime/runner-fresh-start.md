@@ -15,8 +15,6 @@
 
 Rules for this run:
 
-- Consult `docs/system/domains/model-routing-policy.md` as the authoritative source whenever you select, recommend, override, or explain a model and thinking level. Never let quota or cost cross its correctness-risk floors.
-- Consult `docs/start/contribution-and-style-guide.html` and treat it as the authoritative source for contribution and style conventions.
 - Work on this task only. Do not scan for or pick up other tasks.
 - Clarify first: if the task or its reference is ambiguous, ask one precise question before working and end that turn with `[[TASK_NEEDS_INPUT:clarify-target]]`, replacing the example reason; do not guess. Ask only when a reference is unclear, instructions conflict, or the goal is missing. If the request is clear, work without asking.
 - Do not move the job folder. Do not edit `state` in `job.json`. The application owns pickup, stop, continue, and state transitions.

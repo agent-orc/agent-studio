@@ -7,7 +7,7 @@ namespace AgentStudio.Shared;
 /// </summary>
 public sealed record PromptEnrichmentReport
 {
-    public string SchemaVersion { get; init; } = "1.0";
+    public string SchemaVersion { get; init; } = "1.1";
     public string EnrichmentId { get; init; } = "";
     public DateTime GeneratedAtUtc { get; init; }
     /// <summary>One of: enriched, unchanged, fallback-unenriched, blocked.</summary>
@@ -43,9 +43,10 @@ public sealed record PromptEnrichmentCandidate
     public string Title { get; init; } = "";
     public string Source { get; init; } = "";
     public List<string> Signals { get; init; } = [];
-    /// <summary>appended, rejected-budget, or rejected-project-disabled.</summary>
+    /// <summary>appended, rejected-budget, rejected-source-missing, rejected-project-catalogue, or rejected-project-disabled.</summary>
     public string Decision { get; init; } = "";
     public string Reason { get; init; } = "";
+    public string? MissingPath { get; init; }
     public int EstimatedTokens { get; init; }
 }
 
@@ -54,6 +55,9 @@ public sealed record PromptEnrichmentBlock
     public string Id { get; init; } = "";
     public string Title { get; init; } = "";
     public string Source { get; init; } = "";
+    public string Project { get; init; } = "";
+    public string Repository { get; init; } = "";
+    public string SourceVerification { get; init; } = "repository";
     public string Revision { get; init; } = "";
     public string DigestSha256 { get; init; } = "";
     public string Tier { get; init; } = "";
