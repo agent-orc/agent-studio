@@ -154,6 +154,12 @@
                 (openVerboseDebug)="onOpenVerboseDebug()" />
             </div>
 
+            @if (remoteChatWaitingLabel(); as waitingLabel) {
+              <p class="sheet__chat-waiting" role="status" data-testid="orchestrator-chat-waiting">
+                {{ waitingLabel }}
+              </p>
+            }
+
             @if (latestContextReceipt(); as receipt) {
               <app-orchestrator-context-receipt [receipt]="receipt" />
             }

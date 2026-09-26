@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging.Abstractions;
+using AgentStudio.Shared;
 
 using Xunit;
 
@@ -41,6 +42,10 @@ public sealed class RemoteChatWorkBrokerTests
         Assert.Equal("Inspect the repository.", claim.Work.Prompt);
         Assert.Equal(CliTypes.Claude, claim.Work.CliType);
         Assert.Equal(ModelIds.ClaudeOpus5, claim.Work.Model);
+        var running = broker.GetStatus(Route.ProjectName, contextKey: null);
+        Assert.Equal("running", running?.State);
+        Assert.Equal("agent-runner-01", running?.HostName);
+        Assert.NotNull(running?.StartedAt);
         Assert.Equal(CliTypes.Codex, claim.Work.ConfiguredCliType);
         Assert.Equal(ModelIds.Gpt56Sol, claim.Work.ConfiguredModel);
 
@@ -66,6 +71,11 @@ public sealed class RemoteChatWorkBrokerTests
         Assert.True(accepted);
         var result = await pending;
         Assert.True(result.Success);
+        Assert.NotNull(result.QueuedAt);
+        Assert.NotNull(result.StartedAt);
+        Assert.NotNull(result.FinishedAt);
+        Assert.True(result.QueuedAt <= result.StartedAt);
+        Assert.True(result.StartedAt <= result.FinishedAt);
         Assert.Contains(context.RepoPath!, result.ReplyText);
         Assert.Equal(CliTypes.Claude, result.CliType);
         Assert.Equal(ModelIds.Gpt56Sol, result.ConfiguredModel);
@@ -97,6 +107,9 @@ public sealed class RemoteChatWorkBrokerTests
 
         Assert.Equal(RemoteChatWorkClaimStatuses.Empty, deferred.Status);
         Assert.Equal("claude capability unavailable", deferred.Message);
+        var waiting = broker.GetStatus(Route.ProjectName, contextKey: null);
+        Assert.Equal("queued", waiting?.State);
+        Assert.Equal("claude capability unavailable", waiting?.Reason);
         var claimedLater = broker.TryClaim(new RemoteChatWorkClaimRequest(
             "runner-01", "runner-01", "host"));
         Assert.Equal(RemoteChatWorkClaimStatuses.Claimed, claimedLater.Status);
@@ -149,5 +162,46 @@ public sealed class RemoteChatWorkBrokerTests
         Assert.Equal(RemoteChatWorkClaimStatuses.Claimed, first.Status);
         Assert.Equal(RemoteChatWorkKinds.Inspect, first.Work?.Kind);
         Assert.Equal(RemoteChatWorkClaimStatuses.Empty, second.Status);
+    }
+
+    [Fact]
+    public async Task Unreachable_host_releases_queued_turn_for_workstation_fallback()
+    {
+        var broker = new RemoteChatWorkBroker(
+            NullLogger<RemoteChatWorkBroker>.Instance,
+            TimeSpan.FromMilliseconds(25));
+        await Assert.ThrowsAsync<RemoteChatHostUnreachableException>(() =>
+            broker.EnqueueTurnAsync(Route, "question", "gpt-5.5", null, CancellationToken.None));
+        Assert.Null(broker.GetStatus(Route.ProjectName, contextKey: null));
+    }
+
+    [Fact]
+    public async Task Usage_separates_light_and_heavy_chat_from_coding_capacity()
+    {
+        var broker = new RemoteChatWorkBroker(NullLogger<RemoteChatWorkBroker>.Instance);
+        var pending = broker.EnqueueTurnAsync(
+            Route, "question", "gpt-5.5", null, CancellationToken.None);
+        var work = broker.TryClaim(new RemoteChatWorkClaimRequest(
+            "runner-01", "runner-01", "agent-runner-01")).Work!;
+        var light = Assert.Single(broker.GetUsage());
+        Assert.Equal(1, light.ActiveTurns);
+        Assert.Equal(0, light.HeavyTurns);
+
+        Assert.True(broker.Renew(new RemoteChatWorkRenewRequest(
+            work.WorkId, work.ClaimToken, "runner-01", Heavy: true, CpuPercent: 54)));
+        var heavy = Assert.Single(broker.GetUsage());
+        Assert.Equal(1, heavy.HeavyTurns);
+        Assert.Equal(54, heavy.CpuPercent);
+
+        Assert.True(broker.Complete(new RemoteChatWorkCompletionRequest(
+            work.WorkId, work.ClaimToken, "runner-01", true, "done", "gpt-5.5",
+            new OrchestratorTokenUsage { InputTokens = 7, OutputTokens = 3 },
+            null, null)));
+        await pending;
+        var completed = Assert.Single(broker.GetUsage());
+        Assert.Equal(0, completed.ActiveTurns);
+        Assert.Equal(0, completed.HeavyTurns);
+        Assert.Equal(10, completed.Tokens);
+        Assert.NotNull(completed.CostUsd);
     }
 }

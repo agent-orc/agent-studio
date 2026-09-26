@@ -40,6 +40,30 @@ describe('OrchestratorSideSheetComponent · ORCH-1 context digest', () => {
     return request;
   }
 
+  it('shows the assigned runner and queued time while a remote turn waits', async () => {
+    const fixture = await makeFixture();
+    const component = fixture.componentInstance;
+    const http = TestBed.inject(HttpTestingController);
+    component.activeProject.set('Agent Studio');
+    component.remoteChatStatus.set({
+      contextKey: 'project:Agent Studio', state: 'queued', runnerId: 'agent-runner-01',
+      queuedAt: '2026-09-26T07:18:40Z', reason: 'Provider unavailable',
+    });
+    fixture.detectChanges();
+    expectSessionsRequest(http).flush({ sessions: [] });
+    const waiting = fixture.nativeElement.querySelector('[data-testid="orchestrator-chat-waiting"]');
+    expect(waiting?.textContent).toContain('agent-runner-01');
+    expect(waiting?.textContent).toContain('Provider unavailable');
+    expect(waiting?.textContent).toContain('since');
+    component.remoteChatStatus.set({
+      contextKey: 'project:Agent Studio', state: 'running', runnerId: 'agent-runner-01',
+      queuedAt: '2026-09-26T07:18:40Z', reason: null,
+    });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="orchestrator-chat-waiting"]')).toBeNull();
+    fixture.destroy();
+  });
+
   it('uses the visible Refresh action to force context, then reconcile chat and sessions', async () => {
     const fixture = await makeFixture();
     const component = fixture.componentInstance;

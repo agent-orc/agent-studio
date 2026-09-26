@@ -29,6 +29,11 @@
   font-weight: 700;
 }
 
+.capacity__chat-summary,
+.capacity__chat-usage { font-variant-numeric: tabular-nums; }
+
+.capacity__chat-usage li { max-width: none; flex-wrap: wrap; }
+
 .capacity__pending { color: var(--studio-accent-warn-strong); }
 
 // Per-project consumption of the shared host ceiling. A plain two-column list:
