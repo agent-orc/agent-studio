@@ -34,6 +34,7 @@ public sealed record AcceptanceRailSnapshot
 /// </summary>
 public sealed class AcceptanceRailHostedService : BackgroundService
 {
+    private static readonly object BounceClaimGate = new();
     private readonly TaskScannerService _scanner;
     private readonly IntegrationGenerationReconcileSweep? _generationReconcile;
     private readonly AttemptAuthorityService? _attemptAuthority;
@@ -375,6 +376,16 @@ public sealed class AcceptanceRailHostedService : BackgroundService
     private string ProcessBounce(
         TaskInfo job, TaskIntegrationStatus status, int retryNumber)
     {
+        lock (BounceClaimGate)
+            return ProcessBounceUnderClaim(job, status, retryNumber);
+    }
+
+    private string ProcessBounceUnderClaim(
+        TaskInfo job, TaskIntegrationStatus status, int retryNumber)
+    {
+        var live = _scanner.FindJob(job.Id, job.WatchPath);
+        if (live is null || live.State != job.State)
+            return "deferred";
         var subject = ReviewSubjectStore.Read(job.FolderPath);
         if (subject is null || string.IsNullOrWhiteSpace(subject.ResultRef)
             || string.IsNullOrWhiteSpace(subject.RunAttemptId)
@@ -424,27 +435,34 @@ public sealed class AcceptanceRailHostedService : BackgroundService
 
         var result = _recovery.Queue(job, status,
             status.Failure?.Code ?? AcceptedIntegrationFailureCodes.MergeConflict,
-            TaskIntegrationRecoveryService.AcceptanceRailSource, retryNumber);
+            TaskIntegrationRecoveryService.AcceptanceRailSource, retryNumber, obligation);
         if (!result.Queued)
         {
             _logger.LogWarning("integration-bounce-refused task={TaskKey} error={Error}", job.TaskKey, result.Error);
-            IntegrationBounceObligationStore.Update(job.FolderPath,
-                obligation with { State = "deferred", RouteDecision = "operator-error" });
+            var liveAfterFailure = _scanner.FindJob(job.Id, job.WatchPath);
+            if (liveAfterFailure?.State == TaskStates.Ready)
+                return "deferred"; // A restart pass repairs the post-move receipt.
+            if (liveAfterFailure is not null)
+            {
+                var latestPath = Path.Combine(TaskPaths.LogsDir(liveAfterFailure.FolderPath),
+                    "integration-bounce", obligation.IdempotencyKey + ".json");
+                var latest = IntegrationBounceObligationStore.Read(latestPath) ?? obligation;
+                IntegrationBounceObligationStore.Update(liveAfterFailure.FolderPath,
+                    latest with { State = "deferred", RouteDecision = "operator-error" });
+            }
             return "failed";
         }
         var moved = _scanner.FindJob(job.Id, job.WatchPath);
         if (moved is null) return "failed";
-        var selected = _recovery.SelectRecoveryRoute(moved);
-        IntegrationBounceObligationStore.Update(moved.FolderPath, obligation with
+        var routedObligation = IntegrationBounceObligationStore.Read(Path.Combine(
+            TaskPaths.LogsDir(moved.FolderPath), "integration-bounce",
+            obligation.IdempotencyKey + ".json"));
+        if (routedObligation is null) return "failed";
+        IntegrationBounceObligationStore.Update(moved.FolderPath, routedObligation with
         {
             State = "queued",
             RouteDecision = "automatic",
             ClaimedAtUtc = DateTimeOffset.UtcNow,
-            PreviousRoute = selected.Previous,
-            SelectedRoute = selected.Selected,
-            RouteReason = selected.Reason,
-            PolicyVersion = selected.PolicyVersion,
-            OperatorPinPresent = selected.Pinned,
         });
         AppendAction(moved, "requeued", $"Queued deterministic integration recovery retry {retryNumber}.", retryNumber);
         return "queued";
@@ -490,19 +508,18 @@ public sealed class AcceptanceRailHostedService : BackgroundService
                         ["resultSha"] = obligation.ResultSha,
                         ["deliveryRef"] = obligation.ResultRef,
                         ["reason"] = obligation.FailureCode,
+                        ["previousRoute"] = obligation.PreviousRoute ?? "unknown",
+                        ["selectedRoute"] = obligation.SelectedRoute ?? "unknown",
+                        ["routeReason"] = obligation.RouteReason ?? "receipt unavailable",
+                        ["policyVersion"] = obligation.PolicyVersion ?? "unknown",
+                        ["operatorPinPresent"] = obligation.OperatorPinPresent.ToString().ToLowerInvariant(),
                     });
             }
-            var selected = _recovery.SelectRecoveryRoute(ready);
             IntegrationBounceObligationStore.Update(ready.FolderPath, obligation with
             {
                 State = "queued",
                 RouteDecision = "automatic",
                 ClaimedAtUtc = DateTimeOffset.UtcNow,
-                PreviousRoute = selected.Previous,
-                SelectedRoute = selected.Selected,
-                RouteReason = selected.Reason,
-                PolicyVersion = selected.PolicyVersion,
-                OperatorPinPresent = selected.Pinned,
             });
             AppendAction(ready, "requeued", "Recovered queued integration bounce after restart.");
         }

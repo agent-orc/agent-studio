@@ -10,6 +10,13 @@ public sealed record TaskIntegrationRecoveryResult(
     string? IntegrationBranch = null,
     int? RetryNumber = null);
 
+internal sealed record RecoveryRouteSelection(
+    string Previous,
+    string Selected,
+    string Reason,
+    string PolicyVersion,
+    bool Pinned);
+
 /// <summary>
 /// Shared application boundary for operator-triggered and acceptance-rail
 /// rebase recovery. The service persists the steer, supersedes the failed
@@ -47,7 +54,8 @@ public sealed class TaskIntegrationRecoveryService
         TaskIntegrationStatus status,
         string failureCode,
         string source,
-        int? retryNumber = null)
+        int? retryNumber = null,
+        IntegrationBounceObligation? automaticObligation = null)
     {
         var subject = ReviewSubjectStore.Read(job.FolderPath);
         if (subject is null || string.IsNullOrWhiteSpace(subject.ResultRef))
@@ -109,6 +117,39 @@ public sealed class TaskIntegrationRecoveryService
                 internalError: true);
         }
 
+        // The runner can claim a card as soon as it enters Ready. Persist the
+        // selected route and its receipt while this card is still in review.
+        RecoveryRouteSelection? route = null;
+        if (source == AcceptanceRailSource)
+        {
+            route = SelectRecoveryRoute(current);
+            // A restart may replay after the route write but before Ready
+            // promotion. Keep the original receipt when the persisted route
+            // still clears the current policy floor.
+            if (automaticObligation is { PreviousRoute: not null, SelectedRoute: not null,
+                    RouteReason: not null, PolicyVersion: not null }
+                && route.Reason == "already at safe thinking level"
+                && route.Previous == automaticObligation.SelectedRoute
+                && route.PolicyVersion == automaticObligation.PolicyVersion
+                && !route.Pinned)
+                route = new RecoveryRouteSelection(
+                    automaticObligation.PreviousRoute,
+                    automaticObligation.SelectedRoute,
+                    automaticObligation.RouteReason,
+                    automaticObligation.PolicyVersion,
+                    automaticObligation.OperatorPinPresent);
+            if (automaticObligation is not null)
+                IntegrationBounceObligationStore.Update(current.FolderPath,
+                    automaticObligation with
+                    {
+                        PreviousRoute = route.Previous,
+                        SelectedRoute = route.Selected,
+                        RouteReason = route.Reason,
+                        PolicyVersion = route.PolicyVersion,
+                        OperatorPinPresent = route.Pinned,
+                    });
+        }
+
         var position = _states.PromoteToReadyTop(
             current.Id,
             current.WatchPath,
@@ -141,8 +182,18 @@ public sealed class TaskIntegrationRecoveryService
         if (retryNumber is not null)
             details["retryNumber"] = Invariant(retryNumber.Value);
         if (source == AcceptanceRailSource)
+        {
             details["attemptEpoch"] = Invariant(
                 OperatorReviewRequeueService.ReadEpoch(queued.FolderPath));
+            if (route is not null)
+            {
+                details["previousRoute"] = route.Previous;
+                details["selectedRoute"] = route.Selected;
+                details["routeReason"] = route.Reason;
+                details["policyVersion"] = route.PolicyVersion;
+                details["operatorPinPresent"] = route.Pinned.ToString().ToLowerInvariant();
+            }
+        }
 
         _timeline.Append(
             queued.FolderPath,
@@ -181,8 +232,7 @@ public sealed class TaskIntegrationRecoveryService
             RetryNumber: retryNumber);
     }
 
-    public (string Previous, string Selected, string Reason, string PolicyVersion, bool Pinned)
-        SelectRecoveryRoute(TaskInfo job)
+    private RecoveryRouteSelection SelectRecoveryRoute(TaskInfo job)
     {
         var previous = $"{job.Model ?? "default"}/{job.ThinkingLevel ?? "default"}";
         var pinned = job.ModelExplicit || job.ThinkingLevelExplicit;
@@ -192,7 +242,7 @@ public sealed class TaskIntegrationRecoveryService
             : string.Empty;
         var floor = _routing.CorrectnessFloor(job.TaskType, job.Title, prompt);
         if (pinned || string.IsNullOrWhiteSpace(job.Model))
-            return (previous, previous, pinned ? "operator pin retained" : "no concrete model route", policyVersion, pinned);
+            return new(previous, previous, pinned ? "operator pin retained" : "no concrete model route", policyVersion, pinned);
 
         var candidate = "low";
         var lowTier = _routing.Policy.Tiers.Single(tier => tier.Id == "sonnet-low");
@@ -200,14 +250,14 @@ public sealed class TaskIntegrationRecoveryService
             || lowTier.VendorOverrides.Values.Any(route => string.Equals(
                 job.Model, route.Model, StringComparison.OrdinalIgnoreCase));
         if (!knownLowRoute)
-            return (previous, previous, "model has no policy low route", policyVersion, false);
+            return new(previous, previous, "model has no policy low route", policyVersion, false);
         if (!_routing.RouteMeetsFloor(job.Model, candidate, floor))
-            return (previous, previous, $"policy floor {floor?.Id ?? "none"} retained", policyVersion, false);
+            return new(previous, previous, $"policy floor {floor?.Id ?? "none"} retained", policyVersion, false);
         if (string.Equals(job.ThinkingLevel, candidate, StringComparison.OrdinalIgnoreCase))
-            return (previous, previous, "already at safe thinking level", policyVersion, false);
+            return new(previous, previous, "already at safe thinking level", policyVersion, false);
         if (!_mutations.SetRecoveryThinkingLevel(job.Id, candidate, job.WatchPath))
-            return (previous, previous, "route update deferred", policyVersion, false);
-        return (previous, $"{job.Model}/{candidate}", "mechanical recovery within policy floor", policyVersion, false);
+            return new(previous, previous, "route update deferred", policyVersion, false);
+        return new(previous, $"{job.Model}/{candidate}", "mechanical recovery within policy floor", policyVersion, false);
     }
 
     internal static string BuildPrompt(
