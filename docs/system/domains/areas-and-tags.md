@@ -100,6 +100,18 @@ the write path lives in one place and the wiki-path guard covers it.
 | Wiki article | YAML front matter `tags: [a, b]` or a block list; HTML pages use `<meta name="agent-studio-tags" content="a, b">` in `<head>` |
 | Dossier entry page in the wiki tree | the Dossier descriptor's `tags[]` |
 
+Auto-tagging also persists an optional `taggingStatus` alongside these tags.
+The only recognized values are `tagged` (the classifier applied registry tags)
+and `tags-proposed` (low-confidence suggestions are held in the project's
+auto-tag state for review). Cards store it at `task.json.taggingStatus`;
+Dossiers store it at `workbench.json.taggingStatus`. Wiki Markdown stores
+`taggingStatus: tagged` or `taggingStatus: tags-proposed` in YAML front matter.
+Wiki HTML stores `<meta name="agent-studio-tagging-status" content="tagged">`
+or the same meta element with `content="tags-proposed"` inside `<head>`.
+Readers treat missing and unrecognized values as no status marker; they do
+not infer successful tagging from an unknown value. Archived items are not
+classified.
+
 ## API
 
 | Route | Purpose |

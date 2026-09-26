@@ -368,40 +368,45 @@ public sealed class AutoTagCreationWorker(AutoTaggingService service, ITagMainte
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            foreach (var project in service.Projects())
-            {
-                if (!service.Enabled(project)) continue;
-                try
-                {
-                    // A durable baseline keeps a deployment from silently applying a full backfill.
-                    var root = configuration["TaskRepository"];
-                    if (string.IsNullOrWhiteSpace(root)) continue;
-                    var path = Path.Combine(root, "auto-tag", TagMaintenancePolicy.Fingerprint(project) + ".observed.json");
-                    var nonArchivedCards = scanner.ScanAllJobsWithArchive()
-                        .Where(task => task.ProjectName == project && AutoTaggingPolicy.EligibleCard(task))
-                        .Select(task => task.Id).ToHashSet(StringComparer.Ordinal);
-                    var items = workspace.CaptureForClassification(project).Items
-                        .Where(item => item.Project == project && (item.Kind == "card"
-                            ? nonArchivedCards.Contains(item.Id) : item.Active)).ToList();
-                    var now = items.Select(i => i.Kind + ":" + i.Id).ToHashSet(StringComparer.Ordinal);
-                    if (!File.Exists(path))
-                    {
-                        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-                        File.WriteAllText(path, TagMaintenancePolicy.Encode(now));
-                        continue;
-                    }
-                    var previous = JsonSerializer.Deserialize<HashSet<string>>(File.ReadAllText(path), TagMaintenancePolicy.Json) ?? [];
-                    if (now.Except(previous).Any())
-                    {
-                        await service.BackfillAsync(project, apply: true, stoppingToken,
-                            now.Except(previous).ToHashSet(StringComparer.Ordinal));
-                        File.WriteAllText(path, TagMaintenancePolicy.Encode(now));
-                    }
-                }
-                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
-                catch (Exception ex) { logger.LogError(ex, "auto-tag-failed project={Project}", project); }
-            }
+            await ScanOnceAsync(stoppingToken);
             await _wake.WaitAsync(TimeSpan.FromMinutes(2), stoppingToken);
+        }
+    }
+
+    internal async Task ScanOnceAsync(CancellationToken ct)
+    {
+        foreach (var project in service.Projects())
+        {
+            if (!service.Enabled(project)) continue;
+            try
+            {
+                // A durable baseline keeps a deployment from silently applying a full backfill.
+                var root = configuration["TaskRepository"];
+                if (string.IsNullOrWhiteSpace(root)) continue;
+                var path = Path.Combine(root, "auto-tag", TagMaintenancePolicy.Fingerprint(project) + ".observed.json");
+                var nonArchivedCards = scanner.ScanAllJobsWithArchive()
+                    .Where(task => task.ProjectName == project && AutoTaggingPolicy.EligibleCard(task))
+                    .Select(task => task.Id).ToHashSet(StringComparer.Ordinal);
+                var items = workspace.CaptureForClassification(project).Items
+                    .Where(item => item.Project == project && (item.Kind == "card"
+                        ? nonArchivedCards.Contains(item.Id) : item.Active)).ToList();
+                var now = items.Select(i => i.Kind + ":" + i.Id).ToHashSet(StringComparer.Ordinal);
+                if (!File.Exists(path))
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                    File.WriteAllText(path, TagMaintenancePolicy.Encode(now));
+                    continue;
+                }
+                var previous = JsonSerializer.Deserialize<HashSet<string>>(File.ReadAllText(path), TagMaintenancePolicy.Json) ?? [];
+                if (now.Except(previous).Any())
+                {
+                    await service.BackfillAsync(project, apply: true, ct,
+                        now.Except(previous).ToHashSet(StringComparer.Ordinal));
+                    File.WriteAllText(path, TagMaintenancePolicy.Encode(now));
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
+            catch (Exception ex) { logger.LogError(ex, "auto-tag-failed project={Project}", project); }
         }
     }
 }

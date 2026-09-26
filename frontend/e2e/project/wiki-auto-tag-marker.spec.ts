@@ -28,6 +28,8 @@ test('wiki tree distinguishes proposed and applied article tags in both themes',
           type: 'md', children: [], tags: [], taggingStatus: 'tags-proposed' },
         { name: 'tagged-example.md', title: 'Tagged example', relPath: 'concepts/tagged-example.md',
           type: 'md', children: [], tags: ['observation'], taggingStatus: 'tagged' },
+        { name: 'future-example.md', title: 'Future example', relPath: 'concepts/future-example.md',
+          type: 'md', children: [], tags: [], taggingStatus: 'future-status' },
       ] }],
     }),
   }));
@@ -40,6 +42,7 @@ test('wiki tree distinguishes proposed and applied article tags in both themes',
   const tagged = page.getByTestId('project-wiki-tagging-concepts/tagged-example.md');
   await expect(proposed).toHaveText('Tags proposed');
   await expect(tagged).toHaveText('Tagged');
+  await expect(page.getByTestId('project-wiki-tagging-concepts/future-example.md')).toHaveCount(0);
   for (const theme of ['light', 'dark'] as const) {
     await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
     await expect(proposed).toBeVisible();

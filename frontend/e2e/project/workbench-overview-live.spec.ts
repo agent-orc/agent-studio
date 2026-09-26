@@ -69,6 +69,7 @@ const VISUAL_OVERVIEW = {
         title: 'Runner host hardening',
         summary: 'The direction is accepted while the linked implementation cards move through delivery.',
         status: 'decided',
+        taggingStatus: 'future-status',
         phase: 'testing',
         updatedAtUtc: '2026-08-10T09:15:00Z',
         entryPath: 'docs/operations/runner-host-hardening/index.html',
@@ -235,6 +236,8 @@ test('captures the Dossier overview at wide and narrow widths in both themes', a
     .toContainText('Auto-tagged');
   await expect(page.getByTestId('workbench-overview-item-Coding Agent Chat-conversation-recovery'))
     .toContainText('Tags proposed');
+  await expect(page.getByTestId('workbench-overview-item-Agent Studio-runner-host-hardening')
+    .getByTestId('workbench-tagging-status')).toHaveCount(0);
 
   for (const [widthName, width] of [['wide', 1440], ['narrow', 760]] as const) {
     await page.setViewportSize({ width, height: 900 });

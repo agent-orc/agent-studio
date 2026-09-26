@@ -49,7 +49,7 @@ function makeTask(id: string, title: string, order: number, mode: string | undef
 const PLANNING_TASK = { ...makeTask('mode-A-planning', 'Mode badge planning alpha', 1, 'planning'), taggingStatus: 'tags-proposed' };
 const RESEARCH_TASK = { ...makeTask('mode-B-research', 'Mode badge research bravo', 2, 'research'), taggingStatus: 'tagged' };
 const CONCEPT_TASK = makeTask('mode-C-concept', 'Mode badge concept charlie', 3, 'concept');
-const CODING_TASK = makeTask('mode-D-coding', 'Mode badge coding delta', 4, 'coding');
+const CODING_TASK = { ...makeTask('mode-D-coding', 'Mode badge coding delta', 4, 'coding'), taggingStatus: 'future-status' };
 
 const GROUPED_PAYLOAD = {
   backlog: [],
@@ -162,6 +162,7 @@ test.describe('Card mode badge (planning / research / concept recognizable on th
     const tagged = cardByTitle(page, RESEARCH_TASK.title).getByTestId('task-card-tagging-status');
     await expect(proposal).toHaveText('Tags proposed');
     await expect(tagged).toHaveText('Auto-tagged');
+    await expect(cardByTitle(page, CODING_TASK.title).getByTestId('task-card-tagging-status')).toHaveCount(0);
     // The broad board fixture can open an unrelated error dialog while its
     // placeholder API responses settle; keep the marker capture unobscured.
     if (await page.getByTestId('error-dialog').isVisible())
@@ -170,6 +171,8 @@ test.describe('Card mode badge (planning / research / concept recognizable on th
       await setTheme(page, theme);
       await expect(proposal).toBeVisible();
       await expect(tagged).toBeVisible();
+      if (await page.getByTestId('error-dialog').isVisible())
+        await page.getByTestId('error-dialog-close').click();
       const path = `${process.env.JOB_RESULTS_DIR ?? 'test-results'}/auto-tag-card-${theme}.png`;
       await cardByTitle(page, PLANNING_TASK.title).screenshot({ path });
     }

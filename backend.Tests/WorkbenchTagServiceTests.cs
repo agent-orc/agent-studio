@@ -46,6 +46,20 @@ public sealed class WorkbenchTagServiceTests : IDisposable
     }
 
     [Theory]
+    [InlineData("tagged", "tagged")]
+    [InlineData("tags-proposed", "tags-proposed")]
+    [InlineData("future-status", null)]
+    public void Catalogue_OnlyProjectsRecognizedTaggingStatus(string stored, string? expected)
+    {
+        var descriptor = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Descriptor()))!.AsObject();
+        descriptor["taggingStatus"] = stored;
+        File.WriteAllText(Descriptor(), descriptor.ToJsonString());
+        var (catalogue, _) = Services();
+
+        Assert.Equal(expected, Assert.Single(catalogue.List("Project")!.Items).TaggingStatus);
+    }
+
+    [Theory]
     [InlineData("\"delivery-chain\"", "tags must be an array")]
     [InlineData("""[1]""", "tags must be an array")]
     [InlineData("""["Delivery Chain"]""", "Invalid tag id")]

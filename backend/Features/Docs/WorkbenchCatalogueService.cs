@@ -541,7 +541,10 @@ public sealed class WorkbenchCatalogueService
                     Key = key,
                     Pattern = ArticlePatterns.Normalize(OptionalString(obj, "pattern")),
                     Tags = ReadTags(obj),
-                    TaggingStatus = OptionalString(obj, "taggingStatus"),
+                    TaggingStatus = OptionalString(obj, "taggingStatus") switch
+                    {
+                        "tagged" => "tagged", "tags-proposed" => "tags-proposed", _ => null,
+                    },
                     DescriptorSourceTaskKeys = StringArray(obj, "sourceTaskKeys"),
                     RelatedTaskKeys = StringArray(obj, "relatedTaskKeys"),
                     LifecycleState = lifecycleState ?? LifecycleFromStatus(status, phase),

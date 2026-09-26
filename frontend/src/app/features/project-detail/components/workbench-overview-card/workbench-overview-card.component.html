@@ -18,7 +18,8 @@
         <i aria-hidden="true"></i>{{ project().shortCode || project().displayName }}
       </span>
       <span class="workbench-overview__status" [attr.data-status]="item().workbench.status">{{ statusLabel() }}</span>
-      @if (item().workbench.taggingStatus; as taggingStatus) {
+      @if (item().workbench.taggingStatus === 'tagged' || item().workbench.taggingStatus === 'tags-proposed') {
+        @let taggingStatus = item().workbench.taggingStatus;
         <span class="workbench-overview__status" data-testid="workbench-tagging-status">
           {{ taggingStatus === 'tags-proposed' ? 'Tags proposed' : 'Auto-tagged' }}
         </span>
