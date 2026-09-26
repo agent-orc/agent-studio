@@ -138,10 +138,14 @@ public sealed class TaskTransitionService
         bool suppressIntegrationTrigger = false,
         bool operatorOverride = false,
         string? transitionCause = null,
-        string? transitionDetail = null)
+        string? transitionDetail = null,
+        DecisionReopenPermit? decisionReopenPermit = null)
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return new MoveJobOutcome(MoveJobStatus.NotFound);
+        if (TaskKinds.IsDecision(info.Kind)
+            && DecisionLaneGuard.Refusal(info, targetState, _scanner.GetReferenceIndex(), decisionReopenPermit) is { } refusal)
+            return new MoveJobOutcome(MoveJobStatus.Failure, refusal);
         if (operatorOverride && targetState != TaskStates.Completed)
         {
             return new MoveJobOutcome(
@@ -304,7 +308,8 @@ public sealed class TaskTransitionService
                 expectedSourceState,
                 reason,
                 transitionCause,
-                transitionDetail);
+                transitionDetail,
+                decisionReopenPermit);
         var outcome = _reviewAttemptLifecycle is not null
                       && targetState is TaskStates.Completed or TaskStates.Archive
             ? _reviewAttemptLifecycle.ExecuteTerminalTransition(info, targetState, MoveCore)

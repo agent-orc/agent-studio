@@ -486,6 +486,10 @@ public static class TimelineEventKinds
     /// </summary>
     public const string FollowUpConsumed = "follow_up_consumed";
 
+    public const string DecisionRequested = "decision_requested";
+    public const string DecisionDecided = "decision_decided";
+    public const string DecisionReopened = "decision_reopened";
+
     /// <summary>
     /// AGT-2870: an operator asked a remotely executed run to stop. The request
     /// is recorded here when it is accepted, not when the run ends; the owning

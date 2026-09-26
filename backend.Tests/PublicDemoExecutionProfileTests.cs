@@ -131,7 +131,8 @@ public sealed class PublicDemoExecutionProfileTests : IDisposable
             // path its sibling POST /api/projects/{projectId}/completed-lane/audit
             // carries. The two read-only delivery-claim reports stay unmarked,
             // like every other GET that only re-derives git state.
-            Assert.Equal(84, routes.Count);
+            // Decision-card decide and reopen are execution mutations on Start.
+            Assert.Equal(86, routes.Count);
             Assert.Equal(
                 ExecutionAdmissionPolicy.AllPaths.OrderBy(path => path),
                 routes.Select(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)
@@ -141,7 +142,7 @@ public sealed class PublicDemoExecutionProfileTests : IDisposable
                 new Dictionary<ExecutionAdmissionPath, int>
                 {
                     [ExecutionAdmissionPath.Claim] = 6,
-                    [ExecutionAdmissionPath.Start] = 12,
+                    [ExecutionAdmissionPath.Start] = 14,
                     [ExecutionAdmissionPath.Continue] = 13,
                     [ExecutionAdmissionPath.Review] = 9,
                     [ExecutionAdmissionPath.Chat] = 9,
