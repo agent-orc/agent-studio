@@ -33,7 +33,8 @@ function json(route: Route, body: unknown): Promise<void> {
 
 interface MergeFact { mergeCommit: string | null }
 
-function detail(merge: MergeFact | null, hasDeliverable = true) {
+function detail(merge: MergeFact | null, hasDeliverable = true,
+  integrationStatus: 'pending' | 'integrated' | 'not-applicable' = 'pending') {
   return {
     info: {
       id: JOB_ID,
@@ -55,6 +56,7 @@ function detail(merge: MergeFact | null, hasDeliverable = true) {
         sha: 'abc1234abc1234abc1234abc1234abc1234abc1', shortSha: 'abc1234',
         message: 'feat: task deliverable', filesChanged: 1, files: ['src/task.ts'], at: '2026-06-09T12:20:00Z',
       }] : [],
+      integration: { status: integrationStatus, integrationBranch: 'develop' },
       ownerClientId: 'local-default',
       createdAt: '2026-06-09T12:00:00Z',
       sessionChain: [],
@@ -107,6 +109,8 @@ function provenanceView(landedState: 'on-branch-only' | 'merged-to-develop' | 'r
 
 async function installBaseRoutes(page: Page): Promise<void> {
   await page.route('**/api/**', (route) => json(route, []));
+  await page.route('**/api/tasks/*/runs**', (route) =>
+    json(route, { runs: [], runnerEvents: [], hasActiveRun: false }));
   await page.route('**/api/tasks', (route) => json(route, []));
   await page.route('**/api/tasks/grouped**', (route) => json(route, {
     backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
@@ -127,6 +131,9 @@ async function installBaseRoutes(page: Page): Promise<void> {
   await page.route(/\/api\/runner\/status(\?|$)/, (route) => json(route, {
     projects: { [PROJECT]: { projectName: PROJECT, mode: 'manual', activeJobId: null, activeExecution: null, queuedJobIds: [] } },
   }));
+  await page.route('**/api/auth/status', (route) => json(route, {
+    profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
+  }));
 }
 
 /**
@@ -139,9 +146,14 @@ async function installJobRoutes(
   opts: { detailMerge: MergeFact | null; landedState: 'on-branch-only' | 'merged-to-develop' | 'released-to-main'; viewMerge?: MergeFact | null; hasDeliverable?: boolean },
 ): Promise<void> {
   const idEsc = JOB_ID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  await page.route(new RegExp(`/api/tasks/${idEsc}/runs(\\?|$)`), (route) =>
+    json(route, { runs: [], runnerEvents: [], hasActiveRun: false }));
   await page.route(new RegExp(`/api/tasks/${idEsc}/provenance(\\?|$)`), (route) =>
     json(route, provenanceView(opts.landedState, opts.viewMerge ?? opts.detailMerge)));
-  await page.route(new RegExp(`/api/tasks/${idEsc}(\\?|$)`), (route) => json(route, detail(opts.detailMerge, opts.hasDeliverable ?? true)));
+  await page.route(new RegExp(`/api/tasks/${idEsc}(\\?|$)`), (route) => json(route,
+    detail(opts.detailMerge, opts.hasDeliverable ?? true,
+      opts.hasDeliverable === false ? 'not-applicable'
+        : opts.landedState === 'on-branch-only' ? 'pending' : 'integrated')));
 }
 
 async function saveEvidence(page: Page, fileName: string): Promise<void> {
@@ -156,14 +168,15 @@ async function openJob(page: Page): Promise<void> {
 }
 
 test.describe('Human Review acceptance primary is landed-state aware', () => {
-  test('not landed: keeps the "Merge into Develop" offer and shows no status pill', async ({ page }) => {
+  test('not landed: waits for integration and shows no status pill', async ({ page }) => {
     await installBaseRoutes(page);
     await installJobRoutes(page, { detailMerge: null, landedState: 'on-branch-only' });
     await openJob(page);
 
     const primary = page.getByTestId('studio-triage-action-mark-done');
     await expect(primary).toBeVisible();
-    await expect(primary).toHaveText(/Merge into Develop/);
+    await expect(primary).toHaveText(/Await integration/);
+    await expect(primary).toBeDisabled();
     await expect(page.getByTestId('studio-triage-merge-status')).toHaveCount(0);
     await saveEvidence(page, 'merge-action-with-deliverable.png');
   });
@@ -230,7 +243,7 @@ test.describe('Human Review acceptance primary is landed-state aware', () => {
       await provenanceGate;
       await json(route, provenanceView('merged-to-develop', { mergeCommit: MERGE_SHA }));
     });
-    await page.route(new RegExp(`/api/tasks/${idEsc}(\\?|$)`), (route) => json(route, detail(null)));
+    await page.route(new RegExp(`/api/tasks/${idEsc}(\\?|$)`), (route) => json(route, detail(null, true, 'integrated')));
 
     await openJob(page);
 

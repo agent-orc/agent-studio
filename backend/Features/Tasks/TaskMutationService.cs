@@ -44,8 +44,9 @@ public class TaskMutationService
     /// passes one in to prove what a sweep does when a write fails.
     /// </summary>
     private readonly IAtomicJsonFileWriter? _keyFileWriter;
+    private readonly bool _guardedDelivery;
 
-    public TaskMutationService(TaskScannerService scanner, ClientIdentityStore clients, ProjectRegistry projectRegistry, TaskChangeNotifier notifier, ILogger<TaskMutationService> logger, TimelineLog? timeline = null, LaneMutexRegistry? laneMutex = null, GitService? git = null, IAtomicJsonFileWriter? fileWriter = null)
+    public TaskMutationService(TaskScannerService scanner, ClientIdentityStore clients, ProjectRegistry projectRegistry, TaskChangeNotifier notifier, ILogger<TaskMutationService> logger, TimelineLog? timeline = null, LaneMutexRegistry? laneMutex = null, GitService? git = null, IAtomicJsonFileWriter? fileWriter = null, IConfiguration? configuration = null)
     {
         _scanner = scanner;
         _clients = clients;
@@ -56,6 +57,7 @@ public class TaskMutationService
         _laneMutex = laneMutex ?? LaneMutexRegistry.NullSingleton;
         _git = git;
         _keyFileWriter = fileWriter;
+        _guardedDelivery = configuration?.GetValue("DeliveryChain:Guarded", true) ?? false;
     }
 
     /// <summary>
@@ -1047,6 +1049,17 @@ public class TaskMutationService
         return Updated();
     }
 
+    public bool SetJobRequiresIntegration(string jobId, bool? requiresIntegration, string? watchPath = null)
+    {
+        var info = _scanner.FindJob(jobId, watchPath);
+        if (info is null) return false;
+        if (requiresIntegration.HasValue)
+            TaskJsonFile.UpdateField(info.FolderPath, "requiresIntegration", requiresIntegration.Value, _logger);
+        else
+            TaskJsonFile.RemoveField(info.FolderPath, "requiresIntegration", _logger);
+        return Updated();
+    }
+
     /// <summary>Applies one audited incremental waits-on edit without replacing unrelated references.</summary>
     public bool EditTaskWaitsOn(
         string jobId,
@@ -1589,6 +1602,12 @@ public class TaskMutationService
                 ? req.TargetState
                 : null;
         if (targetState == null) return null;
+        // A new card has no review verdict, accepted epoch, or integration
+        // proof. Protected lanes can only be entered through a guarded move.
+        if (_guardedDelivery && AcceptanceIntegrationPolicy.IsIntegrationRequiredAtCreation(req)
+            && targetState is (TaskStates.HumanReview
+                or TaskStates.Completed or TaskStates.Archive))
+            return null;
 
         // Sanitize ID: transliterate umlauts, lowercase, replace spaces with dashes, only allow safe chars
         var baseSlug = string.IsNullOrWhiteSpace(req.Id)
@@ -1710,6 +1729,8 @@ public class TaskMutationService
         jobJson["mode"] = effectiveMode;
         if (req.NoBranchExpected || AcceptanceIntegrationPolicy.IsNoBranchTaskType(req.TaskType))
             jobJson["noBranchExpected"] = true;
+        if (req.RequiresIntegration.HasValue)
+            jobJson["requiresIntegration"] = req.RequiresIntegration.Value;
         jobJson["allowWebAccess"] = req.AllowWebAccess ?? (effectiveMode == TaskModes.Research);
         if (req.Fixture)
             jobJson["fixture"] = true;

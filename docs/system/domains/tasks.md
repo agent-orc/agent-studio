@@ -354,33 +354,42 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   HEAD. Lane state, provenance merge records, pipeline success, and curated
   merge subjects do not force `integrated`; an out-of-band merge is detected on
   the next read.
-- `integrated` means reachable from the PUSHED integration branch
-  (`origin/<branch>`). A delivery that only a local branch or a worktree ref can
-  see is `merged-locally`, with the unreachable commits named in the detail; a
-  repository without an origin mirror of the branch is its own publication and
-  keeps the local graph authoritative (AGT-2849). `merged-locally` is merged work
-  but not integrated work: `IntegrationStatuses.IsMerged` is true, so acceptance,
-  the acceptance rail, integration recovery, the completion contract
-  (`CompletionContractPolicy.IsContained`), the archive guard, and the Human
-  Review accept action proceed while the separately
-  backstopped push is still queued, and `IsNotIntegrated` is true, so the
-  `integrationpending` marker, the archive warning, and the amber board badge
-  stay until the push lands. See
+- `integrated` means reachable from the published integration branch
+  (`origin/<branch>`). A delivery that only a local branch or worktree ref can
+  see is `merged-locally` and cannot enter Human Review, be accepted, or be
+  archived. A repository without an origin mirror uses its local target ref.
+  The current immutable result SHA is checked first, followed by commits
+  attributed to that delivery epoch. A rewritten commit is accepted only when
+  its original-to-replacement mapping was persisted. The last merge attempt is
+  diagnosis; an out-of-band merge heals the current status on the next target
+  ref fingerprint change. See
   [interrupted integration gate](../../operations/git/interrupted-integration-gate.md).
-- Human acceptance is transactional. A coding card remains in
-  `5-human-review` with phase `integrating` until the delivery reaches `Merged`,
-  `MergedAfterRebase`, `AlreadyMerged`, or `AlreadyOnIntegrationBranch`. The
-  last outcome applies when no task branch exists and every current attributed
-  commit for the integration repository is already an ancestor of the target;
-  the pipeline record carries those evidence SHAs. `NoTaskBranch`, conflict,
-  gate failure, and error return it
-  to ordinary Human Review with an Integration failed badge and timeline
-  evidence. Before the already-integrated decision, acceptance fetches the
-  configured origin integration ref and evaluates refreshed local plus remote
-  ancestry. A remote-only out-of-band integration therefore skips the merge
-  queue and gate, while local/remote divergence becomes a failed integration
-  record instead of being overwritten. The `integrationpending` tag is an
-  internal recovery marker, not a second UI status.
+- The guarded delivery chain is workspace-wide by default. `DeliveryChain:Guarded`
+  can be set to `false` only during migration to the former badge-only behavior.
+  A coding card stays in `4-auto-review` with phase `integrating` until the
+  published result is integrated, then enters Human Review. Missing code
+  delivery, conflict, gate failure, and unrecoverable error go to escalation
+  with a category and recovery action. A pull-request project's approval stays
+  on the pull request while the card waits in Auto Review; Human Review starts
+  after the merge. The integration strategy is project configured, but these
+  lane meanings are global.
+- Accept in Human Review confirms the already integrated result and records its
+  delivery epoch, immutable result SHA, target branch, and target ref fingerprint.
+  A changed delivery or target ref makes the verdict stale and returns the card
+  to Auto Review. Archive checks the same integration truth centrally for
+  single moves, drag, batch moves, and management sweeps. An owner can override
+  one card through the move API with a written reason; the audit and timeline
+  retain the actor, time, delivery and target facts. Sweeps skip blocked cards
+  and report each one. `requiresIntegration` may be configured on a card, but
+  any actual repository change always requires integration. New coding cards
+  cannot be created directly in a protected review or terminal lane.
+- `PUT /api/tasks/{jobId}/requires-integration` sets the delivery class with
+  JSON body `{ "requiresIntegration": true }` or `{ "requiresIntegration": false }`.
+  A `null` value (or omitted property) removes the card override and restores
+  contract-derived classification. The route accepts the usual optional
+  `project` or `watchPath` selector, returns `200 OK` on update and `404` when
+  the card is missing. Setting `false` cannot exempt an actual repository
+  change from integration or the guarded lane transitions.
 - A current integration failure is projected as typed card state from the
   durable merge step. `integration.failure` carries a stable code, concise
   label, operator-facing reason, and whether focused rebase recovery applies.
@@ -390,10 +399,11 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   legacy top-level `conflict-skipped` compatibility status.
 - `AcceptanceRailHostedService` is the platform-owned mover for routine
   post-integration progress. By default it runs immediately at backend startup
-  and every 180 seconds. It accepts a coding card from `5-human-review` only
-  when the same Git-derived projection says the delivery is merged
-  (`integrated` or `merged-locally`); concept and other
-  no-code cards remain for human review. A recoverable `conflict-skipped` card
+  and every 180 seconds. In guarded mode it leaves an integrated coding card
+  in `5-human-review` for a human acceptance decision. The temporary
+  badge-only migration mode retains automatic acceptance when the Git-derived
+  projection is `integrated` or `merged-locally`; concept and other no-code
+  cards remain for human review. A recoverable `conflict-skipped` card
   in `5-human-review` or `5e-escalated` receives the shared integration-recovery
   steer and is promoted to the top of `2-ready`. A generic decision-card marker
   cannot suppress this recovery after a passed review. After two automatic
@@ -902,12 +912,10 @@ as `acceptance-rail-run`.
   Consecutive Remote Review decisions with the same blocking aspect,
   classification, and summary escalate with that reason after two rounds by
   default, even when the broader reissue budget remains.
-- Integration remains an explicit operator decision after Human Review. The
-  Remote control plane may durably accept and schedule that command, but Post
-  Processing does not infer acceptance or move directly to `6-completed`.
-- Moving a task from `6-completed` to `7-archive` in task detail requires a
-  second confirmation while `integration.status` is anything other than
-  `integrated`. This is an operator warning, not a server-side hard block.
+- Human Review accepts an already integrated delivery. Post Processing does
+  not infer human acceptance or move directly to `6-completed`.
+- Archive is server guarded for every move path. A non-integrated delivery is
+  blocked unless an owner supplies a written per-card override.
 - Only `2-ready` and `3-progress` tasks can be started. A `2-ready` card is
   additionally held back from auto-pickup while its `references.dependsOn`
   ("waits-on") targets are unfulfilled (AGT-2029); see the waits-on gate in

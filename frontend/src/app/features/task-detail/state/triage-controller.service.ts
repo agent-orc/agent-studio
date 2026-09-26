@@ -132,21 +132,16 @@ export class TriageController {
     const lost = deliveryRef
       ? `The delivery ${deliveryRef} stays on its branch and is never integrated into ${branch}.`
       : `This task's delivery is not in ${branch} and archiving will not integrate it.`;
-    const reason = `Archived with an unintegrated delivery${deliveryRef ? ` (${deliveryRef})` : ''}; not integrated into ${branch}.`;
-    const ok = await this.confirmDialog.confirm({
-      title: 'Archive an unintegrated delivery?',
+    await this.confirmDialog.confirm({
+      title: 'Integration required before archive',
       message:
-        `${lost} The archive keeps the task and all of its evidence, and records why it was closed.`,
+        `${lost} Integrate the current delivery before archiving. An owner can record a written override for this card.`,
       detail: info.integration?.detail || info.title || info.id,
-      confirmLabel: 'Archive anyway',
-      cancelLabel: 'Keep in Delivered',
+      confirmLabel: 'Keep in Delivered',
+      cancelLabel: 'Close',
       kind: 'primary',
     });
-    if (!ok) {
-      this.clearActing();
-      return;
-    }
-    this.performMove(info, ev, reason);
+    this.clearActing();
   }
 
   /** One containment lookup; a failed lookup leaves the verdict unknown rather than negative. */

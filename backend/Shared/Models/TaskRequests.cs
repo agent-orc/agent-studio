@@ -136,11 +136,12 @@ public record MoveJobRequest
 {
     public string TargetState { get; init; } = "";
     /// <summary>
-    /// Explicit one-shot operator decision to complete an accepted coding card
-    /// without integration. Valid only when <see cref="TargetState"/> is
-    /// <see cref="TaskStates.Completed"/> and never inferred by the server.
+    /// Legacy completion exception for a code-free deliverable with a written
+    /// reason. A repository change still requires integration.
     /// </summary>
     public bool OperatorOverride { get; init; }
+    /// <summary>Owner-only, one-card archive override with a written reason.</summary>
+    public bool ArchiveOverride { get; init; }
 
     /// <summary>
     /// Optional operator rationale for the lane move. It is persisted on the
@@ -318,6 +319,7 @@ public record CreateTaskRequest
     public bool? AllowWebAccess { get; init; }
     /// <summary>Explicitly declare that the task is expected to have no delivery branch.</summary>
     public bool NoBranchExpected { get; init; }
+    public bool? RequiresIntegration { get; init; }
     /// <summary>
     /// Optional client identity that owns the new job. When omitted, the
     /// endpoint falls back to the X-Client-Id header on the incoming
@@ -468,6 +470,11 @@ public record SetJobTagsRequest
 public record SetJobTaskTypeRequest
 {
     public string TaskType { get; init; } = TaskTypes.Chore;
+}
+
+public record SetJobRequiresIntegrationRequest
+{
+    public bool? RequiresIntegration { get; init; }
 }
 
 /// <summary>

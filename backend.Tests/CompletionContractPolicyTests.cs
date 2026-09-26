@@ -101,14 +101,13 @@ public class CompletionContractPolicyTests
     }
 
     [Fact]
-    public void SupersededOnlyDeliveryStillCompletesWithAWrittenReason()
+    public void SupersededOnlyDeliveryCannotCompleteWithAWrittenReason()
     {
         var decision = CompletionContractPolicy.Decide(
             Coding(IntegrationStatuses.Pending, hasEffective: false, operatorOverride: true, reason: Reason));
 
-        Assert.True(decision.Accepted);
-        Assert.Equal(CompletionClaimBases.OperatorOverride, decision.Claim!.Basis);
-        Assert.Equal(Reason, decision.Claim.Reason);
+        Assert.False(decision.Accepted);
+        Assert.Equal(CompletionRefusalCodes.SupersededOnlyDelivery, decision.RefusalCode);
     }
 
     [Fact]
@@ -179,7 +178,7 @@ public class CompletionContractPolicyTests
 
     [Theory]
     [InlineData(IntegrationStatuses.Integrated, true)]
-    [InlineData(IntegrationStatuses.MergedLocally, true)]
+    [InlineData(IntegrationStatuses.MergedLocally, false)]
     [InlineData(IntegrationStatuses.Partial, false)]
     [InlineData(IntegrationStatuses.Pending, false)]
     [InlineData(IntegrationStatuses.NoBranch, false)]
@@ -188,21 +187,16 @@ public class CompletionContractPolicyTests
         => Assert.Equal(contained, CompletionContractPolicy.IsContained(status));
 
     /// <summary>
-    /// AGT-2849: an unpublished merge is still a merge. The delivery is in the
-    /// integration branch graph, so the completion contract accepts it on the
-    /// integrated-delivery basis instead of accusing it of being unintegrated.
-    /// The outstanding origin push is the push backstop's work and the
-    /// merged-locally badge is where the card reports it.
+    /// A local merge has not crossed the published integration boundary.
     /// </summary>
     [Fact]
-    public void AMergedButUnpublishedDeliveryStillSatisfiesTheContract()
+    public void AMergedButUnpublishedDeliveryCannotComplete()
     {
         var decision = CompletionContractPolicy.Decide(
             Coding(IntegrationStatuses.MergedLocally));
 
-        Assert.True(decision.Accepted);
-        Assert.Equal(CompletionClaimBases.IntegratedDelivery, decision.Claim!.Basis);
-        Assert.Null(decision.RefusalCode);
+        Assert.False(decision.Accepted);
+        Assert.Equal(CompletionRefusalCodes.UnintegratedDelivery, decision.RefusalCode);
     }
 
     [Theory]

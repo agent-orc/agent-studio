@@ -163,6 +163,7 @@ public sealed class WatcherEndpointsTests : IDisposable
                     ["WatchPaths:0:Name"] = "Alpha Project",
                     ["WatchPaths:0:Path"] = _projectPath,
                     ["WatchPaths:0:RootPath"] = _projectPath,
+                    ["DeliveryChain:Guarded"] = "false",
                     ["Watcher:Enabled"] = "false",
                     ["Watcher:SuppressionDays"] = "14",
                 }));

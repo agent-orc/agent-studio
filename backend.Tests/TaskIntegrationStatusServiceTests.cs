@@ -170,7 +170,7 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
 
         Assert.Equal(IntegrationStatuses.Integrated, status.Status);
         Assert.Equal(rebasedSha[..7], status.Sha);
-        Assert.Contains("superseded", status.Detail);
+        Assert.Equal("current-result-ancestor", status.Detail);
     }
 
     [Fact]
@@ -273,7 +273,11 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
 
         var svc = BuildService(repo, out var project, out var log);
         var job = Job("partial", "AGT-3006", project, repo, log,
-            commits: new[] { Commit(landed), Commit(notLanded) },
+            commits: new[]
+            {
+                Commit(landed) with { RunAttemptId = "run-current" },
+                Commit(notLanded) with { RunAttemptId = "run-current" },
+            },
             prov: Prov(branch: "task/partial"));
         ReviewSubjectStore.Write(job.FolderPath, new ReviewSubjectRecord
         {
@@ -281,7 +285,7 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
             RunAttemptId = "run-current",
             Project = project,
             Repository = repo,
-            ResultSha = landed,
+            ResultSha = notLanded,
             AttemptChainId = "chain-current",
             ResultRef = "refs/heads/agent-studio/results/current",
         });
@@ -765,6 +769,39 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
     }
 
     [Fact]
+    public void BuildLookup_Agt2301FailedMergeRecordHealsWhenCommitAppearsOnTarget()
+    {
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q -b task/agt2301 develop");
+        File.WriteAllText(Path.Combine(repo, "agt2301.txt"), "delivered\n");
+        Commit(repo, "feat: recorded delivery");
+        var delivered = RunGit(repo, "rev-parse HEAD").Out.Trim();
+        var service = BuildService(repo, out var project, out var log);
+        var job = Job("agt2301", "AGT-2301", project, repo, log,
+            commits: [Commit(delivered)]) with { State = TaskStates.Completed };
+        log.EnsureRun(job.FolderPath, PipelineCatalogue.Standard, project, job.Id);
+        log.RecordStep(job.FolderPath, new PipelineStepExecution
+        {
+            StepId = PipelineCatalogue.MergeIntoDevelopStepId,
+            Kind = StepKind.Tool,
+            Status = PipelineStepStatus.Failed,
+            Verdict = "conflict",
+            Reason = "The earlier merge attempt failed.",
+        });
+        Assert.Equal(IntegrationStatuses.ConflictSkipped,
+            service.BuildLookup([job])[job.TaskKey].Status);
+
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "merge --no-ff --no-edit task/agt2301");
+        var healed = service.BuildLookup([job])[job.TaskKey];
+
+        Assert.Equal(IntegrationStatuses.Integrated, healed.Status);
+        Assert.Equal(delivered[..7], healed.Sha);
+        Assert.Equal(PipelineStepStatus.Failed, log.Read(job.FolderPath)?.Steps.Last(
+            step => step.StepId == PipelineCatalogue.MergeIntoDevelopStepId).Status);
+    }
+
+    [Fact]
     public void BuildLookup_PreparationFailure_ShowsTheStderrTailInTheIntegrationDetail()
     {
         // AGT-2822: a repository preparation failure reached the card as a bare
@@ -1047,7 +1084,7 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         var batched = svc.BuildLookup([job, neighbour])[job.TaskKey];
 
         Assert.Equal(IntegrationStatuses.Integrated, alone.Status);
-        Assert.Equal("reviewed-result-ancestor", alone.Detail);
+        Assert.Equal("current-result-ancestor", alone.Detail);
         Assert.Equal(delivered[..7], alone.Sha);
         Assert.Empty(alone.Repositories);
         Assert.Equal(batched.Status, alone.Status);
@@ -1079,7 +1116,7 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
 
     [Fact]
     [Trait("Category", "MachineBound")]
-    public void BuildLookup_LegacyContentEqualCommit_IsIntegratedByContent()
+    public void BuildLookup_LegacyContentEqualCommit_RequiresDurableMapping()
     {
         var repo = SeedDevelopMainRepo();
         RunGit(repo, "checkout -q -b task/legacy develop");
@@ -1095,9 +1132,8 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
 
         var status = service.BuildLookup([job])[job.TaskKey];
 
-        Assert.Equal(IntegrationStatuses.Integrated, status.Status);
-        Assert.Contains("integrated-by-content", status.Detail);
-        Assert.Equal(CommitIntegrationRules.IntegratedByContent, status.Repositories[0].Commits[0].IntegrationRule);
+        Assert.Equal(IntegrationStatuses.Pending, status.Status);
+        Assert.Equal(CommitIntegrationRules.Missing, status.Repositories[0].Commits[0].IntegrationRule);
 
         RunGit(repo, "reset -q --hard HEAD^");
         var afterReset = service.BuildLookup([job])[job.TaskKey];

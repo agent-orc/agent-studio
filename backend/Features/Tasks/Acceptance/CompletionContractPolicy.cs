@@ -56,9 +56,9 @@ public sealed record CompletionContractDecision(
 
 /// <summary>
 /// AGT-2817 - pure completion contract. A move into <c>6-completed</c> is
-/// accepted when one of three grounds holds, and the card records which one:
-/// a contained delivery, a named deliverable without code, or an operator
-/// override carrying a written reason. Nothing else completes a card.
+/// accepted for a contained delivery or a code-free deliverable. A written
+/// operator exception can name a missing code-free deliverable, but cannot
+/// replace integration for a repository change.
 ///
 /// <para>
 /// The contract is deliberately blind to lane history, pipeline verdicts, and
@@ -80,7 +80,7 @@ public static class CompletionContractPolicy
     /// <summary>Shortest reason text the contract accepts for an override.</summary>
     public const int MinimumOverrideReasonLength = 8;
 
-    public static CompletionContractDecision Decide(CompletionContractFacts facts)
+    public static CompletionContractDecision Decide(CompletionContractFacts facts, bool guarded = true)
     {
         var reason = Trimmed(facts.OverrideReason);
         if (facts.OperatorOverride && !IsUsableReason(reason))
@@ -94,7 +94,8 @@ public static class CompletionContractPolicy
 
         // Containment outranks every other ground, including an override the
         // operator did not need: the truthful claim is the integrated one.
-        if (IsContained(facts.ContainmentStatus))
+        if (IsContained(facts.ContainmentStatus)
+            || !guarded && facts.ContainmentStatus == IntegrationStatuses.MergedLocally)
         {
             return Accept(new TaskCompletionClaim
             {
@@ -110,13 +111,12 @@ public static class CompletionContractPolicy
         // successor was never recorded claims a delivery that does not exist.
         if (facts.HasAttributedCommits && !facts.HasEffectiveCommits)
         {
-            return facts.OperatorOverride
-                ? Accept(Override(facts, reason!))
-                : Refuse(
-                    CompletionRefusalCodes.SupersededOnlyDelivery,
-                    "Every delivery attributed to this task is marked superseded and no successor is "
-                    + "recorded, so the card would claim a delivery that does not exist. Record the "
-                    + "successor attempt, or complete it with a written reason.");
+            if (!guarded && facts.OperatorOverride)
+                return Accept(Override(facts, reason!));
+            return Refuse(
+                CompletionRefusalCodes.SupersededOnlyDelivery,
+                "Every delivery attributed to this task is marked superseded and no successor is "
+                + "recorded. Record the successor attempt and integrate it before completion.");
         }
 
         if (!facts.IntegrationRequired)
@@ -144,11 +144,11 @@ public static class CompletionContractPolicy
                     + "with a written reason.");
         }
 
-        return facts.OperatorOverride
-            ? Accept(Override(facts, reason!))
-            : Refuse(
-                CompletionRefusalCodes.UnintegratedDelivery,
-                UnintegratedMessage(facts));
+        if (!guarded && facts.OperatorOverride)
+            return Accept(Override(facts, reason!));
+        return Refuse(
+            CompletionRefusalCodes.UnintegratedDelivery,
+            UnintegratedMessage(facts));
     }
 
     /// <summary>
@@ -157,17 +157,12 @@ public static class CompletionContractPolicy
     /// <see cref="ContainmentUnknown"/> and a null - is "not proven", which is
     /// not the same as "not integrated" and never carries that wording.
     /// <para>
-    /// AGT-2849: containment is the merge question, so
-    /// <see cref="IntegrationStatuses.MergedLocally"/> counts. The merge is
-    /// complete and the card's delivery is in the integration branch graph;
-    /// only the origin push is outstanding, and that is the push backstop's
-    /// work. Refusing completion there would accuse a finished delivery of
-    /// being unintegrated. The badge still says merged-locally until the push
-    /// lands, which is where that distinction belongs.
+    /// The published target branch must contain the delivery. A local-only
+    /// merge remains pending until publication succeeds.
     /// </para>
     /// </summary>
     public static bool IsContained(string? containmentStatus)
-        => IntegrationStatuses.IsMerged(containmentStatus);
+        => containmentStatus == IntegrationStatuses.Integrated;
 
     /// <summary>
     /// True when the card has nothing to integrate, so the containment

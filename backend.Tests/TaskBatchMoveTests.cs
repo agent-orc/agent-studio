@@ -2,6 +2,7 @@ using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 
 using Xunit;
@@ -142,6 +143,206 @@ public class TaskBatchMoveTests : IDisposable
         Assert.Equal(TaskStates.Backlog,     laneByJob["gamma"]);
         Assert.Equal(TaskStates.Backlog,     laneByJob["delta"]);
         Assert.Equal(TaskStates.Preparation, laneByJob["epsilon"]);
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task ProtectedMoves_RejectMissingCodeDeliveryOnSingleDragAndBatchPaths()
+    {
+        WriteJob(TaskStates.AutoReview, "admission");
+        WriteJob(TaskStates.HumanReview, "acceptance");
+        WriteJob(TaskStates.Completed, "archive");
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["WatchPaths:0:Name"] = "batchmove-test",
+                    ["WatchPaths:0:Path"] = _watchPath,
+                    ["WatchPaths:0:RootPath"] = _watchPath,
+                    ["TaskRepository"] = _watchPath,
+                    ["DeliveryChain:Guarded"] = "true",
+                }));
+        });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+
+        foreach (var protectedLane in new[] { TaskStates.HumanReview, TaskStates.Completed, TaskStates.Archive })
+        {
+            using var created = await client.PostAsJsonAsync("/api/tasks", new
+            {
+                id = "new-protected", title = "Documentation only",
+                watchPath = _watchPath, targetState = protectedLane,
+            });
+            Assert.Equal(System.Net.HttpStatusCode.BadRequest, created.StatusCode);
+        }
+
+        async Task AssertBlockedAsync(HttpMethod method, string task, string target, int? index = null)
+        {
+            var route = method == HttpMethod.Put ? "state" : "move";
+            using var request = new HttpRequestMessage(method, $"/api/tasks/{task}/{route}")
+            {
+                Content = JsonContent.Create(new MoveJobRequest { TargetState = target, TargetIndex = index }),
+            };
+            using var response = await client.SendAsync(request);
+            Assert.Equal(System.Net.HttpStatusCode.Conflict, response.StatusCode);
+        }
+
+        await AssertBlockedAsync(HttpMethod.Post, "admission", TaskStates.HumanReview);
+        await AssertBlockedAsync(HttpMethod.Post, "acceptance", TaskStates.Completed);
+        await AssertBlockedAsync(HttpMethod.Post, "archive", TaskStates.Archive);
+        await AssertBlockedAsync(HttpMethod.Put, "acceptance", TaskStates.Completed, 0);
+        await AssertBlockedAsync(HttpMethod.Put, "archive", TaskStates.Archive, 0);
+
+        using var batch = new HttpRequestMessage(HttpMethod.Post, "/api/tasks/batch-move")
+        {
+            Content = JsonContent.Create(new BatchMoveRequest
+            {
+                Items =
+                [
+                    new() { JobId = "admission", WatchPath = _watchPath, TargetState = TaskStates.HumanReview },
+                    new() { JobId = "acceptance", WatchPath = _watchPath, TargetState = TaskStates.Completed },
+                    new() { JobId = "archive", WatchPath = _watchPath, TargetState = TaskStates.Archive },
+                ],
+            }),
+        };
+        using var submitted = await client.SendAsync(batch);
+        Assert.Equal(System.Net.HttpStatusCode.Accepted, submitted.StatusCode);
+        var accepted = await submitted.Content.ReadFromJsonAsync<BatchMoveJobResponse>();
+        Assert.NotNull(accepted);
+        BatchMoveJobResponse? finished = null;
+        for (var attempt = 0; attempt < 100; attempt++)
+        {
+            finished = await client.GetFromJsonAsync<BatchMoveJobResponse>(
+                $"/api/tasks/batch-move/{accepted!.Id}");
+            if (finished is not null && BatchMoveJobStates.IsTerminal(finished.Status)) break;
+            await Task.Delay(20);
+        }
+        Assert.NotNull(finished);
+        Assert.All(finished!.Results, item => Assert.Equal("integration-failed", item.Status));
+        Assert.NotEqual(TaskStates.HumanReview, ReadLaneByJob()["admission"]);
+        Assert.NotEqual(TaskStates.Completed, ReadLaneByJob()["acceptance"]);
+        Assert.NotEqual(TaskStates.Archive, ReadLaneByJob()["archive"]);
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task PerCardArchiveOverride_PersistsTimelineAndAuditFactsAfterMoveOnly()
+    {
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["WatchPaths:0:Name"] = "batchmove-test",
+                    ["WatchPaths:0:Path"] = _watchPath,
+                    ["WatchPaths:0:RootPath"] = _watchPath,
+                    ["TaskRepository"] = _watchPath,
+                    ["DeliveryChain:Guarded"] = "true",
+                }));
+        });
+        using var client = factory.CreateClient();
+        WriteJob(TaskStates.Completed, "override-one");
+        factory.Services.GetRequiredService<TaskScannerService>().InvalidateCache();
+        var transition = factory.Services.GetRequiredService<TaskTransitionService>();
+        var outcome = await transition.MoveAsync("override-one", TaskStates.Archive, _watchPath,
+            cause: TimelineActors.Human("owner"),
+            reason: "Operator accepted archival with an unrecovered delivery.",
+            archiveOverride: true);
+        Assert.Equal(MoveJobStatus.Success, outcome.Status);
+        var archived = factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob("override-one", _watchPath);
+        Assert.Equal(TaskStates.Archive, archived?.State);
+        var timeline = factory.Services.GetRequiredService<TimelineLog>().ReadAll(archived!.FolderPath);
+        Assert.Contains(timeline, row => row.Kind == "archive_override");
+        var audit = Path.Combine(_watchPath, ".audit", "archive-overrides.jsonl");
+        var row = Assert.Single(File.ReadAllLines(audit));
+        Assert.Contains("Operator accepted archival", row);
+        Assert.Contains("integrationStatus", row);
+        Assert.Contains("deliveryEpoch", row);
+        Assert.Contains("targetBranch", row);
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task FailedArchiveOverride_DoesNotWriteTimelineOrAudit()
+    {
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["WatchPaths:0:Name"] = "batchmove-test",
+                    ["WatchPaths:0:Path"] = _watchPath,
+                    ["WatchPaths:0:RootPath"] = _watchPath,
+                    ["TaskRepository"] = _watchPath,
+                    ["DeliveryChain:Guarded"] = "true",
+                }));
+        });
+        WriteJob(TaskStates.Completed, "override-failed");
+        File.WriteAllText(Path.Combine(_watchPath, TaskStates.Completed, "override-failed", "task.json"),
+            "{\"id\":\"override-failed\",\"title\":\"override-failed\",\"state\":\"6-completed\",\"order\":10,\"agent\":\"copilot\",\"requiresIntegration\":false}");
+        var transition = factory.Services.GetRequiredService<TaskTransitionService>();
+        var outcome = await transition.MoveAsync("override-failed", TaskStates.Archive, _watchPath,
+            cause: TimelineActors.Human("owner"),
+            reason: "Operator accepted archival with an unrecovered delivery.",
+            expectedSourceState: TaskStates.AutoReview,
+            archiveOverride: true);
+        Assert.True(outcome.Status == MoveJobStatus.SourceStateMismatch,
+            $"Unexpected archive refusal: {outcome.Status}: {outcome.Message}");
+        var card = factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob("override-failed", _watchPath);
+        Assert.Equal(TaskStates.Completed, card?.State);
+        Assert.DoesNotContain(factory.Services.GetRequiredService<TimelineLog>()
+            .ReadAll(card!.FolderPath), row => row.Kind == "archive_override");
+        Assert.False(File.Exists(Path.Combine(_watchPath, ".audit", "archive-overrides.jsonl")));
+    }
+
+    [Fact]
+    public async Task DeliveryReconciler_ReopensCompletedAndEscalatesMissingIntegratingDelivery()
+    {
+        WriteJob(TaskStates.Completed, "stale-accepted");
+        WriteJob(TaskStates.AutoReview, "missing-delivery");
+        var integratingFolder = Path.Combine(_watchPath, TaskStates.AutoReview, "missing-delivery");
+        File.WriteAllText(Path.Combine(integratingFolder, "task.json"),
+            "{\"id\":\"missing-delivery\",\"title\":\"missing-delivery\",\"state\":\"4-auto-review\",\"phase\":\"integrating\",\"order\":10,\"agent\":\"copilot\"}");
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["WatchPaths:0:Name"] = "batchmove-test",
+            ["WatchPaths:0:Path"] = _watchPath,
+            ["TaskRepository"] = _watchPath,
+            ["DeliveryChain:Guarded"] = "true",
+        }).Build();
+        var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
+        var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
+        var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
+        var status = new TaskIntegrationStatusService(git, settings,
+            new AgentStudio.Pipeline.PipelineExecutionLog(
+                NullLogger<AgentStudio.Pipeline.PipelineExecutionLog>.Instance),
+            NullLogger<TaskIntegrationStatusService>.Instance);
+        var states = new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance,
+            integrationStatus: status, configuration: config);
+        var mutations = new TaskMutationService(scanner,
+            new ClientIdentityStore(config, NullLogger<ClientIdentityStore>.Instance),
+            new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance),
+            new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance),
+            NullLogger<TaskMutationService>.Instance);
+        var transitions = new TaskTransitionService(scanner, states, mutations, git, settings,
+            NullLogger<TaskTransitionService>.Instance, integrationStatus: status,
+            configuration: config);
+        var reconciler = new DeliveryChainReconciler(scanner, status, transitions, config,
+            NullLogger<DeliveryChainReconciler>.Instance);
+
+        Assert.Equal(2, await reconciler.RunOnceAsync());
+        var lanes = ReadLaneByJob();
+        Assert.Equal(TaskStates.AutoReview, lanes["stale-accepted"]);
+        Assert.Equal(TaskStates.Escalated, lanes["missing-delivery"]);
+        Assert.Equal(LifecyclePhases.Integrating,
+            scanner.FindJob("stale-accepted", _watchPath)?.Phase);
     }
 
     [Fact]
