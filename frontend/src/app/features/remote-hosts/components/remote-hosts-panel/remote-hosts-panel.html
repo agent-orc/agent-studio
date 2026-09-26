@@ -48,19 +48,7 @@
       </button>
     }
   </div>
-  @if (brokenRunnerTasks().length > 0) {
-    <section class="rh__candidates" data-testid="execution-host-runner-failures">
-      <h3 class="rh__candidates-title">Runner environment failures</h3>
-      @for (task of brokenRunnerTasks(); track task.taskKey) {
-        <p data-testid="execution-host-runner-failure">
-          <strong>{{ task.taskKey }}</strong>:
-          {{ task.attempts }} failures on {{ task.host }}
-          (fingerprint <code>{{ task.fingerprint }}</code>).
-          {{ task.lastError }}
-        </p>
-      }
-    </section>
-  }
+  <app-runner-infrastructure-failures />
   @if (readyCandidateTasks().length > 0) {
     <section class="rh__candidates" data-testid="execution-host-candidates">
       <h3 class="rh__candidates-title">Ready routes with benchmark candidates</h3>
@@ -73,7 +61,6 @@
       }
     </section>
   }
-
   @for (host of linkFailures(); track host.id) {
     <app-notification kind="warning" layout="banner" [closable]="false"
                       [title]="host.name + ' link is down'" testid="remote-host-link-notification">
@@ -117,7 +104,6 @@
       }
     </section>
   }
-
   @if (providerRefusals().length) {
     <section class="rh__refusals" data-testid="provider-refusal-summary">
       <div>
@@ -136,7 +122,6 @@
       </div>
     </section>
   }
-
   @if (error(); as err) {
     <div class="rh__error" data-testid="remote-hosts-error">{{ err }}</div>
   }

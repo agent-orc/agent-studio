@@ -17,9 +17,14 @@ public sealed class ResultOwnershipRepairTests
         {
             var error = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
                 ResultOwnershipRepair.RepairOrThrowAsync("AGT-2737", root, _ => { }, CancellationToken.None,
-                    (command, args, _) =>
+                    (command, args, input, _) =>
                     {
                         calls.Add(command);
+                        if (command == "sudo")
+                        {
+                            Assert.Equal(["-n", "/usr/local/sbin/agent-runner-deploy", "chown-results"], args);
+                            Assert.Equal("AGT-2737\n", input);
+                        }
                         return Task.FromResult(command switch
                         {
                             "find" => new ProcessResult(0, file + "\n", ""),

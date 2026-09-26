@@ -15,9 +15,9 @@ internal static class ResultOwnershipRepair
 
     internal static async Task RepairOrThrowAsync(
         string taskKey, string resultsDirectory, Action<string> log, CancellationToken ct,
-        Func<string, IReadOnlyList<string>, CancellationToken, Task<ProcessResult>>? run = null)
+        Func<string, IReadOnlyList<string>, string?, CancellationToken, Task<ProcessResult>>? run = null)
     {
-        run ??= (command, args, token) => ProcessRunner.RunAsync(command, args, ct: token);
+        run ??= (command, args, input, token) => ProcessRunner.RunAsync(command, args, stdin: input, ct: token);
         string? sample = null;
         try
         {
@@ -29,17 +29,17 @@ internal static class ResultOwnershipRepair
         if (OperatingSystem.IsLinux() && Directory.Exists(resultsDirectory))
         {
             var foreign = await run("find",
-                [resultsDirectory, "!", "-user", Environment.UserName, "-print", "-quit"], ct);
+                [resultsDirectory, "!", "-user", Environment.UserName, "-print", "-quit"], null, ct);
             if (foreign.Success && !string.IsNullOrWhiteSpace(foreign.StdOut))
                 sample = foreign.StdOut.Trim();
         }
         sample ??= resultsDirectory;
         var owner = "unknown";
-        var stat = await run("stat", ["-c", "%u:%g", "--", sample], ct);
+        var stat = await run("stat", ["-c", "%u:%g", "--", sample], null, ct);
         if (stat.Success) owner = stat.StdOut.Trim();
         var repair = await run("sudo",
-            ["-n", "/usr/local/sbin/agent-runner-deploy", "chown-results", GitWorkspace.SafeSegment(taskKey)],
-            ct);
+            ["-n", "/usr/local/sbin/agent-runner-deploy", "chown-results"],
+            GitWorkspace.SafeSegment(taskKey) + "\n", ct);
         if (!repair.Success)
             throw new UnauthorizedAccessException(
                 $"Result ownership repair failed: path={sample} owner={owner}; " +

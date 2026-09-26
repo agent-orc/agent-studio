@@ -59,6 +59,12 @@ chown_results() {
   printf 'agent-runner-deploy: repaired result ownership for %s\n' "$task"
 }
 
+chown_results_from_stdin() {
+  local task_key
+  IFS= read -r task_key || die "missing task key on stdin"
+  chown_results "$task_key"
+}
+
 # The busy-slot policy lives in the runner binary, not here, so the deploy
 # script and the daemon cannot drift on what "busy" means.
 review_state_dir() {
@@ -1010,8 +1016,8 @@ main() {
     1:drain)
       drain_review_unit
       ;;
-    2:chown-results)
-      chown_results "$2"
+    1:chown-results)
+      chown_results_from_stdin
       ;;
     1:restart-review)
       restart_review_unit
@@ -1033,7 +1039,7 @@ main() {
       configure_role "$2" "$3" "$4"
       ;;
     *)
-      die "usage: agent-runner-deploy [--force|--restart-review-drain] | drain | restart-review [--force] | chown-results <task> | update-clis <codex-version> <claude-version> | config <coding|review> RUNNER_MAX_PARALLELISM <1-6> [--force]"
+      die "usage: agent-runner-deploy [--force|--restart-review-drain] | drain | restart-review [--force] | chown-results (task key on stdin) | update-clis <codex-version> <claude-version> | config <coding|review> RUNNER_MAX_PARALLELISM <1-6> [--force]"
       ;;
   esac
 }

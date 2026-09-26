@@ -569,8 +569,13 @@ public static class LeaseEndpoints
                 // enough to requeue: wait through the authority grace and require
                 // this assigned runner poll to answer that the task is absent
                 // from its active process set.
-                foreach (var interrupted in scanner.ScanAllJobs()
-                             .Where(t => !t.Fixture && t.State == TaskStates.Progress))
+                var progressTasks = scanner.ScanAllJobs()
+                    .Where(t => !t.Fixture && t.State == TaskStates.Progress)
+                    .ToList();
+                DeferredLeaseLogs.RetainProgressTasks(progressTasks
+                    .Select(t => t.Key ?? t.TaskKey ?? t.Id)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase));
+                foreach (var interrupted in progressTasks)
                 {
                     var project = settings.Get(interrupted.ProjectName);
                     if (!ProjectExecutionPolicy.AllowsAutomaticPickup(project)
@@ -621,15 +626,19 @@ public static class LeaseEndpoints
                             interruptedKey,
                             escalated.Status,
                             reason);
+                        if (escalated.Status == MoveJobStatus.Success)
+                            DeferredLeaseLogs.ForgetTask(interruptedKey);
                         continue;
                     }
-                    await transitions.MoveAsync(
+                    var requeued = await transitions.MoveAsync(
                         interrupted.Id, TaskStates.Ready, interrupted.WatchPath, ct,
                         cause: $"remote-runner-lease-recovery:{req.RunnerName.Trim()}",
                         authorityWrite: recoveryWrite,
                         suppressProductExecution: true,
                         transitionCause: LaneChangeCauses.LeaseRecovery,
                         transitionDetail: requeueDecision.ReasonCode);
+                    if (requeued.Status == MoveJobStatus.Success)
+                        DeferredLeaseLogs.ForgetTask(interruptedKey);
                     if (recoveryWrite is not null)
                         recoveredSources[interruptedKey] = recoveryWrite.AttemptId;
                 }

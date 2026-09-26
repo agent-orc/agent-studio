@@ -34,8 +34,12 @@ class ChownResultsTests(unittest.TestCase):
                 chown 10001:10001 "$2"
                 chown 10001:10001 "$3"
                 [[ "$(stat -c %u "$2")" == 10001 ]]
-                chown_results AGT-2737
+                chown_results_from_stdin <<< 'AGT-2737'
                 [[ "$(stat -c %u "$2")" == 1000 ]]
+                [[ "$(stat -c %u "$3")" == 10001 ]]
+                if (chown_results_from_stdin <<< '../AGT-other') 2>/dev/null; then
+                  exit 1
+                fi
                 [[ "$(stat -c %u "$3")" == 10001 ]]
             """
             result = subprocess.run(

@@ -25,7 +25,7 @@ On preparation, a worktree directory without its `.git` metadata is moved to
 worktree registration. The runner lists the task's origin salvage refs in its
 log, then creates a fresh worktree. The quarantined files remain available for
 inspection. On result-file permission errors, the runner calls the allowlisted
-`sudo -n /usr/local/sbin/agent-runner-deploy chown-results <task>` helper once
+`printf '%s\n' '<task>' | sudo -n /usr/local/sbin/agent-runner-deploy chown-results` helper once
 and retries the operation. The helper only accepts a task key under the Coding
 results root, rejects symbolic links, and restores ownership to the runner
 user. If it cannot repair ownership, the error names the path and owner so an
