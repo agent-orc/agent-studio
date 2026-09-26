@@ -63,13 +63,12 @@ public sealed class TaskListGitProjectionCache
     {
         if (tasks.Count == 0) return TaskListGitProjection.Empty;
 
-        var repoKeys = tasks
-            .Select(t => NormalizePath(t.WatchPath))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
+        var repoGroups = tasks
+            .GroupBy(task => NormalizePath(task.WatchPath), StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        if (repoKeys.Length == 1)
-            return _entries.TryGetValue(repoKeys[0], out var only)
+        if (repoGroups.Length == 1)
+            return _entries.TryGetValue(repoGroups[0].Key, out var only)
                 ? FilterForTasks(only.Snapshot, tasks) : TaskListGitProjection.Empty;
 
         var merge = new Dictionary<string, TaskMergeSignal>(StringComparer.Ordinal);
@@ -78,26 +77,38 @@ public sealed class TaskListGitProjectionCache
         var testRuns = new Dictionary<string, TaskTestRunEvidence>(StringComparer.Ordinal);
         var reviewProjection = new Dictionary<string, AgentStudio.Review.ReviewProjectionView>(StringComparer.Ordinal);
         var commits = new Dictionary<string, IReadOnlyList<TaskCommitInfo>>(StringComparer.Ordinal);
-        foreach (var key in repoKeys)
+        var signatures = new Dictionary<string, string>(StringComparer.Ordinal);
+        var subjectVersions = new Dictionary<string, long>(StringComparer.Ordinal);
+        foreach (var repoGroup in repoGroups)
         {
-            if (!_entries.TryGetValue(key, out var entry)) continue;
-            foreach (var (k, v) in entry.Snapshot.Merge) merge[k] = v;
-            foreach (var (k, v) in entry.Snapshot.Integration) integration[k] = v;
-            foreach (var (k, v) in entry.Snapshot.Publish) publish[k] = v;
-            foreach (var (k, v) in entry.Snapshot.TestRuns) testRuns[k] = v;
-            foreach (var (k, v) in entry.Snapshot.ReviewProjection) reviewProjection[k] = v;
-            foreach (var (k, v) in entry.Snapshot.ReconstructedCommits) commits[k] = v;
+            var repoTasks = repoGroup.ToArray();
+            // A task key can occur in more than one project. Keep every fact
+            // aligned with the last repository's version, including when its
+            // snapshot is missing or its task facts have become stale.
+            foreach (var task in repoTasks)
+            {
+                merge.Remove(task.TaskKey);
+                integration.Remove(task.TaskKey);
+                publish.Remove(task.TaskKey);
+                testRuns.Remove(task.TaskKey);
+                reviewProjection.Remove(task.TaskKey);
+                commits.Remove(task.TaskKey);
+                signatures.Remove(task.TaskKey);
+                subjectVersions.Remove(task.TaskKey);
+            }
+            if (!_entries.TryGetValue(repoGroup.Key, out var entry)) continue;
+            var snapshot = FilterForTasks(entry.Snapshot, repoTasks);
+            foreach (var (k, v) in snapshot.Merge) merge[k] = v;
+            foreach (var (k, v) in snapshot.Integration) integration[k] = v;
+            foreach (var (k, v) in snapshot.Publish) publish[k] = v;
+            foreach (var (k, v) in snapshot.TestRuns) testRuns[k] = v;
+            foreach (var (k, v) in snapshot.ReviewProjection) reviewProjection[k] = v;
+            foreach (var (k, v) in snapshot.ReconstructedCommits) commits[k] = v;
+            foreach (var (k, v) in snapshot.TaskSignatures) signatures[k] = v;
+            foreach (var (k, v) in snapshot.TaskSubjectVersions) subjectVersions[k] = v;
         }
-        return FilterForTasks(new TaskListGitProjection(merge, integration, publish,
-            testRuns, reviewProjection, commits,
-            repoKeys.Select(key => _entries.TryGetValue(key, out var entry)
-                    ? entry.Snapshot.TaskSignatures : ImmutableDictionary<string, string>.Empty)
-                .SelectMany(map => map)
-                .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal),
-            repoKeys.Select(key => _entries.TryGetValue(key, out var entry)
-                    ? entry.Snapshot.TaskSubjectVersions : ImmutableDictionary<string, long>.Empty)
-                .SelectMany(map => map)
-                .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal)), tasks);
+        return new TaskListGitProjection(merge, integration, publish,
+            testRuns, reviewProjection, commits, signatures, subjectVersions);
     }
 
     private TaskListGitProjection FilterForTasks(
@@ -122,6 +133,10 @@ public sealed class TaskListGitProjectionCache
             ReviewProjection = projection.ReviewProjection.Where(pair => valid.Contains(pair.Key))
                 .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal),
             Commits = projection.ReconstructedCommits.Where(pair => valid.Contains(pair.Key))
+                .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal),
+            Signatures = projection.TaskSignatures.Where(pair => valid.Contains(pair.Key))
+                .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal),
+            SubjectVersions = projection.TaskSubjectVersions.Where(pair => valid.Contains(pair.Key))
                 .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal),
         };
     }
