@@ -251,6 +251,7 @@ internal static class TaskEndpointHelpers
             TokenSummary = tokens,
             OrchestratorVerdict = verdict,
             WaitsOn = waitsOn,
+            BlockedBy = DecisionBlockProjection.BlockedBy(waitsOn),
             PickupHold = pickupHold,
             TransitiveWaiters = transitiveWaiters,
             PlanningSpawn = planningSpawn,
