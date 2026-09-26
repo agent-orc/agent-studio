@@ -122,6 +122,13 @@ async function openSideSheetForProject(page: Page): Promise<string> {
 test.describe('Project chat fix - silent drop, sluggishness, parallel use', () => {
   test('shows queued runner reason and interactive usage while a reply waits', async ({ page }) => {
     await installFrontendOverride(page);
+    await page.route(/\/api\/cli\/codex\/models(?:\?|$)/, route => route.fulfill({ json: {
+      source: 'test', models: [{
+        id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', multiplier: null,
+        vendor: 'openai', isDefault: true, available: true,
+        thinkingLevels: ['medium'], defaultThinkingLevel: 'medium',
+      }],
+    } }));
     await page.route(/\/api\/runner\/project-chat\/status(?:\?|$)/, route =>
       route.fulfill({ json: {
         state: 'queued', runnerId: 'agent-runner-01', hostName: null,
@@ -137,7 +144,8 @@ test.describe('Project chat fix - silent drop, sluggishness, parallel use', () =
     await page.goto('/', { waitUntil: 'domcontentloaded' });
     await setTheme(page, 'light');
     await page.getByTestId('orch-side-sheet-toggle').click();
-    await expect(page.getByTestId('chat-input')).toBeVisible();
+    const composer = page.locator('cac-chat textarea');
+    await expect(composer).toBeVisible();
     const project = 'Chat fixture';
     await installChatMocks(page, project, {
       handlePost: async () => {
@@ -147,15 +155,15 @@ test.describe('Project chat fix - silent drop, sluggishness, parallel use', () =
         } };
       },
     });
-    await page.getByTestId('chat-input').fill('How is this task progressing?');
-    await page.getByTestId('chat-send').click();
+    await composer.fill('How is this task progressing?');
+    await page.locator('cac-chat').getByRole('button', { name: 'Send' }).click();
     const waiting = page.getByTestId('orchestrator-chat-waiting');
     await expect(waiting).toContainText('agent-runner-01');
     await expect(waiting).toContainText('Provider unavailable');
     if (process.env.JOB_RESULTS_DIR) {
-      await page.screenshot({ path: `${process.env.JOB_RESULTS_DIR}/chat-waiting-light.png` });
+      await page.screenshot({ path: `${process.env.JOB_RESULTS_DIR}/chat-waiting-light--mocked.png` });
       await setTheme(page, 'dark');
-      await page.screenshot({ path: `${process.env.JOB_RESULTS_DIR}/chat-waiting-dark.png` });
+      await page.screenshot({ path: `${process.env.JOB_RESULTS_DIR}/chat-waiting-dark--mocked.png` });
       await setTheme(page, 'light');
     }
     await expect(waiting).toHaveCount(0, { timeout: 12_000 });
@@ -166,9 +174,9 @@ test.describe('Project chat fix - silent drop, sluggishness, parallel use', () =
     await expect(usage).toContainText('agent-runner-01 / Agent Studio');
     await expect(usage).toContainText('54%');
     if (process.env.JOB_RESULTS_DIR) {
-      await page.screenshot({ path: `${process.env.JOB_RESULTS_DIR}/chat-usage-light.png` });
+      await page.screenshot({ path: `${process.env.JOB_RESULTS_DIR}/chat-usage-light--mocked.png` });
       await setTheme(page, 'dark');
-      await page.screenshot({ path: `${process.env.JOB_RESULTS_DIR}/chat-usage-dark.png` });
+      await page.screenshot({ path: `${process.env.JOB_RESULTS_DIR}/chat-usage-dark--mocked.png` });
     }
   });
 
@@ -224,9 +232,9 @@ test.describe('Project chat fix - silent drop, sluggishness, parallel use', () =
     await expect(host.getByTestId('remote-host-slots'))
       .toContainText('5 slots, 4 coding, 1 taken by a heavy chat turn');
     if (process.env.JOB_RESULTS_DIR) {
-      await page.screenshot({ path: `${process.env.JOB_RESULTS_DIR}/chat-host-capacity-light.png` });
+      await page.screenshot({ path: `${process.env.JOB_RESULTS_DIR}/chat-host-capacity-light--mocked.png` });
       await setTheme(page, 'dark');
-      await page.screenshot({ path: `${process.env.JOB_RESULTS_DIR}/chat-host-capacity-dark.png` });
+      await page.screenshot({ path: `${process.env.JOB_RESULTS_DIR}/chat-host-capacity-dark--mocked.png` });
     }
   });
 

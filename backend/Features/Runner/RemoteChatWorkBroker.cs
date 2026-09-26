@@ -132,7 +132,8 @@ public sealed class RemoteChatWorkBroker
         lock (_gate)
         {
             var item = _work
-                .Where(work => work.Kind == RemoteChatWorkKinds.Turn
+                .Where(work => work.State is PendingRemoteChatWorkState.Pending or PendingRemoteChatWorkState.Claimed
+                    && work.Kind == RemoteChatWorkKinds.Turn
                     && string.Equals(work.Route.ProjectName, projectName, StringComparison.OrdinalIgnoreCase)
                     && string.Equals(work.Route.ContextKey, contextKey, StringComparison.Ordinal))
                 .OrderByDescending(work => work.CreatedAt)
