@@ -930,7 +930,7 @@ may enter or remain in Human Review with a visible failed/non-integrated verdict
 acceptance cannot repair it. All currently configured direct-merge Remote coding
 projects use the canonical order without a project-name exception.
 
-Result finalization is a distinct post-core gate on both execution paths. The
+Result finalization is a distinct `summary` pipeline step on both execution paths. The
 local application retries only `SummaryGenerationService`; the V1 Task Server
 exposes `post-result-finalization`, generates the application-owned `status.md`
 artifact from durable run events and deliverables, and persists its typed state
@@ -938,6 +938,24 @@ in task history. `Retryable` consumes the bounded summary budget without
 reopening CORE. `Ready` carries the generated artifact hash. `Degraded` is
 terminal for this post-step, keeps the completed run reviewable, and never
 presents the transition scaffold as a normal generated Result.
+
+The Result summarises the task, not the most recent run. Its bounded input is
+78,500 task-evidence characters, divided across title, task prompt, the complete
+round ledger, the agent-written `results/status.md`, delivery facts, and only
+then the last-run log tail. The task prompt keeps its head when truncated. Each
+later round and terminal acceptance regenerates the Result from the full ledger;
+the card action `Regenerate result` uses the same path for historical cards.
+`Problem` and `Solution` remain task-level while integration recovery and other
+housekeeping are isolated under `Rounds`.
+
+The `summary` step resolves CLI, model, and thinking level through the normal
+per-project pipeline-step settings and `CliOneShotRegistry`. Its default is
+Codex `gpt-5.6-luna` at `medium`, the bounded structured-output floor for this
+operator-facing synthesis. Each call records task key, run number, effective
+route, tokens, and priced cost in `adhoc-usage.jsonl`, and writes the same usage
+to `pipeline-execution.json` so task and project token views include Result
+summary spend. Repeated regeneration accumulates invocation count, tokens, and
+duration on the run's `summary` row instead of replacing earlier summary usage.
 
 The summary is a convenience on top of a delivered result, never a precondition
 for acknowledging it. On the remote path the artefact upload acknowledges as

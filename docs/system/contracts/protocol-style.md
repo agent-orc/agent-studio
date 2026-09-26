@@ -11,14 +11,14 @@ A finished job exposes two views of what happened:
 | Artefact | Audience | Generator | File |
 |----------|----------|-----------|------|
 | **Activity Log** | Live observer / debugger | Streamed by the CLI driver, parsed by the frontend | `logs/cli-output.log` (raw) |
-| **Protocol** | Reviewer ("what did the agent do?") | Haiku one-shot summary of the log tail, with a deterministic transition scaffold when that summary is missing | `status.md` |
+| **Protocol** | Reviewer ("what did the task deliver?") | Project-routed one-shot summary of bounded task, round, and delivery evidence, with a deterministic transition scaffold when that summary is missing | `status.md` |
 
 Keep the boundary clean:
 
 - The Activity Log is **mechanical**. Every tool call, every command, every diff snippet. Do not curate it.
-- The Protocol is **editorial**. 5 to 10 bullet points the reviewer can scan in 30 seconds. It is regenerated from the log on demand and overwritten on the next run, so do not hand-edit it.
+- The Protocol is **editorial**. It is a task-level Result the reviewer can scan in 30 seconds. It is regenerated from the full round ledger on demand and after later rounds, so do not hand-edit it.
 
-> ⚠ Agents must **never write `status.md` themselves.** It is application-owned. [`SummaryGenerationService`](../../../backend/Features/Review/SummaryGenerationService.cs) rewrites it from CLI output, while `TaskTransitionService` may create a marked fallback scaffold at a review or terminal transition. Anything written by hand can be lost.
+> ⚠ Agents must **never write `status.md` themselves.** It is application-owned. [`SummaryGenerationService`](../../../backend/Features/Review/SummaryGenerationService.cs) rewrites it from bounded task, round, delivery, and log evidence, while `TaskTransitionService` may create a marked fallback scaffold at a review or terminal transition. Anything written by hand can be lost. Agents may write `results/status.md` as delivery evidence.
 
 ---
 
@@ -60,26 +60,30 @@ Lines may contain:
 
 ### 3.1 Canonical structure
 
-[`prompts/runtime/summary-protocol.md`](../../../prompts/runtime/summary-protocol.md) is rendered by `SummaryGenerationService` after a successful CLI completion and instructs Haiku to emit exactly this English shape:
+[`prompts/runtime/summary-protocol.md`](../../../prompts/runtime/summary-protocol.md) is rendered by `SummaryGenerationService` after a successful CLI completion and instructs the project-routed model to emit exactly this English shape:
 
 ```markdown
 # Status
 
 - Result: <Success|Failed|NoOp|Blocked|NeedsInput|Partial>
 - Case: <bugfix|feature|refactor|docs|forensics|ui-cleanup|blocked|generic>
-- Duration: <for example, 4 min>
-- Files: <files changed, e.g. 5; optional, omit when the log proves no count>
-- Tests: <e.g. 12 passed or 11/12 passed; optional, omit when no test run appears>
+- Acceptance: <n of m met>
+- Duration: <total across all task rounds>
+- Files: <task total from delivery facts; optional when not verifiable>
+- Tests: <task-level tally or named gate result; optional when not verifiable>
 
 ## Overview
-- Problem: <one sentence naming the goal or the defect this run addressed>
-- Solution: <one sentence naming what was done and the outcome, shareable on its own>
+- Problem: <one sentence restating the task goal or defect from the task prompt>
+- Solution: <one sentence naming the root cause or delivered capability and verification>
 
 ## What Was Done
-- 3 to 7 concrete bullets with actions, files, commands, and results.
+- One evidence-backed bullet per acceptance criterion.
+
+## Rounds
+- At most one line per round. Omit for single-round tasks.
 
 ## Open Items
-- 0 to 5 bullets, or "None."
+- Every unmet or not-verifiable acceptance criterion, or "None."
 
 ## Notes
 - 0 to 3 bullets with warnings, failures, or workarounds. Omit this section when empty.
@@ -90,7 +94,14 @@ Lines may contain:
 
 The `Case` and `## Overview` block feed the case-based, overview-first **Result** view (the UI surface formerly labelled "Protocol"; the artefact/file stays `status.md`). See [concepts/result-view-and-case-templates.md](../../concepts/result-view-and-case-templates.md) for the layered view and the client-side case classifier. Both are additive and optional: the frontend synthesizes an overview from the task title and the first `What Was Done` bullet and heuristically infers a case when either is missing, so every legacy `status.md` still renders.
 
-The optional `- Files:` and `- Tests:` header lines feed the two quality-head metric chips (files changed, tests passed). They are honest-or-absent: the summarizer emits a line only when the run log proves a real count (a `git diff`/`--stat` file count, a test-runner tally); a missing line renders no chip. Never hand-write a number the log does not support.
+The optional `- Files:` and `- Tests:` header lines feed the two quality-head metric chips. They are honest-or-absent and come from delivery facts across all rounds, not the last log. The additive `Acceptance` line reports proved criteria. `Rounds` carries integration recovery, review fixes, and other housekeeping without displacing the task goal from `Problem` and `Solution`.
+
+The six input sections have independent budgets totaling 78,500 characters:
+title 500, task prompt 24,000, rounds 12,000, agent-written
+`results/status.md` 10,000, delivery facts 12,000, and last-run log 20,000.
+Task-prompt truncation preserves the head and tail. A later round or terminal
+acceptance regenerates from the full ledger. The card action `Regenerate result`
+uses the same service for historical cards.
 
 `TaskTransitionService` enforces the fallback invariant for every move into
 `4-auto-review`, `5-human-review`, `5e-escalated`, or `6-completed`. Before the
@@ -133,7 +144,7 @@ Hard rules:
 
 - No `# Status` is omitted. No extra `H1`s are added (`## Overview` is an H2 and leads the body).
 - `Case` is one of the eight ids above; a run that did not fully land (Blocked / NeedsInput / Partial / Failed) uses `blocked` whatever the underlying work was.
-- Total prose is at most 250 words. Images do not count.
+- Total prose is at most 250 words. Images and Rounds do not count.
 - Paths and commands in single backticks.
 - No marketing tone, no recap of what the user already asked for.
 - No em dashes.
@@ -144,9 +155,9 @@ If you change the prompt, mirror the change here and bump the example.
 
 ### 3.2 Why it's regenerated, not hand-written
 
-- The reviewer always sees a fresh summary of the **most recent** run, not stale text from a previous attempt.
-- The "Regenerate" button in the protocol pane re-runs Haiku against the same `cli-output.log`. This is useful when the first summary missed a detail.
-- This means hand-writing into `status.md` is destructive: the next regeneration erases it. A marked transition scaffold is also replaceable by the generated protocol. The model name for this rule is "the log is the truth, the protocol is the projection."
+- The reviewer sees a fresh summary of the **task**, including all recorded rounds and the final delivery, rather than a report of only the most recent run.
+- The "Regenerate result" action re-runs the configured summary pipeline step with the bounded task prompt, round ledger, agent-written delivery status, delivery facts, and last-run log tail.
+- Application-owned `status.md` remains replaceable by regeneration. Agent-written `results/status.md` is evidence supplied to the summary input and is not treated as the complete result by itself.
 
 ---
 
@@ -281,7 +292,7 @@ When the agent task orchestrator runs a CLI (Claude Code, Codex, Copilot, Gemini
 - **If set (orchestrator mode):** copies all test artifacts (screenshots, videos, traces) from `frontend/e2e/test-results/<spec>/...` into `<job>/results/playwright/<spec>/...`, preserving the subfolder structure. Writes `<job>/results/playwright/index.json` with a summary listing test status and artifact paths.
 - **If unset (local dev):** reporter is silent; Playwright artifacts stay in the ephemeral `test-results/` folder as usual.
 
-The frontend's markdown renderer and protocol pane already handle `results/playwright/<spec>/<name>` paths just like any other `results/` image. Haiku's summary (`status.md`) extracts image references from the CLI output; if the run produced screenshots and the CLI mentioned them, Haiku includes them in the `## Images` section of the protocol. `SummaryGenerationService` also runs a deterministic pass over the full CLI log and appends any missing `results/` or `attachments/` image references so visible proof is not lost when the summarizer omits a path or the image appeared before the summary tail.
+The frontend's markdown renderer and protocol pane already handle `results/playwright/<spec>/<name>` paths just like any other `results/` image. The task summary (`status.md`) extracts image references from its evidence; if the run produced screenshots and the CLI mentioned them, the routed model includes them in the `## Images` section. `SummaryGenerationService` also runs a deterministic pass over the full CLI log and appends any missing `results/` or `attachments/` image references so visible proof is not lost when the summarizer omits a path or the image appeared before the bounded last-run tail.
 
 ### 4.2.6 Review-evidence panel reference rendering
 
@@ -346,7 +357,7 @@ The base name may contain single dashes (`before-after`); only the `--` boundary
 
 Before you touch any of the moving parts:
 
-1. If you change the **Haiku prompt** in `prompts/runtime/summary-protocol.md`, update section 3.1 in this file in the same PR.
+1. If you change the **Result summary prompt** in `prompts/runtime/summary-protocol.md`, update section 3.1 in this file in the same PR.
 2. If you change the **marker-line vocabulary**, update §2.1 here and the corresponding row in [docs/system/cli/supported-clis.md §2.5](../cli/supported-clis.md).
 3. If you add a new **image folder** convention, add a row to §4 and a resolver branch in `protocol-pane.component.ts`.
 4. If you add a new **CLI**, fill in its row in §4.1 with observed behaviour, not assumptions.

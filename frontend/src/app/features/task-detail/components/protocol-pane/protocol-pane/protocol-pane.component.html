@@ -131,7 +131,7 @@
           @if (s.status === 'pending') {
             <div class="interim-summary__body interim-summary__body--pending">
               <span class="spinner-ring" aria-hidden="true"></span>
-              <span>Haiku is reading the current cli-output.log…</span>
+              <span>The configured summary model is reading the task evidence…</span>
             </div>
           } @else if (s.status === 'ready' && s.markdown) {
             <app-beautiful-results class="interim-summary__body"
@@ -191,7 +191,7 @@
                 <pre class="summary-error__body" data-testid="protocol-summary-error-message">{{ detail().summaryState?.errorMessage || 'Unknown error — no detail from backend.' }}</pre>
                 <div class="summary-error__actions">
                   <button type="button" class="btn-regen" data-testid="protocol-regenerate-summary"
-                          [cacTooltip]="'Re-run the Haiku summary on the CLI output'" [disabled]="regenerating()"
+                          [cacTooltip]="'Regenerate the task Result from task, round, and delivery evidence'" [disabled]="regenerating()"
                           (click)="regenerateSummary.emit()">
                     <span class="btn-regen__icon" aria-hidden="true">✨</span>
                     <span>{{ regenerating() ? 'Generating…' : 'Try again' }}</span>
@@ -203,7 +203,7 @@
             @if (summaryStatus() === 'generating' && !detail().statusMarkdown) {
               <div class="notes-panel__placeholder" data-testid="protocol-generating-placeholder">
                 <span class="spinner-ring spinner-ring--lg"></span>
-                <p>Haiku is summarizing the CLI output…</p>
+                <p>The task Result is being regenerated…</p>
               </div>
             } @else if (!detail().statusMarkdown && summaryStatus() !== 'failed') {
               <div class="notes-panel__placeholder">

@@ -158,7 +158,7 @@ public sealed class ProjectPipelineCostService
                 Add(perKindDay, (s.Kind, dayKey), stepTokens, est, runIndex, s.Model);
                 Add(perDay, dayKey, stepTokens, est, runIndex, s.Model);
                 Add(perKind, s.Kind, stepTokens, est, runIndex, s.Model);
-                AddStep(perStep, s.StepId, s.Kind, stepTokens, est, runIndex, s.Model);
+                AddStep(perStep, s.StepId, s.Kind, Math.Max(1, s.InvocationCount), stepTokens, est, runIndex, s.Model);
                 grandTokens += stepTokens;
                 if (est.ModelKnown)
                 {
@@ -218,6 +218,7 @@ public sealed class ProjectPipelineCostService
             .Select(kv => new PipelineStepCostSeries(
                 StepId: kv.Key,
                 Kind: KindKey(kv.Value.Kind),
+                Calls: kv.Value.Calls,
                 TotalTokens: kv.Value.Tokens,
                 TotalCostUsd: Round(kv.Value.Cost),
                 AnyModelUnknown: kv.Value.AnyUnknown,
@@ -264,12 +265,16 @@ public sealed class ProjectPipelineCostService
             if ((long)usage.InputTokens + usage.OutputTokens + usage.CacheReadTokens + usage.CacheCreationTokens <= 0)
                 continue;
 
-            var kind = TokenModelDisplay.IsOrchestratorParticipant(entry.ParticipantId)
+            var isSummary = string.Equals(entry.Topic, AdHocUsageSources.SummaryGeneration,
+                StringComparison.OrdinalIgnoreCase);
+            var kind = isSummary
+                ? StepKind.Orchestrator
+                : TokenModelDisplay.IsOrchestratorParticipant(entry.ParticipantId)
                 ? StepKind.Orchestrator
                 : TokenModelDisplay.IsSupportingParticipant(entry.ParticipantId)
                     ? StepKind.Aspect
                     : StepKind.Core;
-            var stepId = kind switch
+            var stepId = isSummary ? PipelineCatalogue.SummaryStepId : kind switch
             {
                 StepKind.Orchestrator => "task-receipt-orchestrator",
                 StepKind.Aspect => "task-receipt-supporting",
@@ -356,6 +361,7 @@ public sealed class ProjectPipelineCostService
         Dictionary<string, StepAcc> map,
         string stepId,
         StepKind kind,
+        int calls,
         long tokens,
         TokenCostEstimate est,
         int runIndex,
@@ -369,6 +375,7 @@ public sealed class ProjectPipelineCostService
             acc = new StepAcc { Kind = kind };
             map[key] = acc;
         }
+        acc.Calls += calls;
         acc.Tokens += tokens;
         if (est.ModelKnown)
         {
@@ -405,6 +412,7 @@ public sealed class ProjectPipelineCostService
     private sealed class StepAcc
     {
         public StepKind Kind;
+        public int Calls;
         public long Tokens;
         public decimal Cost;
         public bool AnyUnknown;
@@ -486,6 +494,7 @@ public sealed record PipelineDayCostCell(
 public sealed record PipelineStepCostSeries(
     string StepId,
     string Kind,
+    int Calls,
     long TotalTokens,
     decimal TotalCostUsd,
     bool AnyModelUnknown,

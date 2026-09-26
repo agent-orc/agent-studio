@@ -47,6 +47,9 @@ public static class PipelineStepModelDefaults
             step.Id, PipelineCatalogue.PreOrchestratorPrepStepId, StringComparison.OrdinalIgnoreCase)
             => SupportModel,
         StepKind.Orchestrator when string.Equals(
+            step.Id, PipelineCatalogue.SummaryStepId, StringComparison.OrdinalIgnoreCase)
+            => ModelIds.Gpt56Luna,
+        StepKind.Orchestrator when string.Equals(
             step.Id, PipelineCatalogue.CodeReviewGradeStepId, StringComparison.OrdinalIgnoreCase)
             => QualityModel,
         StepKind.Orchestrator when string.Equals(
@@ -81,6 +84,8 @@ public static class PipelineStepModelDefaults
         return string.Equals(step.Id, PipelineCatalogue.CodeReviewGradeStepId, StringComparison.OrdinalIgnoreCase)
                || string.Equals(step.Id, PipelineCatalogue.TaskSpawnerStepId, StringComparison.OrdinalIgnoreCase)
             ? QualityThinkingLevel
+            : string.Equals(step.Id, PipelineCatalogue.SummaryStepId, StringComparison.OrdinalIgnoreCase)
+                ? "medium"
             : SupportThinkingLevel;
     }
 

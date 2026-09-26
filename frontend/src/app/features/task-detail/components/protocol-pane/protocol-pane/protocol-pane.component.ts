@@ -94,8 +94,8 @@ export type ActivityView = 'conversation' | 'trace';
 
 /**
  * Transient interim-summary result shown while a job is running. Generated
- * on demand from a single Haiku call against the in-flight cli-output.log;
- * never written to status.md (the final summary owns that file).
+ * on demand through the configured summary route; never written to status.md
+ * (the final summary owns that file).
  */
 interface InterimSummaryState {
   status: 'idle' | 'pending' | 'ready' | 'failed';
@@ -106,10 +106,9 @@ interface InterimSummaryState {
 }
 
 /**
- * Protocol pane: shows the Haiku-generated status.md (read-only), the
- * activity log, the chat-compose strip, and Claude telemetry chips in
- * the header. status.md is owned by the SummaryGenerationService on the
- * backend — there is no edit mode here.
+ * Protocol pane: shows the generated status.md (read-only), the activity log,
+ * the chat-compose strip, and CLI telemetry chips in the header. status.md is
+ * owned by the SummaryGenerationService on the backend; there is no edit mode.
  */
 @Component({
   selector: 'app-protocol-pane',
@@ -531,8 +530,8 @@ export class ProtocolPaneComponent implements OnDestroy {
   readonly statusHistoryTransform = (raw: string): string => stripStatusHeader(raw);
 
   /**
-   * Progressive spinner label so a slow Haiku call doesn't look frozen.
-   * The backend caps the call at HaikuTimeoutSeconds = 90 s; we
+   * Progressive spinner label so a slow summary call doesn't look frozen.
+   * The backend caps the call at 90 seconds; we
    * intentionally mirror that constant here. Tiers:
    *   < 30 s         "Generating the result..."
    *   30 s ... 60 s  "Generating the result... (>=30 s)"
@@ -648,8 +647,8 @@ export class ProtocolPaneComponent implements OnDestroy {
   /**
    * Live "interim status" banner state. Populated when the user clicks the
    * `📊 Interim status` button while a run is in flight. The button calls
-   * `POST /api/tasks/{id}/summary/interim`, which fires a one-shot Haiku
-   * against the current cli-output.log but does NOT touch status.md. The
+   * `POST /api/tasks/{id}/summary/interim`, which fires the configured summary
+   * one-shot but does NOT touch status.md. The
    * banner is transient: dismissing it clears the markdown back to null.
    */
   readonly interimSummary = signal<InterimSummaryState>({
@@ -1002,7 +1001,7 @@ export class ProtocolPaneComponent implements OnDestroy {
       {
         kind: 'row',
         id: 'regenerate',
-        label: 'Regenerate from CLI output',
+        label: 'Regenerate result',
         disabled: !this.canRegenerate(),
       },
       { kind: 'separator' },

@@ -50,6 +50,8 @@ export interface TaskPipeline {
 export interface PipelineStepExecution {
   stepId: string;
   kind: StepKind;
+  /** Calls accumulated into this row for repeatable steps such as Result regeneration. */
+  invocationCount?: number;
   /** Pipeline attempt epoch that owns this row. Null only on legacy records. */
   attempt?: number | null;
   model?: string | null;
