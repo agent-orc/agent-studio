@@ -570,6 +570,7 @@ builder.Services.AddSingleton<SystemKeepAwake>(sp =>
     return new SystemKeepAwake(request, enabled);
 });
 builder.Services.AddSingleton<TaskRunnerService>();
+builder.Services.AddSingleton<ITaskCoreRuntime, TaskCoreRuntime>();
 builder.Services.AddSingleton<CrashRecoveryService>();
 builder.Services.AddSingleton<StaleProgressArchiver>();
 // Run-Liveness Slice A: the phase-aware "no zombie survives 60s" monitor
@@ -1533,6 +1534,7 @@ var taskScanner = app.Services.GetRequiredService<TaskScannerService>();
 taskScanner.SetIndexCache(jobIndexCache);
 taskScanner.SetStatsMetadataCache(jobStatsMetadataCache);
 watcher.OnJobChanged += _ => jobIndexCache.Invalidate(TaskIndexCache.InvalidationSource.External);
+watcher.OnPathChanged += jobIndexCache.NotifyCoreFileChanged;
 watcher.OnJobChanged += _ => jobStatsMetadataCache.Invalidate();
 // AGT-2703: the board ETag needs the events the line above filters out. The
 // task index only cares about task.json semantics and folder structure, while

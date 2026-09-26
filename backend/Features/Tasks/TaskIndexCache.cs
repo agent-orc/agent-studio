@@ -35,6 +35,7 @@ public sealed class TaskIndexCache
 {
     private readonly TimeSpan _safetyTtl;
     private readonly Func<List<TaskInfo>> _scanAllJobsRaw;
+    private readonly TaskScannerService _scanner;
     private readonly Action? _beforeRefreshGenerationCapture;
     private readonly ILogger<TaskIndexCache> _logger;
 
@@ -48,6 +49,17 @@ public sealed class TaskIndexCache
     // once per refresh, so we keep them here for the dedicated paged archive
     // read (ASS-1727) instead of re-walking disk for that endpoint.
     private ImmutableList<TaskInfo> _archiveSnapshot = ImmutableList<TaskInfo>.Empty;
+    // Core is keyed independently of the freshness-enforcing board partitions.
+    private Dictionary<string, TaskCoreRecord> _core = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _removedCoreKeys = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, TaskCoreRecord> _coreByFolder = new(
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+    private readonly HashSet<string> _staleCoreFolders = new(
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+    private readonly HashSet<string> _pendingCoreFolders = new(
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+    private long _coreWriteGeneration;
+    private int _coreHydrationQueued;
     private TaskReferenceIndex _referenceIndex = TaskReferenceIndex.Build(Array.Empty<TaskInfo>());
     private DateTime _snapshotAtUtc = DateTime.MinValue;
     private bool _dirty = true;
@@ -104,6 +116,7 @@ public sealed class TaskIndexCache
         Func<List<TaskInfo>> scanAllJobsRaw,
         Action? beforeRefreshGenerationCapture = null)
     {
+        _scanner = scanner;
         _scanAllJobsRaw = scanAllJobsRaw;
         _beforeRefreshGenerationCapture = beforeRefreshGenerationCapture;
         _logger = logger;
@@ -167,6 +180,141 @@ public sealed class TaskIndexCache
     {
         EnsureFresh();
         lock (_lock) return (_snapshot, _archiveSnapshot);
+    }
+
+    /// <summary>Cache-only core lookup. This never invokes EnsureFresh.</summary>
+    public TaskCoreLookup GetCore(string identity, string watchPath)
+    {
+        lock (_lock)
+        {
+            var key = CoreKey(watchPath, identity);
+            if (_core.TryGetValue(key, out var record))
+            {
+                var stale = _staleCoreFolders.Contains(record.FolderPath)
+                    || DateTime.UtcNow - _snapshotAtUtc >= _safetyTtl;
+                if (DateTime.UtcNow - _snapshotAtUtc >= _safetyTtl) QueueCoreHydration();
+                return new TaskCoreLookup(record, stale);
+            }
+            if (_removedCoreKeys.Contains(key)) return new TaskCoreLookup(null, false);
+            if (!_hasSnapshot || _dirty || DateTime.UtcNow - _snapshotAtUtc >= _safetyTtl)
+            {
+                QueueCoreHydration();
+                return new TaskCoreLookup(null, true);
+            }
+            return new TaskCoreLookup(null, false);
+        }
+    }
+
+    private void QueueCoreHydration()
+    {
+        if (Interlocked.Exchange(ref _coreHydrationQueued, 1) != 0) return;
+        _ = Task.Run(() =>
+        {
+            try { GetSnapshot(); }
+            catch (Exception ex) { _logger.LogWarning(ex, "task-core-hydration-failed"); }
+            finally { Interlocked.Exchange(ref _coreHydrationQueued, 0); }
+        });
+    }
+
+    private static string CoreKey(string watchPath, string identity) =>
+        $"{watchPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)}::{identity}";
+
+    /// <summary>Publish one durable write without a workspace walk.</summary>
+    public void PublishCore(TaskInfo info)
+    {
+        TaskReferenceIndex references;
+        TaskCoreRecord? previous;
+        lock (_lock)
+        {
+            references = _referenceIndex;
+            _coreByFolder.TryGetValue(info.FolderPath, out previous);
+        }
+        var waitsOn = info.References.DependsOn.Count > 0 ? references.EvaluateWaitsOn(info) : null;
+        var record = TaskCoreRecord.Create(info, waitsOn, previous, forceSidecars: true);
+        lock (_lock)
+        {
+            // Remove aliases from an earlier lane, rename or project move.
+            foreach (var key in _core.Where(pair => pair.Value.TaskKey == info.TaskKey
+                || (pair.Value.Id == info.Id && WatchPathComparison.PathsEqual(pair.Value.WatchPath, info.WatchPath)))
+                .Select(pair => pair.Key).ToArray())
+                _core.Remove(key);
+            AddCoreAliases(_core, record);
+            _removedCoreKeys.Remove(CoreKey(record.WatchPath, record.Id));
+            _removedCoreKeys.Remove(CoreKey(record.WatchPath, record.TaskKey));
+            if (!string.IsNullOrWhiteSpace(record.Key))
+                _removedCoreKeys.Remove(CoreKey(record.WatchPath, record.Key));
+            _coreByFolder[record.FolderPath] = record;
+            _staleCoreFolders.Remove(record.FolderPath);
+            _coreWriteGeneration++;
+        }
+    }
+
+    public void RemoveCore(TaskInfo info)
+    {
+        lock (_lock)
+        {
+            foreach (var key in _core.Where(pair => pair.Value.TaskKey == info.TaskKey
+                || (pair.Value.Id == info.Id && WatchPathComparison.PathsEqual(pair.Value.WatchPath, info.WatchPath)))
+                .Select(pair => pair.Key).ToArray())
+            {
+                _removedCoreKeys.Add(key);
+                _core.Remove(key);
+            }
+            _coreByFolder.Remove(info.FolderPath);
+            _staleCoreFolders.Remove(info.FolderPath);
+            _coreWriteGeneration++;
+        }
+    }
+
+    public void RemoveCoreByFolder(string folder)
+    {
+        TaskCoreRecord? record;
+        lock (_lock) _coreByFolder.TryGetValue(folder, out record);
+        if (record is not null) RemoveCore(new TaskInfo
+        {
+            Id = record.Id, TaskKey = record.TaskKey,
+            WatchPath = record.WatchPath, FolderPath = record.FolderPath,
+        });
+    }
+
+    public TaskCoreRecord? GetCoreByFolder(string folder)
+    {
+        lock (_lock) return _coreByFolder.GetValueOrDefault(folder);
+    }
+
+    /// <summary>Debounced sidecar refresh on the watcher thread, never on a core read.</summary>
+    public void NotifyCoreFileChanged(string path)
+    {
+        var name = Path.GetFileName(path);
+        if (name is not ("task.json" or "prompt.md" or "status.md" or "timeline.jsonl")) return;
+        var folder = name == "timeline.jsonl"
+            ? Path.GetDirectoryName(Path.GetDirectoryName(path))
+            : Path.GetDirectoryName(path);
+        if (folder is null) return;
+        TaskCoreRecord? known;
+        lock (_lock)
+        {
+            if (!_coreByFolder.TryGetValue(folder, out known)) return;
+            _staleCoreFolders.Add(folder);
+            if (!_pendingCoreFolders.Add(folder)) return;
+        }
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(250);
+                _scanner.PublishCoreFromFolder(folder, known.WatchPath, known.ProjectName, known.State);
+            }
+            catch (Exception ex) { _logger.LogWarning(ex, "task-core-sidecar-refresh-failed path={Path}", path); }
+            finally { lock (_lock) _pendingCoreFolders.Remove(folder); }
+        });
+    }
+
+    private static void AddCoreAliases(Dictionary<string, TaskCoreRecord> core, TaskCoreRecord record)
+    {
+        core[CoreKey(record.WatchPath, record.Id)] = record;
+        core[CoreKey(record.WatchPath, record.TaskKey)] = record;
+        if (!string.IsNullOrWhiteSpace(record.Key)) core[CoreKey(record.WatchPath, record.Key)] = record;
     }
 
     /// <summary>
@@ -280,6 +428,8 @@ public sealed class TaskIndexCache
             _beforeRefreshGenerationCapture?.Invoke();
             long genBefore;
             long mutationGenBefore;
+            long coreWriteGenBefore;
+            Dictionary<string, TaskCoreRecord> previousCoreByFolder;
             lock (_lock)
             {
                 // These generations describe one logical cache state and must
@@ -288,6 +438,8 @@ public sealed class TaskIndexCache
                 // forcing an unnecessary second full scan.
                 genBefore = _invalidationGen;
                 mutationGenBefore = _requiredMutationGen;
+                coreWriteGenBefore = _coreWriteGeneration;
+                previousCoreByFolder = new Dictionary<string, TaskCoreRecord>(_coreByFolder, _coreByFolder.Comparer);
             }
             var refreshTimer = System.Diagnostics.Stopwatch.StartNew();
             var fresh = _scanAllJobsRaw();
@@ -303,12 +455,32 @@ public sealed class TaskIndexCache
                     board.Add(job);
             }
             var referenceIndex = TaskReferenceIndex.Build(fresh);
+            var projected = new Dictionary<string, TaskCoreRecord>(StringComparer.OrdinalIgnoreCase);
+            var byFolder = new Dictionary<string, TaskCoreRecord>(
+                OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+            foreach (var job in fresh)
+            {
+                var waitsOn = job.References.DependsOn.Count > 0 ? referenceIndex.EvaluateWaitsOn(job) : null;
+                previousCoreByFolder.TryGetValue(job.FolderPath, out var previous);
+                var record = TaskCoreRecord.Create(job, waitsOn, previous);
+                AddCoreAliases(projected, record);
+                byFolder[record.FolderPath] = record;
+            }
 
             lock (_lock)
             {
                 _snapshot = board.ToImmutableList();
                 _archiveSnapshot = archive.ToImmutableList();
                 _referenceIndex = referenceIndex;
+                // A targeted mutation may publish while the scan is running.
+                // Never overwrite that more recent publication with a torn scan.
+                if (_coreWriteGeneration == coreWriteGenBefore)
+                {
+                    _core = projected;
+                    _coreByFolder = byFolder;
+                    _removedCoreKeys.Clear();
+                    _staleCoreFolders.Clear();
+                }
                 _snapshotAtUtc = DateTime.UtcNow;
                 _snapshotGeneration++;
                 _hasSnapshot = true;

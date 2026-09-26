@@ -266,6 +266,10 @@ public sealed class AccessSecurityMiddleware
     private bool ProjectAllowed(StudioUser user, HttpRequest request, string path)
     {
         if (user.Role == StudioRoles.Owner || user.Projects.Count == 0) return true;
+        if (path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase)
+            && path.EndsWith("/core", StringComparison.OrdinalIgnoreCase))
+            return !string.IsNullOrWhiteSpace(request.Query["project"])
+                && ProjectAccessAuthorization.Allows(user, request.Query["project"].FirstOrDefault(), _projects);
         if (path.StartsWith("/api/runner/global", StringComparison.OrdinalIgnoreCase)) return false;
         string? requested = request.Query["project"].FirstOrDefault();
         if (string.IsNullOrWhiteSpace(requested) && path.StartsWith("/api/projects/", StringComparison.OrdinalIgnoreCase))
