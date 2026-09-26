@@ -2697,6 +2697,32 @@
             downgrades conflicting evidence to a claimable degraded state.
           </td>
         </tr>
+        <tr id="case-agt-2912-windows-gate-logger">
+          <td>2026-09-25</td>
+          <td><code>AGT-2912</code><br><span class="small">Windows gate logger arguments broke integration</span></td>
+          <td>
+            The operator host ran a composed <code>dotnet test</code> command through
+            <code>cmd.exe /c</code>. MSBuild rejected the logger argument with
+            <code>MSB4177</code> / <code>MSB1006</code>. The failed gate's rollback then
+            timed out and left <code>index.lock</code>; four following integrations could
+            not prepare their worktree. The operator changed the shell to Git Bash and
+            re-drove the integrations manually.
+          </td>
+          <td>
+            Shell quoting corrupted the appended logger values. The ordinary code
+            failure classification did not make the gate eligible for environment
+            retry, and the timed-out rollback left a private Git lock behind.
+          </td>
+          <td>
+            <span class="pill ok">fixed in dev</span> The gate uses Git Bash on
+            Windows or direct process arguments when Bash is missing; npm uses
+            Node and its JavaScript entry point. The exact
+            logger parse signature maps to <code>gate-environment-failure</code>.
+            Rollback retries one timeout with a longer budget, and the next
+            preparation removes an old owned index lock before resetting to the
+            integration branch tip. The observed terminal was manual operator repair.
+          </td>
+        </tr>
       </tbody>
     </table>
 

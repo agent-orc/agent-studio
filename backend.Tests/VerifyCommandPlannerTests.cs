@@ -1504,6 +1504,29 @@ public sealed class BuildTestGateClassificationTests
         Assert.Equal(BuildTestGateFailureKind.Lock, kind);
     }
 
+    [Theory]
+    [InlineData("MSBUILD : error MSB4177: Invalid property. The name \"console%3bverbosity\" contains an invalid character \"%\".")]
+    [InlineData("MSBUILD : error MSB1006: Property is not valid. Switch: console;verbosity=normal")]
+    public void ComposedDotNetLoggerParseFailure_IsEnvironment(string stderr)
+    {
+        var process = Evidence(exitCode: 1, stderr: stderr) with
+        {
+            Command = "dotnet test",
+            Arguments = ["-lc", "dotnet test --logger \"console;verbosity=normal\""],
+        };
+
+        Assert.Equal(BuildTestGateFailureKind.Environment, BuildTestGateRunner.ClassifyFailure(process));
+    }
+
+    [Fact]
+    public void SimilarMsbuildPropertyFailureWithoutComposedLogger_IsCode()
+    {
+        var process = Evidence(exitCode: 1, stderr: "MSBUILD : error MSB4177: Invalid property. console%3bverbosity")
+            with { Command = "dotnet build" };
+
+        Assert.Equal(BuildTestGateFailureKind.Code, BuildTestGateRunner.ClassifyFailure(process));
+    }
+
     [Fact]
     public void CompletedProcess_WithoutAnyInfraSignal_IsCode()
     {

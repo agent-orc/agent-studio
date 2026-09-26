@@ -41,6 +41,7 @@ public sealed record IntegrationWorktreeResolution(
 /// </summary>
 public sealed class IntegrationWorktreeProvider
 {
+    internal const string LastIntegrationMarker = "agentstudio-last-integration";
     private readonly GitService _git;
     private readonly ILogger<IntegrationWorktreeProvider> _logger;
     private readonly string? _temporaryRoot;
@@ -206,6 +207,7 @@ public sealed class IntegrationWorktreeProvider
     /// </summary>
     private string? Refresh(string worktreePath, string baseRef)
     {
+        RemoveStaleIndexLock(worktreePath, baseRef);
         _git.AbortInterruptedIntegration(worktreePath);
 
         var detached = _git.CheckoutDetachedAt(worktreePath, baseRef);
@@ -221,6 +223,45 @@ public sealed class IntegrationWorktreeProvider
             return $"The integration worktree at '{worktreePath}' could not be cleaned: {cleaned.Error}";
 
         return null;
+    }
+
+    private void RemoveStaleIndexLock(string worktreePath, string baseRef)
+    {
+        // The integration slot is serialized and owned by Studio. A timed-out
+        // rollback can leave this worktree's private index lock behind after
+        // Git's process tree has been terminated. Only reclaim an old lock;
+        // a recent lock is treated as an active writer and Git will refuse it.
+        try
+        {
+            var gitDir = WorktreeGitDirectory(worktreePath);
+            if (gitDir is null) return;
+            var lockPath = Path.Combine(gitDir, "index.lock");
+            if (!File.Exists(lockPath)) return;
+            var lockTime = File.GetLastWriteTimeUtc(lockPath);
+            var markerPath = Path.Combine(gitDir, LastIntegrationMarker);
+            if (DateTime.UtcNow - lockTime < GitNetworkProcessRunner.DefaultTimeout
+                || (File.Exists(markerPath) && lockTime >= File.GetLastWriteTimeUtc(markerPath)))
+                return;
+            File.Delete(lockPath);
+            _logger.LogWarning("Removed stale integration worktree index lock at {LockPath} before resetting to {BaseRef}",
+                lockPath, baseRef);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not inspect the integration worktree index lock at {Path}", worktreePath);
+        }
+    }
+
+    internal static string? WorktreeGitDirectory(string worktreePath)
+    {
+        var link = Path.Combine(worktreePath, ".git");
+        if (!File.Exists(link)) return null;
+        var pointer = File.ReadAllText(link).Trim();
+        if (!pointer.StartsWith("gitdir:", StringComparison.OrdinalIgnoreCase)) return null;
+        var gitDir = pointer[7..].Trim();
+        return Path.IsPathRooted(gitDir)
+            ? gitDir
+            : Path.GetFullPath(Path.Combine(worktreePath, gitDir));
     }
 
     private static string? Normalize(string? path)
