@@ -56,6 +56,9 @@ describe('CrashRecoveryPromptComponent', () => {
 
     const fixture = TestBed.createComponent(CrashRecoveryPromptComponent);
     fixture.detectChanges();
+    expect(fixture.componentInstance.open()).toBe(false);
+    fixture.componentInstance.openRecovery();
+    fixture.detectChanges();
     expect(fixture.componentInstance.open()).toBe(true);
 
     // app-dialog renders into an overlay on document.body, not under the fixture.
@@ -70,6 +73,40 @@ describe('CrashRecoveryPromptComponent', () => {
     expect(fixture.componentInstance.pending()).toEqual([]);
     expect(fixture.componentInstance.busyAll()).toBe(false);
     expect(fixture.componentInstance.open()).toBe(false);
+  });
+
+  it('keeps trivial sidecars out of the review dialog and bulk review action', async () => {
+    const review = { id: 'review', projectName: 'Review', jobId: 'AGT-1', reason: 'r', repoRoot: 'x', message: 'm', files: ['source.ts'], createdAt: '2026-07-18T00:00:00Z', classification: 'review-required' as const };
+    const trivial = { id: 'trivial', projectName: 'Sidecar', jobId: null, reason: 'r', repoRoot: 'y', message: 'm', files: ['docs/page.md.meta.json'], createdAt: '2026-07-18T00:00:00Z', classification: 'trivial' as const };
+    const dismissed = vi.fn(() => of({ status: 'dismissed', pending: null, commitSha: null, error: null }));
+    await TestBed.configureTestingModule({
+      imports: [CrashRecoveryPromptComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideRouter([]),
+        { provide: TaskService, useValue: {
+          getPendingCrashRecoveries: () => of({ pending: [review, trivial] }),
+          commitCrashRecovery: () => of({ status: 'committed', pending: null, commitSha: 'abc123', error: null }),
+          dismissCrashRecovery: dismissed,
+        } },
+      ],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(CrashRecoveryPromptComponent);
+    fixture.detectChanges();
+    const component = fixture.componentInstance;
+    expect(component.reviewPending()).toEqual([review]);
+    expect(component.trivialPending()).toEqual([trivial]);
+    component.openRecovery();
+    fixture.detectChanges();
+    expect(document.querySelector('[data-testid="crash-recovery-item-review"]')).toBeTruthy();
+    expect(document.querySelector('[data-testid="crash-recovery-item-trivial"]')).toBeNull();
+    component.dismissAll();
+    fixture.detectChanges();
+    expect(dismissed).toHaveBeenCalledExactlyOnceWith('review');
+    expect(component.pending()).toEqual([trivial]);
+    expect(component.open()).toBe(false);
+    expect(TestBed.inject(NotificationService).notifications().some(item => item.title === 'Crash recovery found read-evidence sidecars')).toBe(true);
   });
 
   it('routes unattributed metadata sidecars to a non-blocking leave-uncommitted notification', async () => {
