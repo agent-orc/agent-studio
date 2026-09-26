@@ -254,6 +254,8 @@ public sealed class CliOneShotRegistry
         else if (!string.IsNullOrWhiteSpace(request.WatchPath))
             _quotaRecorder?.EmitProjectAdmissionDecision(
                 request.WatchPath, request.Project, plan, source);
+        else
+            _quotaRecorder?.EmitUnscopedAdmissionDecision(plan, source);
 
         if (!plan.ShouldLaunch)
         {
@@ -305,6 +307,7 @@ public sealed class CliOneShotRegistry
                     Model = effective.Model,
                     ThinkingLevel = effective.ThinkingLevel,
                     Reason = plan.Reason,
+                    ModelFallback = plan.ModelFallback,
                 });
                 transientTaskMarker = true;
                 _quotaRecorder?.EmitFallbackActivated(
@@ -318,7 +321,8 @@ public sealed class CliOneShotRegistry
                         true,
                         plan.Reason,
                         CapEvaluation.NotBlocked),
-                    source);
+                    source,
+                    plan.ModelFallback);
             }
             else
             {
