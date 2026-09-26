@@ -52,6 +52,9 @@ public sealed class ProjectChatStoreAndIndexTests : IDisposable
             Author = ProjectChatTurnAuthors.Claude,
             Kind = ProjectChatTurnKinds.EventToolCall,
             Ts = new DateTime(2026, 5, 6, 12, 34, 56, DateTimeKind.Utc),
+            QueuedAt = new DateTime(2026, 5, 6, 12, 34, 57, DateTimeKind.Utc),
+            StartedAt = new DateTime(2026, 5, 6, 12, 34, 58, DateTimeKind.Utc),
+            FinishedAt = new DateTime(2026, 5, 6, 12, 35, 00, DateTimeKind.Utc),
             Refs = new[] { "ref-one", "ref-two" },
             Body = "Body line one.\n\n```\ncode block\n```\n"
         };
@@ -62,6 +65,7 @@ public sealed class ProjectChatStoreAndIndexTests : IDisposable
         Assert.Contains("author: claude", serialised, StringComparison.Ordinal);
         Assert.Contains("kind: event-tool-call", serialised, StringComparison.Ordinal);
         Assert.Contains("ts: 2026-05-06T12:34:56", serialised, StringComparison.Ordinal);
+        Assert.Contains("queuedAt: 2026-05-06T12:34:57", serialised, StringComparison.Ordinal);
         Assert.Contains("refs: [ref-one, ref-two]", serialised, StringComparison.Ordinal);
 
         var parsed = ProjectChatTurnSerializer.Parse(serialised);
@@ -70,6 +74,9 @@ public sealed class ProjectChatStoreAndIndexTests : IDisposable
         Assert.Equal(ProjectChatTurnAuthors.Claude, parsed.Author);
         Assert.Equal(ProjectChatTurnKinds.EventToolCall, parsed.Kind);
         Assert.Equal(turn.Ts, parsed.Ts);
+        Assert.Equal(turn.QueuedAt, parsed.QueuedAt);
+        Assert.Equal(turn.StartedAt, parsed.StartedAt);
+        Assert.Equal(turn.FinishedAt, parsed.FinishedAt);
         Assert.NotNull(parsed.Refs);
         Assert.Equal(new[] { "ref-one", "ref-two" }, parsed.Refs!);
         Assert.Contains("code block", parsed.Body);

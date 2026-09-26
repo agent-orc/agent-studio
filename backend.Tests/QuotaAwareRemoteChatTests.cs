@@ -16,6 +16,73 @@ public sealed class QuotaAwareRemoteChatTests : IDisposable
         Path.GetTempPath(), "quota-remote-chat-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public async Task Unreachable_assigned_host_runs_chat_on_workstation_and_records_timeline()
+    {
+        const string projectName = "fallback-remote-chat";
+        var watchPath = Path.Combine(_root, "projects", projectName);
+        var repositoryPath = Path.Combine(_root, "repository");
+        Directory.CreateDirectory(watchPath);
+        Directory.CreateDirectory(repositoryPath);
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TaskRepository"] = _root,
+                ["WatchPaths:0:Name"] = projectName,
+                ["WatchPaths:0:Path"] = watchPath,
+                ["WatchPaths:0:RootPath"] = repositoryPath,
+                ["WatchPaths:0:RepositoryPath"] = repositoryPath,
+            })
+            .Build();
+        var settings = new ProjectSettingsService(
+            NullLogger<ProjectSettingsService>.Instance, configuration);
+        settings.SetExecutionRunner(projectName, "runner-offline", remoteExecutionEnabled: true);
+        var projects = new ProjectRegistry(configuration, NullLogger<ProjectRegistry>.Instance);
+        var project = projects.EnsureProjectForStorage(watchPath, projectName, "default");
+        projects.AddUrl(project.Id, "repo", "https://example.invalid/fallback-remote-chat.git");
+        var summaries = new SummaryGenerationService(
+            NullLogger<SummaryGenerationService>.Instance, configuration);
+        var scanner = new TaskScannerService(
+            configuration, NullLogger<TaskScannerService>.Instance, summaries);
+        var runner = new FallbackLocalRunner();
+        var sessionStore = new GlobalOrchestratorSessionStore(
+            configuration, NullLogger<GlobalOrchestratorSessionStore>.Instance);
+        var bootstrap = new GlobalOrchestratorBootstrap(
+            NullLogger<GlobalOrchestratorBootstrap>.Instance,
+            sessionStore, runner, scanner, configuration);
+        var broker = new RemoteChatWorkBroker(
+            NullLogger<RemoteChatWorkBroker>.Instance,
+            TimeSpan.FromMilliseconds(20));
+        var service = new OrchestratorChatService(
+            new OrchestratorChat(NullLogger<OrchestratorChat>.Instance),
+            runner, sessionStore, bootstrap, scanner, configuration,
+            NullLogger<OrchestratorChatService>.Instance,
+            projectSettings: settings, projects: projects, remoteWork: broker);
+
+        var reply = await service.SendAsync(
+            projectName, watchPath,
+            new SendOrchestratorChatRequest(
+                "Answer briefly.", Attachments: null,
+                Model: ModelIds.Gpt56Sol, ThinkingLevel: "medium"),
+            CancellationToken.None);
+
+        Assert.True(runner.WasCalled);
+        Assert.Contains("Ran on the workstation because runner-offline was unreachable.", reply.Text);
+        Assert.Contains("local reply", reply.Text);
+        Assert.NotNull(reply.QueuedAt);
+        Assert.NotNull(reply.StartedAt);
+        Assert.NotNull(reply.FinishedAt);
+        Assert.True(reply.QueuedAt <= reply.StartedAt);
+        Assert.True(reply.StartedAt <= reply.FinishedAt);
+        var repository = RemoteProjectRepositoryResolver.Resolve(
+            projects.FindByStorageLocation(watchPath),
+            settings.Get(projectName).IntegrationBranch);
+        Assert.NotNull(repository);
+        Assert.Equal("local", broker.GetContext(new RemoteChatWorkRoute(
+            "runner-offline", repository.ProjectId, projectName,
+            repository.RepositoryUrl, repository.DefaultBranch))?.ExecutionKind);
+    }
+
+    [Fact]
     public async Task Remote_project_chat_claim_carries_resolved_family_and_configured_provenance()
     {
         const string projectName = "quota-remote-chat";
@@ -198,6 +265,24 @@ public sealed class QuotaAwareRemoteChatTests : IDisposable
         {
             WasCalled = true;
             throw new InvalidOperationException("Remote chat unexpectedly used the local runner.");
+        }
+    }
+
+    private sealed class FallbackLocalRunner : OrchestratorRunner
+    {
+        public FallbackLocalRunner()
+            : base(null!, NullLogger<OrchestratorRunner>.Instance) { }
+
+        public bool WasCalled { get; private set; }
+
+        public override Task<OrchestratorDecisionResult> DecideCodexAsync(
+            string prompt, string model, string? thinkingLevel,
+            string workingDirectory, CancellationToken ct = default,
+            string? projectName = null, string? watchPath = null)
+        {
+            WasCalled = true;
+            return Task.FromResult(new OrchestratorDecisionResult(
+                true, "local reply", model, null, null, null));
         }
     }
 }

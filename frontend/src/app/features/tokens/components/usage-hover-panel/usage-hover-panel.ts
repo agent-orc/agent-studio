@@ -3,6 +3,7 @@ import {
   Component,
   DestroyRef,
   OnInit,
+  OnDestroy,
   computed,
   effect,
   inject,
@@ -14,6 +15,7 @@ import type { CliType } from '../../../../models/task.model';
 import { HeaderQuotaComponent } from '../../../quota';
 import { CliUsageStore } from '../../services/cli-usage.store';
 import { CliUsageModalComponent } from '../cli-usage-modal/cli-usage-modal';
+import { RemoteHostsService } from '../../../remote-hosts/services/remote-hosts.service';
 
 /**
  * Status-bar quota trigger. Renders the compact <app-header-quota> strip
@@ -36,8 +38,12 @@ import { CliUsageModalComponent } from '../cli-usage-modal/cli-usage-modal';
   templateUrl: './usage-hover-panel.html',
   styleUrl: './usage-hover-panel.scss'
 })
-export class UsageHoverPanelComponent implements OnInit {
+export class UsageHoverPanelComponent implements OnInit, OnDestroy {
   private readonly store = inject(CliUsageStore);
+  private readonly remoteHosts = inject(RemoteHostsService);
+  readonly chatUsage = this.remoteHosts.interactiveUsage;
+  readonly chatUsageOpen = signal(false);
+  private chatUsagePoll: ReturnType<typeof setInterval> | null = null;
 
   readonly quotaRows = this.store.quotaRows;
   readonly tokens = this.store.tokens;
@@ -61,8 +67,24 @@ export class UsageHoverPanelComponent implements OnInit {
     this.store.ensureQuotaStarted();
   }
 
+  ngOnDestroy(): void {
+    if (this.chatUsagePoll) clearInterval(this.chatUsagePoll);
+  }
+
+  toggleChatUsage(): void {
+    this.chatUsageOpen.update(open => !open);
+    if (this.chatUsageOpen()) {
+      this.remoteHosts.refreshInteractiveUsage();
+      this.chatUsagePoll = setInterval(() => this.remoteHosts.refreshInteractiveUsage(), 5_000);
+    } else if (this.chatUsagePoll) {
+      clearInterval(this.chatUsagePoll);
+      this.chatUsagePoll = null;
+    }
+  }
+
   /** Card click from the strip: open that CLI's own detail modal. */
   select(cliType: CliType): void {
+    if (this.chatUsageOpen()) this.toggleChatUsage();
     if (!this.detailStarted) {
       this.store.startDetail();
       this.detailStarted = true;

@@ -200,10 +200,18 @@ state.
 - `backend/Features/Runner/RemoteChatWorkBroker.cs`,
   `backend/Features/Tasks/LeaseEndpoints.cs`, and
   `runner/RemoteProjectChatRunner.cs`: assignment-aware remote side-sheet chat
-  dispatch. The Runner claims and renews opaque chat work, prepares the
-  project's dedicated chat checkout from its normal git cache, starts Codex
-  there, and completes with the observed hostname, repository path, branch,
-  and HEAD revision.
+  dispatch. `runner/InteractiveChatAdmission.cs` polls chat claims independently
+  of coding slots and the coding load gate. Turns start on the assigned host
+  even when all coding slots are occupied. After 30 seconds of wall time or two
+  consecutive five-second samples above 30% of one CPU core, an active turn
+  borrows one coding admission slot while the threshold holds; a turn past the
+  wall-time budget holds the slot until it ends. Existing coding runs continue.
+  Each concurrent turn uses its own isolated checkout so a
+  new turn cannot reset another turn's files. The broker records queued,
+  started, and finished times and exposes queued reasons to the chat UI.
+  Five-second chat claim renewals report the CLI process CPU share. The broker
+  groups active and heavy turns, CPU, and completed token and priced cost
+  totals by host and project for Execution Hosts and the status-bar usage view.
 - Coding hosts advertise fresh `cli-execution:<cliType>` and
   `provider-auth:<cliType>` capabilities for every card CLI binary they can
   invoke. The primary `RUNNER_CLI_BIN` and the provider-specific

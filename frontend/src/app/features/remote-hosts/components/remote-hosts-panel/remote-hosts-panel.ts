@@ -3,7 +3,7 @@ import { TaskService } from '../../../../services/task.service';
 import { RemoteHostsService } from '../../services/remote-hosts.service';
 import { ReviewQueueService } from '../../services/review-queue.service';
 import { RemoteHostCardComponent } from '../remote-host-card/remote-host-card';
-import type { HostActionKind, HostProjectSlots, RemoteHost } from '../../models/remote-host.model';
+import type { HostActionKind, HostProjectSlots, RemoteChatUsage, RemoteHost } from '../../models/remote-host.model';
 import type {
   HostProjectPolicyChange,
   RuntimeCapacityChange,
@@ -68,6 +68,7 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   readonly error = this.service.error;
   readonly identityDiagnostics = this.service.identityDiagnostics;
   readonly providerRefusals = this.service.providerRefusals;
+  readonly interactiveUsage = this.service.interactiveUsage;
   readonly wizardOpen = signal(false);
   readonly purgeRetiredOpen = signal(false);
   readonly showRetired = signal(false);
@@ -92,6 +93,7 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   /** Ticking clock so relative heartbeat labels stay fresh without per-card timers. */
   readonly now = signal<number>(Date.now());
   private tickHandle: ReturnType<typeof setInterval> | null = null;
+  private usageHandle: ReturnType<typeof setInterval> | null = null;
 
   /** Header tallies reconcile to visible physical machines and role sub-rows. */
   readonly hostGroups = computed(() => groupPhysicalHosts(this.hosts(), this.showRetired()));
@@ -132,12 +134,21 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   ngOnInit(): void {
     this.tableState.hydrate();
     this.service.ensureLoaded();
+    this.service.refreshInteractiveUsage();
     this.reviewQueue.refresh();
     this.tickHandle = setInterval(() => this.now.set(Date.now()), 30_000);
+    this.usageHandle = setInterval(() => this.service.refreshInteractiveUsage(), 5_000);
   }
 
   ngOnDestroy(): void {
     if (this.tickHandle) clearInterval(this.tickHandle);
+    if (this.usageHandle) clearInterval(this.usageHandle);
+  }
+
+  chatUsageFor(host: RemoteHost): readonly RemoteChatUsage[] {
+    const names = new Set([host.name, host.id, host.clientId]
+      .map(name => name.toLowerCase()));
+    return this.interactiveUsage().filter(row => names.has(row.hostName.toLowerCase()));
   }
 
   reload(): void { this.service.reload(); }

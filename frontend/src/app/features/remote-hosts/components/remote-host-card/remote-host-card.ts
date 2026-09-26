@@ -105,6 +105,7 @@ export class RemoteHostCardComponent {
    * the active-slot total always reconcile.
    */
   readonly projectSlots = input<readonly HostProjectSlots[]>([]);
+  readonly chatUsage = input<readonly import('../../models/remote-host.model').RemoteChatUsage[]>([]);
   readonly expanded = input(false);
   /** The release every row is measured against; null until it is loaded. */
   readonly stableRelease = input<StableReleaseIdentity | null>(null);

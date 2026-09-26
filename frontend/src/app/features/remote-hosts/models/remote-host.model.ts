@@ -86,6 +86,17 @@ export interface HostProjectSlots {
   activeSlots: number;
 }
 
+/** Live interactive turns and completed usage since the Task Server started. */
+export interface RemoteChatUsage {
+  hostName: string;
+  projectName: string;
+  activeTurns: number;
+  heavyTurns: number;
+  cpuPercent: number | null;
+  tokens: number;
+  costUsd: number | null;
+}
+
 /**
  * Per-CLI quota window lifted from the runner's quota probe. One row per CLI
  * window the host reported (Claude 5h, Codex weekly, ...). Mirrors the shape of

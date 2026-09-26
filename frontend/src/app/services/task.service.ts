@@ -2611,6 +2611,19 @@ export class TaskService {
     );
   }
 
+  getRemoteChatWorkStatus(projectName: string, contextKey: string) {
+    return this.http.get<{
+      state: 'queued' | 'running';
+      runnerId: string;
+      hostName: string | null;
+      queuedAt: string;
+      startedAt: string | null;
+      reason: string | null;
+    } | null>(`${this.baseUrl}/runner/project-chat/status`, {
+      params: { projectName, contextKey },
+    });
+  }
+
   /**
    * Send a user message to the project's orchestrator chat. The backend
    * persists both turns and the context receipt on the Task Server, then

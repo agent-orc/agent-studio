@@ -22,6 +22,13 @@ public sealed class RemoteProjectChatRunner
     private readonly RunnerOptions _options;
     private readonly TaskServerClient _client;
     private readonly Action<string> _log;
+    private int _processId;
+    private DateTime _startedAt;
+    private DateTime? _lastCpuSampleAt;
+    private TimeSpan _lastCpuTime;
+    private int _highCpuSamples;
+
+    internal bool IsCpuHeavy => Volatile.Read(ref _highCpuSamples) >= 2;
 
     public RemoteProjectChatRunner(
         RunnerOptions options,
@@ -35,12 +42,14 @@ public sealed class RemoteProjectChatRunner
 
     public async Task<int> RunAsync(RemoteChatWorkItem work, CancellationToken shutdown)
     {
+        _startedAt = DateTime.UtcNow;
         ChatExecutionContext? executionContext = null;
+        ProjectChatWorkspace? workspace = null;
         using var renewStop = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
         var renewTask = RenewUntilStoppedAsync(work, renewStop.Token);
         try
         {
-            var workspace = new ProjectChatWorkspace(
+            workspace = new ProjectChatWorkspace(
                 _options, work.ProjectId, work.RepositoryUrl, work.DefaultBranch, _log);
             var checkout = await workspace.PrepareAsync(shutdown);
             executionContext = new ChatExecutionContext(
@@ -107,6 +116,7 @@ public sealed class RemoteProjectChatRunner
         }
         finally
         {
+            workspace?.Release();
             renewStop.Cancel();
             try { await renewTask; }
             catch (OperationCanceledException) { }
@@ -177,6 +187,7 @@ public sealed class RemoteProjectChatRunner
                 shutdown);
             if (run is null)
                 throw new InvalidOperationException($"{cliType} chat run failed to start: {error}");
+            _processId = run.ProcessId;
 
             var deadline = Task.Delay(Timeout.InfiniteTimeSpan, timeoutToken)
                 .ContinueWith(_ => { }, TaskScheduler.Default);
@@ -248,14 +259,48 @@ public sealed class RemoteProjectChatRunner
     {
         while (!ct.IsCancellationRequested)
         {
-            await Task.Delay(TimeSpan.FromSeconds(30), ct);
+            await Task.Delay(TimeSpan.FromSeconds(5), ct);
+            var now = DateTime.UtcNow;
+            var cpuPercent = SampleCpuPercent(now);
             var renewed = await _client.RenewProjectChatWorkAsync(
-                new RemoteChatWorkRenewRequest(work.WorkId, work.ClaimToken, _options.RunnerId),
+                new RemoteChatWorkRenewRequest(
+                    work.WorkId, work.ClaimToken, _options.RunnerId,
+                    InteractiveChatAdmission.IsHeavy(_startedAt, now, IsCpuHeavy),
+                    cpuPercent),
                 ct);
             if (!renewed)
                 throw new InvalidOperationException($"Project-chat claim '{work.WorkId}' became stale.");
         }
     }
+
+    private double? SampleCpuPercent(DateTime now)
+    {
+        if (_processId <= 0) return null;
+        try
+        {
+            using var process = System.Diagnostics.Process.GetProcessById(_processId);
+            var cpu = process.TotalProcessorTime;
+            if (_lastCpuSampleAt is not { } previous)
+            {
+                _lastCpuSampleAt = now;
+                _lastCpuTime = cpu;
+                return null;
+            }
+            var wallSeconds = (now - previous).TotalSeconds;
+            double? cpuPercent = wallSeconds <= 0 ? null
+                : Math.Max(0, (cpu - _lastCpuTime).TotalSeconds / wallSeconds * 100);
+            _lastCpuSampleAt = now;
+            _lastCpuTime = cpu;
+            Volatile.Write(ref _highCpuSamples,
+                NextHighCpuSamples(_highCpuSamples, cpuPercent));
+            return cpuPercent;
+        }
+        catch (ArgumentException) { return null; }
+        catch (InvalidOperationException) { return null; }
+    }
+
+    internal static int NextHighCpuSamples(int previous, double? cpuPercent)
+        => cpuPercent >= 30 ? Math.Min(2, previous + 1) : 0;
 
     internal static RemoteProjectChatResult ParseCodex(ProcessResult process, string model)
     {
@@ -384,11 +429,14 @@ public sealed class RemoteProjectChatRunner
 
 internal sealed class ProjectChatWorkspace
 {
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, CheckoutPool> Pools = new();
     private readonly RunnerOptions _options;
     private readonly string _projectId;
     private readonly string _repositoryUrl;
     private readonly string _branch;
     private readonly Action<string> _log;
+    private readonly CheckoutPool _pool;
+    private int? _slot;
 
     public ProjectChatWorkspace(
         RunnerOptions options,
@@ -402,14 +450,18 @@ internal sealed class ProjectChatWorkspace
         _repositoryUrl = repositoryUrl;
         _branch = branch;
         _log = log;
+        _pool = Pools.GetOrAdd(Path.GetFullPath(ProjectCachePath), _ => new CheckoutPool());
     }
 
     private string ProjectCachePath => GitWorkspace.CachePathForProject(_options.WorkDir, _projectId);
     private string SharedRepoPath => Path.Combine(ProjectCachePath, "repo");
-    private string RepoPath => Path.Combine(ProjectCachePath, "project-chat");
+    // Concurrent turns rent separate checkouts. Reusing an idle checkout keeps
+    // disk usage bounded by peak chat concurrency rather than turn count.
+    private string RepoPath => Path.Combine(ProjectCachePath, $"project-chat-{_slot}");
 
     public async Task<ProjectChatCheckout> PrepareAsync(CancellationToken ct)
     {
+        _slot = _pool.Rent();
         Directory.CreateDirectory(ProjectCachePath);
         await GitWorkspace.GitMetadataGate.WaitAsync(ct);
         try
@@ -434,6 +486,7 @@ internal sealed class ProjectChatWorkspace
             if (Directory.Exists(RepoPath))
             {
                 await Git(["reset", "--hard", remoteRef], RepoPath, ct);
+                await Git(["clean", "-fdx"], RepoPath, ct);
             }
             else
             {
@@ -447,6 +500,30 @@ internal sealed class ProjectChatWorkspace
         finally
         {
             GitWorkspace.GitMetadataGate.Release();
+        }
+    }
+
+    public void Release()
+    {
+        if (_slot is not { } slot) return;
+        _slot = null;
+        _pool.Return(slot);
+    }
+
+    private sealed class CheckoutPool
+    {
+        private readonly object _gate = new();
+        private readonly Stack<int> _idle = new();
+        private int _next;
+
+        public int Rent()
+        {
+            lock (_gate) return _idle.Count > 0 ? _idle.Pop() : ++_next;
+        }
+
+        public void Return(int slot)
+        {
+            lock (_gate) _idle.Push(slot);
         }
     }
 

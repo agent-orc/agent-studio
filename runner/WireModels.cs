@@ -338,7 +338,9 @@ public sealed record RemoteChatWorkItem(
 public sealed record RemoteChatWorkRenewRequest(
     string WorkId,
     string ClaimToken,
-    string RunnerId);
+    string RunnerId,
+    bool Heavy = false,
+    double? CpuPercent = null);
 
 public sealed record RemoteChatWorkCompletionRequest(
     string WorkId,
