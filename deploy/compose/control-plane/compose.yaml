@@ -15,9 +15,23 @@ x-logging: &bounded-logging
     max-file: "5"
 
 services:
+  volume-init:
+    image: ${TASK_SERVER_IMAGE:-ghcr.io/agent-orc/agent-studio-task-server}:${CONTROL_PLANE_VERSION:?set CONTROL_PLANE_VERSION}
+    user: "0:0"
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["chown -R 10001:10001 /var/lib/agent-orchestrator/store /var/lib/agent-orchestrator/backup"]
+    volumes:
+      - store:/var/lib/agent-orchestrator/store
+      - backup:/var/lib/agent-orchestrator/backup
+    logging: *bounded-logging
+
   task-server:
     image: ${TASK_SERVER_IMAGE:-ghcr.io/agent-orc/agent-studio-task-server}:${CONTROL_PLANE_VERSION:?set CONTROL_PLANE_VERSION}
     restart: unless-stopped
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
     networks:
       - control-plane
     volumes:
@@ -66,6 +80,7 @@ services:
     environment:
       SERVER_URL: http://task-server:5071
       CLIENT_ID: orchestrator-engine
+      ENGINE_ALLOW_INSECURE_HTTP: "1"
     secrets:
       - engine_token
     logging: *bounded-logging
@@ -78,6 +93,8 @@ services:
   backup:
     image: ${TASK_SERVER_IMAGE:-ghcr.io/agent-orc/agent-studio-task-server}:${CONTROL_PLANE_VERSION:?set CONTROL_PLANE_VERSION}
     restart: unless-stopped
+    healthcheck:
+      disable: true
     depends_on:
       task-server:
         condition: service_healthy
@@ -85,7 +102,8 @@ services:
       - control-plane
     entrypoint: ["/bin/sh", "/opt/backup/backup-loop.sh"]
     volumes:
-      - store:/var/lib/agent-orchestrator/store:ro
+      # The backup command writes its audit record and SQLite journal.
+      - store:/var/lib/agent-orchestrator/store
       - backup:/var/lib/agent-orchestrator/backup
       - ${CONTROL_PLANE_OFFHOST_BACKUP_PATH:?set CONTROL_PLANE_OFFHOST_BACKUP_PATH to an off-host mounted destination}:/mnt/offhost-backup
       - ./backup-loop.sh:/opt/backup/backup-loop.sh:ro
@@ -94,6 +112,10 @@ services:
       BACKUP_PATH: /var/lib/agent-orchestrator/backup
       BACKUP_OFFHOST_PATH: /mnt/offhost-backup
       BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-300}
+      AUTH: bearer
+      STUDIO_AUTH_TOKEN_FILE: /run/secrets/studio_token
+    secrets:
+      - studio_token
     logging: *bounded-logging
     deploy:
       resources:
@@ -104,6 +126,8 @@ services:
   edge:
     image: caddy:2-alpine
     restart: unless-stopped
+    extra_hosts:
+      - "${CONTROL_PLANE_DOMAIN:?set CONTROL_PLANE_DOMAIN}:127.0.0.1"
     depends_on:
       task-server:
         condition: service_healthy
@@ -121,7 +145,7 @@ services:
     environment:
       CONTROL_PLANE_DOMAIN: ${CONTROL_PLANE_DOMAIN:?set CONTROL_PLANE_DOMAIN, the private WireGuard-only DNS name}
     healthcheck:
-      test: ["CMD", "wget", "--no-check-certificate", "--quiet", "--output-document=-", "https://127.0.0.1:443/healthz"]
+      test: ["CMD-SHELL", "wget --no-check-certificate --quiet --output-document=- https://${CONTROL_PLANE_DOMAIN}:443/healthz >/dev/null"]
       interval: 5s
       timeout: 3s
       retries: 24

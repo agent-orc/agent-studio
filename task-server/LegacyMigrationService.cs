@@ -832,6 +832,15 @@ public sealed class LegacyMigrationService(TaskServerStore store)
         return result.Order(StringComparer.Ordinal).ToArray();
     }
 
+    private static bool IsTaskEvidencePath(string relativePath)
+    {
+        var parts = relativePath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var taskIndex = Array.FindIndex(parts, part => string.Equals(part, "tasks", StringComparison.OrdinalIgnoreCase));
+        return taskIndex >= 0 && parts.Skip(taskIndex + 1).Any(part =>
+            string.Equals(part, "results", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(part, "attachments", StringComparison.OrdinalIgnoreCase));
+    }
+
     private static async Task<List<LegacySupplementaryImport>> DiscoverSupplementaryAsync(
         string root,
         ISet<string> sourceFiles,
@@ -846,6 +855,7 @@ public sealed class LegacyMigrationService(TaskServerStore store)
         var dossierPaths = dossierRoots
             .Where(Directory.Exists)
             .SelectMany(dossierRoot => Directory.EnumerateFiles(dossierRoot, "workbench.json", SearchOption.AllDirectories))
+            .Where(path => !IsTaskEvidencePath(Path.GetRelativePath(root, path)))
             .Select(Path.GetFullPath)
             .Distinct(StringComparer.Ordinal)
             .Order(StringComparer.Ordinal);

@@ -16,6 +16,8 @@ env_file="$work_dir/.env"
 secrets_dir="$work_dir/secrets"
 offhost_dir="$work_dir/offhost-backup"
 leaf_cert="$work_dir/leaf.pem"
+export CONTROL_PLANE_BUILD_VERSION="$(tr -d '\r\n' < "$repo_root/VERSION")"
+export CONTROL_PLANE_BUILD_SHA="$(git -C "$repo_root" rev-parse HEAD)"
 
 compose=(docker compose --project-name "$project_name" --project-directory "$compose_dir" \
     -f "$compose_dir/compose.yaml" -f "$compose_dir/compose.ci.yaml" --env-file "$env_file")
@@ -34,6 +36,9 @@ finish()
         "${compose[@]}" logs --no-color || true
     fi
     down
+    docker run --rm --user 0:0 --volume "$work_dir:/cleanup" \
+        --entrypoint chown mcr.microsoft.com/dotnet/sdk:10.0.301 \
+        -R "$(id -u):$(id -g)" /cleanup >/dev/null 2>&1 || true
     rm -rf "$work_dir"
     exit "$status"
 }
@@ -42,10 +47,18 @@ trap 'finish $?' EXIT
 trap 'exit 130' HUP INT TERM
 
 mkdir -p "$secrets_dir" "$offhost_dir"
+chmod 0700 "$secrets_dir"
 umask 077
 openssl rand -hex 32 >"$secrets_dir/studio.token"
 openssl rand -hex 32 >"$secrets_dir/engine.token"
 openssl rand -hex 32 >"$secrets_dir/runner.token"
+runner_token="$(cat "$secrets_dir/runner.token")"
+# File-backed Compose secrets keep host ownership. Assign the image's UID
+# without sudo; the files remain 0600 and the ephemeral parent remains 0700.
+docker run --rm --user 0:0 --volume "$secrets_dir:/secrets" \
+    --volume "$offhost_dir:/offhost-backup" \
+    --entrypoint chown mcr.microsoft.com/dotnet/sdk:10.0.301 \
+    10001:10001 /secrets/studio.token /secrets/engine.token /secrets/runner.token /offhost-backup
 
 cat >"$env_file" <<EOF
 CONTROL_PLANE_VERSION=ci-test
@@ -60,12 +73,26 @@ EOF
 
 down
 "${compose[@]}" config --quiet
-"${compose[@]}" up --build --wait --wait-timeout 180
+build_option=--build
+if [ "${CONTROL_PLANE_SKIP_BUILD:-0}" = 1 ]; then
+    build_option=--no-build
+fi
+"${compose[@]}" up "$build_option" --wait --wait-timeout 180 task-server orchestrator-engine edge
+"${compose[@]}" up --detach --no-deps backup
 
 echo "== check: no listener outside the edge's published port =="
-test -z "$("${compose[@]}" port task-server 5071 2>/dev/null || true)"
-test -z "$("${compose[@]}" port orchestrator-engine 5071 2>/dev/null || true)"
+task_binding="$("${compose[@]}" port task-server 5071 2>/dev/null || true)"
+engine_binding="$("${compose[@]}" port orchestrator-engine 5071 2>/dev/null || true)"
 edge_binding="$("${compose[@]}" port edge 443)"
+echo "bindings: task-server=${task_binding:-none} engine=${engine_binding:-none} edge=${edge_binding:-none}"
+case "$task_binding" in
+    ''|':0') ;;
+    *) echo "FAIL: task-server is published on $task_binding" >&2; exit 1 ;;
+esac
+case "$engine_binding" in
+    ''|':0') ;;
+    *) echo "FAIL: orchestrator-engine is published on $engine_binding" >&2; exit 1 ;;
+esac
 case "$edge_binding" in
     127.0.0.1:*) ;;
     *) echo "FAIL: edge is published on $edge_binding, not 127.0.0.1" >&2; exit 1 ;;
@@ -98,7 +125,6 @@ client_id_only_status="$(curl --silent --output /dev/null --write-out '%{http_co
 test "$client_id_only_status" = "401"
 echo "OK: X-Client-Id without a bearer returned 401."
 
-runner_token="$(cat "$secrets_dir/runner.token")"
 runner_on_management_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
     --cacert "$leaf_cert" --resolve localhost:443:127.0.0.1 \
     -X PUT -H "Authorization: Bearer $runner_token" -H 'Content-Type: application/json' \

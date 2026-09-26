@@ -2,12 +2,43 @@ using AgentStudio.OrchestratorEngine;
 using AgentStudio.TaskServer;
 using AgentStudio.TaskServer.Contracts;
 using Microsoft.Extensions.Options;
+using System.Net;
+using System.Text.Json;
 using Xunit;
 
 namespace OrchestratorEngine.Tests;
 
 public sealed class EngineContractTests
 {
+    [Fact]
+    public async Task Engine_claim_uses_numeric_stage_values_expected_by_task_server()
+    {
+        string? requestJson = null;
+        using var http = new HttpClient(new CaptureHandler(async request =>
+        {
+            requestJson = await request.Content!.ReadAsStringAsync();
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"status\":\"empty\"}"),
+            };
+        })) { BaseAddress = new Uri("http://localhost") };
+        using var client = new EngineTaskServerClient(http);
+
+        await client.ClaimAsync(
+            new OrchestrationClaimRequest("engine", "instance", [OrchestrationStage.ReviewDecision]),
+            CancellationToken.None);
+
+        using var body = JsonDocument.Parse(requestJson!);
+        Assert.Equal(0, body.RootElement.GetProperty("supportedStages")[0].GetInt32());
+    }
+
+    private sealed class CaptureHandler(Func<HttpRequestMessage, Task<HttpResponseMessage>> respond)
+        : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken) => respond(request);
+    }
+
     [Fact]
     public void Engine_env_contract_resolves_identity_credential_and_stage_caps()
     {

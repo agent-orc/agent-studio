@@ -85,7 +85,9 @@ generate_secret "$SECRETS_DIR/studio.token" "${STUDIO_AUTH_TOKEN:-}"
 generate_secret "$SECRETS_DIR/engine.token" "${ENGINE_AUTH_TOKEN:-}"
 generate_secret "$SECRETS_DIR/runner.token" "${RUNNER_AUTH_TOKEN:-}"
 if [ "${AGENT_ORCHESTRATOR_SKIP_USER_CREATE:-0}" != "1" ]; then
-    chown -R "$SERVICE_USER:$SERVICE_USER" "$SECRETS_DIR" 2>/dev/null || true
+    # Compose file-backed secrets keep their host ownership when bind-mounted.
+    # The images run as UID 10001, which must be able to read the 0600 files.
+    chown -R 10001:10001 "$SECRETS_DIR"
 fi
 
 log "Pulling images and starting the control plane."

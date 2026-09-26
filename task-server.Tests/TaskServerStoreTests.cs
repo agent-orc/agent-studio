@@ -1018,6 +1018,32 @@ public sealed class TaskServerStoreTests
     }
 
     [Fact]
+    public async Task Legacy_inventory_does_not_treat_task_result_workbench_as_a_dossier()
+    {
+        using var source = new TempDirectory();
+        using var data = new TempDirectory();
+        var task = Path.Combine(source.Path, "projects", "PROJ-001", "tasks", "2-ready", "AGT-1");
+        var results = Path.Combine(task, "results");
+        var docs = Path.Combine(source.Path, "docs", "cutover");
+        Directory.CreateDirectory(results);
+        Directory.CreateDirectory(docs);
+        await File.WriteAllTextAsync(Path.Combine(task, "task.json"),
+            """{"key":"AGT-1","title":"Task with evidence","state":"2-ready"}""");
+        await File.WriteAllTextAsync(Path.Combine(results, "workbench.json"),
+            """{"id":"task-result"}""");
+        await File.WriteAllTextAsync(Path.Combine(docs, "workbench.json"),
+            """{"id":"real-dossier"}""");
+
+        var store = Store(data.Path);
+        await store.InitializeAsync();
+        var inventory = await new LegacyMigrationService(store).InventoryAsync(
+            new LegacyMigrationRequest(source.Path, "Workspace", true), default);
+
+        Assert.Equal(1, inventory.Dossiers);
+        Assert.Equal(1, inventory.Artifacts);
+    }
+
+    [Fact]
     public async Task Legacy_inventory_counts_a_dossier_once_when_a_registered_repository_is_nested_in_the_root()
     {
         using var source = new TempDirectory();
