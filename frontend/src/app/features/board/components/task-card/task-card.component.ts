@@ -126,7 +126,6 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   private stopPolling: (() => void) | null = null;
 
   readonly taskTypeChip = computed(() => buildTaskTypeChip(this.job().taskType));
-
   taskTypeIconName(kind: string): StudioIconName {
     if (kind === 'bug') return 'warn';
     if (kind === 'feature') return 'plus';

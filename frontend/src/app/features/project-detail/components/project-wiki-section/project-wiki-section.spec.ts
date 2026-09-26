@@ -263,6 +263,7 @@ async function setup(
   flushWikiPulse(http, pulse);
   flushGradingContext(http);
   fixture.detectChanges();
+  for (const request of http.match('/api/projects/Demo/tags')) request.flush({ items: [] });
   flushStyleGuidesIfRendered(http);
   flushWikiHomeIfRendered(http);
   fixture.detectChanges();
