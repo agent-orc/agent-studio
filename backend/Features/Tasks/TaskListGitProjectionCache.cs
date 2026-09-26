@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Collections.Immutable;
 
 namespace AgentStudio.Tasks;
 
@@ -30,6 +31,10 @@ namespace AgentStudio.Tasks;
 public sealed class TaskListGitProjectionCache
 {
     private readonly ConcurrentDictionary<string, RepoEntry> _entries =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, long> _subjectVersions =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, (long Ticks, long Length)> _sidecarStamps =
         new(StringComparer.OrdinalIgnoreCase);
 
     private long _generation;
@@ -64,13 +69,15 @@ public sealed class TaskListGitProjectionCache
             .ToArray();
 
         if (repoKeys.Length == 1)
-            return _entries.TryGetValue(repoKeys[0], out var only) ? only.Snapshot : TaskListGitProjection.Empty;
+            return _entries.TryGetValue(repoKeys[0], out var only)
+                ? FilterForTasks(only.Snapshot, tasks) : TaskListGitProjection.Empty;
 
         var merge = new Dictionary<string, TaskMergeSignal>(StringComparer.Ordinal);
         var integration = new Dictionary<string, TaskIntegrationStatus>(StringComparer.Ordinal);
         var publish = new Dictionary<string, TaskPublishSignal>(StringComparer.Ordinal);
         var testRuns = new Dictionary<string, TaskTestRunEvidence>(StringComparer.Ordinal);
         var reviewProjection = new Dictionary<string, AgentStudio.Review.ReviewProjectionView>(StringComparer.Ordinal);
+        var commits = new Dictionary<string, IReadOnlyList<TaskCommitInfo>>(StringComparer.Ordinal);
         foreach (var key in repoKeys)
         {
             if (!_entries.TryGetValue(key, out var entry)) continue;
@@ -79,8 +86,44 @@ public sealed class TaskListGitProjectionCache
             foreach (var (k, v) in entry.Snapshot.Publish) publish[k] = v;
             foreach (var (k, v) in entry.Snapshot.TestRuns) testRuns[k] = v;
             foreach (var (k, v) in entry.Snapshot.ReviewProjection) reviewProjection[k] = v;
+            foreach (var (k, v) in entry.Snapshot.ReconstructedCommits) commits[k] = v;
         }
-        return new TaskListGitProjection(merge, integration, publish, testRuns, reviewProjection);
+        return FilterForTasks(new TaskListGitProjection(merge, integration, publish,
+            testRuns, reviewProjection, commits,
+            repoKeys.Select(key => _entries.TryGetValue(key, out var entry)
+                    ? entry.Snapshot.TaskSignatures : ImmutableDictionary<string, string>.Empty)
+                .SelectMany(map => map)
+                .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal),
+            repoKeys.Select(key => _entries.TryGetValue(key, out var entry)
+                    ? entry.Snapshot.TaskSubjectVersions : ImmutableDictionary<string, long>.Empty)
+                .SelectMany(map => map)
+                .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal)), tasks);
+    }
+
+    private TaskListGitProjection FilterForTasks(
+        TaskListGitProjection projection, IReadOnlyCollection<TaskInfo> tasks)
+    {
+        if (projection.TaskSignatures.Count == 0) return projection;
+        var valid = tasks.Where(task => projection.TaskSignatures.TryGetValue(task.TaskKey, out var signature)
+                && signature == TaskGitSignature.For(task)
+                && (!projection.TaskSubjectVersions.TryGetValue(task.TaskKey, out var expected)
+                    || expected == SubjectVersion(task.FolderPath)))
+            .Select(task => task.TaskKey).ToHashSet(StringComparer.Ordinal);
+        return projection with
+        {
+            Merge = projection.Merge.Where(pair => valid.Contains(pair.Key))
+                .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal),
+            Integration = projection.Integration.Where(pair => valid.Contains(pair.Key))
+                .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal),
+            Publish = projection.Publish.Where(pair => valid.Contains(pair.Key))
+                .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal),
+            TestRuns = projection.TestRuns.Where(pair => valid.Contains(pair.Key))
+                .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal),
+            ReviewProjection = projection.ReviewProjection.Where(pair => valid.Contains(pair.Key))
+                .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal),
+            Commits = projection.ReconstructedCommits.Where(pair => valid.Contains(pair.Key))
+                .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal),
+        };
     }
 
     /// <summary>
@@ -105,7 +148,7 @@ public sealed class TaskListGitProjectionCache
                 stale = true;
                 continue;
             }
-            if (entry.Refreshing) stale = true;
+            if (entry.Refreshing || entry.Reason is not null) stale = true;
             if (oldest is null || entry.GitStateAt < oldest) oldest = entry.GitStateAt;
         }
         return new GitProjectionFreshness(oldest, stale || !any);
@@ -115,20 +158,15 @@ public sealed class TaskListGitProjectionCache
     /// Written only by <see cref="AgentStudio.Git.GitStateIndexService"/> when
     /// a repository's index run completes.
     /// </summary>
-    internal void SetSnapshot(string watchPath, TaskListGitProjection projection, DateTimeOffset gitStateAt)
+    internal void SetSnapshot(string watchPath, TaskListGitProjection projection,
+        DateTimeOffset gitStateAt, string? inputKey = null)
     {
         var key = NormalizePath(watchPath);
+        var frozen = projection.Freeze();
         _entries.AddOrUpdate(
             key,
-            _ => new RepoEntry { Snapshot = projection, GitStateAt = gitStateAt, Refreshing = false },
-            (_, existing) =>
-            {
-                existing.Snapshot = projection;
-                existing.GitStateAt = gitStateAt;
-                existing.Refreshing = false;
-                return existing;
-            });
-        Interlocked.Increment(ref _generation);
+            _ => new RepoEntry(frozen, gitStateAt, false, null, Interlocked.Increment(ref _generation), inputKey),
+            (_, existing) => new RepoEntry(frozen, gitStateAt, false, null, Interlocked.Increment(ref _generation), inputKey));
     }
 
     /// <summary>
@@ -141,13 +179,68 @@ public sealed class TaskListGitProjectionCache
         var key = NormalizePath(watchPath);
         _entries.AddOrUpdate(
             key,
-            _ => new RepoEntry { Snapshot = TaskListGitProjection.Empty, GitStateAt = null, Refreshing = true },
-            (_, existing) =>
-            {
-                existing.Refreshing = true;
-                return existing;
-            });
+            _ => new RepoEntry(TaskListGitProjection.Empty, null, true, null, Interlocked.Increment(ref _generation), null),
+            (_, existing) => existing with { Refreshing = true, Reason = null, Generation = Interlocked.Increment(ref _generation) });
+    }
+
+    internal void MarkFailed(string watchPath, string reason)
+    {
+        var key = NormalizePath(watchPath);
+        _entries.AddOrUpdate(key,
+            _ => new RepoEntry(TaskListGitProjection.Empty, null, false, reason, Interlocked.Increment(ref _generation), null),
+            (_, existing) => existing with { Refreshing = false, Reason = reason, Generation = Interlocked.Increment(ref _generation) });
+    }
+
+    internal void ResetRepository(string watchPath, string reason)
+    {
+        _entries[NormalizePath(watchPath)] = new RepoEntry(TaskListGitProjection.Empty,
+            null, false, reason, Interlocked.Increment(ref _generation), null);
+    }
+
+    internal long SubjectVersion(string folderPath)
+        => _subjectVersions.TryGetValue(NormalizePath(folderPath), out var version) ? version : 0;
+
+    internal void SeedTaskInput(string path)
+    {
+        _sidecarStamps.TryAdd(NormalizePath(path), SidecarStamp(path));
+    }
+
+    internal bool MarkTaskInputChanged(string path)
+    {
+        var key = NormalizePath(path);
+        var next = SidecarStamp(path);
+        if (_sidecarStamps.TryGetValue(key, out var previous) && previous == next) return false;
+        _sidecarStamps[key] = next;
+        _subjectVersions.AddOrUpdate(NormalizePath(Path.GetDirectoryName(path) ?? path),
+            1, (_, version) => version + 1);
         Interlocked.Increment(ref _generation);
+        return true;
+    }
+
+    private static (long Ticks, long Length) SidecarStamp(string path)
+    {
+        var file = new FileInfo(path);
+        return file.Exists ? (file.LastWriteTimeUtc.Ticks, file.Length) : default;
+    }
+
+    /// <summary>One atomic, cache-only task Git read. Incompatible task facts are withheld.</summary>
+    public TaskGitSnapshot ReadTask(TaskInfo task)
+    {
+        if (!_entries.TryGetValue(NormalizePath(task.WatchPath), out var entry))
+            return new TaskGitSnapshot(task.TaskKey, task.ProjectName, "warming", null, 0,
+                TaskGitSignature.For(task), null, null, null);
+        var projection = entry.Snapshot;
+        var compatible = projection.TaskSignatures.TryGetValue(task.TaskKey, out var signature)
+            && signature == TaskGitSignature.For(task)
+            && (!projection.TaskSubjectVersions.TryGetValue(task.TaskKey, out var expected)
+                || expected == SubjectVersion(task.FolderPath));
+        var state = entry.GitStateAt is null
+            ? entry.Reason is null ? "warming" : "unavailable"
+            : entry.Refreshing || entry.Reason is not null || !compatible ? "stale" : "ready";
+        return new TaskGitSnapshot(task.TaskKey, task.ProjectName, state, entry.GitStateAt, entry.Generation,
+            TaskGitSignature.For(task),
+            entry.Reason ?? (!compatible && entry.GitStateAt is not null ? "task-changed" : null),
+            compatible ? projection.ForTask(task.TaskKey) : null, entry.InputKey);
     }
 
     internal static string NormalizePath(string path)
@@ -208,12 +301,8 @@ public sealed class TaskListGitProjectionCache
             await reviewProjectionTask);
     }
 
-    private sealed class RepoEntry
-    {
-        public TaskListGitProjection Snapshot = TaskListGitProjection.Empty;
-        public DateTimeOffset? GitStateAt;
-        public bool Refreshing;
-    }
+    private sealed record RepoEntry(TaskListGitProjection Snapshot, DateTimeOffset? GitStateAt,
+        bool Refreshing, string? Reason, long Generation, string? InputKey);
 }
 
 /// <summary>
@@ -228,12 +317,49 @@ public sealed record TaskListGitProjection(
     IReadOnlyDictionary<string, TaskIntegrationStatus> Integration,
     IReadOnlyDictionary<string, TaskPublishSignal> Publish,
     IReadOnlyDictionary<string, TaskTestRunEvidence> TestRuns,
-    IReadOnlyDictionary<string, AgentStudio.Review.ReviewProjectionView> ReviewProjection)
+    IReadOnlyDictionary<string, AgentStudio.Review.ReviewProjectionView> ReviewProjection,
+    IReadOnlyDictionary<string, IReadOnlyList<TaskCommitInfo>>? Commits = null,
+    IReadOnlyDictionary<string, string>? Signatures = null,
+    IReadOnlyDictionary<string, long>? SubjectVersions = null)
 {
+    public IReadOnlyDictionary<string, IReadOnlyList<TaskCommitInfo>> ReconstructedCommits => Commits ?? ImmutableDictionary<string, IReadOnlyList<TaskCommitInfo>>.Empty;
+    public IReadOnlyDictionary<string, string> TaskSignatures => Signatures ?? ImmutableDictionary<string, string>.Empty;
+    public IReadOnlyDictionary<string, long> TaskSubjectVersions => SubjectVersions ?? ImmutableDictionary<string, long>.Empty;
+
+    internal TaskListGitProjection Freeze() => this with
+    {
+        Merge = Merge.ToImmutableDictionary(StringComparer.Ordinal),
+        Integration = Integration.ToImmutableDictionary(StringComparer.Ordinal),
+        Publish = Publish.ToImmutableDictionary(StringComparer.Ordinal),
+        TestRuns = TestRuns.ToImmutableDictionary(StringComparer.Ordinal),
+        ReviewProjection = ReviewProjection.ToImmutableDictionary(StringComparer.Ordinal),
+        Commits = ReconstructedCommits.ToImmutableDictionary(pair => pair.Key,
+            pair => (IReadOnlyList<TaskCommitInfo>)pair.Value.ToArray(), StringComparer.Ordinal),
+        Signatures = TaskSignatures.ToImmutableDictionary(StringComparer.Ordinal),
+        SubjectVersions = TaskSubjectVersions.ToImmutableDictionary(StringComparer.Ordinal),
+    };
+
+    internal TaskGitFacts ForTask(string key) => new(
+        Merge.GetValueOrDefault(key), Integration.GetValueOrDefault(key),
+        Publish.GetValueOrDefault(key), TestRuns.GetValueOrDefault(key),
+        ReviewProjection.GetValueOrDefault(key), ReconstructedCommits.GetValueOrDefault(key));
+
     public static TaskListGitProjection Empty { get; } = new(
         new Dictionary<string, TaskMergeSignal>(StringComparer.Ordinal),
         new Dictionary<string, TaskIntegrationStatus>(StringComparer.Ordinal),
         new Dictionary<string, TaskPublishSignal>(StringComparer.Ordinal),
         new Dictionary<string, TaskTestRunEvidence>(StringComparer.Ordinal),
         new Dictionary<string, AgentStudio.Review.ReviewProjectionView>(StringComparer.Ordinal));
+}
+
+public sealed record TaskGitFacts(TaskMergeSignal? Merge, TaskIntegrationStatus? Integration,
+    TaskPublishSignal? Publish, TaskTestRunEvidence? TestEvidence,
+    AgentStudio.Review.ReviewProjectionView? ReviewProjection,
+    IReadOnlyList<TaskCommitInfo>? ReconstructedCommits);
+
+public sealed record TaskGitSnapshot(string TaskKey, string ProjectName, string State,
+    DateTimeOffset? ComputedAt, long Generation, string InputVersion,
+    string? ReasonCode, TaskGitFacts? Data, string? ResourceVersion)
+{
+    public int SchemaVersion => 2;
 }

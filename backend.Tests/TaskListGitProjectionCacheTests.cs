@@ -99,6 +99,101 @@ public sealed class TaskListGitProjectionCacheTests
     }
 
     [Fact]
+    public void TaskResource_UsesCompletedGenerationAndSuppressesSupersededAttempt()
+    {
+        var cache = new TaskListGitProjectionCache();
+        var task = Job("task-1", "watch-a");
+        var projection = ProjectionFor(task, "task/first") with
+        {
+            Signatures = new Dictionary<string, string>
+            {
+                [task.TaskKey] = TaskGitSignature.For(task),
+            },
+        };
+        var computedAt = DateTimeOffset.UtcNow;
+        cache.SetSnapshot(task.WatchPath, projection, computedAt);
+
+        using var telemetry = GitProcessTelemetry.BeginRequest("task/detail/git", NullLogger.Instance);
+        var ready = cache.ReadTask(task);
+        Assert.Equal("ready", ready.State);
+        Assert.Equal(computedAt, ready.ComputedAt);
+        Assert.Equal("task/first", ready.Data!.Merge!.Branch);
+
+        var nextAttempt = task with { Commits = [new TaskCommitInfo
+        {
+            Sha = "abcdef0123456789abcdef0123456789abcdef01",
+            FilesChanged = 1,
+        }] };
+        var stale = cache.ReadTask(nextAttempt);
+        Assert.Equal("stale", stale.State);
+        Assert.Equal("task-changed", stale.ReasonCode);
+        Assert.Null(stale.Data);
+        Assert.Empty(cache.ReadCacheOnly([nextAttempt]).Merge);
+        Assert.Equal(0, GitProcessTelemetry.CurrentTally()!.Value.Spawns);
+
+        cache.MarkFailed(task.WatchPath, "timeout");
+        var failed = cache.ReadTask(task);
+        Assert.Equal("stale", failed.State);
+        Assert.Equal("timeout", failed.ReasonCode);
+        Assert.Equal("task/first", failed.Data!.Merge!.Branch);
+        Assert.True(cache.ReadFreshness([task]).Stale);
+    }
+
+    [Fact]
+    public void TaskResource_ColdFailureIsUnavailableAndAReadNeverSchedulesWork()
+    {
+        var cache = new TaskListGitProjectionCache();
+        var task = Job("task-1", "watch-a");
+        Assert.Equal("warming", cache.ReadTask(task).State);
+        cache.MarkFailed(task.WatchPath, "repository-unavailable");
+        var missing = cache.ReadTask(task);
+        Assert.Equal("unavailable", missing.State);
+        Assert.Null(missing.Data);
+        Assert.Equal("repository-unavailable", missing.ReasonCode);
+    }
+
+    [Fact]
+    public void PublishedSnapshot_DoesNotFollowBuilderDictionaryMutation()
+    {
+        var cache = new TaskListGitProjectionCache();
+        var task = Job("task-1", "watch-a");
+        var source = new Dictionary<string, TaskMergeSignal>
+        {
+            [task.TaskKey] = new() { Branch = "task/first" },
+        };
+        cache.SetSnapshot(task.WatchPath, ProjectionFor(task, "unused") with { Merge = source },
+            DateTimeOffset.UtcNow);
+        source[task.TaskKey] = new TaskMergeSignal { Branch = "task/second" };
+        Assert.Equal("task/first", cache.ReadCacheOnly([task]).Merge[task.TaskKey].Branch);
+    }
+
+    [Fact]
+    public void ReviewSubjectChange_SuppressesPriorPositiveUntilNextSnapshot()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "git-subject-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            var task = Job("task-1", "watch-a") with { FolderPath = folder };
+            var cache = new TaskListGitProjectionCache();
+            var subject = Path.Combine(folder, ReviewSubjectStore.FileName);
+            cache.SeedTaskInput(subject);
+            cache.SetSnapshot(task.WatchPath, ProjectionFor(task, "task/old") with
+            {
+                Signatures = new Dictionary<string, string> { [task.TaskKey] = TaskGitSignature.For(task) },
+                SubjectVersions = new Dictionary<string, long> { [task.TaskKey] = cache.SubjectVersion(folder) },
+            }, DateTimeOffset.UtcNow);
+            Assert.Equal("ready", cache.ReadTask(task).State);
+            File.WriteAllText(subject, "new review subject");
+            Assert.True(cache.MarkTaskInputChanged(subject));
+            Assert.False(cache.MarkTaskInputChanged(subject));
+            Assert.Equal("stale", cache.ReadTask(task).State);
+            Assert.Null(cache.ReadTask(task).Data);
+        }
+        finally { Directory.Delete(folder, recursive: true); }
+    }
+
+    [Fact]
     public async Task BuildProjectionAsync_StartsAllLookupsBeforeWaitingForCompletion()
     {
         var task = Job("task-1", "watch-a");

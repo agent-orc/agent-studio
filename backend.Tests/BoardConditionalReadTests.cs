@@ -96,6 +96,9 @@ public sealed class BoardConditionalReadTests : IDisposable
                     // are moved out of the way rather than raced with.
                     ["TaskIndexCache:SafetyTtlSeconds"] = "3600",
                     ["GitStateIndex:SweepIntervalSeconds"] = "3600",
+                    // This fixture intentionally has no Git repository. Its
+                    // unavailable state is terminal for this validator test.
+                    ["GitStateIndex:MaxRetries"] = "0",
                 });
             });
         });
@@ -155,7 +158,9 @@ public sealed class BoardConditionalReadTests : IDisposable
         {
             var statuses = indexer.GetRepositoryStatuses();
             var indexed = statuses.Count > 0
-                && statuses.All(status => status.GitStateAt is not null && !status.Refreshing);
+                && statuses.All(status => !status.Refreshing
+                    && (status.GitStateAt is not null
+                        || status.ReasonCode == "repository-unavailable"));
             var generations = Generations();
 
             if (indexed && generations == lastGenerations)

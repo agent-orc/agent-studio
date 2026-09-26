@@ -307,9 +307,8 @@ internal static class TaskEndpointHelpers
     }
 
     /// <summary>
-    /// AGT-2046: folds the batched board merge signal onto each job. List routes
-    /// read the lookup from <see cref="TaskListGitProjectionCache"/> while detail
-    /// routes may build a bounded lookup directly. The fold itself stays an O(1)
+    /// AGT-2046: folds the batched board merge signal onto each job. List and
+    /// detail routes read <see cref="TaskListGitProjectionCache"/>. The fold stays an O(1)
     /// dictionary hit per job. Jobs without a committed or merged anchor are
     /// passed through untouched.
     /// </summary>

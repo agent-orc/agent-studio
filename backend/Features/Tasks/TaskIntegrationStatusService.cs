@@ -71,6 +71,7 @@ public sealed class TaskIntegrationStatusService
     private readonly PipelineExecutionLog _pipelineLog;
     private readonly ILogger<TaskIntegrationStatusService> _logger;
     private readonly ProjectRegistry? _registry;
+    private readonly Func<string, string?> _readOriginUrl;
 
     /// <summary>The delivered lanes this verdict applies to. Cards outside get no entry.</summary>
     internal static readonly HashSet<string> DeliveredLanes = new(StringComparer.Ordinal)
@@ -107,13 +108,15 @@ public sealed class TaskIntegrationStatusService
         PipelineExecutionLog pipelineLog,
         ILogger<TaskIntegrationStatusService> logger,
         TimeProvider timeProvider,
-        ProjectRegistry? registry = null)
+        ProjectRegistry? registry = null,
+        Func<string, string?>? readOriginUrl = null)
     {
         _git = git;
         _settings = settings;
         _pipelineLog = pipelineLog;
         _logger = logger;
         _registry = registry;
+        _readOriginUrl = readOriginUrl ?? _git.ReadOriginUrlAt;
         _cache = new GenerationSingleFlightCache<RepoIntegration>(timeProvider);
         _contentCache = new GenerationSingleFlightCache<bool?>(timeProvider);
         _pathCache = new GenerationSingleFlightCache<IReadOnlyList<string>>(timeProvider);
@@ -134,9 +137,14 @@ public sealed class TaskIntegrationStatusService
 
         var work = new Dictionary<TaskInfo, CardIntegrationWork>();
         var repoKeys = new HashSet<RepoBranchKey>();
+        // One Git-config resolution per primary repository in this computation.
+        // Git itself interprets includes, conditional includes and worktree config.
+        // A new background generation resolves it again, so external config edits
+        // cannot be hidden behind a partial filesystem parser or a long TTL.
+        var origins = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
         foreach (var job in jobs.Where(job => DeliveredLanes.Contains(job.State)))
         {
-            var groups = BuildRepositoryGroups(job);
+            var groups = BuildRepositoryGroups(job, origins);
             // AGT-2856: a card without an attributed commit is answered from its
             // project's primary repository, so that repository must be resolved
             // here too. Deriving the key only from the groups made the verdict
@@ -436,15 +444,22 @@ public sealed class TaskIntegrationStatusService
             : new RepoBranchKey(root, ConfiguredIntegrationBranch(job));
     }
 
-    private List<RepositoryCommitGroup> BuildRepositoryGroups(TaskInfo job)
+    private List<RepositoryCommitGroup> BuildRepositoryGroups(
+        TaskInfo job, Dictionary<string, string?> origins)
     {
         var commits = AttributedCommitRecords(job, includeSuperseded: true);
         if (commits.Count == 0) return [];
 
         var primaryRoot = _git.ResolveRepoRootForWatchPath(job.WatchPath);
-        var primaryOrigin = string.IsNullOrWhiteSpace(primaryRoot)
-            ? null
-            : _git.ReadOriginUrlAt(primaryRoot);
+        string? primaryOrigin = null;
+        if (!string.IsNullOrWhiteSpace(primaryRoot))
+        {
+            if (!origins.TryGetValue(primaryRoot, out primaryOrigin))
+            {
+                primaryOrigin = _readOriginUrl(primaryRoot);
+                origins[primaryRoot] = primaryOrigin;
+            }
+        }
         IReadOnlyList<ProjectRecord> registeredProjects = [];
         try
         {
