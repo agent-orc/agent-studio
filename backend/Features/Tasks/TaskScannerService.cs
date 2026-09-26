@@ -710,6 +710,9 @@ public class TaskScannerService : ITaskScanner
                 EpicId = raw.TryGetProperty("epicId", out var ep) && !string.IsNullOrWhiteSpace(ep.GetString()) ? ep.GetString() : null,
                 Mode = TaskModes.Normalize(raw.TryGetProperty("mode", out var md0) ? md0.GetString() : null),
                 NoBranchExpected = ReadNoBranchExpected(raw),
+                RequiresIntegration = raw.TryGetProperty("requiresIntegration", out var requiresIntegration)
+                    && requiresIntegration.ValueKind is JsonValueKind.True or JsonValueKind.False
+                    ? requiresIntegration.GetBoolean() : null,
                 AllowWebAccess = raw.TryGetProperty("allowWebAccess", out var awa) && awa.ValueKind == JsonValueKind.True,
                 UseOwnSession = raw.TryGetProperty("useOwnSession", out var uos) && uos.ValueKind is JsonValueKind.True or JsonValueKind.False
                     ? uos.GetBoolean()

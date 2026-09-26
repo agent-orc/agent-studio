@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 
 using Xunit;
@@ -98,7 +99,7 @@ public class CreateTaskByProjectHandleTests : IDisposable
     }
 
     [Fact]
-    public async Task CreateTaskEndpoint_HonorsExplicitHumanReviewTargetState()
+    public async Task CreateTaskEndpoint_RejectsDirectHumanReviewForCodeDelivery()
     {
         using var factory = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
@@ -123,16 +124,9 @@ public class CreateTaskByProjectHandleTests : IDisposable
             targetState = TaskStates.HumanReview,
         });
 
-        response.EnsureSuccessStatusCode();
-        using var created = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        var id = created.RootElement.GetProperty("id").GetString();
-        Assert.False(string.IsNullOrWhiteSpace(id));
-
-        var detail = await client.GetFromJsonAsync<JsonElement>(
-            $"/api/tasks/{id}?watchPath={Uri.EscapeDataString(_watchPath)}");
-        Assert.Equal(
-            TaskStates.HumanReview,
-            detail.GetProperty("info").GetProperty("state").GetString());
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.DoesNotContain(factory.Services.GetRequiredService<TaskScannerService>().ScanAllJobs(),
+            task => task.Title == "Operator Review Through API");
     }
 
     [Fact]

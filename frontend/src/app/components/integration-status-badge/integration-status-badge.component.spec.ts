@@ -49,6 +49,14 @@ describe('IntegrationStatusBadgeComponent', () => {
     expect(badge.classList.contains('integration-badge--acute')).toBe(false);
   });
 
+  it('renders a code-free delivery as neutral and without a recovery action', () => {
+    const fixture = render(integration('not-applicable'));
+    const badge = fixture.nativeElement.querySelector('[data-testid="integration-status-badge"]') as HTMLElement;
+    expect(badge.textContent).toContain('No integration needed');
+    expect(badge.dataset['kind']).toBe('no-branch');
+    expect(badge.classList.contains('integration-badge--acute')).toBe(false);
+  });
+
   it('renders repository-scoped delivery counts and target branches', () => {
     const fixture = render(integration('integrated', {
       repositories: [

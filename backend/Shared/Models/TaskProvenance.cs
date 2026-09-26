@@ -262,6 +262,8 @@ public record TaskIntegrationStatus
 
     /// <summary>Integration branch the verdict was computed against (usually "develop").</summary>
     public string IntegrationBranch { get; init; } = "develop";
+    /// <summary>Current published target-ref fingerprint used to stale accepted verdicts.</summary>
+    public string? TargetRefFingerprint { get; init; }
 
     /// <summary>
     /// Membership evidence, or the reason a non-integrated card is pending,
@@ -354,6 +356,7 @@ public sealed record TaskIntegrationFailure
 /// </summary>
 public static class IntegrationStatuses
 {
+    public const string NotApplicable = "not-applicable";
     /// <summary>
     /// Every attributed commit the card shows is provably reachable from the
     /// PUBLISHED integration branch (<c>origin/&lt;branch&gt;</c>, or the local
@@ -389,7 +392,7 @@ public static class IntegrationStatuses
     public const string NoBranch = "no-branch";
 
     public static readonly string[] All =
-        [Integrated, MergedLocally, Partial, Pending, ConflictSkipped, NoBranch];
+        [Integrated, NotApplicable, MergedLocally, Partial, Pending, ConflictSkipped, NoBranch];
 
     /// <summary>
     /// Persisted recovery marker stamped while transactional acceptance is

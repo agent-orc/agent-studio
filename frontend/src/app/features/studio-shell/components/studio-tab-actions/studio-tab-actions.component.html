@@ -129,7 +129,7 @@
                   [attr.data-testid]="'studio-triage-action-' + primaryId"
                   [attr.data-action-id]="primaryId"
                   [attr.data-git-loading]="triageView.awaitingGit ? 'true' : null"
-                  [disabled]="mutationsBlocked() || triageView.awaitingGit || triageView.actingId !== null"
+                  [disabled]="mutationsBlocked() || triageView.awaitingGit || triageView.blockedByIntegration || triageView.actingId !== null"
                   [appPendingButton]="triageView.actingId === primaryId"
                   [pendingLabel]="triageView.primaryLabel + '…'"
                   [cacTooltip]="triageView.primaryTooltip"
