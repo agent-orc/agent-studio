@@ -769,6 +769,11 @@ state.
   standalone Task Server carry the salvage ref and exact commit in the
   continuation claim, and the runner verifies that pair before preparing the
   sibling run's worktree.
+- The Claude Code `unrecognized_model` stderr marker is also a provider request
+  refusal, even when the process exits 0 after running Haiku. The shared
+  outcome adapter compares the requested model with Claude `modelUsage` keys
+  or Codex terminal result models, so a substituted model cannot be accepted
+  as a successful completion.
 - Account-level provider session, usage, and rate limits are CLI capability
   state, not task outcomes. The local runner records `claude: limited until
   <time>` in runner status, persists the current card in provider-scoped
@@ -1388,6 +1393,13 @@ current Ready-lane value as `executionLocation.lastRejection`; the card and
 detail header render it inline. Successful dispatch clears it, and a later lane
 generation cannot inherit it. Missing repository registration is also projected
 as a failed project preflight in Execution Hosts before a Runner polls.
+
+Model-pin admission runs before both local spawn and remote lease acquisition.
+Claude pins use the registry minimum against the installed CLI version already
+reported by health and capability probes. Codex pins use the live catalogue;
+remote Runners advertise that catalogue with their CLI capability. A rejected
+model pin uses the same durable Ready-card dispatch-rejection surface and does
+not consume pending intent, move the card, or create a run.
 
 The build-profile gate is evaluated inside the remote candidate loop, after a
 Ready card is known to be routed to that Runner. A closed gate records the

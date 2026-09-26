@@ -51,6 +51,7 @@ interface JobInfoStub {
     totalTokens: number;
     estimatedApiCostUsd?: number;
     allModelsPriced?: boolean;
+    hasModelMismatch?: boolean;
     lastModel: string | null;
     lastUpdate: string | null;
     entries: {
@@ -62,6 +63,8 @@ interface JobInfoStub {
       cacheCreationTokens: number;
       estimatedApiCostUsd?: number;
       modelPriced?: boolean;
+      pinnedModel?: string | null;
+      modelMismatch?: boolean;
     }[];
   };
 }
@@ -100,10 +103,9 @@ function jobStub(over: Partial<JobInfoStub>): JobInfoStub {
  * close it so it can't block the hover test.
  */
 async function dismissErrorDialogIfPresent(page: Page): Promise<void> {
-  const overlay = page.locator('app-error-dialog .overlay--error');
-  if (await overlay.isVisible().catch(() => false)) {
-    const close = page.locator('app-error-dialog button').first();
-    await close.click({ trial: false }).catch(() => { /* best-effort */ });
+  const close = page.getByTestId('error-dialog-close').last();
+  if (await close.isVisible().catch(() => false)) {
+    await close.click({ force: true }).catch(() => { /* best-effort */ });
   }
 }
 
@@ -187,6 +189,9 @@ async function stubGroupedJobs(page: Page, jobs: JobInfoStub[]): Promise<void> {
     if (p === '/api/tasks' || p === '/api/tasks/') {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(jobs) });
     }
+    if (/^\/api\/clients\/[^/]+\/telemetry$/.test(p)) {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ points: [] }) });
+    }
     if (p.startsWith('/api/clients')) {
       const list = [{
         id: 'local-default', displayName: 'Local Default', emoji: '🤖', colour: '#64748b', kind: 'human',
@@ -204,6 +209,26 @@ async function stubGroupedJobs(page: Page, jobs: JobInfoStub[]): Promise<void> {
     }
     if (p === '/api/cli/usage') {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ at: new Date().toISOString(), sections: [] }) });
+    }
+    if (p === '/api/v1/management/remote-hosts') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+    }
+    if (p === '/api/v1/management/links'
+        || p === '/api/v1/management/provider-refusals'
+        || p === '/api/tags'
+        || p === '/api/workspaces'
+        || p === '/api/projects'
+        || p === '/api/git/summary') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+    }
+    if (p === '/api/cli/model-migrations') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ version: 'fixture', wikiPath: '', migrations: [] }) });
+    }
+    if (p === '/api/pipeline/accepted-integration-alert') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ active: false, stalledTaskCount: 0, thresholdMinutes: 30, oldestAcceptedAt: null, observedAt: new Date().toISOString(), items: [] }) });
+    }
+    if (p === '/api/auto-review/status') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ lastTickAt: null, accept: 0, reissue: 0, escalate: 0, aspectsRun: 0, currentJob: null, currentProject: null, activeJobs: [] }) });
     }
     if (p.startsWith('/api/runner')) {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ projects: {} }) });
@@ -251,6 +276,7 @@ test.describe('Token bubble on job cards', () => {
         totalTokens: 400_000,
         estimatedApiCostUsd: 1.25,
         allModelsPriced: true,
+        hasModelMismatch: true,
         lastModel: 'GPT-5 Codex',
         lastUpdate: '2026-05-05T08:30:00Z',
         entries: [
@@ -258,7 +284,7 @@ test.describe('Token bubble on job cards', () => {
           // not today's rate — the popover must show these dated per-run
           // costs, not just one combined estimate.
           { ts: '2026-05-05T08:00:00Z', model: 'GPT-5 Codex', inputTokens: 50_000, outputTokens: 6_000, cacheReadTokens: 100_000, cacheCreationTokens: 4_000, estimatedApiCostUsd: 0.6, modelPriced: true },
-          { ts: '2026-05-05T08:15:00Z', model: 'Claude Haiku 4.5', inputTokens: 40_000, outputTokens: 6_000, cacheReadTokens: 80_000, cacheCreationTokens: 4_000, estimatedApiCostUsd: 0.15, modelPriced: true },
+          { ts: '2026-05-05T08:15:00Z', model: 'Claude Haiku 4.5', pinnedModel: 'claude-opus-5-5', modelMismatch: true, inputTokens: 40_000, outputTokens: 6_000, cacheReadTokens: 80_000, cacheCreationTokens: 4_000, estimatedApiCostUsd: 0.15, modelPriced: true },
           { ts: '2026-05-05T08:30:00Z', model: 'GPT-5 Codex', inputTokens: 30_000, outputTokens: 6_000, cacheReadTokens: 70_000, cacheCreationTokens: 4_000, estimatedApiCostUsd: 0.5, modelPriced: true }
         ]
       }
@@ -312,6 +338,7 @@ test.describe('Token bubble on job cards', () => {
     await expect(popover.getByTestId('token-row-cache-write')).toContainText('12k');
     await expect(popover.getByTestId('token-row-total')).toContainText('400k');
     await expect(popover.getByTestId('token-row-model')).toContainText('GPT-5 Codex');
+    await expect(popover.getByTestId('token-model-mismatch')).toHaveText('Mismatch');
 
     // Calm layout: the estimate caveat is a single quiet footnote line with
     // the honest total, not a paragraph. The full disclaimer text (incl.
@@ -327,6 +354,7 @@ test.describe('Token bubble on job cards', () => {
     // Per-run dated costs: each run is priced at its own timestamp.
     const runs = popover.getByTestId('token-usage-runs');
     await expect(runs).toContainText('Claude Haiku 4.5');
+    await expect(runs.getByTestId('token-run-model-mismatch')).toContainText('pinned claude-opus-5-5');
     await expect(runs).toContainText('$0.15');
     await expect(runs).toContainText('$0.60');
 
@@ -354,6 +382,8 @@ test.describe('Token bubble on job cards', () => {
     // between assertions above and here; clear it so the evidence shot
     // shows the popover, not an incidental toast.
     await dismissErrorDialogIfPresent(page);
+    await bubble.focus();
+    await expect(popover).toBeVisible();
     mkdirSync(SHOTS, { recursive: true });
     await page.screenshot({ path: `${SHOTS}/card-with-bubble-and-popover.png`, fullPage: false });
   });

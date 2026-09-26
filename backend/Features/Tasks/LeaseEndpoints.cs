@@ -774,6 +774,31 @@ public static class LeaseEndpoints
                         continue;
                     }
                     var cliType = quotaPlan.CliType;
+                    var modelCapability = capabilityRegistry.CliModelCapabilityFor(
+                        req.RunnerId.Trim(),
+                        req.CapabilityInstanceId,
+                        cliType);
+                    var modelAdmission = ModelPinAdmissionPolicy.Evaluate(
+                        cliType,
+                        quotaPlan.Model,
+                        explicitlyPinned: task.ModelExplicit && !quotaPlan.IsFallback,
+                        modelCapability?.InstalledVersion,
+                        modelCapability?.SupportedModels);
+                    if (!modelAdmission.IsAllowed)
+                    {
+                        RecordRejection(
+                            task,
+                            modelAdmission.Code ?? ModelPinAdmissionPolicy.RejectionCode,
+                            modelAdmission.Reason);
+                        logger.LogWarning(
+                            "remote-runner-coding-claim-skipped-model runner={Runner} task={TaskKey} cli={CliType} model={Model} reason={Reason}",
+                            req.RunnerName,
+                            task.Key ?? task.TaskKey ?? task.Id,
+                            cliType,
+                            quotaPlan.Model,
+                            modelAdmission.Reason);
+                        continue;
+                    }
                     var requiredCapabilities = (req.RequiredCapabilities ?? [])
                         .Append(CapabilityProtocol.CodingExecutor)
                         .Append(CapabilityProtocol.CliExecution(cliType))
@@ -1487,7 +1512,11 @@ public static class LeaseEndpoints
                     req.TaskKey,
                     attemptId);
             }
-            var tokenReceipt = tokenReceipts.PersistFromLog(task, attemptId, req.RunnerId);
+            var tokenReceipt = tokenReceipts.PersistFromLog(
+                task,
+                attemptId,
+                req.RunnerId,
+                req.OutcomeDecision?.RawFacts.EffectiveModel);
             if (!tokenReceipt.Persisted && !string.IsNullOrWhiteSpace(tokenReceipt.Warning))
             {
                 loggerFactory.CreateLogger("AgentStudio.Tasks.RemoteRunnerCompletion").LogWarning(

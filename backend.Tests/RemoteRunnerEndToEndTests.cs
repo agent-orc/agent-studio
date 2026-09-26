@@ -2281,6 +2281,57 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Null(factory.Services.GetRequiredService<RunLeaseService>().Peek("AGT-CLI-BLOCKED").Lease);
     }
 
+    [Fact]
+    public async Task Unsupported_pinned_Claude_model_leaves_card_ready_with_visible_rejection()
+    {
+        const string taskKey = "AGT-MODEL-UNSUPPORTED";
+        SeedTask(
+            TaskStates.Ready,
+            taskKey,
+            "Unsupported pinned model",
+            "Prompt.",
+            cliType: CliTypes.Claude,
+            model: "claude-opus-5-5");
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(
+            client,
+            http,
+            cliVersions: new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [CliTypes.Claude] = "2.1.270",
+            });
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/agent-orc/agent-studio.git");
+
+        var claim = await client.ClaimAsync(
+            new RClaim(
+                RunnerId,
+                ProjectName,
+                "hetzner-test",
+                4242,
+                "remote-runner",
+                IdempotencyKey: "unsupported-claude-pin"),
+            CancellationToken.None);
+
+        Assert.Equal(RClaimStatus.Empty, claim.Status);
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.Ready, taskKey)));
+        Assert.Null(factory.Services.GetRequiredService<RunLeaseService>().Peek(taskKey).Lease);
+
+        using var grouped = await http.GetAsync("/api/tasks/grouped");
+        grouped.EnsureSuccessStatusCode();
+        using var groupedJson = JsonDocument.Parse(await grouped.Content.ReadAsStringAsync());
+        var card = Assert.Single(
+            groupedJson.RootElement.GetProperty("ready").EnumerateArray(),
+            item => item.GetProperty("id").GetString() == taskKey);
+        var rejection = card.GetProperty("executionLocation").GetProperty("lastRejection");
+        Assert.Equal(ModelPinAdmissionPolicy.RejectionCode, rejection.GetProperty("code").GetString());
+        Assert.Equal(
+            "model unsupported by installed CLI 2.1.270 (minimum 2.1.281)",
+            rejection.GetProperty("reason").GetString());
+    }
+
     /// <summary>
     /// T0b (CAR migration plan §3 T0b / §7 AP3): the claim carries the card's
     /// execution specification, and the runner turns it into the CLI invocation.
@@ -3553,7 +3604,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         HttpClient http,
         CancellationToken ct = default,
         IReadOnlyDictionary<string, string>? cliStatuses = null,
-        DateTime? advertisedAt = null)
+        DateTime? advertisedAt = null,
+        IReadOnlyDictionary<string, string>? cliVersions = null)
     {
         var clientId = await client.RegisterAsync(ProjectName, "service", ct);
         var instanceId = $"{Environment.MachineName}:{Environment.ProcessId}";
@@ -3577,6 +3629,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                 ["codex"] = "ready",
             },
             advertisedAt,
+            cliVersions,
             ct);
         return clientId;
     }
@@ -3585,6 +3638,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         HttpClient http,
         IReadOnlyDictionary<string, string> cliStatuses,
         DateTime? advertisedAt = null,
+        IReadOnlyDictionary<string, string>? cliVersions = null,
         CancellationToken ct = default)
     {
         var capabilities = new List<Contract.AdvertisedCapabilityDto>
@@ -3601,7 +3655,10 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             capabilities.Add(new Contract.AdvertisedCapabilityDto(
                 Contract.CapabilityProtocol.CliExecution(cliType),
                 "cli-execution",
-                status));
+                status,
+                Version: cliVersions is not null && cliVersions.TryGetValue(cliType, out var version)
+                    ? version
+                    : null));
             capabilities.Add(new Contract.AdvertisedCapabilityDto(
                 Contract.CapabilityProtocol.ProviderAuthentication(cliType),
                 "provider-auth",

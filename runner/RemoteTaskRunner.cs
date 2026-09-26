@@ -1621,7 +1621,8 @@ public sealed class RemoteTaskRunner
             SameSessionResumeAttempts: sameSessionResumeAttempts,
             EffectiveCliType: invocation?.CliType,
             EffectiveModel: invocation?.Model,
-            EffectiveThinkingLevel: invocation?.ThinkingLevel);
+            EffectiveThinkingLevel: invocation?.ThinkingLevel,
+            ObservedModels: provider.ObservedModels);
         var typed = ExecutionOutcomeAdapter.Classify(factsAfterExit);
         var sentinelOutcome = SentinelScanner.Scan(result.StdOut);
         var rawOutcome = BuildRunOutcome(typed, provider, sentinelOutcome, result.StdErr);
@@ -2390,7 +2391,8 @@ public sealed class RemoteTaskRunner
         int SameSessionResumeAttempts = 0,
         string? EffectiveCliType = null,
         string? EffectiveModel = null,
-        string? EffectiveThinkingLevel = null)
+        string? EffectiveThinkingLevel = null,
+        IReadOnlyList<string>? ObservedModels = null)
         => Facts(
             lease,
             workspace,
@@ -2406,7 +2408,8 @@ public sealed class RemoteTaskRunner
             SameSessionResumeAttempts: SameSessionResumeAttempts,
             EffectiveCliType: EffectiveCliType,
             EffectiveModel: EffectiveModel,
-            EffectiveThinkingLevel: EffectiveThinkingLevel);
+            EffectiveThinkingLevel: EffectiveThinkingLevel,
+            ObservedModels: ObservedModels);
 
     private static ExecutionRawFacts Facts(
         RunLeaseInfoDto lease,
@@ -2430,7 +2433,8 @@ public sealed class RemoteTaskRunner
         int FreshSalvageAttempts = 0,
         string? EffectiveCliType = null,
         string? EffectiveModel = null,
-        string? EffectiveThinkingLevel = null)
+        string? EffectiveThinkingLevel = null,
+        IReadOnlyList<string>? ObservedModels = null)
         => new(
             lease.AttemptId ?? lease.LeaseId,
             ExecutionAttemptKind.Coding,
@@ -2456,7 +2460,8 @@ public sealed class RemoteTaskRunner
             ReviewSubject: null,
             EffectiveCliType,
             EffectiveModel,
-            EffectiveThinkingLevel);
+            EffectiveThinkingLevel,
+            ObservedModels);
 
     internal static async Task<T> RetryEnvironmentPreparationAsync<T>(
         Func<CancellationToken, Task<T>> prepare,

@@ -107,6 +107,34 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
     }
 
     [Fact]
+    public async Task AutoPickupUnsupportedPinnedModel_StaysReady_RecordsReason_AndDoesNotSpawn()
+    {
+        WriteJob(
+            TaskStates.Ready,
+            "job-unsupported-model",
+            model: "claude-opus-5-5",
+            modelExplicit: true);
+        var cli = new FailingCliService(installedVersion: "2.1.270 (Claude Code)");
+        var runner = BuildRunner(cli);
+        runner.SetMode("auto-continuous");
+
+        await runner.TickAsync(CancellationToken.None);
+
+        var readyFolder = Path.Combine(_watchPath, TaskStates.Ready, "job-unsupported-model");
+        Assert.False(cli.StartCalled, "model admission must reject before the CLI spawn boundary");
+        Assert.True(Directory.Exists(readyFolder));
+        Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.Progress, "job-unsupported-model")));
+        Assert.Equal(0, runner.GetStatus().OccupiedSlots);
+
+        using var taskJson = JsonDocument.Parse(File.ReadAllText(Path.Combine(readyFolder, "task.json")));
+        var rejection = taskJson.RootElement.GetProperty(RemoteDispatchRejectionStore.FieldName);
+        Assert.Equal(ModelPinAdmissionPolicy.RejectionCode, rejection.GetProperty("code").GetString());
+        Assert.Equal(
+            "model unsupported by installed CLI 2.1.270 (minimum 2.1.281)",
+            rejection.GetProperty("reason").GetString());
+    }
+
+    [Fact]
     public async Task ImmediateCliFinish_WaitsForDurableStartHandshakeBeforeFinalization()
     {
         WriteJob(TaskStates.Ready, "job-fast-finish");
@@ -258,7 +286,13 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         Assert.True(runner.ProviderClaimsAllowedForTest(CliTypes.Codex, DateTime.UtcNow));
     }
 
-    private void WriteJob(string state, string slug, int order = 1, string cliType = CliTypes.Claude)
+    private void WriteJob(
+        string state,
+        string slug,
+        int order = 1,
+        string cliType = CliTypes.Claude,
+        string? model = null,
+        bool modelExplicit = false)
     {
         var dir = Path.Combine(_watchPath, state, slug);
         Directory.CreateDirectory(dir);
@@ -266,7 +300,8 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         File.WriteAllText(
             Path.Combine(dir, "task.json"),
             $"{{\"id\":\"{slug}\",\"title\":\"{slug}\",\"state\":\"{state}\",\"order\":{order}," +
-            $"\"agent\":\"claude\",\"cliType\":\"{cliType}\",\"ownerClientId\":\"local-default\"}}");
+            $"\"agent\":\"claude\",\"cliType\":\"{cliType}\",\"model\":{JsonSerializer.Serialize(model)}," +
+            $"\"modelExplicit\":{modelExplicit.ToString().ToLowerInvariant()},\"ownerClientId\":\"local-default\"}}");
     }
 
     /// <summary>
@@ -416,6 +451,9 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
             BackendName = "test",
             BackendPort = 0
         };
+        var dispatchRejections = new RemoteDispatchRejectionStore(
+            NullLogger<RemoteDispatchRejectionStore>.Instance,
+            scanner);
 
         return new ProjectRunner(
             ProjectName, entry,
@@ -428,7 +466,8 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
             pickupLock: pickupLock,
             pickupLockOwner: pickupLockOwner,
             timeline: timeline,
-            providerLimits: providerLimits);
+            providerLimits: providerLimits,
+            dispatchRejections: dispatchRejections);
     }
 
     private static async Task WaitUntilAsync(Func<bool> predicate)
@@ -442,10 +481,12 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
     private sealed class FailingCliService : ICliExecutionService
     {
         private readonly bool _throwOnStart;
+        private readonly string _installedVersion;
 
-        public FailingCliService(bool throwOnStart = false)
+        public FailingCliService(bool throwOnStart = false, string installedVersion = "test")
         {
             _throwOnStart = throwOnStart;
+            _installedVersion = installedVersion;
         }
 
         public string CliType => CliTypes.Claude;
@@ -465,7 +506,8 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
 
         public string GetCliPath() => "fake-claude";
         public bool IsAvailable() => true;
-        public (bool Available, string? Version, string Path) TestCliPath(string? path = null) => (true, "test", path ?? GetCliPath());
+        public (bool Available, string? Version, string Path) TestCliPath(string? path = null) =>
+            (true, _installedVersion, path ?? GetCliPath());
 
         public Task<(CliExecution? Execution, string? Error)> StartAsync(
             string jobId,
