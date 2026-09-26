@@ -40,8 +40,8 @@ const config = JSON.parse(process.argv[1]);
 const builds = Object.entries(config.services)
   .filter(([, service]) => service.build)
   .map(([name, service]) => ({ name, version: service.build.args?.VERSION }));
-if (builds.length !== 7) {
-  throw new Error(`expected 7 dev builds, found ${builds.length}`);
+if (builds.length !== 8) {
+  throw new Error(`expected 8 dev builds, found ${builds.length}`);
 }
 for (const build of builds) {
   if (build.version !== process.env.EXPECTED_VERSION) {

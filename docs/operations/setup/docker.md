@@ -12,8 +12,8 @@ docker compose --profile dev up --build --wait task-server-dev orchestrator-engi
 
 Open `http://localhost:4011`. This source-built path is the verified default
 for the current checkout. To run it in the background, add `-d` before `--wait`.
-The Task Server, Engine, BFF, Studio API proxy, web UI, and one agent host start
-together. The Studio API proxy preserves the `/api/v1` distributed route path.
+The Task Server, Engine, BFF, Studio API, web UI, and one agent host start
+together. Browser `/api/v1` requests go through the BFF to the Task Server.
 The remaining dev-seat routes have the option C coverage limit described in
 [the connector gap](./docker-compose-connector-gap.md).
 
@@ -40,10 +40,21 @@ values in the `agent-studio_secrets` named volume. It sets each file to mode
 `0600` and ownership to service uid 10001. The Task Server reads the files to
 create Studio, Engine, and Runner principals on an empty store. Other services
 read the same files through read-only mounts. Subsequent `up` runs leave the
-files untouched. Do not edit or remove individual files from the secrets
-volume: principal credential rotation belongs to the product's Operations
-Server or host manager workflow when available. `docker compose down` retains
-the volume; `down --volumes` deletes it and all installation data.
+files untouched. Rotate a principal with the included host-manager command:
+
+```sh
+scripts/compose-rotate.sh runner --dev
+scripts/compose-rotate.sh engine --dev
+scripts/compose-rotate.sh studio --dev
+```
+
+For a published-image stack, omit `--dev`. The command calls the Task Server
+principal API, replaces the protected file in the named volume, and recreates
+the matching service within the credential overlap. Run it while coding tasks
+are idle because rotating the Runner recreates its container. It never prints
+or requires pasting a bearer value. Do not edit or remove individual files
+from the volume. `docker compose down` retains the volume; `down --volumes`
+deletes it and all installation data.
 
 The included agent host registers without a Git remote or CLI login. To run
 coding tasks, set `RUNNER_GIT_REMOTE` and `RUNNER_GIT_PUSH_REMOTE` in `.env`.
