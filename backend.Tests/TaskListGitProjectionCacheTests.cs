@@ -69,6 +69,35 @@ public sealed class TaskListGitProjectionCacheTests
     }
 
     [Fact]
+    public void ReadCacheOnly_DuplicateTaskKeys_UsesOneRepositorysVersionWithoutThrowing()
+    {
+        var cache = new TaskListGitProjectionCache();
+        var taskA = Job("same", "watch-a") with { TaskKey = "same" };
+        var taskB = Job("same", "watch-b") with { TaskKey = "same" };
+        cache.SetSnapshot(taskA.WatchPath, ProjectionFor(taskA, "task/a") with
+        {
+            Signatures = new Dictionary<string, string> { ["same"] = TaskGitSignature.For(taskA) },
+            SubjectVersions = new Dictionary<string, long> { ["same"] = 0 },
+        }, DateTimeOffset.UtcNow);
+        cache.SetSnapshot(taskB.WatchPath, ProjectionFor(taskB, "task/b") with
+        {
+            Signatures = new Dictionary<string, string> { ["same"] = TaskGitSignature.For(taskB) },
+            SubjectVersions = new Dictionary<string, long> { ["same"] = 0 },
+        }, DateTimeOffset.UtcNow);
+
+        var merged = cache.ReadCacheOnly([taskA, taskB]);
+
+        Assert.Equal("task/b", merged.Merge["same"].Branch);
+        Assert.Equal(TaskGitSignature.For(taskB), merged.TaskSignatures["same"]);
+        Assert.Equal(0, merged.TaskSubjectVersions["same"]);
+
+        var changedB = taskB with { Commits = [] };
+        var stale = cache.ReadCacheOnly([taskA, changedB]);
+        Assert.Empty(stale.Merge);
+        Assert.Empty(stale.TaskSignatures);
+    }
+
+    [Fact]
     public void ReadFreshness_WhenOneOfSeveralRepositoriesNeverIndexed_IsStale()
     {
         var cache = new TaskListGitProjectionCache();
