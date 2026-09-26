@@ -1479,6 +1479,11 @@ public sealed partial class TaskServerStore
             var lease = await ReadLeaseAsync(connection, transaction, runId, ct)
                 ?? throw new KeyNotFoundException("Run lease was not found.");
             ValidateLeaseReference(lease, request.RunnerId, request.InstanceId, request.LeaseId, request.Fence);
+            if (string.Equals(lease.Status, "completed", StringComparison.Ordinal))
+            {
+                released = lease;
+                return;
+            }
             if (!string.Equals(lease.Status, "active", StringComparison.Ordinal))
                 throw new TaskServerConflictException("lease-not-active", $"Lease status is '{lease.Status}'.");
             await ExecuteAsync(connection, """

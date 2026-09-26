@@ -357,6 +357,14 @@ public sealed class RemoteTaskRunner
     public async Task<bool> ReleaseSettledAsync(PersistedRunnerSlot slot, string reason)
     {
         _log($"releasing settled persisted attempt task={slot.TaskKey} attempt={slot.AttemptId}: {reason}");
+        if (_client.UsesDurableTaskServer)
+        {
+            // Outbox recovery has already delivered the fenced completion.
+            // A completed v1 lease has nothing left for the runner to release.
+            _client.ForgetCompletedLease(slot.TaskKey, slot.Lease.LeaseId);
+            _state.Delete(slot);
+            return true;
+        }
         if (await ReleaseWithRetryAsync(slot.Lease, "runner-finalization-settled"))
         {
             _state.Delete(slot);
@@ -1716,7 +1724,7 @@ public sealed class RemoteTaskRunner
 
         try
         {
-            await _client.UploadArtifactsAsync(new ArtifactIngestRequest(
+            var finalization = await _client.UploadArtifactsAsync(new ArtifactIngestRequest(
                 taskKey,
                 [],
                 RunnerId: lease.RunnerId,
@@ -1727,6 +1735,7 @@ public sealed class RemoteTaskRunner
                 AuthorityEpoch: lease.AuthorityEpoch,
                 IdempotencyKey: $"artifact-finalize:{lease.AttemptId}:{plan.Manifest.Digest}",
                 FinalizeResult: true), CancellationToken.None);
+            _log($"artifact result-document finalization task={taskKey} ResultDocumentStatus={finalization?.ResultDocumentStatus ?? "missing"}");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

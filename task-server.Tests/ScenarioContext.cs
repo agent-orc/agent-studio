@@ -345,7 +345,8 @@ public sealed class ScenarioContext : IDisposable
                 var latest = await _serverClient.GetFromJsonAsync<TaskHistoryDto>(
                     $"/api/v1/projects/{_project.ProjectId}/tasks/{_task.TaskKey}/history");
                 return latest?.Artifacts.Any(artifact =>
-                    artifact.Name.Contains("scenario-run-log", StringComparison.Ordinal)) == true;
+                    artifact.Name.Contains("scenario-run-log", StringComparison.Ordinal)) == true
+                    && latest.ResultFinalization?.Status == ResultFinalizationStatus.Ready;
             },
             _runner!,
             TimeSpan.FromSeconds(30),
@@ -354,6 +355,13 @@ public sealed class ScenarioContext : IDisposable
             $"/api/v1/projects/{_project.ProjectId}/tasks/{_task.TaskKey}/history");
         Assert.NotNull(history);
         Assert.Contains(history.Artifacts, artifact => artifact.Name.Contains("scenario-run-log", StringComparison.Ordinal));
+        Assert.Equal(ResultFinalizationStatus.Ready, history.ResultFinalization?.Status);
+        Assert.Contains(history.Artifacts, artifact => artifact.Name == "status.md");
+        var runnerLines = _runner!.OutputLines;
+        Assert.Contains(runnerLines, line =>
+            line.Contains("ResultDocumentStatus=generated", StringComparison.Ordinal));
+        Assert.DoesNotContain(runnerLines, line =>
+            line.Contains("409", StringComparison.Ordinal));
 
         var afterCommits = await CountCommitsAsync(_bareRepositoryPath);
         Assert.True(afterCommits > beforeCommits, "The coding attempt did not push a new commit to the seeded repository.");
