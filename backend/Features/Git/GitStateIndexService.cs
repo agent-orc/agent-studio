@@ -340,6 +340,9 @@ public sealed class GitStateIndexService : BackgroundService
     private async Task SweepAsync(CancellationToken stoppingToken)
     {
         DiscoverRepositories();
+        // The safety sweep observes every repository, but the task tree only
+        // needs one disk scan for the whole pass.
+        var allTasks = _scanner.ScanAllJobsRaw();
         foreach (var state in _repos.Values)
         {
             await _repoSlots.WaitAsync(stoppingToken).ConfigureAwait(false);
@@ -349,8 +352,23 @@ public sealed class GitStateIndexService : BackgroundService
                 string config;
                 try { config = GitConfigSignature.Capture(state.RepositoryPath).Signature; }
                 catch { config = "unavailable"; }
+                string taskSignature;
+                try
+                {
+                    var repoTasks = allTasks.Where(task =>
+                        WatchPathComparison.PathsEqual(task.WatchPath, state.WatchPath)).ToArray();
+                    taskSignature = CaptureTaskInputSignature(repoTasks, _projectionCache);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    _logger.LogDebug(ex, "git-state-sweep-task-input-unavailable repository={Repository}",
+                        state.ProjectName);
+                    RequestRefreshCore(state, "sweep");
+                    continue;
+                }
                 if (refs == state.LastSweepSignature && config == state.LastSweepConfig
-                    && _settingsVersion(state.ProjectName) == state.LastSettingsVersion) continue;
+                    && _settingsVersion(state.ProjectName) == state.LastSettingsVersion
+                    && taskSignature == state.LastPublishedInput?.Tasks) continue;
                 state.LastSweepSignature = refs;
                 state.LastSweepConfig = config;
                 RequestRefreshCore(state, "sweep");
@@ -542,13 +560,14 @@ public sealed class GitStateIndexService : BackgroundService
 
     internal static string CaptureTaskInputSignature(TaskInfo[] tasks, TaskListGitProjectionCache cache)
     {
-        var parts = new StringBuilder("schema=3;");
+        var parts = new StringBuilder("schema=4;");
         foreach (var task in tasks.OrderBy(task => task.TaskKey, StringComparer.Ordinal))
         {
             parts.Append(task.TaskKey).Append(':').Append(TaskGitSignature.For(task)).Append(':');
-            var subject = Path.Combine(task.FolderPath, ReviewSubjectStore.FileName);
+            var subject = ReviewSubjectStore.PathFor(task.FolderPath);
             cache.SeedTaskInput(subject);
             AppendFileFact(parts, subject);
+            parts.Append(cache.SubjectVersion(task.FolderPath)).Append(';');
         }
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(parts.ToString())));
     }
@@ -556,8 +575,13 @@ public sealed class GitStateIndexService : BackgroundService
     private static void AppendFileFact(StringBuilder parts, string path)
     {
         var file = new FileInfo(path);
-        parts.Append(file.Exists ? file.LastWriteTimeUtc.Ticks : 0)
-            .Append('/').Append(file.Exists ? file.Length : 0).Append(';');
+        parts.Append(file.Exists ? '1' : '0').Append('/');
+        if (file.Exists)
+        {
+            using var stream = file.OpenRead();
+            parts.Append(Convert.ToHexString(SHA256.HashData(stream)));
+        }
+        parts.Append(';');
     }
 
     private async Task RetryAfterBackoffAsync(RepoState state, int failureCount)
