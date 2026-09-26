@@ -16,5 +16,4 @@ Durable contracts that code, CLIs, and agents must respect.
 | [code-patterns.md](code-patterns.md) | Code-pattern drift watchlist read by analysis services. |
 | [runtime-prompts.md](runtime-prompts.md) | Runtime prompt precedence, review companions, project override comparison, call telemetry, and cost boundaries. |
 | [wiki-tree.md](wiki-tree.md) | Wiki physical docs tree, mutation, rendering, and history contract. |
-
-- [Operations backchannel](operations-backchannel.md): service principals, outbound agents, task permits and one-box parity gates.
+| [operations-backchannel.md](operations-backchannel.md) | Service principals, outbound agents, task permits and one-box parity gates. |

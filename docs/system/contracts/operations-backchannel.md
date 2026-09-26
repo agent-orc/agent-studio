@@ -1,10 +1,12 @@
 # Operations backchannel
 
-Status: accepted architecture, partial implementation in AGT-2907, 2026-09-25.
+Status: accepted architecture, foundation stage delivered in AGT-2907, 2026-09-26.
 [ADR-0075](../architecture/decisions/adr-archive.md#adr-0075---operations-server-brokers-host-execution-beside-task-server-authority-2026-09-25)
 records D1, D2 and D4. The
 [source dossier](../../operations/operations-server-backchannel/index.html)
-records the selected D3 scope and original constraints.
+records the selected D3 scope and original constraints. The operator's
+2026-09-26 instruction places the expansion on AGT-2907 and accepts this
+contract and outbound channel as its first delivery stage.
 
 ## Current implementation and remaining gate
 
@@ -26,9 +28,10 @@ an operation that has no registered definition and executor.
 
 The selected standard remains **one-box Docker after full route and security
 parity**. The private Compose rehearsal below does not replace the root product
-Compose file or claim that parity. AGT-2736 has a conflicting later instruction
-to ship Option C without expanding scope. Its live prompt and lane have not
-been changed by AGT-2907 pending the requested clarification.
+Compose file or claim that parity. AGT-2736 delivers its bounded Option C
+baseline without scope extension. D3's expansion belongs to AGT-2907 and its
+follow-up stages, building on that compatible transitional baseline. Neither
+the baseline card nor its delivery is blocked by the later parity work.
 
 ## Ownership
 
@@ -182,11 +185,22 @@ parity label from this rehearsal.
 
 | Card | Required effect |
 |---|---|
-| AGT-2736 | Reconcile the selected expansion with its later Option C instruction; full one-box promotion remains gated on parity |
+| AGT-2736 | Deliver bounded Option C unchanged; AGT-2907 and its follow-ups own D3 expansion above that compatible baseline |
 | AGT-2737 | Preserve the current local-Connector Phase B rehearsal; add later host-operation extraction and rollback evidence |
 | AGT-2738 | Installer selects a declared profile after contracts and full deployment proofs stabilize |
 | AGT-2764 | Preserve the bounded interim link soak; later connectivity and host actions use typed Operations resources |
 | AGT-2770 | Task Server keeps durable model policy; agents later supply typed live discovery and quota facts |
+
+## Typed follow-up stages
+
+The operator explicitly split these remaining stages into follow-up cards.
+They are not acceptance blockers for the delivered contract and outbound channel.
+
+| Key | Type | Scope and exit condition |
+|---|---|---|
+| OPS-CATALOGUE | feature | Add the full File, Git, CLI, launcher, dossier, render/capture and host-control catalogue with bounded artifacts, usage, accepted-result projections and mutation containment. Each executor needs scope, roots, cancellation, output-limit and no-overlap evidence. |
+| OPS-EDGE-ADAPTERS | migration | Adapt Connector handlers and BFF routes to separate Task and Operations upstreams; add review-subject permits. Route inventory must name one owner and edge per route, with no fallback. Preserve exact loopback Host/Origin/CSRF and keep credentials server-side. Depends on the required catalogue definitions. |
+| OPS-DEPLOYMENT-PARITY | deployment | Build on AGT-2736 Option C and prove full workstation, one-box Docker and distributed parity: HTTPS-only public edge, published-image install, scoped credentials/enrollment/rotation, upgrade/drain, backup/restore, detached Studio, outages, fencing, cutover and rollback. Align installer and dependent host/model-probe surfaces. Depends on catalogue and edge migration. |
 
 ## Verification
 
@@ -203,4 +217,8 @@ its own temporary Compose project and volumes.
 Tests use fake time and in-process HTTP, isolated SQLite stores, distinct
 principals, replayed commands, revoked task authority, cancellation and expired
 leases. They also execute the outbound diagnostic agent against the real service
-handlers. No frontend behavior changed, so no UI screenshot is claimed.
+handlers. The cross-service test issues a real Task Server permit over authenticated
+HTTP, executes through the outbound agent, and proves that releasing the task
+lease blocks subsequent dispatch. The Compose smoke exercises real processes
+and restart replay separately. No frontend behavior changed, so no UI screenshot
+is claimed.

@@ -227,7 +227,7 @@ internal sealed class Fixture : IAsyncDisposable
     public HttpClient Service { get; private set; } = null!;
     public HttpClient Agent { get; private set; } = null!;
     public AgentCapability Capability => new("host-a", "boot-a", "diagnostics", [], [], new() { ["host.inspect"] = 1 }, 1, 1, 1);
-    public static async Task<Fixture> Start()
+    public static async Task<Fixture> Start(IOperationPermitAuthority? authority = null)
     {
         var fixture = new Fixture();
         System.IO.Directory.CreateDirectory(fixture.Directory);
@@ -241,7 +241,7 @@ internal sealed class Fixture : IAsyncDisposable
         });
         builder.Services.AddOperationsServer(builder.Configuration);
         builder.Services.AddSingleton<TimeProvider>(fixture.Clock);
-        builder.Services.AddSingleton<IOperationPermitAuthority>(fixture.Permits);
+        builder.Services.AddSingleton<IOperationPermitAuthority>(authority ?? fixture.Permits);
         fixture.app = builder.Build();
         fixture.app.MapOperationsServer();
         await fixture.app.StartAsync();

@@ -1794,8 +1794,8 @@ The standalone Linux Runner owns one clean checkout per project and executor. It
 ## ADR-0075 - Operations Server brokers host execution beside Task Server authority (2026-09-25)
 
 **Status.** Accepted architecture from AGT-W49 D1, D2 and D4. Implementation is
-partial in AGT-2907. Deployment promotion remains gated on route and security
-parity. The conflicting AGT-2736 delivery instructions require reconciliation.
+staged in AGT-2907. Deployment promotion remains gated on route and security
+parity. The 2026-09-26 operator instruction resolves delivery ownership below.
 
 **Decision.** Add Operations Server as a fourth independently deployable runtime
 role beside Studio, Task Server, and the execution plane. Outbound Operations
@@ -1827,11 +1827,13 @@ Studio and BFF remain browser edges. Agent loss expires authority and retains
 uncertain evidence. Mutating work cannot be reassigned without fence advancement
 and positive no-overlap proof. Closing Studio does not own any service lifetime.
 
-**D3 delivery gate.** AGT-W49 selected expanding AGT-2736 before baseline delivery,
-overriding the dossier's Option 3 recommendation. A later instruction on the
-AGT-2736 card directs Option C delivery without expanding scope. AGT-2907
-records both and requests reconciliation before changing that live card. This
-conflict does not reopen D1, D2 or D4.
+**D3 staged delivery.** The operator resolved the card ownership on 2026-09-26:
+AGT-2736 delivers bounded Option C without scope extension. AGT-2907 owns D3's
+Operations Server expansion above that compatible transitional baseline. Its
+first accepted stage is the Task Server contract and outbound Operations Agent
+channel. Full catalogue, Connector/BFF adapter migration with review permits,
+and deployment parity are typed follow-up stages. D1, D2 and D4 remain selected;
+one-box production parity cannot be claimed from the foundation stage.
 
 **Contract and delivery evidence.** See
 [Operations backchannel contract](../../contracts/operations-backchannel.md) and
