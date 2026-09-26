@@ -4,6 +4,7 @@ namespace AgentStudio.Projects;
 
 using AgentStudio.Git;
 using AgentStudio.Pipeline;
+using AgentStudio.Runner;
 using AgentStudio.Registry;
 using AgentStudio.Security;
 using AgentStudio.ExecutionPreparation;
@@ -452,6 +453,12 @@ public static class ProjectSettingsEndpoints
 
             if (req.MaxIterations is < UiIterationGate.MinimumIterations or > UiIterationGate.MaximumIterations)
                 return Results.BadRequest(new { error = $"maxIterations must be between {UiIterationGate.MinimumIterations} and {UiIterationGate.MaximumIterations}" });
+            if (req.EnrichmentBlockIds is { Count: > 16 }
+                || req.EnrichmentBlockIds?.Any(id => string.IsNullOrWhiteSpace(id)
+                    || id.Length > 100 || !IntakeRunner.IsBuiltInConstraintId(id.Trim())) == true
+                || (req.EnrichmentBlockIds?.Count > 0
+                    && !string.Equals(req.StepId, PipelineCatalogue.PromptEnrichmentStepId, StringComparison.OrdinalIgnoreCase)))
+                return Results.BadRequest(new { error = "enrichmentBlockIds must contain known block ids and is supported only for the prompt-enrichment step (at most 16 ids)" });
 
             // Validate any run condition: the token must be known and
             // value-bearing tokens need a value. An "always" / blank condition
@@ -502,6 +509,7 @@ public static class ProjectSettingsEndpoints
             {
                 Enabled = req.Enabled,
                 EconomyModel = req.EconomyModel,
+                EnrichmentBlockIds = req.EnrichmentBlockIds,
                 MaxIterations = req.MaxIterations,
                 Mode = req.Mode,
                 CliType = req.CliType,

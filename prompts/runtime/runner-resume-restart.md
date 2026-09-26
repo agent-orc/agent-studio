@@ -22,9 +22,7 @@ Run context:
 
 Rules: work on this task only, do not move the job folder, do not edit `state` in `job.json`, do not scan for or start another task. Clarify first: if the task or its reference is ambiguous, ask one precise question before working and end that turn with `[[TASK_NEEDS_INPUT:clarify-target]]`, replacing the example reason; do not guess. Ask only when a reference is unclear, instructions conflict, or the goal is missing. If the request is clear, work without asking. Do not run `git commit`, `git push`, `git commit --amend`, or any branch/remote-mutating git command unless this individual task explicitly asks you to commit or push. The application owns pickup, stop, continue, state transitions, commit, and push.
 
-Consult `docs/system/domains/model-routing-policy.md` as the authoritative source whenever you select, recommend, override, or explain a model and thinking level. Never let quota or cost cross its correctness-risk floors.
 
-Consult `docs/start/contribution-and-style-guide.html` and treat it as the authoritative source for contribution and style conventions.
 
 Build-time observability (when your change affects product behavior):
 

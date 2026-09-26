@@ -228,6 +228,8 @@ public record IntakeEnrichmentManifest
     public int EstimatedTokens { get; init; }
     /// <summary>Bounded audit rows for relevant constraints omitted by the hard budget.</summary>
     public List<IntakeConstraintOmission> Omissions { get; init; } = [];
+    /// <summary>All matching blocks rejected because their source or catalogue was not valid for this project.</summary>
+    public List<IntakeConstraintOmission> SourceRejections { get; init; } = [];
     /// <summary>Further omissions summarized after the bounded audit-row limit.</summary>
     public int AdditionalOmissionCount { get; init; }
 
@@ -242,6 +244,7 @@ public record IntakeConstraintOmission
     public string Title { get; init; } = "";
     public string Source { get; init; } = "";
     public string Reason { get; init; } = "";
+    public string? MissingPath { get; init; }
     public int EstimatedCharacters { get; init; }
     public int EstimatedTokens { get; init; }
 }
@@ -258,6 +261,8 @@ public record IntakeConstraintSelection
     public string Revision { get; init; } = "1";
     /// <summary>Mandatory project policy or optional task-specific context.</summary>
     public string Tier { get; init; } = "optional";
+    /// <summary>How the selector accepted this source for the target project.</summary>
+    public string SourceVerification { get; init; } = "repository";
     /// <summary>Mandatory blocks do not consume the optional-block allowance.</summary>
     public bool Mandatory { get; init; }
     /// <summary>Deterministic selection priority. Lower values are selected first.</summary>

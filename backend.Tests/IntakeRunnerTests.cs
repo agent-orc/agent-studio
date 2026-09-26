@@ -652,13 +652,17 @@ public class IntakeRunnerTests : IDisposable
         Assert.True(File.Exists(artifactPath));
         var artifact = File.ReadAllText(artifactPath);
         Assert.Contains("Prompt enrichment", artifact);
-        Assert.Contains("git-handling-api-not-cli", artifact);
+        Assert.Contains("No task-specific constraints were selected", artifact);
+        Assert.Contains("source-missing", artifact);
 
         var sidecar = ReadLifecycleJson("git-card");
         Assert.NotNull(sidecar);
         Assert.NotNull(sidecar!.Enrichment);
         Assert.Equal(IntakeRunner.EnrichedContextRelativePath, sidecar.Enrichment!.ArtifactPath);
-        Assert.Contains(sidecar.Enrichment.Constraints, c => c.Id == "git-handling-api-not-cli");
+        Assert.Empty(sidecar.Enrichment.Constraints);
+        Assert.Contains(sidecar.Enrichment.Omissions, omission =>
+            omission.Id == "git-handling-api-not-cli"
+            && omission.Reason == "source-missing");
     }
 
     [Fact]

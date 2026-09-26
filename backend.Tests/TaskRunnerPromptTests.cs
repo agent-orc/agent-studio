@@ -249,7 +249,7 @@ public class TaskRunnerPromptTests
     }
 
     [Fact]
-    public void AgentFacingRuntimeTemplates_ReferenceCanonicalModelRoutingPolicy()
+    public void AgentFacingRuntimeTemplates_KeepRepositoryRoutingPolicyProjectScoped()
     {
         var prompts = Prompts();
         foreach (var template in new[]
@@ -272,6 +272,12 @@ public class TaskRunnerPromptTests
         })
         {
             var rendered = prompts.Render(template, new Dictionary<string, string?>());
+
+            if (IsRunnerTemplate(template))
+            {
+                Assert.DoesNotContain("docs/system/domains/model-routing-policy.md", rendered);
+                continue;
+            }
 
             Assert.Contains("docs/system/domains/model-routing-policy.md", rendered);
             Assert.Contains("authoritative source", rendered, StringComparison.OrdinalIgnoreCase);
@@ -333,7 +339,7 @@ public class TaskRunnerPromptTests
     }
 
     [Fact]
-    public void RunnerAndOrchestratorTemplates_PointToCanonicalContributionGuide()
+    public void RunnerAndOrchestratorTemplates_KeepContributionGuideProjectScoped()
     {
         var prompts = Prompts();
         foreach (var template in new[]
@@ -389,6 +395,12 @@ public class TaskRunnerPromptTests
                 ["worktree"] = "worktree",
                 ["conflicted_files"] = "file.cs"
             });
+
+            if (IsRunnerTemplate(template))
+            {
+                Assert.DoesNotContain("docs/start/contribution-and-style-guide.html", rendered);
+                continue;
+            }
 
             Assert.Contains("docs/start/contribution-and-style-guide.html", rendered);
             Assert.Contains("authoritative source", rendered, StringComparison.OrdinalIgnoreCase);
@@ -882,6 +894,13 @@ public class TaskRunnerPromptTests
             + Prompts().RenderModeFraming("concept", allowWebAccess: false);
         Assert.DoesNotContain("—", framing);
     }
+
+    private static bool IsRunnerTemplate(string template) => template is
+        RuntimePromptService.RunnerFreshStart or
+        RuntimePromptService.RunnerResumeInterrupted or
+        RuntimePromptService.RunnerResumeRestart or
+        RuntimePromptService.RunnerRecoveryContinuation or
+        RuntimePromptService.RunnerReissueChange;
 
     private static RuntimePromptService Prompts()
     {

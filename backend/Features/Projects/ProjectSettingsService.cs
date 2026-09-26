@@ -912,9 +912,11 @@ public class ProjectSettingsService
                 : setting!.ThinkingLevel!.Trim().ToLowerInvariant();
             var normalizedMode = string.IsNullOrWhiteSpace(setting?.Mode) ? null : setting!.Mode!.Trim().ToLowerInvariant();
             var normalizedPrompt = string.IsNullOrWhiteSpace(setting?.Prompt) ? null : setting!.Prompt!.Trim();
+            var blockIds = setting?.EnrichmentBlockIds?.Where(id => !string.IsNullOrWhiteSpace(id))
+                .Select(id => id.Trim()).Distinct(StringComparer.Ordinal).ToList();
             var normalizedCondition = NormalizeCondition(setting?.Condition);
             var isEmpty = setting is null
-                || (setting.Enabled is null && setting.EconomyModel is null && setting.MaxIterations is null && normalizedMode is null && normalizedCliType is null && normalizedModel is null && normalizedThinkingLevel is null && normalizedPrompt is null && normalizedCondition is null);
+                || (setting.Enabled is null && setting.EconomyModel is null && setting.MaxIterations is null && normalizedMode is null && normalizedCliType is null && normalizedModel is null && normalizedThinkingLevel is null && normalizedPrompt is null && normalizedCondition is null && blockIds is not { Count: > 0 });
 
             if (isEmpty)
             {
@@ -926,6 +928,7 @@ public class ProjectSettingsService
                 {
                     Enabled = setting!.Enabled,
                     EconomyModel = setting.EconomyModel,
+                    EnrichmentBlockIds = blockIds is { Count: > 0 } ? blockIds : null,
                     MaxIterations = setting.MaxIterations,
                     Mode = normalizedMode,
                     CliType = normalizedCliType,
@@ -1075,6 +1078,8 @@ public class ProjectSettingsService
             ? null
             : setting!.Mode!.Trim().ToLowerInvariant();
         var normalizedPrompt = string.IsNullOrWhiteSpace(setting?.Prompt) ? null : setting!.Prompt!.Trim();
+        var blockIds = setting?.EnrichmentBlockIds?.Where(id => !string.IsNullOrWhiteSpace(id))
+            .Select(id => id.Trim()).Distinct(StringComparer.Ordinal).ToList();
         var normalizedCondition = NormalizeCondition(setting?.Condition);
         var isEmpty = setting is null
             || (setting.Enabled is null
@@ -1085,12 +1090,14 @@ public class ProjectSettingsService
                 && normalizedModel is null
                 && normalizedThinkingLevel is null
                 && normalizedPrompt is null
-                && normalizedCondition is null);
+                && normalizedCondition is null
+                && blockIds is not { Count: > 0 });
         if (isEmpty) return null;
         return new PipelineStepSetting
         {
             Enabled = setting!.Enabled,
             EconomyModel = setting.EconomyModel,
+            EnrichmentBlockIds = blockIds is { Count: > 0 } ? blockIds : null,
             MaxIterations = setting.MaxIterations,
             Mode = normalizedMode,
             CliType = normalizedCliType,
