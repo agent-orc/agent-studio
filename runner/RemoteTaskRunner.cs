@@ -258,12 +258,14 @@ public sealed class RemoteTaskRunner
     /// </summary>
     private async Task<ArtifactTransferPlan> PrepareResultsSafeAsync(
         string taskKey,
+        string attemptId,
         ArtifactTransferLimitsResponse limits,
         DurableRunOutbox? outbox)
     {
         try
         {
-            return await PrepareResultsAsync(taskKey, limits, outbox, CancellationToken.None);
+            return await PrepareResultsAsync(
+                taskKey, attemptId, limits, outbox, CancellationToken.None);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -523,7 +525,9 @@ public sealed class RemoteTaskRunner
                 outcome,
                 lease.AttemptId ?? lease.LeaseId,
                 workspace.WorkBranch);
-            artifactPlan = await PrepareResultsSafeAsync(taskKey, artifactLimits, outbox);
+            artifactPlan = await PrepareResultsSafeAsync(
+                taskKey, outbox?.Authority.RunId ?? lease.AttemptId ?? lease.LeaseId,
+                artifactLimits, outbox);
             artifactManifest = artifactPlan.Manifest;
 
             if (heartbeat.LeaseLost)
@@ -711,7 +715,7 @@ public sealed class RemoteTaskRunner
                 + (finalizationRetries > 0
                     ? $"; finalizationRetries={finalizationRetries}"
                     : string.Empty));
-            await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper);
+            await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper, outbox);
             return outcome.Kind is RunOutcomeKind.Done or RunOutcomeKind.NoOp ? 0 : 1;
         }
         catch (DetachedWorkerLostException ex)
@@ -848,7 +852,9 @@ public sealed class RemoteTaskRunner
                 ? WorktreeTeardownResult.NoWork
                 : await SecureStoppedWorktreeAsync(slot, workspace);
             outcomeDecision = WithDurableOutput(outcomeDecision, stopTeardown);
-            artifactPlan = await PrepareResultsSafeAsync(taskKey, artifactLimits, outbox);
+            artifactPlan = await PrepareResultsSafeAsync(
+                taskKey, outbox?.Authority.RunId ?? lease.AttemptId ?? lease.LeaseId,
+                artifactLimits, outbox);
             artifactManifest = artifactPlan?.Manifest;
             await CompleteAsync(
                 taskKey,
@@ -864,7 +870,7 @@ public sealed class RemoteTaskRunner
                 sourceMutated,
                 CancellationToken.None);
             handedBack = true;
-            await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper);
+            await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper, outbox);
             _log($"task '{taskKey}' handed back after an operator stop: {outcome.Kind}");
             return 0;
         }
@@ -1692,6 +1698,7 @@ public sealed class RemoteTaskRunner
 
     private async Task<ArtifactTransferPlan> PrepareResultsAsync(
         string taskKey,
+        string attemptId,
         ArtifactTransferLimitsResponse limits,
         DurableRunOutbox? outbox,
         CancellationToken ct)
@@ -1706,6 +1713,11 @@ public sealed class RemoteTaskRunner
             (selected, skipped) = ArtifactTransferPolicy.Select(resultsDir, observed, limits);
         }
 
+        var evidenceDir = AttemptEvidenceDir(_options.WorkDir, taskKey, attemptId);
+        CopyResultEvidence(resultsDir, evidenceDir);
+        observed = ObserveResultFiles(evidenceDir);
+        (selected, skipped) = ArtifactTransferPolicy.Select(evidenceDir, observed, limits);
+
         var manifest = new List<ArtifactManifestEntry>();
         var prepared = new List<ArtifactTransferCandidate>();
         foreach (var file in selected)
@@ -1715,6 +1727,7 @@ public sealed class RemoteTaskRunner
             manifest.Add(new ArtifactManifestEntry(file.RelativePath, sha, bytes.LongLength));
             prepared.Add(file with { SizeBytes = bytes.LongLength, Sha256 = sha });
         }
+        manifest.AddRange(await BuildWithheldManifestEntriesAsync(evidenceDir, skipped, ct));
         var artifactManifest = BuildArtifactManifest(manifest);
         if (outbox is not null)
         {
@@ -1729,7 +1742,8 @@ public sealed class RemoteTaskRunner
         string taskKey,
         RunLeaseInfoDto lease,
         ArtifactTransferPlan? plan,
-        LogShipper shipper)
+        LogShipper shipper,
+        DurableRunOutbox? outbox)
     {
         if (plan is null) return;
         var issues = plan.Skipped.ToList();
@@ -1755,7 +1769,7 @@ public sealed class RemoteTaskRunner
                     continue;
                 }
                 var upload = new RunnerArtifactUpload(file.RelativePath, Convert.ToBase64String(bytes));
-                var response = await _client.UploadArtifactsAsync(new ArtifactIngestRequest(
+                var response = await UploadArtifactWithRetryAsync(new ArtifactIngestRequest(
                     taskKey,
                     [upload],
                     RunnerId: lease.RunnerId,
@@ -1764,15 +1778,14 @@ public sealed class RemoteTaskRunner
                     AttemptId: lease.AttemptId,
                     Fence: lease.FencingToken,
                     AuthorityEpoch: lease.AuthorityEpoch,
-                    IdempotencyKey: $"artifact:{lease.AttemptId}:{file.RelativePath}:{WireDigest.Hash(upload.ContentBase64)}"),
-                    CancellationToken.None);
+                    IdempotencyKey: $"artifact:{lease.AttemptId}:{file.RelativePath}:{WireDigest.Hash(upload.ContentBase64)}"));
                 ValidateArtifactAcknowledgement(taskKey, [upload], response);
                 uploaded++;
             }
             catch (TaskServerException ex) when (ArtifactTransferPolicy.IsCapacityRejection(ex))
             {
                 var reason = ex.StatusCode == 413
-                    ? $"exceeded the {ArtifactTransferPolicy.FormatMb(plan.Limits.MaxRequestBodyBytes)} MB upload limit"
+                    ? OneLine(ex.Message)
                     : "was refused because artifact storage is full (HTTP 507)";
                 var issue = new ArtifactTransferIssue(
                     file.RelativePath,
@@ -1816,6 +1829,7 @@ public sealed class RemoteTaskRunner
             _log($"artifact result-document finalization was non-fatal task={taskKey}: {OneLine(ex.Message)}");
         }
 
+        var reportFailed = false;
         if (issues.Count > 0)
         {
             try
@@ -1832,11 +1846,38 @@ public sealed class RemoteTaskRunner
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
+                reportFailed = true;
                 _log($"artifact partial-outcome report was non-fatal task={taskKey}: {OneLine(ex.Message)}");
             }
         }
+        if (reportFailed || issues.Any(issue => issue.Outcome == ArtifactTransferOutcomes.TransferFailed))
+        {
+            outbox?.RecordHandoffState("artifact-replay");
+            _log($"artifact replay retained task={taskKey} attempt={lease.AttemptId}");
+        }
         _log($"artifact-transfer task={taskKey} artifacts={(issues.Count == 0 ? "complete" : "partial")} uploaded={uploaded} notTransferred={issues.Count}");
     }
+
+    private async Task<ArtifactIngestResponse?> UploadArtifactWithRetryAsync(
+        ArtifactIngestRequest request)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await _client.UploadArtifactsAsync(request, CancellationToken.None);
+            }
+            catch (Exception ex) when (attempt < 3 && IsRetryableArtifactFault(ex))
+            {
+                _log($"artifact upload retry task={request.TaskKey} attempt={attempt + 1}/3 reason={OneLine(ex.Message)}");
+                await Task.Delay(TimeSpan.FromMilliseconds(200 * attempt));
+            }
+        }
+    }
+
+    private static bool IsRetryableArtifactFault(Exception exception)
+        => exception is HttpRequestException or TimeoutException
+           || exception is TaskServerException { StatusCode: 408 or 429 or >= 500 };
 
     internal static List<(string FullPath, string RelativePath, long SizeBytes)> ObserveResultFiles(
         string resultsDirectory)
@@ -1849,6 +1890,32 @@ public sealed class RemoteTaskRunner
                     return (path, Path.GetRelativePath(resultsDirectory, path).Replace('\\', '/'), info.Length);
                 })
                 .ToList();
+
+    internal static string AttemptEvidenceDir(string workDir, string taskKey, string attemptId)
+        => Path.Combine(workDir, "evidence", GitWorkspace.SafeSegment(taskKey),
+            GitWorkspace.SafeSegment(attemptId), "results");
+
+    internal static void CopyResultEvidence(string resultsDirectory, string evidenceDirectory)
+    {
+        if (Directory.Exists(evidenceDirectory)) return;
+        var staging = evidenceDirectory + ".tmp-" + Guid.NewGuid().ToString("N");
+        Directory.CreateDirectory(staging);
+        try
+        {
+            foreach (var file in ObserveResultFiles(resultsDirectory))
+            {
+                var target = Path.Combine(staging,
+                    file.RelativePath.Replace('/', Path.DirectorySeparatorChar));
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                File.Copy(file.FullPath, target);
+            }
+            Directory.Move(staging, evidenceDirectory);
+        }
+        finally
+        {
+            if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
+        }
+    }
 
     internal static void UpdateDeliverablesArtifactPolicy(
         string resultsDirectory,
@@ -1870,7 +1937,20 @@ public sealed class RemoteTaskRunner
             .AppendLine($"- Total budget: {ArtifactTransferPolicy.FormatMb(limits.MaxTotalBytes)} MB")
             .AppendLine("- Not transferred:");
         foreach (var issue in issues)
-            section.AppendLine($"  - `{issue.Path}` ({ArtifactTransferPolicy.FormatMb(issue.SizeBytes)} MB): {issue.Reason}.");
+        {
+            var relative = issue.Path.StartsWith("results/", StringComparison.Ordinal)
+                ? issue.Path["results/".Length..]
+                : issue.Path;
+            var evidencePath = Path.Combine(resultsDirectory,
+                relative.Replace('/', Path.DirectorySeparatorChar));
+            var sha = "unavailable";
+            if (File.Exists(evidencePath))
+            {
+                using var stream = File.OpenRead(evidencePath);
+                sha = Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+            }
+            section.AppendLine($"  - `{issue.Path}` ({issue.SizeBytes} bytes, sha256 `{sha}`): {issue.Reason}.");
+        }
         section.AppendLine().AppendLine(end);
         var pattern = Regex.Escape(start) + ".*?" + Regex.Escape(end);
         var updated = Regex.IsMatch(existing, pattern, RegexOptions.Singleline)
@@ -1996,6 +2076,27 @@ public sealed class RemoteTaskRunner
         var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(json)))
             .ToLowerInvariant();
         return new DurableArtifactManifest(digest, json);
+    }
+
+    internal static async Task<List<ArtifactManifestEntry>> BuildWithheldManifestEntriesAsync(
+        string resultsDirectory,
+        IReadOnlyList<ArtifactTransferIssue> skipped,
+        CancellationToken ct)
+    {
+        var entries = new List<ArtifactManifestEntry>(skipped.Count);
+        foreach (var issue in skipped)
+        {
+            var relative = issue.Path.StartsWith("results/", StringComparison.Ordinal)
+                ? issue.Path["results/".Length..]
+                : issue.Path;
+            var fullPath = Path.Combine(resultsDirectory,
+                relative.Replace('/', Path.DirectorySeparatorChar));
+            await using var stream = File.OpenRead(fullPath);
+            var sha = Convert.ToHexString(await SHA256.HashDataAsync(stream, ct)).ToLowerInvariant();
+            entries.Add(new ArtifactManifestEntry(
+                issue.Path, sha, stream.Length, "withheld", issue.Reason));
+        }
+        return entries;
     }
 
     private async Task CompleteAsync(
