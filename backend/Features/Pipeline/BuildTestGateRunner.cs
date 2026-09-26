@@ -326,6 +326,17 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
             _preparationCacheRoot = preparationCacheRoot;
     }
 
+    internal BuildTestGateRunner(
+        ILogger<BuildTestGateRunner> logger,
+        BuildTestMachineGateMode machineGateMode,
+        string preparationCacheRoot,
+        IHttpClientFactory failureHistoryClients)
+        : this(logger, failureHistoryClients: failureHistoryClients)
+    {
+        _machineGateMode = machineGateMode;
+        _preparationCacheRoot = preparationCacheRoot;
+    }
+
     public async Task<BuildTestGateResult> RunAsync(
         BuildTestGateRequest request,
         IReadOnlyList<string>? changedFiles,
