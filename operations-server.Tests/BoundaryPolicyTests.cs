@@ -62,6 +62,57 @@ public sealed class BoundaryPolicyTests
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
 
+    [Theory]
+    [InlineData("agent", "missing")]
+    [InlineData("client", "missing")]
+    [InlineData("both", "missing")]
+    [InlineData("agent", "empty")]
+    [InlineData("client", "empty")]
+    [InlineData("agent", "mismatch")]
+    [InlineData("client", "mismatch")]
+    public void Bootstrap_rejects_partial_secret_recovery_without_mutation_and_accepts_restored_tokens(string target, string damage)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "operations-tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var principals = Path.Combine(root, "principals");
+            var agent = Path.Combine(root, "agent");
+            var client = Path.Combine(root, "client");
+            OperationsBootstrap.Run(principals, agent, client);
+            var original = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+                .ToDictionary(path => path, File.ReadAllText);
+            foreach (var name in target == "both" ? new[] { "agent", "client" } : new[] { target })
+            {
+                var directory = Path.Combine(root, name);
+                if (damage == "missing") Directory.Delete(directory, true);
+                else File.WriteAllText(Path.Combine(directory, "token"), damage == "empty" ? " \n" : "replacement-secret");
+            }
+            var damaged = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+                .ToDictionary(path => path, File.ReadAllText);
+
+            for (var retry = 0; retry < 2; retry++)
+            {
+                var error = Assert.Throws<InvalidDataException>(() => OperationsBootstrap.Run(principals, agent, client));
+                Assert.Contains("Restore", error.Message);
+                Assert.DoesNotContain("replacement-secret", error.Message);
+                Assert.Equal(damaged.Keys.Order(), Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories).Order());
+                foreach (var file in damaged) Assert.Equal(file.Value, File.ReadAllText(file.Key));
+            }
+
+            foreach (var file in original)
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(file.Key)!);
+                File.WriteAllText(file.Key, file.Value);
+            }
+            OperationsBootstrap.Run(principals, agent, client);
+            var access = new OperationsAccess(Path.Combine(principals, "principals.json"));
+            Assert.Equal("container-agent", access.Authenticate(File.ReadAllText(Path.Combine(agent, "token")))!.Id);
+            Assert.Equal("diagnostics-client", access.Authenticate(File.ReadAllText(Path.Combine(client, "token")))!.Id);
+            foreach (var file in original) Assert.Equal(file.Value, File.ReadAllText(file.Key));
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
     [Fact]
     public async Task Permit_client_binds_correlation_uses_task_protocol_and_fails_closed_when_unconfigured()
     {

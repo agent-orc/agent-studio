@@ -1,6 +1,6 @@
 # Distributed Agent Studio target architecture
 
-Status: canonical target picture, amended by ADR-0075 on 2026-09-25. This page defines the intended
+Status: canonical target picture, amended by ADR-0076 on 2026-09-25. This page defines the intended
 separation of Agent Studio, Task Server, Agent Runner, and Operations Server. It is a product
 and architecture target, not a claim that every boundary already ships.
 
@@ -30,7 +30,7 @@ deployable runtime components:
    and all orchestration sessions. Studio edges hold independent upstream credentials.
 
 Shared contracts and orchestration libraries remain modules, not runtime roles.
-[ADR-0075](../system/architecture/decisions/adr-archive.md#adr-0075---operations-server-brokers-host-execution-beside-task-server-authority-2026-09-25)
+[ADR-0076](../system/architecture/decisions/adr-archive.md#adr-0076---operations-server-brokers-host-execution-beside-task-server-authority-2026-09-25)
 amends the original three-component decision. The selected standard is one-box
 Docker after full route and security parity. The initial service and read-only
 agent do not yet establish that parity. See the

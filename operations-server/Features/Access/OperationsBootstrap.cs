@@ -8,15 +8,24 @@ public static class OperationsBootstrap
 {
     public static void Run(string principalsDirectory, string agentDirectory, string clientDirectory)
     {
+        var path = Path.Combine(principalsDirectory, "principals.json");
+        var agentPath = Path.Combine(agentDirectory, "token");
+        var clientPath = Path.Combine(clientDirectory, "token");
+        if (File.Exists(path))
+        {
+            var access = new OperationsAccess(path);
+            ValidateCredential(access, agentPath, "container-agent", "agent");
+            ValidateCredential(access, clientPath, "diagnostics-client", "service");
+            return;
+        }
+
         foreach (var directory in new[] { principalsDirectory, agentDirectory, clientDirectory })
         {
             Directory.CreateDirectory(directory);
             if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         }
-        var agent = Credential(Path.Combine(agentDirectory, "token"));
-        var client = Credential(Path.Combine(clientDirectory, "token"));
-        var path = Path.Combine(principalsDirectory, "principals.json");
-        if (File.Exists(path)) return;
+        var agent = Credential(agentPath);
+        var client = Credential(clientPath);
         var principals = new OperationsAccessDocument([
             new("diagnostics-client", OperationsProtocol.Audience, OperationsProtocol.Digest(client), "service",
                 ["host.inspect", "maintenance.execute", "operations.read"], ["container-agent"], []),
@@ -24,6 +33,14 @@ public static class OperationsBootstrap
                 ["agents.connect", "host.inspect"], ["container-agent"], []),
         ]);
         WriteNew(path, JsonSerializer.Serialize(principals, OperationsProtocol.Json));
+    }
+
+    private static void ValidateCredential(OperationsAccess access, string path, string principalId, string kind)
+    {
+        var token = File.Exists(path) ? File.ReadAllText(path).Trim() : null;
+        var principal = string.IsNullOrEmpty(token) ? null : access.Authenticate(token);
+        if (principal?.Id != principalId || principal.Kind != kind)
+            throw new InvalidDataException($"Operations credential for '{principalId}' is missing or does not match the persisted principal store. Restore the matching secret volume from backup before restarting bootstrap. No credentials were changed.");
     }
 
     private static string Credential(string path)

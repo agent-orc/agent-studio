@@ -179,7 +179,13 @@ docker compose -f deploy/compose/operations/compose.yaml down
 This source-built rehearsal has an internal network and no published ports,
 Docker socket or host checkout mount. Bootstrap generates separate service and
 agent credentials on first start with restricted file permissions and reuses
-them later. Each consumer mounts only its own secret volume. The server mounts
+them later. When `principals.json` already exists, bootstrap first verifies that
+both token files are nonempty and authenticate as their expected principals.
+Missing, empty, mismatched or revoked credentials stop bootstrap with an error
+before any credential is generated or replaced. Restore the matching secret
+volumes from backup; deleting a secret volume is not credential rotation. The
+persisted principal store is never silently rewritten to accept a new token.
+Each consumer mounts only its own secret volume. The server mounts
 principal hashes, not raw client tokens. State and spool volumes survive `down`.
 The image SDK must satisfy the repository's `global.json`.
 
