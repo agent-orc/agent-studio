@@ -47,7 +47,7 @@ test.describe('Crash recovery prompt', () => {
         const detail = await (await page.request.get(`${devBackend.baseUrl}/api/tasks/${ids.at(-1)}?watchPath=${encodeURIComponent(watchPath)}`)).json();
         keys.push(detail.info.key);
       }
-      await page.goto('/');
+      await page.goto('/', { waitUntil: 'domcontentloaded' });
       await expect(page.getByTestId('studio-board')).toBeVisible({ timeout: 30_000 });
       const firstCard = page.getByTestId('task-card').filter({ hasText: titles[0] });
       await expect(firstCard).toBeVisible({ timeout: 30_000 });
@@ -142,22 +142,22 @@ test.describe('Crash recovery prompt', () => {
           }, null, 2));
         }
         expect(coreP95Ms).toBeLessThanOrEqual(100);
-        await page.goto(`/#/tasks/${keys[0]}`);
+        await page.goto(`/#/tasks/${keys[0]}`, { waitUntil: 'domcontentloaded' });
         await expect(page.getByTestId('overview-title')).toContainText(titles[0]);
       }
       await page.goBack();
       await page.goForward();
       const deepLinkPage = await page.context().newPage();
       try {
-        await deepLinkPage.goto(`/#/tasks/${keys[1]}`);
+        await deepLinkPage.goto(`/#/tasks/${keys[1]}`, { waitUntil: 'domcontentloaded' });
         await expect(deepLinkPage).toHaveURL(new RegExp(`/tasks/${keys[1]}`));
         await expect(deepLinkPage.getByTestId('crash-recovery-entry')).toBeVisible();
         await expect(deepLinkPage.getByTestId('crash-recovery-prompt')).toBeHidden();
       } finally {
         await deepLinkPage.close();
       }
-      await page.goto('/');
-      await page.reload();
+      await page.goto('/', { waitUntil: 'domcontentloaded' });
+      await page.reload({ waitUntil: 'domcontentloaded' });
       await expect(page.getByTestId('crash-recovery-entry')).toBeVisible();
       await expect(page.getByTestId('crash-recovery-prompt')).toBeHidden();
       await page.getByTestId('crash-recovery-entry').click();
@@ -171,7 +171,7 @@ test.describe('Crash recovery prompt', () => {
       }
       await page.getByTestId('crash-recovery-defer').click();
       await expect(page.getByTestId('crash-recovery-prompt')).toBeHidden();
-      await page.reload();
+      await page.reload({ waitUntil: 'domcontentloaded' });
       await expect(page.getByTestId('crash-recovery-entry')).toBeVisible();
       await expect(page.getByTestId('crash-recovery-prompt')).toBeHidden();
       const unchanged = await (await page.request.get(`${devBackend.baseUrl}/api/crash-recovery/pending`)).json();
