@@ -691,22 +691,41 @@ public sealed class GitStateIndexServiceTests : IDisposable
         var repoPath = Path.Combine(Path.GetDirectoryName(jobsPath)!, "repo");
         var scanner = BuildScanner("proj", jobsPath, repoPath);
         var cache = new TaskListGitProjectionCache();
-        var builder = new FakeBuilder();
+        var task = new TaskInfo { TaskKey = "job", WatchPath = jobsPath };
+        var signal = new TaskMergeSignal { Branch = "task/retained" };
+        var projection = TaskListGitProjection.Empty with
+        {
+            Merge = new Dictionary<string, TaskMergeSignal> { [task.TaskKey] = signal },
+            Signatures = new Dictionary<string, string> { [task.TaskKey] = TaskGitSignature.For(task) },
+        };
+        var builds = 0;
         using var service = new GitStateIndexService(scanner, BuildWatcher(scanner), cache,
-            builder.BuildAsync, _ => { }, NullLogger.Instance,
+            _ => { Interlocked.Increment(ref builds); return Task.FromResult(projection); },
+            _ => { }, NullLogger.Instance,
             FastOptions() with { MaxRetries = 0 }, TimeProvider.System);
         await service.StartAsync(CancellationToken.None);
         try
         {
             await WaitUntilAsync(() => !service.IsRunning("proj")
                 && service.GetRepositoryStatuses().FirstOrDefault()?.GitStateAt is not null);
-            var previous = service.GetRepositoryStatuses().Single().GitStateAt;
-            Directory.Delete(repoPath, recursive: true);
+            var previous = cache.ReadTask(task);
+            Assert.Equal("ready", previous.State);
+            // Recursive deletion exposes intermediate ref states which may
+            // legitimately publish before the repository disappears. Remove
+            // the checkout atomically to isolate failure retention; Dispose
+            // cleans the moved directory after the service stops.
+            Directory.Move(repoPath, repoPath + "-removed");
             service.RequestRefresh("proj", "repo-deleted");
-            var task = new TaskInfo { TaskKey = "job", WatchPath = jobsPath };
             await WaitUntilAsync(() => cache.ReadTask(task).ReasonCode == "repository-unavailable");
-            Assert.Equal(previous, service.GetRepositoryStatuses().Single().GitStateAt);
-            Assert.Equal("stale", cache.ReadTask(task).State);
+            using var telemetry = GitProcessTelemetry.BeginRequest("tasks/detail/git", NullLogger.Instance,
+                includeNested: true);
+            var failed = cache.ReadTask(task);
+            Assert.Equal(previous.ComputedAt, failed.ComputedAt);
+            Assert.Equal(previous.ComputedAt, service.GetRepositoryStatuses().Single().GitStateAt);
+            Assert.Equal("stale", failed.State);
+            Assert.Equal(signal, failed.Data?.Merge);
+            Assert.Equal(1, Volatile.Read(ref builds));
+            Assert.Equal(0, GitProcessTelemetry.CurrentTally()!.Value.Spawns);
         }
         finally { await service.StopAsync(CancellationToken.None); }
     }
