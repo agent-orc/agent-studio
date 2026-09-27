@@ -1,14 +1,4 @@
 services:
-  agent-host-coding:
-    env_file:
-      - path: ./runner.env
-        required: false
-
-  agent-host-review:
-    env_file:
-      - path: ./runner.env
-        required: false
-
   task-server:
     image: "${SCENARIO_TASK_SERVER_IMAGE:?set SCENARIO_TASK_SERVER_IMAGE}"
     build:
