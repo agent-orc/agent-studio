@@ -1009,6 +1009,16 @@ public sealed class AttemptAuthorityService
         }
     }
 
+    public bool HasScheduledReviewInfrastructureRetry(string attemptId)
+    {
+        lock (_gate)
+        {
+            var review = FindReview(attemptId);
+            return review is not null && IsCurrentReview(review)
+                   && review.PendingInfrastructureRetryAt is not null;
+        }
+    }
+
     /// <summary>
     /// Number of linked infrastructure retries already spent in the chain
     /// ending at <paramref name="review"/> (the review itself is not counted -
