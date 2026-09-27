@@ -295,7 +295,8 @@ public sealed record RunnerClaimResponse(
     IReadOnlyList<string>? ReprobeCapabilities = null,
     AgentStudio.TaskServer.Contracts.SessionContinuationLedgerEntry? PreviousSession = null,
     AgentStudio.TaskServer.Contracts.MechanicalRoundDelta? MechanicalDelta = null,
-    string? FreshRunReason = null);
+    string? FreshRunReason = null,
+    string? ContinuationCommandId = null);
 
 public static class RemoteChatWorkKinds
 {

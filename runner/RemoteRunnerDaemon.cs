@@ -816,7 +816,8 @@ public sealed class RemoteRunnerDaemon
                             claim.ContinuationBaseSha,
                             claim.PreviousSession,
                             claim.MechanicalDelta,
-                            claim.FreshRunReason)));
+                            claim.FreshRunReason,
+                            claim.ContinuationCommandId)));
                     idleWatchdog.RecordActiveSlots(active.Count);
                 }
 

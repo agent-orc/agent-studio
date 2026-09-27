@@ -103,42 +103,16 @@ public sealed partial class TaskServerStore
     public async Task<TaskLifecycleResponse> ContinueTaskAsync(
         string projectId, string taskIdentity, ContinueTaskRequest request, string actorId, CancellationToken ct)
     {
-        RequireWritable();
-        if (string.IsNullOrWhiteSpace(request.Prompt))
-            throw new ArgumentException("A continuation prompt is required.");
-        TaskLifecycleResponse? result = null;
-        await InWriteTransactionAsync(async (connection, transaction) =>
-        {
-            var existing = await ReadTaskAsync(connection, transaction, projectId, taskIdentity, ct)
-                ?? throw new KeyNotFoundException("Task was not found.");
-            if (existing.State == StudioTaskLanes.Archive)
-                throw new TaskServerConflictException("task-archived", "An archived task cannot be continued.");
-            if (existing.State == StudioTaskLanes.Progress)
-                throw new TaskServerConflictException(
-                    "task-active", "Stop the active run before continuing this task.");
-            var now = UtcNow;
-            var rank = await NextRankAsync(connection, transaction, existing.ProjectId, StudioTaskLanes.Ready, ct);
-            await ExecuteAsync(connection, """
-                UPDATE tasks SET state = $state, rank = $rank, version = version + 1, updated_at = $updated
-                 WHERE id = $id;
-                """, ct, transaction,
-                ("$state", StudioTaskLanes.Ready), ("$rank", rank), ("$updated", Iso(now)), ("$id", existing.TaskId));
-            await AuditAsync(connection, transaction, actorId, "task.continue-requested", "task", existing.TaskId,
-                JsonSerializer.Serialize(new { request.Model, request.CliType, request.ThinkingLevel, request.Mode }), ct);
-            result = new TaskLifecycleResponse(
-                existing with { State = StudioTaskLanes.Ready, Version = existing.Version + 1, UpdatedAt = now });
-        }, ct);
-        // The continuation instruction itself is persisted on the task's durable
-        // orchestrator context turn timeline, so the runner that next claims this
-        // task can read the latest instruction the same way it reads chat turns.
-        await AppendOrchestratorContextTurnAsync(
-            result!.Task.ProjectId,
-            result.Task.TaskId,
-            new AppendOrchestratorContextTurnRequest(
-                new OrchestratorContextTurnDto($"continue_{Guid.NewGuid():N}", UtcNow, "user", request.Prompt)),
-            actorId,
-            ct);
-        return result;
+        var task = await GetTaskAsync(projectId, taskIdentity, ct)
+            ?? throw new KeyNotFoundException("Task was not found.");
+        var receipt = await SubmitContinuationIntentAsync(projectId, taskIdentity,
+            new ContinuationIntentRequest(1, request.CommandId ?? $"studio:{Guid.NewGuid():N}",
+                request.ExpectedTaskVersion ?? task.Version, request.Prompt, request.Model,
+                request.CliType, request.ThinkingLevel, request.Mode ?? "continue",
+                request.Reason ?? "operator-continue"), actorId, ct);
+        var current = await GetTaskAsync(projectId, taskIdentity, ct)
+            ?? throw new KeyNotFoundException("Task was not found.");
+        return new TaskLifecycleResponse(current, ContinuationReceipt: receipt);
     }
 
     public async Task<TaskLifecycleResponse> StopTaskAsync(

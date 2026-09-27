@@ -52,7 +52,8 @@ public sealed record PersistedRunnerSlot(
     string? InputSessionId = null,
     string? ResumeDecision = null,
     string? ResumeRejectionReason = null,
-    string? FreshRunReason = null);
+    string? FreshRunReason = null,
+    string? ContinuationCommandId = null);
 
 /// <summary>Atomic JSON persistence under RUNNER_STATE_DIR.</summary>
 public sealed class RunnerStateStore

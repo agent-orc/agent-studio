@@ -31,8 +31,9 @@ public sealed partial class TaskServerStore
     // binds its claim to the fenced run for replay and restart safety.
     // The migration block is idempotent; the number guards downgrades from
     // binaries that do not know this state.
-    // 21 adds versioned engine steering receipts.
-    public const int CurrentSchemaVersion = 21;
+    // 21 adds versioned engine steering receipts. 22 adds ordered continuation
+    // rounds with immutable acceptance and fenced consumption receipts.
+    public const int CurrentSchemaVersion = 22;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -1382,6 +1383,7 @@ public sealed partial class TaskServerStore
 
             var providerContinuation = await ReadProviderFallbackForClaimAsync(
                 connection, transaction, task, ct);
+            var continuationIntent = await ReadNextContinuationAsync(connection, transaction, task.TaskId, ct);
             var mechanicalDelta = await ReadUnclaimedMechanicalDeltaAsync(connection, transaction, task.TaskId, ct);
             SessionContinuationLedgerEntry? previousSession = null;
             var priorSessionJson = Convert.ToString(await ScalarAsync(connection, """
@@ -1427,6 +1429,15 @@ public sealed partial class TaskServerStore
                 ("$canaryCapabilities", JsonSerializer.Serialize(capabilityAdmission.Canaries)));
             if (mechanicalDelta is not null)
                 await ClaimMechanicalDeltaAsync(connection, transaction, task.TaskId, runId, ct);
+            if (continuationIntent is not null)
+            {
+                await ExecuteAsync(connection, """
+                    UPDATE continuation_intents SET status = 'claimed', run_id = $run, fence = $fence
+                     WHERE command_id = $command AND status = 'queued';
+                    """, ct, transaction, ("$run", runId), ("$fence", fence),
+                    ("$command", continuationIntent.Receipt.CommandId));
+                continuationIntent = continuationIntent with { Status = "claimed", RunId = runId, Fence = fence };
+            }
             await ReserveCanariesAsync(
                 connection,
                 transaction,
@@ -1450,7 +1461,13 @@ public sealed partial class TaskServerStore
             response = new ClaimResponse(
                 "claimed",
                 run,
-                task with { State = "3-progress", Version = task.Version + 1, UpdatedAt = now },
+                task with {
+                    State = "3-progress", Version = task.Version + 1, UpdatedAt = now,
+                    Body = continuationIntent is null ? task.Body
+                        : string.Concat(task.Body, "\n\nContinuation round ",
+                            continuationIntent.Receipt.Round, " (", continuationIntent.Mode,
+                            "):\n", continuationIntent.Prompt)
+                },
                 lease,
                 ReconciliationActions: reconciliationActions,
                 RequiredCapabilities: capabilityAdmission.Required,
@@ -1461,7 +1478,8 @@ public sealed partial class TaskServerStore
                 ContinuationBaseSha: mechanicalBase.Sha ?? providerContinuation?.BaseSha,
                 PreviousSession: previousSession,
                 MechanicalDelta: mechanicalDelta,
-                MechanicalFreshRoute: mechanicalFreshRoute);
+                MechanicalFreshRoute: mechanicalFreshRoute,
+                ContinuationIntent: continuationIntent);
         }, ct);
         return response!;
     }
@@ -1529,6 +1547,11 @@ public sealed partial class TaskServerStore
                  WHERE run_id = $run AND status = 'accepted';
                 """, ct, transaction, ("$run", runId), ("$outcome", request.Outcome),
                 ("$now", Iso(UtcNow)), ("$task", lease.TaskId));
+            await ExecuteAsync(connection, """
+                UPDATE continuation_intents
+                   SET status = 'queued', run_id = NULL, fence = NULL
+                 WHERE run_id = $run AND status = 'claimed';
+                """, ct, transaction, ("$run", runId));
             released = lease with { Status = "released" };
             // AGT-2870: a release that follows a lost worker names the salvage
             // ref its work was published under. Recording it on the audit row
@@ -1872,6 +1895,19 @@ public sealed partial class TaskServerStore
             {
                 effectiveSummary = providerRecovery.EscalationReason;
             }
+            // A claim with no spawn acknowledgement has not consumed its round.
+            // It remains first in order for the next admitted run.
+            await ExecuteAsync(connection, """
+                UPDATE continuation_intents
+                   SET status = 'queued', run_id = NULL, fence = NULL
+                 WHERE run_id = $run AND status = 'claimed';
+                """, ct, transaction, ("$run", runId));
+            var waitingRound = Convert.ToInt64(await ScalarAsync(connection, """
+                SELECT count(*) FROM continuation_intents
+                 WHERE task_id = $task AND status = 'queued';
+                """, ct, transaction, ("$task", lease.TaskId)) ?? 0L);
+            if (waitingRound > 0)
+                nextState = StudioTaskLanes.Ready;
             await ExecuteAsync(connection, """
                 UPDATE leases SET status = 'completed' WHERE run_id = $run;
                 UPDATE runs
@@ -3316,6 +3352,32 @@ public sealed partial class TaskServerStore
                 accepted_at TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS ix_steering_actions_task ON steering_actions(task_id, accepted_at);
+            CREATE TABLE IF NOT EXISTS continuation_intents(
+                command_id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL REFERENCES projects(id),
+                task_id TEXT NOT NULL REFERENCES tasks(id),
+                round INTEGER NOT NULL,
+                expected_task_version INTEGER NOT NULL,
+                result_task_version INTEGER NOT NULL,
+                payload_json TEXT NOT NULL,
+                prompt TEXT NOT NULL,
+                model TEXT,
+                cli_type TEXT,
+                thinking_level TEXT,
+                mode TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                actor TEXT NOT NULL,
+                accepted_at TEXT NOT NULL,
+                policy_version TEXT NOT NULL,
+                explicit_selection INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'queued',
+                run_id TEXT REFERENCES runs(id),
+                fence INTEGER,
+                consumed_at TEXT,
+                UNIQUE(task_id, round)
+            );
+            CREATE INDEX IF NOT EXISTS ix_continuation_intents_task
+                ON continuation_intents(task_id, round);
             CREATE TABLE IF NOT EXISTS leases(
                 task_id TEXT NOT NULL REFERENCES tasks(id),
                 lease_id TEXT PRIMARY KEY,

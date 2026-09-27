@@ -116,7 +116,8 @@ public sealed record ClaimResponse(
     IReadOnlyList<string>? ReprobeCapabilities = null,
     SessionContinuationLedgerEntry? PreviousSession = null,
     MechanicalRoundDelta? MechanicalDelta = null,
-    MechanicalFreshRunRoute? MechanicalFreshRoute = null);
+    MechanicalFreshRunRoute? MechanicalFreshRoute = null,
+    ContinuationIntentProjection? ContinuationIntent = null);
 
 /// <summary>A run-scoped sibling route selected after a provider refusal.</summary>
 public sealed record ProviderModelFallback(

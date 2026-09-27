@@ -13,6 +13,120 @@ namespace TaskServer.Tests;
 public sealed class TaskServerStoreTests
 {
     [Fact]
+    public async Task Continuation_rounds_are_ordered_idempotent_and_bound_to_one_run()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await Assert.ThrowsAsync<ArgumentException>(() => store.SubmitContinuationIntentAsync(
+            project.ProjectId, task.TaskId,
+            new ContinuationIntentRequest(1, "invalid-thinking", task.Version,
+                "Instruction", "gpt-5.6-sol", "codex", "unbounded", "continue", "operator"),
+            "operator", default));
+        Assert.Null(await store.GetContinuationIntentAsync(project.ProjectId, task.TaskId,
+            "invalid-thinking", default));
+        var first = new ContinuationIntentRequest(1, "continue-1", task.Version,
+            "First instruction", "gpt-5.6-sol", "codex", "xhigh", "continue", "operator follow-up");
+        var receipt1 = await store.SubmitContinuationIntentAsync(project.ProjectId, task.TaskId,
+            first, "operator", default);
+        var receipt2 = await store.SubmitContinuationIntentAsync(project.ProjectId, task.TaskId,
+            first with { CommandId = "continue-2", ExpectedTaskVersion = receipt1.ResultTaskVersion,
+                Prompt = "Second instruction" }, "operator", default);
+        Assert.Equal(1, receipt1.Round);
+        Assert.Equal(2, receipt2.Round);
+        Assert.True(receipt1.ExplicitSelection);
+        Assert.False(string.IsNullOrWhiteSpace(receipt1.PolicyVersion));
+        Assert.Equal(new[] { "continue-1", "continue-2" },
+            (await store.ListContinuationIntentsAsync(project.ProjectId, task.TaskId, default))
+                .Select(item => item.Receipt.CommandId));
+        Assert.Equal(receipt1, await store.SubmitContinuationIntentAsync(
+            project.ProjectId, task.TaskId, first, "operator", default));
+        var conflict = await Assert.ThrowsAsync<TaskServerConflictException>(() =>
+            store.SubmitContinuationIntentAsync(project.ProjectId, task.TaskId,
+                first with { Prompt = "Different" }, "operator", default));
+        Assert.Equal("continuation-command-conflict", conflict.Code);
+        var stale = await Assert.ThrowsAsync<TaskServerConflictException>(() =>
+            store.SubmitContinuationIntentAsync(project.ProjectId, task.TaskId,
+                first with { CommandId = "continue-stale" }, "operator", default));
+        Assert.Equal("continuation-task-stale", stale.Code);
+
+        // A restart after acceptance retains both ordered rounds.
+        var restarted = Store(temp.Path);
+        await restarted.InitializeAsync();
+        Assert.Equal("queued", (await restarted.GetContinuationIntentAsync(
+            project.ProjectId, task.TaskId, "continue-2", default))!.Status);
+        await restarted.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var claim = await restarted.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal("continue-1", claim.ContinuationIntent?.Receipt.CommandId);
+        Assert.Contains("First instruction", claim.Task!.Body);
+        Assert.DoesNotContain("Second instruction", claim.Task.Body);
+        var bad = await Assert.ThrowsAsync<TaskServerConflictException>(() =>
+            restarted.ConsumeContinuationIntentAsync(claim.Run!.RunId,
+                new ConsumeContinuationIntentRequest("continue-2", "runner-a", "instance-a",
+                    claim.Lease!.LeaseId, claim.Lease.Fence), default));
+        Assert.Equal("continuation-run-mismatch", bad.Code);
+
+        // Acknowledged claim followed by a failed spawn remains recoverable.
+        Assert.Equal("claimed", (await restarted.GetContinuationIntentAsync(
+            project.ProjectId, task.TaskId, "continue-1", default))!.Status);
+        await restarted.ReleaseLeaseAsync(claim.Run!.RunId,
+            new LeaseReleaseRequest("runner-a", "instance-a", claim.Lease!.LeaseId,
+                claim.Lease.Fence, "runner-process-missing"), "runner-a", default);
+        Assert.Equal("queued", (await restarted.GetContinuationIntentAsync(
+            project.ProjectId, task.TaskId, "continue-1", default))!.Status);
+        var retryClaim = await restarted.ClaimAsync(new ClaimRequest("runner-a", "instance-a"),
+            "test", default);
+        Assert.Equal("continue-1", retryClaim.ContinuationIntent?.Receipt.CommandId);
+        var consume = new ConsumeContinuationIntentRequest("continue-1", "runner-a", "instance-a",
+            retryClaim.Lease!.LeaseId, retryClaim.Lease.Fence);
+        var consumed = await restarted.ConsumeContinuationIntentAsync(retryClaim.Run!.RunId,
+            consume, default);
+        Assert.Equal("consumed", consumed.Status);
+        Assert.Equal(retryClaim.Run.RunId, consumed.RunId);
+        Assert.Equal(consumed, await restarted.ConsumeContinuationIntentAsync(retryClaim.Run.RunId,
+            consume, default));
+        Assert.Equal("queued", (await restarted.GetContinuationIntentAsync(
+            project.ProjectId, task.TaskId, "continue-2", default))!.Status);
+        await restarted.CompleteRunAsync(retryClaim.Run.RunId,
+            new CompleteRunRequest("runner-a", "instance-a", retryClaim.Lease.LeaseId,
+                retryClaim.Lease.Fence, ExecutionOutcomeKind.LaunchFailure.ToString(),
+                IdempotencyKey: "continuation-first-complete", Sequence: 1), "runner-a", default);
+        var secondClaim = await restarted.ClaimAsync(new ClaimRequest("runner-a", "instance-a"),
+            "test", default);
+        Assert.Equal("continue-2", secondClaim.ContinuationIntent?.Receipt.CommandId);
+        Assert.Contains("Second instruction", secondClaim.Task!.Body);
+        Assert.DoesNotContain("First instruction", secondClaim.Task.Body);
+        Assert.Equal("consumed", (await restarted.GetContinuationIntentAsync(
+            project.ProjectId, task.TaskId, "continue-1", default))!.Status);
+    }
+
+    [Fact]
+    public async Task Continuation_claim_survives_server_restart_without_false_consumption()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.SubmitContinuationIntentAsync(project.ProjectId, task.TaskId,
+            new ContinuationIntentRequest(1, "restart-claim", task.Version,
+                "Recover this instruction", null, null, null, "continue", "operator"),
+            "operator", default);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"),
+            "runner-a", default);
+
+        var restarted = Store(temp.Path);
+        await restarted.InitializeAsync();
+        var projection = await restarted.GetContinuationIntentAsync(project.ProjectId,
+            task.TaskId, "restart-claim", default);
+        Assert.Equal("claimed", projection!.Status);
+        Assert.Equal(claim.Run!.RunId, projection.RunId);
+        Assert.Equal(claim.Lease!.Fence, projection.Fence);
+        Assert.Null(projection.ConsumedAt);
+    }
+
+    [Fact]
     public async Task Steering_rejects_stale_generation_without_mutation_and_preserves_actor_reason()
     {
         using var temp = new TempDirectory();

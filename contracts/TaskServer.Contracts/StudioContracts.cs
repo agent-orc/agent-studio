@@ -75,11 +75,15 @@ public sealed record ContinueTaskRequest(
     string? Model = null,
     string? CliType = null,
     string? ThinkingLevel = null,
-    string? Mode = null);
+    string? Mode = null,
+    string? CommandId = null,
+    long? ExpectedTaskVersion = null,
+    string? Reason = null);
 
 public sealed record StopTaskRequest(string? Reason = null);
 
-public sealed record TaskLifecycleResponse(TaskDto Task, RunDto? Run = null);
+public sealed record TaskLifecycleResponse(TaskDto Task, RunDto? Run = null,
+    ContinuationIntentReceipt? ContinuationReceipt = null);
 public sealed record MoveTaskResponse(TaskDto Task, int Position);
 
 public sealed record StudioOrchestratorChatMessageRequest(

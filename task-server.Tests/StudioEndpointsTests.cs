@@ -127,10 +127,23 @@ public sealed class StudioEndpointsTests
         moveToTop.EnsureSuccessStatusCode();
         Assert.Equal(1, (await moveToTop.Content.ReadFromJsonAsync<MoveTaskResponse>())!.Position);
 
+        var currentBeforeContinue = await store.GetTaskAsync(project.ProjectId, task.TaskId, default);
+        var continueRequest = new ContinueTaskRequest("Please keep going",
+            CommandId: "studio-lifecycle-cont", ExpectedTaskVersion: currentBeforeContinue!.Version);
         var continueResponse = await client.PostAsJsonAsync(
-            $"{basePath}/continue", new ContinueTaskRequest("Please keep going"));
+            $"{basePath}/continue", continueRequest);
         continueResponse.EnsureSuccessStatusCode();
-        Assert.Equal("2-ready", (await continueResponse.Content.ReadFromJsonAsync<TaskLifecycleResponse>())!.Task.State);
+        var continued = (await continueResponse.Content.ReadFromJsonAsync<TaskLifecycleResponse>())!;
+        Assert.Equal("2-ready", continued.Task.State);
+        Assert.Equal("studio-lifecycle-cont", continued.ContinuationReceipt?.CommandId);
+        var replay = await client.PostAsJsonAsync($"{basePath}/continue", continueRequest);
+        replay.EnsureSuccessStatusCode();
+        Assert.Equal(continued.ContinuationReceipt,
+            (await replay.Content.ReadFromJsonAsync<TaskLifecycleResponse>())!.ContinuationReceipt);
+        var projected = await client.GetFromJsonAsync<List<ContinuationIntentProjection>>(
+            $"{basePath}/continuations");
+        Assert.Single(projected!);
+        Assert.Equal("queued", projected![0].Status);
 
         var chatAfterContinue = await store.ReadOrchestratorContextAsync(project.ProjectId, task.TaskId, 10, "test", default);
         Assert.Contains(chatAfterContinue.Turns, turn => turn.Body == "Please keep going");

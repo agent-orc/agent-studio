@@ -785,22 +785,40 @@ public sealed class TaskServerClient : IDisposable
             RunId: claim.Run.RunId,
             LeaseInstanceId: RunnerInstanceId,
             ReconciliationActions: FromContract(claim.ReconciliationActions),
-            RunSpec: claim.MechanicalFreshRoute is { } mechanicalRoute
-                ? new RunSpecDto(mechanicalRoute.CliType, mechanicalRoute.Model, mechanicalRoute.ThinkingLevel,
-                    ContextMode: CodingAgentRunner.Model.CliContextModes.Clean)
-                : claim.ModelFallback is null
-                    ? null
-                    : new RunSpecDto(
-                        claim.ModelFallback.CliType,
-                        claim.ModelFallback.To,
-                        claim.ModelFallback.ThinkingLevel,
-                        ContextMode: CodingAgentRunner.Model.CliContextModes.Clean),
+            RunSpec: claim.ContinuationIntent is { } intent
+                    && intent.Receipt.ExplicitSelection
+                    ? new RunSpecDto(intent.CliType, intent.Model, intent.ThinkingLevel,
+                        ContextMode: CodingAgentRunner.Model.CliContextModes.Clean)
+                : claim.MechanicalFreshRoute is { } mechanicalRoute
+                    ? new RunSpecDto(mechanicalRoute.CliType, mechanicalRoute.Model, mechanicalRoute.ThinkingLevel,
+                        ContextMode: CodingAgentRunner.Model.CliContextModes.Clean)
+                    : claim.ModelFallback is { } fallback
+                        ? new RunSpecDto(fallback.CliType, fallback.To, fallback.ThinkingLevel,
+                            ContextMode: CodingAgentRunner.Model.CliContextModes.Clean)
+                    : claim.ContinuationIntent is { } configuredIntent
+                        && (configuredIntent.Model is not null || configuredIntent.CliType is not null
+                            || configuredIntent.ThinkingLevel is not null)
+                        ? new RunSpecDto(configuredIntent.CliType, configuredIntent.Model,
+                            configuredIntent.ThinkingLevel,
+                            ContextMode: CodingAgentRunner.Model.CliContextModes.Clean)
+                    : null,
             ContinuationBaseRef: claim.ContinuationBaseRef,
             ContinuationBaseSha: claim.ContinuationBaseSha,
             PreviousSession: claim.PreviousSession,
             MechanicalDelta: claim.MechanicalDelta,
             FreshRunReason: claim.MechanicalDelta is null
-                ? claim.MechanicalFreshRoute?.Reason : null);
+                ? claim.MechanicalFreshRoute?.Reason : null,
+            ContinuationCommandId: claim.ContinuationIntent?.Receipt.CommandId);
+    }
+
+    public async Task ConsumeContinuationIntentAsync(PersistedRunnerSlot slot, CancellationToken ct)
+    {
+        if (!_useV1 || slot.ContinuationCommandId is null) return;
+        _ = await PostJsonAsync<Contract.ConsumeContinuationIntentRequest, Contract.ContinuationIntentProjection>(
+            $"/api/v1/runs/{Uri.EscapeDataString(slot.RunId ?? slot.AttemptId)}/continuation/consume",
+            new Contract.ConsumeContinuationIntentRequest(slot.ContinuationCommandId,
+                slot.Lease.RunnerId, slot.LeaseInstanceId ?? RunnerInstanceId,
+                slot.Lease.LeaseId, slot.Lease.FencingToken), ct);
     }
 
     private void AdoptRuntimeCapacity(Contract.RuntimeCapacitySettingsDto? capacity)

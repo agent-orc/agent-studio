@@ -102,7 +102,8 @@ public sealed class RemoteTaskRunner
         string? continuationBaseSha = null,
         AgentStudio.TaskServer.Contracts.SessionContinuationLedgerEntry? previousSession = null,
         AgentStudio.TaskServer.Contracts.MechanicalRoundDelta? mechanicalDelta = null,
-        string? freshRunReason = null)
+        string? freshRunReason = null,
+        string? continuationCommandId = null)
     {
         var isProjectClone = !string.IsNullOrWhiteSpace(projectId);
         if (isProjectClone && string.IsNullOrWhiteSpace(repositoryUrl))
@@ -136,6 +137,7 @@ public sealed class RemoteTaskRunner
             PreviousSession = previousSession,
             MechanicalDelta = mechanicalDelta,
             FreshRunReason = freshRunReason,
+            ContinuationCommandId = continuationCommandId,
         });
         return await RunPersistedAsync(
             slot,
@@ -156,6 +158,8 @@ public sealed class RemoteTaskRunner
         // and without it the completion would be assembled with no envelope trio
         // after every daemon restart.
         var workspace = WorkspaceFor(slot);
+        if (slot.ProcessId is not null)
+            await _client.ConsumeContinuationIntentAsync(slot, CancellationToken.None);
         return await RunPersistedAsync(
             slot,
             workspace,
@@ -1269,6 +1273,16 @@ public sealed class RemoteTaskRunner
             WorktreePath = workspace.RepoPath,
             Phase = "running",
         });
+        try
+        {
+            await _client.ConsumeContinuationIntentAsync(slot, CancellationToken.None);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The started process remains in durable slot state. Retry the
+            // fenced receipt at settlement or daemon reattachment.
+            _log($"continuation consume receipt pending task={taskKey} attempt={slot.AttemptId}: {ex.Message}");
+        }
         _inventory.AttachProcess(slot.RunId ?? slot.AttemptId, process.ProcessId);
         _log($"detached worker started task={taskKey} pid={process.ProcessId} attempt={slot.AttemptId}");
         var executed = await AwaitDetachedAsync(
@@ -2014,6 +2028,10 @@ public sealed class RemoteTaskRunner
         IReadOnlyList<string>? gateItems = null,
         SessionContinuationLedgerEntry? sessionContinuation = null)
     {
+        var continuationSlot = _state.LoadAll().FirstOrDefault(candidate =>
+            candidate.TaskKey == taskKey && candidate.Lease.LeaseId == lease.LeaseId);
+        if (continuationSlot?.ContinuationCommandId is not null)
+            await _client.ConsumeContinuationIntentAsync(continuationSlot, ct);
         var (envelopeBaseSha, envelopeResultRef, envelopeManifestDigest) =
             BuildEnvelopeCompletionFields(teardown, baseSha, artifactManifestDigest);
         var resp = await _client.CompleteRunAsync(new RemoteRunCompletionRequest(
