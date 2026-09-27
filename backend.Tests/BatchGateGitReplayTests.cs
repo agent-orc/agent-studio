@@ -12,6 +12,39 @@ public sealed class BatchGateGitReplayTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "batch-git-test-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public void PublishRequiresExactRemotePreTipAndVerifiesTestedSha()
+    {
+        Directory.CreateDirectory(_root);
+        Git("init", "-q");
+        Git("config", "user.name", "Test");
+        Git("config", "user.email", "test@example.invalid");
+        File.WriteAllText(Path.Combine(_root, "file.txt"), "base\n");
+        Git("add", "file.txt");
+        Git("commit", "-qm", "base");
+        Git("branch", "-M", "develop");
+        var baseSha = Git("rev-parse", "HEAD");
+        var remote = Path.Combine(_root, "remote.git");
+        Git("init", "--bare", "-q", remote);
+        Git("remote", "add", "origin", remote);
+        Git("push", "-q", "origin", "develop");
+        File.WriteAllText(Path.Combine(_root, "file.txt"), "candidate\n");
+        Git("commit", "-qam", "candidate");
+        var tested = Git("rev-parse", "HEAD");
+        var service = Service();
+        var published = service.PublishBatchCandidate(
+            _root, "develop", baseSha, tested, CancellationToken.None);
+        Assert.True(published.Success, published.Error);
+        Assert.Contains(tested, Git("ls-remote", "origin", "refs/heads/develop"));
+        File.WriteAllText(Path.Combine(_root, "file.txt"), "later\n");
+        Git("commit", "-qam", "later");
+        var later = Git("rev-parse", "HEAD");
+        var stale = service.PublishBatchCandidate(
+            _root, "develop", baseSha, later, CancellationToken.None);
+        Assert.Equal("stale-base", stale.Status);
+        Assert.Contains(tested, Git("ls-remote", "origin", "refs/heads/develop"));
+    }
+
+    [Fact]
     public void DirectDescendantGetsIdentityMappingAndConflictLeavesCandidateRefUnchanged()
     {
         Directory.CreateDirectory(_root);

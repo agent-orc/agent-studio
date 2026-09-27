@@ -42,6 +42,17 @@ public sealed record BatchGateMemberRecord(
 
 public sealed record BatchGateReleaseResult(bool Allowed, string? FailureCode);
 
+public sealed record BatchGatePendingRecord(
+    string ReviewAttemptId, BatchGateSubject Subject, string RepositoryPath,
+    string? WatchPath, string JobFolderPath, string IntegrationStrategy,
+    string PipelineType, DateTimeOffset EnqueuedAtUtc);
+
+public sealed record BatchGateExecutionFact(
+    string Project, string? BatchId, string? BatchRunId,
+    string TestedSha, string Outcome, string Host,
+    DateTimeOffset StartedAtUtc, DateTimeOffset CompletedAtUtc,
+    long QueueWaitMs, double OverloadMinutes, string EvidencePath);
+
 /// <summary>
 /// Durable batch authority. A closed manifest is written once before assembly;
 /// all later facts are append-only files carrying its digest. CreateNew and
@@ -63,6 +74,159 @@ public sealed class BatchGateStore
 
     public string BatchDirectory(string batchId)
         => Path.Combine(_root, SafeName(batchId));
+
+    public BatchGatePendingRecord Enqueue(BatchGatePendingRecord pending)
+    {
+        if (string.IsNullOrWhiteSpace(pending.ReviewAttemptId)
+            || string.IsNullOrWhiteSpace(pending.RepositoryPath)
+            || pending.Subject.ReviewCompletedAtUtc == default)
+            throw new InvalidDataException("The pending batch subject is incomplete.");
+        var folder = Path.Combine(_root, "pending");
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, SafeName(pending.ReviewAttemptId) + ".json");
+        if (File.Exists(path))
+        {
+            var previous = Read<BatchGatePendingRecord>(path);
+            if (previous.Subject.TaskKey != pending.Subject.TaskKey
+                || previous.Subject.ResultSha != pending.Subject.ResultSha
+                || previous.Subject.RunAttempt != pending.Subject.RunAttempt)
+                throw new InvalidDataException("A pending review attempt changed identity.");
+            return previous;
+        }
+        // The sequence is durable and monotonically assigned under one exclusive
+        // file lock, including after a process restart.
+        using var guard = new FileStream(Path.Combine(folder, "enqueue.lock"),
+            FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        if (File.Exists(path))
+        {
+            var previous = Read<BatchGatePendingRecord>(path);
+            if (previous.Subject.TaskKey != pending.Subject.TaskKey
+                || previous.Subject.ResultSha != pending.Subject.ResultSha
+                || previous.Subject.RunAttempt != pending.Subject.RunAttempt)
+                throw new InvalidDataException("A pending review attempt changed identity.");
+            return previous;
+        }
+        var sequencePath = Path.Combine(folder, "sequence");
+        var prior = File.Exists(sequencePath)
+            ? long.Parse(File.ReadAllText(sequencePath), System.Globalization.CultureInfo.InvariantCulture)
+            : 0;
+        prior = Math.Max(prior, Directory.EnumerateFiles(folder, "*.json")
+            .Select(file => Read<BatchGatePendingRecord>(file).Subject.EnqueueSequence)
+            .DefaultIfEmpty(0).Max());
+        var next = checked(prior + 1);
+        var sequenced = pending with { Subject = pending.Subject with { EnqueueSequence = next } };
+        WriteOnce(path, sequenced);
+        File.WriteAllText(sequencePath, next.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        return sequenced;
+    }
+
+    public BatchGatePendingRecord? ReadPending(string reviewAttemptId)
+    {
+        var path = Path.Combine(_root, "pending", SafeName(reviewAttemptId) + ".json");
+        return File.Exists(path) ? Read<BatchGatePendingRecord>(path) : null;
+    }
+
+    public IReadOnlyList<BatchGatePendingRecord> ListPending()
+    {
+        var folder = Path.Combine(_root, "pending");
+        if (!Directory.Exists(folder)) return [];
+        return Directory.EnumerateFiles(folder, "*.json")
+            .Where(path => !File.Exists(path + ".resolved"))
+            .Select(Read<BatchGatePendingRecord>)
+            .OrderBy(item => item.Subject.EnqueueSequence)
+            .ToArray();
+    }
+
+    public IReadOnlyList<BatchGatePendingRecord> ListAllPending()
+    {
+        var folder = Path.Combine(_root, "pending");
+        return Directory.Exists(folder)
+            ? Directory.EnumerateFiles(folder, "*.json")
+                .Select(Read<BatchGatePendingRecord>).ToArray()
+            : [];
+    }
+
+    public IReadOnlyList<BatchGateManifest> ListManifests()
+        => !Directory.Exists(_root) ? []
+            : Directory.EnumerateDirectories(_root)
+                .Where(dir => File.Exists(Path.Combine(dir, "manifest.json")))
+                .Select(dir => Read<BatchGateManifest>(Path.Combine(dir, "manifest.json")))
+                .ToArray();
+
+    public IReadOnlyList<BatchGateRunRecord> ListRuns(string batchId)
+    {
+        var folder = Path.Combine(BatchDirectory(batchId), "runs");
+        return Directory.Exists(folder)
+            ? Directory.EnumerateFiles(folder, "*.json")
+                .Where(path => !path.EndsWith(".verdict.json", StringComparison.Ordinal))
+                .Select(Read<BatchGateRunRecord>).ToArray()
+            : [];
+    }
+
+    public BatchGateRunVerdict? ReadVerdict(string batchId, string runId)
+    {
+        var path = Path.Combine(BatchDirectory(batchId), "runs",
+            SafeName(runId) + ".verdict.json");
+        return File.Exists(path) ? Read<BatchGateRunVerdict>(path) : null;
+    }
+
+    public BatchGatePublication? ReadPublication(string batchId)
+    {
+        var path = Path.Combine(BatchDirectory(batchId), "publication.json");
+        return File.Exists(path) ? Read<BatchGatePublication>(path) : null;
+    }
+
+    public BatchGateReplayRecord? TryReadReplay(string batchId, string taskKey)
+    {
+        var path = Path.Combine(BatchDirectory(batchId), "replays", SafeName(taskKey) + ".json");
+        return File.Exists(path) ? Read<BatchGateReplayRecord>(path) : null;
+    }
+
+    public BatchGateMemberRecord? TryReadMember(string batchId, string taskKey, string runId)
+    {
+        var path = Path.Combine(BatchDirectory(batchId), "members",
+            SafeName(taskKey), SafeName(runId) + ".json");
+        return File.Exists(path) ? Read<BatchGateMemberRecord>(path) : null;
+    }
+
+    public void RecordExecution(BatchGateExecutionFact fact)
+    {
+        var folder = Path.Combine(_root, "executions");
+        Directory.CreateDirectory(folder);
+        WriteOnce(Path.Combine(folder, Guid.NewGuid().ToString("N") + ".json"), fact);
+    }
+
+    public IReadOnlyList<BatchGateExecutionFact> ListExecutions(string project)
+    {
+        var folder = Path.Combine(_root, "executions");
+        return Directory.Exists(folder)
+            ? Directory.EnumerateFiles(folder, "*.json")
+                .Select(Read<BatchGateExecutionFact>)
+                .Where(fact => string.Equals(fact.Project, project, StringComparison.Ordinal))
+                .ToArray()
+            : [];
+    }
+
+    public IReadOnlyList<BatchGateManifest> ListRecoverableManifests()
+    {
+        if (!Directory.Exists(_root)) return [];
+        return Directory.EnumerateDirectories(_root)
+            .Where(dir => File.Exists(Path.Combine(dir, "manifest.json")))
+            .Select(dir => Read<BatchGateManifest>(Path.Combine(dir, "manifest.json")))
+            .Where(manifest => !Directory.Exists(Path.Combine(BatchDirectory(manifest.BatchId), "state"))
+                || LatestState(manifest.BatchId).Phase is
+                    BatchPhase.Formed or BatchPhase.Assembling
+                    or BatchPhase.Assembled or BatchPhase.Running)
+            .ToArray();
+    }
+
+    public void ResolvePending(string reviewAttemptId, string outcome)
+    {
+        var path = Path.Combine(_root, "pending", SafeName(reviewAttemptId) + ".json");
+        if (!File.Exists(path)) throw new FileNotFoundException("Pending batch member is missing.", path);
+        var resolved = path + ".resolved";
+        if (!File.Exists(resolved)) WriteOnce(resolved, new { outcome, atUtc = DateTimeOffset.UtcNow });
+    }
 
     public void CloseManifest(BatchGateManifest manifest)
     {
@@ -149,7 +313,8 @@ public sealed class BatchGateStore
         if (verdict.MembershipDigest != run.MembershipDigest
             || verdict.TestedCandidateSha != run.CandidateSha
             || verdict.GateProfileDigest != run.GateProfileDigest
-            || string.IsNullOrWhiteSpace(verdict.EvidencePath))
+            || !string.Equals(verdict.EvidencePath, run.EvidencePath, StringComparison.Ordinal)
+            || !File.Exists(run.EvidencePath))
             throw new InvalidDataException("Batch verdict does not match its recorded run.");
         WriteOnce(Path.Combine(BatchDirectory(verdict.BatchId), "runs",
             SafeName(verdict.BatchRunId) + ".verdict.json"), verdict);
@@ -183,14 +348,18 @@ public sealed class BatchGateStore
             || record.BaseSha != manifest.BaseSha
             || record.TestedCandidateSha != run.CandidateSha
             || record.GateProfileDigest != run.GateProfileDigest
+            || !string.Equals(record.EvidencePath, run.EvidencePath, StringComparison.Ordinal)
             || record.ReplacementShas.Count == 0
             || record.ReplacementShas.Any(sha => !IsSha(sha))
             || replay.Outcome != "admitted"
             || replay.TipAfterSha is null
+            || !string.Equals(record.ReplacementShas[^1], replay.TipAfterSha,
+                StringComparison.OrdinalIgnoreCase)
             || !record.ReplacementShas.SequenceEqual(
                 replay.Replacements.Select(x => x.RebasedSha),
                 StringComparer.OrdinalIgnoreCase)
-            || string.IsNullOrWhiteSpace(record.EvidencePath))
+            || string.IsNullOrWhiteSpace(record.EvidencePath)
+            || !File.Exists(record.EvidencePath))
             throw new InvalidDataException("batch-gate-evidence-missing");
         var folder = Path.Combine(BatchDirectory(record.BatchId), "members", SafeName(record.TaskKey));
         Directory.CreateDirectory(folder);
@@ -210,7 +379,12 @@ public sealed class BatchGateStore
                 "runs", SafeName(runId) + ".verdict.json"));
             var publication = Read<BatchGatePublication>(Path.Combine(BatchDirectory(batchId),
                 "publication.json"));
+            var frozen = manifest.Members.Single(member => member.TaskKey == current.TaskKey);
+            var replay = ReadReplay(batchId, current.TaskKey);
             return current.CurrentGeneration
+                && current.ResultRef == frozen.ResultRef
+                && current.FencingToken == frozen.FencingToken
+                && current.DeliveryEpoch == frozen.DeliveryEpoch
                 && record.TaskKey == current.TaskKey
                 && record.RunAttempt == current.RunAttempt
                 && record.DeliveryEpoch == current.DeliveryEpoch
@@ -222,8 +396,18 @@ public sealed class BatchGateStore
                 && record.BatchRunId == run.BatchRunId
                 && record.ReplacementShas.Count > 0
                 && record.ReplacementShas.All(IsSha)
+                && replay.Outcome == "admitted"
+                && replay.OriginalResultSha == record.OriginalResultSha
+                && string.Equals(record.ReplacementShas[^1], replay.TipAfterSha,
+                    StringComparison.OrdinalIgnoreCase)
+                && record.ReplacementShas.SequenceEqual(
+                    replay.Replacements.Select(item => item.RebasedSha),
+                    StringComparer.OrdinalIgnoreCase)
                 && record.Verdict == "pass"
+                && string.Equals(record.EvidencePath, run.EvidencePath, StringComparison.Ordinal)
+                && File.Exists(record.EvidencePath)
                 && verdict.Outcome == "pass"
+                && verdict.EvidencePath == run.EvidencePath
                 && verdict.TestedCandidateSha == run.CandidateSha
                 && verdict.GateProfileDigest == run.GateProfileDigest
                 && publication.BatchRunId == runId

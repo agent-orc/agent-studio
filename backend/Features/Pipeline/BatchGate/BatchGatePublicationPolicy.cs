@@ -52,6 +52,9 @@ public static class BatchGatePublicationPolicy
            && frozen.RunAttempt == current.RunAttempt
            && frozen.DeliveryEpoch == current.DeliveryEpoch
            && frozen.FencingToken == current.FencingToken
+           && frozen.GateProfileDigest == current.GateProfileDigest
+           && frozen.PlatformVersion == current.PlatformVersion
+           && frozen.IntegrationBranch == current.IntegrationBranch
            && frozen.ResultRef == current.ResultRef
            && frozen.ResultSha == current.ResultSha
            && current.ModelReviewPassed
