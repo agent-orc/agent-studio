@@ -1326,7 +1326,9 @@ public sealed class TaskServerClient : IDisposable
                 directive.Reason,
                 directive.RequestedAtUtc,
                 directive.AttemptId,
-                directive.RequestedBy);
+                directive.RequestedBy,
+                directive.CommandId,
+                directive.FencingToken);
 
     private static IReadOnlyList<RunnerReconciliationAction>? FromContract(
         IReadOnlyList<Contract.RunnerReconciliationAction>? actions)

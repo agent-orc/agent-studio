@@ -39,6 +39,7 @@ public static class LeaseEndpoints
             ProjectSettingsService settings,
             AgentStudio.Registry.ProjectRegistry projects,
             RunLeaseService leases,
+            RemoteRunStopRequestStore stops,
             RunnerIdentity identity,
             CancellationToken ct) =>
         {
@@ -71,7 +72,11 @@ public static class LeaseEndpoints
                                    ?? (string.IsNullOrWhiteSpace(project?.Id) ? task.ProjectName : project.Id),
                     ClientId = string.IsNullOrWhiteSpace(clientId) ? null : clientId,
                 };
-                return Results.Ok(leases.TryAcquire(canonical));
+                var acquired = leases.TryAcquire(canonical);
+                if (acquired.Granted && acquired.Lease is { } acquiredLease)
+                    stops.RetireSuperseded(
+                        req.TaskKey, acquiredLease.AttemptId, acquiredLease.FencingToken);
+                return Results.Ok(acquired);
             }
             finally
             {
@@ -136,7 +141,7 @@ public static class LeaseEndpoints
                 return Results.Conflict(new RunLeaseResponse(
                     "PromptMismatch", false, renewed.Lease, promptRejection));
             if (!renewed.Granted) return Results.Ok(renewed);
-            var stop = stops.Peek(req.TaskKey);
+            var stop = stops.Observe(req.TaskKey, renewed.Lease?.AttemptId, renewed.Lease?.FencingToken ?? -1);
             return Results.Ok(stop is null
                 ? renewed
                 : renewed with
@@ -146,7 +151,9 @@ public static class LeaseEndpoints
                         stop.Reason,
                         stop.RequestedAtUtc,
                         stop.AttemptId ?? req.AttemptId,
-                        stop.RequestedBy),
+                        stop.RequestedBy,
+                        stop.CommandId,
+                        stop.FencingToken),
                 });
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
@@ -177,10 +184,10 @@ public static class LeaseEndpoints
             {
                 await ApplyLostWorkerContinuationAsync(
                     req, scanner, continuations, humanReviewEscalation, orchestratorLog, loggerFactory, ct);
-                stops.Clear(req.TaskKey);
                 var released = leases.Release(req);
                 if (string.Equals(released.Outcome, "Released", StringComparison.OrdinalIgnoreCase))
                 {
+                    stops.Clear(req.TaskKey, req.AttemptId, req.FencingToken, "released");
                     var task = FindTask(scanner, req.TaskKey);
                     if (task is not null)
                         mutations.RollbackStashedPendingIntent(task.FolderPath);
@@ -282,6 +289,7 @@ public static class LeaseEndpoints
             AgentStudio.Registry.ProjectRegistry projects,
             TaskTransitionService transitions,
             RunLeaseService leases,
+            RemoteRunStopRequestStore stops,
             TaskSessionLog sessions,
             HttpContext context,
             AgentStudio.Clients.ClientIdentityStore clients,
@@ -1060,6 +1068,8 @@ public static class LeaseEndpoints
                     return Results.Ok(WithCapacity(new RunnerClaimResponse(
                         RunnerClaimStatus.Empty, Message: acquire.Message ?? acquire.Outcome)));
 
+                stops.RetireSuperseded(taskKey, acquire.Lease.AttemptId, acquire.Lease.FencingToken);
+
                 var stashedIntent = candidate.PendingIntent is null
                     ? null
                     : mutations.ReadAndStashPendingIntent(candidate.FolderPath);
@@ -1510,6 +1520,9 @@ public static class LeaseEndpoints
                     ? Results.BadRequest(response)
                     : Results.Conflict(response);
             }
+            // Settlement has already committed the attempt's terminal fact. The
+            // stop receipt must be retired even if a later projection fails.
+            var settledStop = stops.Clear(req.TaskKey, attemptId, req.FencingToken, "settled");
             var settledRun = settled.RunAttempt ?? authority.GetRun(attemptId);
             var terminalAt = settledRun?.TerminalAt ?? DateTime.UtcNow;
             var terminalResult = settledRun?.TerminalOutcome ?? outcome;
@@ -2403,7 +2416,7 @@ public static class LeaseEndpoints
             // consumes that follow-up as the next round.
             if (operatorStopped)
             {
-                var stopRequest = stops.Clear(req.TaskKey);
+                var stopRequest = settledStop;
                 task = scanner.FindJob(task.Id, task.WatchPath) ?? task;
                 if (RemoteRunStopReasons.IsFollowup(stopRequest?.Reason) && task.PendingIntent is not null)
                 {
