@@ -26,7 +26,8 @@ internal static class RunnerCapabilityProbe
                 typeof(RunnerCapabilityProbe).Assembly.GetName().Version?.ToString(),
                 options.Role),
             Capability(CapabilityProtocol.GitFetch, "source", ToolVersion("git"), "git",
-                options.Role == "gate" && !OnPath("git") ? "unavailable" : "ready"),
+                (options.Role == "gate" || options.IsWorkstation) && !OnPath("git")
+                    ? "unavailable" : "ready"),
             Capability(CapabilityProtocol.RepositoryAccess, "source", null, options.GitRemote ?? "server-routed"),
             Capability(CapabilityProtocol.Disk, "foundation", null, Path.GetPathRoot(options.WorkDir)),
             Capability(
@@ -37,7 +38,32 @@ internal static class RunnerCapabilityProbe
                 connectivity?.Status == TaskServerConnectivityStates.Unreachable ? "unavailable" : "ready",
                 ConnectivityDetail(connectivity)),
             Capability($"platform:{Platform()}", "platform", RuntimeInformation.OSDescription, RuntimeInformation.ProcessArchitecture.ToString()),
+            Capability($"platform:{PlatformClass()}", "platform", RuntimeInformation.OSDescription, RuntimeInformation.ProcessArchitecture.ToString()),
         };
+        if (OperatingSystem.IsWindows())
+        {
+            AddToolchain(list, "toolchain:msbuild", "msbuild");
+            AddToolchain(list, "toolchain:vswhere", "vswhere");
+            AddToolchain(list, "toolchain:pwsh", "pwsh");
+            AddToolchain(list, "toolchain:powershell", "powershell");
+        }
+        if (options.IsWorkstation)
+        {
+            list.Add(Capability("host-class:workstation", "host-class", null, options.Hostname));
+            foreach (var root in options.WorkstationRepositoryRoots)
+                list.Add(Capability(root.CapabilityKey, "local-repository", null, root.Name,
+                    WorkstationProfile.RootAvailable(root) ? "ready" : "unavailable"));
+            foreach (var tool in options.WorkstationRequiredTools)
+            {
+                if (list.Any(capability => capability.Key == $"toolchain:{tool}")) continue;
+                list.Add(Capability($"toolchain:{tool}", "toolchain", ToolVersion(tool), tool,
+                    OnPath(tool) ? "ready" : "unavailable"));
+            }
+            if (options.WorkstationPreview is { } preview)
+                list.Add(Capability(preview.CapabilityKey, "preview", null,
+                    preview.Origin.GetLeftPart(UriPartial.Authority),
+                    detail: $"reachableFrom={preview.Reachability}; maxLifetimeSeconds={preview.MaxLifetimeSeconds}"));
+        }
         if (options.Role == "coding")
         {
             // The advertised status is the only lever that keeps a card away from
@@ -118,6 +144,9 @@ internal static class RunnerCapabilityProbe
             CapabilityProtocol.TaskServerConnectivity,
         }
         .Concat(options.RequiredCapabilities)
+        .Concat(options.IsWorkstation
+            ? options.WorkstationRequiredTools.Select(tool => $"toolchain:{tool}")
+            : [])
         .Distinct(StringComparer.Ordinal)
         .ToArray();
 
@@ -137,6 +166,9 @@ internal static class RunnerCapabilityProbe
             CapabilityProtocol.TaskServerConnectivity,
         }
         .Concat(options.RequiredCapabilities)
+        .Concat(options.IsWorkstation
+            ? options.WorkstationRequiredTools.Select(tool => $"toolchain:{tool}")
+            : [])
         .Distinct(StringComparer.Ordinal)
         .ToArray();
 
@@ -246,6 +278,7 @@ internal static class RunnerCapabilityProbe
         string key,
         string executable)
     {
+        if (capabilities.Any(capability => capability.Key == key)) return;
         if (!OnPath(executable)) return;
         capabilities.Add(Capability(key, "toolchain", ToolVersion(executable), executable));
     }
@@ -342,6 +375,11 @@ internal static class RunnerCapabilityProbe
 
     private static string Platform()
         => $"{(OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsLinux() ? "linux" : "other")}:{RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant()}";
+
+    private static string PlatformClass()
+        => OperatingSystem.IsWindows() ? "windows"
+            : OperatingSystem.IsLinux() ? "linux"
+            : OperatingSystem.IsMacOS() ? "macos" : "other";
 
     internal static bool OnPath(string executable)
     {

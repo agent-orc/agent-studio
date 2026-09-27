@@ -804,7 +804,8 @@ public sealed class TaskServerClient : IDisposable
             PreviousSession: claim.PreviousSession,
             MechanicalDelta: claim.MechanicalDelta,
             FreshRunReason: claim.MechanicalDelta is null
-                ? claim.MechanicalFreshRoute?.Reason : null);
+                ? claim.MechanicalFreshRoute?.Reason : null,
+            RequiredCapabilities: claim.RequiredCapabilities);
     }
 
     private void AdoptRuntimeCapacity(Contract.RuntimeCapacitySettingsDto? capacity)
