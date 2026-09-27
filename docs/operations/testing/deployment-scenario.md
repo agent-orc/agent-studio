@@ -59,7 +59,10 @@ scripts/scenario.sh --target remote --level smoke --remote-url https://... --rem
   `studio-bff`, and `agent-host-distributed` services from the development
   checkout, applies
   `testsupport/scenario/docker-compose.scenario.yml`, and runs the same nine
-  typed steps as `inproc`. The override uses
+  typed steps as `inproc`. Its bootstrap runs from the same source-built Task
+  Server image and generates the principal credentials in the product's
+  persistent `secrets` volume. The harness reads those credentials through
+  `docker compose exec`; it does not inject a second token set. The override uses
   `testsupport/scenario/runner.Dockerfile`, which contains the fixed
   `scenario-coding-agent` instead of relying on an installed provider CLI.
   The run uses its own Compose project, bind-mounted fixture repository, ports,

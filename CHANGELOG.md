@@ -37,6 +37,7 @@ Second throughput release of the operations weekend: 63 commits on develop since
 
 ### Fixed
 
+- Deployment regression scenario: the Compose overlay follows the bootstrap-generated secrets topology of AGT-2736 (injected scenario tokens, no published images), so the release contract test and the promotion train render the stack again.
 - Preparation cache: an empty block is no longer published; an incomplete block is rejected and rebuilt (AGT-2891).
 - Pickup no longer runs a card on claude-haiku-4-5 when the pinned Claude model is unknown to the installed CLI (AGT-2893).
 - Prompt enrichment no longer appends Agent Studio instruction blocks to cards of other projects (AGT-2908).

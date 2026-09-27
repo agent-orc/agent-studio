@@ -166,10 +166,36 @@ for (const [serviceName, contract] of Object.entries(expected)) {
     throw new Error(`${serviceName} does not build ${contract.dockerfile}`);
   }
 }
-const secretVolume = config.services["task-server"].volumes
-  .find(volume => volume.target === "/run/agent-studio-secrets");
-if (secretVolume?.source !== "secrets" || !secretVolume.read_only) {
-  throw new Error("task-server must read the Compose credential volume");
+const tokenFiles = {
+  "task-server": {
+    STUDIO_AUTH_TOKEN_FILE: "studio_token",
+    ENGINE_AUTH_TOKEN_FILE: "engine_token",
+    BOOTSTRAP_RUNNER_AUTH_TOKEN_FILE: "runner_token",
+  },
+  "studio-bff": { TaskServer__AuthTokenFile: "studio_token" },
+  "orchestrator-engine": { CLIENT_CREDENTIAL_FILE: "engine_token" },
+};
+for (const [serviceName, files] of Object.entries(tokenFiles)) {
+  const service = config.services[serviceName];
+  const volume = service.volumes.find(volume => volume.target === "/run/agent-studio-secrets");
+  if (volume?.source !== "secrets" || !volume.read_only) {
+    throw new Error(`${serviceName} must read the Compose credential volume`);
+  }
+  for (const [variable, file] of Object.entries(files)) {
+    if (service.environment?.[variable] !== `/run/agent-studio-secrets/${file}`) {
+      throw new Error(`${serviceName}/${variable} must read its bootstrapped credential`);
+    }
+  }
+}
+// Keep the upstream source-image boundary, including the one-shot bootstrap.
+for (const serviceName of ["bootstrap", "task-server", "studio-bff", "orchestrator-engine", "agent-host-distributed"]) {
+  const image = config.services[serviceName]?.image ?? "";
+  if (image === "" || image.startsWith("ghcr.io/")) {
+    throw new Error(`${serviceName} would run the published image ${image} in the scenario`);
+  }
+}
+if (config.services["bootstrap"].image !== config.services["task-server"].image) {
+  throw new Error("bootstrap does not run from the scenario task-server image");
 }
 if (config.services["task-server"].build.args.VERSION !== process.argv[2]
     || config.services["studio-bff"].build.args.VERSION !== process.argv[2]) {

@@ -1,3 +1,6 @@
+# Keep the product bootstrap and credential volume. The harness reads the
+# generated tokens through Compose exec; it never supplies a second token set.
+# Bootstrap runs from the same source-built image as the scenario Task Server.
 services:
   bootstrap:
     image: "${SCENARIO_TASK_SERVER_IMAGE:?set SCENARIO_TASK_SERVER_IMAGE}"
