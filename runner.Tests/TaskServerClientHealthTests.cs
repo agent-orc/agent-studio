@@ -1,11 +1,94 @@
 using AgentRunner;
 using AgentStudio.TaskServer.Contracts;
+using System.Text.Json;
 using Xunit;
 
 namespace AgentRunner.Tests;
 
 public class TaskServerClientHealthTests
 {
+    [Fact]
+    public async Task V1_completion_artifact_and_finalization_send_exact_authority_then_release_locally()
+    {
+        var now = DateTime.UtcNow;
+        var requests = new List<(string Path, JsonElement Body)>();
+        var handler = new RecordingHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            var body = JsonDocument.Parse(request.Content!.ReadAsStringAsync().GetAwaiter().GetResult()).RootElement.Clone();
+            requests.Add((path, body));
+            var response = path.EndsWith("/result-finalization", StringComparison.Ordinal)
+                ? JsonSerializer.Serialize(new ResultFinalizationDto(
+                    "run-v1", ResultFinalizationStatus.Ready, 1, 3,
+                    "status-artifact", "status-sha", null, now))
+                : "{}";
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(response),
+            };
+        });
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://task-server") };
+        using var client = new TaskServerClient(http, "runner-v1", usesDurableTaskServer: true);
+        var lease = new RunLeaseInfoDto(
+            "RTS-21", "runner-v1", "Runner v1", "host-v1", 42, "test",
+            "lease-v1", 7, now, now.AddMinutes(2), "attempt-v1");
+        client.RestoreRunAuthority("RTS-21", "run-v1", "instance-v1", lease);
+
+        await client.CompleteRunAsync(new RemoteRunCompletionRequest(
+            "RTS-21", "lease-v1", 7, "runner-v1", "blocked"), default);
+        var upload = await client.UploadArtifactsAsync(new ArtifactIngestRequest(
+            "RTS-21", [new RunnerArtifactUpload("results/proof.txt", "cHJvb2Y=")],
+            FinalizeResult: true), default);
+        var release = await client.ReleaseLeaseAsync(new RunLeaseReleaseRequest(
+            "RTS-21", "lease-v1", 7, "runner-v1"), default);
+
+        Assert.Equal("generated", upload!.ResultDocumentStatus);
+        Assert.Equal("Released", release.Outcome);
+        Assert.Equal(3, requests.Count);
+        Assert.Equal(
+            ["/api/v1/runs/run-v1/completion", "/api/v1/runs/run-v1/artifacts",
+                "/api/v1/runs/run-v1/result-finalization"],
+            requests.Select(item => item.Path));
+        foreach (var (_, body) in requests)
+        {
+            Assert.Equal("runner-v1", body.GetProperty("runnerId").GetString());
+            Assert.Equal("instance-v1", body.GetProperty("instanceId").GetString());
+            Assert.Equal("lease-v1", body.GetProperty("leaseId").GetString());
+            Assert.Equal(7, body.GetProperty("fence").GetInt64());
+        }
+    }
+
+    [Fact]
+    public async Task V1_active_lease_release_sends_exact_authority()
+    {
+        var now = DateTime.UtcNow;
+        JsonElement body = default;
+        var handler = new RecordingHandler(request =>
+        {
+            body = JsonDocument.Parse(request.Content!.ReadAsStringAsync().GetAwaiter().GetResult()).RootElement.Clone();
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"status\":\"released\"}"),
+            };
+        });
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://task-server") };
+        using var client = new TaskServerClient(http, "runner-v1", usesDurableTaskServer: true);
+        var lease = new RunLeaseInfoDto(
+            "RTS-21", "runner-v1", "Runner v1", "host-v1", 42, "test",
+            "lease-v1", 7, now, now.AddMinutes(2), "attempt-v1");
+        client.RestoreRunAuthority("RTS-21", "run-v1", "instance-v1", lease);
+
+        await client.ReleaseLeaseAsync(new RunLeaseReleaseRequest(
+            "RTS-21", "lease-v1", 7, "runner-v1"), default);
+
+        Assert.Single(handler.Requests);
+        Assert.Equal("/api/v1/runs/run-v1/lease/release", handler.Requests[0].PathAndQuery);
+        Assert.Equal("runner-v1", body.GetProperty("runnerId").GetString());
+        Assert.Equal("instance-v1", body.GetProperty("instanceId").GetString());
+        Assert.Equal("lease-v1", body.GetProperty("leaseId").GetString());
+        Assert.Equal(7, body.GetProperty("fence").GetInt64());
+    }
+
     [Fact]
     public async Task Monolith_capability_plane_registers_and_advertises_before_legacy_claim()
     {

@@ -99,9 +99,13 @@ public sealed class OrchestratorEngineService : BackgroundService
         OrchestrationLeaseDto lease,
         CancellationToken ct)
     {
+        using var stageLifetime = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var renewal = RenewStageLeaseAsync(run.RunId, lease, stageLifetime);
         try
         {
-            var decision = await handler.ExecuteAsync(run, ct);
+            var decision = await handler.ExecuteAsync(run, stageLifetime.Token);
+            stageLifetime.Cancel();
+            await renewal;
             var completed = await _client.CompleteStageAsync(
                 run.RunId,
                 new CompleteOrchestrationStageRequest(
@@ -150,6 +154,39 @@ public sealed class OrchestratorEngineService : BackgroundService
                     releaseException,
                     "orchestration lease release failed; server expiry will recover run={RunId}",
                     run.RunId);
+            }
+        }
+        finally
+        {
+            stageLifetime.Cancel();
+            try { await renewal; }
+            catch (OperationCanceledException) { }
+        }
+    }
+
+    private async Task RenewStageLeaseAsync(
+        string runId, OrchestrationLeaseDto initial, CancellationTokenSource lifetime)
+    {
+        var expiry = initial.ExpiresAt;
+        while (!lifetime.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(Math.Max(10, _options.LeaseSeconds / 3)), lifetime.Token);
+                var current = await _client.RenewAsync(runId, new OrchestrationLeaseRenewRequest(
+                    _options.ClientId, _instanceId, initial.LeaseId, initial.Fence,
+                    _options.LeaseSeconds), lifetime.Token);
+                expiry = current.ExpiresAt;
+            }
+            catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { return; }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(exception, "orchestration lease renewal failed; run={RunId}", runId);
+                if (DateTime.UtcNow >= expiry)
+                {
+                    lifetime.Cancel();
+                    return;
+                }
             }
         }
     }

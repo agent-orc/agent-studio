@@ -1,0 +1,285 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Proposed host credential metadata record",
+  "description": "No secret values. Adapter-specific safety rules additionally prohibit credentials embedded in locators or evidence. Semantic validation requires reasons for unknown dates.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "installationId",
+    "hostId",
+    "credentialId",
+    "provider",
+    "owner",
+    "recoveryOwner",
+    "generation",
+    "renewalMethod",
+    "schemaVersion",
+    "kind",
+    "accountRef",
+    "scopes",
+    "bindings",
+    "locator",
+    "expiryKnowledge",
+    "unknownReasons",
+    "supersedes",
+    "publicFingerprint",
+    "lastRenewedBy",
+    "runbookId",
+    "lastOperationId",
+    "lastOutcome",
+    "evidenceRefs",
+    "createdAt",
+    "discoveredAt",
+    "lastVerifiedAt",
+    "lastRenewedAt",
+    "expiresAt",
+    "rotationDueAt",
+    "accessTokenExpiresAt",
+    "lastRealSuccessAt",
+    "nextProbeAt"
+  ],
+  "properties": {
+    "installationId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "hostId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "credentialId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1
+    },
+    "owner": {
+      "type": "string",
+      "minLength": 1
+    },
+    "recoveryOwner": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generation": {
+      "type": "string",
+      "minLength": 1
+    },
+    "renewalMethod": {
+      "type": "string",
+      "minLength": 1
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "kind": {
+      "enum": [
+        "claude_oauth_token",
+        "claude_native_login",
+        "codex_chatgpt_login",
+        "github_https_token",
+        "github_provisioning_oauth",
+        "github_deploy_key",
+        "task_server_principal",
+        "wireguard_peer",
+        "provider_api_key",
+        "administration_ssh_key"
+      ]
+    },
+    "accountRef": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "scopes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "bindings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "serviceId",
+          "purpose",
+          "sourceRef"
+        ],
+        "properties": {
+          "serviceId": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "sourceRef": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "locator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "adapter",
+        "localRef",
+        "effectiveSource"
+      ],
+      "properties": {
+        "adapter": {
+          "enum": [
+            "credential-helper",
+            "environment-file",
+            "native-cli-store",
+            "network-key",
+            "service-secret",
+            "ssh-private-key",
+            "external-vault",
+            "docker-secret"
+          ]
+        },
+        "localRef": {
+          "type": "string"
+        },
+        "effectiveSource": {
+          "enum": [
+            "active",
+            "shadowed",
+            "absent",
+            "unknown"
+          ]
+        }
+      }
+    },
+    "expiryKnowledge": {
+      "enum": [
+        "issuer",
+        "operator",
+        "none",
+        "unknown"
+      ]
+    },
+    "unknownReasons": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "supersedes": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "publicFingerprint": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "lastRenewedBy": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "runbookId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "lastOperationId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "lastOutcome": {
+      "enum": [
+        "healthy",
+        "credential_invalid",
+        "provider_incident",
+        "quota_exhausted",
+        "network_failure",
+        "indeterminate",
+        "not_verified"
+      ]
+    },
+    "evidenceRefs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "createdAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "discoveredAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "lastVerifiedAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "lastRenewedAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "expiresAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "rotationDueAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "accessTokenExpiresAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "lastRealSuccessAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "nextProbeAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    }
+  }
+}

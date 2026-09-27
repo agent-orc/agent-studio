@@ -147,7 +147,9 @@ public sealed class DeliveryClaimSweep
             status?.DeliveryRef,
             branch,
             status?.ReleaseBranch ?? BoardMergeStatusService.ReleaseBranch,
-            status?.Status ?? CompletionContractPolicy.ContainmentUnknown,
+            status?.ReachUnavailable == true
+                ? CompletionContractPolicy.ContainmentUnknown
+                : status?.Status ?? CompletionContractPolicy.ContainmentUnknown,
             integrated,
             status?.Released,
             status?.Sha,
@@ -269,7 +271,9 @@ public sealed class DeliveryClaimSweep
         return new DeliveryClaimCardFacts(
             IntegrationRequired: AcceptanceIntegrationPolicy.IsIntegrationRequired(card),
             Commits: commits,
-            ContainmentStatus: status?.Status ?? CompletionContractPolicy.ContainmentUnknown,
+            ContainmentStatus: status?.ReachUnavailable == true
+                ? CompletionContractPolicy.ContainmentUnknown
+                : status?.Status ?? CompletionContractPolicy.ContainmentUnknown,
             HasIntegrationRecord: card.IntegrationRecords.Count > 0,
             HasNamedDeliverable: NamedDeliverableReader.Exists(card));
     }

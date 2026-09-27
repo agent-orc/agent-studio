@@ -1748,6 +1748,9 @@ public sealed class MergeIntoDevelopRunner
             Reason = reason,
             FailureCode = failure?.Code,
             ConflictReport = result.ConflictReport,
+            GateVerdictSource = preMainResult?.VerdictSource ?? preDevelopResult?.VerdictSource,
+            GateOriginEvidencePath = preMainResult?.OriginEvidencePath ?? preDevelopResult?.OriginEvidencePath,
+            GateOriginCompletedAtUtc = preMainResult?.GateCompletedAtUtc ?? preDevelopResult?.GateCompletedAtUtc,
         });
     }
 

@@ -27,6 +27,12 @@ describe('ProjectExecutionDefinitionComponent', () => {
       definitionSha256: '1234567890abcdef',
       valid: true,
       issues: [],
+      preparationWarnings: [{
+        code: 'cache-block-unused',
+        block: 'nuget',
+        consecutiveRuns: 3,
+        message: 'The nuget block of Quality Studio is bound but unused for 3 consecutive preparations; the prepare script redirects or unsets NUGET_PACKAGES.',
+      }],
       lastManifest: {
         completedAtUtc: '2026-09-12T08:00:00Z',
         durationMs: 1500,
@@ -43,6 +49,8 @@ describe('ProjectExecutionDefinitionComponent', () => {
     expect(root.querySelector('[data-testid="execution-repository-definition"]')?.textContent)
       .toContain('schemaVersion: 1');
     expect(root.querySelector('.execution__cache-state')?.textContent).toContain('hit');
+    expect(root.querySelector('[data-testid="execution-preparation-warnings"]')?.textContent)
+      .toContain('redirects or unsets NUGET_PACKAGES');
     expect((root.querySelector('[data-testid="execution-save-override"]') as HTMLButtonElement).disabled).toBe(true);
 
     fixture.componentInstance.justification.set('Temporary host compatibility while the repository change is reviewed.');

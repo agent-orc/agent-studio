@@ -126,6 +126,7 @@ public static class ProjectSnapshotEndpoints
                 {
                     autoCommit = settings.AutoCommit,
                     crashRecoveryEnabled = settings.CrashRecoveryEnabled,
+                    automaticFailureContinuationsEnabled = settings.AutomaticFailureContinuationsEnabled,
                     autoPushStrategy = AutoPushStrategies.Normalize(settings.AutoPushStrategy),
                     runnerMode = settings.RunnerMode,
                     pickupMode = ProjectExecutionPolicy.ResolvePickupMode(settings),

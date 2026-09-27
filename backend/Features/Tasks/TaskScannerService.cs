@@ -154,6 +154,34 @@ public class TaskScannerService : ITaskScanner
         _statsMetadataCache?.Invalidate();
     }
 
+    /// <summary>Publish one durable mutation to the cache-only core projection.</summary>
+    public void PublishCoreFromFolder(string folder, string watchPath, string projectName, string state)
+    {
+        if (_indexCache is null) return;
+        var entry = new WatchPathEntry { Name = projectName, Path = watchPath };
+        var updated = ScanJobFolder(folder, entry, state);
+        if (updated is not null) _indexCache.PublishCore(updated);
+        else _indexCache.RemoveCoreByFolder(folder);
+    }
+
+    public void RemoveCore(TaskInfo info) => _indexCache?.RemoveCore(info);
+
+    public void PublishCoreFromKnownFolder(string folder)
+    {
+        var known = _indexCache?.GetCoreByFolder(folder);
+        if (known is not null)
+            PublishCoreFromFolder(folder, known.WatchPath, known.ProjectName, known.State);
+    }
+
+    public void MoveCoreFromKnownFolder(string sourceFolder, string targetFolder,
+        string watchPath, string state)
+    {
+        var known = _indexCache?.GetCoreByFolder(sourceFolder);
+        _indexCache?.RemoveCoreByFolder(sourceFolder);
+        PublishCoreFromFolder(targetFolder, watchPath,
+            known?.ProjectName ?? Path.GetFileName(watchPath), state);
+    }
+
     private static string? ReadArchiveState(string jobDir)
     {
         var path = Path.Combine(jobDir, "archive-manifest.json");

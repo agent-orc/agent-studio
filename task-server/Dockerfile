@@ -1,6 +1,6 @@
 # Standalone Task Server (v1 run/review plane) - target-architecture component.
 # Build context is the repository root: docker build -f task-server/Dockerfile .
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0.301 AS build
 ARG VERSION=0.0.0-dev
 ARG SHA=unknown
 WORKDIR /src
