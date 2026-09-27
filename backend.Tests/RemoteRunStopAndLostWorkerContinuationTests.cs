@@ -128,6 +128,41 @@ public sealed class RemoteRunStopAndLostWorkerContinuationTests
     }
 
     [Fact]
+    public void Successor_acquired_between_lease_read_and_stop_write_retires_the_late_receipt()
+    {
+        var root = Directory.CreateTempSubdirectory("remote-stop-race-").FullName;
+        try
+        {
+            var writer = new InterleavingWriter();
+            var store = new RemoteRunStopRequestStore(root, () => Now, writer);
+            var successorRetiredBeforeWrite = false;
+            writer.BeforeWrite = () =>
+            {
+                // The acquire path runs after the endpoint read fence 4, but
+                // before Record publishes the command. Its retirement sees none.
+                store.RetireSuperseded("AGT-2869", "attempt-2", 5);
+                successorRetiredBeforeWrite = true;
+            };
+
+            var receipt = store.RecordAndReconcile("AGT-2869", RemoteRunStopReasons.User,
+                "attempt-1", "operator", 4, "stop-race", "runner-1", () =>
+                {
+                    Assert.True(successorRetiredBeforeWrite);
+                    return ("attempt-2", 5);
+                });
+
+            Assert.Equal("terminal", receipt.State);
+            Assert.Equal("superseded", receipt.TerminalReason);
+            Assert.Null(store.Peek("AGT-2869"));
+            Assert.Null(store.Observe("AGT-2869", "attempt-2", 5));
+            var restarted = new RemoteRunStopRequestStore(root, () => Now.AddMinutes(1));
+            Assert.Equal("superseded", restarted.GetReceipt("stop-race")?.TerminalReason);
+            Assert.Null(restarted.Peek("AGT-2869"));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
     public void A_late_old_completion_cannot_retire_the_successor_stop()
     {
         var store = new RemoteRunStopRequestStore(() => Now);
@@ -174,6 +209,19 @@ public sealed class RemoteRunStopAndLostWorkerContinuationTests
     private sealed class FailingWriter : IAtomicJsonFileWriter
     {
         public void Write(string path, string content) => throw new IOException("disk unavailable");
+    }
+
+    private sealed class InterleavingWriter : IAtomicJsonFileWriter
+    {
+        public Action? BeforeWrite { get; set; }
+
+        public void Write(string path, string content)
+        {
+            var beforeWrite = BeforeWrite;
+            BeforeWrite = null;
+            beforeWrite?.Invoke();
+            new AtomicJsonFileWriter().Write(path, content);
+        }
     }
 
     /// <summary>

@@ -544,7 +544,10 @@ rollout decision.
   the directive carries the command id and fence for runner attribution.
   `observed` records that the server included it in a granted renewal response;
   a lost response does not consume it, so the next renewal repeats the command.
-  Settlement, release, supersession, or expiry retires it. A temporary route
+  Settlement, release, supersession, or expiry retires it.
+  The stop endpoint rechecks the current lease after the receipt write because
+  a successor may have retired the old generation before that write completed.
+  Either operation order leaves the superseded receipt terminal. A temporary route
   outage leaves the request pending until renewal resumes within the command's
   one-day expiry; authority expiry and the runner's salvage and `Stopped`
   completion policy remain separate. Park and dependency hold affect admission,

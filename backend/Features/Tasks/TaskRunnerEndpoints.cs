@@ -96,14 +96,21 @@ public static class TaskRunnerEndpoints
             RemoteRunStopRequest request;
             try
             {
-                request = stops.Record(
+                request = stops.RecordAndReconcile(
                     info.TaskKey,
                     RemoteRunStopReasons.From(parsed),
                     lease.AttemptId,
                     lease.RunnerName ?? lease.RunnerId,
                     lease.FencingToken,
                     commandId,
-                    lease.RunnerId);
+                    lease.RunnerId,
+                    () =>
+                    {
+                        var current = leases.Peek(info.TaskKey);
+                        return string.Equals(current.Outcome, "Held", StringComparison.OrdinalIgnoreCase)
+                            ? (current.Lease?.AttemptId, current.Lease?.FencingToken ?? -1)
+                            : (null, -1L);
+                    });
             }
             catch (InvalidOperationException ex)
             {

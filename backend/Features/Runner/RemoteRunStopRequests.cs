@@ -179,6 +179,29 @@ public sealed class RemoteRunStopRequestStore
     }
 
     /// <summary>
+    /// Recheck the lease after the durable write. A successor can acquire and
+    /// retire the old generation between the caller's lease read and Record;
+    /// in that order its retirement sees no command. The acquire path also
+    /// retires commands, so either ordering leaves a superseded receipt terminal.
+    /// </summary>
+    public RemoteRunStopRequest RecordAndReconcile(
+        string taskKey,
+        string reason,
+        string attemptId,
+        string? requestedBy,
+        long fencingToken,
+        string? commandId,
+        string? runnerId,
+        Func<(string? AttemptId, long FencingToken)> currentLease)
+    {
+        ArgumentNullException.ThrowIfNull(currentLease);
+        var request = Record(taskKey, reason, attemptId, requestedBy, fencingToken, commandId, runnerId);
+        var current = currentLease();
+        RetireSuperseded(taskKey, current.AttemptId, current.FencingToken);
+        return GetReceipt(request.CommandId)!;
+    }
+
+    /// <summary>
     /// The pending request for this card, if any. Peeking does not consume it:
     /// the runner may miss a heartbeat, and the request stays valid until the
     /// attempt it belongs to actually hands back.
