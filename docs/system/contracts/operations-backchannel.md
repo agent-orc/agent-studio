@@ -91,13 +91,13 @@ new canonicalization rule. Same key plus changed command is a conflict.
 
 ## Task Server permits
 
-Task Server schema 20 adds bounded opaque permits and the `operations` service
+Task Server schema 21 adds bounded opaque permits and the `operations` service
 principal kind. That kind can receive only `operations:inspect`. It cannot
 read arbitrary task data, issue permits, claim runs, or move lanes. Studio and
 Engine kinds may receive `operations:issue`; existing persisted principals
 must be provisioned with that scope before using the route. The migration
 preserves existing credential hashes and foreign keys. Older binaries refuse
-schema 20; rollback to schema 19 requires restoring a matching pre-upgrade
+schema 21; rollback to schema 20 or earlier requires restoring a matching pre-upgrade
 backup, not just changing the executable.
 
 - `POST /api/v1/operations/permits` accepts `IssueOperationPermitRequest` under

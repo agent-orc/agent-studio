@@ -24,6 +24,11 @@ public sealed class HostOrchestratorStoreTests
             new CreateTaskRequest("Task", "Do the work", "2-ready"),
             "test",
             default);
+        var delta = new MechanicalRoundDelta(new string('b', 40),
+            "refs/heads/result", new string('a', 40), ["src/Feature.cs"],
+            "Resolve the conflict.", "Run focused tests.");
+        await first.UpdateTaskAsync(project.ProjectId, task.TaskKey,
+            new UpdateTaskRequest(null, null, "2-ready", task.Version, delta), "test", default);
         await first.RegisterRunnerAsync("runner-a", Runner("instance-a"), "runner-a", default);
 
         var report1 = Report(
@@ -45,6 +50,17 @@ public sealed class HostOrchestratorStoreTests
             "runner-a",
             default);
         Assert.Equal("accepted", acceptance.Status);
+        Assert.Equal(delta.DeliverySha, acceptance.MechanicalDelta?.DeliverySha);
+        Assert.Equal("pending-mechanical-continuation", acceptance.MechanicalFreshRoute?.Reason);
+        Assert.Equal("gpt-5.6-terra", acceptance.MechanicalFreshRoute?.Model);
+        var replay = await first.AcceptWorkPermitAsync(
+            permit.PermitId,
+            new WorkPermitAcceptRequest(
+                HostOrchestratorContract.Current, "host-a", "instance-a", "runner-a",
+                available.AcceptedSequence, available.PolicyVersion, "accept-once"),
+            "runner-a", default);
+        Assert.Equal(delta.DeliverySha, replay.MechanicalDelta?.DeliverySha);
+        Assert.Equal(acceptance.MechanicalFreshRoute, replay.MechanicalFreshRoute);
         Assert.Equal(2, acceptance.PostProcessingPlan.Count);
         var postStep = Assert.Single(
             acceptance.PostProcessingPlan,

@@ -63,8 +63,10 @@ public sealed class OperationPermitTests
             new("compromised-agent", TaskServerPrincipalKinds.Runner, [TaskServerScopes.OperationsIssue], "runner-a"), "owner", default));
     }
 
-    [Fact]
-    public async Task Schema_19_upgrade_preserves_existing_credentials_and_allows_operations_kind()
+    [Theory]
+    [InlineData(19)]
+    [InlineData(20)]
+    public async Task Legacy_schema_upgrade_preserves_existing_credentials_and_allows_operations_kind(int previousVersion)
     {
         using var temp = new TempDirectory();
         var options = Options.Create(new TaskServerOptions { DataDirectory = temp.Path });
@@ -77,23 +79,31 @@ public sealed class OperationPermitTests
             using var command = connection.CreateCommand();
             command.CommandText = """
                 PRAGMA foreign_keys = OFF;
-                CREATE TABLE principals_v19(
+                CREATE TABLE principals_legacy(
                     principal_id TEXT PRIMARY KEY,
                     kind TEXT NOT NULL CHECK(kind IN ('studio', 'engine', 'runner')),
                     scopes_json TEXT NOT NULL, runner_id TEXT UNIQUE, created_at TEXT NOT NULL,
                     revoked_at TEXT, last_seen_at TEXT, CHECK(kind = 'runner' OR runner_id IS NULL)
                 );
-                INSERT INTO principals_v19 SELECT * FROM principals;
+                INSERT INTO principals_legacy SELECT * FROM principals;
                 DROP TABLE principals;
-                ALTER TABLE principals_v19 RENAME TO principals;
-                UPDATE meta SET value = '19' WHERE key = 'schema_version';
+                ALTER TABLE principals_legacy RENAME TO principals;
+                UPDATE meta SET value = $previousVersion WHERE key = 'schema_version';
                 DROP TABLE operation_permits;
                 PRAGMA foreign_keys = ON;
                 """;
+            command.Parameters.AddWithValue("$previousVersion", previousVersion.ToString(System.Globalization.CultureInfo.InvariantCulture));
             await command.ExecuteNonQueryAsync();
         }
         var upgraded = new TaskServerStore(options, TimeProvider.System);
         await upgraded.InitializeAsync();
+        await using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={store.DatabasePath};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            using var version = connection.CreateCommand();
+            version.CommandText = "SELECT value FROM meta WHERE key = 'schema_version';";
+            Assert.Equal("21", Convert.ToString(await version.ExecuteScalarAsync()));
+        }
         Assert.NotNull(await upgraded.AuthenticatePrincipalAsync(original.Credential, default));
         var operations = await upgraded.CreatePrincipalAsync(new("operations-new", TaskServerPrincipalKinds.Operations), "owner", default);
         Assert.NotNull(await upgraded.AuthenticatePrincipalAsync(operations.Credential, default));
