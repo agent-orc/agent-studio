@@ -283,6 +283,44 @@ public sealed class RemoteDeliveryIntegrationCoordinatorTests
         Assert.Equal(1, Volatile.Read(ref calls));
     }
 
+    [Fact]
+    public async Task Queued_delivery_from_superseded_review_never_starts_integration()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = new List<string>();
+        var current = true;
+        var coordinator = new RemoteDeliveryIntegrationCoordinator(
+            async request =>
+            {
+                calls.Add(request.JobId);
+                if (request.JobId == "first")
+                {
+                    entered.TrySetResult();
+                    await release.Task;
+                }
+                return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Merged,
+                    mergedSha: new string('a', 40));
+            },
+            NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance,
+            isCurrentReview: request => request.ReviewAttemptId is null || current);
+
+        var first = coordinator.EnqueueAsync(Request("first", 1));
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var stale = coordinator.EnqueueAsync(Request("second", 2) with
+        {
+            ReviewAttemptId = "review-old",
+        });
+        current = false;
+        release.TrySetResult();
+        await first.WaitAsync(TimeSpan.FromSeconds(5));
+        var skipped = await stale.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(["first"], calls);
+        Assert.Equal(MergeIntoIntegrationOutcome.Error, skipped.Outcome);
+        Assert.Equal("superseded-review-generation", skipped.Error);
+    }
+
     private static RemoteDeliveryIntegrationRequest Request(string jobId, int minute)
         => new(
             "project",
