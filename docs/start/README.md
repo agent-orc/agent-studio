@@ -133,6 +133,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Wiki as a cognitive interface (AIP-4 page backchannel, page context, archive semantics) | [concept](../concepts/wiki-as-cognitive-interface.md) · [Visual StyleGuide Dossier](../quality/visual-styleguide-workbench-wiki/index.html) |
 | Wiki grading run (global LLM grade per page; trigger + critical pages; GRADE-1) | [concepts/wiki-grading-run.md](../concepts/wiki-grading-run.md) |
 | Run-liveness & slot semantics (heartbeat, process-lost demotion) | [concepts/run-liveness-and-slot-semantics.md](../concepts/run-liveness-and-slot-semantics.md) |
+| Run record trigger provenance schema | [schemas/run-record.schema.json](../app/schemas/run-record.schema.json) |
 | UI task iteration pipeline and Human Gate hand-off | [contracts/ui-task-pipeline.md](../system/contracts/ui-task-pipeline.md) |
 | Operator decision surface for escalated tasks | [operations/decision-surface/README.md](../operations/decision-surface/README.md) |
 | Parked-card recall (machine-readable blocker, Wiedervorlage sweep, lane aging; AGT-2492) | [concepts/parked-card-recall.md](../concepts/parked-card-recall.md) |

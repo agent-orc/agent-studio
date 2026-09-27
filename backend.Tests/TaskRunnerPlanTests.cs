@@ -381,6 +381,33 @@ public class TaskRunnerPlanTests
         Assert.Equal(manual.EventKind, auto.EventKind);
         Assert.Equal(manual.EventReason, auto.EventReason);
         Assert.Equal(manual.MoveJobToProgress, auto.MoveJobToProgress);
+        Assert.Equal(RunTriggers.Initial, auto.TriggerMetadata.Trigger);
+        Assert.Equal(RunTriggers.Initial, manual.TriggerMetadata.Trigger);
+    }
+
+    [Fact]
+    public void Trigger_metadata_is_independent_of_session_resume_choice()
+    {
+        var trigger = new RunTriggerMetadata(
+            RunTriggers.IntegrationRecovery,
+            "pipeline",
+            "Integration recovery was queued after a merge conflict.",
+            "failure=merge-conflict;file=README.md");
+        var plan = RunPlanner.PlanRun(
+            RunIntent.UserContinue,
+            TaskStates.Progress,
+            ValidUuid,
+            CliTypes.Claude,
+            ClaudeCompat,
+            "AGT-1",
+            @"C:\jobs\fix-bug\prompt.md",
+            @"C:\jobs\fix-bug",
+            "Resolve the conflict.",
+            triggerMetadata: trigger);
+
+        Assert.Equal("continue", plan.EventKind);
+        Assert.True(plan.ResumeFlag);
+        Assert.Equal(trigger, plan.TriggerMetadata);
     }
 
     /// <summary>
@@ -755,6 +782,121 @@ public class TaskRunnerPlanTests
         Assert.True(p.ResumeFlag);
         Assert.Equal(slug, p.SessionToResume);
         Assert.False(p.MarkSessionChainRecovery);
+    }
+
+    [Fact]
+    public void Default_trigger_producer_covers_initial_operator_continue_and_restart()
+    {
+        Assert.Equal(
+            RunTriggers.Initial,
+            RunPlanner.DefaultTrigger(RunIntent.AutoPickup, TaskStates.Ready, null).Trigger);
+        Assert.Equal(
+            RunTriggers.OperatorContinue,
+            RunPlanner.DefaultTrigger(RunIntent.UserContinue, TaskStates.Progress, "finish the fix").Trigger);
+        Assert.Equal(
+            RunTriggers.Restart,
+            RunPlanner.DefaultTrigger(RunIntent.ManualStart, TaskStates.HumanReview, null).Trigger);
+    }
+
+    [Theory]
+    [InlineData("integration-conflict", RunTriggers.IntegrationRecovery, "pipeline")]
+    [InlineData("timeout-salvage", RunTriggers.TimeoutContinuation, "watchdog")]
+    [InlineData("loop-continuation", RunTriggers.Replan, "pipeline")]
+    [InlineData("provider-crash", RunTriggers.RecoveryAfterCrash, "pipeline")]
+    [InlineData("project-busy", RunTriggers.OperatorContinue, "operator desktop-client")]
+    public void Pending_intent_producer_records_business_trigger_actor_and_source(
+        string savedReason,
+        string expectedTrigger,
+        string expectedActor)
+    {
+        var trigger = ProjectRunner.TriggerForPendingIntent(
+            new PendingIntent { SavedReason = savedReason, Prompt = "continue exactly here" },
+            "desktop-client");
+
+        Assert.Equal(expectedTrigger, trigger.Trigger);
+        Assert.Equal(expectedActor, trigger.TriggeredBy);
+        Assert.Contains(savedReason, trigger.TriggerSource, StringComparison.Ordinal);
+        Assert.Contains("continue exactly here", trigger.TriggerSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Queued_operator_intent_uses_saved_caller_and_reason_on_local_pickup()
+    {
+        var intent = new PendingIntent
+        {
+            SavedReason = FollowUpQueueReasons.ProjectBusy,
+            Prompt = "Fix the test",
+            TriggeredBy = "operator desktop-client",
+            TriggerReason = "Address the review comment.",
+        };
+
+        var trigger = ProjectRunner.TriggerForPendingIntent(intent, "task-owner");
+
+        Assert.Equal(RunTriggers.OperatorContinue, trigger.Trigger);
+        Assert.Equal("operator desktop-client", trigger.TriggeredBy);
+        Assert.Equal("Address the review comment.", trigger.TriggerReason);
+        Assert.Contains("Fix the test", trigger.TriggerSource, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(RunIssueKind.WatchdogTimeout, RunTriggers.TimeoutContinuation, "watchdog")]
+    [InlineData(RunIssueKind.InfraCrash, RunTriggers.RecoveryAfterCrash, "pipeline")]
+    [InlineData(RunIssueKind.EnvironmentBlocker, RunTriggers.GateFailure, "pipeline")]
+    public void Automatic_retry_producer_records_timeout_crash_and_gate_failure(
+        RunIssueKind issueKind,
+        string expectedTrigger,
+        string expectedActor)
+    {
+        var trigger = ProjectRunner.TriggerForAutomaticRetry(
+            issueKind,
+            "Bounded retry selected.",
+            "retry prompt");
+
+        Assert.Equal(expectedTrigger, trigger.Trigger);
+        Assert.Equal(expectedActor, trigger.TriggeredBy);
+        Assert.Contains("failure=", trigger.TriggerSource, StringComparison.Ordinal);
+        Assert.Contains("retry prompt", trigger.TriggerSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Remote_claim_producer_covers_every_claim_trigger_without_session_inference()
+    {
+        var concern = new ReviewConcernRoundLedger(
+            1, 1, "review_01", ["code-quality"], DateTime.UtcNow,
+            RoundKind: RunTriggers.ReviewConcern);
+        var finding = concern with { RoundKind = RunTriggers.ReviewFinding };
+        var cases = new[]
+        {
+            LeaseEndpoints.BuildRemoteClaimTrigger(null, null, 0, null, "runner-1", "run-1"),
+            LeaseEndpoints.BuildRemoteClaimTrigger(null, null, 2, null, "runner-1", "run-2"),
+            LeaseEndpoints.BuildRemoteClaimTrigger("desktop", new PendingIntent { SavedReason = "project-busy", Prompt = "go" }, 1, null, "runner-1", "run-3"),
+            LeaseEndpoints.BuildRemoteClaimTrigger(null, new PendingIntent { SavedReason = "integration-conflict", Prompt = "fix" }, 1, null, "runner-1", "run-4"),
+            LeaseEndpoints.BuildRemoteClaimTrigger(null, new PendingIntent { SavedReason = "timeout-salvage", Prompt = "resume" }, 1, null, "runner-1", "run-5"),
+            LeaseEndpoints.BuildRemoteClaimTrigger(null, new PendingIntent { SavedReason = "loop-continuation", Prompt = "answer" }, 1, null, "runner-1", "run-6"),
+            LeaseEndpoints.BuildRemoteClaimTrigger(null, null, 1, concern, "runner-1", "run-7"),
+            LeaseEndpoints.BuildRemoteClaimTrigger(null, null, 1, finding, "runner-1", "run-8"),
+        };
+
+        Assert.Equal(
+            [
+                RunTriggers.Initial,
+                RunTriggers.DependencyRelease,
+                RunTriggers.OperatorContinue,
+                RunTriggers.IntegrationRecovery,
+                RunTriggers.TimeoutContinuation,
+                RunTriggers.Replan,
+                RunTriggers.ReviewConcern,
+                RunTriggers.ReviewFinding,
+            ],
+            cases.Select(item => item.Trigger).ToArray());
+        Assert.All(cases, item =>
+        {
+            Assert.False(string.IsNullOrWhiteSpace(item.TriggeredBy));
+            Assert.False(string.IsNullOrWhiteSpace(item.TriggerReason));
+            Assert.False(string.IsNullOrWhiteSpace(item.TriggerSource));
+        });
+        Assert.Equal("pipeline", cases[6].TriggeredBy);
+        Assert.Contains("review_01", cases[6].TriggerSource, StringComparison.Ordinal);
     }
 
     private static string? Var(RunPlan plan, string key) =>

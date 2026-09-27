@@ -133,35 +133,77 @@ public class TaskSessionLog
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
+        return AppendSessionEventToFolder(info.FolderPath, evt, jobId);
+    }
+
+    /// <summary>
+    /// Appends an event to an already resolved task folder. Remote claims use
+    /// this after their lane transition because the scanner snapshot can still
+    /// point at the source lane while the authoritative folder has moved.
+    /// </summary>
+    public bool AppendSessionEventToFolder(string jobFolder, SessionEvent evt, string? jobId = null)
+    {
         try
         {
-            Directory.CreateDirectory(TaskPaths.LogsDir(info.FolderPath));
+            Directory.CreateDirectory(TaskPaths.LogsDir(jobFolder));
 
             // A confirmed successor start is itself terminal evidence for an
             // older open row. Close it before appending so the durable log
             // never exposes two simultaneous open runs for one task.
-            var predecessor = ReadSessionEvents(jobId, watchPath).LastOrDefault();
+            var path = TaskPaths.SessionEventsLog(jobFolder);
+            var events = ReadSessionEventsFromPath(path);
+            var predecessor = events.LastOrDefault();
             if (predecessor is { FinishedAt: null })
             {
-                CloseSessionEvent(jobId, new RunSessionCloseout
+                var duration = evt.Ts >= predecessor.Ts
+                    ? (evt.Ts - predecessor.Ts).TotalSeconds
+                    : 0;
+                events[^1] = predecessor with
                 {
-                    StartedAt = predecessor.Ts,
                     FinishedAt = evt.Ts,
                     Result = "superseded",
-                    Status = "superseded"
-                }, watchPath);
+                    Status = "superseded",
+                    DurationSeconds = duration,
+                };
+                WriteSessionEvents(path, events);
             }
 
-            var path = TaskPaths.SessionEventsLog(info.FolderPath);
             var line = JsonSerializer.Serialize(evt, SessionEventJsonOpts) + Environment.NewLine;
             File.AppendAllText(path, line, Encoding.UTF8);
             return true;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to append session event for job {JobId}", jobId);
+            _logger.LogWarning(ex, "Failed to append session event for job {JobId}", jobId ?? jobFolder);
             return false;
         }
+    }
+
+    private static List<SessionEvent> ReadSessionEventsFromPath(string path)
+    {
+        if (!File.Exists(path)) return [];
+        var result = new List<SessionEvent>();
+        foreach (var line in File.ReadAllLines(path))
+        {
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            try
+            {
+                var evt = JsonSerializer.Deserialize<SessionEvent>(line, TaskJsonFile.ReadOpts);
+                if (evt is not null) result.Add(evt);
+            }
+            catch (Exception ex)
+            {
+                SilentCatch.Note(ex, "TaskSessionLog: Best-effort: skip torn / malformed lines.");
+                // Keep the append path tolerant of a torn trailing line.
+            }
+        }
+        return result;
+    }
+
+    private static void WriteSessionEvents(string path, IEnumerable<SessionEvent> events)
+    {
+        var lines = events.Select(item => JsonSerializer.Serialize(item, SessionEventJsonOpts));
+        File.WriteAllLines(path, lines, Encoding.UTF8);
     }
 
     /// <summary>
@@ -325,23 +367,7 @@ public class TaskSessionLog
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return [];
         var path = TaskPaths.SessionEventsLog(info.FolderPath);
-        if (!File.Exists(path)) return [];
-        var result = new List<SessionEvent>();
-        foreach (var line in File.ReadAllLines(path))
-        {
-            if (string.IsNullOrWhiteSpace(line)) continue;
-            try
-            {
-                var evt = JsonSerializer.Deserialize<SessionEvent>(line, TaskJsonFile.ReadOpts);
-                if (evt != null) result.Add(evt);
-            }
-            catch (Exception __ex)
-            {
-                SilentCatch.Note(__ex, "TaskSessionLog: Best-effort: skip torn / malformed lines.");
-                // Best-effort: skip torn / malformed lines.
-            }
-        }
-        return result;
+        return ReadSessionEventsFromPath(path);
     }
 
     public bool UpdateLastUsage(string jobId, SessionUsage usage, string? watchPath = null)

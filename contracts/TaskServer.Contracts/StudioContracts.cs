@@ -75,7 +75,8 @@ public sealed record ContinueTaskRequest(
     string? Model = null,
     string? CliType = null,
     string? ThinkingLevel = null,
-    string? Mode = null);
+    string? Mode = null,
+    string? Reason = null);
 
 public sealed record StopTaskRequest(string? Reason = null);
 
