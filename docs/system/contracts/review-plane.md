@@ -36,14 +36,19 @@ outcome), but the runner saw a transport failure, kept retrying into the same
 slow path, and held its review slot busy for up to tens of minutes per report
 (observed: AGT-2712, 16 submission attempts over 1289s; AGT-2724; QS-84).
 
-The endpoint now splits the request into two phases:
+The file-backed endpoint has these durable and asynchronous parts:
 
-1. **Settle (synchronous, durable).** `AttemptAuthorityService.SettleReview`
-   records the fenced outcome and the raw report payload, and the lane
-   transition (Auto Review to Human Review, or Escalated on a drained
-   infrastructure-retry budget) runs inline. The response returns as soon as
-   this completes, regardless of host load.
-2. **Project evidence (asynchronous, best-effort ordering).** The endpoint
+1. **Prepare and settle (synchronous, durable).** The monolith validates and
+   normalizes the report, then atomically writes
+   `logs/remote-review-settlement-{attemptId}.json` with the canonical payload,
+   its hash, and any delivery gate decision with its own digest before calling
+   `AttemptAuthorityService.SettleReview`. The ReviewAttempt remains the sole
+   verdict authority. A prepared journal without an accepted authority report
+   grants no projection or integration authority. The endpoint writes the
+   matching `RemoteDeliverySettlementStore` sidecar before integration. A failed
+   required write returns typed `review-settlement-repair-required` instead of
+   acknowledging incomplete work.
+2. **Project evidence (asynchronous, durable pending work).** The endpoint
    enqueues a `RemoteReviewEvidenceProjectionRequest` onto
    `IRemoteReviewEvidenceProjectionQueue` (`backend/Features/Runner/RemoteReviewEvidenceProjectionQueue.cs`).
    `RemoteReviewEvidenceProjectionWorker`, a `BackgroundService`, drains the
@@ -52,16 +57,31 @@ The endpoint now splits the request into two phases:
    `RemotePipelineReviewEvidenceProjector`. A projection that fails with an
    `IOException` or `UnauthorizedAccessException` re-enqueues itself with
    exponential backoff (`RemoteReviewEvidenceProjectionWorker.RetryDelay`: 5s
-   base, doubling, capped at 2 minutes) up to 5 attempts, then gives up and
-   logs `remote-review-evidence-projection-exhausted`. A projection over 30s
-   logs `remote-review-evidence-projection-slow`.
+   base, doubling, capped at 2 minutes) up to 5 failed attempts. Failure count,
+   next attempt time, completion, and exhausted repair reason are journaled.
+   A projection over 30s logs `remote-review-evidence-projection-slow`.
 
-The enqueue happens after the lane-transition write on every response path,
-including its error returns, so the background worker's own fresh
-task-folder lookup never races the same request's synchronous lane move.
+`RemoteReviewSettlementReconciler` scans current settled attempts at startup
+and every 30 seconds. It restores a missing delivery sidecar from the journal,
+requeues due evidence, and invokes `AutoReviewDeliveryResumeService` for pending
+integration and lane work. Every replay checks the current ReviewAttempt id,
+accepted report key, immutable subject SHA, and tested result SHA. A missing journal with missing
+evidence, corrupt journal, mismatched payload, or exhausted projection yields a
+typed repair state; a terminal `Pass` alone never supplies a gate verdict.
+The integration coordinator checks the review generation again when a queued
+delivery starts, after any wait behind another delivery. A superseded queued
+item completes with a typed error without running Git or a recovery round.
+An infrastructure failure left in Auto Review without a durable retry schedule
+also reports repair while its evidence remains recoverable.
+Older reports with an existing grade file remain readable without a journal.
+
+The normal enqueue happens after the lane transition or its error return, so
+the worker's fresh task-folder lookup does not race that request's move. A
+duplicate can also enqueue unfinished journaled evidence. The startup and tick
+reconciler covers process death before either enqueue.
 
 The response's `ReviewReportDto.EvidenceProjection` field tells the runner
-which phase it is looking at: `"queued"` (evidence projection was hand off to
+which phase it is looking at: `"queued"` (evidence projection was handed to
 the background worker) or `"duplicate"` (see below). A `200` response with
 `EvidenceProjection: queued` means the settlement is durable even though the
 task folder has not been written yet; the runner must not resubmit that
@@ -73,10 +93,20 @@ A report is keyed by `IdempotencyKey`. If a retry (same executor, same
 delivery) replays a key the authority already has recorded as settled, the
 authority returns `AttemptWriteStatus.Duplicate` before doing anything else.
 The endpoint answers `200` with the stored settlement summary and
-`EvidenceProjection: "duplicate"` without touching Git or the task folder -
-the original delivery's projection already ran or is already queued, and
-redoing it would repeat the same I/O for no new information. The runner
+`EvidenceProjection: "duplicate"` without repeating integration or review.
+If evidence is still pending, it requeues the journaled projection; the queue
+coalesces the attempt in memory. A replay with a different canonical payload
+returns `idempotency-conflict`, and a settled report without recoverable journal
+or evidence returns `review-settlement-repair-required`. The runner
 treats `Duplicate` exactly like a fresh acceptance: the review slot is freed.
+
+The standalone Task Server has a different durability boundary.
+`TaskServerReviewStore.ReportReviewAsync` writes `report_json`, report hash,
+idempotency key, outcome, and task state in one SQLite transaction. Its duplicate
+path compares both key and payload hash. It does not use the monolith's
+file journal, `RemoteDeliverySettlementStore`, evidence worker, or integration
+and Human Review lane continuation. This monolith repair does not establish
+those projections for standalone deployments.
 
 ## Claim poll semantics: stale-lease requeue
 
@@ -306,8 +336,10 @@ knows that.
 | The canonical-review-executor deferral backoff is capped at 60s while an executor is registered, and keeps the generic 10-minute-capped schedule otherwise | `backend.Tests/AutoReviewPostProcessingWorkerTests.cs`: `ResolveReviewExecutorAvailability_RegisteredExecutor_CapsTheEffectiveDelayAtSixtySeconds`, `ResolveReviewExecutorAvailability_NoRegistry_ReturnsNullAndKeepsTheGenericCap`, `ResolveReviewExecutorAvailability_UnrelatedReason_NeverConsultsTheRegistry`. |
 | The wait reason is exposed on the card instead of an empty queue | `backend.Tests/AutoReviewPostProcessingWorkerTests.cs`: `ApplyOutcome_CanonicalReviewExecutorDeferral_ExposesTheWaitReasonOnTheQueue`, `ApplyOutcome_CanonicalReviewExecutorDeferral_WithoutARegisteredExecutor_KeepsTheGenericBackoff`; `frontend/src/app/components/task-live-status/task-live-status.component.spec.ts`: `names the wait reason instead of an empty queue when no slot position is known`. |
 | Acknowledge before evidence (settlement returns before projection runs) | `backend.Tests/RemoteRunnerEndToEndTests.cs`: `Review_host_runs_tool_and_agent_aspect_end_to_end_with_honest_step_location`, `Review_daemon_restart_reports_non_adoptable_process_with_loss_extent_and_retry_reason`, and `Monolith_v1_review_report_after_operator_acceptance_keeps_terminal_lane_and_records_evidence` each assert the settlement response first, then `WaitUntilAsync` on the background-written grade file / timeline entry - the projection is proven to still be pending or racing, not already finished, when the response returns. |
-| Replay answers fast, without touching git or the task folder | `backend.Tests/RemoteRunnerEndToEndTests.cs`: `Monolith_v1_review_report_after_operator_acceptance_keeps_terminal_lane_and_records_evidence` asserts the replay response equals the original settlement with `EvidenceProjection` reported as `Duplicate` (the original stays `Queued`), i.e. the replay is a read of already-settled state, not a second write. |
-| No duplicate evidence on replay | Same test: only one grade file / evidence write is asserted across both the original report and its replay; the replay path in `V1ReviewPlaneEndpoints` returns before calling `EnqueueEvidenceProjection`. |
+| Replay answers fast, without repeating integration | `backend.Tests/RemoteRunnerEndToEndTests.cs`: `Monolith_v1_review_report_after_operator_acceptance_keeps_terminal_lane_and_records_evidence` asserts `EvidenceProjection` is `Duplicate` on replay and the lane remains terminal. The replay may requeue unfinished journaled evidence. |
+| Pending evidence survives restart and duplicate delivery | `backend.Tests/AutoReviewRestartDrillTests.cs`: `Settled_report_without_sidecar_restores_delivery_and_pending_evidence_after_restart` checks a fresh service stack restores the sidecar and queues the evidence once. The evidence queue coalesces duplicate enqueue requests for one attempt. |
+| Death after integration but before the lane move | `backend.Tests/AutoReviewRestartDrillTests.cs`: `Restart_after_integration_before_lane_move_uses_the_journaled_generation` checks a fresh service stack finishes the move without changing the integration tip. |
+| A successor prevents queued stale integration | `backend.Tests/RemoteDeliveryIntegrationTests.cs`: `Queued_delivery_from_superseded_review_never_starts_integration` holds a preceding delivery, supersedes the queued attempt, then checks the stale request never calls the integration runner. |
 | A review Pass recorded before a restart reaches integration afterwards, without a new review | `backend.Tests/AutoReviewRestartDrillTests.cs`: `Restart_before_integration_starts_integrates_afterwards_without_a_new_review` (asserts the delivery reaches `develop`, the card reaches Human Review, and the task still has exactly one ReviewAttempt). |
 | A gate killed after a later gate published its merge completes on the next pass without re-merging | `backend.Tests/AutoReviewRestartDrillTests.cs`: `A_delivery_published_by_a_later_gate_completes_on_the_next_pass_without_remerging` (develop's tip is unchanged across the resume). |
 | `deferral-exhausted` is never logged for a card with a terminal Pass attempt | `backend.Tests/AutoReviewPostProcessingWorkerTests.cs`: `ApplyOutcome_DeliveryResumeWait_NeverExhaustsTheDeferralBudget`, `ApplyOutcome_IntegrationCompletionWait_NeverExhaustsTheDeferralBudget`, `ApplyOutcome_RegisteredExecutor_ResetsTheBudgetInsteadOfExhaustingIt`, with `ApplyOutcome_IdleExecutorWait_StillExhaustsTheDeferralBudget` as the counter-example that keeps AGT-2842's backoff. |
