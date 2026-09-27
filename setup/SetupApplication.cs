@@ -12,6 +12,8 @@ internal static class SetupApplication
     {
         try
         {
+            if (ProductSetup.IsProductCommand(args))
+                return await ProductSetup.RunAsync(args);
             var options = SetupOptions.Parse(args);
             if (options.ShowHelp)
             {
@@ -21,7 +23,7 @@ internal static class SetupApplication
             if (options.ShowVersion)
             {
                 Console.WriteLine(
-                    $"agent-orchestrator-setup {AssemblyVersion()}");
+                    $"agent-studio-setup {AssemblyVersion()}");
                 return 0;
             }
 
@@ -604,7 +606,7 @@ internal static class SetupApplication
         Console.WriteLine("Control Plane setup is complete.");
         Console.WriteLine("On each Agent Host machine, copy the setup executable and run:");
         Console.WriteLine();
-        Console.WriteLine("  sudo ./agent-orchestrator-setup --join");
+        Console.WriteLine("  sudo ./agent-studio-setup --join");
         Console.WriteLine();
         Console.WriteLine("Paste this token when prompted:");
         Console.WriteLine();
@@ -661,19 +663,18 @@ internal static class SetupApplication
     private static void PrintHelp()
     {
         Console.WriteLine("""
-            agent-orchestrator-setup - guided Linux x64 onboarding
+            agent-studio-setup - guided Linux x64 remote onboarding
 
             Usage:
-              sudo ./agent-orchestrator-setup
-              ./agent-orchestrator-setup --mode demo [--demo-port 4011]
-              sudo ./agent-orchestrator-setup --mode single
-              sudo ./agent-orchestrator-setup --mode control-plane --server-url https://tasks.example.com
-              sudo ./agent-orchestrator-setup --mode control-plane --target docker --server-url task-server-01.wg.internal
-              sudo ./agent-orchestrator-setup --join
-              sudo ./agent-orchestrator-setup --join --join-token-file /secure/path/join.token
+              ./agent-studio-setup --mode studio
+              sudo ./agent-studio-setup --mode single
+              sudo ./agent-studio-setup --mode control-plane --server-url https://tasks.example.com
+              sudo ./agent-studio-setup --mode control-plane --target docker --server-url task-server-01.wg.internal
+              sudo ./agent-studio-setup --join
+              sudo ./agent-studio-setup --join --join-token-file /secure/path/join.token
 
             Options:
-              --mode <demo|single|control-plane|agent-host>
+              --mode <single|control-plane|agent-host>
               --target <systemd|docker>   Control Plane runtime; systemd is the default. docker requires --mode control-plane and boots deploy/compose/control-plane/compose.yaml.
               --release-version <X.Y.Z>   Release to install; defaults to this setup binary's version
               --release-dir <path>        Offline directory containing release archives and SHA256SUMS
@@ -690,7 +691,6 @@ internal static class SetupApplication
               --git-push-remote <url>     Optional separate push probe URL
               --role <coding|review>      Agent Host service role
               --max-parallelism <n>       Host run slots; default 2
-              --demo-port <port>          Loopback demo UI port; default 4011
               --non-interactive           Require all needed values as options or protected files
               --dry-run                   Print planned mutations after real prerequisite checks
               --version                   Print setup version

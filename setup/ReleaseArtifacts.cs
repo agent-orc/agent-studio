@@ -53,6 +53,12 @@ internal sealed class ReleaseArtifacts(
             $"agent-studio-{Version}",
             cancellationToken);
 
+    public async Task<string> ExtractComposeAsync(CancellationToken cancellationToken)
+        => await DownloadVerifyExtractAsync(
+            $"agent-studio-compose-{Version}.tar.gz",
+            $"agent-studio-compose-{Version}",
+            cancellationToken);
+
     private async Task<string> DownloadVerifyExtractAsync(
         string archiveName,
         string expectedDirectory,
