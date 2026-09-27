@@ -18,6 +18,9 @@
  *   - A temporary task repository and watched project point back to the
  *     selected checkout for repository provenance, so an isolated checkout
  *     without appsettings.Local.json can still drive real-source UI coverage.
+ *   - `DEV_RECOVERY_FIXTURE=1` gives that watched project a disposable dirty
+ *     Git repository before boot. Crash recovery tests can then observe a
+ *     real pending decision without touching the operator's repositories.
  *   - Else: ask the dev backend's `/api/watch-paths` endpoint after start
  *     (Agent Software Studio entry) for the workspace path.
  *   - Else: fall back to the script's own default (sibling folder).
@@ -29,7 +32,7 @@
  */
 import { test as base, expect } from '@playwright/test';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 
@@ -42,11 +45,29 @@ export interface DevBackend {
 const DEV_PORT = Number(process.env.DEV_PORT ?? 5030);
 const DEV_BASE_URL = `http://127.0.0.1:${DEV_PORT}`;
 let isolatedWorkspace: string | undefined;
+let isolatedRecoveryRepository: string | undefined;
 
 function ensureIsolatedWorkspace(): { taskRepository: string; watchPath: string } {
   isolatedWorkspace ??= mkdtempSync(path.join(tmpdir(), 'agent-studio-dev-backend-'));
   const watchPath = path.join(isolatedWorkspace, 'projects', 'agent-studio-worktree');
   mkdirSync(watchPath, { recursive: true });
+  if (process.env.DEV_RECOVERY_FIXTURE === '1' && !isolatedRecoveryRepository) {
+    isolatedRecoveryRepository = path.join(isolatedWorkspace, 'recovery-repository');
+    mkdirSync(isolatedRecoveryRepository, { recursive: true });
+    for (const args of [
+      ['init'], ['config', 'user.name', 'Playwright Recovery'],
+      ['config', 'user.email', 'playwright-recovery@example.invalid'],
+    ]) {
+      const result = spawnSync('git', args, { cwd: isolatedRecoveryRepository });
+      if (result.status !== 0) throw new Error(`Could not prepare isolated recovery Git repository: git ${args.join(' ')}`);
+    }
+    writeFileSync(path.join(isolatedRecoveryRepository, 'recovery-proof.txt'), 'before restart\n');
+    for (const args of [['add', '.'], ['commit', '-m', 'test: recovery baseline']]) {
+      const result = spawnSync('git', args, { cwd: isolatedRecoveryRepository });
+      if (result.status !== 0) throw new Error(`Could not seed isolated recovery Git repository: git ${args.join(' ')}`);
+    }
+    writeFileSync(path.join(isolatedRecoveryRepository, 'recovery-proof.txt'), 'pending operator decision\n');
+  }
   return { taskRepository: isolatedWorkspace, watchPath };
 }
 
@@ -89,12 +110,14 @@ function runScript(cmd: 'start' | 'stop' | 'status'): { code: number; stdout: st
         Runner__Role: 'test-subject',
         WatchPaths__0__Name: 'Agent Studio Worktree',
         WatchPaths__0__Path: isolated.watchPath,
-        WatchPaths__0__RootPath: devCheckout,
-        WatchPaths__0__RepositoryPath: devCheckout,
+        WatchPaths__0__RootPath: isolatedRecoveryRepository ?? devCheckout,
+        WatchPaths__0__RepositoryPath: isolatedRecoveryRepository ?? devCheckout,
       } : {}),
     },
     encoding: 'utf8',
-    timeout: 60_000,
+    // A cold worktree build can exceed a minute before the API launcher starts
+    // its own bounded health check.
+    timeout: 180_000,
   });
   return {
     code: result.status ?? 1,
@@ -167,6 +190,7 @@ export const test = base.extend<{ devBackend: DevBackend }>({
         if (isolatedWorkspace) {
           rmSync(isolatedWorkspace, { recursive: true, force: true });
           isolatedWorkspace = undefined;
+          isolatedRecoveryRepository = undefined;
         }
         throw new Error(
           `dev-lifecycle.sh start failed (exit ${r.code}).\nstdout:\n${r.stdout}\nstderr:\n${r.stderr}`
@@ -195,6 +219,7 @@ export const test = base.extend<{ devBackend: DevBackend }>({
     if (isolatedWorkspace) {
       rmSync(isolatedWorkspace, { recursive: true, force: true });
       isolatedWorkspace = undefined;
+      isolatedRecoveryRepository = undefined;
     }
   },
 });
