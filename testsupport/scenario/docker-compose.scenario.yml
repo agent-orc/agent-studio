@@ -38,6 +38,15 @@ services:
         gid: "10001"
         mode: 0400
 
+  orchestrator-engine:
+    image: "${SCENARIO_ORCHESTRATOR_ENGINE_IMAGE:?set SCENARIO_ORCHESTRATOR_ENGINE_IMAGE}"
+    build:
+      context: .
+      dockerfile: orchestrator-engine/Dockerfile
+      args:
+        VERSION: ${SCENARIO_BUILD_VERSION:?set SCENARIO_BUILD_VERSION}
+        SHA: ${SCENARIO_BUILD_SHA:?set SCENARIO_BUILD_SHA}
+
   studio-bff:
     image: "${SCENARIO_STUDIO_BFF_IMAGE:?set SCENARIO_STUDIO_BFF_IMAGE}"
     build:
