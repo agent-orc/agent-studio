@@ -96,7 +96,8 @@ public sealed record ReviewPlanDto(
     IReadOnlyList<ReviewPreparationCommandDto>? Preparation = null,
     IReadOnlyList<string>? PreserveGlobs = null,
     string? BuildProfileFingerprint = null,
-    int LibraryVersion = 0);
+    int LibraryVersion = 0,
+    bool BuildTestDeferredToBatch = false);
 
 public sealed record CreateReviewSubjectRequest(
     string TaskId,

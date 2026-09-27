@@ -59,7 +59,8 @@ public sealed record BatchGateManifest(
     string BatchId, BatchGateScope Scope, string BaseSha, string MembershipDigest,
     DateTimeOffset ClosedAtUtc, IReadOnlyList<BatchGateSubject> Members,
     IReadOnlyList<BatchGateExclusion> Exclusions,
-    IReadOnlyList<string> EligibleKeys);
+    IReadOnlyList<string> EligibleKeys,
+    string? ParentBatchId = null);
 
 public sealed record BatchGateFormation(
     BatchGateManifest? Manifest, IReadOnlyList<BatchGateExclusion> Exclusions,

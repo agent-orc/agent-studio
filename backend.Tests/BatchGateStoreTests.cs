@@ -31,6 +31,25 @@ public sealed class BatchGateStoreTests : IDisposable
     }
 
     [Fact]
+    public void PendingReviewIsDurableIdempotentAndSequenced()
+    {
+        var first = _store.Enqueue(new BatchGatePendingRecord(
+            "review-a", Subject("task-a", 0) with { EnqueueSequence = 0 },
+            _root, _root, _root, "direct-merge", "task", Now));
+        var replay = _store.Enqueue(new BatchGatePendingRecord(
+            "review-a", Subject("task-a", 0) with { EnqueueSequence = 0 },
+            _root, _root, _root, "direct-merge", "task", Now));
+        var second = new BatchGateStore(_root).Enqueue(new BatchGatePendingRecord(
+            "review-b", Subject("task-b", 1) with { EnqueueSequence = 0 },
+            _root, _root, _root, "direct-merge", "task", Now));
+        Assert.Equal(first.Subject.EnqueueSequence, replay.Subject.EnqueueSequence);
+        Assert.True(second.Subject.EnqueueSequence > first.Subject.EnqueueSequence);
+        Assert.Equal(2, new BatchGateStore(_root).ListPending().Count);
+        _store.ResolvePending("review-a", "published");
+        Assert.Single(_store.ListPending());
+    }
+
+    [Fact]
     public void ClosedManifestCannotAbsorbMembersOrChangeDigest()
     {
         var manifest = Close();
@@ -75,16 +94,22 @@ public sealed class BatchGateStoreTests : IDisposable
     {
         var manifest = Close();
         var member = manifest.Members[0];
+        var evidence = Path.Combine(_root, "run-evidence.json");
+        File.WriteAllText(evidence, "{\"tested\":true}");
         var run = new BatchGateRunRecord("run-1", manifest.BatchId,
             manifest.MembershipDigest, Base, Next, "full", "digest", "host", 1,
-            ["dotnet test"], Now, "evidence/run.json");
+            ["dotnet test"], Now, evidence);
         _store.AppendState(new BatchGateState(manifest.BatchId, manifest.MembershipDigest,
             BatchPhase.Assembled, Next, 1, Now));
         _store.RecordRun(run);
         Assert.False(_store.CanRelease(member, manifest.BatchId, run.BatchRunId));
+        Assert.Throws<InvalidDataException>(() => _store.RecordVerdict(
+            new BatchGateRunVerdict(run.BatchRunId, manifest.BatchId,
+                manifest.MembershipDigest, Next, "digest", "pass", "passed",
+                "another-evidence-path", Now)));
         _store.RecordVerdict(new BatchGateRunVerdict(run.BatchRunId, manifest.BatchId,
             manifest.MembershipDigest, Next, "digest", "pass", "passed",
-            "evidence/verdict.json", Now));
+            evidence, Now));
         _store.RecordPublication(new BatchGatePublication(manifest.BatchId,
             manifest.MembershipDigest, run.BatchRunId, Base, Next, Next, 1, 1, Now));
         Assert.False(_store.CanRelease(member, manifest.BatchId, run.BatchRunId));
@@ -94,12 +119,16 @@ public sealed class BatchGateStoreTests : IDisposable
         Assert.Throws<InvalidDataException>(() => _store.RecordMember(new BatchGateMemberRecord(
             member.TaskKey, "wrong-attempt", 1, Base, [Next], manifest.BatchId,
             manifest.MembershipDigest, Base, Next, "digest", run.BatchRunId,
-            "pass", "evidence/member.json", Now)));
+            "pass", evidence, Now)));
         _store.RecordMember(new BatchGateMemberRecord(
             member.TaskKey, member.RunAttempt, member.DeliveryEpoch, Base, [Next],
             manifest.BatchId, manifest.MembershipDigest, Base, Next, "digest",
-            run.BatchRunId, "pass", "evidence/member.json", Now));
+            run.BatchRunId, "pass", evidence, Now));
         Assert.True(_store.CanRelease(member, manifest.BatchId, run.BatchRunId));
+        Assert.False(_store.CanRelease(member with { ResultRef = "refs/heads/agent-studio/results/other" },
+            manifest.BatchId, run.BatchRunId));
+        File.Delete(evidence);
+        Assert.False(_store.CanRelease(member, manifest.BatchId, run.BatchRunId));
         Assert.False(_store.CanRelease(member with { RunAttempt = "new" },
             manifest.BatchId, run.BatchRunId));
     }
