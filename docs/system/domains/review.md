@@ -36,7 +36,12 @@ surfaced under its exact classification (`review:unparseable` or environmental
 `InfraCrash`) by both the local and Remote Review decision paths. This also
 applies when another aspect reports a blocking product finding in the same
 review: the infrastructure failure is surfaced first, and the blocking finding
-remains in the review report for the next valid decision.
+remains in the review report for the next valid decision. Infrastructure
+routing uses only the runner-authored `InfrastructureFailure` flag (projected
+from local `AspectVerdict.IsInfraFailure`) or the exact classification
+`review:unparseable` / `ReviewInfra`. Free-text summaries never classify a
+reviewer failure: a product block mentioning "infra crash" or "no parseable
+verdict" still enters the coding fix path.
 
 The fix prompt contains the review attempt, aspect, summary, cited evidence,
 and finding, and instructs the coding agent to change exactly those items.

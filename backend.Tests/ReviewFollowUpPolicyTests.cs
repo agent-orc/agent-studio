@@ -74,6 +74,34 @@ public class ReviewFollowUpPolicyTests
                 concernRoundsUsed: 0,
                 maxConcernRounds: 1).Action);
 
+    [Theory]
+    [InlineData("Infra crash recovery loses pending state")]
+    [InlineData("The product returns no parseable verdict when input is valid")]
+    public void Product_block_with_infrastructure_words_starts_coding_round(string summary)
+    {
+        var decision = ReviewFollowUpPolicy.Decide(
+            [new("code-quality", "block", summary, Classification: "RemoteAspectVerdict")], 0, 1);
+
+        Assert.Equal(ReviewFollowUpAction.ReviewFindingRound, decision.Action);
+        Assert.True(decision.StartsCodingRound);
+        Assert.Equal(summary, Assert.Single(decision.Findings).Summary);
+    }
+
+    [Theory]
+    [InlineData("review:unparseable", false)]
+    [InlineData("ReviewInfra", false)]
+    [InlineData(null, true)]
+    public void Explicit_infrastructure_marker_retries_without_summary_keywords(
+        string? classification, bool infrastructureFailure)
+    {
+        var decision = ReviewFollowUpPolicy.Decide(
+            [new("code-quality", "concerns", "Reviewer unavailable.",
+                Classification: classification, InfrastructureFailure: infrastructureFailure)], 0, 1);
+
+        Assert.Equal(ReviewFollowUpAction.RetryAspect, decision.Action);
+        Assert.False(decision.StartsCodingRound);
+    }
+
     [Fact]
     public void Unparseable_verdict_is_infrastructure_not_a_concern_round()
         => Assert.Equal(

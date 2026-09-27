@@ -115,12 +115,11 @@ public static partial class ReviewFollowUpPolicy
         return text.Length == 0 ? null : text;
     }
 
+    // Only runner-authored markers identify review infrastructure; summaries describe product findings too.
     private static bool IsAspectInfrastructureResult(ReviewFollowUpFinding item)
         => item.InfrastructureFailure
            || string.Equals(item.Classification, "review:unparseable", StringComparison.OrdinalIgnoreCase)
-           || string.Equals(item.Classification, "ReviewInfra", StringComparison.OrdinalIgnoreCase)
-           || (item.Summary?.Contains("no parseable verdict", StringComparison.OrdinalIgnoreCase) ?? false)
-           || (item.Summary?.Contains("infra crash", StringComparison.OrdinalIgnoreCase) ?? false);
+           || string.Equals(item.Classification, "ReviewInfra", StringComparison.OrdinalIgnoreCase);
 
     private static bool Meaningful(string? value)
         => !string.IsNullOrWhiteSpace(value)

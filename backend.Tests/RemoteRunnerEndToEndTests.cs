@@ -4957,6 +4957,54 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         return new LocalGitResult(process.ExitCode, stdout, stderr);
     }
 
+    [Theory]
+    [InlineData("RemoteAspectVerdict", "Infra crash recovery loses pending state", false)]
+    [InlineData("RemoteAspectVerdict", "The product returns no parseable verdict when input is valid", false)]
+    [InlineData("review:unparseable", "Reviewer unavailable.", true)]
+    [InlineData("ReviewInfra", "Reviewer unavailable.", true)]
+    public async Task Monolith_v1_review_plane_routes_by_explicit_infrastructure_classification(
+        string classification, string summary, bool infrastructure)
+    {
+        const string reviewer = "review-classification";
+        const string instance = "review-classification-host:4243";
+        SeedTask(TaskStates.AutoReview, TaskKey, "Aspect classification", "Build and verify.");
+        var now = DateTime.UtcNow;
+        using var factory = BuildFactory(authorityNow: () => now);
+        using var http = factory.CreateClient();
+        SeedReviewAttempt(factory.Services, includeResultEnvelope: true);
+        await RegisterReviewExecutorAsync(http, reviewer, instance);
+        using var client = new RClient(http, reviewer, usesDurableTaskServer: true);
+        var claim = await client.ClaimReviewAsync(
+            new Contract.ReviewClaimRequest(reviewer, instance, 120), CancellationToken.None);
+        Assert.Equal("claimed", claim.Status);
+        var request = PassingV1ReviewReport(claim, "classification-report") with
+        {
+            Outcome = "ProductFailure",
+            Verdicts = [new Contract.ReviewVerdictDto(
+                "code-quality", "block", classification, summary,
+                "backend/Features/Runner/ProjectRunner.cs", "Preserve pending state.")],
+        };
+
+        var response = await client.ReportReviewAsync(claim.Attempt!.AttemptId, request, CancellationToken.None);
+
+        Assert.Equal(infrastructure ? TaskStates.Escalated : TaskStates.Ready, response.TaskState);
+        var task = factory.Services.GetRequiredService<TaskScannerService>().FindJob(TaskKey, _watchPath)!;
+        var followUp = Path.Combine(task.FolderPath, "orchestrator-follow-up.md");
+        var attempt = factory.Services.GetRequiredService<AttemptAuthorityService>()
+            .GetReview(claim.Attempt.AttemptId)!;
+        Assert.Equal(infrastructure ? ReviewTerminalOutcome.InfrastructureFailure : ReviewTerminalOutcome.ProductFailure, attempt.Outcome);
+        if (infrastructure)
+        {
+            Assert.Equal("AspectVerdictUnparseable", attempt.FailureClassification);
+            Assert.False(File.Exists(followUp));
+        }
+        else
+        {
+            Assert.Contains(summary, File.ReadAllText(followUp));
+            Assert.Equal(RunTriggers.ReviewFinding, ReviewConcernRoundStore.Read(task.FolderPath)!.RoundKind);
+        }
+    }
+
     [Fact]
     public async Task Monolith_v1_review_plane_runs_one_concern_fix_round_then_accepts_pass_end_to_end()
     {
