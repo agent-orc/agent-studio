@@ -48,6 +48,24 @@ public sealed class EngineTaskServerClient : IDisposable
             request,
             ct);
 
+    public Task<SteeringActionReceipt> ApplySteeringActionAsync(
+        string projectId, string taskId, SteeringActionRequest request, CancellationToken ct)
+        => PostAsync<SteeringActionRequest, SteeringActionReceipt>(
+            $"/api/v1/steering/projects/{Uri.EscapeDataString(projectId)}/tasks/{Uri.EscapeDataString(taskId)}/actions",
+            request, ct);
+
+    public async Task<SteeringActionReceipt> GetSteeringActionAsync(
+        string projectId, string taskId, string commandId, CancellationToken ct)
+    {
+        var path = $"/api/v1/steering/projects/{Uri.EscapeDataString(projectId)}/tasks/{Uri.EscapeDataString(taskId)}/actions/{Uri.EscapeDataString(commandId)}";
+        using var response = await _http.GetAsync(path, ct);
+        var content = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            throw new EngineTaskServerException((int)response.StatusCode, content);
+        return JsonSerializer.Deserialize<SteeringActionReceipt>(content, Json)
+            ?? throw new EngineTaskServerException((int)response.StatusCode, "Task Server returned an empty steering receipt.");
+    }
+
     public Task<OrchestrationRunDto> CompleteStageAsync(
         string runId,
         CompleteOrchestrationStageRequest request,
@@ -65,6 +83,30 @@ public sealed class EngineTaskServerClient : IDisposable
             $"/api/v1/orchestration/runs/{Uri.EscapeDataString(runId)}/lease/release",
             request,
             ct);
+
+    public Task<OrchestrationLeaseDto> RenewAsync(
+        string runId, OrchestrationLeaseRenewRequest request, CancellationToken ct)
+        => PostAsync<OrchestrationLeaseRenewRequest, OrchestrationLeaseDto>(
+            $"/api/v1/orchestration/runs/{Uri.EscapeDataString(runId)}/lease/renew", request, ct);
+
+    public Task<GateStatus> CreateGateSubjectAsync(CreateGateSubjectRequest request, CancellationToken ct)
+        => PostAsync<CreateGateSubjectRequest, GateStatus>("/api/v1/gates/subjects", request, ct);
+
+    public async Task<GateStatus> GetGateStatusAsync(string subjectId, CancellationToken ct)
+        => await GetAsync<GateStatus>($"/api/v1/gates/subjects/{Uri.EscapeDataString(subjectId)}", ct);
+
+    public async Task<ReviewSubjectDto> GetReviewSubjectAsync(string subjectId, CancellationToken ct)
+        => await GetAsync<ReviewSubjectDto>($"/api/v1/gates/review-sources/{Uri.EscapeDataString(subjectId)}", ct);
+
+    private async Task<T> GetAsync<T>(string path, CancellationToken ct)
+    {
+        using var response = await _http.GetAsync(path, ct);
+        var body = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            throw new EngineTaskServerException((int)response.StatusCode, body);
+        return JsonSerializer.Deserialize<T>(body, Json)
+            ?? throw new EngineTaskServerException(500, "Task Server returned an empty response.");
+    }
 
     private static HttpClient CreateHttpClient(EngineOptions options)
     {

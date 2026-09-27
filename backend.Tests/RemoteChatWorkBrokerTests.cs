@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging.Abstractions;
+using AgentStudio.Shared;
 
 using Xunit;
 
@@ -41,6 +42,10 @@ public sealed class RemoteChatWorkBrokerTests
         Assert.Equal("Inspect the repository.", claim.Work.Prompt);
         Assert.Equal(CliTypes.Claude, claim.Work.CliType);
         Assert.Equal(ModelIds.ClaudeOpus5, claim.Work.Model);
+        var running = broker.GetStatus(Route.ProjectName, contextKey: null);
+        Assert.Equal("running", running?.State);
+        Assert.Equal("agent-runner-01", running?.HostName);
+        Assert.NotNull(running?.StartedAt);
         Assert.Equal(CliTypes.Codex, claim.Work.ConfiguredCliType);
         Assert.Equal(ModelIds.Gpt56Sol, claim.Work.ConfiguredModel);
 
@@ -66,14 +71,56 @@ public sealed class RemoteChatWorkBrokerTests
         Assert.True(accepted);
         var result = await pending;
         Assert.True(result.Success);
+        Assert.NotNull(result.QueuedAt);
+        Assert.NotNull(result.StartedAt);
+        Assert.NotNull(result.FinishedAt);
+        Assert.True(result.QueuedAt <= result.StartedAt);
+        Assert.True(result.StartedAt <= result.FinishedAt);
         Assert.Contains(context.RepoPath!, result.ReplyText);
         Assert.Equal(CliTypes.Claude, result.CliType);
         Assert.Equal(ModelIds.Gpt56Sol, result.ConfiguredModel);
         Assert.Equal("codex weekly cap reached", result.QuotaFallbackReason);
         Assert.Equal(context, broker.GetContext(Route));
+        Assert.Null(broker.GetStatus(Route.ProjectName, contextKey: null));
 
         var reassigned = Route with { RunnerId = "runner-02" };
         Assert.Null(broker.GetContext(reassigned));
+    }
+
+    [Fact]
+    public async Task Concurrent_contexts_in_one_project_keep_their_own_execution_metadata()
+    {
+        var broker = new RemoteChatWorkBroker(NullLogger<RemoteChatWorkBroker>.Instance);
+        var taskRoute = Route with { ContextKey = "task:Agent Studio/AGT-2901" };
+        var dossierRoute = Route with { ContextKey = "workbench:Agent Studio/dossier-1" };
+        var taskPending = broker.EnqueueTurnAsync(
+            taskRoute, "Task question", "gpt-5.5", null, CancellationToken.None);
+        var dossierPending = broker.EnqueueTurnAsync(
+            dossierRoute, "Dossier question", "gpt-5.5", null, CancellationToken.None);
+        var runner = new RemoteChatWorkClaimRequest("runner-01", "runner-01", "agent-runner-01");
+        var taskWork = broker.TryClaim(runner).Work!;
+        var dossierWork = broker.TryClaim(runner).Work!;
+        var taskContext = new ChatExecutionContext(
+            "remote", "agent-runner-01", "/srv/task-chat", "develop", "task-sha", "ready", DateTime.UtcNow);
+        var dossierContext = taskContext with { RepoPath = "/srv/dossier-chat", HeadSha = "dossier-sha" };
+
+        Assert.True(broker.Complete(new RemoteChatWorkCompletionRequest(
+            dossierWork.WorkId, dossierWork.ClaimToken, "runner-01", true,
+            "dossier reply", "gpt-5.5", null, null, dossierContext)));
+        Assert.True(broker.Complete(new RemoteChatWorkCompletionRequest(
+            taskWork.WorkId, taskWork.ClaimToken, "runner-01", true,
+            "task reply", "gpt-5.5", null, null, taskContext)));
+        await Task.WhenAll(taskPending, dossierPending);
+
+        Assert.Equal(taskContext, broker.GetContext(taskRoute));
+        Assert.Equal(dossierContext, broker.GetContext(dossierRoute));
+        Assert.Null(broker.GetContext(Route));
+
+        var fallbackContext = taskContext with { RepoPath = "/local/task-chat" };
+        broker.RecordLocalFallback(taskRoute, fallbackContext);
+        Assert.Equal(fallbackContext, broker.GetContext(taskRoute));
+        Assert.Equal(dossierContext, broker.GetContext(dossierRoute));
+        Assert.Null(broker.GetContext(taskRoute with { RunnerId = "runner-02" }));
     }
 
     [Fact]
@@ -97,6 +144,9 @@ public sealed class RemoteChatWorkBrokerTests
 
         Assert.Equal(RemoteChatWorkClaimStatuses.Empty, deferred.Status);
         Assert.Equal("claude capability unavailable", deferred.Message);
+        var waiting = broker.GetStatus(Route.ProjectName, contextKey: null);
+        Assert.Equal("queued", waiting?.State);
+        Assert.Equal("claude capability unavailable", waiting?.Reason);
         var claimedLater = broker.TryClaim(new RemoteChatWorkClaimRequest(
             "runner-01", "runner-01", "host"));
         Assert.Equal(RemoteChatWorkClaimStatuses.Claimed, claimedLater.Status);
@@ -149,5 +199,46 @@ public sealed class RemoteChatWorkBrokerTests
         Assert.Equal(RemoteChatWorkClaimStatuses.Claimed, first.Status);
         Assert.Equal(RemoteChatWorkKinds.Inspect, first.Work?.Kind);
         Assert.Equal(RemoteChatWorkClaimStatuses.Empty, second.Status);
+    }
+
+    [Fact]
+    public async Task Unreachable_host_releases_queued_turn_for_workstation_fallback()
+    {
+        var broker = new RemoteChatWorkBroker(
+            NullLogger<RemoteChatWorkBroker>.Instance,
+            TimeSpan.FromMilliseconds(25));
+        await Assert.ThrowsAsync<RemoteChatHostUnreachableException>(() =>
+            broker.EnqueueTurnAsync(Route, "question", "gpt-5.5", null, CancellationToken.None));
+        Assert.Null(broker.GetStatus(Route.ProjectName, contextKey: null));
+    }
+
+    [Fact]
+    public async Task Usage_separates_light_and_heavy_chat_from_coding_capacity()
+    {
+        var broker = new RemoteChatWorkBroker(NullLogger<RemoteChatWorkBroker>.Instance);
+        var pending = broker.EnqueueTurnAsync(
+            Route, "question", "gpt-5.5", null, CancellationToken.None);
+        var work = broker.TryClaim(new RemoteChatWorkClaimRequest(
+            "runner-01", "runner-01", "agent-runner-01")).Work!;
+        var light = Assert.Single(broker.GetUsage());
+        Assert.Equal(1, light.ActiveTurns);
+        Assert.Equal(0, light.HeavyTurns);
+
+        Assert.True(broker.Renew(new RemoteChatWorkRenewRequest(
+            work.WorkId, work.ClaimToken, "runner-01", Heavy: true, CpuPercent: 54)));
+        var heavy = Assert.Single(broker.GetUsage());
+        Assert.Equal(1, heavy.HeavyTurns);
+        Assert.Equal(54, heavy.CpuPercent);
+
+        Assert.True(broker.Complete(new RemoteChatWorkCompletionRequest(
+            work.WorkId, work.ClaimToken, "runner-01", true, "done", "gpt-5.5",
+            new OrchestratorTokenUsage { InputTokens = 7, OutputTokens = 3 },
+            null, null)));
+        await pending;
+        var completed = Assert.Single(broker.GetUsage());
+        Assert.Equal(0, completed.ActiveTurns);
+        Assert.Equal(0, completed.HeavyTurns);
+        Assert.Equal(10, completed.Tokens);
+        Assert.NotNull(completed.CostUsd);
     }
 }

@@ -32,16 +32,13 @@ public static class AttemptAuthorityEndpoints
                 request.IdempotencyKey)))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
 
-        group.MapPost("/reviews/{attemptId}/settle", (
-            string attemptId,
-            SettleReviewAttemptRequest request,
-            AttemptAuthorityService authority) =>
-        {
-            if (!string.Equals(attemptId, request.Write.AttemptId, StringComparison.Ordinal))
-                return Results.BadRequest(new AttemptWriteResult(
-                    AttemptWriteStatus.Invalid, attemptId, "Route AttemptId must match the write reference."));
-            return ToHttp(authority.SettleReview(request));
-        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
+        group.MapPost("/reviews/{attemptId}/settle", (string attemptId) =>
+            Results.Conflict(new
+            {
+                code = "review-delivery-required",
+                message = "Submit the fenced review report through the review plane. Authority settlement alone does not complete delivery.",
+                attemptId,
+            })).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
 
         group.MapPost("/reviews/{attemptId}/renew", (
             string attemptId,

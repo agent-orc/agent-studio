@@ -21,11 +21,12 @@ internal static class RunnerCapabilityProbe
             Capability(
                 options.Role == "review"
                     ? CapabilityProtocol.ReviewExecutor
-                    : CapabilityProtocol.CodingExecutor,
+                    : options.Role == "gate" ? GateCapabilities.Executor : CapabilityProtocol.CodingExecutor,
                 "executor",
                 typeof(RunnerCapabilityProbe).Assembly.GetName().Version?.ToString(),
                 options.Role),
-            Capability(CapabilityProtocol.GitFetch, "source", ToolVersion("git"), "git"),
+            Capability(CapabilityProtocol.GitFetch, "source", ToolVersion("git"), "git",
+                options.Role == "gate" && !OnPath("git") ? "unavailable" : "ready"),
             Capability(CapabilityProtocol.RepositoryAccess, "source", null, options.GitRemote ?? "server-routed"),
             Capability(CapabilityProtocol.Disk, "foundation", null, Path.GetPathRoot(options.WorkDir)),
             Capability(
@@ -73,7 +74,7 @@ internal static class RunnerCapabilityProbe
                 typeof(CodingAgentRunner.CliRunner).Assembly.GetName().Version?.ToString(),
                 "car"));
         }
-        else
+        else if (options.Role == "review")
         {
             AddCodingCliCapabilities(
                 list,
@@ -85,6 +86,12 @@ internal static class RunnerCapabilityProbe
             list.Add(Capability(ReviewCapabilities.SourceBundleMaterialization, "review", null, "artifact"));
             list.Add(Capability(ReviewCapabilities.BaselineComparison, "review", null, "merge-base"));
             list.Add(Capability(ReviewCapabilities.DependencyPreparation, "review", null, "build-profile"));
+        }
+        else
+        {
+            list.Add(Capability(GateCapabilities.GitMaterialization, "gate", ToolVersion("git"), "git",
+                OnPath("git") ? "ready" : "unavailable"));
+            list.Add(Capability(GateCapabilities.BundleMaterialization, "gate", null, "artifact"));
         }
         AddToolchain(list, CapabilityProtocol.DotNet, "dotnet");
         AddToolchain(list, CapabilityProtocol.Node, "node");
@@ -158,6 +165,15 @@ internal static class RunnerCapabilityProbe
             }))
             .Distinct(StringComparer.Ordinal)
             .ToArray();
+
+    public static IReadOnlyList<string> GateRegistrationCapabilities(RunnerOptions options)
+        => new[]
+        {
+            GateCapabilities.Executor, GateCapabilities.GitMaterialization,
+            GateCapabilities.BundleMaterialization, CapabilityProtocol.GitFetch,
+            CapabilityProtocol.RepositoryAccess, CapabilityProtocol.Disk,
+            CapabilityProtocol.TaskServerConnectivity,
+        }.Concat(options.RequiredCapabilities).Distinct(StringComparer.Ordinal).ToArray();
 
     public static HostTelemetrySnapshotDto? Telemetry(
         HostTelemetrySample? sample,

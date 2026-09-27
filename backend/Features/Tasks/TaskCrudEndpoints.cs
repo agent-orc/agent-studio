@@ -800,6 +800,16 @@ public static class TaskCrudEndpoints
         {
             if (string.IsNullOrWhiteSpace(req.Title))
                 return Results.BadRequest("Title is required");
+            if (req.Kind is not null && !TaskKinds.All.Contains(req.Kind.Trim(), StringComparer.OrdinalIgnoreCase))
+                return Results.BadRequest(new { error = "kind must be task, epic, or decision." });
+            if (TaskKinds.IsDecision(req.Kind))
+            {
+                var errors = DecisionCardPolicy.ValidateContent(req.Decision);
+                if (errors.Count > 0)
+                    return Results.BadRequest(new { error = "Invalid decision card", errors });
+                if (req.TargetState is not null && req.TargetState != TaskStates.Preparation)
+                    return Results.BadRequest(new { error = "Decision cards must start in 1-preparation." });
+            }
 
             // A networked human principal is the initiating identity. The
             // attribution header must never override the authenticated user.
@@ -1020,6 +1030,24 @@ public static class TaskCrudEndpoints
             return success ? Results.Ok(new { released = req?.Released == true }) : Results.NotFound();
         });
 
+        group.MapPost("/{jobId}/decision", async (HttpContext ctx, string jobId, string? project, string? watchPath,
+            DecideCardRequest req, DecisionCardService decisions, AgentStudio.Registry.ProjectRegistry projects,
+            CancellationToken ct) =>
+        {
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            return DecisionResult(await decisions.DecideAsync(jobId, watchPath, req, DecisionActor(ctx), ct,
+                (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User.Role));
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
+
+        group.MapPost("/{jobId}/decision/reopen", async (HttpContext ctx, string jobId, string? project, string? watchPath,
+            ReopenDecisionRequest? req, DecisionCardService decisions, AgentStudio.Registry.ProjectRegistry projects,
+            CancellationToken ct) =>
+        {
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            return DecisionResult(await decisions.ReopenAsync(jobId, watchPath, req, DecisionActor(ctx), ct,
+                (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User.Role));
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
+
         // Replace-all: the request's Tags array becomes the new full set on
         // the job. Empty list clears tags. AGT-2803: unknown tag ids are refused
         // at this boundary against the project's effective vocabulary (workspace
@@ -1214,6 +1242,37 @@ public static class TaskCrudEndpoints
             ?? context.Request.Headers["X-Client-Id"].FirstOrDefault();
         return TimelineActors.Human(clientId ?? string.Empty);
     }
+
+    /// <summary>
+    /// AGT-2795: the decider identity for a decision-card write. Unlike
+    /// <see cref="OperatorActor"/> this returns the raw client id (not a
+    /// <c>human:</c>-prefixed timeline actor), because it is stored as the
+    /// decision record's author and the timeline layer re-wraps it.
+    /// </summary>
+    private static string DecisionActor(HttpContext context) =>
+        context.Items["ClientId"] as string
+        ?? context.Request.Headers["X-Client-Id"].FirstOrDefault()
+        ?? DecisionDeciders.Operator;
+
+    /// <summary>Maps a <see cref="DecisionCardOutcome"/> to an HTTP result.</summary>
+    private static IResult DecisionResult(DecisionCardOutcome outcome) => outcome.Status switch
+    {
+        DecisionCardStatus.Success => Results.Ok(new
+        {
+            decision = outcome.Decision,
+            targetState = outcome.TargetState,
+        }),
+        DecisionCardStatus.NotFound => Results.NotFound(),
+        DecisionCardStatus.NotDecision => Results.BadRequest(new { error = "This card is not a decision card." }),
+        DecisionCardStatus.Forbidden => Results.Json(new { error = outcome.Message }, statusCode: StatusCodes.Status403Forbidden),
+        DecisionCardStatus.Conflict => Results.Conflict(new { error = outcome.Message ?? "The decision is not in a valid state for this action." }),
+        DecisionCardStatus.InvalidRequest => Results.BadRequest(new
+        {
+            error = "Invalid decision",
+            errors = (outcome.Errors ?? []).Select(e => new { code = e.Code.ToString(), message = e.Message }),
+        }),
+        _ => Results.StatusCode(500),
+    };
 
     internal static string? AppendDeliveryAcceptanceCriteria(
         string? prompt,

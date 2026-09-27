@@ -17,6 +17,9 @@ public sealed record ProjectChatTurn
     public string Author { get; init; } = ProjectChatTurnAuthors.User;
     public string Kind { get; init; } = ProjectChatTurnKinds.Turn;
     public DateTime Ts { get; init; } = DateTime.UtcNow;
+    public DateTime? QueuedAt { get; init; }
+    public DateTime? StartedAt { get; init; }
+    public DateTime? FinishedAt { get; init; }
     public IReadOnlyList<string>? Refs { get; init; }
     public string Body { get; init; } = "";
 }
@@ -82,6 +85,9 @@ public static class ProjectChatTurnSerializer
         sb.Append("author: ").Append(EscapeScalar(turn.Author)).Append('\n');
         sb.Append("kind: ").Append(EscapeScalar(turn.Kind)).Append('\n');
         sb.Append("ts: ").Append(turn.Ts.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture)).Append('\n');
+        AppendTimestamp(sb, "queuedAt", turn.QueuedAt);
+        AppendTimestamp(sb, "startedAt", turn.StartedAt);
+        AppendTimestamp(sb, "finishedAt", turn.FinishedAt);
         if (turn.Refs is { Count: > 0 })
         {
             sb.Append("refs: [");
@@ -96,6 +102,12 @@ public static class ProjectChatTurnSerializer
         sb.Append(turn.Body ?? "");
         if (!(turn.Body ?? "").EndsWith('\n')) sb.Append('\n');
         return sb.ToString();
+    }
+
+    private static void AppendTimestamp(StringBuilder sb, string key, DateTime? value)
+    {
+        if (value is { } at)
+            sb.Append(key).Append(": ").Append(at.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture)).Append('\n');
     }
 
     /// <summary>
@@ -142,7 +154,7 @@ public static class ProjectChatTurnSerializer
         }
 
         string? turnId = null, author = null, kind = null;
-        DateTime? ts = null;
+        DateTime? ts = null, queuedAt = null, startedAt = null, finishedAt = null;
         List<string>? refs = null;
 
         foreach (var rawLine in fmBlock.Split('\n'))
@@ -162,6 +174,9 @@ public static class ProjectChatTurnSerializer
                     if (DateTime.TryParse(UnescapeScalar(value), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var parsedTs))
                         ts = DateTime.SpecifyKind(parsedTs, DateTimeKind.Utc);
                     break;
+                case "queuedAt": queuedAt = ParseTimestamp(value); break;
+                case "startedAt": startedAt = ParseTimestamp(value); break;
+                case "finishedAt": finishedAt = ParseTimestamp(value); break;
                 case "refs":
                     refs = ParseRefsList(value);
                     break;
@@ -175,10 +190,18 @@ public static class ProjectChatTurnSerializer
             Author = author,
             Kind = kind,
             Ts = ts.Value,
+            QueuedAt = queuedAt,
+            StartedAt = startedAt,
+            FinishedAt = finishedAt,
             Refs = refs,
             Body = body
         };
     }
+
+    private static DateTime? ParseTimestamp(string value)
+        => DateTime.TryParse(UnescapeScalar(value), CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var parsed)
+            ? DateTime.SpecifyKind(parsed, DateTimeKind.Utc) : null;
 
     private static List<string>? ParseRefsList(string raw)
     {

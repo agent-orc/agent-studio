@@ -146,6 +146,14 @@ if (options.HealthCheckOnly)
 try
 {
     await client.EnsureCompatibleAsync(shutdown.Token);
+    if (options.Role == "gate")
+    {
+        if (!daemonMode)
+            throw new ArgumentException("Gate Executor runs as a polling service and does not accept coding task keys.");
+        await new RemoteGateDaemon(options, client, Log).RunAsync(shutdown.Token);
+        Log("gate daemon stopped");
+        return 0;
+    }
     if (options.Role == "review")
     {
         if (!daemonMode)
@@ -224,7 +232,7 @@ static void PrintUsage()
           --server <url>          Task Server base URL       (RUNNER_SERVER_URL)
           --runner-id <id>        Stable runner identity     (RUNNER_ID)
           --runner-name <name>    Board-facing runner name   (RUNNER_NAME)
-          --role <coding|review>  Separate service role      (RUNNER_ROLE)
+          --role <coding|review|gate>  Separate service role (RUNNER_ROLE)
           --client-id <id>        Attribution label only     (RUNNER_CLIENT_ID)
           --git-remote <url>      Startup probe/one-shot URL  (RUNNER_GIT_REMOTE)
           --git-push-remote <url> Probe/one-shot push URL     (RUNNER_GIT_PUSH_REMOTE)

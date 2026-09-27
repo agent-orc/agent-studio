@@ -42,6 +42,15 @@ export class RemoteHostsService {
   /** The release every host row is measured against (AGT-2826). */
   readonly stableRelease = signal<StableReleaseIdentity | null>(null);
   readonly providerRefusals = signal<readonly ProviderRejectionDailyCount[]>([]);
+  readonly interactiveUsage = signal<readonly import('../models/remote-host.model').RemoteChatUsage[]>([]);
+
+  refreshInteractiveUsage(): void {
+    this.http?.get<import('../models/remote-host.model').RemoteChatUsage[]>(
+      '/api/runner/project-chat/usage').subscribe({
+      next: rows => this.interactiveUsage.set(rows ?? []),
+      error: () => this.interactiveUsage.set([]),
+    });
+  }
 
   private static readonly FRESH_CLIENT_MS = 90_000;
   private static readonly DEGRADED_CLIENT_MS = 5 * 60_000;
