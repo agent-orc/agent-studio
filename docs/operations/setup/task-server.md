@@ -478,11 +478,10 @@ tag), `sha-<short-commit>` (the first 7 characters of the release commit), and
 `latest`. All three tags point at the same image content for that release; use
 the version tag for a normal upgrade, the SHA tag to pin an exact commit
 during a rollback rehearsal, and `latest` only for a non-production demo.
-Root `docker-compose.yml` uses one `AGENT_STUDIO_IMAGE_TAG` for every service.
-The template leaves it as `unpublished` until this one-box code has a compatible
-release. Set it to an exact verified `v<version>` and confirm all six images
-exist before a published-image installation. `AGENT_STUDIO_VERSION=0.9.1`
-labels interim source builds; that is separate evidence. Images build for
+Root `docker-compose.yml` uses one `AGENT_STUDIO_VERSION` for every service
+and resolves its release images at `v<AGENT_STUDIO_VERSION>`. Confirm all six
+images exist at that compatible version before a published-image installation.
+Source-built `-dev` services are separate evidence. Images build for
 `linux/amd64`; `linux/arm64` is not yet published.
 
 Every image carries standard OCI labels -

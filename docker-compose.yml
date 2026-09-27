@@ -120,10 +120,14 @@ x-web: &web
 
 x-runner: &runner
   restart: unless-stopped
+  env_file:
+    - path: ./runner.env
+      required: false
   environment:
     RUNNER_SERVER_URL: http://task-server:5071
     RUNNER_ID: distributed-runner
     RUNNER_NAME: distributed-runner
+    RUNNER_ROLE: coding
     RUNNER_ALLOW_INSECURE_HTTP: "1"
     RUNNER_AUTH_TOKEN_FILE: /run/agent-studio-secrets/runner_token
     RUNNER_GIT_REMOTE: ${RUNNER_GIT_REMOTE:-}
@@ -353,6 +357,7 @@ services:
       RUNNER_SERVER_URL: http://task-server-dev:5071
       RUNNER_ID: distributed-runner
       RUNNER_NAME: distributed-runner
+      RUNNER_ROLE: coding
       RUNNER_ALLOW_INSECURE_HTTP: "1"
       RUNNER_AUTH_TOKEN_FILE: /run/agent-studio-secrets/runner_token
       RUNNER_GIT_REMOTE: ${RUNNER_GIT_REMOTE:-}

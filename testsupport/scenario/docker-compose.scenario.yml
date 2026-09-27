@@ -1,4 +1,6 @@
 services:
+  bootstrap:
+    image: "${SCENARIO_TASK_SERVER_IMAGE:?set SCENARIO_TASK_SERVER_IMAGE}"
   task-server:
     image: "${SCENARIO_TASK_SERVER_IMAGE:?set SCENARIO_TASK_SERVER_IMAGE}"
     build:
@@ -11,27 +13,6 @@ services:
       BOOTSTRAP_RUNNER_ID: scenario-coding-runner
       TaskServer__MinimumLeaseSeconds: "5"
       TaskServer__MaximumLeaseSeconds: "30"
-    secrets:
-      - source: studio_token
-        target: /run/secrets/studio_token
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
-      - source: engine_token
-        target: /run/secrets/engine_token
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
-      - source: runner_token
-        target: /run/secrets/runner_token
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
-      - source: review_runner_token
-        target: /run/secrets/review_runner_token
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
 
   orchestrator-engine:
     image: "${SCENARIO_ORCHESTRATOR_ENGINE_IMAGE:?set SCENARIO_ORCHESTRATOR_ENGINE_IMAGE}"
@@ -65,7 +46,7 @@ services:
       RUNNER_NAME: scenario-coding-runner
       RUNNER_HOSTNAME: scenario-coding-host
       RUNNER_ROLE: coding
-      RUNNER_GIT_REMOTE: /scenario/origin.git
+      RUNNER_GIT_REMOTE: ${SCENARIO_HOST_DIR}/origin.git
       RUNNER_BASE_BRANCH: main
       RUNNER_BRANCH: main
       RUNNER_WORKDIR: /scenario/runner-work
@@ -84,7 +65,8 @@ services:
       - type: bind
         source: ${SCENARIO_HOST_DIR:?set SCENARIO_HOST_DIR}
         target: /scenario
-    secrets:
-      - source: runner_token
-        target: /run/secrets/runner_token
-        mode: 0400
+      # Use the same credential-free repository identity for the container
+      # coding worker and the native review executor on this one-box host.
+      - type: bind
+        source: ${SCENARIO_HOST_DIR:?set SCENARIO_HOST_DIR}
+        target: ${SCENARIO_HOST_DIR:?set SCENARIO_HOST_DIR}

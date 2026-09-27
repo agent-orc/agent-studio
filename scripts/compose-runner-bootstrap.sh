@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Compatibility entry point for installers that used the old runner bootstrap.
-# The supported one-box runners register with Task Server and use the four
-# installation credentials created by compose-distributed-bootstrap.sh.
+# The supported one-box runners register with Task Server and use credentials
+# created by the Compose bootstrap service on first start.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -7,15 +7,19 @@ Docker Engine with Compose v2, or Docker Desktop, is required. Allow at least
 workspaces. From the repository root:
 
 ```sh
-docker compose --profile dev up --build --wait task-server-dev orchestrator-engine-dev studio-bff-dev orchestrator-api-dev web-dev agent-host-distributed-dev
+scripts/compose-distributed-bootstrap.sh
+docker compose --profile dev up --build --wait task-server-dev orchestrator-engine-dev studio-bff-dev orchestrator-api-dev web-dev agent-host-distributed-dev agent-host-review-distributed-dev
 ```
 
 Open `http://localhost:4011`. This source-built path is the verified default
 for the current checkout. To run it in the background, add `-d` before `--wait`.
-The Task Server, Engine, BFF, Studio API, web UI, and one agent host start
+The Task Server, Engine, BFF, Studio API, web UI, and coding and review hosts start
 together. Browser `/api/v1` requests go through the BFF to the Task Server.
 The remaining dev-seat routes have the option C coverage limit described in
 [the connector gap](./docker-compose-connector-gap.md).
+The compatibility API rejects non-versioned task routes and has no durable
+workspace or project mount. Browser mutations reach the Task Server through
+the BFF on `/api/v1`.
 
 ## Published images
 
@@ -23,7 +27,7 @@ After release CI has checked the published images, pin a release and start the
 same stack without a source build:
 
 ```sh
-cp .env.example .env
+scripts/compose-distributed-bootstrap.sh
 # Set AGENT_STUDIO_VERSION in .env to the published release number, without v.
 docker compose up -d --wait
 ```
@@ -33,17 +37,32 @@ Only services under the `dev` profile contain `build:`. The published-image
 path is verified by the post-release smoke run, separate from this checkout's
 source-build verification.
 
+N-1 upgrade evidence needs both the prior and current compatible image sets
+published under `v<version>`, plus a Docker job that can pull them and run
+`scripts/compose-upgrade-test.sh` with `PREVIOUS_VERSION` and
+`CURRENT_VERSION`. A source build cannot supply that evidence. Supported
+desktop and VM placement still needs clean Windows/macOS Docker Desktop and
+Ubuntu VM jobs with provider login and Git fetch/push credentials.
+
 ## Bootstrap and credentials
 
-A one-shot `bootstrap` service creates three independent random 256-bit bearer
+The host bootstrap creates owner-only `.env` and `runner.env`, preserving
+existing contents on repeated runs. The retained `compose-runner-bootstrap.sh`
+command invokes the same installation path. Both role services optionally read
+`runner.env` for provider environment credentials and slot limits. Git remotes
+and credential mount paths belong in `.env`; Compose service values take
+precedence over `runner.env`. No unused `runner.token` is created.
+
+A one-shot `bootstrap` service creates four independent random 256-bit bearer
 values in the `agent-studio_secrets` named volume. It sets each file to mode
 `0600` and ownership to service uid 10001. The Task Server reads the files to
-create Studio, Engine, and Runner principals on an empty store. Other services
+create Studio, Engine, coding Runner, and review Runner principals on an empty store. Other services
 read the same files through read-only mounts. Subsequent `up` runs leave the
 files untouched. Rotate a principal with the included host-manager command:
 
 ```sh
 scripts/compose-rotate.sh runner --dev
+scripts/compose-rotate.sh review-runner --dev
 scripts/compose-rotate.sh engine --dev
 scripts/compose-rotate.sh studio --dev
 ```
@@ -56,7 +75,7 @@ or requires pasting a bearer value. Do not edit or remove individual files
 from the volume. `docker compose down` retains the volume; `down --volumes`
 deletes it and all installation data.
 
-The included agent host registers without a Git remote or CLI login. To run
+The included coding and review hosts register without a Git remote or CLI login. To run
 coding tasks, set `RUNNER_GIT_REMOTE` and `RUNNER_GIT_PUSH_REMOTE` in `.env`.
 Mount your provider credentials using `RUNNER_CLAUDE_CREDENTIALS_DIR`,
 `RUNNER_CODEX_CREDENTIALS_DIR`, or `RUNNER_GEMINI_CREDENTIALS_DIR`; each maps to
@@ -73,8 +92,8 @@ mounts outside the repository build context.
 
 ## Network and edge
 
-The UI binds to `127.0.0.1:4011` by default. Set `STUDIO_UI_BIND=0.0.0.0`
-explicitly for LAN access. Task Server always publishes only to host loopback;
+The HTTP UI binds to `127.0.0.1:4011`. Task Server and BFF diagnostics
+also publish only to host loopback;
 container communication uses the Compose `control` network. The optional
 `edge` profile starts Caddy with a persistent local certificate authority:
 
@@ -84,7 +103,11 @@ docker compose --profile edge up -d --wait
 
 Set `STUDIO_EDGE_HOSTNAME`, `STUDIO_EDGE_BIND`, and `STUDIO_EDGE_PORT` in `.env`
 for the intended private-network name and listener. Clients must trust the
-Caddy local CA, or use an existing trusted TLS terminator.
+Caddy local CA, or use an existing trusted TLS terminator. Set
+`STUDIO_ALLOWED_ORIGINS` to include the exact `https://<host>:<port>` browser
+origin before enabling a LAN listener. Foreign origins and requests without
+an Origin on browser mutations return 403. The Connector's fixed loopback
+authority and origin remain unchanged.
 
 ## Update, backup, restore, and logs
 
@@ -115,7 +138,7 @@ Inspect health and bounded service logs with:
 
 ```sh
 docker compose ps
-docker compose logs --tail 200 task-server orchestrator-engine orchestrator-api web agent-host-distributed
+docker compose logs --tail 200 task-server orchestrator-engine orchestrator-api web agent-host-distributed agent-host-review-distributed
 ```
 
 Use `docker compose down` to remove containers while retaining named volumes.

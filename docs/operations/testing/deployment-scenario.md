@@ -32,7 +32,7 @@ deeper release gate.
 | 3 | Create task | smoke | The seeded workspace/project/task exist in `2-ready`. |
 | 4 | Claim task | smoke | The runner claims the task under a fenced lease. |
 | 5 | Run with the fake CLI | smoke | The runner drives a fake coding CLI that runs the fixture's known-passing and known-failing checks, commits, and pushes; the task reaches `4-auto-review`. |
-| 6 | Auto-review | smoke | A review subject is claimed, reported, and cleaned up; the queued orchestration run is settled; the task reaches `5-human-review`. |
+| 6 | Auto-review | smoke | The real review executor checks out the coding run's exact SHA, executes its checks, reports, and cleans up; a supervised fixture publisher verifies that SHA at canonical `main`; the queued orchestration run is settled; the task reaches `5-human-review`. |
 | 7 | Orchestrator chat turn with context receipt | full | A chat turn round-trips with a persisted context receipt (token budget, sources). |
 | 8 | Backup | full | `POST /api/v1/management/backups` returns a file digest. |
 | 9 | Restore into an empty store, inventory hash equality | full | A second, empty Task Server instance restores that backup and reports the same SHA-256 (the most direct "before vs. after" equality check the store exposes today; see "Known gaps"). |
@@ -153,26 +153,51 @@ The scenario is the regression suite from now on; it grows only here.
    `scripts/scenario.sh --target compose --level full` locally. Require two
    consecutive green CI runs before merging the scenario change.
 
+## Bounded one-box publication canary
+
+The full scenario uses one coding run, its immutable result ref and SHA, and
+one real review daemon with a detached `RemoteReviewExecutor` worker. The daemon
+runs natively on the same Linux host against the Compose Task Server. Both
+executors see the same fixture repository URL through a bind mount. Required
+checks read the coding results log and execute the known passing and failing
+checks. A synthetic passing review report is no longer used.
+The harness reserves one review slot and overrides only its test daemon's
+load threshold so other jobs on a shared CI host cannot prevent this bounded
+fixture from starting. Product admission defaults remain unchanged.
+
+For a provider-authenticated semantic review, run the same bounded scenario
+with an existing Codex host login (credentials stay outside reports):
+
+```sh
+SCENARIO_PROVIDER_REVIEW=1 scripts/scenario.sh --target compose --level full \
+  --report-dir artifacts/provider-canary
+```
+
+This adds a read-only `gpt-5.6-sol` / `medium` review of the tiny fixture diff,
+using the demanding-analysis tier from the model routing policy. It fails if
+the provider cannot authenticate or the aspect cannot produce a passing
+verdict; it never substitutes a fixture verdict. Routine CI leaves the flag
+unset and runs actual deterministic review commands without a provider call.
+
+After Task Server records Pass and cleanup, the supervised test publisher
+fetches that exact immutable ref, checks the reviewed SHA, requires a fast
+forward and pushes with an expected-old-SHA lease to the disposable origin's
+canonical `refs/heads/main`. It independently reads the remote ref back.
+`canary-publication.json` joins coding run, review subject, review attempt,
+reviewed SHA and published SHA. The Compose BFF remains stopped through review
+and publication. No product repository or production branch is published.
+
+This is a bounded supervised installation canary, not an implementation of the
+autonomous publication authority. I08 still owns detached automatic publication
+and recovery acceptance across the full deployment ladder. Source-build,
+published-image, N-1 and supported desktop/VM results remain separate evidence.
+
 ## Known gaps
 
 Found while building this scenario; each is a real, current limitation of the
 distributed Task Server / Studio BFF / Runner topology, not a shortcut taken
 by the scenario itself.
 
-- **A CLI-driven run's result SHA never reaches the run row.** The runner
-  completes with the outcome string `"SuccessfulCompletion"`
-  (`ExecutionOutcomeKind.ToString()`), but
-  `TaskServerStore.RequiresResultEnvelope` only recognizes the legacy
-  `"success"`/`"done"`/`"noop"`/`"no-op"` strings. So a real coding run's
-  `result_sha`/`repository_id` stay `null` on the `runs` row, and
-  `POST /api/v1/reviews/subjects` can never reference it (its `RepositoryId`
-  is non-nullable in the request but must equal that `null` column, an
-  impossible match). Step 6 (auto-review) works around this today by
-  completing a *second*, purpose-built coding attempt with the literal
-  outcome `"success"` purely to exercise the review/orchestration wiring; it
-  does not review the same run step 5 produced. After outcome-string
-  reconciliation lands, step 6 should point back at the fixture task's real
-  run.
 - **No dossier / decision-gate concept in this topology.** `docs/concepts/`
   and the fixture's `dossier` section describe "one dossier with a decision
   gate," but that concept exists only in the separate backend monolith

@@ -78,20 +78,23 @@ compose_json="$(
 EXPECTED_VERSION="$version" node -e '
 const config = JSON.parse(process.argv[1]);
 const services = config.services;
+for (const legacy of ["agent-host-coding", "agent-host-review"]) {
+  if (services[legacy]) throw new Error(`${legacy} must not target the closed compatibility protocol`);
+}
 const secretMount = service => services[service]?.volumes?.find(
   volume => volume.source === "secrets" && volume.target === "/run/agent-studio-secrets");
 for (const [service, bootstrap] of [["bootstrap", true], ["bootstrap-dev", true],
-  ...["task-server", "orchestrator-engine", "studio-bff", "orchestrator-api", "agent-host-distributed"].map(name => [name, false]),
-  ...["task-server-dev", "orchestrator-engine-dev", "studio-bff-dev", "orchestrator-api-dev", "agent-host-distributed-dev"].map(name => [name, false])]) {
+  ...["task-server", "orchestrator-engine", "studio-bff", "orchestrator-api", "agent-host-distributed", "agent-host-review-distributed"].map(name => [name, false]),
+  ...["task-server-dev", "orchestrator-engine-dev", "studio-bff-dev", "orchestrator-api-dev", "agent-host-distributed-dev", "agent-host-review-distributed-dev"].map(name => [name, false])]) {
   const mount = secretMount(service);
   if (!mount || mount.type !== "volume" || Boolean(mount.read_only) === bootstrap)
     throw new Error(`${service} has an invalid secret volume mount`);
 }
-for (const service of ["task-server", "orchestrator-engine", "studio-bff", "orchestrator-api", "web", "agent-host-distributed"]) {
+for (const service of ["task-server", "orchestrator-engine", "studio-bff", "orchestrator-api", "web", "agent-host-distributed", "agent-host-review-distributed"]) {
   if (services[service].build || !services[service].image?.endsWith(`:v${process.env.EXPECTED_VERSION}`))
     throw new Error(`${service} must use the pinned release image`);
 }
-for (const service of ["task-server-dev", "orchestrator-engine-dev", "studio-bff-dev", "orchestrator-api-dev", "web-dev", "agent-host-distributed-dev"]) {
+for (const service of ["task-server-dev", "orchestrator-engine-dev", "studio-bff-dev", "orchestrator-api-dev", "web-dev", "agent-host-distributed-dev", "agent-host-review-distributed-dev"]) {
   if (!services[service].build)
     throw new Error(`${service} must build from this checkout`);
 }
@@ -114,9 +117,23 @@ for (const service of ["task-server", "task-server-dev", "web", "web-dev"]) {
   if (services[service].ports?.[0]?.host_ip !== "127.0.0.1")
     throw new Error(`${service} must bind to loopback by default`);
 }
+for (const service of ["studio-bff", "studio-bff-dev"]) {
+  if (!services[service].environment?.Studio__AllowedOrigins)
+    throw new Error(`${service} must have an explicit browser Origin allowlist`);
+}
+for (const service of ["agent-host-review-distributed", "agent-host-review-distributed-dev"]) {
+  if (services[service].environment?.RUNNER_ROLE !== "review" ||
+      services[service].environment?.RUNNER_AUTH_TOKEN_FILE !== "/run/agent-studio-secrets/review_runner_token")
+    throw new Error(`${service} must use the separate review principal`);
+}
+for (const service of ["orchestrator-api", "orchestrator-api-dev"]) {
+  if (services[service].volumes?.some(volume => ["workspace", "projects"].includes(volume.source)))
+    throw new Error(`${service} must not retain a compatibility task store`);
+}
 ' "$compose_json"
 
 grep -F '@distributed path /api/v1 /api/v1/*' "$repo_root/deploy/compose/Caddyfile" >/dev/null
 grep -F 'reverse_proxy {$STUDIO_BFF_UPSTREAM:studio-bff:5072}' "$repo_root/deploy/compose/Caddyfile" >/dev/null
+grep -F '@api path /api /api/* /healthz /readyz' "$repo_root/deploy/compose/Caddyfile" >/dev/null
 
 printf 'Container image user, health, and entrypoint contracts passed.\n'
