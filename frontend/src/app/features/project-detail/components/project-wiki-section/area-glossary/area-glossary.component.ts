@@ -53,23 +53,34 @@ export class AreaGlossaryComponent {
   readonly linkedDossiers = computed(() => this.dossiers().filter(item => item.tags?.includes(this.areaId() ?? '')));
 
   constructor() {
-    effect(() => {
+    effect(onCleanup => {
       const project = this.projectName();
-      this.http.get<{ items: Area[] }>(`/api/projects/${encodeURIComponent(project)}/areas`).subscribe({
+      this.areaId.set(null);
+      this.glossary.set(null);
+      this.areas.set([]);
+      this.dossiers.set([]);
+      const areas = this.http.get<{ items: Area[] }>(`/api/projects/${encodeURIComponent(project)}/areas`).subscribe({
         next: response => this.areas.set(response.items), error: () => this.areas.set([]),
       });
-      this.docs.getWorkbenches(project, true).subscribe({
+      const dossiers = this.docs.getWorkbenches(project, true).subscribe({
         next: response => this.dossiers.set(response.items), error: () => this.dossiers.set([]),
       });
+      onCleanup(() => { areas.unsubscribe(); dossiers.unsubscribe(); });
+    });
+    effect(onCleanup => {
+      const project = this.projectName();
+      const id = this.areaId();
+      this.glossary.set(null);
+      if (!id) return;
+      const request = this.http.get<Glossary>(`/api/projects/${encodeURIComponent(project)}/areas/${encodeURIComponent(id)}/glossary`)
+        .subscribe({ next: glossary => this.glossary.set(glossary), error: () => this.glossary.set(null) });
+      onCleanup(() => request.unsubscribe());
     });
   }
 
   select(id: string): void {
     this.areaId.set(id || null);
     this.glossary.set(null);
-    if (!id) return;
-    this.http.get<Glossary>(`/api/projects/${encodeURIComponent(this.projectName())}/areas/${encodeURIComponent(id)}/glossary`)
-      .subscribe({ next: glossary => this.glossary.set(glossary), error: () => this.glossary.set(null) });
   }
 
   openCard(taskKey: string): void { this.navigation.openTaskKey(taskKey); }

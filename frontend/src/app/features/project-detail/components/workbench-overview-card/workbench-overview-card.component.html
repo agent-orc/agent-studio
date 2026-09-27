@@ -19,9 +19,8 @@
       </span>
       <span class="workbench-overview__status" [attr.data-status]="item().workbench.status">{{ statusLabel() }}</span>
       @if (item().workbench.taggingStatus === 'tagged') {
-        @let taggingStatus = item().workbench.taggingStatus;
         <span class="workbench-overview__status" data-testid="workbench-tagging-status">
-          {{ taggingStatus === 'tags-proposed' ? 'Tags proposed' : 'Auto-tagged' }}
+          Auto-tagged
         </span>
       }
       <app-tag-chips [ids]="item().workbench.tags ?? []" [projectName]="item().projectName" />

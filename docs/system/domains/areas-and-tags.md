@@ -199,6 +199,9 @@ chips expose additional selections when a URL contains several tags of one kind.
 The wiki's Area glossaries view reads `GET /api/projects/{project}/areas` and
 `GET /api/projects/{project}/areas/{areaId}/glossary`. It shows definitions,
 synonyms, and links to matching wiki pages, Dossiers, and current cards.
+Changing the project clears the selected area, glossary, area options, and
+Dossier links. Requests belong to the current project and area selection;
+changing either selection or leaving the view cancels obsolete requests.
 
 The proposal marker uses the typed `TagProposalsService`. Until the AGT-2804
 proposal decision endpoints are integrated, `USE_TAG_PROPOSAL_MOCK` is true and
