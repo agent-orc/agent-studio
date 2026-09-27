@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 
 using Microsoft.Extensions.Logging.Abstractions;
+using Contract = AgentStudio.TaskServer.Contracts;
 
 using Xunit;
 
@@ -90,6 +91,157 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
 
         var settlement = RemoteDeliverySettlementStore.Read(moved.FolderPath)!;
         Assert.Equal(RemoteDeliverySettlementStage.LaneSettled, settlement.Stage);
+    }
+
+    [Fact]
+    public async Task Settled_report_without_sidecar_restores_delivery_and_pending_evidence_after_restart()
+    {
+        var seeded = Build();
+        var card = SeedPassedDelivery(seeded, "journal-window");
+        var entry = JournalEntry(card, seeded) with { Delivery = Settlement(card, shouldIntegrate: true) };
+        Assert.True(RemoteReviewSettlementJournal.Prepare(card.FolderPath, entry));
+        Assert.Equal(RemoteReviewSettlementReadStatus.Ready,
+            RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId).Status);
+
+        var restarted = Build();
+        var queue = new RemoteReviewEvidenceProjectionQueue();
+        var reconciler = new RemoteReviewSettlementReconciler(
+            restarted.Scanner, restarted.Authority, queue, restarted.Resume,
+            NullLogger<RemoteReviewSettlementReconciler>.Instance);
+        var task = restarted.Scanner.FindJob(card.Id, _watchPath)!;
+        Assert.Equal(RemoteReviewSettlementReconcileStatus.PendingEvidence, reconciler.Reconcile(task));
+        Assert.NotNull(RemoteDeliverySettlementStore.Read(card.FolderPath));
+        Assert.True(queue.Reader.TryRead(out var pending));
+        Assert.Equal(card.ReviewAttemptId, pending.AttemptId);
+        Assert.Equal(RemoteReviewSettlementReconcileStatus.PendingEvidence, reconciler.Reconcile(task));
+        Assert.False(queue.Reader.TryRead(out _));
+
+        var resumed = await restarted.Resume.RunOnceAsync("journal-restart-drill");
+        Assert.Equal(1, resumed.Integrated);
+        Assert.Equal(TaskStates.HumanReview, restarted.Scanner.FindJob(card.Id, _watchPath)!.State);
+        Assert.Single(restarted.Authority.GetTaskProjection(card.TaskKey).ReviewAttempts);
+    }
+
+    [Fact]
+    public void Corrupt_or_missing_journal_reports_repair_without_integrating()
+    {
+        var seeded = Build();
+        var card = SeedPassedDelivery(seeded, "journal-repair");
+        var restarted = Build();
+        var reconciler = new RemoteReviewSettlementReconciler(
+            restarted.Scanner, restarted.Authority, new RemoteReviewEvidenceProjectionQueue(), restarted.Resume,
+            NullLogger<RemoteReviewSettlementReconciler>.Instance);
+        var task = restarted.Scanner.FindJob(card.Id, _watchPath)!;
+        Assert.Equal(RemoteReviewSettlementReconcileStatus.Repair, reconciler.Reconcile(task));
+        Directory.CreateDirectory(Path.GetDirectoryName(
+            RemoteReviewSettlementJournal.PathFor(card.FolderPath, card.ReviewAttemptId))!);
+        File.WriteAllText(RemoteReviewSettlementJournal.PathFor(card.FolderPath, card.ReviewAttemptId), "{ broken");
+        Assert.Equal(RemoteReviewSettlementReconcileStatus.Repair, reconciler.Reconcile(task));
+        Assert.Null(RemoteDeliverySettlementStore.Read(card.FolderPath));
+    }
+
+    [Fact]
+    public void Successor_review_prevents_old_journal_from_restoring_delivery()
+    {
+        var seeded = Build();
+        var card = SeedPassedDelivery(seeded, "journal-stale");
+        var entry = JournalEntry(card, seeded) with { Delivery = Settlement(card, shouldIntegrate: true) };
+        Assert.True(RemoteReviewSettlementJournal.Prepare(card.FolderPath, entry));
+        var old = seeded.Authority.GetReview(card.ReviewAttemptId)!;
+        var successor = seeded.Authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            card.TaskKey, old.Subject.RepositoryId, card.DeliverySha, old.SourceRunAttemptId,
+            "req", "policy", [], "successor-review"));
+        Assert.True(successor.Accepted);
+
+        var restarted = Build();
+        var queue = new RemoteReviewEvidenceProjectionQueue();
+        var reconciler = new RemoteReviewSettlementReconciler(
+            restarted.Scanner, restarted.Authority, queue, restarted.Resume,
+            NullLogger<RemoteReviewSettlementReconciler>.Instance);
+        Assert.Equal(RemoteReviewSettlementReconcileStatus.PendingAuthority,
+            reconciler.Reconcile(restarted.Scanner.FindJob(card.Id, _watchPath)!));
+        Assert.Null(RemoteDeliverySettlementStore.Read(card.FolderPath));
+        Assert.False(queue.Reader.TryRead(out _));
+    }
+
+    [Fact]
+    public void Replayed_report_key_keeps_one_canonical_payload()
+    {
+        var seeded = Build();
+        var card = SeedPassedDelivery(seeded, "journal-duplicate");
+        var entry = JournalEntry(card, seeded) with { Delivery = Settlement(card, shouldIntegrate: true) };
+        var current = seeded.Authority.GetReview(card.ReviewAttemptId)!;
+        Assert.True(RemoteReviewSettlementPolicy.MatchesAcceptedReview(entry, current));
+        Assert.False(RemoteReviewSettlementPolicy.MatchesAcceptedReview(
+            entry with { AttemptId = "review_stale" }, current));
+        Assert.False(RemoteReviewSettlementPolicy.MatchesAcceptedReview(
+            entry with { IdempotencyKey = "other-key" }, current));
+        Assert.False(RemoteReviewSettlementPolicy.MatchesAcceptedReview(
+            entry with { Report = entry.Report with
+                { Workspace = entry.Report.Workspace with { ActualHead = new string('b', 40) } } }, current));
+        Assert.True(RemoteReviewSettlementJournal.Prepare(card.FolderPath, entry));
+        Assert.True(RemoteReviewSettlementJournal.Prepare(card.FolderPath, entry));
+        var changed = entry.Report with { Summary = "Different verdict detail." };
+        Assert.False(RemoteReviewSettlementJournal.Prepare(card.FolderPath, entry with
+        {
+            Report = changed,
+            ReportSha256 = RemoteReviewSettlementJournal.Hash(changed),
+        }));
+        Assert.Equal(entry.ReportSha256,
+            RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId).Entry!.ReportSha256);
+        var path = RemoteReviewSettlementJournal.PathFor(card.FolderPath, card.ReviewAttemptId);
+        File.WriteAllText(path, File.ReadAllText(path).Replace(
+            "\"shouldIntegrate\": true", "\"shouldIntegrate\": false", StringComparison.Ordinal));
+        Assert.Equal(RemoteReviewSettlementReadStatus.Repair,
+            RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId).Status);
+    }
+
+    [Fact]
+    public async Task Restart_after_integration_before_lane_move_uses_the_journaled_generation()
+    {
+        var seeded = Build();
+        var card = SeedPassedDelivery(seeded, "journal-lane");
+        var delivery = Settlement(card, shouldIntegrate: true) with
+        {
+            JournalRequired = true,
+            Stage = RemoteDeliverySettlementStage.IntegrationSettled,
+            IntegrationOutcome = MergeIntoIntegrationOutcome.Merged.ToString(),
+        };
+        Assert.True(RemoteReviewSettlementJournal.Prepare(card.FolderPath,
+            JournalEntry(card, seeded) with { Delivery = delivery }));
+        RemoteDeliverySettlementStore.Write(card.FolderPath, delivery);
+        Git(_repo, "merge", "-q", "--no-ff", "-m", "chore: publish journal-lane", "task/journal-lane");
+        Git(_repo, "push", "-q", "origin", "develop");
+        Git(_repo, "fetch", "-q", "origin");
+        var publishedTip = Git(_repo, "rev-parse", "develop");
+
+        var restarted = Build();
+        var resumed = await restarted.Resume.RunOnceAsync("journal-lane-restart");
+        Assert.Equal(1, resumed.Completed);
+        Assert.Equal(TaskStates.HumanReview, restarted.Scanner.FindJob(card.Id, _watchPath)!.State);
+        Assert.Equal(publishedTip, Git(_repo, "rev-parse", "develop"));
+    }
+
+    private static RemoteReviewSettlementEntry JournalEntry(SeededCard card, Stack stack)
+    {
+        var review = stack.Authority.GetReview(card.ReviewAttemptId)!;
+        var report = new Contract.ReviewReportRequest(
+            "reviewer", "instance", "lease", review.LastFence, "review-settle-" + card.Id,
+            "Pass", null, "All aspects passed.",
+            new Contract.ReviewWorkspaceProofDto(review.Subject.RepositoryId, card.DeliverySha,
+                card.DeliverySha, new string('a', 40), false, false, "workspace", "namespace"),
+            new Contract.ReviewEnvironmentDto("review-host", "reviewer", "instance", "linux", "x64",
+                "10.0", new Dictionary<string, string>(), new Dictionary<string, string>()),
+            [], [], [], review.AuthorityEpoch);
+        return new RemoteReviewSettlementEntry
+        {
+            AttemptId = card.ReviewAttemptId,
+            TaskKey = card.TaskKey,
+            IdempotencyKey = report.IdempotencyKey,
+            ReportSha256 = RemoteReviewSettlementJournal.Hash(report),
+            Report = report,
+            ReceivedAtUtc = DateTime.UtcNow,
+        };
     }
 
     /// <summary>
