@@ -99,6 +99,52 @@ public sealed class AutoTaggingOrchestrationTests : IDisposable
         Assert.Null(_scanner.FindJob("accepted", Watch())!.TaggingStatus);
     }
 
+    [Theory]
+    [InlineData("card")]
+    [InlineData("dossier")]
+    [InlineData("wiki")]
+    public async Task NormalBackfillsLeaveExistingProposalsPendingAndClassifyOnlyNewItems(string kind)
+    {
+        void Add(string id)
+        {
+            if (kind == "card") AddCard(id);
+            else if (kind == "dossier") AddDossier(id);
+            else AddWiki(id + ".md");
+        }
+
+        var proposedId = kind == "wiki" ? "proposed.md" : "proposed";
+        var freshId = kind == "wiki" ? "fresh.md" : "fresh";
+        Add("proposed");
+        _classifier.Confidence[proposedId] = 0.4;
+        await _service.BackfillAsync(Project, apply: true, CancellationToken.None);
+        var first = Assert.Single(_service.Read(Project));
+        Assert.Equal("tags-proposed", first.Status);
+        Assert.Equal(2, _classifier.Calls.Count);
+        Assert.Single(new OrchestratorLog(NullLogger<OrchestratorLog>.Instance).Read(Watch()));
+
+        Add("fresh");
+        var dryRun = await _service.BackfillAsync(Project, apply: false, CancellationToken.None);
+        Assert.Equal(1, dryRun.Classified);
+        Assert.Equal(freshId, Assert.Single(dryRun.Items).Id);
+        Assert.DoesNotContain(_classifier.Calls.Skip(2), call => call.Id == proposedId);
+
+        var applied = await _service.BackfillAsync(Project, apply: true, CancellationToken.None);
+        Assert.Equal(1, applied.Classified);
+        Assert.Equal(freshId, Assert.Single(applied.Items).Id);
+        var stillProposed = _service.Read(Project).Single(x => x.Id == proposedId);
+        Assert.Equal(first.Status, stillProposed.Status);
+        Assert.Equal(first.Tags, stillProposed.Tags);
+        Assert.Equal(first.At, stillProposed.At);
+        var calls = _classifier.Calls.Count;
+        var writes = _workspace.Writes.Count;
+        var repeated = await NewService().BackfillAsync(Project, apply: true, CancellationToken.None);
+        Assert.Equal(0, repeated.Classified);
+        Assert.Empty(repeated.Items);
+        Assert.Equal(calls, _classifier.Calls.Count);
+        Assert.Equal(writes, _workspace.Writes.Count);
+        Assert.Equal(2, new OrchestratorLog(NullLogger<OrchestratorLog>.Instance).Read(Watch()).Count);
+    }
+
     [Fact]
     public async Task CreationScanRespectsOptOutAndClassifiesNewCardsAfterDurableBaseline()
     {

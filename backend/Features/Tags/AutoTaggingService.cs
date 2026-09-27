@@ -257,8 +257,8 @@ public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAuto
                 ? nonArchivedCards.Contains(item.Id) : item.Active;
             var eligible = snapshot.Items.Where(i => i.Project == project && Eligible(i)).ToList();
             var candidates = eligible.Where(i => i.Tags.Length == 0
-                && (onlyKeys == null || (onlyKeys.Contains(i.Kind + ":" + i.Id)
-                    && !prior.ContainsKey((i.Kind, i.Id))))).ToList();
+                && !prior.ContainsKey((i.Kind, i.Id))
+                && (onlyKeys == null || onlyKeys.Contains(i.Kind + ":" + i.Id))).ToList();
             var results = new List<AutoTagResult>();
             var counts = new Dictionary<string, int>(StringComparer.Ordinal);
             var low = new List<AutoTagResult>();

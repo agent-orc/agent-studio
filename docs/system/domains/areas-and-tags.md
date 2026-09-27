@@ -112,6 +112,11 @@ Readers treat missing and unrecognized values as no status marker; they do
 not infer successful tagging from an unknown value. Archived items are not
 classified.
 
+Normal backfills skip any item already recorded in the project's auto-tag
+state, including a tag-empty `tags-proposed` item. Repeating a dry run or
+apply therefore preserves its pending proposal and does not spend another
+classification call. New eligible items are still classified.
+
 For cards and wiki articles, applying a classification persists the tags and
 `taggingStatus` together in one atomic file replacement. A proposal writes the
 status while retaining the existing tags. A rejected or failed replacement
