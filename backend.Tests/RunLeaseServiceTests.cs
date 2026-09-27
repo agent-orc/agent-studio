@@ -11,6 +11,19 @@ namespace AgentStudio.Tests;
 /// </summary>
 public sealed class RunLeaseServiceTests
 {
+    [Fact]
+    public void Local_adapter_and_remote_claim_cannot_hold_the_same_task()
+    {
+        var leases = NewService();
+        var identity = new RunnerIdentity("local-runner", "local", "host", "backend", "token", "1");
+        var local = new LocalRunClaimAdapter(leases, identity, NullLogger.Instance);
+        var booked = local.TryAcquire("AGT-1", () => { });
+        Assert.True(booked.Granted);
+        Assert.False(leases.TryAcquire(Acquire("AGT-1", "remote-runner")).Granted);
+        local.Release("AGT-1");
+        Assert.True(leases.TryAcquire(Acquire("AGT-1", "remote-runner")).Granted);
+    }
+
     // §8.2C: "Two runner processes race the same ready task; only one gets a lease."
     [Fact]
     public void TwoRunnersRaceSameTask_OnlyOneGetsLease()

@@ -62,6 +62,30 @@ public sealed class RemoteProjectChatRunnerTests : IDisposable
     }
 
     [Fact]
+    public async Task Concurrent_chat_checkouts_are_isolated_and_idle_checkout_is_cleaned_for_reuse()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var origin = Path.Combine(_root, "origin.git");
+        await SeedOriginAsync(origin);
+        var options = Options("unused-codex");
+        var first = new ProjectChatWorkspace(options, "PROJ-002", origin, "main", _output.WriteLine);
+        var second = new ProjectChatWorkspace(options, "PROJ-002", origin, "main", _output.WriteLine);
+        var firstCheckout = await first.PrepareAsync(CancellationToken.None);
+        var secondCheckout = await second.PrepareAsync(CancellationToken.None);
+        Assert.NotEqual(firstCheckout.RepoPath, secondCheckout.RepoPath);
+        var leftover = Path.Combine(firstCheckout.RepoPath, "chat-output.txt");
+        await File.WriteAllTextAsync(leftover, "temporary chat output");
+        first.Release();
+
+        var reused = new ProjectChatWorkspace(options, "PROJ-002", origin, "main", _output.WriteLine);
+        var reusedCheckout = await reused.PrepareAsync(CancellationToken.None);
+        Assert.Equal(firstCheckout.RepoPath, reusedCheckout.RepoPath);
+        Assert.False(File.Exists(leftover));
+        second.Release();
+        reused.Release();
+    }
+
+    [Fact]
     public async Task Turn_runs_from_host_project_checkout_and_reports_path_branch_and_head()
     {
         if (OperatingSystem.IsWindows())

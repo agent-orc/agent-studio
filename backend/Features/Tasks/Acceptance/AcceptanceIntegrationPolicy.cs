@@ -13,7 +13,8 @@ public static class AcceptanceIntegrationPolicy
     {
         if (task.NoBranchExpected
             || TaskModes.IsReadOnly(task.Mode)
-            || TaskKinds.IsEpic(task.Kind))
+            || TaskKinds.IsEpic(task.Kind)
+            || TaskKinds.IsDecision(task.Kind))
         {
             return false;
         }

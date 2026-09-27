@@ -1,7 +1,7 @@
 # Agent Studio orchestrator API (the current monolith: board API, pipeline,
 # review plane, local project registry).
 # Build context is the repository root: docker build -f backend/Dockerfile .
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0.301 AS build
 ARG VERSION=0.0.0-dev
 ARG SHA=unknown
 WORKDIR /src

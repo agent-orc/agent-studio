@@ -236,6 +236,9 @@ public class ProjectRunner
     // belt-and-braces (single-process unit tests).
     private readonly PickupLockFile? _pickupLock;
     private readonly PickupLockOwner? _pickupLockOwner;
+    private readonly LocalRunClaimAdapter? _localRunClaims;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _localAuthorityTaskKeys =
+        new(StringComparer.OrdinalIgnoreCase);
     private readonly IntegrationLeaseService? _integrationLeases;
     private string? _activePickupLockFolder;
     // Deferred mode: when SetMode(manual|paused) arrives while a job is
@@ -481,7 +484,8 @@ public class ProjectRunner
         FailureInterventionService? failureInterventions = null,
         IReadOnlyList<ProjectUrlRecord>? projectUrls = null,
         AgentStudio.Registry.IProjectUrlPortInspector? projectUrlPortInspector = null,
-        RemoteDispatchRejectionStore? dispatchRejections = null)
+        RemoteDispatchRejectionStore? dispatchRejections = null,
+        LocalRunClaimAdapter? localRunClaims = null)
     {
         ProjectName = projectName;
         Entry = entry;
@@ -521,6 +525,7 @@ public class ProjectRunner
         _role = role;
         _pickupLock = pickupLock;
         _pickupLockOwner = pickupLockOwner;
+        _localRunClaims = localRunClaims;
         _integrationLeases = integrationLeases;
         _timeline = timeline;
         _pipelineLog = pipelineLog;
@@ -2453,6 +2458,8 @@ public class ProjectRunner
         var claimedRunThisCall = false;
         var processStartConfirmed = false;
         string? acquiredPickupLockFolder = null;
+        var localAuthorityAcquired = false;
+        string? localAuthorityTaskKey = null;
         // Set only when THIS call stashed a saved follow-up. Every rollback is
         // gated on it: pending-intent.consumed.json now survives a successful
         // run as consumption evidence (AGT-2747), so an unrelated later failure
@@ -2727,6 +2734,29 @@ public class ProjectRunner
                 acquiredPickupLockFolder = jobFolder;
             }
 
+            if (_localRunClaims is not null)
+            {
+                localAuthorityTaskKey = !string.IsNullOrWhiteSpace(info.Key)
+                    ? info.Key : !string.IsNullOrWhiteSpace(info.TaskKey) ? info.TaskKey : info.Id;
+                var claim = _localRunClaims.TryAcquire(localAuthorityTaskKey, () =>
+                {
+                    try { _router.Get(info.CliType).Stop(GetJobKey(jobId), RunStopReason.Cancelled); }
+                    catch (Exception exception) { _logger.LogWarning(exception, "Could not stop task after authority loss: {JobId}", jobId); }
+                });
+                if (!claim.Granted)
+                {
+                    if (acquiredPickupLockFolder is not null)
+                        ReleasePickupLockIfHeld(acquiredPickupLockFolder);
+                    if (movedToProgressThisCall)
+                        RevertFailedStartFromProgress(jobId, info, intent);
+                    return RunOutcome.Reject(new RunRejection(
+                        RunRejectReason.ProjectBusy,
+                        $"Task authority is held by another runner: {claim.Message ?? claim.Outcome}"));
+                }
+                localAuthorityAcquired = true;
+                _localAuthorityTaskKeys[jobId] = localAuthorityTaskKey;
+            }
+
             var uiProjectSettings = AgentStudio.Pipeline.PipelineTypeSettings.ForTask(
                 _projectSettings.Get(ProjectName),
                 info);
@@ -2767,6 +2797,11 @@ public class ProjectRunner
             _activePickupLockFolder = null;
             if (!claimedRunThisCall)
             {
+                if (localAuthorityAcquired && localAuthorityTaskKey is not null)
+                {
+                    _localAuthorityTaskKeys.TryRemove(jobId, out _);
+                    _localRunClaims?.Release(localAuthorityTaskKey);
+                }
                 if (_pickupLock != null && _pickupLockOwner != null && acquiredPickupLockFolder != null)
                 {
                     var owner = _pickupLockOwner with { ProjectName = ProjectName, JobId = jobId };
@@ -3412,6 +3447,11 @@ public class ProjectRunner
             {
                 var owner = _pickupLockOwner with { ProjectName = ProjectName, JobId = jobId };
                 _pickupLock.Release(acquiredPickupLockFolder, owner);
+            }
+            if (localAuthorityAcquired && !claimedRunThisCall)
+            {
+                _localAuthorityTaskKeys.TryRemove(jobId, out _);
+                if (localAuthorityTaskKey is not null) _localRunClaims?.Release(localAuthorityTaskKey);
             }
 
             if (admissionInfo != null)
@@ -7249,6 +7289,8 @@ public class ProjectRunner
     private ActiveRun? ReleaseRun(string jobId, bool releasePickupLock = true)
     {
         var released = _activeRuns.Release(jobId);
+        if (released is not null && _localAuthorityTaskKeys.TryRemove(jobId, out var authorityTaskKey))
+            _localRunClaims?.Release(authorityTaskKey);
         if (releasePickupLock && released?.PickupLockFolder is { } folder)
             ReleasePickupLockIfHeld(folder);
         // The coding run held the preparation's per-run cache folder for as long
@@ -8589,11 +8631,23 @@ public class ProjectRunner
     /// </summary>
     private bool IsUnpickableEpic(TaskInfo job)
     {
-        if (!TaskKinds.IsEpic(job.Kind)) return false;
-        _logger.LogWarning(
-            "[taskboard] skipping epic card {Job} on {Project} in pickup lane {State}: epics are containers, not pickable work items",
-            job.Id, ProjectName, job.State);
-        return true;
+        if (TaskKinds.IsEpic(job.Kind))
+        {
+            _logger.LogWarning(
+                "[taskboard] skipping epic card {Job} on {Project} in pickup lane {State}: epics are containers, not pickable work items",
+                job.Id, ProjectName, job.State);
+            return true;
+        }
+        // AGT-2795: a decision card is a decision request the operator resolves;
+        // it is never code-executed and must never be auto-picked into a run.
+        if (TaskKinds.IsDecision(job.Kind))
+        {
+            _logger.LogWarning(
+                "[taskboard] skipping decision card {Job} on {Project} in pickup lane {State}: decision cards are decided, not executed",
+                job.Id, ProjectName, job.State);
+            return true;
+        }
+        return false;
     }
 
     private List<DisplayedPickupCandidate> ListPickupCandidatesInDisplayedOrder()

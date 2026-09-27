@@ -27,11 +27,14 @@ public sealed partial class TaskServerStore
     // counts for the 24-hour execution-host projection.
     // 19 persists host CLI update state, target drift age, and deduplicated
     // per-host model minimum alerts.
+    // 20 keeps a single-use mechanical continuation delta on each task and
+    // binds its claim to the fenced run for replay and restart safety.
+    // 21 adds versioned engine steering receipts.
+    // 22 adds the host-owned, metadata-only credential registry and typed
+    // provider capability observation fields.
     // The migration block is idempotent; the number guards downgrades from
     // binaries that do not know this state.
-    // 20 adds the host-owned, metadata-only credential registry and typed
-    // provider capability observation fields.
-    public const int CurrentSchemaVersion = 20;
+    public const int CurrentSchemaVersion = 22;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -528,6 +531,8 @@ public sealed partial class TaskServerStore
     public async Task<TaskDto?> UpdateTaskAsync(string projectId, string taskIdentity, UpdateTaskRequest request, string actorId, CancellationToken ct)
     {
         RequireWritable();
+        if (request.MechanicalDelta is not null && request.State != "2-ready")
+            throw new ArgumentException("A mechanical continuation delta requires a Ready transition.");
         TaskDto? updated = null;
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
@@ -553,6 +558,15 @@ public sealed partial class TaskServerStore
                 """, ct, transaction,
                 ("$title", updated.Title), ("$body", updated.Body), ("$state", updated.State),
                 ("$version", updated.Version), ("$updated", Iso(now)), ("$id", updated.TaskId), ("$expected", request.ExpectedVersion));
+            if (request.MechanicalDelta is not null)
+                await ExecuteAsync(connection, """
+                    DELETE FROM task_mechanical_deltas
+                     WHERE task_id = $task AND claimed_run_id IS NULL;
+                    INSERT INTO task_mechanical_deltas(task_id, delta_json, claimed_run_id)
+                    VALUES ($task, $delta, NULL);
+                    """, ct, transaction,
+                    ("$task", updated.TaskId),
+                    ("$delta", JsonSerializer.Serialize(request.MechanicalDelta)));
             if (updated.State is "6-completed" or "7-archive")
             {
                 await SupersedeUnclaimableReviewAttemptsAsync(
@@ -1370,6 +1384,21 @@ public sealed partial class TaskServerStore
 
             var providerContinuation = await ReadProviderFallbackForClaimAsync(
                 connection, transaction, task, ct);
+            var mechanicalDelta = await ReadUnclaimedMechanicalDeltaAsync(connection, transaction, task.TaskId, ct);
+            SessionContinuationLedgerEntry? previousSession = null;
+            var priorSessionJson = Convert.ToString(await ScalarAsync(connection, """
+                SELECT payload_json FROM events
+                 WHERE task_id = $task AND kind = 'session.continuation'
+                 ORDER BY rowid DESC LIMIT 1;
+                """, ct, transaction, ("$task", task.TaskId)), CultureInfo.InvariantCulture);
+            if (!string.IsNullOrWhiteSpace(priorSessionJson))
+            {
+                try { previousSession = JsonSerializer.Deserialize<SessionContinuationLedgerEntry>(priorSessionJson); }
+                catch (JsonException) { /* Corrupt evidence never authorizes a resume. */ }
+            }
+            var mechanicalFreshRoute = await ReadMechanicalFreshRouteAsync(
+                connection, transaction, task.TaskId, mechanicalDelta, previousSession, ct);
+            var mechanicalBase = MechanicalFallbackBase(previousSession);
 
             var fence = Convert.ToInt64(await ScalarAsync(connection,
                 "SELECT last_fence FROM fence_counters WHERE task_id = $task;", ct, transaction, ("$task", task.TaskId))
@@ -1398,6 +1427,8 @@ public sealed partial class TaskServerStore
                 ("$fence", fence), ("$lease", leaseId), ("$now", Iso(now)), ("$expires", Iso(expires)),
                 ("$requiredCapabilities", JsonSerializer.Serialize(capabilityAdmission.Required)),
                 ("$canaryCapabilities", JsonSerializer.Serialize(capabilityAdmission.Canaries)));
+            if (mechanicalDelta is not null)
+                await ClaimMechanicalDeltaAsync(connection, transaction, task.TaskId, runId, ct);
             await ReserveCanariesAsync(
                 connection,
                 transaction,
@@ -1428,8 +1459,11 @@ public sealed partial class TaskServerStore
                 CanaryCapabilities: capabilityAdmission.Canaries,
                 RuntimeCapacity: runtimeCapacity,
                 ModelFallback: providerContinuation?.Fallback,
-                ContinuationBaseRef: providerContinuation?.BaseRef,
-                ContinuationBaseSha: providerContinuation?.BaseSha);
+                ContinuationBaseRef: mechanicalBase.Ref ?? providerContinuation?.BaseRef,
+                ContinuationBaseSha: mechanicalBase.Sha ?? providerContinuation?.BaseSha,
+                PreviousSession: previousSession,
+                MechanicalDelta: mechanicalDelta,
+                MechanicalFreshRoute: mechanicalFreshRoute);
         }, ct);
         return response!;
     }
@@ -1679,14 +1713,31 @@ public sealed partial class TaskServerStore
     public async Task<RunDto> CompleteRunAsync(string runId, CompleteRunRequest request, string actorId, CancellationToken ct)
     {
         RequireWritable();
+        if (request.SessionContinuation is { } session
+            && !string.Equals(session.AttemptId, runId, StringComparison.Ordinal))
+            throw new TaskServerConflictException(
+                "session-attempt-mismatch", "Session evidence does not match the fenced run.");
+        var mechanicalFallback = string.Equals(
+            request.Outcome, ExecutionOutcomeKind.MechanicalFallback.ToString(),
+            StringComparison.OrdinalIgnoreCase);
+        if (mechanicalFallback
+            && (request.OutcomeDecision?.Outcome != ExecutionOutcomeKind.MechanicalFallback
+                || request.SessionContinuation is not
+                { MechanicalRound: true, MechanicalResumesUsed: > 0, FallbackReason: { Length: > 0 } }))
+            throw new TaskServerConflictException(
+                "mechanical-fallback-evidence-required",
+                "A resumed mechanical fallback requires typed outcome and fenced fallback evidence.");
         if (request.NeedsInputMessage is not null
             && Encoding.UTF8.GetByteCount(request.NeedsInputMessage) > 16 * 1024)
             throw new ArgumentException("NeedsInputMessage exceeds the 16 KiB completion-envelope limit.");
         var gateItems = NormalizeGateItems(request.GateItems);
         var needsInput = !string.IsNullOrWhiteSpace(request.NeedsInputMessage);
         var providerRejected = request.OutcomeDecision?.Outcome == ExecutionOutcomeKind.ProviderRejectedRequest;
-        var nextState = needsInput || providerRejected ? "5-human-review" : "4-auto-review";
+        var nextState = mechanicalFallback ? "2-ready"
+            : needsInput || providerRejected ? "5-human-review" : "4-auto-review";
         var effectiveSummary = request.Summary;
+        if (mechanicalFallback)
+            effectiveSummary = $"Resumed mechanical round requires a policy-qualified fresh attempt ({request.SessionContinuation!.FallbackReason}).";
         ProviderRejectionRecoveryPlan? providerRecovery = null;
         RunDto? completed = null;
         await InWriteTransactionAsync(async (connection, transaction) =>
@@ -1864,6 +1915,10 @@ public sealed partial class TaskServerStore
                 ("$repositoryUrl", resultHandoff?.Envelope.RepositoryUrl),
                 ("$resultRef", resultHandoff?.Envelope.ImmutableRemoteRef),
                 ("$bundleSha", resultHandoff?.Envelope.SourceBundleDigest));
+            if (request.SessionContinuation is { } completedSession)
+                await AppendLifecycleEventAsync(
+                    connection, transaction, runId, lease.TaskId, request.Fence,
+                    "session.continuation", completedSession, ct);
             await ResolveCanarySuccessAsync(
                 connection,
                 transaction,
@@ -1897,6 +1952,7 @@ public sealed partial class TaskServerStore
                     modelFallback = providerRecovery?.Fallback is { } lifecycleFallback
                         ? new { from = lifecycleFallback.From, to = lifecycleFallback.To, lifecycleFallback.Reason, lifecycleFallback.CardPinned }
                         : null,
+                    mechanicalFallbackReason = mechanicalFallback ? request.SessionContinuation!.FallbackReason : null,
                 },
                 ct);
             await AppendLifecycleEventAsync(
@@ -1928,6 +1984,7 @@ public sealed partial class TaskServerStore
                     classifierVersion = request.OutcomeDecision?.ClassifierVersion,
                     recoveryAction = request.OutcomeDecision?.RecoveryAction.ToString(),
                     modelFallback = providerRecovery?.Fallback,
+                    mechanicalFallbackReason = mechanicalFallback ? request.SessionContinuation!.FallbackReason : null,
                 }), ct);
             completed = new RunDto(
                 runId,
@@ -3275,6 +3332,20 @@ public sealed partial class TaskServerStore
                 task_id TEXT PRIMARY KEY REFERENCES tasks(id),
                 last_fence INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS steering_actions(
+                command_id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL REFERENCES projects(id),
+                task_id TEXT NOT NULL REFERENCES tasks(id),
+                action TEXT NOT NULL,
+                expected_task_version INTEGER NOT NULL,
+                expected_generation INTEGER NOT NULL,
+                result_task_version INTEGER NOT NULL,
+                result_state TEXT NOT NULL,
+                actor TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                accepted_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ix_steering_actions_task ON steering_actions(task_id, accepted_at);
             CREATE TABLE IF NOT EXISTS leases(
                 task_id TEXT NOT NULL REFERENCES tasks(id),
                 lease_id TEXT PRIMARY KEY,
@@ -3298,6 +3369,14 @@ public sealed partial class TaskServerStore
                 occurred_at TEXT NOT NULL,
                 sequence INTEGER
             );
+            CREATE TABLE IF NOT EXISTS task_mechanical_deltas(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                delta_json TEXT NOT NULL,
+                claimed_run_id TEXT UNIQUE
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS ix_task_mechanical_deltas_pending
+                ON task_mechanical_deltas(task_id) WHERE claimed_run_id IS NULL;
             CREATE TABLE IF NOT EXISTS artifacts(
                 id TEXT PRIMARY KEY,
                 run_id TEXT NOT NULL,
