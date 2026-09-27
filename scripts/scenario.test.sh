@@ -208,6 +208,15 @@ for (const serviceName of ["bootstrap", "task-server", "studio-bff", "orchestrat
 if (config.services["bootstrap"].image !== config.services["task-server"].image) {
   throw new Error("bootstrap does not run from the scenario task-server image");
 }
+// The harness reaches the Task Server and the Studio BFF directly on the
+// loopback interface; the product stack publishes only the Task Server port.
+for (const [serviceName, containerPort] of [["task-server", 5071], ["studio-bff", 5072]]) {
+  const published = (config.services[serviceName].ports ?? [])
+    .find(port => Number(port.target) === containerPort && port.host_ip === "127.0.0.1");
+  if (!published) {
+    throw new Error(`${serviceName} does not publish port ${containerPort} on 127.0.0.1 for the scenario harness`);
+  }
+}
 if (config.services["task-server"].build.args.VERSION !== process.argv[2]
     || config.services["studio-bff"].build.args.VERSION !== process.argv[2]) {
   throw new Error("scenario service builds do not use the canonical repository version");
