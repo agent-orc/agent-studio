@@ -60,7 +60,7 @@ These metrics measure local exact-subject gate requests; they do not estimate
 batch green rate or answer the staging-lane decision in the
 [Gates Dossier](../../operations/gates/index.html#sect5).
 
-## Batch gate pilot groundwork
+## Documentation-only batch gate pilot
 
 `backend/Features/Pipeline/BatchGate/` contains the closed-manifest policy,
 membership digest, append-only replay and member evidence records, bounded
@@ -74,13 +74,30 @@ base SHA and member run IDs; its existing claimable executor still checks the
 exact candidate SHA. An infrastructure retry excludes the host of the previous
 attempt.
 
-This code has no route from a settled Remote Review or claimable batch gate
-execution yet. The per-card gate and integration path remains authoritative;
-no project setting enables batch routing. Do not treat a closed manifest, a
-temporary candidate ref, or the new member record store as a released card
-without the exact-SHA gate execution, shared ref-mutation lease, verified
-publication, and lane-release wiring described in the
-[Gates Dossier](../../operations/gates/index.html#sect3).
+The default-off `BatchGate` project setting routes documentation-only settled
+Remote Review passes to a durable pending queue. The review plan records the
+build and test aspect as deferred to the batch while retaining model review.
+The hosted pilot worker closes manifests at the configured size, age, or
+pressure threshold, assembles the candidate, persists a run before invoking
+`BuildTestGateRunner` on its exact SHA, and records verdict and evidence.
+Green publication rechecks member generations and the remote pre-tip under a
+coordinator lease and the shared fenced ref-mutation lease. A changed pre-tip
+returns members for reconstruction and another suite run. The worker verifies
+the remote SHA before recording publication. Each admitted member receives an
+append-only batch-gate record. The card-local ownership marker makes both
+Human Review entry and Completed acceptance fail closed on missing or stale
+evidence. Verified members also receive an idempotent integration bookkeeping
+record with their mapped SHA set and tested remote tip. A disabled project and
+a lone aged member use the ordinary per-card
+gate on the same immutable result subject. Code-bearing cards keep the
+existing route.
+
+The pilot is currently executed by the backend hosted worker using the local
+gate runner. It does not claim an independently claimable remote `GateAttempt`;
+that separate target remains described in the [Gates Dossier](../../operations/gates/index.html#sect4).
+`GET /api/projects/{project}/batch-gate/report` exposes observed pilot counts
+and the correctness floor; comparable baseline and cost fields remain null
+until measured on the same window.
 
 ## Key Code
 
