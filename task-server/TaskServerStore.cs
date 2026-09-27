@@ -3231,6 +3231,15 @@ public sealed partial class TaskServerStore
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY(installation_id, host_id, credential_id)
             );
+            CREATE TABLE IF NOT EXISTS credential_registry_retired_sources(
+                installation_id TEXT NOT NULL,
+                host_id TEXT NOT NULL,
+                credential_id TEXT NOT NULL,
+                source_instance_id TEXT NOT NULL,
+                retired_generation TEXT NOT NULL,
+                retired_at TEXT NOT NULL,
+                PRIMARY KEY(installation_id, host_id, credential_id, source_instance_id)
+            );
             CREATE TABLE IF NOT EXISTS capability_failure_deliveries(
                 runner_id TEXT NOT NULL REFERENCES runners(id),
                 idempotency_key TEXT NOT NULL,

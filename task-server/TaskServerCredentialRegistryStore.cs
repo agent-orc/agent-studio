@@ -40,6 +40,37 @@ public sealed partial class TaskServerStore
                     observedAt = Parse(reader.GetString(2));
                 }
             }
+            var hasRegisteredSource = false;
+            var sourceIsCurrent = false;
+            var previousSourceIsCurrent = false;
+            await using (var command = Command(connection, """
+                SELECT instance_id, status FROM runners WHERE host_id = $host;
+                """, ("$host", record.HostId)))
+            {
+                command.Transaction = transaction;
+                await using var reader = await command.ExecuteReaderAsync(ct);
+                while (await reader.ReadAsync(ct))
+                {
+                    hasRegisteredSource = true;
+                    if (!string.Equals(reader.GetString(1), "active", StringComparison.Ordinal))
+                        continue;
+                    sourceIsCurrent |= string.Equals(reader.GetString(0), request.SourceInstanceId, StringComparison.Ordinal);
+                    previousSourceIsCurrent |= string.Equals(reader.GetString(0), instance, StringComparison.Ordinal);
+                }
+            }
+            if (hasRegisteredSource && !sourceIsCurrent)
+                throw new TaskServerConflictException("stale-credential-instance", "Source instance is not current for this host.");
+            await using (var command = Command(connection, """
+                SELECT 1 FROM credential_registry_retired_sources
+                 WHERE installation_id = $installation AND host_id = $host
+                   AND credential_id = $credential AND source_instance_id = $instance;
+                """, ("$installation", record.InstallationId), ("$host", record.HostId),
+                ("$credential", record.CredentialId), ("$instance", request.SourceInstanceId)))
+            {
+                command.Transaction = transaction;
+                if (await command.ExecuteScalarAsync(ct) is not null)
+                    throw new TaskServerConflictException("stale-credential-instance", "A retired source instance cannot regain this credential.");
+            }
             if (generation is null)
             {
                 if (request.ExpectedGeneration is not null || record.Supersedes is not null)
@@ -47,16 +78,29 @@ public sealed partial class TaskServerStore
             }
             else if (!string.Equals(request.ExpectedGeneration, generation, StringComparison.Ordinal))
                 throw new TaskServerConflictException("stale-credential-generation", "Credential generation changed before the observation was stored.");
+            else if (!string.Equals(instance, request.SourceInstanceId, StringComparison.Ordinal) &&
+                (!sourceIsCurrent || previousSourceIsCurrent))
+                throw new TaskServerConflictException("stale-credential-instance", "Current host registration has not transferred this credential source.");
+            else if (request.ObservedAt <= observedAt)
+                throw new TaskServerConflictException("stale-credential-observation", "A newer credential observation is already stored.");
             else if (string.Equals(record.Generation, generation, StringComparison.Ordinal))
             {
                 if (!string.Equals(instance, request.SourceInstanceId, StringComparison.Ordinal))
                     throw new TaskServerConflictException("stale-credential-instance", "Another host instance owns this credential generation.");
-                if (request.ObservedAt <= observedAt)
-                    throw new TaskServerConflictException("stale-credential-observation", "A newer credential observation is already stored.");
             }
             else if (!string.Equals(record.Supersedes, generation, StringComparison.Ordinal))
                 throw new TaskServerConflictException("stale-credential-generation", "New credential generation must supersede the current one.");
 
+            if (instance is not null && !string.Equals(instance, request.SourceInstanceId, StringComparison.Ordinal))
+                await ExecuteAsync(connection, """
+                    INSERT INTO credential_registry_retired_sources(
+                        installation_id, host_id, credential_id, source_instance_id,
+                        retired_generation, retired_at)
+                    VALUES ($installation, $host, $credential, $instance, $generation, $retired);
+                    """, ct, transaction,
+                    ("$installation", record.InstallationId), ("$host", record.HostId),
+                    ("$credential", record.CredentialId), ("$instance", instance),
+                    ("$generation", generation), ("$retired", Iso(UtcNow)));
             await ExecuteAsync(connection, """
                 INSERT INTO credential_registry(
                     installation_id, host_id, credential_id, generation,

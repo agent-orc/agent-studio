@@ -41,8 +41,10 @@ public sealed class CredentialRegistryTests
         var store = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
             new ManualTimeProvider(now));
         await store.InitializeAsync();
+        await RegisterSourceAsync(store, "instance-a");
         var first = Fixture("claude_oauth_token");
         await store.UpsertCredentialRegistryAsync(new(first, "instance-a", null, now.UtcDateTime), "test", default);
+        await RegisterSourceAsync(store, "instance-b");
         var second = first with { Generation = "generation-b", Supersedes = first.Generation };
         await store.UpsertCredentialRegistryAsync(new(second, "instance-b", first.Generation,
             now.AddMinutes(1).UtcDateTime), "test", default);
@@ -50,7 +52,55 @@ public sealed class CredentialRegistryTests
             new(first, "instance-a", null, now.AddMinutes(2).UtcDateTime), "test", default));
         await Assert.ThrowsAsync<TaskServerConflictException>(() => store.UpsertCredentialRegistryAsync(
             new(second, "instance-a", second.Generation, now.AddMinutes(2).UtcDateTime), "test", default));
-        Assert.Equal("generation-b", Assert.Single(await store.ListCredentialRegistryAsync(default)).Generation);
+        await store.RegisterRunnerAsync("other-service", new RegisterRunnerRequest(
+            "other-service", "host", "instance-a", "1.0", TaskServerProtocol.Current,
+            [ReviewCapabilities.ReviewExecutor]), "test", default);
+        var third = second with { Generation = "generation-c", Supersedes = second.Generation };
+        var staleInstance = await Assert.ThrowsAsync<TaskServerConflictException>(() => store.UpsertCredentialRegistryAsync(
+            new(third, "instance-a", second.Generation, now.AddMinutes(2).UtcDateTime), "test", default));
+        Assert.Equal("stale-credential-instance", staleInstance.Code);
+        await RegisterSourceAsync(store, "instance-a");
+        var reopened = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
+            new ManualTimeProvider(now));
+        await reopened.InitializeAsync();
+        var reRegisteredStaleInstance = await Assert.ThrowsAsync<TaskServerConflictException>(() => reopened.UpsertCredentialRegistryAsync(
+            new(third, "instance-a", second.Generation, now.AddMinutes(2).UtcDateTime), "test", default));
+        Assert.Equal("stale-credential-instance", reRegisteredStaleInstance.Code);
+        Assert.Equal("generation-b", Assert.Single(await reopened.ListCredentialRegistryAsync(default)).Generation);
+    }
+
+    [Fact]
+    public async Task New_generation_with_older_observation_cannot_replace_current_metadata()
+    {
+        using var temp = new TempDirectory();
+        var now = new DateTimeOffset(2026, 9, 26, 12, 0, 0, TimeSpan.Zero);
+        var store = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
+            new ManualTimeProvider(now));
+        await store.InitializeAsync();
+        var first = Fixture("claude_oauth_token");
+        await store.UpsertCredentialRegistryAsync(new(first, "instance-a", null, now.UtcDateTime), "test", default);
+        var second = first with { Generation = "generation-b", Supersedes = first.Generation };
+        var conflict = await Assert.ThrowsAsync<TaskServerConflictException>(() => store.UpsertCredentialRegistryAsync(
+            new(second, "instance-a", first.Generation, now.AddMinutes(-1).UtcDateTime), "test", default));
+        Assert.Equal("stale-credential-observation", conflict.Code);
+        Assert.Equal(first.Generation, Assert.Single(await store.ListCredentialRegistryAsync(default)).Generation);
+    }
+
+    [Fact]
+    public async Task Unregistered_instance_cannot_take_over_a_credential_generation()
+    {
+        using var temp = new TempDirectory();
+        var now = new DateTimeOffset(2026, 9, 26, 12, 0, 0, TimeSpan.Zero);
+        var store = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
+            new ManualTimeProvider(now));
+        await store.InitializeAsync();
+        var first = Fixture("claude_oauth_token");
+        await store.UpsertCredentialRegistryAsync(new(first, "instance-a", null, now.UtcDateTime), "test", default);
+        var second = first with { Generation = "generation-b", Supersedes = first.Generation };
+        var conflict = await Assert.ThrowsAsync<TaskServerConflictException>(() => store.UpsertCredentialRegistryAsync(
+            new(second, "instance-b", first.Generation, now.AddMinutes(1).UtcDateTime), "test", default));
+        Assert.Equal("stale-credential-instance", conflict.Code);
+        Assert.Equal(first.Generation, Assert.Single(await store.ListCredentialRegistryAsync(default)).Generation);
     }
 
     [Fact]
@@ -100,4 +150,9 @@ public sealed class CredentialRegistryTests
         },
         null, null, null, null, null, "not_verified", [],
         null, null, null, null, null, null, null, null, null);
+
+    private static Task RegisterSourceAsync(TaskServerStore store, string instanceId) =>
+        store.RegisterRunnerAsync("credential-source", new RegisterRunnerRequest(
+            "credential-source", "host", instanceId, "1.0", TaskServerProtocol.Current,
+            [ReviewCapabilities.CodingExecutor]), "test", default);
 }
