@@ -257,6 +257,7 @@ run_compose_full() {
     export SCENARIO_BUILD_SHA="${SCENARIO_BUILD_SHA:-scenario}"
     export SCENARIO_TASK_SERVER_IMAGE="${project_name}-task-server:local"
     export SCENARIO_STUDIO_BFF_IMAGE="${project_name}-studio-bff:local"
+    export SCENARIO_ORCHESTRATOR_ENGINE_IMAGE="${project_name}-orchestrator-engine:local"
     export SCENARIO_AGENT_HOST_IMAGE="${project_name}-agent-host:local"
     export SCENARIO_UID
     SCENARIO_UID="$(id -u)"
@@ -274,8 +275,8 @@ run_compose_full() {
 
     echo "scenario: building Compose full target..." >&2
     "${compose[@]}" config --quiet
-    "${compose[@]}" build task-server studio-bff agent-host-distributed
-    "${compose[@]}" up --detach task-server studio-bff
+    "${compose[@]}" build task-server studio-bff orchestrator-engine agent-host-distributed
+    "${compose[@]}" up --detach task-server studio-bff orchestrator-engine
 
     local binding
     binding="$(wait_for_compose_port task-server 5071)"

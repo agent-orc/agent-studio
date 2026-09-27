@@ -1763,6 +1763,8 @@ The standalone Linux Runner owns one clean checkout per project and executor. It
 
 **Consequences.** A successful run leaves version, duration, cache, and subject evidence. Failed runs cannot poison shared cache entries. An unchanged second run can prove cache reuse. Existing Build Profile discovery remains only for repositories that have not adopted the contract. M2 owns sandbox, container, micro-VM, mandatory Windows Docker execution, and the restricted `windows-host` profile. M3 owns diagnosis and healing actions. Migration starts on the Linux Runner and fixes forward without a prolonged parallel execution model. CI/CD remains a product-owned pipeline direction, including integration runs, deploy stages, and project statistics.
 
+**Revision (2026-09-19).** Empty cache blocks are not reusable entries and are never published. Pre-fix empty entries are compatibility misses. Incomplete entries are atomically quarantined under a per-entry lock and become misses instead of preparation failures; a cache-class failure reported by the prepare command remains an environment outcome and receives one immediate clean integration-gate retry. Repeated unused bindings surface as project-definition warnings.
+
 **Implementation pointers.** Shared contract and executor: [`ProjectPreparation.cs`](../../../../contracts/TaskServer.Contracts/ProjectPreparation.cs). Gate: [`BuildTestGateRunner.cs`](../../../../backend/Features/Pipeline/BuildTestGateRunner.cs). Runner checkout and lease: [`GitWorkspace.cs`](../../../../runner/GitWorkspace.cs). Operator setup: [`preparation-isolation-orchestrator.md`](../../../operations/setup/preparation-isolation-orchestrator.md).
 
 **Status.** Accepted.
@@ -1791,7 +1793,7 @@ The standalone Linux Runner owns one clean checkout per project and executor. It
 
 ---
 
-## ADR-0075 - Operations Server brokers host execution beside Task Server authority (2026-09-25)
+## ADR-0076 - Operations Server brokers host execution beside Task Server authority (2026-09-25)
 
 **Status.** Accepted architecture from AGT-W49 D1, D2 and D4. Implementation is
 staged in AGT-2907. Deployment promotion remains gated on route and security
@@ -1838,3 +1840,19 @@ one-box production parity cannot be claimed from the foundation stage.
 **Contract and delivery evidence.** See
 [Operations backchannel contract](../../contracts/operations-backchannel.md) and
 [the source dossier](../../../operations/operations-server-backchannel/index.html).
+
+---
+
+## ADR-0075 - One-box Compose uses distributed authority and persistent product-managed credentials (2026-09-26)
+
+**Decision.** The root Compose file is the one-box Studio deployment: Task Server owns the store and principal authority, Orchestrator Engine runs the flow, Studio BFF serves browser `/api/v1` requests, the compatibility Studio API serves remaining dev-seat routes, and one Agent Host registers as a Runner. A one-shot bootstrap creates separate Studio, Engine, and Runner credentials in a persistent named volume. A product credential-manager command rotates each principal through the Task Server management API, replaces its protected file, and recreates the consumer. Option C accepts the current `/api/v1` route coverage limit until the operations topology work assigns the remaining routes.
+
+**Context.** The local Connector rejects LAN and Docker origins by a decided security boundary. Extending the BFF to all Connector routes would preempt the pending Operations Server topology. The operator selected option C for AGT-2736 and required first-run and rotation workflows without manual secret copying. Source-built Compose is the verified checkout path; published images receive their own release smoke and upgrade checks.
+
+**Non-goals.** This deployment does not relax the Connector's origin checks, make the Task Server publicly reachable, or claim Connector-equivalent route coverage. Docker Compose does not own Task Server principal state. Deleting the secrets volume is not a rotation method because it can strand principals in the retained store.
+
+**Reasoning style.** Keep durable authority in the Task Server, and let the deployment own only the file distribution needed by its processes. Credential creation is idempotent, and rotation uses the same principal API as other management clients. Browser routing must exercise the BFF that carries the distributed Studio principal.
+
+**Implementation pointers.** [docker-compose.yml](../../../../docker-compose.yml), [Caddyfile](../../../../deploy/compose/Caddyfile), [bootstrap](../../../../scripts/compose-secret-bootstrap.sh), [rotation command](../../../../scripts/compose-rotate.sh), [rotation worker](../../../../scripts/compose-rotate-credentials.sh), [smoke](../../../../scripts/compose-smoke-test.sh), and [Docker operations](../../../operations/setup/docker.md).
+
+**Status.** Accepted.

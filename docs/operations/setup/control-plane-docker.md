@@ -36,11 +36,11 @@ holds:
 
 | File | Purpose |
 |---|---|
-| `compose.yaml` | `task-server`, `orchestrator-engine`, `backup`, and `edge` services. |
+| `compose.yaml` | A one-shot `volume-init` service makes store and backup volumes writable by UID 10001; `task-server`, `orchestrator-engine`, `backup`, and `edge` are the long-running services. |
 | `.env.example` | Every Compose variable, documented; copy to `.env` or let `install-docker.sh` write it. |
 | `Caddyfile` | Self-signed leaf via Caddy's internal CA. Default for first bootstrap and CI. |
 | `Caddyfile.private-ca` | Alternate edge config for an operator-issued private-CA certificate. |
-| `backup-loop.sh` | Runs inside the `backup` service; calls `task-server backup --name` on a timer and copies the result off-host. |
+| `backup-loop.sh` | Runs inside the `backup` service; requests a snapshot from the serving Task Server API on a timer and copies the completed file off-host. |
 | `network/configure-firewall.sh` | Default-deny `ufw` policy for the public interface. |
 | `network/verify-no-public-listener.sh` | Proof command: no API/health/management port is reachable off the WireGuard interface. |
 | `wireguard/*.conf.template` | One template per peer (`task-server-01`, `agent-runner-01`, `windows-studio`). |
@@ -116,13 +116,12 @@ scripts never need a route to the WireGuard-only edge themselves.
 
 ## Backup and restore
 
-The `backup` service shares the `task-server` image and calls the same
-`task-server backup --name <name>` command the systemd timer uses
-([task-server.md, "Backup and restore rehearsal"](./task-server.md)): a
-consistent SQLite snapshot, an integrity check, an audit record, and a
-SHA-256 in the JSON result. It runs every `BACKUP_INTERVAL_SECONDS` (default
-300, matching the plan's five-minute maximum recovery point) and copies the
-verified archive to the off-host mount. Inspect its log:
+The `backup` service shares the `task-server` image but has no live store mount.
+It calls the authenticated management backup API, so the serving Task Server
+creates the consistent SQLite snapshot and audit record under its write gate.
+The sidecar checks the returned SHA-256 before and after copying the completed
+file to the off-host mount. It runs every `BACKUP_INTERVAL_SECONDS` (default
+300, matching the plan's five-minute maximum recovery point). Inspect its log:
 
 ```bash
 docker compose --project-directory /opt/agent-orchestrator/compose \
@@ -260,7 +259,7 @@ documented fallback, not a route kept live in parallel.
 
 ## Verify
 
-1. `docker compose ... ps` reports every service `healthy`.
+1. `docker compose ... ps --all` reports `volume-init` exited successfully and every long-running service healthy or running.
 2. From `agent-runner-01`, over WireGuard:
    `curl --cacert <pinned-or-trusted> https://task-server-01.wg.internal/healthz`
    returns `200`.

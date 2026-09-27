@@ -1,6 +1,6 @@
 # Runner Domain Map
 
-Version: 2026-09-19
+Version: 2026-09-26
 Status: System-of-record map for runner-side changes.
 
 Use this when a change touches task pickup, active execution, post-run outcome
@@ -34,13 +34,54 @@ state.
 
 ## Key Code
 
+### Claimable gate host and Task API
+
+`RUNNER_ROLE=gate` starts `RemoteGateDaemon` as a polling Agent Host service.
+Use a stable `RUNNER_ID`, a unique runner instance, the normal Task Server URL
+and runner credential with `tasks:read`, `runs:write`, `reviews:claim`, and
+`reviews:write` scopes, and a gate work directory separate from coding and
+review work. The host registers the `gate-executor` role and advertises fresh
+`gate-executor`, `gate:git` or `gate:source-bundle`, repository, and toolchain
+capabilities. Admission requires a free gate slot. The Engine switch
+`REMOTE_POST_BUILD_TEST_GATE_ENABLED=0` keeps the backend gate active by default;
+the operator enables it only for a bounded canary. An eligible replacement
+Agent Host is the only retry target. A spent budget becomes `GateInfra`.
+Deploy the updated Review Executor with the backend before issuing new review
+plans: verify commands now carry a typed working subdirectory, which older
+executors would ignore.
+
+The public `/api/v1/gates` Task API has these operations:
+
+| Route | Caller and purpose |
+| --- | --- |
+| `POST /subjects`, `POST /subjects/{subjectId}/cancel` | Engine creates an immutable source-run, gate-id, plan-hash subject or cancels it. |
+| `GET /subjects/{subjectId}`, `GET /review-sources/{reviewSubjectId}` | Read durable gate state and the declared source snapshot. |
+| `POST /claims` | Gate host claims eligible queued work with a fresh capability advertisement and free slot. |
+| `POST /attempts/{attemptId}/renew`, `/phase`, `/report`, `/containment` | Gate host renews its lease, records phase, submits the fenced result, and confirms cleanup after restart. |
+
+Gate mutations require the corresponding Task Server scopes. A runner principal's
+ID must match the claimed executor ID on every mutation. Each report carries
+the lease ID, fence, authority epoch, tested SHA and tree, dirty proof, command
+evidence, and cleanup status. Stale or conflicting reports are rejected. Host
+shutdown keeps an interrupted claim without reporting a tool failure. Host
+restart reads the persisted claim, reaps its owned process tree, removes its
+namespace, and confirms containment before it claims more work. The Task Server
+retains the subject, attempts, phases, and terminal classification across a
+restart; the Engine retains no attempt state. See the
+[Gates Dossier](../../operations/gates/index.html#sect4) for the contract and
+rollout decision.
+
 - `runner/ArtifactTransferPolicy.cs`, `runner/RemoteTaskRunner.cs`,
   `backend/Features/Diagnostics/ArtifactIngestionEndpoints.cs`, and
   `task-server/TaskServerEndpoints.cs`: post-delivery
   result evidence transport. Git result or salvage publication and fenced
   completion happen first. The server advertises its base64-safe request
-  budget plus project file and total caps; the runner selects bounded files,
-  excludes Playwright traces, videos, dependency trees, and build output,
+  budget. On the v1 plane, post-completion artifact ingest, event ingest, and
+  result finalization require the exact runner, instance, and lease id alongside
+  the fence; the server admits them only while that completed lease remains the
+  current authority. A completed lease needs no later release request.
+  The server also advertises project file and total caps; the runner selects
+  bounded files, excludes Playwright traces, videos, dependency trees, and build output,
   then uploads one manifest-bound file per request. Deterministic skips are
   written to `results/deliverables.md` before the manifest is created. A later
   HTTP 413/507 never rewrites a manifested file; it is recorded as the

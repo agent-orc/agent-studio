@@ -55,6 +55,18 @@ public sealed class AcceptanceIntegrationPolicyTests
     }
 
     [Fact]
+    public void DecisionKind_ExpectsNoIntegration()
+    {
+        // AGT-2795: a decision card is never code-executed and carries no branch.
+        Assert.False(AcceptanceIntegrationPolicy.IsIntegrationRequired(new TaskInfo
+        {
+            Mode = TaskModes.Coding,
+            Kind = TaskKinds.Decision,
+            TaskType = TaskTypes.Chore,
+        }));
+    }
+
+    [Fact]
     public void ExplicitNoBranchExpectation_ExemptsCodingCard()
     {
         Assert.False(AcceptanceIntegrationPolicy.IsIntegrationRequired(new TaskInfo

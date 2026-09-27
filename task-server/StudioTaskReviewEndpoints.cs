@@ -64,6 +64,11 @@ internal static class StudioTaskReviewEndpoints
             => await TaskServerEndpoints.InvokeAsync(
                 () => store.GetTaskPipelineAsync(projectId, taskIdentity, ct)));
 
+        tasks.MapGet("/gates", async (
+            string projectId, string taskIdentity, TaskServerStore store, CancellationToken ct)
+            => await TaskServerEndpoints.InvokeAsync(
+                () => store.ListTaskGateStatusesAsync(projectId, taskIdentity, ct)));
+
         tasks.MapPost("/pipeline/steps/{stepId}/run", async (
             string projectId,
             string taskIdentity,

@@ -1,7 +1,7 @@
 # Operations backchannel
 
 Status: accepted architecture, foundation stage delivered in AGT-2907, 2026-09-26.
-[ADR-0075](../architecture/decisions/adr-archive.md#adr-0075---operations-server-brokers-host-execution-beside-task-server-authority-2026-09-25)
+[ADR-0076](../architecture/decisions/adr-archive.md#adr-0076---operations-server-brokers-host-execution-beside-task-server-authority-2026-09-25)
 records D1, D2 and D4. The
 [source dossier](../../operations/operations-server-backchannel/index.html)
 records the selected D3 scope and original constraints. The operator's

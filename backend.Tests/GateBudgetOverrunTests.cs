@@ -4,6 +4,38 @@ namespace AgentStudio.Tests;
 
 public sealed class GateBudgetOverrunTests
 {
+    [Fact]
+    public void Preparation_cache_retry_is_written_to_gate_evidence_and_card_timeline()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "preparation-cache-retry-receipt-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var timeline = new TimelineLog(
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<TimelineLog>.Instance);
+            var result = new BuildTestGateResult(
+                BuildTestGateVerdict.Ok, 0, 10, "ok", "cache recovered", true, false)
+            {
+                TestedSha = new string('a', 40),
+                PreparationCacheRetryPerformed = true,
+            };
+
+            IntegrationGateReceipts.Record(root, "pre-develop-build-gate", result, timeline);
+
+            var log = File.ReadAllText(Assert.Single(
+                Directory.GetFiles(Path.Combine(root, "post-steps"), "*.log")));
+            Assert.Contains("preparationCacheRetryPerformed=true", log);
+            Assert.Contains(
+                timeline.ReadAll(root),
+                entry => entry.Kind == TimelineEventKinds.IntegrationGatePreparationCacheRetried
+                         && entry.Summary.Contains("retried the integration gate once", StringComparison.Ordinal));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     [Theory]
     [InlineData("Passed Product.Tests.Green [12 ms]", BuildTestGateFailureKind.Environment)]
     [InlineData("  Failed AgentStudio.Tests.Foo.Bar [123 ms]", BuildTestGateFailureKind.Code)]
