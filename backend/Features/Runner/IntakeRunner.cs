@@ -128,10 +128,12 @@ public sealed class IntakeRunner
         var areas = DetectTaskAreas(target, promptMarkdown);
         var areaSet = new HashSet<string>(areas, StringComparer.OrdinalIgnoreCase);
         var candidates = new List<IntakeConstraintSelection>();
+        bool IsExplicit(ConstraintRule rule) =>
+            explicitlyDeclaredBlockIds?.Contains(rule.Constraint.Id, StringComparer.Ordinal) == true;
 
         foreach (var rule in ConstraintRules.Where(rule => rule.Constraint.Mandatory))
         {
-            if (rule.Applies(areaSet))
+            if (rule.Applies(areaSet) || IsExplicit(rule))
                 candidates.Add(CloneConstraint(rule.Constraint));
         }
 
@@ -164,7 +166,7 @@ public sealed class IntakeRunner
 
         foreach (var rule in ConstraintRules.Where(rule => !rule.Constraint.Mandatory))
         {
-            if (rule.Applies(areaSet))
+            if (rule.Applies(areaSet) || IsExplicit(rule))
                 candidates.Add(CloneConstraint(rule.Constraint));
         }
 

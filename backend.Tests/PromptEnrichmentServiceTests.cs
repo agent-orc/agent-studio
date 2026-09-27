@@ -266,6 +266,46 @@ public sealed class PromptEnrichmentServiceTests : IDisposable
     }
 
     [Fact]
+    public void Prepare_ExplicitPipelineBlock_DoesNotRequireAnAreaMatch()
+    {
+        var repository = Path.Combine(_root, "configured-no-area-repository");
+        var folder = Path.Combine(_root, "configured-no-area-card");
+        Directory.CreateDirectory(folder);
+        WriteSource(repository, "AGENTS.md");
+        WriteSource(repository, "docs/system/contracts/filesystem.md");
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["TaskRepository"] = _root })
+            .Build();
+        var settings = new ProjectSettingsService(
+            NullLogger<ProjectSettingsService>.Instance, config);
+        settings.SetPipelineStep("Custom", PipelineTypes.Task,
+            PipelineCatalogue.PromptEnrichmentStepId,
+            new PipelineStepSetting { EnrichmentBlockIds = ["task-state-api-first"] });
+        var task = new TaskInfo
+        {
+            Id = "CUSTOM-NO-AREA", ProjectName = "Custom", FolderPath = folder,
+            State = TaskStates.Ready, Mode = TaskModes.Coding,
+            Title = "Polish release notes"
+        };
+        const string authoredPrompt = "Polish release notes for the next release.";
+        Assert.Empty(IntakeRunner.DetectTaskAreas(task, authoredPrompt));
+
+        var service = new PromptEnrichmentService(
+            NullLogger<PromptEnrichmentService>.Instance, projectSettings: settings);
+        var result = service.Prepare(task, authoredPrompt, null,
+            repositoryRootOverride: repository);
+
+        Assert.Contains(result.Report.AppendedBlocks, block =>
+            block.Id == "task-state-api-first"
+            && block.SourceVerification == "pipeline-explicit");
+        Assert.Contains(result.Report.Candidates, candidate =>
+            candidate.Id == "task-state-api-first"
+            && candidate.Decision == "appended"
+            && candidate.Reason == "pipeline-explicit");
+        Assert.Contains("task-state-api-first", result.LaunchPrompt);
+    }
+
+    [Fact]
     public void Prepare_ExplicitPipelineBlock_RecordsProjectDeclaration()
     {
         var repository = Path.Combine(_root, "configured-repository");
@@ -368,7 +408,11 @@ public sealed class PromptEnrichmentServiceTests : IDisposable
         };
         var service = new PromptEnrichmentService(NullLogger<PromptEnrichmentService>.Instance);
 
-        var result = service.Prepare(task, $"Inspect repository instruction sources for {project}.", null,
+        var authoredPrompt =
+            "# Prompt enrichment source audit\n\n"
+            + $"Verification card for AGT-2908. Inspect which repository-owned instruction blocks the prompt-enrichment step appends for {project}. "
+            + "This card is parked in backlog and requests no code change.";
+        var result = service.Prepare(task, authoredPrompt, null,
             enabledOverride: true, guidesOverride: guides,
             repositoryRootOverride: repository, agentStudioCatalogueOverride: false);
 

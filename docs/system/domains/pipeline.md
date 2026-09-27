@@ -80,6 +80,8 @@ batch green rate or answer the staging-lane decision in the
   instructions, when present. A project can explicitly adopt built-in block
   ids through the `pre-prompt-enrichment` pipeline step's
   `enrichmentBlockIds` setting when those block sources exist in its repository.
+  Explicitly adopted blocks are considered even when task-area detection does
+  not match their usual trigger; the normal optional-block budget still applies.
   The report records `rejected-source-missing`
   with the missing path, and each appended block records its project,
   repository, and source verification mode. The step is default-on and can be

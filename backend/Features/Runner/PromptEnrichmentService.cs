@@ -281,7 +281,9 @@ public sealed class PromptEnrichmentService
                 Signals = constraint.Areas,
                 Decision = applyEnrichment ? "appended" : "rejected-project-disabled",
                 Reason = applyEnrichment
-                    ? constraint.Mandatory ? "mandatory-project-policy" : "matched-task-area"
+                    ? constraint.SourceVerification == "pipeline-explicit"
+                        ? "pipeline-explicit"
+                        : constraint.Mandatory ? "mandatory-project-policy" : "matched-task-area"
                     : projectEnabled ? "selector-fallback" : "project-step-disabled",
                 EstimatedTokens = IntakeRunner.EstimateTokens(
                     IntakeRunner.RenderConstraintMarkdown(constraint).Length),
