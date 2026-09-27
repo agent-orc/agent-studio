@@ -1,0 +1,20 @@
+:host { display: contents; }
+
+.rh__candidates {
+  display: grid;
+  gap: var(--studio-spacing-1);
+  margin-block: var(--studio-spacing-3);
+  padding: var(--studio-spacing-3);
+  border: 1px solid var(--studio-border);
+  border-radius: 8px;
+  background: var(--studio-bg-elevated);
+}
+
+.rh__candidates-title {
+  margin: 0 0 var(--studio-spacing-1);
+  color: var(--studio-fg-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
