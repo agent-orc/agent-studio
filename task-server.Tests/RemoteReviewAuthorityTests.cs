@@ -25,6 +25,93 @@ public sealed class RemoteReviewAuthorityTests
     private const string ReviewHttpToken = "review-http-token-000000000000000000000000000001";
 
     [Fact]
+    public async Task Versioned_library_step_is_fenced_to_its_digest_on_either_review_host()
+    {
+        var digests = new List<string>();
+        foreach (var host in new[] { "review-host-a", "review-host-b" })
+        {
+            using var temp = new TempDirectory();
+            var store = Store(temp.Path);
+            await store.InitializeAsync();
+            var plan = new ReviewPlanDto(
+                [new ReviewCommandDto("verify-subject", "completion", "git", ["rev-parse", "HEAD"])],
+                ["completion"], LibraryVersion: ReviewLibraryStepPolicy.Version);
+            var subject = await SeedReviewSubjectAsync(store, plan: plan);
+            await RegisterReviewerAsync(store, "review-a", "instance-a", host);
+            var claim = await store.ClaimReviewAsync(
+                new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+            Assert.Equal("claimed", claim.Status);
+            Assert.Equal(host, claim.Lease!.HostId);
+            var step = Assert.Single(subject.Plan.Commands).LibraryStep!;
+            Assert.Equal(ResultSha, step.InputSubjectSha);
+            digests.Add(step.Digest);
+
+            var report = PassingReport(claim);
+            var changed = report with
+            {
+                Commands = report.Commands.Select(command => command with
+                {
+                    LibraryStep = command.LibraryStep! with { Digest = new string('0', 64) },
+                }).ToArray(),
+            };
+            var error = await Assert.ThrowsAsync<TaskServerConflictException>(() =>
+                store.ReportReviewAsync(claim.Attempt!.AttemptId, changed, "review-a", default));
+            Assert.Equal("review-step-digest-mismatch", error.Code);
+            var accepted = await store.ReportReviewAsync(
+                claim.Attempt!.AttemptId, report, "review-a", default);
+            Assert.Equal(accepted, await store.ReportReviewAsync(
+                claim.Attempt.AttemptId, report, "review-a", default));
+        }
+        Assert.Equal(digests[0], digests[1]);
+    }
+
+    [Fact]
+    public async Task Versioned_review_retry_can_move_to_another_capable_host_without_changing_the_step()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var plan = new ReviewPlanDto(
+            [new ReviewCommandDto("verify-subject", "completion", "git", ["rev-parse", "HEAD"])],
+            ["completion"], LibraryVersion: ReviewLibraryStepPolicy.Version);
+        await SeedReviewSubjectAsync(store, plan: plan);
+        await store.RegisterRunnerAsync(
+            "legacy-review",
+            new RegisterRunnerRequest(
+                "legacy-review", "host-legacy", "instance-legacy", "1.0.0",
+                TaskServerProtocol.Current,
+                [ReviewCapabilities.ReviewExecutor, ReviewCapabilities.GitMaterialization,
+                    ReviewCapabilities.SemanticReview]),
+            "legacy-review", default);
+        Assert.Equal("empty", (await store.ClaimReviewAsync(
+            new ReviewClaimRequest("legacy-review", "instance-legacy"),
+            "legacy-review", default)).Status);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        await RegisterReviewerAsync(store, "review-b", "instance-b", "host-b");
+
+        var first = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        var firstStep = Assert.Single(first.Subject!.Plan.Commands).LibraryStep!;
+        var failed = PassingReport(first) with
+        {
+            Outcome = "ReviewInfra",
+            FailureClassification = "SnapshotUnavailable",
+        };
+        var firstReport = await store.ReportReviewAsync(
+            first.Attempt!.AttemptId, failed, "review-a", default);
+        Assert.True(firstReport.RetryScheduled);
+
+        var second = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-b", "instance-b"), "review-b", default);
+        Assert.Equal("claimed", second.Status);
+        Assert.Equal("host-b", second.Lease!.HostId);
+        Assert.Equal(first.Subject.SubjectId, second.Subject!.SubjectId);
+        Assert.Equal(firstStep.Digest, Assert.Single(second.Subject.Plan.Commands).LibraryStep!.Digest);
+        Assert.Equal("Pass", (await store.ReportReviewAsync(
+            second.Attempt!.AttemptId, PassingReport(second), "review-b", default)).Outcome);
+    }
+
+    [Fact]
     public async Task Stored_review_subject_limits_dotnet_test_cpu_before_it_becomes_immutable()
     {
         using var temp = new TempDirectory();
@@ -410,6 +497,7 @@ public sealed class RemoteReviewAuthorityTests
                     ReviewCapabilities.VisionReview,
                     ReviewCapabilities.BaselineComparison,
                     ReviewCapabilities.DependencyPreparation,
+                    ReviewCapabilities.LibraryStepV1,
                 ],
                 ActiveAttempts:
                 [
@@ -1182,7 +1270,8 @@ public sealed class RemoteReviewAuthorityTests
             stderrDigest,
             Phase: "preparation",
             WorkspaceRole: "candidate",
-            Budget: new ReviewCommandBudgetEvidenceDto("review-command", 120_000, 2_000, false));
+            Budget: new ReviewCommandBudgetEvidenceDto("review-command", 120_000, 2_000, false),
+            LibraryStep: preparation.LibraryStep);
         var unavailable = template with
         {
             Outcome = "ReviewInfra",
@@ -1999,6 +2088,7 @@ public sealed class RemoteReviewAuthorityTests
                     ReviewCapabilities.VisionReview,
                     ReviewCapabilities.BaselineComparison,
                     ReviewCapabilities.DependencyPreparation,
+                    ReviewCapabilities.LibraryStepV1,
                     CapabilityProtocol.CliExecution("codex"),
                     CapabilityProtocol.ProviderAuthentication("codex"),
                 ]),
@@ -2021,7 +2111,8 @@ public sealed class RemoteReviewAuthorityTests
             HostId: lease.HostId,
             AttemptId: claim.Attempt!.AttemptId,
             Model: command.Model,
-            ThinkingLevel: command.ThinkingLevel))
+            ThinkingLevel: command.ThinkingLevel,
+            LibraryStep: command.LibraryStep))
             .Concat((subject.Plan.Preparation ?? []).Select(command => new ReviewCommandEvidenceDto(
                 command.StepId, "preparation", command.FileName, command.Arguments,
                 ResultSha, ResultSha, TreeSha,
@@ -2034,7 +2125,8 @@ public sealed class RemoteReviewAuthorityTests
                 ExecutionLocation: "remote",
                 ExecutorId: lease.ExecutorId,
                 HostId: lease.HostId,
-                AttemptId: claim.Attempt!.AttemptId)))
+                AttemptId: claim.Attempt!.AttemptId,
+                LibraryStep: command.LibraryStep)))
             .ToArray();
         var verdicts = subject.Plan.RequiredAspects.Select(aspect =>
             new ReviewVerdictDto(aspect, "pass", "Verified", $"{aspect} passed")).ToArray();

@@ -531,7 +531,8 @@ public sealed class ScenarioContext : IDisposable
             Sha256Of($"{command.StepId}-stderr"),
             ExecutorId: lease.ExecutorId,
             HostId: lease.HostId,
-            AttemptId: attempt.AttemptId)).ToArray();
+            AttemptId: attempt.AttemptId,
+            LibraryStep: command.LibraryStep)).ToArray();
         var artifacts = commands.SelectMany(command => new[]
         {
             new ReviewArtifactEvidenceDto($"{command.StepId}.stdout.log", "text/plain", command.StdoutSha256, 1),

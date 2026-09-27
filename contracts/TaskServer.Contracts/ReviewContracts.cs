@@ -10,7 +10,19 @@ public static class ReviewCapabilities
     public const string VisionReview = "review:vision";
     public const string BaselineComparison = "review:baseline-comparison";
     public const string DependencyPreparation = "review:dependency-preparation";
+    public const string LibraryStepV1 = "review:library-step:v1";
 }
+
+/// <summary>A resolved, immutable shared-library invocation for one review subject.</summary>
+public sealed record ReviewLibraryStepDto(
+    string Id,
+    int Version,
+    string Digest,
+    string InputSubjectSha,
+    IReadOnlyList<string> RequiredCapabilities,
+    int TimeoutSeconds,
+    string Slot = "review",
+    int MaxDotNetCpuCount = ReviewPlanResourcePolicy.DefaultDotNetMaxCpuCount);
 
 public static class ReviewCommandKinds
 {
@@ -55,7 +67,8 @@ public sealed record ReviewPreparationCommandDto(
     IReadOnlyList<string> Arguments,
     string WorkingSubdir = "",
     int TimeoutSeconds = 1800,
-    IReadOnlyList<ReviewDependencyScopeDto>? DependencyScopes = null);
+    IReadOnlyList<ReviewDependencyScopeDto>? DependencyScopes = null,
+    ReviewLibraryStepDto? LibraryStep = null);
 
 public sealed record ReviewCommandDto(
     string StepId,
@@ -71,7 +84,8 @@ public sealed record ReviewCommandDto(
     string? Model = null,
     string? ThinkingLevel = null,
     string BaselineMode = ReviewBaselineModes.TestFailures,
-    string WorkingSubdir = "");
+    string WorkingSubdir = "",
+    ReviewLibraryStepDto? LibraryStep = null);
 
 public sealed record ReviewPlanDto(
     IReadOnlyList<ReviewCommandDto> Commands,
@@ -81,7 +95,8 @@ public sealed record ReviewPlanDto(
     string? IntegrationRef = null,
     IReadOnlyList<ReviewPreparationCommandDto>? Preparation = null,
     IReadOnlyList<string>? PreserveGlobs = null,
-    string? BuildProfileFingerprint = null);
+    string? BuildProfileFingerprint = null,
+    int LibraryVersion = 0);
 
 public sealed record CreateReviewSubjectRequest(
     string TaskId,
@@ -228,7 +243,8 @@ public sealed record ReviewCommandEvidenceDto(
     /// plan asked for a baseline comparison (AGT-2819). Null means no baseline
     /// run happened, which attributes any failure to the delivery.
     /// </summary>
-    int? BaselineExitCode = null);
+    int? BaselineExitCode = null,
+    ReviewLibraryStepDto? LibraryStep = null);
 
 /// <summary>
 /// The one word every surface uses for a test failure that a targeted re-run
