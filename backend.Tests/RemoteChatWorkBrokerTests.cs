@@ -88,6 +88,42 @@ public sealed class RemoteChatWorkBrokerTests
     }
 
     [Fact]
+    public async Task Concurrent_contexts_in_one_project_keep_their_own_execution_metadata()
+    {
+        var broker = new RemoteChatWorkBroker(NullLogger<RemoteChatWorkBroker>.Instance);
+        var taskRoute = Route with { ContextKey = "task:Agent Studio/AGT-2901" };
+        var dossierRoute = Route with { ContextKey = "workbench:Agent Studio/dossier-1" };
+        var taskPending = broker.EnqueueTurnAsync(
+            taskRoute, "Task question", "gpt-5.5", null, CancellationToken.None);
+        var dossierPending = broker.EnqueueTurnAsync(
+            dossierRoute, "Dossier question", "gpt-5.5", null, CancellationToken.None);
+        var runner = new RemoteChatWorkClaimRequest("runner-01", "runner-01", "agent-runner-01");
+        var taskWork = broker.TryClaim(runner).Work!;
+        var dossierWork = broker.TryClaim(runner).Work!;
+        var taskContext = new ChatExecutionContext(
+            "remote", "agent-runner-01", "/srv/task-chat", "develop", "task-sha", "ready", DateTime.UtcNow);
+        var dossierContext = taskContext with { RepoPath = "/srv/dossier-chat", HeadSha = "dossier-sha" };
+
+        Assert.True(broker.Complete(new RemoteChatWorkCompletionRequest(
+            dossierWork.WorkId, dossierWork.ClaimToken, "runner-01", true,
+            "dossier reply", "gpt-5.5", null, null, dossierContext)));
+        Assert.True(broker.Complete(new RemoteChatWorkCompletionRequest(
+            taskWork.WorkId, taskWork.ClaimToken, "runner-01", true,
+            "task reply", "gpt-5.5", null, null, taskContext)));
+        await Task.WhenAll(taskPending, dossierPending);
+
+        Assert.Equal(taskContext, broker.GetContext(taskRoute));
+        Assert.Equal(dossierContext, broker.GetContext(dossierRoute));
+        Assert.Null(broker.GetContext(Route));
+
+        var fallbackContext = taskContext with { RepoPath = "/local/task-chat" };
+        broker.RecordLocalFallback(taskRoute, fallbackContext);
+        Assert.Equal(fallbackContext, broker.GetContext(taskRoute));
+        Assert.Equal(dossierContext, broker.GetContext(dossierRoute));
+        Assert.Null(broker.GetContext(taskRoute with { RunnerId = "runner-02" }));
+    }
+
+    [Fact]
     public async Task Capability_preparation_can_defer_fallback_work_without_consuming_it()
     {
         var broker = new RemoteChatWorkBroker(NullLogger<RemoteChatWorkBroker>.Instance);

@@ -17,7 +17,7 @@ public sealed class RemoteChatWorkBroker
     private readonly List<PendingRemoteChatWork> _work = [];
     private readonly Dictionary<string, DateTime> _lastPollByRunner = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<(string Host, string Project), CompletedChatUsage> _completedUsage = [];
-    private readonly Dictionary<string, CachedChatExecutionContext> _contexts =
+    private readonly Dictionary<string, Dictionary<string, CachedChatExecutionContext>> _contexts =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly ILogger<RemoteChatWorkBroker> _logger;
 
@@ -114,17 +114,17 @@ public sealed class RemoteChatWorkBroker
     {
         lock (_gate)
         {
-            if (!_contexts.TryGetValue(route.ProjectName, out var cached))
+            if (!_contexts.TryGetValue(route.ProjectName, out var projectContexts)
+                || !projectContexts.TryGetValue(route.ContextKey ?? string.Empty, out var cached))
                 return null;
-            return (cached.Route with { ContextKey = null }) == (route with { ContextKey = null })
-                ? cached.Context : null;
+            return cached.Route == route ? cached.Context : null;
         }
     }
 
     public void RecordLocalFallback(RemoteChatWorkRoute route, ChatExecutionContext context)
     {
         lock (_gate)
-            _contexts[route.ProjectName] = new CachedChatExecutionContext(route, context);
+            StoreContextLocked(route, context);
     }
 
     public RemoteChatWorkStatus? GetStatus(string projectName, string? contextKey)
@@ -292,8 +292,7 @@ public sealed class RemoteChatWorkBroker
                         : null);
             }
             if (request.ExecutionContext != null)
-                _contexts[item.Route.ProjectName] =
-                    new CachedChatExecutionContext(item.Route, request.ExecutionContext);
+                StoreContextLocked(item.Route, request.ExecutionContext);
             _work.Remove(item);
         }
 
@@ -327,6 +326,16 @@ public sealed class RemoteChatWorkBroker
             && string.Equals(item.Id, workId, StringComparison.Ordinal)
             && string.Equals(item.ClaimToken, claimToken, StringComparison.Ordinal)
             && string.Equals(item.ClaimedBy, runnerId, StringComparison.OrdinalIgnoreCase));
+
+    private void StoreContextLocked(RemoteChatWorkRoute route, ChatExecutionContext context)
+    {
+        if (!_contexts.TryGetValue(route.ProjectName, out var projectContexts))
+        {
+            projectContexts = new Dictionary<string, CachedChatExecutionContext>(StringComparer.Ordinal);
+            _contexts[route.ProjectName] = projectContexts;
+        }
+        projectContexts[route.ContextKey ?? string.Empty] = new CachedChatExecutionContext(route, context);
+    }
 
     private void RequeueExpiredClaimsLocked()
     {
