@@ -138,6 +138,25 @@ public sealed class AutoReviewDeliveryResumeService
         var review = string.IsNullOrWhiteSpace(taskKey)
             ? null
             : _authority.GetTaskProjection(taskKey!).CurrentReviewAttempt;
+        if (review is not null && review.Reports.Any(report => report.AuthorityStatus == AttemptWriteStatus.Accepted))
+        {
+            var journal = RemoteReviewSettlementJournal.Read(task.FolderPath, review.AttemptId);
+            var recorded = RemoteDeliverySettlementStore.Read(task.FolderPath);
+            if (journal.Status == RemoteReviewSettlementReadStatus.Repair
+                || journal.Status == RemoteReviewSettlementReadStatus.Missing
+                   && recorded?.JournalRequired == true)
+                return new AutoReviewResumeOutcome(AutoReviewResumeAction.None,
+                    "review-settlement-repair-required", Resumed: false, journal.Reason);
+            if (journal.Entry is { } journalEntry
+                && !RemoteReviewSettlementPolicy.MatchesAcceptedReview(journalEntry, review))
+                return new AutoReviewResumeOutcome(AutoReviewResumeAction.None,
+                    "review-settlement-repair-required", Resumed: false, "review-journal-authority-mismatch");
+            if (journal.Entry is { Delivery: { } delivery }
+                && !RemoteDeliverySettlementStore.MatchesAttempt(
+                    RemoteDeliverySettlementStore.Read(task.FolderPath), review.AttemptId)
+                && string.Equals(task.State, TaskStates.AutoReview, StringComparison.Ordinal))
+                RemoteDeliverySettlementStore.Write(task.FolderPath, delivery);
+        }
         var settlement = RemoteDeliverySettlementStore.Read(task.FolderPath);
         if (!RemoteDeliverySettlementStore.MatchesAttempt(settlement, review?.AttemptId))
             settlement = null;
@@ -155,6 +174,9 @@ public sealed class AutoReviewDeliveryResumeService
         if (decision.Action == AutoReviewResumeAction.None)
             return new AutoReviewResumeOutcome(decision.Action, decision.Reason, Resumed: false);
 
+        if (!IsCurrent(review!))
+            return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, "superseded-review-generation", Resumed: false);
+
         _logger.LogInformation(
             "auto-review-delivery-resume-started project={Project} job={JobId} attempt={AttemptId} action={Action} reason={Reason} source={Source}",
             task.ProjectName, task.Id, review!.AttemptId, decision.Action, decision.Reason, source);
@@ -171,6 +193,8 @@ public sealed class AutoReviewDeliveryResumeService
             // already contains, so re-entering here cannot double-merge.
             var request = BuildIntegrationRequest(task, settlement!);
             var result = await _integration.EnqueueAsync(request).ConfigureAwait(false);
+            if (!IsCurrent(review!))
+                return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, "superseded-review-generation", Resumed: false);
             integrationOutcome = result.Outcome.ToString();
             integrationDetail = result.AutomaticRecoveryDetail;
             RemoteDeliverySettlementStore.Advance(
@@ -201,6 +225,10 @@ public sealed class AutoReviewDeliveryResumeService
             .ConfigureAwait(false);
     }
 
+    private bool IsCurrent(ReviewAttemptDto review)
+        => string.Equals(_authority.GetTaskProjection(review.TaskKey).CurrentReviewAttempt?.AttemptId,
+            review.AttemptId, StringComparison.Ordinal);
+
     /// <summary>
     /// The normal <c>4-auto-review -&gt; 5-human-review</c> transition the
     /// interrupted request never reached. It is the same move the report
@@ -217,6 +245,8 @@ public sealed class AutoReviewDeliveryResumeService
         CancellationToken ct)
     {
         var outcomeLabel = review.Outcome?.ToString() ?? "Pass";
+        if (!IsCurrent(review))
+            return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, "superseded-review-generation", Resumed: false);
         var moved = await _transitions.MoveAsync(
             task.Id,
             TaskStates.HumanReview,
@@ -224,6 +254,9 @@ public sealed class AutoReviewDeliveryResumeService
             ct,
             cause: $"remote-review-resume:{review.AttemptId}",
             reason: integrationDetail,
+            authorityWrite: new AttemptWriteReference(
+                review.AttemptId, review.LastFence, review.AuthorityEpoch,
+                $"lane:resume:{review.AttemptId}"),
             suppressProductExecution: true,
             expectedSourceState: TaskStates.AutoReview,
             transitionCause: LaneChangeCauses.ReviewVerdict,
@@ -291,7 +324,8 @@ public sealed class AutoReviewDeliveryResumeService
             string.IsNullOrWhiteSpace(settlement.PipelineType)
                 ? PipelineTypes.Resolve(task)
                 : settlement.PipelineType,
-            settlement.DeliveredAtUtc);
+            settlement.DeliveredAtUtc,
+            settlement.ReviewAttemptId);
 
     /// <summary>
     /// Git-derived integration verdict for one card. Never throws: an
