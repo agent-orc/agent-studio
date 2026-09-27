@@ -546,6 +546,10 @@ public sealed class RemoteTaskRunner
                 return 3;
             }
 
+            // Artifact admission is fenced by the live run lease. Completion
+            // closes that lease, so upload the prepared manifest's files now.
+            await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper);
+
             teardownAttempted = true;
             WorktreeTeardownResult teardown;
             ResultHandoffAck? handoffAcknowledgement = null;
@@ -725,7 +729,6 @@ public sealed class RemoteTaskRunner
                 + (finalizationRetries > 0
                     ? $"; finalizationRetries={finalizationRetries}"
                     : string.Empty));
-            await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper);
             return outcome.Kind is RunOutcomeKind.Done or RunOutcomeKind.NoOp ? 0 : 1;
         }
         catch (DetachedWorkerLostException ex)
@@ -864,6 +867,7 @@ public sealed class RemoteTaskRunner
             outcomeDecision = WithDurableOutput(outcomeDecision, stopTeardown);
             artifactPlan = await PrepareResultsSafeAsync(taskKey, artifactLimits, outbox);
             artifactManifest = artifactPlan?.Manifest;
+            await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper);
             await CompleteAsync(
                 taskKey,
                 lease,
@@ -878,7 +882,6 @@ public sealed class RemoteTaskRunner
                 sourceMutated,
                 CancellationToken.None);
             handedBack = true;
-            await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper);
             _log($"task '{taskKey}' handed back after an operator stop: {outcome.Kind}");
             return 0;
         }
