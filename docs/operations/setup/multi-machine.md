@@ -2,7 +2,7 @@
 
 Use this guide when the Control Plane and one or more Agent Hosts run on
 different Linux x64 machines. The same guided
-`agent-orchestrator-setup` executable is used on every machine. The Control
+`agent-studio-setup` executable is used on every machine. The Control
 Plane machine needs no Agent CLI. Each Agent Host needs Git and an authenticated
 Codex or Claude CLI. No .NET SDK or runtime is required because all shipped
 binaries are self-contained.
@@ -13,8 +13,8 @@ binaries are self-contained.
 flowchart LR
     Browser["Operator browser"] -->|"HTTPS"| CP["Control Plane machine<br/>Studio + Task Server + Engine"]
     CP -->|"prints join command + token"| Operator["Operator"]
-    Operator -->|"secure transfer"| Setup1["agent-orchestrator-setup<br/>Agent Host 1"]
-    Operator -->|"secure transfer"| Setup2["agent-orchestrator-setup<br/>Agent Host 2"]
+    Operator -->|"secure transfer"| Setup1["agent-studio-setup<br/>Agent Host 1"]
+    Operator -->|"secure transfer"| Setup2["agent-studio-setup<br/>Agent Host 2"]
     Setup1 --> Host1["agent-host<br/>Codex or Claude + Git"]
     Setup2 --> Host2["agent-host<br/>Codex or Claude + Git"]
     Host1 -->|"outbound HTTPS<br/>register, claim, lease, results"| CP
@@ -33,10 +33,10 @@ On every machine, download the setup executable and its checksum from the same
 release:
 
 ```sh
-curl -fLO https://github.com/agent-orc/agent-studio/releases/latest/download/agent-orchestrator-setup
+curl -fLO https://github.com/agent-orc/agent-studio/releases/latest/download/agent-studio-setup
 curl -fLO https://github.com/agent-orc/agent-studio/releases/latest/download/SHA256SUMS
-grep '  agent-orchestrator-setup$' SHA256SUMS | sha256sum -c -
-chmod +x agent-orchestrator-setup
+grep '  agent-studio-setup$' SHA256SUMS | sha256sum -c -
+chmod +x agent-studio-setup
 ```
 
 The executable downloads the matching release archives and verifies each one
@@ -52,7 +52,7 @@ the Control Plane archive contains the site template.
 On the Control Plane machine:
 
 ```sh
-sudo ./agent-orchestrator-setup --mode control-plane
+sudo ./agent-studio-setup --mode control-plane
 ```
 
 The guide asks for:
@@ -66,7 +66,7 @@ It installs the Task Server and Orchestrator Engine as one versioned unit,
 installs the matching static Studio files, waits for readiness, and prints:
 
 ```text
-sudo ./agent-orchestrator-setup --join
+sudo ./agent-studio-setup --join
 ```
 
 followed by a join token. Configure the supplied Caddy template so the public
@@ -135,7 +135,7 @@ The full repository credential and rotation contract is in
 Run on the Agent Host:
 
 ```sh
-sudo ./agent-orchestrator-setup --join
+sudo ./agent-studio-setup --join
 ```
 
 Paste the join token at the hidden prompt. The installer then asks for the
@@ -154,7 +154,7 @@ parallelism. It:
 To avoid a token in a paste prompt:
 
 ```sh
-sudo ./agent-orchestrator-setup \
+sudo ./agent-studio-setup \
   --join \
   --join-token-file /root/agent-studio.join
 sudo rm /root/agent-studio.join
