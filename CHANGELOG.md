@@ -12,6 +12,18 @@ release yet.
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-09-27
+
+Hotfix release. With 0.9.3 the production runner's every completion was
+rejected with `Session continuation evidence does not match the fenced
+attempt.` (14 of 14 completions between 13:20 and 15:06 UTC), because the
+runner named the lease id in the continuation ledger entry while the
+completion request carries the lease's attempt id; on the legacy runner
+plane, which the fleet uses, the two differ. The runner now records the
+lease's attempt id (`SessionContinuationEvidence.FencedAttemptId`), covered
+by unit tests for the legacy and v1 planes. The runner host was rolled back
+to the 0.9.2 build in the meantime.
+
 ## [0.9.3] - 2026-09-27
 
 Second throughput release of the operations weekend: 63 commits on develop since
