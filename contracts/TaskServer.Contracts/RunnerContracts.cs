@@ -143,7 +143,8 @@ public sealed record ClaimResponse(
     SessionContinuationLedgerEntry? PreviousSession = null,
     MechanicalRoundDelta? MechanicalDelta = null,
     MechanicalFreshRunRoute? MechanicalFreshRoute = null,
-    FollowUpDeliveryDto? FollowUp = null);
+    FollowUpDeliveryDto? FollowUp = null,
+    ContinuationIntentProjection? ContinuationIntent = null);
 
 /// <summary>A run-scoped sibling route selected after a provider refusal.</summary>
 public sealed record ProviderModelFallback(

@@ -785,7 +785,13 @@ public sealed class TaskServerClient : IDisposable
             RunId: claim.Run.RunId,
             LeaseInstanceId: RunnerInstanceId,
             ReconciliationActions: FromContract(claim.ReconciliationActions),
-            RunSpec: claim.MechanicalFreshRoute is { } mechanicalRoute
+            // An explicit continuation selection is kept exactly as submitted;
+            // unspecified fields keep the task's normal route resolution.
+            RunSpec: claim.ContinuationIntent is { Receipt.ExplicitSelection: true } intent
+                ? new RunSpecDto(intent.CliType, intent.Model, intent.ThinkingLevel,
+                    ContextMode: CodingAgentRunner.Model.CliContextModes.Clean,
+                    FollowUp: claim.FollowUp)
+                : claim.MechanicalFreshRoute is { } mechanicalRoute
                 ? new RunSpecDto(mechanicalRoute.CliType, mechanicalRoute.Model, mechanicalRoute.ThinkingLevel,
                     ContextMode: CodingAgentRunner.Model.CliContextModes.Clean,
                     FollowUp: claim.FollowUp)
