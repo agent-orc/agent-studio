@@ -1679,6 +1679,14 @@ describe('buildTagChips — lane-mirror + concern suppression', () => {
     expect(chips).toEqual([]);
   });
 
+  it('shows the bounded concern round as card-visible history', () => {
+    const chips = buildTagChips(['review:concern-round-1-of-1-used'], new Map(), '2-ready');
+    expect(chips).toEqual([expect.objectContaining({
+      label: 'Concern round 1 of 1 used',
+      ghost: false,
+    })]);
+  });
+
   it('keeps reissue and abort event history off human-review cards', () => {
     const abort = tag('abort-review:watchdog', 'Abort: watchdog');
     abort.color = '#ef4444';
