@@ -899,6 +899,51 @@ public class TaskRunnerPlanTests
         Assert.Contains("review_01", cases[6].TriggerSource, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("provider-crash", RunTriggers.RecoveryAfterCrash)]
+    [InlineData("provider-rejection", RunTriggers.RecoveryAfterCrash)]
+    [InlineData("provider-rejected-request", RunTriggers.RecoveryAfterCrash)]
+    [InlineData("infra-crash", RunTriggers.RecoveryAfterCrash)]
+    [InlineData("PROVIDER-CRASH", RunTriggers.RecoveryAfterCrash)]
+    [InlineData("gate-failure", RunTriggers.GateFailure)]
+    [InlineData("build-test-gate-failed", RunTriggers.GateFailure)]
+    public void Remote_claim_queued_recovery_preserves_pipeline_provenance(string reason, string expectedTrigger)
+    {
+        var intent = new PendingIntent { SavedReason = reason, Prompt = new string('x', 350) };
+
+        var remote = LeaseEndpoints.BuildRemoteClaimTrigger(
+            "task-owner", intent, 1, null, "runner-1", "run-2");
+        var local = ProjectRunner.TriggerForPendingIntent(intent, "task-owner");
+
+        Assert.Equal(expectedTrigger, remote.Trigger);
+        Assert.Equal("pipeline", remote.TriggeredBy);
+        Assert.Contains(reason, remote.TriggerReason, StringComparison.Ordinal);
+        Assert.Contains($"reason={reason}", remote.TriggerSource, StringComparison.Ordinal);
+        Assert.Contains(new string('x', 300), remote.TriggerSource, StringComparison.Ordinal);
+        Assert.DoesNotContain(new string('x', 301), remote.TriggerSource, StringComparison.Ordinal);
+        Assert.Equal(local, remote);
+    }
+
+    [Theory]
+    [InlineData(RunTriggers.ReviewConcern)]
+    [InlineData(RunTriggers.ReviewFinding)]
+    public void Remote_claim_review_round_takes_precedence_over_pending_recovery(string roundKind)
+    {
+        var round = new ReviewConcernRoundLedger(
+            1, 1, "review_02", ["code-quality"], DateTime.UtcNow, RoundKind: roundKind);
+        var intent = new PendingIntent { SavedReason = "provider-crash", Prompt = "resume" };
+
+        var active = LeaseEndpoints.BuildRemoteClaimTrigger("desktop", intent, 1, round, "runner-1", "run-2");
+        var closed = LeaseEndpoints.BuildRemoteClaimTrigger(
+            "desktop", intent, 1, round with { StillOpen = false }, "runner-1", "run-2");
+
+        Assert.Equal(roundKind, active.Trigger);
+        Assert.Equal("pipeline", active.TriggeredBy);
+        Assert.Equal("review=review_02;aspects=code-quality", active.TriggerSource);
+        Assert.Equal(RunTriggers.RecoveryAfterCrash, closed.Trigger);
+        Assert.Equal("pipeline", closed.TriggeredBy);
+    }
+
     private static string? Var(RunPlan plan, string key) =>
         plan.PromptVariables.TryGetValue(key, out var value) ? value : null;
 }

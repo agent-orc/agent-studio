@@ -238,7 +238,13 @@ rollout decision.
   `pending-intent.json` across both admission queueing and a busy runner slot;
   local pickup and remote claim use those saved values. Other remote claims
   record `runner <id>` unless a durable pipeline cause such as a review concern
-  owns the pickup. Legacy rows have null provenance;
+  owns the pickup. Both paths resolve queued intent provenance through
+  `PendingIntentTriggerPolicy`: crash/provider reasons record
+  `recovery-after-crash`, gate reasons record `gate-failure`, and both name
+  `pipeline` as the actor. Timeout/salvage reasons name `watchdog`; explicit
+  operator continuations retain their saved caller and reason. An open review
+  fix round takes precedence over queued intent classification on remote claims.
+  Legacy rows have null provenance;
   readers show `not recorded` and never guess from `kind`.
 - `backend/Services/Runner/OrchestratorChatLog.cs`: typed orchestrator messages
   written into `logs/cli-output.log`.

@@ -1747,6 +1747,41 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Equal("Held", b.Outcome);
     }
 
+    [Theory]
+    [InlineData("provider-crash", RunTriggers.RecoveryAfterCrash)]
+    [InlineData("gate-failure", RunTriggers.GateFailure)]
+    public async Task Daemon_claim_records_queued_recovery_trigger_without_a_cli_session(
+        string savedReason, string expectedTrigger)
+    {
+        SeedTask(TaskStates.Ready, TaskKey, "Queued recovery", "Prompt.");
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://example.invalid/agent-studio.git");
+        var mutations = factory.Services.GetRequiredService<TaskMutationService>();
+        Assert.NotNull(mutations.SavePendingIntent(
+            TaskKey, ContinueModes.Continue, "Resume the saved work.", savedReason,
+            activeJobId: null, watchPath: _watchPath));
+
+        var claim = await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+            RunnerId, ProjectName, "coding-host", 4242, "codex",
+            IdempotencyKey: "queued-recovery-claim"));
+
+        Assert.Equal(RClaimStatus.Claimed, claim.Status);
+        var session = Assert.Single(File.ReadLines(Path.Combine(
+                _watchPath, TaskStates.Progress, TaskKey, "logs", "session-events.jsonl"))
+            .Select(line => JsonSerializer.Deserialize<SessionEvent>(line, ApiJson))
+            .OfType<SessionEvent>());
+        Assert.Equal("start", session.Kind);
+        Assert.Equal(expectedTrigger, session.Trigger);
+        Assert.Equal("pipeline", session.TriggeredBy);
+        Assert.Contains(savedReason, session.TriggerReason, StringComparison.Ordinal);
+        Assert.Contains($"reason={savedReason}", session.TriggerSource, StringComparison.Ordinal);
+        Assert.Contains("Resume the saved work.", session.TriggerSource, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Daemon_claim_only_returns_server_assigned_remote_capable_project()
     {
