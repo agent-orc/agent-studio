@@ -603,6 +603,14 @@ public static class TaskServerEndpoints
             => await InvokeAsync(() => store.GetInvariantRegistryAsync(ct)));
         management.MapGet("/remote-hosts", async (TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.ListRunnerCapabilitySnapshotsAsync(ct)));
+        management.MapGet("/credentials", async (TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.ListCredentialRegistryAsync(ct)));
+        management.MapPut("/credentials", async (
+            HttpContext context,
+            CredentialRegistryObservationRequest request,
+            TaskServerStore store,
+            CancellationToken ct)
+            => await InvokeAsync(() => store.UpsertCredentialRegistryAsync(request, Actor(context), ct)));
         management.MapGet("/provider-refusals", async (
             int? days,
             TaskServerStore store,

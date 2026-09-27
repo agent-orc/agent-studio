@@ -377,7 +377,9 @@ public sealed class ProviderAuthProbeTests
 
         var afterRun = probe.RecordProcessResult("claude", new ProcessResult(0, agentOutput, "HTTP 429 in a quoted log line"));
 
-        Assert.Equal(ready, afterRun);
+        Assert.Equal(ready.Status, afterRun.Status);
+        Assert.Equal(ready.Signal, afterRun.Signal);
+        Assert.NotNull(afterRun.LastRealSuccessAt);
         Assert.Equal(ProviderAuthProbe.Ready, afterRun.Status);
         Assert.Null(afterRun.LimitedUntil);
     }
@@ -584,9 +586,11 @@ public sealed class ProviderAuthProbeTests
                 Path.Combine(home, ".codex", "auth.json"),
                 JsonSerializer.Serialize(new { tokens = new { access_token = token } }));
 
-            var freshness = ProviderCredentialMonitor.Inspect("codex", home);
+            var freshness = ProviderCredentialMonitor.Inspect("codex", home,
+                new Dictionary<string, string?>());
 
-            Assert.Equal(expiresAt, freshness.ExpiresAt);
+            Assert.Null(freshness.ExpiresAt);
+            Assert.Equal(expiresAt, freshness.AccessTokenExpiresAt);
             Assert.DoesNotContain(token, freshness.Detail, StringComparison.Ordinal);
         }
         finally
@@ -614,10 +618,59 @@ public sealed class ProviderAuthProbeTests
                     },
                 }));
 
-            var freshness = ProviderCredentialMonitor.Inspect("claude", home);
+            var freshness = ProviderCredentialMonitor.Inspect("claude", home,
+                new Dictionary<string, string?>());
 
-            Assert.Equal(expiresAt, freshness.ExpiresAt);
+            Assert.Null(freshness.ExpiresAt);
+            Assert.Equal(expiresAt, freshness.AccessTokenExpiresAt);
             Assert.DoesNotContain("secret-fixture", freshness.Detail, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(home)) Directory.Delete(home, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Claude_environment_source_shadows_stale_native_expiry()
+    {
+        var home = Path.Combine(Path.GetTempPath(), $"provider-auth-home-{Guid.NewGuid():N}");
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(home, ".claude"));
+            File.WriteAllText(Path.Combine(home, ".claude", ".credentials.json"),
+                "{\"claudeAiOauth\":{\"expiresAt\":1788890400000,\"accessToken\":\"fixture-secret\"}}");
+
+            var observed = ProviderCredentialMonitor.Inspect("claude", home,
+                new Dictionary<string, string?> { ["CLAUDE_CODE_OAUTH_TOKEN"] = "fixture-env-secret" });
+
+            Assert.Equal("environment-file", observed.EffectiveSource);
+            Assert.True(observed.NativeFileShadowed);
+            Assert.Null(observed.ExpiresAt);
+            Assert.Null(observed.AccessTokenExpiresAt);
+            Assert.DoesNotContain("fixture-env-secret", observed.Detail);
+        }
+        finally
+        {
+            if (Directory.Exists(home)) Directory.Delete(home, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Codex_key_environment_does_not_relabel_chatgpt_login_or_export_the_key()
+    {
+        var home = Path.Combine(Path.GetTempPath(), $"provider-auth-home-{Guid.NewGuid():N}");
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(home, ".codex"));
+            File.WriteAllText(Path.Combine(home, ".codex", "auth.json"),
+                "{\"tokens\":{\"access_token\":\"redacted-fixture\"}}");
+            var observed = ProviderCredentialMonitor.Inspect("codex", home,
+                new Dictionary<string, string?> { ["OPENAI_API_KEY"] = "redacted-key-fixture" });
+            Assert.Equal("unknown", observed.EffectiveSource);
+            Assert.Null(observed.ExpiresAt);
+            Assert.Null(observed.AccessTokenExpiresAt);
+            Assert.DoesNotContain("redacted-key-fixture", observed.Detail);
         }
         finally
         {

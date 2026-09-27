@@ -6,10 +6,15 @@ namespace AgentRunner;
 public sealed record ProviderCredentialFreshness(
     DateTimeOffset? ExpiresAt,
     DateTimeOffset? ModifiedAt,
-    string Detail);
+    string Detail,
+    DateTimeOffset? AccessTokenExpiresAt = null,
+    string EffectiveSource = "unknown",
+    bool NativeFileShadowed = false,
+    string ExpiryProvenance = "unknown");
 
 /// <summary>
-/// Reads expiry metadata only from the runner user's provider credential file.
+/// Discovers the effective source from the daemon environment before reading
+/// expiry hints from a native store. The CLI remains the owner of native refresh.
 /// Token values are never returned, logged, or copied. Unknown or changed file
 /// formats degrade quietly and leave the active CLI status probe authoritative.
 /// </summary>
@@ -27,39 +32,65 @@ public static class ProviderCredentialMonitor
         "accessToken", "access_token", "idToken", "id_token",
     };
 
-    public static ProviderCredentialFreshness Inspect(string cliBinary, string? homeDirectory = null)
+    public static ProviderCredentialFreshness Inspect(
+        string cliBinary,
+        string? homeDirectory = null,
+        IReadOnlyDictionary<string, string?>? daemonEnvironment = null)
     {
         var provider = RunnerCapabilityProbe.Provider(cliBinary);
         var home = homeDirectory ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        string? Variable(string name) => daemonEnvironment is null
+            ? Environment.GetEnvironmentVariable(name)
+            : daemonEnvironment.GetValueOrDefault(name);
         var path = provider switch
         {
-            "codex" => Path.Combine(home, ".codex", "auth.json"),
-            "claude" => Path.Combine(home, ".claude", ".credentials.json"),
+            "codex" => Path.Combine(Variable("CODEX_HOME") ?? Path.Combine(home, ".codex"), "auth.json"),
+            "claude" => Path.Combine(Variable("CLAUDE_CONFIG_DIR") ?? Path.Combine(home, ".claude"), ".credentials.json"),
             _ => null,
         };
+        var environmentSource = provider switch
+        {
+            "claude" when !string.IsNullOrWhiteSpace(Variable("CLAUDE_CODE_OAUTH_TOKEN")) ||
+                          !string.IsNullOrWhiteSpace(Variable("ANTHROPIC_API_KEY")) => true,
+            _ => false,
+        };
+        if (environmentSource)
+            return new ProviderCredentialFreshness(
+                null, null,
+                "Daemon environment credential is active; native file metadata is shadowed.",
+                EffectiveSource: "environment-file",
+                NativeFileShadowed: path is not null && File.Exists(path));
         if (path is null)
             return new ProviderCredentialFreshness(null, null, "No credential metadata format is known for this provider.");
+        if (provider == "codex" && !string.IsNullOrWhiteSpace(Variable("OPENAI_API_KEY")))
+            return new ProviderCredentialFreshness(null, null,
+                "Codex auth source is ambiguous in this daemon context; no native expiry is attributed to it.",
+                EffectiveSource: "unknown");
 
         try
         {
             if (!File.Exists(path))
-                return new ProviderCredentialFreshness(null, null, "No provider credential file was found; process authentication remains authoritative.");
+                return new ProviderCredentialFreshness(null, null, "No provider credential file was found; process authentication remains authoritative.", EffectiveSource: "absent");
             var modifiedAt = File.GetLastWriteTimeUtc(path);
             using var document = JsonDocument.Parse(File.ReadAllText(path));
-            var expiresAt = FindExpiry(document.RootElement, 0);
+            var accessExpiresAt = FindExpiry(document.RootElement, 0);
             return new ProviderCredentialFreshness(
-                expiresAt,
+                null,
                 new DateTimeOffset(DateTime.SpecifyKind(modifiedAt, DateTimeKind.Utc)),
-                expiresAt is null
-                    ? "Credential age is monitored, but this file exposes no supported expiry metadata."
-                    : $"Credential expiry metadata was read without exposing credential values.");
+                accessExpiresAt is null
+                    ? "Native login has no supported expiry metadata; session expiry is unknown."
+                    : "Native access-token expiry is a refresh hint; session expiry is unknown.",
+                AccessTokenExpiresAt: accessExpiresAt,
+                EffectiveSource: "native-cli-store",
+                ExpiryProvenance: accessExpiresAt is null ? "unknown" : "access-token-unverified");
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or ArgumentOutOfRangeException)
         {
             return new ProviderCredentialFreshness(
                 null,
                 null,
-                $"Credential freshness metadata is temporarily unreadable ({exception.GetType().Name}).");
+                $"Credential freshness metadata is temporarily unreadable ({exception.GetType().Name}).",
+                EffectiveSource: "native-cli-store");
         }
     }
 

@@ -11,6 +11,20 @@ public sealed class CapabilityAdmissionTests
         new(2026, 7, 25, 10, 0, 0, TimeSpan.Zero);
 
     [Fact]
+    public void Rich_capability_fields_survive_json_deserialization_with_legacy_constructor_available()
+    {
+        var observed = Start.UtcDateTime;
+        var request = new CapabilityAdvertisementRequest("runner", "instance", 2,
+            observed, 180, 1, [new AdvertisedCapabilityDto("provider-auth:claude", "provider-auth",
+                CredentialGeneration: "generation-b", EffectiveSource: "environment-file")],
+            CredentialHealthVersion: 1);
+        var json = System.Text.Json.JsonSerializer.Serialize(request);
+        var read = System.Text.Json.JsonSerializer.Deserialize<CapabilityAdvertisementRequest>(json)!;
+        Assert.Equal(1, read.CredentialHealthVersion);
+        Assert.Equal("generation-b", Assert.Single(read.Capabilities).CredentialGeneration);
+    }
+
+    [Fact]
     public async Task Repeated_codex_auth_failure_drains_only_codex_while_claude_and_review_continue()
     {
         using var temp = new TempDirectory();
@@ -589,6 +603,35 @@ public sealed class CapabilityAdmissionTests
         => new(
             Options.Create(new TaskServerOptions { DataDirectory = path }),
             clock);
+
+    [Fact]
+    public async Task Credential_observation_v2_round_trips_and_old_observation_cannot_replace_it()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(Start);
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        await RegisterAndAdvertiseAsync(store, clock, "runner-v2", "instance-v2", "host-v2",
+            CapabilityProtocol.CodingExecutor, CapabilityProtocol.ProviderAuthentication("claude"));
+        var observed = clock.GetUtcNow().UtcDateTime.AddMinutes(1);
+        var newer = new CapabilityAdvertisementRequest("runner-v2", "instance-v2", 2,
+            observed, 180, 2, [new AdvertisedCapabilityDto(
+                CapabilityProtocol.ProviderAuthentication("claude"), "provider-auth",
+                CredentialGeneration: "generation-b", CredentialObservedAt: observed,
+                LastRealSuccessAt: observed, ExpiryProvenance: "unknown",
+                EffectiveSource: "environment-file", NativeFileShadowed: true,
+                EvidenceRefs: ["evidence:probe-1"])]);
+        await store.AdvertiseCapabilitiesAsync(newer, "runner-v2", default);
+        var capability = Assert.Single((await store.ListRunnerCapabilitySnapshotsAsync(default))
+            .Single(item => item.RunnerId == "runner-v2").Capabilities,
+            item => item.Key == CapabilityProtocol.ProviderAuthentication("claude"));
+        Assert.Equal("generation-b", capability.CredentialGeneration);
+        Assert.Equal("environment-file", capability.EffectiveSource);
+        Assert.True(capability.NativeFileShadowed);
+        Assert.Equal(["evidence:probe-1"], capability.EvidenceRefs);
+        await Assert.ThrowsAsync<TaskServerConflictException>(() => store.AdvertiseCapabilitiesAsync(
+            newer with { AdvertisedAt = observed.AddSeconds(-1) }, "runner-v2", default));
+    }
 
     private static async Task<ProjectDto> SeedTasksAsync(TaskServerStore store, int count)
     {
