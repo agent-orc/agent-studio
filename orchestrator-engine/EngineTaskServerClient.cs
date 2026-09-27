@@ -1,17 +1,14 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.OrchestratorEngine;
 
 public sealed class EngineTaskServerClient : IDisposable
 {
-    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
-    {
-        Converters = { new JsonStringEnumConverter() },
-    };
+    // Match the Task Server HTTP JSON contract: orchestration enums are numbers.
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     private readonly HttpClient _http;
 
@@ -86,6 +83,30 @@ public sealed class EngineTaskServerClient : IDisposable
             $"/api/v1/orchestration/runs/{Uri.EscapeDataString(runId)}/lease/release",
             request,
             ct);
+
+    public Task<OrchestrationLeaseDto> RenewAsync(
+        string runId, OrchestrationLeaseRenewRequest request, CancellationToken ct)
+        => PostAsync<OrchestrationLeaseRenewRequest, OrchestrationLeaseDto>(
+            $"/api/v1/orchestration/runs/{Uri.EscapeDataString(runId)}/lease/renew", request, ct);
+
+    public Task<GateStatus> CreateGateSubjectAsync(CreateGateSubjectRequest request, CancellationToken ct)
+        => PostAsync<CreateGateSubjectRequest, GateStatus>("/api/v1/gates/subjects", request, ct);
+
+    public async Task<GateStatus> GetGateStatusAsync(string subjectId, CancellationToken ct)
+        => await GetAsync<GateStatus>($"/api/v1/gates/subjects/{Uri.EscapeDataString(subjectId)}", ct);
+
+    public async Task<ReviewSubjectDto> GetReviewSubjectAsync(string subjectId, CancellationToken ct)
+        => await GetAsync<ReviewSubjectDto>($"/api/v1/gates/review-sources/{Uri.EscapeDataString(subjectId)}", ct);
+
+    private async Task<T> GetAsync<T>(string path, CancellationToken ct)
+    {
+        using var response = await _http.GetAsync(path, ct);
+        var body = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            throw new EngineTaskServerException((int)response.StatusCode, body);
+        return JsonSerializer.Deserialize<T>(body, Json)
+            ?? throw new EngineTaskServerException(500, "Task Server returned an empty response.");
+    }
 
     private static HttpClient CreateHttpClient(EngineOptions options)
     {

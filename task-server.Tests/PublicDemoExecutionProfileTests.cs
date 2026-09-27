@@ -84,7 +84,7 @@ public sealed class PublicDemoExecutionProfileTests
         var routes = ExecutionRoutes(factory.Services);
         // Security inventory tripwire: adding, removing, or reclassifying an
         // executable endpoint requires an explicit update to this matrix.
-        Assert.Equal(30, routes.Count);
+        Assert.Equal(37, routes.Count);
         Assert.Contains(routes, route => route.RoutePattern.RawText ==
             "/api/v1/steering/projects/{projectId}/tasks/{taskIdentity}/actions");
         var requiredPaths = new[]
@@ -104,12 +104,12 @@ public sealed class PublicDemoExecutionProfileTests
         Assert.Equal(
             new Dictionary<ExecutionAdmissionPath, int>
             {
-                [ExecutionAdmissionPath.Claim] = 4,
+                [ExecutionAdmissionPath.Claim] = 5,
                 [ExecutionAdmissionPath.Start] = 5,
-                [ExecutionAdmissionPath.Continue] = 8,
+                [ExecutionAdmissionPath.Continue] = 10,
                 [ExecutionAdmissionPath.Review] = 2,
                 [ExecutionAdmissionPath.Chat] = 4,
-                [ExecutionAdmissionPath.PostStep] = 7,
+                [ExecutionAdmissionPath.PostStep] = 11,
             },
             routes.GroupBy(route => route.Metadata.GetMetadata<TaskServerExecutionRouteMetadata>()!.Path)
                 .ToDictionary(group => group.Key, group => group.Count()));

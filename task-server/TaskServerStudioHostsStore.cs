@@ -113,7 +113,8 @@ public sealed partial class TaskServerStore
                 latest.LastSeenAt,
                 lifecycle?.RetiredAt,
                 lifecycle?.RetiredReason,
-                lifecycle?.PermanentlyDeletedAt));
+                lifecycle?.PermanentlyDeletedAt,
+                latest.ActiveGateCount));
         }
         return result;
     }
