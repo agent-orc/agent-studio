@@ -1543,16 +1543,20 @@ the runner acknowledges the exact prompt hash after the worker starts. A
 matching acknowledgement deletes the stash and writes a `follow_up_consumed`
 timeline receipt with run id, mode, author, save time, and source. Spawn or
 claim failure, pre-start worker loss, and lease recovery restore the canonical
-file. Each claim also carries a follow-up claim id. The runner wraps that id and
+file. A rejected worker-start hash or failed receipt returns a conflict without
+extending the lease; the same renewal delivery can retry after repair. Each
+claim also carries a follow-up claim id. The runner wraps that id and
 the exact follow-up text in one structural prompt block, so repeated composition
 deduplicates by claim identity rather than by text. It acknowledges delivery
 only when that complete block is present in the worker prompt. A new operator
 follow-up wins over an older stash. Entering Completed or
 Archive removes either form and records `follow_up_superseded` with state
-`superseded-by-completion`. Supersession retries once. If both writes fail, a
-terminal transition is refused with `pending-intent-supersede-failed`; startup
-reconciliation retains the intent, reports the same failure, and retries on
-the next pass. Startup reconciliation applies the same history conversion when
+`superseded-by-completion`. The queued prompt is staged before the lane move,
+and a refused move restores it. After a successful move, supersession retries
+once. If both writes fail, the terminal move remains landed and the API returns
+the typed `pending-intent-supersede-failed` error (HTTP 500). The unresolved
+stash cannot replay, and startup reconciliation reports the failure and retries
+the receipt on the next pass. Startup reconciliation also converts history when
 a later coding-run start acknowledges the exact prompt hash.
 If the local process starts but its timeline receipt fails, pickup retries the
 receipt once and logs `pending-intent-acknowledgement-failed` if it still fails.

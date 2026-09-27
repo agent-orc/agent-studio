@@ -97,36 +97,26 @@ public static class LeaseEndpoints
                 return Results.Conflict(new RunLeaseResponse(
                     "Invalid", false, null,
                     "AttemptId, AuthorityEpoch, and IdempotencyKey are required for lease renewal."));
-            var renewed = leases.Renew(req);
-            if (!renewed.Granted) return Results.Ok(renewed);
-            if (!string.IsNullOrWhiteSpace(req.StartedPromptSha256))
+            string? promptRejection = null;
+            string? ConfirmWorkerStart()
             {
                 var task = FindTask(scanner, req.TaskKey);
                 if (task is null)
-                    return Results.Conflict(new RunLeaseResponse(
-                        "Invalid", false, renewed.Lease, "The claimed task no longer exists."));
+                    return "The claimed task no longer exists.";
                 var stashed = mutations.ReadStashedPendingIntent(task.FolderPath);
                 if (stashed is not null
                     && !string.Equals(
                         AgentStudio.TaskServer.Contracts.FollowUpPromptDigest.Compute(stashed.Prompt),
                         req.StartedPromptSha256,
                         StringComparison.OrdinalIgnoreCase))
-                {
-                    return Results.Conflict(new RunLeaseResponse(
-                        "PromptMismatch", false, renewed.Lease,
-                        "The worker-start prompt hash does not match the stashed follow-up."));
-                }
+                    return "The worker-start prompt hash does not match the stashed follow-up.";
                 if (!sessions.ConfirmRunStartedWithPrompt(
                         task.Id,
                         req.AttemptId!,
                         req.StartedPromptSha256,
                         allowInitialConfirmation: stashed is not null,
                         task.WatchPath))
-                {
-                    return Results.Conflict(new RunLeaseResponse(
-                        "PromptMismatch", false, renewed.Lease,
-                        "The worker-start prompt hash does not match the claimed run."));
-                }
+                    return "The worker-start prompt hash does not match the claimed run.";
                 var acknowledged = stashed is null
                     ? PendingIntentAcknowledgeResult.AlreadyResolved
                     : mutations.AcknowledgeStashedPendingIntent(
@@ -136,12 +126,16 @@ public static class LeaseEndpoints
                         source: "remote-worker-start-heartbeat");
                 if (acknowledged is not PendingIntentAcknowledgeResult.Consumed
                     and not PendingIntentAcknowledgeResult.AlreadyResolved)
-                {
-                    return Results.Conflict(new RunLeaseResponse(
-                        "PromptMismatch", false, renewed.Lease,
-                        "The worker-start prompt hash does not match the stashed follow-up."));
-                }
+                    return $"The worker-start follow-up acknowledgement failed: {acknowledged}.";
+                return null;
             }
+            var renewed = leases.Renew(req, string.IsNullOrWhiteSpace(req.StartedPromptSha256)
+                ? null
+                : () => promptRejection = ConfirmWorkerStart());
+            if (promptRejection is not null)
+                return Results.Conflict(new RunLeaseResponse(
+                    "PromptMismatch", false, renewed.Lease, promptRejection));
+            if (!renewed.Granted) return Results.Ok(renewed);
             var stop = stops.Peek(req.TaskKey);
             return Results.Ok(stop is null
                 ? renewed

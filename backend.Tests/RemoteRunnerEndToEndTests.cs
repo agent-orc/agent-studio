@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Net.Http.Json;
+using System.Net;
 using System.Diagnostics;
 using AgentStudio.TestSupport;
 
@@ -192,6 +193,73 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Equal(claim.Lease.AttemptId, delivered.RunId);
         Assert.Equal("steer", delivered.Details!["mode"]);
         Assert.Equal("human:owner", delivered.Details["author"]);
+    }
+
+    [Fact]
+    public async Task Rejected_worker_start_hash_does_not_renew_backend_lease()
+    {
+        const string prompt = "Deliver the exact queued follow-up.";
+        SeedTask(TaskStates.Ready, TaskKey, "Rejected start hash", "Original prompt.");
+        var readyFolder = Path.Combine(_watchPath, TaskStates.Ready, TaskKey);
+        File.WriteAllText(Path.Combine(readyFolder, "pending-intent.json"),
+            JsonSerializer.Serialize(new PendingIntent
+            {
+                Prompt = prompt,
+                Mode = ContinueModes.Steer,
+                SavedAt = DateTime.UtcNow.AddMinutes(-1),
+                SavedReason = FollowUpQueueReasons.RemoteExecution,
+            }));
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/example/rejected-start.git");
+
+        var claim = await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+            RunnerId, ProjectName, "host", 1, "remote-runner"));
+        Assert.Equal(RClaimStatus.Claimed, claim.Status);
+        var lease = claim.Lease!;
+        var leases = factory.Services.GetRequiredService<RunLeaseService>();
+        var originalExpiry = leases.Peek(lease.TaskKey).Lease!.ExpiresAt;
+        var heartbeat = new RHeartbeat(
+            TaskKey, lease.LeaseId, lease.FencingToken, RunnerId,
+            RequestedTtlSeconds: 600,
+            AttemptId: lease.AttemptId,
+            AuthorityEpoch: lease.AuthorityEpoch,
+            IdempotencyKey: $"worker-start:{lease.AttemptId}",
+            StartedPromptSha256: new string('0', 64));
+
+        using var rejected = await http.PostAsJsonAsync(
+            "/api/runner/lease/renew", heartbeat, ApiJson);
+        Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
+        Assert.Equal(originalExpiry, leases.Peek(lease.TaskKey).Lease!.ExpiresAt);
+        var progressFolder = Path.Combine(_watchPath, TaskStates.Progress, TaskKey);
+        Assert.True(File.Exists(Path.Combine(progressFolder, "pending-intent.consumed.json")));
+
+        var timelinePath = TaskPaths.TimelineLog(progressFolder);
+        var originalTimeline = File.Exists(timelinePath) ? File.ReadAllText(timelinePath) : string.Empty;
+        if (File.Exists(timelinePath)) File.Delete(timelinePath);
+        Directory.CreateDirectory(timelinePath);
+        using (var unpersistable = await http.PostAsJsonAsync(
+                   "/api/runner/lease/renew", heartbeat with
+                   {
+                       StartedPromptSha256 = claim.RunSpec!.FollowUp!.PromptSha256,
+                   }, ApiJson))
+        {
+            Assert.Equal(HttpStatusCode.Conflict, unpersistable.StatusCode);
+        }
+        Assert.Equal(originalExpiry, leases.Peek(lease.TaskKey).Lease!.ExpiresAt);
+        Directory.Delete(timelinePath);
+        File.WriteAllText(timelinePath, originalTimeline);
+
+        var accepted = await client.RenewLeaseAsync(heartbeat with
+        {
+            StartedPromptSha256 = claim.RunSpec!.FollowUp!.PromptSha256,
+        }, CancellationToken.None);
+        Assert.True(accepted.Granted, accepted.Message);
+        Assert.True(leases.Peek(lease.TaskKey).Lease!.ExpiresAt > originalExpiry);
+        Assert.False(File.Exists(Path.Combine(progressFolder, "pending-intent.consumed.json")));
     }
 
     [Fact]

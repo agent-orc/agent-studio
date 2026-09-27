@@ -229,7 +229,8 @@ public sealed class AttemptAuthorityService
         AttemptWriteReference write,
         string executorId,
         int? requestedTtlSeconds,
-        string? leaseId = null)
+        string? leaseId = null,
+        Func<string?>? beforeRenew = null)
     {
         lock (_gate)
         {
@@ -237,12 +238,25 @@ public sealed class AttemptAuthorityService
             if (replayed is not null
                 && replayed.IdempotencyKeys.Contains(DeliveryKey("renew", write.IdempotencyKey)))
             {
-                return ClassifyRunLeaseReplay(replayed, write, executorId, leaseId);
+                var replay = ClassifyRunLeaseReplay(replayed, write, executorId, leaseId);
+                if (replay.Status != AttemptWriteStatus.Duplicate) return replay;
+                var replayRejection = beforeRenew?.Invoke();
+                return replayRejection is null
+                    ? replay
+                    : new AttemptWriteResult(AttemptWriteStatus.Invalid, replayed.AttemptId,
+                        replayRejection, RunAttempt: ToDto(replayed));
             }
             var validation = ValidateRunWriteLocked(
                 write, executorId, recordIdempotency: false, idempotencyScope: "renew", leaseId: leaseId);
             if (validation.Status != AttemptWriteStatus.Accepted) return validation;
             var run = FindRun(write.AttemptId)!;
+            // A worker-start receipt must be durable before this heartbeat can
+            // extend authority. Keep validation, receipt, and renewal ordered
+            // under the same authority lock.
+            var rejection = beforeRenew?.Invoke();
+            if (rejection is not null)
+                return new AttemptWriteResult(AttemptWriteStatus.Invalid, run.AttemptId,
+                    rejection, RunAttempt: ToDto(run));
             var now = _utcNow();
             run.Lease!.ExpiresAt = now.Add(NormalizeTtl(requestedTtlSeconds));
             run.Lease.LastHeartbeat = now;
