@@ -377,6 +377,8 @@ public class TaskRunnerService : BackgroundService
                 role: Role,
                 pickupLock: _pickupLock,
                 pickupLockOwner: BuildPickupLockOwner(entry.Name),
+                localRunClaims: _runLeases is not null && _runnerIdentity is not null
+                    ? new LocalRunClaimAdapter(_runLeases, _runnerIdentity, _logger) : null,
                 integrationLeases: _integrationLeases,
                 timeline: _timeline,
                 pipelineLog: _pipelineLog,
@@ -1589,6 +1591,8 @@ public class TaskRunnerService : BackgroundService
             role: Role,
             pickupLock: _pickupLock,
             pickupLockOwner: BuildPickupLockOwner(entry.Name),
+            localRunClaims: _runLeases is not null && _runnerIdentity is not null
+                ? new LocalRunClaimAdapter(_runLeases, _runnerIdentity, _logger) : null,
             integrationLeases: _integrationLeases,
             timeline: _timeline,
             pipelineLog: _pipelineLog,

@@ -1,3 +1,6 @@
+using AgentStudio.Runner;
+using AgentStudio.TaskServer.Contracts;
+
 namespace AgentStudio.Tasks;
 
 public sealed record TaskIntegrationRecoveryResult(
@@ -158,6 +161,15 @@ public sealed class TaskIntegrationRecoveryService
                     return Failed("The recovery route was recorded but could not be applied.", internalError: true);
             }
         }
+
+        var conflict = status.Failure?.ConflictReport;
+        SessionContinuationLedgerStore.SaveDelta(current.FolderPath, new MechanicalRoundDelta(
+            conflict?.IntegrationTipSha ?? string.Empty,
+            subject.ResultRef,
+            subject.ResultSha,
+            conflict?.ConflictedFiles ?? [],
+            prompt,
+            "Verify the updated delivery with the relevant focused checks, then run the required deterministic delivery gate."));
 
         var position = _states.PromoteToReadyTop(
             current.Id,

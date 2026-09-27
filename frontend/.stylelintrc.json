@@ -209,6 +209,7 @@
         "src/app/features/orchestrator/components/prompt-catalogue-nav/prompt-catalogue-nav.component.scss",
         "src/app/features/orchestrator/components/orchestrator-context-picker/orchestrator-context-picker.component.scss",
         "src/app/features/orchestrator/components/orchestrator-context-receipt/orchestrator-context-receipt.component.scss",
+        "src/app/features/orchestrator/components/orchestrator-chat-waiting/orchestrator-chat-waiting.component.scss",
         "src/app/features/orchestrator/components/orchestrator-chat-history/orchestrator-chat-history.component.scss",
         "src/app/features/task-detail/components/task-detail-load-sections/task-detail-load-sections.component.scss",
         "src/app/features/task-detail/components/protocol-pane/artifact-gallery/artifact-gallery.component.scss",

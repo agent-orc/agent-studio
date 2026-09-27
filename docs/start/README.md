@@ -173,6 +173,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Supported CLIs | [cli/supported-clis.md](../system/cli/supported-clis.md) |
 | CLI frame compatibility and capture corpus | [cli/frame-compatibility-matrix.md](../system/cli/frame-compatibility-matrix.md) |
 | Getting started (new install, step by step) | [operations/setup/getting-started.md](../operations/setup/getting-started.md) |
+| Docker one-box install and operations | [operations/setup/docker.md](../operations/setup/docker.md) |
 | Contributor source-build setup | [operations/setup/contributor-setup.md](../operations/setup/contributor-setup.md) |
 | Preparation, isolation, and orchestrator setup | [operations/setup/preparation-isolation-orchestrator.md](../operations/setup/preparation-isolation-orchestrator.md) |
 | Project definition v2 proposal (inactive; shared AGT/QS/Voice properties, quality applicability and rollout) | [plan](../operations/docker-ausfuehrungswelt-migration/project-definition-v2-plan.md) · [draft schema](../operations/docker-ausfuehrungswelt-migration/project-execution.v2.draft.schema.json) |

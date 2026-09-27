@@ -83,6 +83,9 @@ public record WaitsOnItem
     /// </summary>
     public bool Resolved { get; init; }
 
+    /// <summary>True when this unresolved edge waits on a pending decision card.</summary>
+    public bool PendingDecision { get; init; }
+
     /// <summary>
     /// True when the target is terminal and, for a release-gated edge, also
     /// carries its explicit release flag.
@@ -217,7 +220,9 @@ public static class WaitsOnEvaluator
 
             byKey.TryGetValue(key, out var target);
             var resolved = target != null;
-            var terminal = resolved && IsFulfilledState(target!.State);
+            var terminal = resolved && IsFulfilledState(target!.State)
+                && (!TaskKinds.IsDecision(target.Kind)
+                    || DecisionStatuses.Normalize(target.Decision?.Status) == DecisionStatuses.Decided);
             var waitingForRelease = terminal && releaseGate && !target!.Released;
             var fulfilled = terminal && (!releaseGate || target!.Released);
             if (!fulfilled) blocked = true;
@@ -228,6 +233,8 @@ public static class WaitsOnEvaluator
             {
                 Key = key,
                 Resolved = resolved,
+                PendingDecision = target is not null && TaskKinds.IsDecision(target.Kind)
+                    && DecisionStatuses.IsOpen(target.Decision?.Status),
                 Fulfilled = fulfilled,
                 ReleaseGate = releaseGate,
                 TargetReleased = target?.Released == true,

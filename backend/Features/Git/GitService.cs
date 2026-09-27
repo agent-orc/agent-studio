@@ -7678,7 +7678,8 @@ public class GitService
             var sw = Stopwatch.StartNew();
             var result = GitNetworkProcessRunner.Run(psi, stdin: null, timeout, cancellationToken);
             sw.Stop();
-            GitProcessTelemetry.Record(command, sw.ElapsedMilliseconds, result.ExitCode);
+            GitProcessTelemetry.Record(command, sw.ElapsedMilliseconds, result.ExitCode,
+                timedOut: result.FailureKind == GitProcessFailureKind.TimedOut);
             if (result.FailureKind != GitProcessFailureKind.TimedOut || timeout == IntegrationFetchCatchUpTimeout)
                 return (result.StandardOutput, result.StandardError, result.ExitCode);
             _logger.LogWarning(
@@ -7707,11 +7708,12 @@ public class GitService
         var sw = Stopwatch.StartNew();
         var result = RunGitProcessCore(psi, stdin, cancellationToken);
         sw.Stop();
-        GitProcessTelemetry.Record(command, sw.ElapsedMilliseconds, result.Code);
-        return result;
+        GitProcessTelemetry.Record(command, sw.ElapsedMilliseconds, result.ExitCode,
+            timedOut: result.FailureKind == GitProcessFailureKind.TimedOut);
+        return (result.StandardOutput, result.StandardError, result.ExitCode);
     }
 
-    private static (string Out, string Err, int Code) RunGitProcessCore(
+    private static GitProcessResult RunGitProcessCore(
         ProcessStartInfo psi,
         string? stdin,
         CancellationToken cancellationToken)
@@ -7721,7 +7723,7 @@ public class GitService
             stdin,
             GitNetworkProcessRunner.DefaultTimeout,
             cancellationToken);
-        return (result.StandardOutput, result.StandardError, result.ExitCode);
+        return result;
     }
 
     /// <summary>

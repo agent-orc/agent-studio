@@ -42,7 +42,9 @@ internal sealed record DetachedJobSpec(
     // NUGET_PACKAGES / NPM_CONFIG_CACHE / PLAYWRIGHT_BROWSERS_PATH locations
     // repository preparation restored into. Additive like the blocks above; a
     // pre-TE-52 spec.json deserialises with null and simply binds nothing.
-    IReadOnlyDictionary<string, string>? Environment = null);
+    IReadOnlyDictionary<string, string>? Environment = null,
+    long? TokenCeiling = null,
+    long? TokenBaseline = null);
 
 internal sealed record DetachedJobLogLine(long Sequence, DateTime Timestamp, string Stream, string Text);
 
@@ -103,7 +105,10 @@ internal sealed class DurableAgentProcess
         string? resumeSessionId = null,
         string? cleanContextKey = null,
         IReadOnlyDictionary<string, string>? environment = null,
-        Action<string>? log = null)
+        Action<string>? log = null,
+        long? tokenCeiling = null,
+        int? timeoutSeconds = null,
+        long? tokenBaseline = null)
     {
         Directory.CreateDirectory(workerDirectory);
         var specPath = Path.Combine(workerDirectory, "spec.json");
@@ -117,7 +122,10 @@ internal sealed class DurableAgentProcess
             runId,
             resumeSessionId,
             cleanContextKey,
-            environment);
+            environment,
+            tokenCeiling,
+            timeoutSeconds,
+            tokenBaseline);
         File.WriteAllText(specPath, JsonSerializer.Serialize(spec, Json));
 
         var executable = Environment.ProcessPath
@@ -194,7 +202,10 @@ internal sealed class DurableAgentProcess
         string? runId = null,
         string? resumeSessionId = null,
         string? cleanContextKey = null,
-        IReadOnlyDictionary<string, string>? environment = null)
+        IReadOnlyDictionary<string, string>? environment = null,
+        long? tokenCeiling = null,
+        int? timeoutSeconds = null,
+        long? tokenBaseline = null)
     {
         // One resolution truth for both engines: which CLI runs (card wish vs.
         // host binaries, foreign-CLI fallback drops the model pins) comes from
@@ -208,7 +219,7 @@ internal sealed class DurableAgentProcess
             Path.GetFullPath(repoPath),
             prompt,
             Path.GetFullPath(resultsDirectory),
-            options.RunTimeoutSeconds,
+            timeoutSeconds ?? options.RunTimeoutSeconds,
             invocation.CliType,
             invocation.Model,
             invocation.ThinkingLevel,
@@ -218,7 +229,9 @@ internal sealed class DurableAgentProcess
             RunId: runId,
             ResumeSessionId: resumeSessionId,
             CleanContextKey: cleanContextKey,
-            Environment: environment);
+            Environment: environment,
+            TokenCeiling: tokenCeiling,
+            TokenBaseline: tokenBaseline);
     }
 
     /// <summary>

@@ -5,6 +5,13 @@
 :8080 {
 	encode zstd gzip
 
+	# The distributed Studio API is served by the BFF. Other Studio routes
+	# remain on the compatibility API until route ownership moves.
+	@distributed path /api/v1 /api/v1/*
+	handle @distributed {
+		reverse_proxy {$STUDIO_BFF_UPSTREAM:studio-bff:5072}
+	}
+
 	@api path /api/* /hubs/* /healthz /readyz
 	handle @api {
 		reverse_proxy {$STUDIO_API_UPSTREAM:orchestrator-api:5031}

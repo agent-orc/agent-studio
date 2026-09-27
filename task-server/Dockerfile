@@ -17,7 +17,7 @@ LABEL org.opencontainers.image.title="agent-task-server" \
       org.opencontainers.image.source="https://github.com/agent-orc/agent-studio"
 # curl: HEALTHCHECK reads the process's own open /healthz route.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends curl \
+ && apt-get install -y --no-install-recommends curl jq \
  && rm -rf /var/lib/apt/lists/* \
  && groupadd --system --gid 10001 agentstudio \
  && useradd --system --uid 10001 --gid agentstudio --home-dir /nonexistent --shell /usr/sbin/nologin agentstudio

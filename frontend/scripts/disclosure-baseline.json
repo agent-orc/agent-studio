@@ -223,6 +223,10 @@
     "src/app/features/tokens/components/cli-usage-modal/cli-usage-modal.html": {
       "kind": "staged-adoption",
       "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
+    },
+    "src/app/features/tokens/components/usage-hover-panel/usage-hover-panel.html": {
+      "kind": "popup-trigger",
+      "reason": "The status-bar Chat usage button opens a fixed floating panel; it does not expand content in place."
     }
   }
 }
