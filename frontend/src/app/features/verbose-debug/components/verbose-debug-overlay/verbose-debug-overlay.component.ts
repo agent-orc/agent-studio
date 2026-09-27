@@ -238,7 +238,7 @@ export class VerboseDebugOverlayComponent {
     try {
       const d = new Date(iso);
       if (Number.isNaN(d.getTime())) return iso;
-      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     } catch {
       return iso;
     }
@@ -551,7 +551,7 @@ export class VerboseDebugOverlayComponent {
   formatTime(ts: string): string {
     if (!ts) return '';
     try {
-      return new Date(ts).toLocaleTimeString();
+      return new Date(ts).toLocaleTimeString('en-US');
     } catch {
       return ts;
     }

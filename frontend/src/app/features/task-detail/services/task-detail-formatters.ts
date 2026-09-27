@@ -28,10 +28,10 @@ export function claudeSessionTooltip(session: ClaudeSessionInfo | null): string 
   if (!session) return '';
   return [
     `Model: ${session.model ?? '?'}`,
-    `Input: ${session.inputTokens.toLocaleString()} tokens`,
-    `Output: ${session.outputTokens.toLocaleString()} tokens`,
-    `Cache read: ${session.cacheReadTokens.toLocaleString()} tokens`,
-    `Cache creation: ${session.cacheCreationTokens.toLocaleString()} tokens`,
+    `Input: ${session.inputTokens.toLocaleString('en-US')} tokens`,
+    `Output: ${session.outputTokens.toLocaleString('en-US')} tokens`,
+    `Cache read: ${session.cacheReadTokens.toLocaleString('en-US')} tokens`,
+    `Cache creation: ${session.cacheCreationTokens.toLocaleString('en-US')} tokens`,
     `Turns recorded: ${session.turnCount}`,
     session.lastTurnAt ? `Last turn: ${session.lastTurnAt}` : '',
   ]
@@ -49,14 +49,14 @@ export function formatResetIn(epochSeconds: number, now: number): string {
 
 export function rateLimitTooltip(rateLimit: ClaudeRateLimitSnapshot | null): string {
   if (!rateLimit) return '';
-  const reset = rateLimit.resetsAt ? new Date(rateLimit.resetsAt * 1000).toLocaleString() : 'unknown';
+  const reset = rateLimit.resetsAt ? new Date(rateLimit.resetsAt * 1000).toLocaleString('en-US') : 'unknown';
   return [
     `Window: ${formatRateWindow(rateLimit.window)}`,
     `Status: ${rateLimit.status ?? '?'}`,
     `Resets at: ${reset}`,
     `Overage: ${rateLimit.overageStatus ?? '-'}`,
     rateLimit.isUsingOverage ? 'Currently using overage budget' : '',
-    `Captured: ${new Date(rateLimit.capturedAt).toLocaleTimeString()}`,
+    `Captured: ${new Date(rateLimit.capturedAt).toLocaleTimeString('en-US')}`,
   ]
     .filter(Boolean)
     .join('\n');

@@ -8,14 +8,35 @@ namespace AgentStudio.TestSupport;
 /// crashed child fails fast with its captured output instead of waiting out the
 /// full timeout.
 /// </summary>
+/// <remarks>
+/// The readiness deadline is harness policy, not a product property: a child
+/// that is alive but not yet listening is only "slow", and how slow depends on
+/// the host. A cold Task Server start took more than 20 seconds on the release
+/// gate host while nine agent slots were busy (load average above 40 on 12
+/// cores, 2026-09-27), which failed the promotion train without any defect.
+/// The default therefore allows a slow start; a crashed child still fails on
+/// the next poll. <c>AGENT_STUDIO_TEST_READINESS_SECONDS</c> overrides the
+/// default for hosts that need a different budget.
+/// </remarks>
 public static class ProcessWaiters
 {
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(100);
 
+    /// <summary>Default readiness budget for a freshly started child process.</summary>
+    public static TimeSpan DefaultReadinessTimeout { get; } = ResolveDefaultReadinessTimeout();
+
+    private static TimeSpan ResolveDefaultReadinessTimeout()
+    {
+        var configured = Environment.GetEnvironmentVariable("AGENT_STUDIO_TEST_READINESS_SECONDS");
+        return int.TryParse(configured, out var seconds) && seconds > 0
+            ? TimeSpan.FromSeconds(seconds)
+            : TimeSpan.FromSeconds(90);
+    }
+
     public static async Task WaitForHttpAsync(string url, ManagedProcess process, TimeSpan? timeout = null)
     {
         using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
-        var deadline = DateTime.UtcNow.Add(timeout ?? TimeSpan.FromSeconds(20));
+        var deadline = DateTime.UtcNow.Add(timeout ?? DefaultReadinessTimeout);
         Exception? last = null;
         while (DateTime.UtcNow < deadline)
         {
@@ -43,7 +64,7 @@ public static class ProcessWaiters
     {
         using var handler = PinnedHandler(expectedCertificateSha256);
         using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(2) };
-        var deadline = DateTime.UtcNow.Add(timeout ?? TimeSpan.FromSeconds(20));
+        var deadline = DateTime.UtcNow.Add(timeout ?? DefaultReadinessTimeout);
         Exception? last = null;
         while (DateTime.UtcNow < deadline)
         {

@@ -21,7 +21,7 @@ const SORT_KEYS = new Set<RemoteHostSortKey>([
   'activity',
   'release',
 ]);
-const COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+const COLLATOR = new Intl.Collator('en-US', { numeric: true, sensitivity: 'base' });
 
 export class RemoteHostTableState {
   readonly sortKey = signal<RemoteHostSortKey>('name');

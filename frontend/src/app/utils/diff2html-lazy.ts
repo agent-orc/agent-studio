@@ -28,8 +28,8 @@ export function currentDiff2Html(): Diff2HtmlModule | null {
 export async function loadDiff2Html(): Promise<Diff2HtmlModule> {
   if (diff2htmlModuleCache) return diff2htmlModuleCache;
   const [main, types] = await Promise.all([
-    import('diff2html'),
-    import('diff2html/lib-esm/types'),
+    import('diff2html/lib-esm/diff2html.js'),
+    import('diff2html/lib-esm/types.js'),
   ]);
   diff2htmlModuleCache = {
     html: main.html as unknown as Diff2HtmlRenderer,

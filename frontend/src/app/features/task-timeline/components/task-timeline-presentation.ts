@@ -267,7 +267,7 @@ function runDuration(event: TaskTimelineEvent): string | null {
   if (!raw) return null;
   const seconds = Number.parseFloat(raw.replace(',', '.'));
   if (!Number.isFinite(seconds) || seconds < 0) return null;
-  return `${seconds.toLocaleString(undefined, { maximumFractionDigits: 1 })}s`;
+  return `${seconds.toLocaleString('en-US', { maximumFractionDigits: 1 })}s`;
 }
 
 function statusFromRunSummary(summary: string): string | null {

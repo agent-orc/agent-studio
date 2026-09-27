@@ -248,7 +248,7 @@ export function stepTokenTooltip(row: Pick<PipelineAdminRow,
   const d = PIPELINE_TOKEN_WINDOW_DAYS;
   const context = row.tokenSum == null
     ? `No token usage recorded for this step in the last ${d} days.`
-    : `${row.tokenSum.toLocaleString()} tokens spent by this step across every task run in the last ${d} days.`;
+    : `${row.tokenSum.toLocaleString('en-US')} tokens spent by this step across every task run in the last ${d} days.`;
   return buildTokenCostTooltip({
     costUsd: row.tokenCostUsd,
     priceKnown: row.tokenSum != null && !row.tokenUnknown,

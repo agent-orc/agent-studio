@@ -94,6 +94,6 @@ export class WikiDashboardComponent {
     if (hours < 24) return `vor ${hours} h`;
     const days = Math.floor(hours / 24);
     if (days < 30) return `vor ${days} d`;
-    return new Date(ms).toLocaleDateString();
+    return new Date(ms).toLocaleDateString('en-US');
   });
 }
