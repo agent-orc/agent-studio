@@ -58,6 +58,8 @@ public static partial class ReviewPlanResourcePolicy
             changed |= !ReferenceEquals(limited, command);
             return limited;
         }).ToArray();
+        if (changed && plan.Commands.Any(command => command.LibraryStep is not null))
+            throw new ArgumentException("A leased review-library plan cannot be modified by resource normalization.");
         return changed
             ? plan with { Commands = commands, Preparation = preparation }
             : plan;

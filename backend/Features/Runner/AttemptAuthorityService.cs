@@ -451,6 +451,16 @@ public sealed class AttemptAuthorityService
             || Blank(request.ReviewPolicyHash) || Blank(request.IdempotencyKey))
             return new AttemptWriteResult(AttemptWriteStatus.Invalid, string.Empty, "Complete immutable ReviewSubject identity and IdempotencyKey are required.");
 
+        AgentStudio.TaskServer.Contracts.ReviewPlanDto? sealedPlan;
+        try
+        {
+            sealedPlan = SealReviewPlan(request.Plan, Normalize(request.ExpectedResultSha).ToLowerInvariant());
+        }
+        catch (ArgumentException exception)
+        {
+            return new AttemptWriteResult(AttemptWriteStatus.Invalid, string.Empty, exception.Message);
+        }
+
         lock (_gate)
         {
             var deliveryKey = DeliveryKey("create", request.IdempotencyKey);
@@ -526,7 +536,7 @@ public sealed class AttemptAuthorityService
                     EvidenceDigestInputs = evidence,
                     RepositoryUrl = NormalizeNull(request.RepositoryUrl),
                     ResultRef = NormalizeNull(request.ResultRef),
-                    Plan = request.Plan,
+                    Plan = sealedPlan,
                     CreatedAt = now,
                 };
             }
@@ -534,7 +544,7 @@ public sealed class AttemptAuthorityService
                          sourceReview.FailureClassification)
                      && request.Plan is not null)
             {
-                subject = CopySubjectWithPlan(sourceReview.Subject, request.Plan);
+                subject = CopySubjectWithPlan(sourceReview.Subject, sealedPlan);
             }
             else
             {
@@ -803,7 +813,8 @@ public sealed class AttemptAuthorityService
         string executorId,
         string hostId,
         string instanceId,
-        int? requestedTtlSeconds)
+        int? requestedTtlSeconds,
+        IReadOnlySet<string>? capabilities = null)
     {
         if (Blank(executorId) || Blank(hostId) || Blank(instanceId))
             return new AttemptWriteResult(
@@ -832,6 +843,10 @@ public sealed class AttemptAuthorityService
                     // out. Handing it out would burn a fenced attempt on a subject the
                     // executor provably cannot check out.
                     .Where(review => !IsUnmaterializableWithinGrace(review, now))
+                    .Where(review => review.Subject.Plan is null
+                        || capabilities is null
+                        || AgentStudio.TaskServer.Contracts.ReviewLibraryStepPolicy.Supports(
+                            review.Subject.Plan, capabilities))
                     .OrderBy(review => review.CreatedAt)
                     .FirstOrDefault();
                 if (candidate is null)
@@ -1470,7 +1485,15 @@ public sealed class AttemptAuthorityService
                     "ReviewAttempt is no longer queued; a claimed attempt keeps its frozen plan.",
                     ReviewAttempt: ToDto(review));
 
-            review.Subject.Plan = plan;
+            try
+            {
+                review.Subject.Plan = SealReviewPlan(plan, review.Subject.ExpectedResultSha);
+            }
+            catch (ArgumentException exception)
+            {
+                return new AttemptWriteResult(AttemptWriteStatus.Invalid, attemptId,
+                    exception.Message, ReviewAttempt: ToDto(review));
+            }
             PersistLocked();
             return new AttemptWriteResult(AttemptWriteStatus.Accepted, attemptId, ReviewAttempt: ToDto(review));
         }
@@ -2439,6 +2462,11 @@ public sealed class AttemptAuthorityService
             Plan = plan,
             CreatedAt = subject.CreatedAt,
         };
+
+    private static AgentStudio.TaskServer.Contracts.ReviewPlanDto? SealReviewPlan(
+        AgentStudio.TaskServer.Contracts.ReviewPlanDto? plan, string sha)
+        => plan is null ? null : AgentStudio.TaskServer.Contracts.ReviewLibraryStepPolicy.Seal(
+            AgentStudio.TaskServer.Contracts.ReviewPlanResourcePolicy.Apply(plan), sha);
     private static RunAttemptDto ToDto(RunAttemptRecord run) => new(
         AttemptId: run.AttemptId,
         TaskKey: run.TaskKey,
