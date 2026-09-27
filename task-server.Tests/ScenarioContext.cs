@@ -328,7 +328,8 @@ public sealed partial class ScenarioContext : IDisposable
             await Assert.ThrowsAnyAsync<Exception>(() => probe.GetAsync(_studioBffUrl + "/healthz"));
         }
         await File.WriteAllTextAsync(_fakeCliReleaseFile, "continue");
-        await WaitForAuditCountAsync(_serverClient, "run.completed", 1, _runner!, TimeSpan.FromSeconds(30));
+        // The fixture CLI has a 45-second budget; allow its fenced handoff to finish too.
+        await WaitForAuditCountAsync(_serverClient, "run.completed", 1, _runner!, TimeSpan.FromSeconds(60));
         await WaitForTaskStateAsync(
             _serverClient, _project.ProjectId, _task.TaskKey, "4-auto-review", _runner!, TimeSpan.FromSeconds(20));
 
