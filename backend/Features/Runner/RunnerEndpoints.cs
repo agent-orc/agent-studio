@@ -377,7 +377,7 @@ public static class RunnerEndpoints
             var entry = scanner.GetWatchPaths().FirstOrDefault(e => e.Name == key.ProjectId);
             if (entry == null) return Results.NotFound(new { error = $"Unknown project '{key.ProjectId}'" });
             var turns = await chatService.ReadAsync(key.ProjectId!, entry.Path, key, 1000, ct);
-            var executionContext = chatService.ResolveExecutionContext(key.ProjectId!, entry.Path);
+            var executionContext = chatService.ResolveExecutionContext(key.ProjectId!, entry.Path, key);
             return Results.Ok(new { contextKey = key.Value, project = key.ProjectId, turns, executionContext });
         }
 
@@ -399,7 +399,7 @@ public static class RunnerEndpoints
             try
             {
                 var reply = await chatService.SendAsync(key.ProjectId!, entry.Path, req, clientId, key, ct);
-                var executionContext = chatService.ResolveExecutionContext(key.ProjectId!, entry.Path);
+                var executionContext = chatService.ResolveExecutionContext(key.ProjectId!, entry.Path, key);
                 return Results.Ok(new { contextKey = key.Value, project = key.ProjectId, reply, executionContext });
             }
             catch (OrchestratorContextEnvelopeException exception)

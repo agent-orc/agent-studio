@@ -62,6 +62,28 @@ batch green rate or answer the staging-lane decision in the
 
 ## Key Code
 
+The creation-time `auto-tag` step (AGT-2804) is separate from the card's coding
+run pipeline. `AutoTagCreationWorker` detects newly created active cards,
+Dossiers, and wiki articles in each project; `AutoTaggingService` classifies
+them against the project's closed registry and area glossaries, writes tags
+only at confidence 0.8 or higher, and stores lower-confidence suggestions as
+`tags-proposed`. Existing non-archived items use
+`POST /api/projects/{project}/auto-tag/backfill-jobs?apply=false` for a queued
+dry run and `apply=true` for writes. `GET .../backfill-jobs/{id}` exposes the
+job status; interrupted jobs resume after restart, and `GET .../report`
+returns the last report. A direct `POST .../backfill` also returns the report
+synchronously for a bounded inspection. Reports include area counts,
+low-confidence items, and tier precision and recall against the proposed
+golden set. The step writes project activity-feed lines for applied tags and
+proposals on all three item kinds, plus card timeline lines. The per-project
+workspace setting `AutoTag` is true by default; the
+`PUT /api/projects/{project}/auto-tag` endpoint changes it. The active v1
+project definition has no `tagging.autoTag` key. Apply batches retain a durable
+pending record until item writes, timeline, state, activity, and report are
+complete. Apply retries and enabled creation sweeps recover that record without
+reclassification, including already tagged items; dry runs do not mutate it.
+See [auto-tag apply recovery](areas-and-tags.md#auto-tag-apply-recovery).
+
 - [Model Routing Policy](./model-routing-policy.md) is the canonical model and
   thinking-level selection policy, including weighted criteria, correctness
   floors, benchmark confidence, quota handling, and reissue promotion.
@@ -74,8 +96,18 @@ batch green rate or answer the staging-lane decision in the
   card, selects curated versioned project/style/delegation blocks, appends at
   most two optional blocks within a 1,500-token budget, and persists
   `enrichment-report.json` before dispatch. Failure to persist the report blocks
-  dispatch. The step is default-on and can be disabled through the normal
-  per-project `PipelineSteps` convention.
+  dispatch. Built-in Agent Studio blocks apply only to Agent Studio; every
+  cited source must exist in the target repository before a block is selected.
+  Projects without their own style-guide catalogue get only their own root
+  instructions, when present. A project can explicitly adopt built-in block
+  ids through the `pre-prompt-enrichment` pipeline step's
+  `enrichmentBlockIds` setting when those block sources exist in its repository.
+  Explicitly adopted blocks are considered even when task-area detection does
+  not match their usual trigger; the normal optional-block budget still applies.
+  The report records `rejected-source-missing`
+  with the missing path, and each appended block records its project,
+  repository, and source verification mode. The step is default-on and can be
+  disabled through the normal per-project `PipelineSteps` convention.
 - `backend/Features/Pipeline/PipelineStepEconomyAdvisor.cs`: opt-in automated
   recommendation layer for cheap pipeline work. It passes only live-discovered
   Spark candidates to `IModelEconomyAdvisor`, preserves explicit step pins, and
@@ -921,7 +953,8 @@ move-error dialog.
   describe selector work only, which is zero in the deterministic
   implementation. Appended prompt tokens are attributed in
   `enrichment-report.json` and remain part of CORE input, so pipeline cost
-  totals do not count them twice.
+  totals do not count them twice. Shared runner prompts do not name Agent
+  Studio policy files for tasks in other repositories.
 - Cheap-model routing is explicit and reversible. `PipelineStepSetting` owns the
   `(cliType, model, thinkingLevel)` override per project and step; absent fields
   preserve the current runtime default. Aspect reviews and abort review honor

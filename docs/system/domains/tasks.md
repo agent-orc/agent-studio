@@ -77,6 +77,37 @@ or commit attribution.
 
 ## Entry Points
 
+### Engine steering boundary (AGT-2933, D5)
+
+The standalone Engine uses its scoped bearer principal to submit
+`POST /api/v1/steering/projects/{projectId}/tasks/{taskId}/actions` to the
+Task Server. Contract version 1 accepts `queue` and `park` with a unique
+`commandId`, the expected task version, the expected run generation (the last
+issued fence), and a nonempty reason. The authenticated principal is the
+recorded actor. The Task Server validates eligibility and current authority in
+one transaction, changes the lane, and stores a receipt. Replaying an identical
+command returns that receipt; conflicting reuse and stale versions return 409.
+`GET .../actions/{commandId}` reads back the accepted actor and reason. A
+rejected command changes neither the lane nor attempt authority.
+
+`queue` admits backlog, Human Review, or escalated tasks to Ready; `park` moves
+only an unclaimed Ready task to Backlog. Neither command grants execution.
+Runner hosts use the existing claim, lease, heartbeat, and completion paths.
+The file-backed local ProjectRunner books the same `RunLeaseService` authority
+as the remote claim path before CLI spawn, renews while running, and releases
+after the run. This adapter is for the monolith compatibility deployment;
+standalone SQLite and file-backed `task.json` are separate authority stores.
+
+The low-level `/api/attempts/reviews/{attemptId}/settle` route now refuses
+delivery. A runner must submit the fenced review report through the review
+plane so integration and lane settlement can run. An authority record alone
+does not prove reviewed, integrated delivery.
+The monolith review report path retains its file-backed delivery workflow for
+compatibility; it is not mounted as an authority beside the standalone SQLite
+Task Server in the remote profile. Policy selection for standalone engine
+actions stays in the Engine. The server only checks action eligibility and
+fenced state.
+
 - [docs/system/contracts/filesystem.md](../contracts/filesystem.md) defines the durable
   job-folder layout, lane catalog, and state strings.
 - [docs/system/contracts/agent-task.md](../contracts/agent-task.md) defines what the app
@@ -186,6 +217,13 @@ folder-backed workspace into the SQLite authority store. Discovery examines
 selected task metadata in every live and archive state. For each successfully
 scanned task directory, `task.json` wins when present, with `job.json` accepted
 only as the fallback.
+
+For folder-backed cards, `task.json` may persist `tags[]` and
+`taggingStatus`. Auto-tagging writes `taggingStatus: "tagged"` when it applies
+registry tags, or `"tags-proposed"` when confidence is below the threshold and
+the proposed tags are kept in the per-project auto-tag state. Missing or
+unrecognized status values mean no auto-tag marker. Archived cards are excluded
+from creation classification and backfill.
 
 Task Server store schema 15 is the first combined migration-capable format:
 schema 12 owns scoped principals and credentials, schema 13 owns retention and
@@ -1077,6 +1115,16 @@ path.
   `GET /api/admin/git-telemetry` can report p50/p95 and spawns/minute per
   endpoint alongside each repository's index age, with a warning when
   `tasks/grouped` p95 exceeds 1 s or total spawns exceed 20/min.
+
+Task detail has a separate opt-in diagnostic trace. `X-Task-Switch-Trace: 1`
+enables bounded stage timing for `GET /api/tasks/{jobId}` only. Canonical UUID
+`X-Task-Request-Id` and `X-Task-Switch-Id` response headers correlate a browser
+switch with its detail request. One `task-switch-trace` JSON log record is
+emitted after the response write, with exclusive stage timings, written bytes,
+outcome, request Git spawns and Git timeouts. It contains no task content or
+filesystem paths. The existing `task-op` Server-Timing duration and background
+`git-index-run` rollups retain their distinct boundaries. The capture and
+offline reducer protocol is in [measurement.md](../../task-switch-performance/measurement.md).
 
 ## Bounded task core read (AGT-2953)
 

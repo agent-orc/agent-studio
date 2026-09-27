@@ -161,15 +161,52 @@ for (const [serviceName, contract] of Object.entries(expected)) {
     throw new Error(`${serviceName} does not build ${contract.dockerfile}`);
   }
 }
+// The product stack generates its tokens in the bootstrap container; the
+// scenario injects known tokens as Compose secrets and every service must
+// read its token file from that mount, never from the bootstrap volume.
+const tokenFiles = {
+  "task-server": {
+    STUDIO_AUTH_TOKEN_FILE: "studio_token",
+    ENGINE_AUTH_TOKEN_FILE: "engine_token",
+    BOOTSTRAP_RUNNER_AUTH_TOKEN_FILE: "runner_token",
+  },
+  "studio-bff": { TaskServer__AuthTokenFile: "studio_token" },
+  "orchestrator-engine": { CLIENT_CREDENTIAL_FILE: "engine_token" },
+};
+for (const [serviceName, files] of Object.entries(tokenFiles)) {
+  const service = config.services[serviceName];
+  for (const [variable, source] of Object.entries(files)) {
+    const target = `/run/secrets/${source}`;
+    if (service.environment?.[variable] !== target) {
+      throw new Error(`${serviceName}/${variable} is ${service.environment?.[variable]}, expected ${target}`);
+    }
+    const secret = (service.secrets ?? []).find(candidate => candidate.source === source);
+    if (!secret || (secret.target ?? target) !== target) {
+      throw new Error(`${serviceName} does not mount the ${source} secret at ${target}`);
+    }
+    if (String(secret.uid) !== "10001" || String(secret.gid) !== "10001") {
+      throw new Error(`${serviceName}/${source} is not readable by UID/GID 10001`);
+    }
+    if (String(secret.mode) !== "0400") {
+      throw new Error(`${serviceName}/${source} mode is not 0400`);
+    }
+  }
+}
 for (const source of ["studio_token", "engine_token", "runner_token"]) {
-  const secret = config.services["task-server"].secrets
-    .find(candidate => candidate.source === source);
-  if (!secret || String(secret.uid) !== "10001" || String(secret.gid) !== "10001") {
-    throw new Error(`task-server/${source} is not readable by UID/GID 10001`);
+  const variable = `DISTRIBUTED_${source.split("_")[0].toUpperCase()}_TOKEN`;
+  if (config.secrets?.[source]?.environment !== variable) {
+    throw new Error(`secret ${source} is not injected from ${variable}`);
   }
-  if (String(secret.mode) !== "0400") {
-    throw new Error(`task-server/${source} mode is not 0400`);
+}
+// Nothing the scenario starts may come from a published image.
+for (const serviceName of ["bootstrap", "task-server", "studio-bff", "orchestrator-engine", "agent-host-distributed"]) {
+  const image = config.services[serviceName]?.image ?? "";
+  if (image === "" || image.startsWith("ghcr.io/")) {
+    throw new Error(`${serviceName} would run the published image ${image} in the scenario`);
   }
+}
+if (config.services["bootstrap"].image !== config.services["task-server"].image) {
+  throw new Error("bootstrap does not run from the scenario task-server image");
 }
 if (config.services["task-server"].build.args.VERSION !== process.argv[2]
     || config.services["studio-bff"].build.args.VERSION !== process.argv[2]) {

@@ -87,6 +87,26 @@ Its `version` must match this page. The registry owns tier ids, concrete Codex
 routes, task-type intake defaults, and correctness floors; appsettings must not
 redefine them.
 
+A fresh coding claim after a resumed mechanical integration round is qualified
+again when the round found a semantic conflict or the deterministic gate failed.
+An integration recovery claim with a pending mechanical delta is qualified before
+admission at the stronger of its correctness floor and Terra/medium. This also
+covers a fresh run when the runner rejects the resume for a missing or stale
+session, changed provider, or lineage mismatch after claim. A resumed round may
+therefore use the same qualified route. Explicit operator pins retain their
+existing policy treatment.
+The claim keeps a route that clears the policy floor; otherwise it selects the
+registry's provider route at the stronger of the task's correctness floor and
+Sol/medium for a semantic conflict, or Terra/medium for a gate failure. The
+fresh-run reason is visible in the task's continuation ledger; the selected
+model is visible in the run-session event.
+The standalone Task Server uses the same versioned policy document for both
+direct claims and accepted host permits. A pending mechanical delta gets at
+least Terra/medium before the runner checks session admission; a recorded
+semantic fallback gets at least Sol/medium on the next fresh claim. Task text
+that names a critical boundary raises the route to Sol/xhigh. The claim carries
+the selected CLI, model, thinking level, and reason to the runner.
+
 When a new task has no explicit model pin (`modelExplicit=false`), model
 qualification starts from this convention:
 
@@ -133,6 +153,17 @@ and whether economy mode caused a safe one-step downgrade. Choosing a model or
 thinking level marks the card explicit in one action. Explicit pins remain
 untouched by qualification, while the policy recommendation stays visible for
 comparison.
+
+The `auto-tag` creation step is a separate bounded classification route. Its
+operator floor is Sonnet-class at low thinking, despite the earlier D5 economy
+recommendation, because the 2026-09-13 follow-up judged Haiku-class too small.
+It uses the closed tag registry and glossaries, never the card's coding model.
+The one-shot call records usage under `auto-tag` in the token ledger. A proposed
+80-item golden set measures tier 1; precision below 0.9 selects Sonnet-class
+high thinking for item classification until the service restarts. Individual
+low-confidence results are retried on Sonnet-class high thinking; only a final
+result below the 0.8 confidence threshold remains a proposal. See
+[the tagging reference set](../../quality/tagging-golden-set/index.html).
 
 ### Create-card contract
 

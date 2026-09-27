@@ -35,6 +35,7 @@ import {
   type HostProjectSlots,
   type MeterTone,
   type RemoteHost,
+  type RemoteChatUsage,
 } from '../../models/remote-host.model';
 import { freshHostTelemetry, latestHostTelemetry } from '../../models/running-truth';
 import type { StableReleaseIdentity } from '../../models/host-release-drift';
@@ -105,6 +106,12 @@ export class RemoteHostCardComponent {
    * the active-slot total always reconcile.
    */
   readonly projectSlots = input<readonly HostProjectSlots[]>([]);
+  readonly allChatUsage = input<readonly RemoteChatUsage[]>([]);
+  readonly chatUsage = computed(() => {
+    const host = this.host();
+    const names = new Set([host.name, host.id, host.clientId].map(name => name.toLowerCase()));
+    return this.allChatUsage().filter(row => names.has(row.hostName.toLowerCase()));
+  });
   readonly expanded = input(false);
   /** The release every row is measured against; null until it is loaded. */
   readonly stableRelease = input<StableReleaseIdentity | null>(null);
