@@ -27,6 +27,39 @@ pipeline view.
   records the serialized-argument failure mode and the validation and resource
   caps required before parallel work starts.
 
+## Exact-SHA gate verdict cache
+
+`BuildTestGateRunner` reuses a deterministic terminal verdict only for an exact
+tested tree SHA and the same gate-profile digest. The digest includes the build
+profile, resolved verify commands and selection inputs, gate mode, pipeline
+definition version, and executor toolchain identity. A changed input is a miss.
+The local fallback identity includes the effective `dotnet --version` result
+from each command directory, as well as the `node` and `npm` versions when
+installed. Version probing fails closed for cache use: a failed probe runs the
+gate without reusing or recording a verdict.
+The lookup runs after exact-SHA materialization and before project preparation,
+so a hit skips preparation and the verify suite. A command-selection adviser
+defers lookup until the resolved plan is known.
+The cache never substitutes a result for a missing or unverified SHA, an
+infrastructure failure, or a skipped gate. It is independent of the preparation
+dependency cache and the Remote Review baseline-result cache.
+
+`GateResultCache` stores the original run's evidence and completion time under
+local application data. It retains at most 128 entries per project for 30 days,
+with a 2 MB limit per entry. The runner serializes requests for one project, so
+concurrent requests for the same key cannot both execute. `GateVerdictSource`
+marks `Executed` and `CacheHit` separately in the result and pipeline step;
+`gate_verdict_cache_hit` carries the original run ID, time, SHA, digest and
+evidence path in the task timeline. A cached step records zero execution time.
+
+Operators can read `GET /api/projects/{projectName}/gate-result-cache` for the
+same-SHA re-test rate: repeated SHA executions divided by executions in the
+latest 4,096 execution window. Cache hits are counted separately. `DELETE` on
+the same endpoint invalidates that project's verdicts and measurement window.
+These metrics measure local exact-subject gate requests; they do not estimate
+batch green rate or answer the staging-lane decision in the
+[Gates Dossier](../../operations/gates/index.html#sect5).
+
 ## Key Code
 
 - [Model Routing Policy](./model-routing-policy.md) is the canonical model and
@@ -41,8 +74,18 @@ pipeline view.
   card, selects curated versioned project/style/delegation blocks, appends at
   most two optional blocks within a 1,500-token budget, and persists
   `enrichment-report.json` before dispatch. Failure to persist the report blocks
-  dispatch. The step is default-on and can be disabled through the normal
-  per-project `PipelineSteps` convention.
+  dispatch. Built-in Agent Studio blocks apply only to Agent Studio; every
+  cited source must exist in the target repository before a block is selected.
+  Projects without their own style-guide catalogue get only their own root
+  instructions, when present. A project can explicitly adopt built-in block
+  ids through the `pre-prompt-enrichment` pipeline step's
+  `enrichmentBlockIds` setting when those block sources exist in its repository.
+  Explicitly adopted blocks are considered even when task-area detection does
+  not match their usual trigger; the normal optional-block budget still applies.
+  The report records `rejected-source-missing`
+  with the missing path, and each appended block records its project,
+  repository, and source verification mode. The step is default-on and can be
+  disabled through the normal per-project `PipelineSteps` convention.
 - `backend/Features/Pipeline/PipelineStepEconomyAdvisor.cs`: opt-in automated
   recommendation layer for cheap pipeline work. It passes only live-discovered
   Spark candidates to `IModelEconomyAdvisor`, preserves explicit step pins, and
@@ -888,7 +931,8 @@ move-error dialog.
   describe selector work only, which is zero in the deterministic
   implementation. Appended prompt tokens are attributed in
   `enrichment-report.json` and remain part of CORE input, so pipeline cost
-  totals do not count them twice.
+  totals do not count them twice. Shared runner prompts do not name Agent
+  Studio policy files for tasks in other repositories.
 - Cheap-model routing is explicit and reversible. `PipelineStepSetting` owns the
   `(cliType, model, thinkingLevel)` override per project and step; absent fields
   preserve the current runtime default. Aspect reviews and abort review honor

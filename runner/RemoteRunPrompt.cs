@@ -4,11 +4,8 @@ namespace AgentRunner;
 /// Builds the prompt handed to a standalone remote-runner CLI.
 /// <para>
 /// The task server deliberately exposes the operator-authored <c>prompt.md</c>
-/// verbatim. The local in-process runner adds standing model-routing and
-/// contribution guidance plus its completion protocol while it renders
-/// <c>runner-fresh-start.md</c>, so the standalone runner must add the same
-/// instructions at its own execution boundary. Keeping them here makes one-shot
-/// and daemon-claimed runs use exactly the same prompt.
+/// verbatim. The standalone runner adds the completion protocol at its execution
+/// boundary. Repository-specific guidance is selected by the task server.
 /// </para>
 /// </summary>
 public static class RemoteRunPrompt
@@ -128,8 +125,6 @@ public static class RemoteRunPrompt
             + "---" + Environment.NewLine + Environment.NewLine
             + framingBlock
             + resultsBlock
-            + ModelRoutingPolicyInstruction + Environment.NewLine + Environment.NewLine
-            + ContributionGuideInstruction + Environment.NewLine + Environment.NewLine
             + CompletionProtocol + Environment.NewLine;
     }
 }

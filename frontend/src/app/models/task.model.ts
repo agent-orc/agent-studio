@@ -1120,6 +1120,7 @@ export interface PromptEnrichmentCandidate {
   signals: string[];
   decision: 'appended' | 'rejected-budget' | 'rejected-project-disabled' | string;
   reason: string;
+  missingPath?: string | null;
   estimatedTokens: number;
 }
 
@@ -1127,6 +1128,9 @@ export interface PromptEnrichmentBlock {
   id: string;
   title: string;
   source: string;
+  project?: string;
+  repository?: string;
+  sourceVerification?: 'repository' | 'pipeline-explicit' | string;
   revision: string;
   digestSha256: string;
   tier: string;

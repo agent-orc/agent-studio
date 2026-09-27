@@ -1,5 +1,31 @@
 <div class="uhp" data-testid="usage-hover-panel">
   <app-header-quota (cliSelected)="select($event)" />
+  <button type="button" class="uhp__chat-trigger" data-testid="usage-chat-trigger"
+          [attr.aria-expanded]="chatUsageOpen()" (click)="toggleChatUsage()">
+    Chat usage
+  </button>
+  @if (chatUsageOpen()) {
+    <section class="uhp__chat" data-testid="usage-chat-panel" aria-label="Interactive chat usage">
+      <strong>Interactive chat</strong>
+      <table>
+        <thead><tr><th>Host / project</th><th>Active</th><th>Heavy</th><th>CPU</th><th>Tokens</th><th>Cost</th></tr></thead>
+        <tbody>
+          @for (row of chatUsage(); track row.hostName + ':' + row.projectName) {
+            <tr>
+              <th>{{ row.hostName }} / {{ row.projectName }}</th>
+              <td>{{ row.activeTurns }}</td><td>{{ row.heavyTurns }}</td>
+              <td>{{ row.cpuPercent === null ? 'pending' : row.cpuPercent.toFixed(0) + '%' }}</td>
+              <td>{{ row.tokens.toLocaleString() }}</td>
+              <td>{{ row.costUsd === null ? 'unknown' : '$' + row.costUsd.toFixed(3) }}</td>
+            </tr>
+          } @empty {
+            <tr><td colspan="6">No interactive chat usage reported.</td></tr>
+          }
+        </tbody>
+      </table>
+      <small>Tokens and cost cover completed turns since Task Server startup.</small>
+    </section>
+  }
 </div>
 
 @if (selectedCli(); as cli) {

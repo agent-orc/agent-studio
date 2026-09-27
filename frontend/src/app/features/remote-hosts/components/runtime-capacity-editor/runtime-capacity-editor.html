@@ -4,6 +4,26 @@
     <div class="capacity__copy">
       <strong>Runtime capacity</strong>
       <span data-testid="remote-host-slots">{{ slotsLabel() }}</span>
+      <span class="capacity__chat-summary" data-testid="remote-host-chat-summary">
+        {{ activeChats() }} active chat {{ activeChats() === 1 ? 'turn' : 'turns' }},
+        {{ heavyChats() }} using coding capacity.
+      </span>
+      @if (chatUsage().length) {
+        <ul class="capacity__projects capacity__chat-usage" data-testid="remote-host-chat-usage"
+            aria-label="Interactive chat usage by project">
+          @for (entry of chatUsage(); track entry.projectName) {
+            <li>
+              <span class="capacity__project-name">{{ entry.projectName }}</span>
+              <span class="capacity__project-slots">
+                {{ entry.activeTurns }} active, {{ entry.heavyTurns }} heavy ·
+                CPU {{ entry.cpuPercent === null ? 'pending' : entry.cpuPercent.toFixed(0) + '%' }} ·
+                {{ entry.tokens.toLocaleString() }} tokens ·
+                {{ entry.costUsd === null ? 'cost unknown' : '$' + entry.costUsd.toFixed(3) }}
+              </span>
+            </li>
+          }
+        </ul>
+      }
       <span>
         Central ceiling {{ capacity.maxParallelism }} slots, policy version {{ capacity.version }}.
         Daemon reports {{ h.effectiveMaxParallelism ?? 'not reported' }} slots.

@@ -651,27 +651,11 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             $"/api/attempts/reviews/{completion.ReviewAttemptId}/settle",
             new SettleReviewAttemptRequest(reviewWrite, "61306343", ReviewTerminalOutcome.Pass), ct);
         Assert.Equal(System.Net.HttpStatusCode.Conflict, mismatchResponse.StatusCode);
-        var mismatch = await mismatchResponse.Content.ReadFromJsonAsync<AttemptWriteResult>(ApiJson, ct);
-        Assert.Equal(AttemptWriteStatus.SubjectMismatch, mismatch!.Status);
-        Assert.Equal("immutable-result-mismatch", mismatch.ReviewAttempt!.FailureClassification);
-        Assert.Equal(ReviewTerminalOutcome.InfrastructureFailure, mismatch.ReviewAttempt.Outcome);
-
-        var retryResponse = await http.PostAsJsonAsync(
-            "/api/attempts/reviews",
-            new CreateReviewAttemptRequest(
-                TaskKey,
-                mismatch.ReviewAttempt.RepositoryId,
-                mismatch.ReviewAttempt.Subject.ExpectedResultSha,
-                mismatch.ReviewAttempt.SourceRunAttemptId,
-                mismatch.ReviewAttempt.Subject.TaskRequirementsHash,
-                mismatch.ReviewAttempt.Subject.ReviewPolicyHash,
-                mismatch.ReviewAttempt.Subject.EvidenceDigestInputs,
-                "retry-review-same-subject",
-                mismatch.ReviewAttempt.AttemptId), ct);
-        retryResponse.EnsureSuccessStatusCode();
-        var retry = await retryResponse.Content.ReadFromJsonAsync<AttemptWriteResult>(ApiJson, ct);
-        Assert.NotEqual(mismatch.ReviewAttempt.AttemptId, retry!.ReviewAttempt!.AttemptId);
-        Assert.Equal(mismatch.ReviewAttempt.Subject.SubjectId, retry.ReviewAttempt.Subject.SubjectId);
+        using (var refused = JsonDocument.Parse(await mismatchResponse.Content.ReadAsStringAsync(ct)))
+            Assert.Equal("review-delivery-required", refused.RootElement.GetProperty("code").GetString());
+        var stillPending = await http.GetFromJsonAsync<AttemptAuthorityProjection>(
+            $"/api/attempts/tasks/{TaskKey}", ApiJson, ct);
+        Assert.Equal(AttemptLifecycleState.Leased, stillPending!.CurrentReviewAttempt!.State);
         var moved = Path.Combine(_watchPath, TaskStates.AutoReview, TaskKey);
         Assert.True(Directory.Exists(moved));
         Assert.Equal(
@@ -2442,8 +2426,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Equal("claude", claim.RunSpec!.CliType);
         Assert.Equal("claude-opus-4-8", claim.RunSpec.Model);
         Assert.Equal("max", claim.RunSpec.ThinkingLevel);
-        Assert.Contains("## Prompt enrichment", claim.RunSpec.ModeFraming);
-        Assert.Contains("repo-instructions-source", claim.RunSpec.ModeFraming);
+        Assert.DoesNotContain("## Prompt enrichment", claim.RunSpec.ModeFraming);
+        Assert.DoesNotContain("repo-instructions-source", claim.RunSpec.ModeFraming);
         // Both modes resolve from live project settings, so they are always
         // stated; the runner transports them but does not yet build flags.
         Assert.False(string.IsNullOrWhiteSpace(claim.RunSpec.PermissionMode));
@@ -2475,7 +2459,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Equal("AGT-SPEC-CODEX", codexClaim.JobId);
         Assert.Equal("codex", codexClaim.RunSpec!.CliType);
         Assert.Equal("gpt-5.6-codex", codexClaim.RunSpec.Model);
-        Assert.Contains("## Prompt enrichment", codexClaim.RunSpec.ModeFraming);
+        Assert.DoesNotContain("## Prompt enrichment", codexClaim.RunSpec.ModeFraming);
         // Codex has no "max" rung; the server resolves the card's request against
         // the model's ladder rather than shipping an invalid selector.
         Assert.Equal("medium", codexClaim.RunSpec.ThinkingLevel);

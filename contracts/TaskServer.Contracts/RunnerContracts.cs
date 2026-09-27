@@ -140,6 +140,9 @@ public sealed record ClaimResponse(
     string? ContinuationBaseRef = null,
     string? ContinuationBaseSha = null,
     IReadOnlyList<string>? ReprobeCapabilities = null,
+    SessionContinuationLedgerEntry? PreviousSession = null,
+    MechanicalRoundDelta? MechanicalDelta = null,
+    MechanicalFreshRunRoute? MechanicalFreshRoute = null,
     FollowUpDeliveryDto? FollowUp = null);
 
 /// <summary>A run-scoped sibling route selected after a provider refusal.</summary>
@@ -278,4 +281,5 @@ public sealed record CompleteRunRequest(
     // dropped them, so a missing-terminal-sentinel incident reported through
     // the outbox reached the card as prose only. Additive and optional: an
     // older runner omits the field and the server records no gate item.
-    IReadOnlyList<string>? GateItems = null);
+    IReadOnlyList<string>? GateItems = null,
+    SessionContinuationLedgerEntry? SessionContinuation = null);

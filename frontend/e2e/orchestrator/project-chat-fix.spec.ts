@@ -1,5 +1,7 @@
 import { test, expect, Page } from '@playwright/test';
 import { startLongTaskRecorder } from '../helpers/timing';
+import { installFrontendOverride } from '../helpers/frontend-override';
+import { setTheme } from '../helpers/theme';
 
 /**
  * Regression spec for project chat: visible failures,
@@ -118,6 +120,146 @@ async function openSideSheetForProject(page: Page): Promise<string> {
 }
 
 test.describe('Project chat fix - silent drop, sluggishness, parallel use', () => {
+  test('shows queued runner reason and interactive usage while a reply waits', async ({ page }) => {
+    await installFrontendOverride(page);
+    await page.route('**/api/auth/status', route => route.fulfill({ json: {
+      profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
+    } }));
+    await page.route('**/api/watch-paths', route => route.fulfill({ json: [{
+      name: 'Chat fixture', path: '/tmp/chat-fixture', rootPath: '/tmp/chat-fixture',
+      repositoryPath: '/tmp/chat-fixture',
+    }] }));
+    await page.route('**/api/workspaces', route => route.fulfill({ json: [{
+      id: 'workspace-chat-fixture', displayName: 'Chat fixture', sortOrder: 0,
+      isDefault: true, projects: [{
+        id: 'Chat fixture', displayName: 'Chat fixture', shortCode: 'CF',
+        workspaceId: 'workspace-chat-fixture', storageLocation: '/tmp/chat-fixture',
+        archived: false, urls: [],
+      }],
+    }] }));
+    await page.route(/\/api\/tasks\/grouped(?:\?|$)/, route => route.fulfill({ json: {
+      preparation: [], ready: [], progress: [], review: [], completed: [], archive: [],
+    } }));
+    await page.route(/\/api\/tasks\/archive(?:\?|$)/, route => route.fulfill({ json: {
+      items: [], total: 0, offset: 0, limit: 50, hasMore: false,
+    } }));
+    await page.route('**/api/runner/status', route =>
+      route.fulfill({ json: { projects: {} } }));
+    await page.route(/\/api\/cli\/codex\/models(?:\?|$)/, route => route.fulfill({ json: {
+      source: 'test', models: [{
+        id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', multiplier: null,
+        vendor: 'openai', isDefault: true, available: true,
+        thinkingLevels: ['medium'], defaultThinkingLevel: 'medium',
+      }],
+    } }));
+    await page.route(/\/api\/runner\/project-chat\/status(?:\?|$)/, route =>
+      route.fulfill({ json: {
+        state: 'queued', runnerId: 'agent-runner-01', hostName: null,
+        queuedAt: '2026-09-26T07:18:40Z', startedAt: null,
+        reason: 'Provider unavailable',
+      } }));
+    await page.route('**/api/runner/project-chat/usage', route =>
+      route.fulfill({ json: [{
+        hostName: 'agent-runner-01', projectName: 'Agent Studio',
+        activeTurns: 1, heavyTurns: 1, cpuPercent: 54,
+        tokens: 1200, costUsd: 0.03,
+      }] }));
+    await installChatMocks(page, 'Chat fixture', {
+      handlePost: async () => {
+        await new Promise(resolve => setTimeout(resolve, 7_000));
+        return { status: 200, reply: {
+          id: 'reply-after-wait', ts: nowIso(), role: 'orchestrator', text: 'Done',
+        } };
+      },
+    });
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+    await setTheme(page, 'light');
+    await page.getByTestId('orch-side-sheet-toggle').click();
+    const composer = page.locator('cac-chat textarea');
+    await expect(composer).toBeVisible();
+    await composer.fill('How is this task progressing?');
+    await page.locator('cac-chat').getByRole('button', { name: 'Send' }).click();
+    const waiting = page.getByTestId('orchestrator-chat-waiting');
+    await expect(waiting).toContainText('agent-runner-01');
+    await expect(waiting).toContainText('Provider unavailable');
+    if (process.env.JOB_RESULTS_DIR) {
+      await page.screenshot({ path: `${process.env.JOB_RESULTS_DIR}/chat-waiting-light--mocked.png` });
+      await setTheme(page, 'dark');
+      await page.screenshot({ path: `${process.env.JOB_RESULTS_DIR}/chat-waiting-dark--mocked.png` });
+      await setTheme(page, 'light');
+    }
+    await expect(waiting).toHaveCount(0, { timeout: 12_000 });
+    await page.getByTestId('orch-side-sheet-toggle').click();
+    await page.getByTestId('usage-chat-trigger').click();
+    const usage = page.getByTestId('usage-chat-panel');
+    await expect(usage).toBeVisible();
+    await expect(usage).toContainText('agent-runner-01 / Agent Studio');
+    await expect(usage).toContainText('54%');
+    if (process.env.JOB_RESULTS_DIR) {
+      await page.screenshot({ path: `${process.env.JOB_RESULTS_DIR}/chat-usage-light--mocked.png` });
+      await setTheme(page, 'dark');
+      await page.screenshot({ path: `${process.env.JOB_RESULTS_DIR}/chat-usage-dark--mocked.png` });
+    }
+  });
+
+  test('Execution Hosts accounts for a heavy chat beside coding work', async ({ page }) => {
+    await installFrontendOverride(page);
+    const now = new Date().toISOString();
+    const coding = Array.from({ length: 4 }, (_, index) => ({
+      id: `coding-${index}`, taskKey: `AGT-C${index}`, title: `Coding ${index}`,
+      state: '3-progress', order: index, agent: '', createdAt: now,
+      watchPath: '/tmp/agent-studio', projectName: 'Agent Studio',
+      folderPath: '', lastActivity: now, sessionName: null, model: null,
+      cliType: null, useOwnSession: null, lastUsage: null,
+      execution: null, commit: null,
+      runner: { runnerId: 'agent-runner-01', runnerName: 'agent-runner-01',
+        hostname: 'agent-runner-01', backendName: 'task-server', isRemote: true,
+        leaseId: `lease-${index}`, fencingToken: 1, acquiredAt: now },
+    }));
+    await page.route(/\/api\/tasks\/grouped(?:\?|$)/, route => route.fulfill({ json: {
+      preparation: [], ready: [], progress: coding, review: [], completed: [], archive: [],
+    } }));
+    await page.route('**/api/clients', route => route.fulfill({ json: [
+      { id: 'local-default', displayName: 'operator-workstation', kind: 'human',
+        registeredAt: now, lastSeenAt: now },
+      { id: 'agent-runner-01', displayName: 'agent-runner-01', kind: 'service',
+        registeredAt: now, lastSeenAt: now, runnerDaemonState: 'running',
+        runnerActiveSlots: 4, runnerAvailableSlots: 1 },
+    ] }));
+    await page.route('**/api/v1/management/remote-hosts', route => route.fulfill({ json: [{
+      runnerId: 'agent-runner-01', name: 'agent-runner-01', hostId: 'agent-runner-01',
+      instanceId: 'test', runnerVersion: '0.9.2', protocolVersion: 1,
+      status: 'online', registeredAt: now, lastSeenAt: now,
+      hostAdmission: { status: 'ready' }, capabilities: [], telemetry: null,
+      runtimeCapacity: { hostId: 'agent-runner-01', maxParallelism: 5,
+        targetLoadPercent: 80, rampStrategy: 'balanced', version: 1, updatedAt: now },
+      effectiveMaxParallelism: 5, runtimeCapacityAppliedAt: now,
+      runtimeCapacityAppliedVersion: 1,
+    }] }));
+    await page.route('**/api/runner/project-chat/usage', route => route.fulfill({ json: [{
+      hostName: 'agent-runner-01', projectName: 'Agent Studio',
+      activeTurns: 1, heavyTurns: 1, cpuPercent: 54,
+      tokens: 1200, costUsd: 0.03,
+    }] }));
+    await page.goto('/#/workspace/settings/execution-hosts', { waitUntil: 'domcontentloaded' });
+    await setTheme(page, 'light');
+    const host = page.getByTestId('remote-host-card').filter({ hasText: 'agent-runner-01' }).first();
+    await expect(host).toBeVisible();
+    const disclosure = host.getByTestId('remote-host-disclosure');
+    if (await disclosure.getAttribute('aria-expanded') !== 'true') await disclosure.click();
+    const capacity = host.getByTestId('remote-host-detail-toggle-capacity');
+    if (await capacity.getAttribute('aria-expanded') !== 'true') await capacity.click();
+    await expect(host.getByTestId('remote-host-chat-summary')).toContainText('1 active chat turn');
+    await expect(host.getByTestId('remote-host-chat-usage')).toContainText('CPU 54%');
+    await expect(host.getByTestId('remote-host-slots'))
+      .toContainText('5 slots, 4 coding, 1 taken by a heavy chat turn');
+    if (process.env.JOB_RESULTS_DIR) {
+      await page.screenshot({ path: `${process.env.JOB_RESULTS_DIR}/chat-host-capacity-light--mocked.png` });
+      await setTheme(page, 'dark');
+      await page.screenshot({ path: `${process.env.JOB_RESULTS_DIR}/chat-host-capacity-dark--mocked.png` });
+    }
+  });
+
   test('silent drop: orchestrator error and submitted message remain visible in canonical chat', async ({ page }) => {
     const project = await openSideSheetForProject(page);
     const state = await installChatMocks(page, project, {

@@ -127,6 +127,17 @@ public sealed partial class ProjectStyleGuideService
         }
     }
 
+    public string? GetRepositoryRoot(string projectName)
+    {
+        var root = ResolveProject(projectName)?.RepositoryRoot;
+        if (string.IsNullOrWhiteSpace(root)) return null;
+        try { return Path.GetFullPath(root); }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>Bounded test seam over a repository fixture.</summary>
     internal static ProjectStyleGuideCatalogue BuildCatalogue(
         string projectKey,

@@ -154,6 +154,9 @@
                 (openVerboseDebug)="onOpenVerboseDebug()" />
             </div>
 
+            <app-orchestrator-chat-waiting
+              [project]="effectiveProject()" [contextKey]="contextKey()" [sending]="sending()" />
+
             @if (latestContextReceipt(); as receipt) {
               <app-orchestrator-context-receipt [receipt]="receipt" />
             }

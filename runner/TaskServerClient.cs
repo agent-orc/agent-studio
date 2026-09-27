@@ -467,7 +467,17 @@ public sealed class TaskServerClient : IDisposable
             RepositoryUrl: options.GitRemote,
             DefaultBranch: options.BaseBranch,
             RunId: acceptance.Run.RunId,
-            LeaseInstanceId: acceptance.Lease.InstanceId);
+            LeaseInstanceId: acceptance.Lease.InstanceId,
+            PreviousSession: acceptance.PreviousSession,
+            MechanicalDelta: acceptance.MechanicalDelta,
+            RunSpec: acceptance.MechanicalFreshRoute is { } hostRoute
+                ? new RunSpecDto(hostRoute.CliType, hostRoute.Model, hostRoute.ThinkingLevel,
+                    ContextMode: CodingAgentRunner.Model.CliContextModes.Clean)
+                : null,
+            FreshRunReason: acceptance.MechanicalDelta is null
+                ? acceptance.MechanicalFreshRoute?.Reason : null,
+            ContinuationBaseRef: acceptance.ContinuationBaseRef,
+            ContinuationBaseSha: acceptance.ContinuationBaseSha);
     }
 
     public async Task ReconcileHostRunAsync(
@@ -775,18 +785,26 @@ public sealed class TaskServerClient : IDisposable
             RunId: claim.Run.RunId,
             LeaseInstanceId: RunnerInstanceId,
             ReconciliationActions: FromContract(claim.ReconciliationActions),
-            RunSpec: claim.ModelFallback is null && claim.FollowUp is null
-                ? null
-                : new RunSpecDto(
-                    claim.ModelFallback?.CliType,
-                    claim.ModelFallback?.To,
-                    claim.ModelFallback?.ThinkingLevel,
-                    ContextMode: claim.ModelFallback is null
-                        ? null
-                        : CodingAgentRunner.Model.CliContextModes.Clean,
-                    FollowUp: claim.FollowUp),
+            RunSpec: claim.MechanicalFreshRoute is { } mechanicalRoute
+                ? new RunSpecDto(mechanicalRoute.CliType, mechanicalRoute.Model, mechanicalRoute.ThinkingLevel,
+                    ContextMode: CodingAgentRunner.Model.CliContextModes.Clean,
+                    FollowUp: claim.FollowUp)
+                : claim.ModelFallback is null && claim.FollowUp is null
+                    ? null
+                    : new RunSpecDto(
+                        claim.ModelFallback?.CliType,
+                        claim.ModelFallback?.To,
+                        claim.ModelFallback?.ThinkingLevel,
+                        ContextMode: claim.ModelFallback is null
+                            ? null
+                            : CodingAgentRunner.Model.CliContextModes.Clean,
+                        FollowUp: claim.FollowUp),
             ContinuationBaseRef: claim.ContinuationBaseRef,
-            ContinuationBaseSha: claim.ContinuationBaseSha);
+            ContinuationBaseSha: claim.ContinuationBaseSha,
+            PreviousSession: claim.PreviousSession,
+            MechanicalDelta: claim.MechanicalDelta,
+            FreshRunReason: claim.MechanicalDelta is null
+                ? claim.MechanicalFreshRoute?.Reason : null);
     }
 
     private void AdoptRuntimeCapacity(Contract.RuntimeCapacitySettingsDto? capacity)
@@ -1612,10 +1630,17 @@ public sealed class TaskServerClient : IDisposable
                 SalvageCommitSha: req.SalvageRecoveryCommitSha ?? req.SalvageCommitSha,
                 // AGT-2820: gate items are not legacy-only. A completion that
                 // names an incident must name it on both planes.
-                GateItems: req.GateItems),
+                GateItems: req.GateItems,
+                SessionContinuation: req.SessionContinuation),
             ct);
         _v1CompletedLeases[req.TaskKey] = req.LeaseId;
-        return new RemoteRunCompletionResponse(req.TaskKey, typedOutcome, "4-auto-review");
+        var targetState = string.Equals(typedOutcome,
+            Contract.ExecutionOutcomeKind.MechanicalFallback.ToString(), StringComparison.Ordinal)
+            ? "2-ready"
+            : !string.IsNullOrWhiteSpace(req.NeedsInputMessage)
+                || req.OutcomeDecision?.Outcome == Contract.ExecutionOutcomeKind.ProviderRejectedRequest
+                ? "5-human-review" : "4-auto-review";
+        return new RemoteRunCompletionResponse(req.TaskKey, typedOutcome, targetState);
     }
 
     public async Task<ResultHandoffAck> AcknowledgeResultHandoffAsync(
@@ -1702,7 +1727,8 @@ public sealed class TaskServerClient : IDisposable
                         payload.NeedsInputMessage,
                         payload.SalvageBranch,
                         payload.SalvageCommitSha,
-                        payload.GateItems),
+                        payload.GateItems,
+                        payload.SessionContinuation),
                     ct);
                 return;
             }

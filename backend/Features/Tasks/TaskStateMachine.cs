@@ -39,6 +39,11 @@ public class TaskStateMachine
     // when null the move still lands, just without an evidence nudge.
     private readonly AgentStudio.Pipeline.WorkspaceEvidenceQueue? _evidenceQueue;
 
+    private static bool DecisionGuardApplies(TaskInfo task, string targetState) =>
+        TaskKinds.IsDecision(task.Kind)
+        || (targetState is TaskStates.Ready or TaskStates.Progress
+            && task.References?.DependsOn.Count is > 0);
+
     public TaskStateMachine(
         TaskScannerService scanner,
         ILogger<TaskStateMachine> logger,
@@ -110,7 +115,8 @@ public class TaskStateMachine
         string? expectedSourceState = null,
         string? reason = null,
         string? transitionCause = null,
-        string? transitionDetail = null)
+        string? transitionDetail = null,
+        DecisionReopenPermit? decisionReopenPermit = null)
     {
         if (!TaskStates.All.Contains(targetState))
             return new MoveJobOutcome(MoveJobStatus.Failure, $"Invalid state: {targetState}");
@@ -124,6 +130,9 @@ public class TaskStateMachine
             : _laneMutex.Acquire(watchPath);
         var info = FindJobForLaneMutation(jobId, watchPath);
         if (info == null) return new MoveJobOutcome(MoveJobStatus.NotFound);
+        if (DecisionGuardApplies(info, targetState)
+            && DecisionLaneGuard.Refusal(info, targetState, _scanner.GetReferenceIndex(), decisionReopenPermit) is { } refusal)
+            return new MoveJobOutcome(MoveJobStatus.Failure, refusal);
         if (!string.IsNullOrWhiteSpace(expectedSourceState)
             && !string.Equals(info.State, expectedSourceState, StringComparison.OrdinalIgnoreCase))
         {
@@ -144,6 +153,9 @@ public class TaskStateMachine
             ? FindJobForLaneMutation(jobId, watchPath)
             : info;
         if (recheck == null) return new MoveJobOutcome(MoveJobStatus.NotFound);
+        if (DecisionGuardApplies(recheck, targetState)
+            && DecisionLaneGuard.Refusal(recheck, targetState, _scanner.GetReferenceIndex(), decisionReopenPermit) is { } recheckRefusal)
+            return new MoveJobOutcome(MoveJobStatus.Failure, recheckRefusal);
         if (!string.IsNullOrWhiteSpace(expectedSourceState)
             && !string.Equals(recheck.State, expectedSourceState, StringComparison.OrdinalIgnoreCase))
         {
