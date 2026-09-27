@@ -29,6 +29,9 @@ export interface OrchestratorLogEntry {
   reasoning?: string | null;
   jobId?: string | null;
   tokenUsage?: OrchestratorTokenUsage | null;
+  queuedAt?: string | null;
+  startedAt?: string | null;
+  finishedAt?: string | null;
   userOverride?: { at: string; newDirection: string } | null;
 }
 

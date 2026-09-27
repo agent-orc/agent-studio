@@ -3,6 +3,7 @@ import { DatePipe } from '@angular/common';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
 import type {
   HostProjectSlots,
+  RemoteChatUsage,
   HostRampStrategy,
   RemoteHost,
 } from '../../models/remote-host.model';
@@ -60,6 +61,7 @@ export class RuntimeCapacityEditorComponent {
   readonly boardActiveSlots = input(0);
   /** Projects occupying this host's slots, derived from the board's lease truth. */
   readonly projectSlots = input<readonly HostProjectSlots[]>([]);
+  readonly chatUsage = input<readonly RemoteChatUsage[]>([]);
   readonly capacityChange = output<RuntimeCapacityChange>();
   readonly projectPolicyChange = output<HostProjectPolicyChange>();
   readonly capacityDraft = signal<number | null>(null);
@@ -71,6 +73,8 @@ export class RuntimeCapacityEditorComponent {
   /** The hard ceiling, or null when no server has published one yet. */
   readonly ceiling = computed(() => this.host().runtimeCapacity?.maxParallelism ?? null);
   readonly activeSlots = computed(() => Math.max(0, this.boardActiveSlots()));
+  readonly activeChats = computed(() => this.chatUsage().reduce((sum, row) => sum + row.activeTurns, 0));
+  readonly heavyChats = computed(() => this.chatUsage().reduce((sum, row) => sum + row.heavyTurns, 0));
   /**
    * Pre-fill for the empty state: what the daemon says it runs today, so the
    * first ceiling an operator publishes describes the host rather than a guess.
@@ -80,10 +84,15 @@ export class RuntimeCapacityEditorComponent {
   readonly suggestedTargetLoad = SUGGESTED_TARGET_LOAD;
   readonly freeSlots = computed(() => {
     const ceiling = this.ceiling();
-    return ceiling === null ? 0 : Math.max(0, ceiling - this.activeSlots());
+    return ceiling === null ? 0 : Math.max(0, ceiling - this.activeSlots() - this.heavyChats());
   });
   readonly slotsLabel = computed(() => {
     const ceiling = this.ceiling();
+    if (ceiling !== null && this.heavyChats() > 0
+        && this.activeSlots() + this.heavyChats() > ceiling)
+      return `${ceiling} slots, ${this.activeSlots()} coding, ${this.heavyChats()} heavy chat ${this.heavyChats() === 1 ? 'turn' : 'turns'} running alongside, 0 free`;
+    if (ceiling !== null && this.heavyChats() > 0)
+      return `${ceiling} slots, ${this.activeSlots()} coding, ${this.heavyChats()} taken by ${this.heavyChats() === 1 ? 'a heavy chat turn' : 'heavy chat turns'}`;
     return ceiling === null
       ? `${this.activeSlots()} active / capacity not reported`
       : `${this.activeSlots()} active / ${this.freeSlots()} free / ${ceiling} total`;

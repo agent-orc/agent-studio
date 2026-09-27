@@ -152,6 +152,11 @@ public static class LeaseEndpoints
         // card runs. Studio queues an opaque request for the project's assigned
         // runner; the host claims, renews and completes it with a claim token.
         // No central process reaches into the runner over SSH.
+        app.MapGet("/api/runner/project-chat/status",
+            (string projectName, string? contextKey, RemoteChatWorkBroker broker) =>
+                Results.Ok(broker.GetStatus(projectName, contextKey)));
+        app.MapGet("/api/runner/project-chat/usage",
+            (RemoteChatWorkBroker broker) => Results.Ok(broker.GetUsage()));
         app.MapPost("/api/runner/project-chat/claim",
             (RemoteChatWorkClaimRequest req,
                 HttpContext context,

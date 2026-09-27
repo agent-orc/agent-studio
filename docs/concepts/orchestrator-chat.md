@@ -133,10 +133,15 @@ transcript so a pinned task and the board no longer share one history.
 - `GET /api/runner/{contextKey}/orchestrator-chat` returns the transcript for a
   navigation context. `{contextKey}` is the same canonical key as the session
   registry — `project:<PROJ>` (one path segment) or `task:<PROJ>/<KEY>` (two).
-  The response is `{ contextKey, project, turns }`.
+  The response is `{ contextKey, project, turns, executionContext }`.
 - `POST /api/runner/{contextKey}/orchestrator-chat` sends a user message and
   persists both turns to that context's transcript, returning
-  `{ contextKey, project, reply }`.
+  `{ contextKey, project, reply, executionContext }`.
+
+The execution context uses the same context key as the transcript. A task or
+Dossier turn that falls back to the workstation retains its own checkout
+metadata; reading that context does not pick up another turn's metadata from
+the same project.
 
 Storage is context-keyed in the selected topology. A remote Task Server uses
 its SQLite store. The monolith profile uses its existing context-keyed JSONL
@@ -229,14 +234,29 @@ and recreate only those enriched nodes while ordinary text appeared stable.
 Side-sheet chat execution follows the same project assignment that controls
 card pickup. When `remoteExecutionEnabled` and `executionRunner` select a remote
 Runner, project and task chat turns are queued for that Runner. The host
-prepares a dedicated `project-chat` worktree from the same per-project git cache
-used by card runs, fetches the configured integration branch, and starts Codex
-with that checkout as its working directory. A project without a remote
+prepares a dedicated `project-chat-<slot>` worktree from the same per-project git
+cache used by card runs, fetches the configured integration branch, and starts
+the selected CLI with that checkout as its working directory. A project without a remote
 assignment continues to use the local project root.
 
 Studio never reaches into a Runner over SSH. The Runner pulls an opaque chat
-work item through claim, renew, and fenced completion endpoints. This
-in-process broker is a compatibility seam toward the durable Task Server work
+work item through claim, renew, and fenced completion endpoints. Interactive
+claims are polled independently of coding admission: a full coding host does
+not delay chat pickup. Several remote turns may run at once in separate
+checkouts. A turn that runs beyond 30 seconds, or consumes over 30% of one CPU
+core for two consecutive five-second samples, counts against capacity for new
+coding claims while heavy; running coding jobs continue. While a remote
+turn is pending pickup, the side sheet shows its assigned runner, queue time,
+and provider reason if a capability check deferred it. If the host stops
+polling for 10 seconds before claiming the turn, the workstation runs it and
+the reply says where it ran. Reply metadata records queued, started, and
+finished times in the JSONL transcript and project-chat markdown frontmatter.
+
+Execution Hosts and the status-bar usage view list interactive turns by host
+and project, including active and heavy counts, CLI CPU share, and completed
+tokens and cost since Task Server startup. A heavy turn reduces free coding
+capacity without interrupting any running coding work. The in-process broker
+is a compatibility seam toward the durable Task Server work
 permit model described by ADR-0063 and the distributed target architecture.
 Repository materialization and CLI execution remain Runner responsibilities.
 

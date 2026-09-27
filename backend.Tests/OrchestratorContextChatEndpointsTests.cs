@@ -180,9 +180,20 @@ public sealed class OrchestratorContextChatEndpointsTests : IDisposable
         Assert.Equal(_codeRoot, execution.GetProperty("repoPath").GetString());
     }
 
-    [Fact]
-    public async Task Get_RemoteProject_QueuesAssignedRunnerAndReturnsItsExactCheckoutContext()
+    [Theory]
+    [InlineData("project")]
+    [InlineData("task")]
+    [InlineData("workbench")]
+    public async Task Get_RemoteContext_QueuesAssignedRunnerAndReturnsItsExactCheckoutContext(
+        string contextKind)
     {
+        var contextKey = contextKind switch
+        {
+            "task" => $"task:{Project}/AGT-1930",
+            "workbench" => $"workbench:{Project}/AGT-W43",
+            _ => $"project:{Project}",
+        };
+        var contextPath = $"/api/runner/{contextKey}/orchestrator-chat";
         using var factory = CreateFactory();
         using var client = factory.CreateClient();
         var registry = factory.Services.GetRequiredService<ProjectRegistry>();
@@ -197,7 +208,7 @@ public sealed class OrchestratorContextChatEndpointsTests : IDisposable
         settings.SetExecutionRunner(Project, "runner-01", remoteExecutionEnabled: true);
 
         using (var resolvingResponse =
-               await client.GetAsync($"/api/runner/project:{Project}/orchestrator-chat"))
+               await client.GetAsync(contextPath))
         {
             resolvingResponse.EnsureSuccessStatusCode();
             using var resolving = JsonDocument.Parse(
@@ -232,8 +243,7 @@ public sealed class OrchestratorContextChatEndpointsTests : IDisposable
             null,
             hostContext)));
 
-        using var readyResponse =
-            await client.GetAsync($"/api/runner/project:{Project}/orchestrator-chat");
+        using var readyResponse = await client.GetAsync(contextPath);
         readyResponse.EnsureSuccessStatusCode();
         using var ready = JsonDocument.Parse(await readyResponse.Content.ReadAsStringAsync());
         var reported = ready.RootElement.GetProperty("executionContext");

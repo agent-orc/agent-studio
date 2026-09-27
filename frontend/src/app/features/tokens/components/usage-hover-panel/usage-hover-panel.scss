@@ -1,6 +1,39 @@
-:host { display: inline-flex; }
+:host { display: inline-flex; position: relative; }
 
 .uhp {
   display: inline-flex;
   align-items: center;
 }
+
+.uhp__chat-trigger {
+  border: 1px solid var(--studio-border);
+  border-radius: 6px;
+  background: var(--studio-surface-muted);
+  color: var(--studio-fg);
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  cursor: pointer;
+}
+
+.uhp__chat {
+  position: fixed;
+  z-index: 100;
+  right: var(--studio-spacing-3);
+  bottom: 42px;
+  width: min(640px, 90vw);
+  max-height: 55vh;
+  overflow: auto;
+  border: 1px solid var(--studio-border);
+  border-radius: 8px;
+  background: var(--studio-bg-elevated);
+  color: var(--studio-fg);
+  padding: var(--studio-spacing-3);
+  font-size: 12px;
+  line-height: 1.4;
+  box-shadow: 0 12px 32px color-mix(in srgb, var(--studio-fg) 12%, transparent);
+}
+
+.uhp__chat table { width: 100%; border-collapse: collapse; margin-block: var(--studio-spacing-2); }
+.uhp__chat th { text-align: left; }
+.uhp__chat th, .uhp__chat td { padding: var(--studio-spacing-1); border-bottom: 1px solid var(--studio-border); }
+.uhp__chat td { font-variant-numeric: tabular-nums; }
+.uhp__chat small { color: var(--studio-fg-muted); }
