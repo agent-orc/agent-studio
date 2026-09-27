@@ -147,7 +147,7 @@ public sealed class AutoReviewDeliveryResumeService
             task.Fixture,
             review?.State,
             review?.Outcome,
-            IntegrationStatuses.IsMerged(ReadIntegrationStatus(task)),
+            ReadIntegrationStatus(task) == IntegrationStatuses.Integrated,
             settlement?.Stage,
             settlement?.ShouldIntegrate ?? false,
             IntegrationGateJournal.Read(task.FolderPath) is not null);
@@ -204,9 +204,8 @@ public sealed class AutoReviewDeliveryResumeService
     /// <summary>
     /// The normal <c>4-auto-review -&gt; 5-human-review</c> transition the
     /// interrupted request never reached. It is the same move the report
-    /// endpoint makes, with the same park verdict, so the acceptance rail sees
-    /// an ordinary reviewed-and-integrated card afterwards and carries it into
-    /// the completed lane on its own schedule.
+    /// endpoint makes, with the same park verdict. Human acceptance happens
+    /// only after the published delivery reaches this lane.
     /// </summary>
     private async Task<AutoReviewResumeOutcome> CompleteTransitionAsync(
         TaskInfo task,
@@ -238,6 +237,9 @@ public sealed class AutoReviewDeliveryResumeService
             return new AutoReviewResumeOutcome(
                 decision.Action, decision.Reason, Resumed: false, moved.Message);
         }
+        if (moved.Status == MoveJobStatus.IntegrationFailed)
+            return new AutoReviewResumeOutcome(decision.Action, decision.Reason,
+                Resumed: false, moved.Message);
         if (moved.Status != MoveJobStatus.Success)
         {
             _logger.LogWarning(

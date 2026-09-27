@@ -663,6 +663,13 @@ public static class TaskCrudEndpoints
             // It needs a written reason, checked here at the boundary.
             if (req.OperatorOverride && !CompletionContractPolicy.IsUsableReason(req.Reason?.Trim()))
                 return Results.BadRequest(new { error = OverrideReasonRequired });
+            if (req.ArchiveOverride && req.TargetState != TaskStates.Archive)
+                return Results.BadRequest(new { error = "archiveOverride is valid only for a move to 7-archive." });
+            if (req.ArchiveOverride && (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal owner
+                || owner.User.Role != StudioRoles.Owner))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            if (req.ArchiveOverride && !CompletionContractPolicy.IsUsableReason(req.Reason?.Trim()))
+                return Results.BadRequest(new { error = OverrideReasonRequired });
 
             // T2b: these two routes are the operator-initiated move (board drag /
             // detail-view lane button), so the lane-change ledger trigger is the
@@ -671,7 +678,8 @@ public static class TaskCrudEndpoints
             return MoveResult(await transitions.MoveAsync(
                 jobId, req.TargetState, watchPath, ct, req.TargetIndex,
                 cause: OperatorActor(ctx), reason: req.Reason,
-                operatorOverride: req.OperatorOverride));
+                operatorOverride: req.OperatorOverride,
+                archiveOverride: req.ArchiveOverride));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         group.MapPost("/{jobId}/move", async (string jobId, string? project, string? watchPath, MoveJobRequest req,
@@ -689,11 +697,19 @@ public static class TaskCrudEndpoints
             // It needs a written reason, checked here at the boundary.
             if (req.OperatorOverride && !CompletionContractPolicy.IsUsableReason(req.Reason?.Trim()))
                 return Results.BadRequest(new { error = OverrideReasonRequired });
+            if (req.ArchiveOverride && req.TargetState != TaskStates.Archive)
+                return Results.BadRequest(new { error = "archiveOverride is valid only for a move to 7-archive." });
+            if (req.ArchiveOverride && (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal owner
+                || owner.User.Role != StudioRoles.Owner))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            if (req.ArchiveOverride && !CompletionContractPolicy.IsUsableReason(req.Reason?.Trim()))
+                return Results.BadRequest(new { error = OverrideReasonRequired });
 
             return MoveResult(await transitions.MoveAsync(
                 jobId, req.TargetState, watchPath, ct, req.TargetIndex,
                 cause: OperatorActor(ctx), reason: req.Reason,
-                operatorOverride: req.OperatorOverride));
+                operatorOverride: req.OperatorOverride,
+                archiveOverride: req.ArchiveOverride));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         // Lift a folder out of 3a-failed-pickup back into 2-ready and
@@ -796,10 +812,15 @@ public static class TaskCrudEndpoints
             ModelRoutingPolicyRegistry modelRouting,
             IModelRoutingModeProvider routingMode,
             CliRouter cliRouter,
+            IConfiguration configuration,
             CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(req.Title))
                 return Results.BadRequest("Title is required");
+            if (configuration.GetValue("DeliveryChain:Guarded", true)
+                && AcceptanceIntegrationPolicy.IsIntegrationRequiredAtCreation(req)
+                && req.TargetState is (TaskStates.HumanReview or TaskStates.Completed or TaskStates.Archive))
+                return Results.BadRequest(new { error = "Create the card in an earlier lane, then complete its integration and review before entering a protected lane." });
 
             // A networked human principal is the initiating identity. The
             // attribution header must never override the authenticated user.
@@ -1008,6 +1029,15 @@ public static class TaskCrudEndpoints
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var success = mutations.SetJobTaskType(jobId, req.TaskType, watchPath);
             return success ? Results.Ok() : Results.NotFound();
+        });
+
+        group.MapPut("/{jobId}/requires-integration", (string jobId, string? project,
+            string? watchPath, SetJobRequiresIntegrationRequest req,
+            TaskMutationService mutations, AgentStudio.Registry.ProjectRegistry projects) =>
+        {
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            return mutations.SetJobRequiresIntegration(jobId, req.RequiresIntegration, watchPath)
+                ? Results.Ok() : Results.NotFound();
         });
 
         // Explicit content release for references.dependsOn edges with

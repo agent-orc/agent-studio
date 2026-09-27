@@ -18,7 +18,7 @@ public sealed class AcceptanceIntegrationPolicyTests
     [InlineData(MergeIntoIntegrationOutcome.Error, false, true, AcceptedIntegrationLaneDecision.ReturnToHumanReview)]
     [InlineData(MergeIntoIntegrationOutcome.Conflict, false, true, AcceptedIntegrationLaneDecision.ReturnToHumanReview)]
     [InlineData(MergeIntoIntegrationOutcome.AgentRoundRequired, false, true, AcceptedIntegrationLaneDecision.ReturnToHumanReview)]
-    [InlineData(MergeIntoIntegrationOutcome.NoTaskBranch, true, true, AcceptedIntegrationLaneDecision.Complete)]
+    [InlineData(MergeIntoIntegrationOutcome.NoTaskBranch, true, true, AcceptedIntegrationLaneDecision.ReturnToHumanReview)]
     [InlineData(MergeIntoIntegrationOutcome.NoTaskBranch, false, false, AcceptedIntegrationLaneDecision.Complete)]
     public void WorkerOutcomeMatrix_DecidesAcceptedLane(
         MergeIntoIntegrationOutcome outcome,
@@ -64,6 +64,33 @@ public sealed class AcceptanceIntegrationPolicyTests
             TaskType = TaskTypes.Chore,
             NoBranchExpected = true,
         }));
+    }
+
+    [Fact]
+    public void RepositoryChangeOverridesAConfiguredCodeFreeClassAndCardTitle()
+    {
+        var card = new TaskInfo
+        {
+            Title = "Documentation only",
+            TaskType = "concept",
+            NoBranchExpected = true,
+            RequiresIntegration = false,
+            Commits = [new TaskCommitInfo { Sha = new string('a', 40) }],
+        };
+        Assert.True(AcceptanceIntegrationPolicy.IsIntegrationRequired(card));
+        Assert.False(AcceptanceIntegrationPolicy.IsIntegrationRequired(card with
+        {
+            Commits = [], RequiresIntegration = false,
+        }));
+    }
+
+    [Fact]
+    public void CreationClass_CannotUseATitleToEnterAProtectedLane()
+    {
+        Assert.True(AcceptanceIntegrationPolicy.IsIntegrationRequiredAtCreation(
+            new CreateTaskRequest { Title = "Documentation only", Mode = TaskModes.Coding }));
+        Assert.False(AcceptanceIntegrationPolicy.IsIntegrationRequiredAtCreation(
+            new CreateTaskRequest { Title = "Code-free decision", Mode = TaskModes.Concept }));
     }
 
     [Theory]
