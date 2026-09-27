@@ -78,8 +78,9 @@ public record ProjectSettings
     /// <summary>
     /// Canonical execution placement, independent from pickup intent.
     /// <see cref="ExecutionLocations.Local"/> selects the in-process runner;
-    /// any other value is the registered remote runner id. Null is accepted
-    /// only for legacy records and resolves through
+    /// a registered remote runner id is an explicit pin; `class:linux`,
+    /// `class:windows`, or `class:macos` selects any matching capable host.
+    /// Null is accepted only for legacy records and resolves through
     /// <see cref="ProjectExecutionPolicy"/>.
     /// </summary>
     public string? ExecutionLocation { get; init; }
