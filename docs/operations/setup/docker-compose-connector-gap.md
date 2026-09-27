@@ -85,3 +85,10 @@ principal credentials in a persistent named volume without operator token
 handling. The source-built path is the verified install path for this checkout;
 the published-image path is checked after release. See
 [Docker operations](./docker.md) for the commands and the route coverage limit.
+
+The reconciled installation also starts a separate review host principal. The
+Studio API compatibility process rejects non-versioned `/api/*` routes while
+Task Server proxy mode is configured, so it cannot write a second task store.
+The browser's versioned routes go through the BFF with an exact Origin
+allowlist. LAN exposure uses the optional HTTPS edge; the Connector's fixed
+loopback settings have not changed.
