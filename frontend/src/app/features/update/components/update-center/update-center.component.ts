@@ -73,7 +73,7 @@ export class UpdateCenterComponent implements OnDestroy {
 
   formatDate(value: string | null | undefined): string {
     if (!value) return 'Time unknown';
-    return new Intl.DateTimeFormat(undefined, {
+    return new Intl.DateTimeFormat('en-US', {
       dateStyle: 'medium', timeStyle: 'short',
     }).format(new Date(value));
   }

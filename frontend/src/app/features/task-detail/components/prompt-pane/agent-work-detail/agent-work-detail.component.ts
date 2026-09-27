@@ -66,7 +66,7 @@ export class AgentWorkDetailComponent implements OnInit {
   callTime(ts: string | null): string {
     if (!ts) return '';
     const d = new Date(ts);
-    return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString();
+    return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('en-US');
   }
 
   /** Single-line preview of a call's argument; dash placeholder when empty. */

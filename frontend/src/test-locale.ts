@@ -9,6 +9,8 @@
  * that formats without an explicit locale keeps working for the user's locale
  * at runtime; only the test process is made deterministic here.
  *
+ * Product formatters specify their locale explicitly; this fallback also
+ * keeps existing test expectations and third-party calls deterministic.
  * Calls that pass an explicit locale are left untouched.
  */
 const DEFAULT_LOCALE = 'en-US';
@@ -16,7 +18,9 @@ const DEFAULT_LOCALE = 'en-US';
 type LocaleArg = string | string[] | undefined;
 
 const withDefaultLocale = (locales: LocaleArg): LocaleArg =>
-  locales === undefined ? DEFAULT_LOCALE : locales;
+  locales === undefined || (Array.isArray(locales) && locales.length === 0)
+    ? DEFAULT_LOCALE
+    : locales;
 
 const numberToLocaleString = Number.prototype.toLocaleString;
 Number.prototype.toLocaleString = function (this: number, locales?: LocaleArg, options?: Intl.NumberFormatOptions) {
@@ -52,7 +56,7 @@ function pinDefaultLocale<T extends object>(original: T): T {
   });
 }
 
-for (const name of ['NumberFormat', 'DateTimeFormat', 'RelativeTimeFormat', 'ListFormat', 'PluralRules', 'Collator'] as const) {
+for (const name of ['NumberFormat', 'DateTimeFormat', 'RelativeTimeFormat', 'ListFormat', 'PluralRules', 'Collator', 'DisplayNames', 'Segmenter', 'DurationFormat'] as const) {
   const original = (Intl as unknown as Record<string, object | undefined>)[name];
   if (original) {
     Object.defineProperty(Intl, name, { value: pinDefaultLocale(original), configurable: true, writable: true });

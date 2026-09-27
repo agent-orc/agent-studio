@@ -46,5 +46,5 @@ export function describeDiffSize(text: string | null | undefined): string {
   const m = measureDiff(text);
   const size = m.bytes >= 1024 ? `${Math.round(m.bytes / 1024)} KB` : `${m.bytes} B`;
   const lineLabel = m.lines === 1 ? 'line' : 'lines';
-  return `${m.lines.toLocaleString()} ${lineLabel} · ${size}`;
+  return `${m.lines.toLocaleString('en-US')} ${lineLabel} · ${size}`;
 }

@@ -111,7 +111,7 @@ export class ProjectMetaCycleSectionComponent implements OnInit, OnDestroy {
     try {
       const d = new Date(iso);
       if (Number.isNaN(d.getTime())) return iso;
-      return d.toLocaleTimeString();
+      return d.toLocaleTimeString('en-US');
     } catch {
       return iso;
     }

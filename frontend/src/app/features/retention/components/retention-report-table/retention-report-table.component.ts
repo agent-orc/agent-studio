@@ -44,7 +44,7 @@ export class RetentionReportTableComponent {
   date(value: string | null | undefined): string {
     if (!value) return '–';
     const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? '–' : date.toLocaleDateString();
+    return Number.isNaN(date.getTime()) ? '–' : date.toLocaleDateString('en-US');
   }
 
   private sortValue(action: RetentionAction, key: SortKey): string | number {

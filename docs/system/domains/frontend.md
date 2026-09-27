@@ -55,6 +55,13 @@ the domains it broke without hiding the domains that succeeded.
 
 ## Entry Points
 
+Product calls to `toLocaleString`, `toLocaleDateString`, `toLocaleTimeString`,
+and `Intl` formatters pass an explicit locale. The current product formatting
+locale is `en-US`; `frontend/scripts/check-explicit-locales.mjs` enforces this
+contract in `lint:structure`. The unit-test setup in `frontend/src/test-locale.ts`
+pins calls without a locale to `en-US`, including calls from dependencies, so
+the suite is independent of the workstation's operating-system locale.
+
 - [frontend/AGENTS.md](../../../frontend/AGENTS.md) contains frontend-scoped agent
   rules and wins for files under `frontend/`.
 - [Stable view URLs](../contracts/stable-view-urls.md) defines the canonical,

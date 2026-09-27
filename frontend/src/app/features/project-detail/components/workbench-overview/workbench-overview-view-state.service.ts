@@ -52,7 +52,7 @@ const DEFAULT_DIRECTIONS: Record<Exclude<WorkbenchSortKey, 'default'>, Workbench
 @Injectable()
 export class WorkbenchOverviewViewStateService {
   private readonly destroyRef = inject(DestroyRef);
-  private readonly collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+  private readonly collator = new Intl.Collator('en-US', { numeric: true, sensitivity: 'base' });
   private readonly now = inject(NowTickService).now;
   private scopeKey = 'all';
 

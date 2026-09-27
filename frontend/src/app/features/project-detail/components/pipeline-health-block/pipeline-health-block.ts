@@ -32,7 +32,7 @@ export class PipelineHealthBlockComponent implements OnDestroy {
   }
 
   drainRate(lane: PipelineLaneDrainHealth): string {
-    return `${lane.completedPerHour.toLocaleString(undefined, { maximumFractionDigits: 1 })}/h`;
+    return `${lane.completedPerHour.toLocaleString('en-US', { maximumFractionDigits: 1 })}/h`;
   }
 
   private refresh(): void {

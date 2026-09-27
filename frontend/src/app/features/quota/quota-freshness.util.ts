@@ -14,7 +14,7 @@ export function quotaProbeFailureLabel(snapshot: QuotaSnapshot): string | null {
   if (!snapshot.probeFailedAt) return null;
   const failedMs = Date.parse(snapshot.probeFailedAt);
   const time = Number.isFinite(failedMs)
-    ? new Date(failedMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+    ? new Date(failedMs).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
     : 'unknown time';
   const cli = snapshot.cliType.toLowerCase();
   const version = normalizedVersion(snapshot.cliVersion);

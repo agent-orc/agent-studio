@@ -168,7 +168,7 @@ describe('buildRunActivityBadge — 3-progress run states (ASS-1751)', () => {
       );
       expect(badge!.kind).toBe('failed-backoff');
       expect(badge!.tone).toBe('failed');
-      const clock = new Date(backoffUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const clock = new Date(backoffUntil).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
       expect(badge!.label).toBe(`failed · Backoff bis ${clock}`);
       expect(badge!.tooltip.body).toContain('Versuch:');
       expect(badge!.tooltip.body).toContain('git push rejected');
@@ -195,7 +195,7 @@ describe('buildRunActivityBadge — 3-progress run states (ASS-1751)', () => {
         makeJob({ kind: 'failed-idle', backoffUntil, attempt: 2 }),
         NOW,
       );
-      const clock = new Date(backoffUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const clock = new Date(backoffUntil).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
       expect(badge!.kind).toBe('failed-backoff');
       expect(badge!.label).toBe(`failed · Backoff bis ${clock}`);
     });
