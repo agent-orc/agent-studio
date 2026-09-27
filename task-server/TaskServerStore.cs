@@ -3670,6 +3670,7 @@ public sealed partial class TaskServerStore
             """, ct, ("$version", CurrentSchemaVersion), ("$now", Iso(UtcNow)));
         await ApplyReviewMigrationAsync(connection, ct);
         await ApplyFailureFingerprintMigrationAsync(connection, ct);
+        await ApplyGateMigrationAsync(connection, ct);
         // Studio route-ownership P1 "task detail and hosts" bundle
         // (docs/studio-route-ownership/index.html): each group below owns a
         // disjoint set of new tables and touches no other group's schema.
@@ -3945,7 +3946,8 @@ public sealed partial class TaskServerStore
     }
 
     private static bool RequiresResultEnvelope(string outcome)
-        => outcome.Trim().ToLowerInvariant() is "success" or "done" or "noop" or "no-op";
+        => outcome.Trim().ToLowerInvariant() is "success" or "done" or "noop" or "no-op"
+            or "successfulcompletion";
 
     private static void ValidateImmutableSource(
         string runId,

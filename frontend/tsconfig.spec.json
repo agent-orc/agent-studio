@@ -6,6 +6,7 @@
   },
   "include": [
     "src/**/*.spec.ts",
+    "src/test-locale.ts",
     "src/**/*.d.ts"
   ]
 }

@@ -70,7 +70,8 @@ public sealed record ReviewCommandDto(
     string? CliType = null,
     string? Model = null,
     string? ThinkingLevel = null,
-    string BaselineMode = ReviewBaselineModes.TestFailures);
+    string BaselineMode = ReviewBaselineModes.TestFailures,
+    string WorkingSubdir = "");
 
 public sealed record ReviewPlanDto(
     IReadOnlyList<ReviewCommandDto> Commands,

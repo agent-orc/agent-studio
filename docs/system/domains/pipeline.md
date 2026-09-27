@@ -27,6 +27,39 @@ pipeline view.
   records the serialized-argument failure mode and the validation and resource
   caps required before parallel work starts.
 
+## Exact-SHA gate verdict cache
+
+`BuildTestGateRunner` reuses a deterministic terminal verdict only for an exact
+tested tree SHA and the same gate-profile digest. The digest includes the build
+profile, resolved verify commands and selection inputs, gate mode, pipeline
+definition version, and executor toolchain identity. A changed input is a miss.
+The local fallback identity includes the effective `dotnet --version` result
+from each command directory, as well as the `node` and `npm` versions when
+installed. Version probing fails closed for cache use: a failed probe runs the
+gate without reusing or recording a verdict.
+The lookup runs after exact-SHA materialization and before project preparation,
+so a hit skips preparation and the verify suite. A command-selection adviser
+defers lookup until the resolved plan is known.
+The cache never substitutes a result for a missing or unverified SHA, an
+infrastructure failure, or a skipped gate. It is independent of the preparation
+dependency cache and the Remote Review baseline-result cache.
+
+`GateResultCache` stores the original run's evidence and completion time under
+local application data. It retains at most 128 entries per project for 30 days,
+with a 2 MB limit per entry. The runner serializes requests for one project, so
+concurrent requests for the same key cannot both execute. `GateVerdictSource`
+marks `Executed` and `CacheHit` separately in the result and pipeline step;
+`gate_verdict_cache_hit` carries the original run ID, time, SHA, digest and
+evidence path in the task timeline. A cached step records zero execution time.
+
+Operators can read `GET /api/projects/{projectName}/gate-result-cache` for the
+same-SHA re-test rate: repeated SHA executions divided by executions in the
+latest 4,096 execution window. Cache hits are counted separately. `DELETE` on
+the same endpoint invalidates that project's verdicts and measurement window.
+These metrics measure local exact-subject gate requests; they do not estimate
+batch green rate or answer the staging-lane decision in the
+[Gates Dossier](../../operations/gates/index.html#sect5).
+
 ## Key Code
 
 - [Model Routing Policy](./model-routing-policy.md) is the canonical model and
@@ -159,6 +192,27 @@ steer the pipeline in this policy version.
   rewrite in-flight work. The code-owned default definition is version zero;
   the first project override becomes version one. Successful cleanup of a
   canonical Remote Review report creates the decision run transactionally.
+- `contracts/TaskServer.Contracts/GateContracts.cs`,
+  `task-server/TaskServerGateStore.cs`, `runner/RemoteGateDaemon.cs`, and
+  `orchestrator-engine/OrchestrationStageHandlers.cs`: the dedicated claimable
+  gate pilot. The Task Server persists the immutable result subject, one live
+  attempt, a fenced lease, phase events, cleanup and the report. The Agent Host
+  gate role materializes the declared ref or digest-pinned bundle in the Review
+  workspace namespace and executes only the frozen plan. The Engine dispatches
+  the post-build-test plan through the public Task API when
+  `REMOTE_POST_BUILD_TEST_GATE_ENABLED=1`; the switch defaults off, leaving the
+  existing backend gate active. Review plans carry each verify command's working
+  subdirectory as a typed field. The Review Executor resolves it inside the
+  candidate and baseline workspaces, and the gate dispatcher preserves it for
+  the Gate Executor's exact-subject run. A lost lease waits for
+  positive host cleanup attestation before a higher-fence retry and otherwise
+  ends as GateInfra.
+  `GET /api/v1/projects/{projectId}/tasks/{taskIdentity}/gates` exposes the
+  Studio read model from Task Server facts. Host snapshots and Studio client
+  summaries derive `activeGateCount` from claimed, materializing, running,
+  reporting, and cleaning Task Server attempts. The registered-host canary and
+  throughput comparison remain the operator's rollout gate; bridge teardown
+  is a separate card.
 - `backend/Features/TestRuns/`: the separate project test-run lifecycle. These
   runs belong to commits rather than cards and expose planned order, scope,
   host, state, result, duration, and derived card attachments through

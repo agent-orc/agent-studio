@@ -23,6 +23,7 @@ public static class EndpointMapping
         var tasks = app.MapGroup("/api/tasks")
             .AddEndpointFilter<TaskOperationTimingFilter>();
         tasks.MapTaskCrudEndpoints();
+        tasks.MapTaskCoreEndpoint();
         tasks.MapBatchMoveEndpoints();
         tasks.MapTaskFilesEndpoints();
         tasks.MapTaskRunnerEndpoints();
@@ -79,6 +80,7 @@ public static class EndpointMapping
         app.MapSecurityReviewEndpoints();
         app.MapDesignSurfaceEndpoints();
         app.MapProjectTokenUsageEndpoints();
+        app.MapUsageCockpitEndpoints();
         app.MapPipelineHealthEndpoints();
         app.MapFailureInterventionEndpoints();
         app.MapTokenPricingEndpoints();

@@ -1020,6 +1020,26 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "MachineBound")]
+    [Trait("Category", "ReviewFlaky")]
+    public async Task Verification_uses_the_typed_working_subdirectory()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchWithFileAsync(
+            "task/typed-directory", "frontend/delivery.txt", "subject");
+        var command = new ReviewCommandDto("verify-directory", "build-tests",
+            PosixShell.RequirePath(), ["-c", "test -f delivery.txt"],
+            WorkingSubdir: "frontend");
+        var (workspace, _) = Workspace("attempt-typed-directory", subjectSha,
+            [command], 26116, resultRef: "refs/heads/task/typed-directory");
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal("Pass", evidence.Outcome);
+        Assert.Equal(0, CandidateVerification(evidence).ExitCode);
+    }
+
+    [Fact]
     public async Task Baseline_result_is_reused_for_same_repository_sha_and_command()
     {
         var (_, subjectSha) = await SeedSubjectBranchAsync();

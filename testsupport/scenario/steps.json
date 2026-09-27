@@ -34,14 +34,14 @@
       "title": "Run with the fake CLI",
       "level": "smoke",
       "description": "The runner drives the fake coding CLI, which reports the fixture's known-passing and known-failing checks, commits, and pushes.",
-      "expectedOutcome": "The task reaches 4-auto-review, a new commit lands on the seeded repository's default branch, and the run's evidence artifacts include a results log naming both checks."
+      "expectedOutcome": "The task reaches 4-auto-review with an immutable result handoff, a new commit lands on the seeded repository's default branch, and the run's evidence artifacts include a results log naming both checks. In Compose, Studio BFF stays stopped during the run."
     },
     {
       "id": "auto-review",
       "title": "Auto-review",
       "level": "smoke",
       "description": "A review subject is opened against the completed run, claimed, reported as passing, and cleaned up, queuing an orchestration run that is settled to completion.",
-      "expectedOutcome": "The task reaches 5-human-review."
+      "expectedOutcome": "The same task reaches 5-human-review while Studio BFF remains stopped in Compose."
     },
     {
       "id": "orchestrator-chat-turn",

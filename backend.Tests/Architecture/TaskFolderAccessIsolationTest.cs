@@ -126,6 +126,8 @@ public class TaskFolderAccessIsolationTest
                 "Moves and replaces dependency caches under the OS review-workspace temp root, never task storage.",
             ["backend/Features/Pipeline/BuildTestGateRunner.cs"] =
                 "Deletes only disposable diagnostic clones and cache entries under the gate's temp roots, never task folders.",
+            ["backend/Features/Pipeline/GateResultCache.cs"] =
+                "Deletes only the hashed per-project gate-result cache under local application data, never task storage.",
 
             // Re-added after the structure migration folded the src/ executor
             // projects back into backend/ (the scan covers them again):

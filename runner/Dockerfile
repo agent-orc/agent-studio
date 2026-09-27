@@ -2,7 +2,7 @@
 # CLI inside this container is the container-default execution boundary: the
 # container is the isolation, the CLI itself runs unsandboxed within it.
 # Build context is the repository root: docker build -f runner/Dockerfile .
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0.301 AS build
 ARG VERSION=0.0.0-dev
 ARG SHA=unknown
 WORKDIR /src
