@@ -204,7 +204,7 @@ export class OrchestratorFeedComponent {
     try {
       const d = new Date(iso);
       if (Number.isNaN(d.getTime())) return iso;
-      return d.toLocaleString();
+      return d.toLocaleString('en-US');
     } catch {
       return iso;
     }
@@ -215,7 +215,7 @@ export class OrchestratorFeedComponent {
     if (Number.isNaN(date.getTime())) return iso;
     const today = new Date();
     if (date.toDateString() === today.toDateString()) return 'Today';
-    return date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+    return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
   }
 
   projectColor(project: string): string {

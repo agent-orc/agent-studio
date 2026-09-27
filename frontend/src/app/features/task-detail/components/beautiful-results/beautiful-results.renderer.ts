@@ -33,7 +33,7 @@
  */
 import { Marked, type MarkedExtension, type Tokens } from 'marked';
 import DOMPurify from 'dompurify';
-import { html as diff2htmlRender } from 'diff2html';
+import { html as diff2htmlRender } from 'diff2html/lib-esm/diff2html.js';
 import { protectTechnicalMarkdown } from 'coding-agent-chat/markdown';
 import { resolveProtocolImageSrc } from '../protocol-pane/protocol-image-resolver';
 import { detectSourceRef } from './source-ref';

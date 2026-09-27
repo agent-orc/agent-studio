@@ -125,7 +125,7 @@ export class RegressionRadarComponent implements OnInit, OnDestroy {
     if (!r?.generatedAt) return '';
     const d = new Date(r.generatedAt);
     if (Number.isNaN(d.getTime())) return '';
-    return `Generated ${d.toLocaleString()}`;
+    return `Generated ${d.toLocaleString('en-US')}`;
   });
 
   readonly hasData = computed(() => {

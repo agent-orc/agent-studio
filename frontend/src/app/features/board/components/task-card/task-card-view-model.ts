@@ -317,7 +317,7 @@ export function formatTokens(n: number): string {
 
 export function formatShortTime(iso: string): string {
   try {
-    return new Date(iso).toLocaleString();
+    return new Date(iso).toLocaleString('en-US');
   } catch {
     return iso;
   }
@@ -1095,7 +1095,7 @@ export function buildQuotaWaitBadge(wait: TaskInfo['quotaWait'], nowMs: number):
   const resetMs = Date.parse(wait.resetAt);
   if (!Number.isFinite(resetMs)) return null;
   const minutesLeft = Math.max(0, Math.ceil((resetMs - nowMs) / 60_000));
-  const resetLabel = new Date(resetMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const resetLabel = new Date(resetMs).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
   const remaining = minutesLeft > 0 ? `${minutesLeft} min remaining` : 'reset due · refreshing';
   return {
     label: `Waiting for quota reset ${resetLabel} · ${remaining}`,
@@ -1367,7 +1367,7 @@ export function buildAutoReviewProcessBadge(job: TaskInfo, status: AutoReviewSta
     label: `waiting ${wait}`,
     tone: 'waiting',
     tooltip: `Waiting for a post-processing slot since ${new Date(
-      Number.isFinite(enteredAt) ? enteredAt : nowMs).toLocaleString()}.`,
+      Number.isFinite(enteredAt) ? enteredAt : nowMs).toLocaleString('en-US')}.`,
   };
 }
 
@@ -1498,7 +1498,7 @@ export function buildExternalDoneBadge(job: TaskInfo): ExternalDoneBadge | null 
 function formatExternalCompletionDate(iso: string | null | undefined): string {
   if (!iso) return '';
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString();
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-US');
 }
 
 /** Host-level attention follows the current acute lane, never an old verdict. */
@@ -1732,8 +1732,8 @@ function dependencyTooltip(
 }
 
 export function buildLoopTooltip(al: AutoLoopSnapshot): string {
-  const tokenLine = `${al.tokensUsed.toLocaleString()} / ${al.maxTokens.toLocaleString()} orchestrator tokens`;
-  const startedAt = (() => { try { return new Date(al.startedAt).toLocaleString(); } catch { return al.startedAt; } })();
+  const tokenLine = `${al.tokensUsed.toLocaleString('en-US')} / ${al.maxTokens.toLocaleString('en-US')} orchestrator tokens`;
+  const startedAt = (() => { try { return new Date(al.startedAt).toLocaleString('en-US'); } catch { return al.startedAt; } })();
   const lastQ = (al.lastQuestion ?? '').slice(0, 160);
   const lastErr = al.lastError ? `\nLast error: ${al.lastError}` : '';
   return `Auto-loop: orchestrator answering NEEDS_INPUT for this task.\n` +
@@ -1743,7 +1743,7 @@ export function buildLoopTooltip(al: AutoLoopSnapshot): string {
 
 export function buildPendingTooltip(pi: PendingIntent): string {
   const when = (() => {
-    try { return new Date(pi.savedAt).toLocaleString(); }
+    try { return new Date(pi.savedAt).toLocaleString('en-US'); }
     catch { return pi.savedAt; }
   })();
   const preview = (pi.prompt ?? '').slice(0, 120);

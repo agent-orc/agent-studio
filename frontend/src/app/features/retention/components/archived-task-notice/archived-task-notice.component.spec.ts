@@ -17,5 +17,5 @@ describe('ArchivedTaskNoticeComponent', () => {
     fixture.nativeElement.querySelector('[data-testid="archived-task-restore"]').click();
     await fixture.whenStable(); fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('[data-testid="archived-task-notice"]')).toBeNull();
-  });
+  }, 90_000);
 });

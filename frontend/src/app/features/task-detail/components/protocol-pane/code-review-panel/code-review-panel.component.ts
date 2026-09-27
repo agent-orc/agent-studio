@@ -323,9 +323,9 @@ export class CodeReviewPanelComponent implements OnInit {
       costUsd: entry.estimatedApiCostUsd,
       priceKnown: entry.priceKnown === true,
       context: [
-        `${input.toLocaleString()} input + ${output.toLocaleString()} output`,
-        `${cacheRead.toLocaleString()} cache read + ${cacheWrite.toLocaleString()} cache write`,
-        `${total.toLocaleString()} total tokens`,
+        `${input.toLocaleString('en-US')} input + ${output.toLocaleString('en-US')} output`,
+        `${cacheRead.toLocaleString('en-US')} cache read + ${cacheWrite.toLocaleString('en-US')} cache write`,
+        `${total.toLocaleString('en-US')} total tokens`,
         `Pricing date: ${entry.runAt || 'recorded execution time'}.`,
       ].join('\n'),
     });
