@@ -215,26 +215,24 @@ public sealed class WorkbenchDecisionService
             .ToArray();
 
         var descriptor = snapshot.Descriptor;
-        var receipt = new JsonObject
+        var receipt = DecisionRecordService.Receipt(new DecisionReceiptInput
         {
-            ["outcome"] = body.Outcome,
-            ["action"] = rework ? "rework-requested" : archive ? "archived" : "created-card",
-            ["state"] = rework ? "pending" : "succeeded",
-            ["operationId"] = body.OperationId,
-            ["sourceRevision"] = snapshot.Revision,
-            ["sourceFingerprint"] = snapshot.Fingerprint,
-            ["sourceEntryFingerprint"] = WorkbenchCatalogueService.ComputeEntryFingerprint(snapshot.EntryPath),
-            ["preparedAt"] = now,
-            ["preparedBy"] = actor,
-            ["confirmedAt"] = now,
-            ["confirmedBy"] = actor,
-            ["decidedAt"] = rework ? null : now,
-            ["spawnedTaskKeys"] = new JsonArray(spawned.Select(key => (JsonNode)key!).ToArray()),
-            ["responses"] = JsonSerializer.SerializeToNode(body.Responses, DraftJson),
-            ["cliType"] = body.CliType?.Trim(),
-            ["model"] = body.Model?.Trim(),
-            ["thinkingLevel"] = body.ThinkingLevel?.Trim(),
-        };
+            Outcome = body.Outcome,
+            Action = rework ? "rework-requested" : archive ? "archived" : "created-card",
+            State = rework ? "pending" : "succeeded",
+            OperationId = body.OperationId,
+            SourceRevision = snapshot.Revision,
+            SourceFingerprint = snapshot.Fingerprint,
+            SourceEntryFingerprint = WorkbenchCatalogueService.ComputeEntryFingerprint(snapshot.EntryPath),
+            At = now,
+            Actor = actor,
+            DecidedAt = rework ? null : now,
+            SpawnedTaskKeys = spawned,
+            Responses = body.Responses,
+            CliType = body.CliType?.Trim(),
+            Model = body.Model?.Trim(),
+            ThinkingLevel = body.ThinkingLevel?.Trim(),
+        });
         if (archive) receipt["reason"] = body.ArchiveReason!.Trim();
         else if (!rework) receipt["taskDraft"] = JsonSerializer.SerializeToNode(gate.Draft, DraftJson);
         descriptor["decision"] = receipt;
@@ -271,13 +269,7 @@ public sealed class WorkbenchDecisionService
                 history = [];
                 descriptor["lifecycleHistory"] = history;
             }
-            history.Add(new JsonObject
-            {
-                ["state"] = lifecycleState,
-                ["editedBy"] = actor,
-                ["editedAt"] = now,
-                ["note"] = note,
-            });
+            history.Add(DecisionRecordService.HistoryEntry(lifecycleState, actor, now, note));
         }
         else
         {
@@ -294,13 +286,7 @@ public sealed class WorkbenchDecisionService
                     history = [];
                     descriptor["lifecycleHistory"] = history;
                 }
-                history.Add(new JsonObject
-                {
-                    ["state"] = "review-requested",
-                    ["editedBy"] = actor,
-                    ["editedAt"] = now,
-                    ["note"] = note,
-                });
+                history.Add(DecisionRecordService.HistoryEntry("review-requested", actor, now, note));
             }
         }
 

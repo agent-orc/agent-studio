@@ -40,6 +40,7 @@ public static class RemoteDispatchEligibility
         ArgumentNullException.ThrowIfNull(references);
 
         return ProjectExecutionPolicy.AllowsAutomaticPickup(project)
+               && !TaskKinds.IsDecision(task.Kind)
                && ProjectExecutionPolicy.IsAssignedRemote(project, runnerId, runnerName)
                && AgentTypes.IsAutoPickupEligible(task.Agent)
                && !TaskSlugs.IsHumanDecisionNeeded(task.Id)
