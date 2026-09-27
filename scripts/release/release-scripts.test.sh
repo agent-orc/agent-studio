@@ -19,7 +19,7 @@ for executable in \
     orchestrator-engine/orchestrator-engine \
     agent-host-linux-x64/agent-host \
     agent-host-osx-arm64/agent-host \
-    setup/agent-orchestrator-setup
+    setup/agent-studio-setup
 do
     printf '#!/bin/sh\nexit 0\n' >"$publish_root/$executable"
     chmod 0755 "$publish_root/$executable"
@@ -30,13 +30,15 @@ SOURCE_DATE_EPOCH=1 "$repo_root/scripts/release/package-release.sh" \
     1.2.3 0123456789abcdef "$publish_root" "$frontend_root" "$output_root"
 (
     cd "$output_root"
-    [ "$(find . -maxdepth 1 -name '*.tar.gz' | wc -l)" -eq 3 ]
+    [ "$(find . -maxdepth 1 -name '*.tar.gz' | wc -l)" -eq 4 ]
     [ -x agent-orchestrator-setup ]
+    [ -x agent-studio-setup ]
     sha256sum -c SHA256SUMS
     tar -tzf agent-orchestrator-1.2.3-linux-x64.tar.gz \
         | grep -q 'agent-orchestrator-1.2.3-linux-x64/update.sh'
     tar -tzf agent-host-1.2.3.tar.gz | grep -q 'agent-host-1.2.3/osx-arm64/agent-host'
     tar -tzf agent-studio-1.2.3.tar.gz | grep -q 'agent-studio-1.2.3/browser/index.html'
+    tar -tzf agent-studio-compose-1.2.3.tar.gz | grep -q 'agent-studio-compose-1.2.3/docker-compose.yml'
 )
 
 fake_systemctl="$test_root/systemctl"

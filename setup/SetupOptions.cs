@@ -42,6 +42,7 @@ internal sealed record SetupOptions(
     {
         var mode = SetupMode.Guided;
         var target = SetupTarget.Systemd;
+        var targetSpecified = false;
         string? releaseVersion = null;
         string? releaseDirectory = null;
         string? serverUrl = null;
@@ -89,6 +90,7 @@ internal sealed record SetupOptions(
                     break;
                 case "--target":
                     target = ParseTarget(ValueAt(index, "--target"));
+                    targetSpecified = true;
                     index++;
                     break;
                 case "--release-version":
@@ -167,12 +169,14 @@ internal sealed record SetupOptions(
             }
         }
 
+        if (!targetSpecified && mode == SetupMode.ControlPlane)
+            target = SetupTarget.Docker;
         if (role is not ("coding" or "review"))
             throw new ArgumentException("--role must be coding or review.");
         if (nonInteractive && mode == SetupMode.Guided && !showHelp && !showVersion)
             throw new ArgumentException("--non-interactive requires --mode.");
-        if (target == SetupTarget.Docker && mode != SetupMode.ControlPlane)
-            throw new ArgumentException("--target docker is supported only with --mode control-plane.");
+        if (target == SetupTarget.Docker && mode is not (SetupMode.ControlPlane or SetupMode.Guided))
+            throw new ArgumentException("--target docker is supported only with --mode control-plane or studio.");
 
         return new SetupOptions(
             mode,

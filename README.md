@@ -33,6 +33,12 @@
 
 ## Install with Docker
 
+For a release installation on Windows or Linux, download the
+[Agent Studio installer](./docs/operations/setup/install.md). It pins the
+published images, starts the one-machine Docker stack, and verifies health.
+
+For a source checkout, run:
+
 ```bash
 git clone https://github.com/agent-orc/agent-studio.git
 cd agent-studio

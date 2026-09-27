@@ -12,6 +12,8 @@ internal static class SetupApplication
     {
         try
         {
+            if (StudioSetup.Handles(args))
+                return await StudioSetup.RunAsync(args);
             var options = SetupOptions.Parse(args);
             if (options.ShowHelp)
             {
@@ -21,7 +23,7 @@ internal static class SetupApplication
             if (options.ShowVersion)
             {
                 Console.WriteLine(
-                    $"agent-orchestrator-setup {AssemblyVersion()}");
+                    $"agent-studio-setup {AssemblyVersion()}");
                 return 0;
             }
 
@@ -56,6 +58,8 @@ internal static class SetupApplication
             ? AskMode(prompter)
             : original.Mode;
         var options = original with { Mode = mode };
+        if (mode != SetupMode.ControlPlane && options.Target == SetupTarget.Docker)
+            options = options with { Target = SetupTarget.Systemd };
         var processes = new ProcessRunner(options.DryRun);
         var version = options.ReleaseVersion ?? ReleaseArtifacts.CurrentVersion();
 
@@ -76,7 +80,7 @@ internal static class SetupApplication
         await CheckRootAsync(processes);
         await CheckPlatformAsync(
             processes,
-            native: true,
+            native: !(mode == SetupMode.ControlPlane && options.Target == SetupTarget.Docker),
             controlPlane: mode is SetupMode.SingleMachine or SetupMode.ControlPlane,
             host: mode is SetupMode.SingleMachine or SetupMode.AgentHost);
 
@@ -461,6 +465,11 @@ internal static class SetupApplication
 
         if (!native)
         {
+            if (controlPlane)
+            {
+                Console.WriteLine("  Docker Engine and Compose are installed by the Linux control-plane bootstrap when absent.");
+                return;
+            }
             await RequireCommandAsync(processes, "docker", "Install Docker Engine from https://docs.docker.com/engine/install/.");
             var compose = await new ProcessRunner(dryRun: false).RunAsync(
                 "docker",
@@ -469,7 +478,7 @@ internal static class SetupApplication
             if (compose.ExitCode != 0)
                 throw new InvalidOperationException(
                     "Docker Compose v2 is required for the demo path. Install the Docker Compose plugin.");
-            Console.WriteLine("  [ok] Docker Compose v2 (demo only)");
+            Console.WriteLine("  [ok] Docker Compose v2");
             return;
         }
 
@@ -583,17 +592,15 @@ internal static class SetupApplication
     {
         Console.WriteLine();
         Console.WriteLine("Choose an onboarding path:");
-        Console.WriteLine("  1. Demo only (Docker, no repositories)");
-        Console.WriteLine("  2. Single machine (Control Plane and Agent Host)");
-        Console.WriteLine("  3. Multi-machine Control Plane");
-        Console.WriteLine("  4. Join this machine as an Agent Host");
-        return prompter.Ask("Selection", "2") switch
+        Console.WriteLine("  1. Single machine (Control Plane and Agent Host)");
+        Console.WriteLine("  2. Multi-machine Control Plane");
+        Console.WriteLine("  3. Join this machine as an Agent Host");
+        return prompter.Ask("Selection", "1") switch
         {
-            "1" => SetupMode.Demo,
-            "2" => SetupMode.SingleMachine,
-            "3" => SetupMode.ControlPlane,
-            "4" => SetupMode.AgentHost,
-            _ => throw new ArgumentException("Selection must be 1, 2, 3 or 4."),
+            "1" => SetupMode.SingleMachine,
+            "2" => SetupMode.ControlPlane,
+            "3" => SetupMode.AgentHost,
+            _ => throw new ArgumentException("Selection must be 1, 2, or 3."),
         };
     }
 
@@ -665,7 +672,6 @@ internal static class SetupApplication
 
             Usage:
               sudo ./agent-orchestrator-setup
-              ./agent-orchestrator-setup --mode demo [--demo-port 4011]
               sudo ./agent-orchestrator-setup --mode single
               sudo ./agent-orchestrator-setup --mode control-plane --server-url https://tasks.example.com
               sudo ./agent-orchestrator-setup --mode control-plane --target docker --server-url task-server-01.wg.internal
@@ -674,7 +680,7 @@ internal static class SetupApplication
 
             Options:
               --mode <demo|single|control-plane|agent-host>
-              --target <systemd|docker>   Control Plane runtime; systemd is the default. docker requires --mode control-plane and boots deploy/compose/control-plane/compose.yaml.
+              --target <systemd|docker>   Control Plane runtime; Docker is the default. docker boots deploy/compose/control-plane/compose.yaml.
               --release-version <X.Y.Z>   Release to install; defaults to this setup binary's version
               --release-dir <path>        Offline directory containing release archives and SHA256SUMS
               --listen-url <url>          Private Task Server listener (systemd target only)

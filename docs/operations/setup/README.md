@@ -3,15 +3,17 @@
 agent-orchestrator is a local Kanban board that drives your Claude Code, Codex, Copilot, or Gemini CLIs through a sequential task queue per watched project. The product pitch lives in [../../README.md](../../../README.md); the near-term direction lives in [../../ROADMAP.md](../../../ROADMAP.md). The hard rules every CLI driving the repo must follow are in [../../AGENTS.md](../../../AGENTS.md).
 
 This folder is the **operator-facing setup guide**.
-[getting-started.md](./getting-started.md) is the single new-user installation
-path. The other pages cover contributor builds, attaching a project, onboarding
+[install.md](./install.md) is the release installation path.
+[getting-started.md](./getting-started.md) links the release and source paths.
+The other pages cover contributor builds, attaching a project, onboarding
 an agent CLI, first tasks, and troubleshooting.
 
 ## Pages
 
 | File | Use it when |
 |---|---|
-| [getting-started.md](./getting-started.md) | The single new-user installation path: Docker Compose prerequisites, one start command, health checks, persistence, and troubleshooting - start here. |
+| [getting-started.md](./getting-started.md) | Choose the released installer or the source-checkout Docker workflow. |
+| [install.md](./install.md) | Released setup executable for Windows and Linux, one-machine Docker install, unattended answer file, update, rollback, uninstall, and native or remote paths. |
 | [docker.md](./docker.md) | One-box Docker Compose installation and operations: source build, published images, credentials, backup, update, and network binding. |
 | [contributor-setup.md](./contributor-setup.md) | Source-build workflow for contributors who need to edit, test, or debug Agent Studio itself. Not a product installation path. |
 | [onboard-a-project.md](./onboard-a-project.md) | Product workflow for project creation through the UI or API, central task-store rules, runtime activation, and troubleshooting. |

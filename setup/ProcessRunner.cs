@@ -91,10 +91,9 @@ internal sealed class ProcessRunner(bool dryRun)
         ProcessResult result;
         if (string.IsNullOrWhiteSpace(user))
         {
-            result = await inspectionRunner.RunAsync(
-                "/bin/sh",
-                ["-lc", shellCommand],
-                printOutput: false);
+            result = OperatingSystem.IsWindows()
+                ? await inspectionRunner.RunAsync("where.exe", [ShellName(command)], printOutput: false)
+                : await inspectionRunner.RunAsync("/bin/sh", ["-lc", shellCommand], printOutput: false);
         }
         else
         {
@@ -117,7 +116,7 @@ internal sealed class ProcessRunner(bool dryRun)
                 inspectCurrentUserDirectly ? userArguments.Skip(1) : userArguments,
                 printOutput: false);
         }
-        return result.ExitCode == 0 ? result.Output.Trim() : null;
+        return result.ExitCode == 0 ? result.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries)[0].Trim() : null;
     }
 
     private static string ShellName(string value)

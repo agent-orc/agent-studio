@@ -9,6 +9,44 @@ namespace AgentOrchestratorSetup.Tests;
 public sealed class SetupContractTests
 {
     [Fact]
+    public void StudioInstaller_DefaultsToDockerAndPreservesExplicitPort()
+    {
+        var request = StudioSetup.Parse(["--mode", "studio", "--port", "4111"]);
+
+        Assert.Equal("install", request.Action);
+        Assert.Equal("docker", request.Target);
+        Assert.Equal(4111, request.Port);
+        Assert.Equal("AGENT_STUDIO_VERSION=1.2.3\nSTUDIO_UI_BIND=127.0.0.1\nSTUDIO_UI_PORT=4111\nSTUDIO_TASKSERVER_PORT=5071\n",
+            StudioDockerInstaller.InitialEnvironment("1.2.3", request.Port));
+    }
+
+    [Fact]
+    public void StudioInstaller_AnswerFileAndCliOverrideAreDeterministic()
+    {
+        var file = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(file, "{\"mode\":\"studio\",\"target\":\"docker\",\"port\":4020,\"releaseVersion\":\"1.2.3\"}");
+            var request = StudioSetup.Parse(["--mode", "studio", "--unattended", file, "--port", "4040"]);
+
+            Assert.True(request.Unattended);
+            Assert.Equal("1.2.3", request.Version);
+            Assert.Equal(4040, request.Port);
+        }
+        finally { File.Delete(file); }
+    }
+
+    [Fact]
+    public void StudioInstaller_UpdateVersionKeepsOtherConfiguration()
+    {
+        var updated = StudioDockerInstaller.ReplaceVersion(
+            "AGENT_STUDIO_VERSION=1.2.3\nSTUDIO_UI_PORT=4040\n", "1.2.4");
+
+        Assert.Equal("AGENT_STUDIO_VERSION=1.2.4\nSTUDIO_UI_PORT=4040\n", updated);
+        Assert.Throws<InvalidDataException>(() => StudioDockerInstaller.ReplaceVersion("STUDIO_UI_PORT=4040", "1.2.4"));
+    }
+
+    [Fact]
     public async Task Agent_host_join_mints_a_bound_runner_credential()
     {
         var joinCredential = new string('j', 64);
@@ -274,11 +312,11 @@ public sealed class SetupContractTests
     }
 
     [Fact]
-    public void Target_DefaultsToSystemd()
+    public void ControlPlaneTarget_DefaultsToDocker()
     {
         var options = SetupOptions.Parse(["--mode", "control-plane"]);
 
-        Assert.Equal(SetupTarget.Systemd, options.Target);
+        Assert.Equal(SetupTarget.Docker, options.Target);
     }
 
     [Fact]

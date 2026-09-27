@@ -174,7 +174,7 @@ jobs:
           artifacts/publish/task-server/task-server --version | tee /tmp/task-server.version
           artifacts/publish/orchestrator-engine/orchestrator-engine --version | tee /tmp/orchestrator-engine.version
           artifacts/publish/agent-host-linux-x64/agent-host --version | tee /tmp/agent-host.version
-          artifacts/publish/setup/agent-orchestrator-setup --version | tee /tmp/setup.version
+          artifacts/publish/setup/agent-studio-setup --version | tee /tmp/setup.version
           grep -F "$VERSION" /tmp/task-server.version
           grep -F "$VERSION" /tmp/orchestrator-engine.version
           grep -F "$VERSION" /tmp/agent-host.version
@@ -184,7 +184,7 @@ jobs:
           grep -F "$SHA" /tmp/agent-host.version
           grep -F "$SHA" /tmp/setup.version
           test "$(od -An -tx1 -N4 artifacts/publish/agent-host-linux-x64/agent-host | tr -d ' \n')" = '7f454c46'
-          test "$(od -An -tx1 -N4 artifacts/publish/setup/agent-orchestrator-setup | tr -d ' \n')" = '7f454c46'
+          test "$(od -An -tx1 -N4 artifacts/publish/setup/agent-studio-setup | tr -d ' \n')" = '7f454c46'
           test "$(od -An -tx1 -N8 artifacts/publish/agent-host-osx-arm64/agent-host | tr -d ' \n')" = 'cffaedfe0c000001'
 
       - name: Create guided setup executable, three archives, and SHA-256 checksums
@@ -244,6 +244,18 @@ jobs:
           AGENT_STUDIO_VERSION: ${{ needs.version.outputs.version }}
         run: scripts/compose-smoke-test.sh
 
+      - name: Smoke Linux installer with published images
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          install_root="$RUNNER_TEMP/agent-studio-install-smoke"
+          answer_file="$RUNNER_TEMP/agent-studio-answers.json"
+          printf '{"mode":"studio","target":"docker","releaseVersion":"%s","installDirectory":"%s"}\n' "$VERSION" "$install_root" > "$answer_file"
+          trap 'artifacts/release/agent-studio-setup uninstall --install-dir "$install_root" --purge || true' EXIT
+          artifacts/release/agent-studio-setup --unattended "$answer_file" --release-dir artifacts/release
+          curl --fail --silent http://127.0.0.1:4011/healthz
+
       - name: Upload Linux release artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -291,6 +303,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'orchestrator-engine win-x64 publish failed.' }
           dotnet publish studio-bff/StudioBff.csproj @common --output artifacts/publish/studio-bff
           if ($LASTEXITCODE -ne 0) { throw 'studio-bff win-x64 publish failed.' }
+          dotnet publish setup/AgentOrchestratorSetup.csproj @common --output artifacts/publish/setup
+          if ($LASTEXITCODE -ne 0) { throw 'agent-studio-setup win-x64 publish failed.' }
 
       - name: Verify published identities
         env:
@@ -301,7 +315,8 @@ jobs:
           $checks = @(
             @{ Name = 'task-server'; Path = 'artifacts/publish/task-server/task-server.exe' },
             @{ Name = 'orchestrator-engine'; Path = 'artifacts/publish/orchestrator-engine/orchestrator-engine.exe' },
-            @{ Name = 'studio-bff'; Path = 'artifacts/publish/studio-bff/agent-studio-bff.exe' }
+            @{ Name = 'studio-bff'; Path = 'artifacts/publish/studio-bff/agent-studio-bff.exe' },
+            @{ Name = 'agent-studio-setup'; Path = 'artifacts/publish/setup/agent-studio-setup.exe' }
           )
           foreach ($check in $checks) {
             $output = & $check.Path '--version'
@@ -310,6 +325,14 @@ jobs:
             if ($output -notmatch [regex]::Escape($env:VERSION)) { throw "$($check.Name) does not report version $env:VERSION." }
             if ($output -notmatch [regex]::Escape($env:SHA)) { throw "$($check.Name) does not report SHA $env:SHA." }
           }
+
+      - name: Test Windows installer parser and CLI
+        shell: pwsh
+        run: |
+          dotnet test setup.Tests/AgentOrchestratorSetup.Tests.csproj --configuration Release --verbosity quiet
+          if ($LASTEXITCODE -ne 0) { throw 'Windows installer tests failed.' }
+          & artifacts/publish/setup/agent-studio-setup.exe --help
+          if ($LASTEXITCODE -ne 0) { throw 'Windows installer help failed.' }
 
       - name: Package the Windows fallback archive
         env:
@@ -338,17 +361,92 @@ jobs:
           ) | Set-Content -LiteralPath "$root/RELEASE" -Encoding ascii
           Compress-Archive -Path $root -DestinationPath "windows-package/$component.zip"
 
+      - name: Sign installer when certificate is configured
+        env:
+          WINDOWS_CODESIGN_PFX: ${{ secrets.WINDOWS_CODESIGN_PFX }}
+          WINDOWS_CODESIGN_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PASSWORD }}
+        shell: pwsh
+        run: |
+          if (-not $env:WINDOWS_CODESIGN_PFX) { Write-Host 'No signing certificate configured; publishing unsigned installer.'; exit 0 }
+          if (-not $env:WINDOWS_CODESIGN_PASSWORD) { throw 'WINDOWS_CODESIGN_PASSWORD is required when WINDOWS_CODESIGN_PFX is set.' }
+          $certificate = Join-Path $env:RUNNER_TEMP 'agent-studio-codesign.pfx'
+          [IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:WINDOWS_CODESIGN_PFX))
+          try {
+            $signTool = (Get-Command signtool.exe -ErrorAction SilentlyContinue).Source
+            if (-not $signTool) {
+              $kitRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
+              $signTool = Get-ChildItem -Path $kitRoot -Filter signtool.exe -Recurse -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -match '[\\/]x64[\\/]' } |
+                Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+            }
+            if (-not $signTool) { throw 'Windows SDK signtool.exe was not found.' }
+            & $signTool sign /f $certificate /p $env:WINDOWS_CODESIGN_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 artifacts/publish/setup/agent-studio-setup.exe
+            if ($LASTEXITCODE -ne 0) { throw 'Installer signing failed.' }
+            & $signTool verify /pa /v artifacts/publish/setup/agent-studio-setup.exe
+            if ($LASTEXITCODE -ne 0) { throw 'Installer signature verification failed.' }
+          }
+          finally { Remove-Item -LiteralPath $certificate -Force -ErrorAction SilentlyContinue }
+
+      - name: Stage Windows installer
+        shell: pwsh
+        run: Copy-Item artifacts/publish/setup/agent-studio-setup.exe windows-package/agent-studio-setup.exe
+
       - name: Upload Windows release artifact
         uses: actions/upload-artifact@v4
         with:
           name: windows-release-artifacts
-          path: windows-package/*.zip
+          path: |
+            windows-package/*.zip
+            windows-package/agent-studio-setup.exe
           if-no-files-found: error
           retention-days: 7
 
+  smoke-windows-fallback:
+    name: Smoke released Windows native fallback services
+    needs: [version, publish-windows]
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Download Windows release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-release-artifacts
+          path: windows-release
+
+      - name: Install released fallback profile
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          $archive = "windows-release/agent-orchestrator-$env:VERSION-win-x64.zip"
+          Expand-Archive -LiteralPath $archive -DestinationPath windows-expanded
+          $package = "windows-expanded/agent-orchestrator-$env:VERSION-win-x64"
+          $data = Join-Path $env:RUNNER_TEMP 'agent-studio-native-smoke-data'
+          $install = Join-Path $env:RUNNER_TEMP 'agent-studio-native-smoke-bin'
+          $config = Join-Path $env:RUNNER_TEMP 'agent-studio-native-smoke-config'
+          & "$package/deploy-windows/fallback/install-fallback-profile.ps1" `
+            -ReleasePackageRoot $package -DataDirectory $data -InstallBase $install -ConfigRoot $config `
+            -AuthMode none -ListenUrl 'http://127.0.0.1:5071' -ConnectorListenUrl 'http://127.0.0.1:5031'
+          foreach ($taskName in 'AgentOrchestrator-TaskServer', 'AgentOrchestrator-Engine', 'AgentOrchestrator-StudioConnector') {
+            if (-not (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)) { throw "Missing native task $taskName." }
+          }
+
+      - name: Uninstall released fallback profile
+        if: always()
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          $package = "windows-expanded/agent-orchestrator-$env:VERSION-win-x64"
+          if (-not (Test-Path -LiteralPath "$package/deploy-windows/fallback/uninstall-fallback-profile.ps1")) { exit 0 }
+          $data = Join-Path $env:RUNNER_TEMP 'agent-studio-native-smoke-data'
+          $install = Join-Path $env:RUNNER_TEMP 'agent-studio-native-smoke-bin'
+          & "$package/deploy-windows/fallback/uninstall-fallback-profile.ps1" `
+            -InstallBase $install -RemoveData -DataDirectory $data
+
   publish-release:
     name: Merge artifacts and publish the GitHub Release
-    needs: [version, test-build-release, publish-windows]
+    needs: [version, test-build-release, publish-windows, smoke-windows-fallback]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -372,6 +470,7 @@ jobs:
       - name: Recompute the combined SHA256SUMS
         run: |
           chmod +x artifacts/release/agent-orchestrator-setup
+          chmod +x artifacts/release/agent-studio-setup
           (cd artifacts/release && rm -f SHA256SUMS && sha256sum * > SHA256SUMS)
 
       - name: Attest release assets
@@ -381,6 +480,8 @@ jobs:
             artifacts/release/*.tar.gz
             artifacts/release/*.zip
             artifacts/release/agent-orchestrator-setup
+            artifacts/release/agent-studio-setup
+            artifacts/release/agent-studio-setup.exe
 
       - name: Create GitHub Release
         env:
@@ -390,6 +491,8 @@ jobs:
           artifacts/release/*.tar.gz
           artifacts/release/*.zip
           artifacts/release/agent-orchestrator-setup
+          artifacts/release/agent-studio-setup
+          artifacts/release/agent-studio-setup.exe
           artifacts/release/SHA256SUMS
           --verify-tag
           --generate-notes
