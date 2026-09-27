@@ -109,6 +109,10 @@ public sealed class BoundaryPolicyTests
             Assert.Equal("container-agent", access.Authenticate(File.ReadAllText(Path.Combine(agent, "token")))!.Id);
             Assert.Equal("diagnostics-client", access.Authenticate(File.ReadAllText(Path.Combine(client, "token")))!.Id);
             foreach (var file in original) Assert.Equal(file.Value, File.ReadAllText(file.Key));
+            if (!OperatingSystem.IsWindows())
+                foreach (var directory in new[] { principals, agent, client })
+                    Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute,
+                        File.GetUnixFileMode(directory));
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }

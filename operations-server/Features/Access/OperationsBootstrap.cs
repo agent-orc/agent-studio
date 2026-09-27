@@ -11,12 +11,12 @@ public static class OperationsBootstrap
         var path = Path.Combine(principalsDirectory, "principals.json");
         var agentPath = Path.Combine(agentDirectory, "token");
         var clientPath = Path.Combine(clientDirectory, "token");
-        if (File.Exists(path))
+        var principalsExist = File.Exists(path);
+        if (principalsExist)
         {
             var access = new OperationsAccess(path);
             ValidateCredential(access, agentPath, "container-agent", "agent");
             ValidateCredential(access, clientPath, "diagnostics-client", "service");
-            return;
         }
 
         foreach (var directory in new[] { principalsDirectory, agentDirectory, clientDirectory })
@@ -24,6 +24,8 @@ public static class OperationsBootstrap
             Directory.CreateDirectory(directory);
             if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         }
+        if (principalsExist) return;
+
         var agent = Credential(agentPath);
         var client = Credential(clientPath);
         var principals = new OperationsAccessDocument([
