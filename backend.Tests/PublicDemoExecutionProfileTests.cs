@@ -133,6 +133,15 @@ public sealed class PublicDemoExecutionProfileTests : IDisposable
             // like every other GET that only re-derives git state.
             // Decision-card decide and reopen are execution mutations on Start.
             Assert.Equal(87, routes.Count);
+            // Pin their identities too: an unrelated route must not mask the loss
+            // of either decision mutation from the denial inventory.
+            foreach (var decisionPath in new[] { "/api/tasks/{jobId}/decision", "/api/tasks/{jobId}/decision/reopen" })
+            {
+                var decisionRoute = Assert.Single(routes, route => route.RoutePattern.RawText == decisionPath);
+                Assert.Equal(ExecutionAdmissionPath.Start,
+                    decisionRoute.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path);
+                Assert.Contains("POST", decisionRoute.Metadata.GetMetadata<IHttpMethodMetadata>()!.HttpMethods);
+            }
             Assert.Equal(
                 ExecutionAdmissionPolicy.AllPaths.OrderBy(path => path),
                 routes.Select(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)
