@@ -44,6 +44,7 @@ var app = builder.Build();
 app.MapGet("/healthz", () => Results.Ok(new { status = "live", role = "studio-bff" }));
 RequestDelegate proxyToTaskServer = async context =>
 {
+    context.Response.Headers["X-Studio-Backend"] = "studio-bff";
     var client = context.RequestServices.GetRequiredService<IHttpClientFactory>().CreateClient("task-server");
     var target = context.Request.Path + context.Request.QueryString;
     using var request = new HttpRequestMessage(new HttpMethod(context.Request.Method), target);
