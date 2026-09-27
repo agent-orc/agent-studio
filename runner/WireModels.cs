@@ -358,7 +358,11 @@ public sealed record RemoteChatWorkCompletionRequest(
     string? CliType = null,
     string? ConfiguredCliType = null,
     string? ConfiguredModel = null,
-    string? QuotaFallbackReason = null);
+    string? QuotaFallbackReason = null,
+    string? ProviderSessionId = null,
+    long? ReasoningTokens = null,
+    DateTime? ProviderStartedAt = null,
+    DateTime? ProviderFinishedAt = null);
 
 public sealed record OrchestratorTokenUsage
 {

@@ -35,6 +35,7 @@ public static class WorkspaceSettingsEndpoints
                     .ResolveCliExecutionEngine(null, s).Source,
                 autonomyLevel = s.AutonomyLevel,
                 autoApplyModelMigrations = s.AutoApplyModelMigrations ?? true,
+                chatMetadataEnabled = s.ChatMetadataEnabled ?? true,
                 // Platform fallbacks so the UI can render the effective "inherited"
                 // value without hardcoding it or a second round-trip.
                 defaultOrchestratorModel = OrchestratorRunner.DefaultModel,
@@ -43,6 +44,16 @@ public static class WorkspaceSettingsEndpoints
                 usageTimeZone = s.UsageTimeZone ?? "Etc/UTC",
                 usageWeekStart = (s.UsageWeekStart ?? DayOfWeek.Monday).ToString(),
             });
+        });
+
+        app.MapPut("/api/workspaces/{id}/chat-metadata", (
+            string id, SetChatMetadataRequest req,
+            WorkspaceRegistry workspaces, WorkspaceSettingsService settings) =>
+        {
+            if (workspaces.Find(id) is null)
+                return Results.NotFound(new { error = $"Unknown workspaceId '{id}'" });
+            settings.SetChatMetadataEnabled(id, req.Enabled);
+            return Results.Ok(new { chatMetadataEnabled = settings.Get(id).ChatMetadataEnabled ?? true });
         });
 
         app.MapPut("/api/workspaces/{id}/usage-calendar", (
@@ -184,3 +195,5 @@ public sealed record SetWorkspaceAutoApplyModelMigrationsRequest
     /// <summary>Null restores the platform default (on).</summary>
     public bool? Enabled { get; init; }
 }
+
+public sealed record SetChatMetadataRequest(bool? Enabled);

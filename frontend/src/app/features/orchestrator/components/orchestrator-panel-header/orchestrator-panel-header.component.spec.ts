@@ -50,4 +50,22 @@ describe('OrchestratorPanelHeaderComponent', () => {
     );
     expect(host.querySelector('[data-testid="orch-context-count"]')?.textContent).toContain('17');
   });
+
+  it('emits the user usage toggle', async () => {
+    await TestBed.configureTestingModule({
+      imports: [OrchestratorPanelHeaderComponent],
+      providers: [provideZonelessChangeDetection()],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(OrchestratorPanelHeaderComponent);
+    let toggles = 0;
+    fixture.componentInstance.metadataToggle.subscribe(() => toggles++);
+    fixture.detectChanges();
+
+    const host = fixture.nativeElement as HTMLElement;
+    (host.querySelector('[data-testid="orch-chat-metadata-toggle"]') as HTMLButtonElement).click();
+    expect(toggles).toBe(1);
+    fixture.componentRef.setInput('metadataEnabled', false);
+    fixture.detectChanges();
+    expect(host.querySelector('[data-testid="orch-chat-metadata-toggle"]')?.textContent).toContain('Show usage');
+  });
 });

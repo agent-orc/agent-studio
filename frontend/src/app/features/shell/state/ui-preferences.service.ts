@@ -1,4 +1,5 @@
-import { Injectable, signal } from '@angular/core';
+import { computed, effect, inject, Injectable, signal } from '@angular/core';
+import { AuthSessionState } from '../../../services/auth.service';
 
 /**
  * Cycle 9 shell feature service: durable user-interface preferences
@@ -41,9 +42,14 @@ const STORAGE_KEY_OPEN_PROJECT_CHAT_ON_ENTRY = 'atp.studio.openProjectChatOnEntr
 // is proactively cleared on boot (see constructor).
 const STORAGE_KEY_ORCHESTRATOR_SETTINGS_OPEN = 'orchestratorSettingsOpen';
 const STORAGE_KEY_TREE_METRICS = 'atp.studio.explorer.metrics';
+const STORAGE_KEY_CHAT_METADATA = 'atp.studio.chat.metadata.enabled';
 
 @Injectable({ providedIn: 'root' })
 export class UiPreferencesService {
+  private readonly auth = inject(AuthSessionState);
+  private readonly chatMetadataKey = computed(() =>
+    `${STORAGE_KEY_CHAT_METADATA}.${this.auth.status()?.user?.id ?? 'local'}`);
+  readonly chatMetadataEnabled = signal<boolean>(true);
   readonly taskNavCollapsed = signal<boolean>(localStorage.getItem(STORAGE_KEY_TASK_NAV) === '1');
   readonly treeMetricView = signal<'numbers' | 'dots'>(
     localStorage.getItem(STORAGE_KEY_TREE_METRICS) === 'dots' ? 'dots' : 'numbers',
@@ -66,6 +72,10 @@ export class UiPreferencesService {
   private resizing = false;
 
   constructor() {
+    effect(() => {
+      const key = this.chatMetadataKey();
+      this.chatMetadataEnabled.set(localStorage.getItem(key) !== '0');
+    });
     // AGT-2035 migration: drop the abolished card-density preference so a stale
     // value can never resurrect compact rendering.
     try { localStorage.removeItem(STORAGE_KEY_COMPACT_CARDS); } catch { /* ignore */ }
@@ -89,6 +99,10 @@ export class UiPreferencesService {
    */
   private readonly onStorageEvent = (e: StorageEvent): void => {
     if (e.storageArea !== null && e.storageArea !== localStorage) return;
+    if (e.key === this.chatMetadataKey()) {
+      this.chatMetadataEnabled.set(e.newValue !== '0');
+      return;
+    }
     switch (e.key) {
       case STORAGE_KEY_TASK_NAV:
         this.taskNavCollapsed.set(e.newValue === '1');
@@ -115,6 +129,11 @@ export class UiPreferencesService {
   setTaskNavCollapsed(collapsed: boolean): void {
     this.taskNavCollapsed.set(collapsed);
     localStorage.setItem(STORAGE_KEY_TASK_NAV, collapsed ? '1' : '0');
+  }
+
+  setChatMetadataEnabled(enabled: boolean): void {
+    this.chatMetadataEnabled.set(enabled);
+    localStorage.setItem(this.chatMetadataKey(), enabled ? '1' : '0');
   }
 
   setTreeMetricView(value: 'numbers' | 'dots'): void {

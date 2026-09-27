@@ -262,6 +262,16 @@
   gap: var(--studio-spacing-2);
 }
 
+.sheet__usage-summary {
+  flex: 0 0 auto;
+  padding: var(--studio-spacing-1) var(--studio-spacing-4);
+  border-bottom: 1px solid var(--studio-border);
+  color: var(--studio-fg);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .sheet__conversation {
   flex: 1 1 auto;
   min-height: 0;

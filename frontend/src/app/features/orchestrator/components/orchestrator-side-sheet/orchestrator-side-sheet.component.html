@@ -24,6 +24,9 @@
     [contextCount]="contextCount()"
     [chatsOpen]="contextMenuOpen()"
     [active]="sending() || activeRun() !== null"
+    [metadataEnabled]="chatMetadataEnabled()"
+    [metadataAvailable]="projectChatMetadataEnabled()"
+    (metadataToggle)="toggleChatMetadata()"
     (chatsToggle)="toggleContextMenu()" />
 
   @if (contextKind() === 'task' && effectiveJobKey(); as taskKey) {
@@ -145,6 +148,10 @@
           </section>
         } @else if (effectiveProject()) {
           <section class="sheet__chat">
+            @if (chatMetadataEnabled() && chatMetadataSummary(); as summary) {
+              <div class="sheet__usage-summary" data-testid="orch-chat-usage-summary"
+                   title="TokenEconomy API-equivalent estimate; time includes queue wait">{{ summary }}</div>
+            }
             <div #conversationHost class="sheet__conversation" data-testid="orchestrator-conversation">
               <cac-conversation-view
                 variant="embedded"

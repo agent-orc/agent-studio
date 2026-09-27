@@ -90,6 +90,7 @@ public sealed class RemoteProjectChatRunner
             var cliType = string.IsNullOrWhiteSpace(work.CliType)
                 ? "codex"
                 : work.CliType.Trim().ToLowerInvariant();
+            var providerStartedAt = DateTime.UtcNow;
             _log($"project-chat-agent-start engine=car cli={cliType} path={checkout.RepoPath} model={work.Model} thinking={work.ThinkingLevel ?? "default"}");
             // T1c (AGT-2370): this CLI start path runs through CAR with
             // PermissionMode=read-only. AGT-2751 selects the driver from the
@@ -101,7 +102,9 @@ public sealed class RemoteProjectChatRunner
                 : ParseCodex(process, work.Model!);
             return await CompleteAsync(
                 work, parsed.Success, parsed.ReplyText, parsed.ErrorMessage,
-                work.Model, parsed.TokenUsage, executionContext, shutdown);
+                parsed.TokenUsage?.Model ?? work.Model, parsed.TokenUsage, executionContext, shutdown,
+                parsed.ProviderSessionId, parsed.ReasoningTokens,
+                providerStartedAt, DateTime.UtcNow);
         }
         catch (OperationCanceledException) when (shutdown.IsCancellationRequested)
         {
@@ -229,7 +232,11 @@ public sealed class RemoteProjectChatRunner
         string? model,
         OrchestratorTokenUsage? tokenUsage,
         ChatExecutionContext? executionContext,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? providerSessionId = null,
+        long? reasoningTokens = null,
+        DateTime? providerStartedAt = null,
+        DateTime? providerFinishedAt = null)
     {
         var accepted = await _client.CompleteProjectChatWorkAsync(
             new RemoteChatWorkCompletionRequest(
@@ -245,7 +252,11 @@ public sealed class RemoteProjectChatRunner
                 work.CliType,
                 work.ConfiguredCliType,
                 work.ConfiguredModel,
-                work.QuotaFallbackReason),
+                work.QuotaFallbackReason,
+                providerSessionId,
+                reasoningTokens,
+                providerStartedAt,
+                providerFinishedAt),
             ct);
         if (!accepted)
         {
@@ -306,6 +317,8 @@ public sealed class RemoteProjectChatRunner
     {
         var replies = new List<string>();
         string? turnError = null;
+        string? providerSessionId = null;
+        long? reasoningTokens = null;
         OrchestratorTokenUsage? usage = null;
         foreach (var line in process.StdOut.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
         {
@@ -314,7 +327,10 @@ public sealed class RemoteProjectChatRunner
                 using var doc = JsonDocument.Parse(line);
                 var root = doc.RootElement;
                 var type = root.TryGetProperty("type", out var typeNode) ? typeNode.GetString() : null;
-                if (type == "item.completed"
+                if (type == "thread.started"
+                    && root.TryGetProperty("thread_id", out var threadId))
+                    providerSessionId = threadId.GetString();
+                else if (type == "item.completed"
                     && root.TryGetProperty("item", out var item)
                     && item.TryGetProperty("type", out var itemType)
                     && itemType.GetString() == "agent_message"
@@ -333,17 +349,25 @@ public sealed class RemoteProjectChatRunner
                 else if (type == "turn.completed"
                          && root.TryGetProperty("usage", out var usageNode))
                 {
+                    var observedModel = root.TryGetProperty("model", out var modelNode)
+                        && modelNode.ValueKind == JsonValueKind.String
+                        ? modelNode.GetString() : null;
                     var normalized = ProviderUsageNormalization.OpenAi(
                         ReadLong(usageNode, "input_tokens"),
                         ReadLong(usageNode, "cached_input_tokens"));
                     usage = new OrchestratorTokenUsage
                     {
-                        Model = model,
+                        Model = observedModel ?? model,
                         InputTokens = SafeInt(normalized.InputTokens),
                         OutputTokens = ReadInt(usageNode, "output_tokens"),
                         CacheReadTokens = SafeInt(normalized.CacheReadTokens),
                         InputIncludesCached = normalized.InputIncludesCached,
                     };
+                    if (usageNode.TryGetProperty("reasoning_output_tokens", out _))
+                        reasoningTokens = ReadLong(usageNode, "reasoning_output_tokens");
+                    else if (usageNode.TryGetProperty("output_tokens_details", out var details)
+                        && details.TryGetProperty("reasoning_tokens", out _))
+                        reasoningTokens = ReadLong(details, "reasoning_tokens");
                 }
             }
             catch (JsonException)
@@ -363,7 +387,9 @@ public sealed class RemoteProjectChatRunner
             success,
             string.Join("\n", replies),
             errorMessage,
-            usage);
+            usage,
+            providerSessionId,
+            reasoningTokens);
     }
 
     internal static RemoteProjectChatResult ParseClaude(ProcessResult process, string model)
@@ -371,6 +397,7 @@ public sealed class RemoteProjectChatRunner
         string? reply = null;
         string? error = null;
         OrchestratorTokenUsage? usage = null;
+        string? providerSessionId = null;
         foreach (var line in process.StdOut.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
         {
             try
@@ -380,6 +407,15 @@ public sealed class RemoteProjectChatRunner
                 if (root.TryGetProperty("type", out var type)
                     && type.GetString() == "result")
                 {
+                    if (root.TryGetProperty("session_id", out var sessionId))
+                        providerSessionId = sessionId.GetString();
+                    var observedModel = root.TryGetProperty("model", out var modelNode)
+                        && modelNode.ValueKind == JsonValueKind.String
+                        ? modelNode.GetString() : null;
+                    if (observedModel is null
+                        && root.TryGetProperty("modelUsage", out var modelUsage)
+                        && modelUsage.ValueKind == JsonValueKind.Object)
+                        observedModel = modelUsage.EnumerateObject().Select(item => item.Name).FirstOrDefault();
                     reply = root.TryGetProperty("result", out var resultText)
                         ? resultText.GetString()
                         : reply;
@@ -390,7 +426,7 @@ public sealed class RemoteProjectChatRunner
                     {
                         usage = new OrchestratorTokenUsage
                         {
-                            Model = model,
+                            Model = observedModel ?? model,
                             InputTokens = ReadInt(usageNode, "input_tokens"),
                             OutputTokens = ReadInt(usageNode, "output_tokens"),
                             CacheReadTokens = ReadInt(usageNode, "cache_read_input_tokens"),
@@ -413,7 +449,7 @@ public sealed class RemoteProjectChatRunner
                 ? $"exitCode={process.ExitCode}"
                 : process.StdErr.Trim();
         }
-        return new RemoteProjectChatResult(success, reply?.Trim() ?? "", error, usage);
+        return new RemoteProjectChatResult(success, reply?.Trim() ?? "", error, usage, providerSessionId);
     }
 
     private static int ReadInt(JsonElement node, string property)
@@ -546,4 +582,6 @@ internal sealed record RemoteProjectChatResult(
     bool Success,
     string ReplyText,
     string? ErrorMessage,
-    OrchestratorTokenUsage? TokenUsage);
+    OrchestratorTokenUsage? TokenUsage,
+    string? ProviderSessionId = null,
+    long? ReasoningTokens = null);

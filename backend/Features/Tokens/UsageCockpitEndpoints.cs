@@ -1,6 +1,7 @@
 using AgentStudio.Bus;
 using AgentStudio.Cli;
 using AgentStudio.Clients;
+using AgentStudio.Orchestrator;
 using AgentStudio.Registry;
 using AgentStudio.Runner;
 using AgentStudio.Security;
@@ -23,19 +24,22 @@ public sealed record UsageSlotPool(string Name, int? Occupied, int? Capacity, Us
 public sealed record UsageCockpitResponse(int SnapshotVersion, string WorkspaceId, string TimeZone,
     DayOfWeek WeekStart, DateTime GeneratedAt, UsageCalendar Calendar,
     IReadOnlyList<UsageCli> Clis, UsageCostProjection Cost, IReadOnlyList<UsageRun> Runs,
-    IReadOnlyList<UsageSlotPool> Slots, IReadOnlyDictionary<string, UsageSourceState> Sources);
+    IReadOnlyList<UsageSlotPool> Slots, IReadOnlyDictionary<string, UsageSourceState> Sources,
+    IReadOnlyList<RemoteChatUsage>? Chats = null);
 
 public static class UsageCockpitEndpoints
 {
     public static void MapUsageCockpitEndpoints(this WebApplication app)
     {
-        app.MapGet("/api/usage/cockpit", (HttpContext context, string? workspaceId,
+        app.MapGet("/api/usage/cockpit", async (HttpContext context, string? workspaceId,
             string? primaryCli, WorkspaceRegistry workspaces, WorkspaceSettingsService settings,
             ProjectRegistry projects, TaskScannerService scanner, QuotaService quota,
             BusBackedProjectTokenUsageReader ledger, AgentMessageBusStore bus,
             TaskRunnerService runner, ClientIdentityStore clients,
             AttemptAuthorityService reviews,
-            IConfiguration configuration) =>
+            IConfiguration configuration, RemoteChatWorkBroker chatBroker,
+            LocalChatTurnActivity localChats,
+            IOrchestratorChatPersistence chatPersistence, CancellationToken ct) =>
         {
             var workspace = string.IsNullOrWhiteSpace(workspaceId)
                 ? workspaces.List().FirstOrDefault(item => item.IsDefault) ?? workspaces.List().FirstOrDefault()
@@ -216,8 +220,21 @@ public static class UsageCockpitEndpoints
             sourceStates["slots"] = slots.All(slot => slot.Availability.Status == "complete")
                 ? new UsageSourceState("complete", now, null)
                 : new UsageSourceState("partial", now, null, "One slot source is unavailable.");
+            var chats = new List<RemoteChatUsage>();
+            try
+            {
+                chats.AddRange(await ChatUsageReader.ReadAsync(
+                    visibleProjects.Select(project => (project.DisplayName, project.StorageLocation)).ToArray(),
+                    chatPersistence, chatBroker, localChats, ct));
+                sourceStates["chat"] = new UsageSourceState("complete", now, null);
+            }
+            catch (Exception)
+            {
+                sourceStates["chat"] = new UsageSourceState("unavailable", null, null,
+                    "Chat turn receipts could not be read.");
+            }
             return Results.Ok(new UsageCockpitResponse(1, workspace.Id, calendar.TimeZone,
-                calendar.WeekStart, now, calendar, clis, cost, runs, slots, sourceStates));
+                calendar.WeekStart, now, calendar, clis, cost, runs, slots, sourceStates, chats));
         });
     }
 

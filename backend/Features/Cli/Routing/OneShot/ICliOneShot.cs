@@ -162,6 +162,8 @@ public sealed record CliOneShotResult(
     public string? EffectiveCliType { get; init; }
     public string? EffectiveModel { get; init; }
     public string? EffectiveThinkingLevel { get; init; }
+    /// <summary>Provider thread or session id when the one-shot frame reports one.</summary>
+    public string? ProviderSessionId { get; init; }
 
     /// <summary>True when admission intentionally did not launch a provider.</summary>
     public bool QuotaDeferred { get; init; }

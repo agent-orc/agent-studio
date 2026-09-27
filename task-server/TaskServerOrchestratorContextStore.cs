@@ -182,11 +182,11 @@ public sealed partial class TaskServerStore
         await using var command = Command(connection, """
             SELECT turn_id, created_at, role, body, model,
                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                   error_message, error_detail, attachments_json, receipt_json
+                   error_message, error_detail, attachments_json, receipt_json, metadata_json
               FROM (
                     SELECT sequence, turn_id, created_at, role, body, model,
                            input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                           error_message, error_detail, attachments_json, receipt_json
+                           error_message, error_detail, attachments_json, receipt_json, metadata_json
                       FROM orchestrator_context_turns
                      WHERE context_key = $context
                      ORDER BY sequence DESC
@@ -293,11 +293,11 @@ public sealed partial class TaskServerStore
             INSERT INTO orchestrator_context_turns(
                 context_key, turn_id, created_at, role, body, model,
                 input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                error_message, error_detail, attachments_json, receipt_json, payload_sha256)
+                error_message, error_detail, attachments_json, receipt_json, metadata_json, payload_sha256)
             VALUES (
                 $context, $turn, $created, $role, $body, $model,
                 $input, $output, $cache_read, $cache_creation,
-                $error, $detail, $attachments, $receipt, $sha);
+                $error, $detail, $attachments, $receipt, $metadata, $sha);
             """, ct, transaction,
             ("$context", context.ContextKey),
             ("$turn", canonicalTurn.TurnId),
@@ -315,6 +315,7 @@ public sealed partial class TaskServerStore
                 ? null
                 : JsonSerializer.Serialize(canonicalTurn.Attachments)),
             ("$receipt", receiptJson),
+            ("$metadata", canonicalTurn.Metadata is null ? null : JsonSerializer.Serialize(canonicalTurn.Metadata)),
             ("$sha", payloadSha));
 
         var summary = string.Equals(canonicalTurn.Role, "user", StringComparison.Ordinal)
@@ -580,7 +581,10 @@ public sealed partial class TaskServerStore
                 : JsonSerializer.Deserialize<IReadOnlyList<OrchestratorContextAttachmentDto>>(reader.GetString(11)),
             reader.IsDBNull(12)
                 ? null
-                : JsonSerializer.Deserialize<OrchestratorContextReceiptDto>(reader.GetString(12)));
+                : JsonSerializer.Deserialize<OrchestratorContextReceiptDto>(reader.GetString(12)),
+            reader.IsDBNull(13)
+                ? null
+                : JsonSerializer.Deserialize<ChatTurnMetadataDto>(reader.GetString(13)));
     }
 
     private static void ValidateOrchestratorContextTurn(OrchestratorContextTurnDto turn)
@@ -596,6 +600,15 @@ public sealed partial class TaskServerStore
         if (turn.Attachments?.Any(item => string.IsNullOrWhiteSpace(item.RelativePath)
                                          || item.RelativePath.Contains("..", StringComparison.Ordinal)) == true)
             throw new ArgumentException("Attachment references must be bounded relative paths.");
+        if (turn.Metadata is { } metadata)
+        {
+            if (metadata.UsageClass != "chat-turn"
+                || new long?[] { metadata.InputTokens, metadata.CachedInputTokens,
+                        metadata.OutputTokens, metadata.ReasoningTokens, metadata.CacheCreationTokens }
+                    .Any(value => value is < 0)
+                || metadata.Cost is < 0)
+                throw new ArgumentException("Chat turn metadata must contain nonnegative usage and cost.");
+        }
     }
 
     private static string BuildContextSummary(string body, string fallback)

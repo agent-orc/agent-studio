@@ -26,6 +26,9 @@ namespace AgentStudio.Shared;
 /// </summary>
 public record WorkspaceSettings
 {
+    /// <summary>Whether chat usage metadata is visible by default; null means on.</summary>
+    [System.Text.Json.Serialization.JsonPropertyName("chat.metadata.enabled")]
+    public bool? ChatMetadataEnabled { get; init; }
     /// <summary>IANA calendar zone used for workspace usage costs. Null selects UTC.</summary>
     public string? UsageTimeZone { get; init; }
 

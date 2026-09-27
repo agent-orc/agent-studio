@@ -114,13 +114,13 @@ public class TokenPricingTests
     }
 
     [Fact]
-    public void Estimate_Gpt5CodexWithoutPublishedPrice_IsExplicitlyUnknown()
+    public void Estimate_Gpt5CodexUsesPublishedCatalogPrice()
     {
         var c = _provider.Estimate("gpt-5-codex", 1_000_000, 100_000, 1_000_000, 1_000_000);
-        Assert.False(c.ModelKnown);
-        Assert.Equal(TokenEconomy.PriceStatus.NoPriceForDate, c.Status);
-        Assert.Equal(0m, c.Total);
-        Assert.Null(c.PriceBasis);
+        Assert.True(c.ModelKnown);
+        Assert.Equal(TokenEconomy.PriceStatus.Resolved, c.Status);
+        Assert.True(c.Total > 0m);
+        Assert.NotNull(c.PriceBasis);
     }
 
     [Fact]
@@ -166,13 +166,12 @@ public class TokenPricingTests
         var before = _provider.Estimate("claude-sonnet-5", 1_000_000, 0, 0, 0, transition.AddTicks(-1));
         var after = _provider.Estimate("claude-sonnet-5", 1_000_000, 0, 0, 0, transition);
 
-        Assert.True(before.ModelKnown);
+        Assert.False(before.ModelKnown);
         Assert.True(after.ModelKnown);
-        Assert.Equal(TokenEconomy.PriceStatus.Resolved, before.Status);
+        Assert.Equal(TokenEconomy.PriceStatus.NoPriceForDate, before.Status);
         Assert.Equal(TokenEconomy.PriceStatus.Resolved, after.Status);
-        Assert.NotEqual(before.Total, after.Total);
-        Assert.NotEqual(before.PriceBasis!.ValidFrom, after.PriceBasis!.ValidFrom);
-        Assert.False(string.IsNullOrWhiteSpace(before.PriceBasis.Source));
+        Assert.Equal(0m, before.Total);
+        Assert.Null(before.PriceBasis);
         Assert.False(string.IsNullOrWhiteSpace(after.PriceBasis.Source));
     }
 

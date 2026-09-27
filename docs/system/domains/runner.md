@@ -1169,6 +1169,15 @@ rollout decision.
   lifecycle visibility, usage, and short summaries. Project contexts are
   permanent; archived task contexts are retained with `hiddenAt` and omitted
   from the current list. Local orchestrator chat JSONL is migration input only.
+- Each orchestrator reply now carries a `metadata` receipt: executing CLI,
+  model, effort, host, provider thread/session id when reported, queued/start/
+  finish times, normalized token dimensions, reasoning tokens when reported,
+  and a dated TokenEconomy cost with currency and catalogue version. Codex
+  `turn.completed` usage subtracts cached input before pricing; Claude `result`
+  usage keeps its separate cache-read and cache-creation dimensions. The Task
+  Server persists this receipt beside the turn, so task, project, and Dossier
+  chat transcripts share one wire contract. Missing provider fields remain
+  absent rather than estimated.
 - Project chat reference chips carry stable task, page, repository-file, or
   project-qualified commit ids only. The backend resolves them on the selected
   execution checkout after route and project validation. The UI exposes the

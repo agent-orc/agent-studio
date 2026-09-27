@@ -306,11 +306,14 @@ public sealed class RemoteChatWorkBroker
             item.CliType,
             item.ConfiguredCliType,
             item.ConfiguredModel,
-            item.QuotaFallbackReason)
+            item.QuotaFallbackReason,
+            request.ProviderSessionId,
+            request.ReasoningTokens,
+            item.ThinkingLevel)
         {
             QueuedAt = item.CreatedAt,
-            StartedAt = item.ClaimedAt,
-            FinishedAt = DateTime.UtcNow,
+            StartedAt = request.ProviderStartedAt ?? item.ClaimedAt,
+            FinishedAt = request.ProviderFinishedAt ?? DateTime.UtcNow,
         };
         item.Completion.TrySetResult(result);
         _logger.LogInformation(
@@ -527,7 +530,11 @@ public sealed record RemoteChatWorkCompletionRequest(
     string? CliType = null,
     string? ConfiguredCliType = null,
     string? ConfiguredModel = null,
-    string? QuotaFallbackReason = null);
+    string? QuotaFallbackReason = null,
+    string? ProviderSessionId = null,
+    long? ReasoningTokens = null,
+    DateTime? ProviderStartedAt = null,
+    DateTime? ProviderFinishedAt = null);
 
 public sealed record RemoteChatWorkResult(
     bool Success,
@@ -539,7 +546,10 @@ public sealed record RemoteChatWorkResult(
     string? CliType = null,
     string? ConfiguredCliType = null,
     string? ConfiguredModel = null,
-    string? QuotaFallbackReason = null)
+    string? QuotaFallbackReason = null,
+    string? ProviderSessionId = null,
+    long? ReasoningTokens = null,
+    string? ThinkingLevel = null)
 {
     public DateTime? QueuedAt { get; init; }
     public DateTime? StartedAt { get; init; }

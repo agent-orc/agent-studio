@@ -339,7 +339,9 @@ public sealed class TaskServerOrchestratorChatPersistence(
                 turn.TokenUsage.InputTokens,
                 turn.TokenUsage.OutputTokens,
                 turn.TokenUsage.CacheReadTokens,
-                turn.TokenUsage.CacheCreationTokens);
+                turn.TokenUsage.CacheCreationTokens,
+                turn.TokenUsage.InputIncludesCached,
+                turn.TokenUsage.ThinkingLevel);
         OrchestratorContextReceiptDto? receipt = null;
         if (turn.ContextReceipt is
             {
@@ -381,7 +383,8 @@ public sealed class TaskServerOrchestratorChatPersistence(
             turn.ErrorDetail,
             turn.Attachments?.Select(item =>
                 new OrchestratorContextAttachmentDto(item.Alt, item.RelativePath)).ToArray(),
-            receipt);
+            receipt,
+            turn.Metadata);
     }
 
     private static OrchestratorChatTurn FromDto(OrchestratorContextTurnDto turn)
@@ -395,6 +398,8 @@ public sealed class TaskServerOrchestratorChatPersistence(
                 OutputTokens = checked((int)turn.TokenUsage.OutputTokens),
                 CacheReadTokens = checked((int)turn.TokenUsage.CacheReadTokens),
                 CacheCreationTokens = checked((int)turn.TokenUsage.CacheCreationTokens),
+                InputIncludesCached = turn.TokenUsage.InputIncludesCached,
+                ThinkingLevel = turn.TokenUsage.ThinkingLevel,
             };
         OrchestratorContextReceipt? receipt = null;
         if (turn.Receipt is not null)
@@ -441,6 +446,10 @@ public sealed class TaskServerOrchestratorChatPersistence(
                 RelativePath = item.RelativePath,
             }).ToList(),
             ContextReceipt = receipt,
+            Metadata = turn.Metadata,
+            QueuedAt = turn.Metadata?.QueuedAt,
+            StartedAt = turn.Metadata?.StartedAt,
+            FinishedAt = turn.Metadata?.FinishedAt,
         };
     }
 

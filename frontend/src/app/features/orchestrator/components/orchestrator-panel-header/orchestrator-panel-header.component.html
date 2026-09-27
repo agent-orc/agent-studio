@@ -56,4 +56,11 @@
       [size]="12"
     />
   </button>
+  <div class="panel-head__usage" data-testid="orch-chat-metadata-control">
+    <button type="button" [attr.aria-pressed]="metadataEnabled()"
+            [disabled]="!metadataAvailable()"
+            (click)="metadataToggle.emit()" data-testid="orch-chat-metadata-toggle">
+      {{ !metadataAvailable() ? 'Usage off' : metadataEnabled() ? 'Hide usage' : 'Show usage' }}
+    </button>
+  </div>
 </div>

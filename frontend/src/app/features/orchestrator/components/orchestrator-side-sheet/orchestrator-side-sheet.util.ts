@@ -1,4 +1,5 @@
 import type { OrchestratorChatTurn } from '../../../../features/orchestrator';
+import { CHAT_METADATA_LIBRARY_ENABLED, toTurnMetadata } from '../../chat-turn-metadata.adapter';
 import type { ChatEvent, ConversationEvent, RawLineRange } from 'coding-agent-chat/core';
 
 /**
@@ -81,6 +82,7 @@ export function sameOrchestratorChatTurns(
       && (left.errorMessage ?? null) === (right.errorMessage ?? null)
       && sameContextReceipt(left.contextReceipt, right.contextReceipt)
       && sameTokenUsage(left.tokenUsage, right.tokenUsage)
+      && JSON.stringify(left.metadata ?? null) === JSON.stringify(right.metadata ?? null)
       && sameAttachments(left.attachments, right.attachments);
   });
 }
@@ -146,6 +148,7 @@ export function buildOrchestratorConversationEvents(
   inlineEvents: readonly ChatEvent[],
   projectName: string | null,
   source: string,
+  metadataEnabled = true,
 ): ConversationEvent[] {
   const persisted = suppressLocalDuplicates(serverTurns, localTurns);
   const turns: readonly OptimisticOrchestratorChatTurn[] = [...persisted, ...localTurns];
@@ -175,6 +178,9 @@ export function buildOrchestratorConversationEvents(
         severity: error ? 'error' : undefined,
         model: turn.model ?? turn.tokenUsage?.model ?? null,
         thinkingLevel: turn.tokenUsage?.thinkingLevel ?? null,
+        ...(CHAT_METADATA_LIBRARY_ENABLED && metadataEnabled && turn.metadata
+          ? { metadata: toTurnMetadata(turn.metadata) }
+          : {}),
         rawRange: rangeFor(source, index),
         body,
         actor: turn.role === 'user' ? 'You' : 'Orchestrator',

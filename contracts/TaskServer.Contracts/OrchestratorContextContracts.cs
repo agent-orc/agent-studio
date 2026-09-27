@@ -72,7 +72,29 @@ public sealed record OrchestratorContextTokenUsageDto(
     long InputTokens,
     long OutputTokens,
     long CacheReadTokens,
-    long CacheCreationTokens);
+    long CacheCreationTokens,
+    bool? InputIncludesCached = null,
+    string? ThinkingLevel = null);
+
+/// <summary>Provider-reported facts and measured wall time for one chat reply.</summary>
+public sealed record ChatTurnMetadataDto(
+    string? CliType = null,
+    string? Model = null,
+    string? Effort = null,
+    string? ProviderSessionId = null,
+    string? ExecutingHost = null,
+    DateTime? QueuedAt = null,
+    DateTime? StartedAt = null,
+    DateTime? FinishedAt = null,
+    long? InputTokens = null,
+    long? CachedInputTokens = null,
+    long? OutputTokens = null,
+    long? ReasoningTokens = null,
+    long? CacheCreationTokens = null,
+    decimal? Cost = null,
+    string? Currency = null,
+    string? PriceCatalogueVersion = null,
+    string UsageClass = "chat-turn");
 
 public sealed record OrchestratorContextAttachmentDto(
     string Alt,
@@ -88,7 +110,8 @@ public sealed record OrchestratorContextTurnDto(
     string? ErrorMessage = null,
     string? ErrorDetail = null,
     IReadOnlyList<OrchestratorContextAttachmentDto>? Attachments = null,
-    OrchestratorContextReceiptDto? Receipt = null);
+    OrchestratorContextReceiptDto? Receipt = null,
+    ChatTurnMetadataDto? Metadata = null);
 
 public sealed record OrchestratorContextTranscriptResponse(
     OrchestratorContextDto Context,

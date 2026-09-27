@@ -37,6 +37,9 @@ export class OrchestratorPanelHeaderComponent {
   readonly contextCount = input(0);
   readonly chatsOpen = input(false);
   readonly active = input(false);
+  readonly metadataEnabled = input(true);
+  readonly metadataAvailable = input(true);
+  readonly metadataToggle = output<void>();
   readonly chatsToggle = output<void>();
 
   readonly identity = computed<PanelContextIdentity>(() => {

@@ -14,6 +14,12 @@ interface ChatTurn {
   ts: string;
   role: 'user' | 'orchestrator';
   text: string;
+  metadata?: {
+    cliType: string; model: string; effort: string; providerSessionId: string;
+    executingHost: string; queuedAt: string; startedAt: string; finishedAt: string;
+    inputTokens: number; cachedInputTokens: number; outputTokens: number;
+    reasoningTokens: number; cost: number; currency: string;
+  };
   contextReceipt?: {
     scope: 'task';
     contextKey: string;
@@ -105,6 +111,14 @@ async function installRoutes(
         ts: now,
         role: 'orchestrator',
         text: `This answer is scoped to ${TASK_KEY}. The task agent remains unchanged.`,
+        metadata: {
+          cliType: 'codex', model: 'gpt-6-astra', effort: 'medium',
+          providerSessionId: 'thread-123', executingHost: 'agent-runner-01',
+          queuedAt: '2026-09-27T12:00:00Z', startedAt: '2026-09-27T12:00:01Z',
+          finishedAt: '2026-09-27T12:00:03Z', inputTokens: 900,
+          cachedInputTokens: 100, outputTokens: 80, reasoningTokens: 20,
+          cost: 0.003, currency: 'USD',
+        },
         contextReceipt: {
           scope: 'task',
           contextKey: CONTEXT_KEY,
@@ -151,6 +165,9 @@ async function installRoutes(
       return json(route, { events: [], sessionChain: [] });
     }
     if (pathname === '/api/runner/status') return json(route, { projects: {} });
+    if (/\/api\/projects\/[^/]+\/chat-metadata$/.test(pathname)) {
+      return json(route, { enabled: true, projectOverride: null, workspaceDefault: null });
+    }
     if (pathname === '/api/runner/global') return json(route, { mode: 'paused', activeProjects: [] });
     if (pathname === '/api/crash-recovery/pending') return json(route, { pending: [] });
     if (pathname === '/api/cli/quota') return json(route, { snapshots: [], ttlSeconds: 600 });
@@ -236,6 +253,11 @@ test('Task detail uses the Orchestrator side sheet for task context without a Ch
   await sideSheet.getByTestId('chat-send').click();
   await expect.poll(() => chatPosts.length).toBe(1);
   await expect(sideSheet).toContainText(`This answer is scoped to ${TASK_KEY}.`);
+  await expect(sideSheet.getByTestId('orch-chat-usage-summary'))
+    .toContainText('gpt-6-astra · 1,080 tokens · $0.0030 · 3s');
+  await sideSheet.getByTestId('orch-chat-metadata-toggle').click();
+  await expect(sideSheet.getByTestId('orch-chat-usage-summary')).toHaveCount(0);
+  await sideSheet.getByTestId('orch-chat-metadata-toggle').click();
 
   const requestBody = chatPosts[0].body;
   expect(requestBody['navigationContext']).toMatchObject({

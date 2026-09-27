@@ -66,6 +66,27 @@ public static class ProjectSettingsEndpoints
 {
     public static void MapProjectSettingsEndpoints(this WebApplication app)
     {
+        app.MapGet("/api/projects/{projectName}/chat-metadata", (
+            string projectName, ProjectSettingsService settings, TaskScannerService scanner,
+            AgentStudio.Registry.OrchestratorDefaultsProvider defaults) =>
+        {
+            if (!scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            var projectOverride = settings.Get(projectName).ChatMetadataEnabled;
+            var workspaceDefault = defaults.WorkspaceForProject(projectName).ChatMetadataEnabled;
+            return Results.Ok(new { enabled = projectOverride ?? workspaceDefault ?? true, projectOverride, workspaceDefault });
+        });
+        app.MapPut("/api/projects/{projectName}/chat-metadata", (
+            string projectName, AgentStudio.Registry.SetChatMetadataRequest request,
+            ProjectSettingsService settings, TaskScannerService scanner,
+            AgentStudio.Registry.OrchestratorDefaultsProvider defaults) =>
+        {
+            if (!scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            settings.SetChatMetadataEnabled(projectName, request.Enabled);
+            return Results.Ok(new { enabled = request.Enabled ?? defaults.WorkspaceForProject(projectName).ChatMetadataEnabled ?? true,
+                projectOverride = request.Enabled });
+        });
         app.MapGet("/api/projects/{projectName}/execution", (
             string projectName,
             ProjectSettingsService settings,

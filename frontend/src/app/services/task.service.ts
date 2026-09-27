@@ -2640,6 +2640,12 @@ export class TaskService {
     });
   }
 
+  getChatMetadataSetting(projectName: string) {
+    return this.http.get<{ enabled: boolean; projectOverride: boolean | null; workspaceDefault: boolean | null }>(
+      `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/chat-metadata`,
+    );
+  }
+
   /**
    * Send a user message to the project's orchestrator chat. The backend
    * persists both turns and the context receipt on the Task Server, then

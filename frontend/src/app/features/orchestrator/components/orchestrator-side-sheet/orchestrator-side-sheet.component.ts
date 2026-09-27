@@ -67,6 +67,7 @@ import { UiPreferencesService } from '../../../shell/state/ui-preferences.servic
 import { PlanStripComponent } from '../../../plan-strip';
 import { OrchestratorTaskPlanStore } from '../../state/orchestrator-task-plan.store';
 import { StudioTabStateService } from '../../../studio-shell/services/studio-tab-state.service';
+import { summarizeChatMetadata } from '../../chat-turn-metadata.adapter';
 
 /**
  * Push-layout side sheet hosting automatic context-keyed orchestrator chats.
@@ -379,6 +380,14 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
   readonly contextKey = computed<string | null>(() => this.contextResolution().key);
 
   readonly turns = signal<OrchestratorChatTurn[]>([], { equal: sameOrchestratorChatTurns });
+  readonly projectChatMetadataEnabled = signal(true);
+  readonly chatMetadataEnabled = computed(() =>
+    this.projectChatMetadataEnabled() && this.uiPreferences.chatMetadataEnabled());
+  readonly chatMetadataSummary = computed(() => summarizeChatMetadata(this.turns()));
+
+  toggleChatMetadata(): void {
+    this.uiPreferences.setChatMetadataEnabled(!this.uiPreferences.chatMetadataEnabled());
+  }
   readonly latestContextReceipt = computed(() =>
     [...this.turns()].reverse().find(turn => turn.role === 'orchestrator' && turn.contextReceipt)?.contextReceipt ?? null);
   readonly loading = signal(false);
@@ -473,6 +482,7 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
     this.events(),
     this.effectiveProject(),
     this.contextKey() ?? this.effectiveProject() ?? 'orchestrator-chat',
+    this.chatMetadataEnabled(),
   ));
 
   readonly contextChipText = computed<string | null>(() => {
@@ -511,6 +521,17 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
     effect(() => {
       const proj = this.effectiveProject();
       const key = this.contextKey();
+      if (proj) {
+        this.projectChatMetadataEnabled.set(true);
+        this.jobService.getChatMetadataSetting(proj).subscribe({
+          next: setting => {
+            if (this.effectiveProject() === proj) this.projectChatMetadataEnabled.set(setting.enabled);
+          },
+          error: () => {
+            if (this.effectiveProject() === proj) this.projectChatMetadataEnabled.set(true);
+          },
+        });
+      }
       untracked(() => this.contextDigestState.selectContext(key));
       this.open();
       if (this.open() && key) {

@@ -2,6 +2,9 @@ namespace AgentStudio.Shared;
 
 public record ProjectSettings
 {
+    /// <summary>Per-project chat metadata override; null inherits the workspace default.</summary>
+    [System.Text.Json.Serialization.JsonPropertyName("chat.metadata.enabled")]
+    public bool? ChatMetadataEnabled { get; init; }
     /// <summary>Default-on creation classification. Stored here until project definition v2 accepts tagging.autoTag.</summary>
     public bool AutoTag { get; init; } = true;
     /// <summary>

@@ -10,7 +10,7 @@ Imports via `from './features/orchestrator'`. See [`index.ts`](./index.ts).
 
 - `OrchestratorFeedComponent` — per-project log + token rollup + global card; renders inside an overlay opened from the project tab feed icon.
 - `GlobalOrchestratorCardComponent` — shows the singleton orchestrator session above the per-project log.
-- `OrchestratorSideSheetComponent`: right-hand chat host. Its header contains only the project picker and the context-count badge; Pin, Debug, Settings, and Refresh live in the expanded context menu.
+- `OrchestratorSideSheetComponent`: right-hand chat host. Its header contains the context identity, context-count badge, usage summary, and user usage toggle; Pin, Debug, Settings, and Refresh live in the expanded context menu.
 - `OrchestratorContextHeaderComponent`: the "where am I right now" locator inside the expanded context menu. It shows project, task, lane/state, and live-run telemetry. The host resolves the run in scope (`App.orchSideSheetActiveRun`): the open task's run, or the running task in the active project when on the board.
 
 **Types**:
@@ -22,6 +22,12 @@ Imports via `from './features/orchestrator'`. See [`index.ts`](./index.ts).
 ## Notable
 
 - The transcript is rendered by `<cac-conversation-view>` from `coding-agent-chat/conversation`. A pure host adapter maps orchestrator turns and inline events to `ConversationEvent[]`. `<cac-chat>` from `coding-agent-chat/composer` is mounted with no messages or events, so it contributes only the canonical composer.
+- Reply DTOs include durable `ChatTurnMetadata`. The header shows per-session
+  model, token, priced cost, and queued-to-finished wall time totals when the
+  workspace and project default plus the local user toggle permit it. The
+  `chat-turn-metadata.adapter.ts` projection and capability flags are ready for
+  the library's `TurnMetadata` seam; event binding activates when the exact
+  `coding-agent-chat` package pin reaches 0.5.0.
 - **Composer contract (coding-agent-chat 0.4.1, CAC-20).** The composer renders at most three rows: the context chip row when chips exist, the textarea, and the footer (model selector left, Send right). The host binds no `toolbarStart`, `routingLabel`, `contextLabel`, or `composerContext`, so the library draws neither a toolbar row nor a breadcrumb — the sheet header and the automatic chip already say where the operator is. `allowAttachments` is `false`: this composer has no image upload, and the chat POST carries no `attachments`.
 - **There is no host-owned picker row.** Context state (the automatic current-tab block, every attached source, and each one's token estimate) is projected into the library's `contextAttachments` input by `buildComposerContextAttachments` in `composer-location-context.ts`. `OrchestratorContextPickerComponent` is popover-only: the library's `+` raises `contextAttachmentAddRequested`, the host opens the popover, and `contextAttachmentRemoved` removes that attachment. Removing the automatic chip (id `context:automatic`) means "leave the current tab out of the next message"; task scope keeps it mandatory and answers that removal with a no-op, which the chip tooltip states.
 - The "GPT-only · Inherited Codex default" routing chip went away with the toolbar row. The GPT-only policy is still visible as the per-CLI `disabledReason` inside the model picker, and `selectionSource` still travels on every send; the explicit-vs-inherited provenance is no longer rendered, because `<cac-chat>` exposes no seam for the selector's trigger tooltip.

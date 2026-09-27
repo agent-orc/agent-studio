@@ -200,6 +200,7 @@ public sealed class CodexOneShot : ICliOneShot
         var replies = new List<string>();
         ParsedTurnUsage? richUsage = null;
         string? turnError = null;
+        string? providerSessionId = null;
         foreach (var line in (stdout ?? string.Empty).Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries))
         {
             try
@@ -209,7 +210,10 @@ public sealed class CodexOneShot : ICliOneShot
                 if (root.TryGetProperty("type", out var typeElement))
                 {
                     var type = typeElement.GetString();
-                    if (type == "item.completed"
+                    if (type == "thread.started"
+                        && root.TryGetProperty("thread_id", out var threadId))
+                        providerSessionId = threadId.GetString();
+                    else if (type == "item.completed"
                         && root.TryGetProperty("item", out var item)
                         && item.TryGetProperty("type", out var itemType)
                         && itemType.GetString() == "agent_message"
@@ -256,7 +260,10 @@ public sealed class CodexOneShot : ICliOneShot
             Usage: usage,
             RichUsage: richUsage,
             Latency: new AgentMessageLatency(RequestedAt: requestedAt, CompletedAt: completedAt, TotalMs: (long)duration.TotalMilliseconds),
-            Error: ok ? null : turnError ?? $"exitCode={exitCode}{(string.IsNullOrWhiteSpace(stderr) ? "" : $"; stderr={stderr.Trim()}")}");
+            Error: ok ? null : turnError ?? $"exitCode={exitCode}{(string.IsNullOrWhiteSpace(stderr) ? "" : $"; stderr={stderr.Trim()}")}")
+        {
+            ProviderSessionId = providerSessionId,
+        };
     }
 
     private CliOneShotResult Record(CliOneShotRequest request, CliOneShotResult result)

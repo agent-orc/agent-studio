@@ -53,6 +53,21 @@ parser, remote project-chat runner, and remote review runner cannot diverge.
 Every pricing, receipt, ledger, export, and context-window consumer receives
 the normalized record rather than provider-native counters.
 
+## Chat-turn usage class
+
+Orchestrator replies carry a durable `metadata` receipt with `usageClass =
+chat-turn`. The receipt stores uncached input, cached input, output, optional
+reasoning and cache-creation counts, plus the TokenEconomy 0.3.5 dated price,
+currency, and catalogue version. Reasoning tokens are a subset of output and
+are not added again to token or cost totals. Unpriced models keep cost null.
+The usage cockpit and status-bar chat view expose chat rows separately by executing host and project,
+combining persisted completed receipts with the remote chat broker's active
+turn count, heavy count, and sampled CPU share. The local chat activity
+tracker contributes local active and heavy counts; local CPU share remains
+unknown because the in-process one-shot path cannot attribute it to one turn.
+Chat costs are not silently
+mixed into the coding-run cost total.
+
 ## OpenAI historical repair (2026-09-18)
 
 `OpenAiUsageHistoryRepair` is a one-time startup migration with completion

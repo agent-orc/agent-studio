@@ -254,7 +254,7 @@ finished times in the JSONL transcript and project-chat markdown frontmatter.
 
 Execution Hosts and the status-bar usage view list interactive turns by host
 and project, including active and heavy counts, CLI CPU share, and completed
-tokens and cost since Task Server startup. A heavy turn reduces free coding
+tokens and cost from durable chat-turn receipts. A heavy turn reduces free coding
 capacity without interrupting any running coding work. The in-process broker
 is a compatibility seam toward the durable Task Server work
 permit model described by ADR-0063 and the distributed target architecture.

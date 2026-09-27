@@ -28,6 +28,7 @@ public sealed record OrchestratorDecisionResult(
     public AgentMessageLatency? Latency { get; init; }
     public string? CliType { get; init; }
     public string? ConfiguredModel { get; init; }
+    public string? EffectiveThinkingLevel { get; init; }
     public bool QuotaFallback { get; init; }
     public string? QuotaFallbackReason { get; init; }
     public QuotaAdmissionPlan? QuotaAdmission { get; init; }
@@ -132,13 +133,14 @@ public class OrchestratorRunner
             result.ParsedText,
             result.EffectiveModel ?? configuredModel,
             result.Usage,
-            CapturedSessionId: null,
+            CapturedSessionId: result.ProviderSessionId,
             error)
         {
             Latency = result.Latency,
             ParsedUsage = result.RichUsage,
             CliType = result.EffectiveCliType ?? cli,
             ConfiguredModel = configuredModel,
+            EffectiveThinkingLevel = result.EffectiveThinkingLevel,
             QuotaFallback = result.QuotaAdmission?.IsFallback == true,
             QuotaFallbackReason = result.QuotaAdmission?.IsFallback == true
                 ? result.QuotaAdmission.Reason
@@ -203,13 +205,14 @@ public class OrchestratorRunner
                 result.ParsedText,
                 result.EffectiveModel ?? model,
                 result.Usage,
-                null,
+                result.ProviderSessionId,
                 error)
             {
                 Latency = result.Latency,
                 ParsedUsage = result.RichUsage,
                 CliType = result.EffectiveCliType ?? CliTypes.Codex,
                 ConfiguredModel = model,
+                EffectiveThinkingLevel = result.EffectiveThinkingLevel,
                 QuotaFallback = result.QuotaAdmission?.IsFallback == true,
                 QuotaFallbackReason = result.QuotaAdmission?.IsFallback == true
                     ? result.QuotaAdmission.Reason
@@ -223,13 +226,14 @@ public class OrchestratorRunner
             result.ParsedText,
             result.EffectiveModel ?? model,
             result.Usage,
-            null,
+            result.ProviderSessionId,
             null)
         {
             Latency = result.Latency,
             ParsedUsage = result.RichUsage,
             CliType = result.EffectiveCliType ?? CliTypes.Codex,
             ConfiguredModel = model,
+            EffectiveThinkingLevel = result.EffectiveThinkingLevel,
             QuotaFallback = result.QuotaAdmission?.IsFallback == true,
             QuotaFallbackReason = result.QuotaAdmission?.IsFallback == true
                 ? result.QuotaAdmission.Reason

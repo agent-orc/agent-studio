@@ -1,6 +1,10 @@
 using AgentStudio.Cli;
 using AgentStudio.Pipeline;
 using AgentStudio.Runner;
+using AgentStudio.Orchestrator;
+using AgentStudio.Registry;
+using AgentStudio.Security;
+using AgentStudio.Tokens;
 using System.Text;
 using CapabilityProtocol = AgentStudio.TaskServer.Contracts.CapabilityProtocol;
 
@@ -156,7 +160,19 @@ public static class LeaseEndpoints
             (string projectName, string? contextKey, RemoteChatWorkBroker broker) =>
                 Results.Ok(broker.GetStatus(projectName, contextKey)));
         app.MapGet("/api/runner/project-chat/usage",
-            (RemoteChatWorkBroker broker) => Results.Ok(broker.GetUsage()));
+            async (HttpContext context, ProjectRegistry registry,
+                IOrchestratorChatPersistence persistence, RemoteChatWorkBroker broker,
+                LocalChatTurnActivity localChats, CancellationToken ct) =>
+            {
+                var human = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal;
+                var visible = registry.List().Where(project => !project.Archived
+                    && (human is null || ProjectAccessAuthorization.Allows(
+                        human.User, project.Id, registry)))
+                    .Select(project => (project.DisplayName, project.StorageLocation)).ToArray();
+                var rows = await ChatUsageReader.ReadAsync(visible, persistence,
+                    broker, localChats, ct);
+                return Results.Ok(rows);
+            });
         app.MapPost("/api/runner/project-chat/claim",
             (RemoteChatWorkClaimRequest req,
                 HttpContext context,
