@@ -2962,49 +2962,27 @@ public static class LeaseEndpoints
         string runnerId,
         string attemptId)
     {
-        var pendingReason = pendingIntent?.SavedReason ?? string.Empty;
-        var trigger = concernRound is { StillOpen: true }
-            ? concernRound.RoundKind
-            : pendingReason.Contains("integration", StringComparison.OrdinalIgnoreCase)
-                ? RunTriggers.IntegrationRecovery
-            : pendingReason.Contains("timeout", StringComparison.OrdinalIgnoreCase)
-              || pendingReason.Contains("salvage", StringComparison.OrdinalIgnoreCase)
-                ? RunTriggers.TimeoutContinuation
-            : pendingReason.Contains("loop-continuation", StringComparison.OrdinalIgnoreCase)
-                ? RunTriggers.Replan
-            : pendingIntent is not null
-                ? RunTriggers.OperatorContinue
-            : priorRunCount == 0
-                ? RunTriggers.Initial
-                : RunTriggers.DependencyRelease;
-        var pipelineTriggered = trigger is RunTriggers.ReviewConcern
-            or RunTriggers.ReviewFinding
-            or RunTriggers.IntegrationRecovery
-            or RunTriggers.TimeoutContinuation
-            or RunTriggers.Replan;
+        if (concernRound is { StillOpen: true })
+        {
+            return new RunTriggerMetadata(
+                concernRound.RoundKind,
+                "pipeline",
+                concernRound.RoundKind == RunTriggers.ReviewConcern
+                    ? $"Review concern round {concernRound.Used} of {concernRound.Maximum}."
+                    : $"Blocking findings from review {concernRound.ReviewAttemptId} require another coding run.",
+                $"review={concernRound.ReviewAttemptId};aspects={string.Join(',', concernRound.AspectIds)}");
+        }
+
+        if (pendingIntent is not null)
+            return PendingIntentTriggerPolicy.Resolve(pendingIntent, ownerClientId);
+
         return new RunTriggerMetadata(
-            trigger,
-            pipelineTriggered
-                ? trigger == RunTriggers.TimeoutContinuation ? "watchdog" : "pipeline"
-                : trigger == RunTriggers.OperatorContinue
-                    ? pendingIntent?.TriggeredBy ?? $"operator {ownerClientId ?? "local-default"}"
-                    : $"runner {runnerId}",
-            trigger switch
-            {
-                RunTriggers.ReviewConcern => $"Review concern round {concernRound!.Used} of {concernRound.Maximum}.",
-                RunTriggers.ReviewFinding => $"Blocking findings from review {concernRound!.ReviewAttemptId} require another coding run.",
-                RunTriggers.IntegrationRecovery => $"Integration recovery was queued after {pendingReason}.",
-                RunTriggers.TimeoutContinuation => "The watchdog queued a bounded continuation after a timed-out run.",
-                RunTriggers.Replan => "The pipeline queued the orchestrator's answer to an agent planning question.",
-                RunTriggers.OperatorContinue => pendingIntent?.TriggerReason ?? "An operator continuation was queued before the remote claim.",
-                RunTriggers.Initial => "Remote runner claimed the initial task run.",
-                _ => "A dependency release made the task eligible for a remote run.",
-            },
-            trigger is RunTriggers.ReviewConcern or RunTriggers.ReviewFinding
-                ? $"review={concernRound!.ReviewAttemptId};aspects={string.Join(',', concernRound.AspectIds)}"
-                : pendingIntent is not null
-                    ? $"reason={pendingReason};prompt={RunTriggerMetadata.PromptPreview(pendingIntent.Prompt)}"
-                    : $"attempt={attemptId}");
+            priorRunCount == 0 ? RunTriggers.Initial : RunTriggers.DependencyRelease,
+            $"runner {runnerId}",
+            priorRunCount == 0
+                ? "Remote runner claimed the initial task run."
+                : "A dependency release made the task eligible for a remote run.",
+            $"attempt={attemptId}");
     }
 
     private static TaskInfo? FindTask(ITaskScanner scanner, string taskKey)

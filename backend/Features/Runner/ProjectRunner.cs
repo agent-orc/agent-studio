@@ -1535,39 +1535,7 @@ public class ProjectRunner
         => RunCliAsync(jobId, RunIntent.UserContinue, followupPrompt, reissueAttempt: 0, mode: mode, ct, triggerMetadata);
 
     internal static RunTriggerMetadata TriggerForPendingIntent(PendingIntent intent, string? ownerClientId)
-    {
-        var reason = intent.SavedReason ?? string.Empty;
-        var trigger = reason.Contains("integration", StringComparison.OrdinalIgnoreCase)
-            ? RunTriggers.IntegrationRecovery
-            : reason.Contains("timeout", StringComparison.OrdinalIgnoreCase)
-              || reason.Contains("salvage", StringComparison.OrdinalIgnoreCase)
-                ? RunTriggers.TimeoutContinuation
-            : reason.Contains("loop-continuation", StringComparison.OrdinalIgnoreCase)
-                ? RunTriggers.Replan
-            : reason.Contains("crash", StringComparison.OrdinalIgnoreCase)
-              || reason.Contains("provider", StringComparison.OrdinalIgnoreCase)
-                ? RunTriggers.RecoveryAfterCrash
-            : RunTriggers.OperatorContinue;
-        var actor = trigger switch
-        {
-            RunTriggers.TimeoutContinuation => "watchdog",
-            RunTriggers.OperatorContinue => intent.TriggeredBy ?? $"operator {ownerClientId ?? "local-default"}",
-            _ => "pipeline",
-        };
-        var sentence = trigger switch
-        {
-            RunTriggers.IntegrationRecovery => $"Integration recovery was queued after {reason}.",
-            RunTriggers.TimeoutContinuation => "The watchdog queued a bounded continuation after a timed-out run.",
-            RunTriggers.Replan => "The pipeline queued the orchestrator's answer to an agent planning question.",
-            RunTriggers.RecoveryAfterCrash => $"The pipeline queued recovery after {reason}.",
-            _ => intent.TriggerReason ?? "An operator continuation was queued while the task could not start immediately.",
-        };
-        return new RunTriggerMetadata(
-            trigger,
-            actor,
-            sentence,
-            $"reason={reason}; prompt={RunTriggerMetadata.PromptPreview(intent.Prompt)}");
-    }
+        => PendingIntentTriggerPolicy.Resolve(intent, ownerClientId);
 
     /// <summary>
     /// Single entry point for spawning the CLI for a job. <see cref="RunPlanner.PlanRun"/>
