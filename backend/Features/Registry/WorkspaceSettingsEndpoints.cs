@@ -1,6 +1,7 @@
 namespace AgentStudio.Registry;
 
 public sealed record SetWorkspaceUsageCalendarRequest(string TimeZone, string WeekStart);
+public sealed record SetChatMetadataRequest(bool? Enabled);
 
 /// <summary>
 /// AGT-1812 — read/write surface for per-workspace default orchestrator settings
@@ -35,6 +36,7 @@ public static class WorkspaceSettingsEndpoints
                     .ResolveCliExecutionEngine(null, s).Source,
                 autonomyLevel = s.AutonomyLevel,
                 autoApplyModelMigrations = s.AutoApplyModelMigrations ?? true,
+                chatMetadataEnabled = s.ChatMetadataEnabled ?? true,
                 // Platform fallbacks so the UI can render the effective "inherited"
                 // value without hardcoding it or a second round-trip.
                 defaultOrchestratorModel = OrchestratorRunner.DefaultModel,
@@ -43,6 +45,16 @@ public static class WorkspaceSettingsEndpoints
                 usageTimeZone = s.UsageTimeZone ?? "Etc/UTC",
                 usageWeekStart = (s.UsageWeekStart ?? DayOfWeek.Monday).ToString(),
             });
+        });
+
+        app.MapPut("/api/workspaces/{id}/chat-metadata", (
+            string id, SetChatMetadataRequest req, WorkspaceRegistry workspaces,
+            WorkspaceSettingsService settings) =>
+        {
+            if (workspaces.Find(id) is null)
+                return Results.NotFound(new { error = $"Unknown workspaceId '{id}'" });
+            settings.SetChatMetadataEnabled(id, req.Enabled);
+            return Results.Ok(new { enabled = settings.Get(id).ChatMetadataEnabled ?? true });
         });
 
         app.MapPut("/api/workspaces/{id}/usage-calendar", (

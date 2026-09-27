@@ -13,8 +13,8 @@ namespace AgentStudio.Shared;
 /// implemented once in <see cref="AgentStudio.Registry.OrchestratorSettingsResolver"/>.</para>
 ///
 /// <para>Scope note: only genuinely workspace-shaped knobs live here: the model
-/// and thinking level the orchestrator decides with, the ADR-0026 autonomy
-/// level, and the temporary local CLI execution-engine rollout. Process-wide
+/// and thinking level the orchestrator decides with, chat metadata display,
+/// the ADR-0026 autonomy level, and the temporary local CLI execution-engine rollout. Process-wide
 /// supervisor lifecycle flags stay a single platform-global value edited
 /// through <see cref="AgentStudio.Configuration.OrchestratorConfigService"/>;
 /// they gate whole hosted loops before any project or workspace scope exists.
@@ -26,6 +26,8 @@ namespace AgentStudio.Shared;
 /// </summary>
 public record WorkspaceSettings
 {
+    /// <summary>Show chat turn usage metadata by default. Null inherits the platform default (on).</summary>
+    public bool? ChatMetadataEnabled { get; init; }
     /// <summary>IANA calendar zone used for workspace usage costs. Null selects UTC.</summary>
     public string? UsageTimeZone { get; init; }
 

@@ -43,6 +43,32 @@ The chat has two scopes:
 
 The user should be able to tell which scope is active. A target selector is better than pretending one model sees everything at once.
 
+## Turn usage receipts
+
+Each assistant turn persists a `metadata` receipt beside its transcript text.
+The receipt records the effective provider model and effort, host, provider
+session ID when the CLI reports one, queued/start/finish instants, normalized
+input and cached input, output and reasoning tokens when available, and a
+historical TokenEconomy cost estimate with currency and catalogue version.
+Queue time includes waiting for interactive admission. Reasoning tokens are
+part of output tokens and are never added to the billable output count.
+Unknown prices remain null. The receipt's `usageClass` is `chat-turn`, separate
+from task coding calls.
+
+`chat.metadata.enabled` resolves project override, then workspace default,
+then the platform default of on. The chat header has a browser user toggle
+that can override the resolved display setting. Capture continues when display
+is off, so the audit transcript and usage accounting remain complete. The
+header sums only the turns visible in the current context, and marks cost
+incomplete when any turn is unpriced. The context chat GET response carries
+`metadataEnabled` for this resolution.
+
+The Coding Agent Chat package is pinned to 0.4.1. Agent Studio has an adapter
+for the CAC-26 `TurnMetadata` and `TurnMetadataCapabilities` contract; its
+conversation binding activates with a 0.5.0 or later pin. The CAC-26 branch
+was unavailable during this delivery, so the adapter is a local mirror. The
+package pin and adapter shape need one compatibility check at the 0.5.0 bump.
+
 ## Architecture Answer
 
 The user-facing chat should use the same canonical orchestrator session that owns the scope:

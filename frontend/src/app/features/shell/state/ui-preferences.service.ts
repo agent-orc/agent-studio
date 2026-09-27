@@ -41,6 +41,7 @@ const STORAGE_KEY_OPEN_PROJECT_CHAT_ON_ENTRY = 'atp.studio.openProjectChatOnEntr
 // is proactively cleared on boot (see constructor).
 const STORAGE_KEY_ORCHESTRATOR_SETTINGS_OPEN = 'orchestratorSettingsOpen';
 const STORAGE_KEY_TREE_METRICS = 'atp.studio.explorer.metrics';
+const STORAGE_KEY_CHAT_METADATA = 'chat.metadata.enabled';
 
 @Injectable({ providedIn: 'root' })
 export class UiPreferencesService {
@@ -54,6 +55,11 @@ export class UiPreferencesService {
   /** Project Chat is the standard project entry unless the operator opts out. */
   readonly openProjectChatOnEntry = signal<boolean>(
     localStorage.getItem(STORAGE_KEY_OPEN_PROJECT_CHAT_ON_ENTRY) !== '0',
+  );
+  /** Null inherits the workspace/project setting; either boolean is this browser user's choice. */
+  readonly chatMetadataEnabled = signal<boolean | null>(
+    localStorage.getItem(STORAGE_KEY_CHAT_METADATA) === null
+      ? null : localStorage.getItem(STORAGE_KEY_CHAT_METADATA) === '1',
   );
 
   /**
@@ -107,6 +113,9 @@ export class UiPreferencesService {
       case STORAGE_KEY_TREE_METRICS:
         this.treeMetricView.set(e.newValue === 'dots' ? 'dots' : 'numbers');
         return;
+      case STORAGE_KEY_CHAT_METADATA:
+        this.chatMetadataEnabled.set(e.newValue === null ? null : e.newValue === '1');
+        return;
       default:
         return;
     }
@@ -125,6 +134,11 @@ export class UiPreferencesService {
   setOpenProjectChatOnEntry(open: boolean): void {
     this.openProjectChatOnEntry.set(open);
     localStorage.setItem(STORAGE_KEY_OPEN_PROJECT_CHAT_ON_ENTRY, open ? '1' : '0');
+  }
+
+  setChatMetadataEnabled(enabled: boolean): void {
+    this.chatMetadataEnabled.set(enabled);
+    localStorage.setItem(STORAGE_KEY_CHAT_METADATA, enabled ? '1' : '0');
   }
 
   toggleGroupByEpic(): void {

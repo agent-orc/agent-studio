@@ -111,6 +111,18 @@ public class ProjectSettingsService
         }
     }
 
+    public void SetChatMetadataEnabled(string projectName, bool? enabled)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var value) ? value : new ProjectSettings();
+            _cache[key] = current with { ChatMetadataEnabled = enabled };
+            Persist();
+        }
+    }
+
     public void SetAutomaticFailureContinuationsEnabled(string projectName, bool enabled)
     {
         EnsureLoaded();

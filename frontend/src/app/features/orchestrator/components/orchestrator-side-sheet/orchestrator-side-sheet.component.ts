@@ -67,6 +67,7 @@ import { UiPreferencesService } from '../../../shell/state/ui-preferences.servic
 import { PlanStripComponent } from '../../../plan-strip';
 import { OrchestratorTaskPlanStore } from '../../state/orchestrator-task-plan.store';
 import { StudioTabStateService } from '../../../studio-shell/services/studio-tab-state.service';
+import { summarizeChatTurns } from '../../chat-turn-metadata.adapter';
 
 /**
  * Push-layout side sheet hosting automatic context-keyed orchestrator chats.
@@ -379,6 +380,12 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
   readonly contextKey = computed<string | null>(() => this.contextResolution().key);
 
   readonly turns = signal<OrchestratorChatTurn[]>([], { equal: sameOrchestratorChatTurns });
+  readonly metadataProjectDefault = signal(true);
+  readonly metadataEnabled = computed(() => this.uiPreferences.chatMetadataEnabled() ?? this.metadataProjectDefault());
+  readonly chatTotals = computed(() => summarizeChatTurns(this.turns()));
+  toggleMetadata(): void {
+    this.uiPreferences.setChatMetadataEnabled(!this.metadataEnabled());
+  }
   readonly latestContextReceipt = computed(() =>
     [...this.turns()].reverse().find(turn => turn.role === 'orchestrator' && turn.contextReceipt)?.contextReceipt ?? null);
   readonly loading = signal(false);
@@ -473,6 +480,7 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
     this.events(),
     this.effectiveProject(),
     this.contextKey() ?? this.effectiveProject() ?? 'orchestrator-chat',
+    this.metadataEnabled(),
   ));
 
   readonly contextChipText = computed<string | null>(() => {
@@ -870,6 +878,7 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
         if (this.contextKey() !== key) return;
         this.turns.set(resp.turns ?? []);
         this.executionContext.set(resp.executionContext ?? null);
+        this.metadataProjectDefault.set(resp.metadataEnabled ?? true);
         this.errorMsg.set(null);
         if (reconcileMissingSession
           && !this.contextSessions().some((session) => session.contextKey === key)) {

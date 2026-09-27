@@ -328,6 +328,7 @@ public record OrchestratorChatTurn
     public string? ConfiguredModel { get; init; }
     public string? QuotaFallbackReason { get; init; }
     public OrchestratorTokenUsage? TokenUsage { get; init; }
+    public ChatTurnMetadata? Metadata { get; init; }
     public DateTime? QueuedAt { get; init; }
     public DateTime? StartedAt { get; init; }
     public DateTime? FinishedAt { get; init; }
@@ -350,6 +351,29 @@ public record OrchestratorChatTurn
     public string? ErrorDetail { get; init; }
 
     public List<OrchestratorChatAttachment>? Attachments { get; init; }
+}
+
+/// <summary>Persisted provider and accounting receipt for one assistant chat turn.</summary>
+public sealed record ChatTurnMetadata
+{
+    public string? ProviderSessionId { get; init; }
+    public string? Host { get; init; }
+    public string? Model { get; init; }
+    public string? Effort { get; init; }
+    public string? CliType { get; init; }
+    public DateTime? QueuedAt { get; init; }
+    public DateTime? StartedAt { get; init; }
+    public DateTime? FinishedAt { get; init; }
+    public long? QueueMs => QueuedAt is { } q && StartedAt is { } s ? Math.Max(0, (long)(s - q).TotalMilliseconds) : null;
+    public long? DurationMs => StartedAt is { } s && FinishedAt is { } f ? Math.Max(0, (long)(f - s).TotalMilliseconds) : null;
+    public int? InputTokens { get; init; }
+    public int? CachedInputTokens { get; init; }
+    public int? OutputTokens { get; init; }
+    public int? ReasoningTokens { get; init; }
+    public decimal? Cost { get; init; }
+    public string? Currency { get; init; }
+    public string? PriceCatalogueVersion { get; init; }
+    public string UsageClass { get; init; } = "chat-turn";
 }
 
 public sealed record OrchestratorContextReceipt(
@@ -679,7 +703,7 @@ public class OrchestratorChatService
                                 remote.ReplyText,
                                 string.IsNullOrWhiteSpace(remote.Model) ? effectiveModel : remote.Model,
                                 remote.TokenUsage,
-                                CapturedSessionId: null,
+                                CapturedSessionId: remote.ProviderSessionId,
                                 remote.ErrorMessage)
                             {
                                 CliType = remote.CliType ?? effectiveCli,
@@ -738,6 +762,7 @@ public class OrchestratorChatService
                     "Orchestrator chat send threw for project {Project} ({ExceptionType}): {Raw}",
                     projectName, ex.GetType().Name, ex.Message);
                 var translation = OrchestratorChatErrorTranslator.Translate(ex.Message, CliTypes.Codex);
+                var failureFinishedAt = DateTime.UtcNow;
                 var failure = new OrchestratorChatTurn
                 {
                     Role = OrchestratorChatRoles.Orchestrator,
@@ -746,7 +771,11 @@ public class OrchestratorChatService
                     ErrorDetail = translation.RawDetail,
                     QueuedAt = remoteResult?.QueuedAt ?? fallbackQueuedAt ?? queuedAt,
                     StartedAt = remoteResult?.StartedAt ?? startedAt,
-                    FinishedAt = DateTime.UtcNow,
+                    FinishedAt = failureFinishedAt,
+                    Metadata = ChatTurnMetadataFactory.Create(
+                        new OrchestratorDecisionResult(false, "", requestedModel, null, null, ex.Message)
+                        { CliType = CliTypes.Codex },
+                        remoteResult, fallbackQueuedAt ?? queuedAt, startedAt, failureFinishedAt, thinkingLevel),
                     ContextReceipt = contextReceipt
                 };
                 await AppendTurnAsync(projectName, watchPath, context, failure, ct).ConfigureAwait(false);
@@ -770,6 +799,7 @@ public class OrchestratorChatService
                     ConfiguredModel = result.ConfiguredModel,
                     QuotaFallbackReason = result.QuotaFallbackReason,
                     TokenUsage = result.TokenUsage,
+                    Metadata = ChatTurnMetadataFactory.Create(result, remoteResult, fallbackQueuedAt ?? queuedAt, startedAt, DateTime.UtcNow, thinkingLevel),
                     ErrorMessage = translation.FriendlyMessage,
                     ErrorDetail = translation.RawDetail,
                     QueuedAt = remoteResult?.QueuedAt ?? fallbackQueuedAt ?? queuedAt,
@@ -790,6 +820,7 @@ public class OrchestratorChatService
                 ConfiguredModel = result.ConfiguredModel,
                 QuotaFallbackReason = result.QuotaFallbackReason,
                 TokenUsage = result.TokenUsage,
+                Metadata = ChatTurnMetadataFactory.Create(result, remoteResult, fallbackQueuedAt ?? queuedAt, startedAt, remoteResult?.FinishedAt ?? DateTime.UtcNow, thinkingLevel),
                 QueuedAt = remoteResult?.QueuedAt ?? fallbackQueuedAt ?? queuedAt,
                 StartedAt = remoteResult?.StartedAt ?? startedAt,
                 FinishedAt = remoteResult?.FinishedAt ?? DateTime.UtcNow,

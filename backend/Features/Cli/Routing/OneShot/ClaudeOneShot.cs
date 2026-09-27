@@ -233,11 +233,14 @@ public sealed class ClaudeOneShot : ICliOneShot
 
         // Rich usage with context-window snapshot (new bus dimension).
         ParsedTurnUsage? rich = null;
+        string? providerSessionId = null;
         if (!string.IsNullOrWhiteSpace(stdout) && stdout.TrimStart().StartsWith('{'))
         {
             try
             {
                 using var doc = JsonDocument.Parse(stdout);
+                if (doc.RootElement.TryGetProperty("session_id", out var sessionId))
+                    providerSessionId = sessionId.GetString();
                 if (_claudeUsage.TryParse(doc.RootElement, fallbackModel, _modelRegistry, out var parsed))
                 {
                     rich = parsed;
@@ -263,7 +266,8 @@ public sealed class ClaudeOneShot : ICliOneShot
             Usage: usage,
             RichUsage: rich,
             Latency: latency,
-            Error: ok ? null : $"exitCode={exitCode}{(string.IsNullOrWhiteSpace(stderr) ? "" : $"; stderr={stderr.Trim()}")}");
+            Error: ok ? null : $"exitCode={exitCode}{(string.IsNullOrWhiteSpace(stderr) ? "" : $"; stderr={stderr.Trim()}")}")
+        { ProviderSessionId = providerSessionId };
     }
 
     private void RecordIfRequested(CliOneShotRequest request, CliOneShotResult result)

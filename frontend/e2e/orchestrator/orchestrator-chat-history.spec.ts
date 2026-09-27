@@ -96,7 +96,8 @@ async function stubWorkspace(page: Page): Promise<void> {
     let body: unknown = {};
     if (/\/api\/(?:tags|workspaces|clients|projects)\/?$/.test(path)
       || path.startsWith('/api/bus/')
-      || path === '/api/v1/management/remote-hosts') body = [];
+      || path === '/api/v1/management/remote-hosts'
+      || path === '/api/v1/management/links') body = [];
     if (path === '/api/runner/status') body = { projects: {} };
     if (path === '/api/cli/quota') body = { snapshots: [] };
     if (path === '/api/tasks/archive') body = { items: [], total: 0, offset: 0, limit: 50 };
@@ -155,7 +156,22 @@ async function stubWorkspace(page: Page): Promise<void> {
         role: 'user',
         text: 'Deliver central Chat History with live context summaries',
         model: null,
+      }, {
+        id: 'turn-2',
+        ts: '2026-08-10T11:48:05Z',
+        role: 'orchestrator',
+        text: 'The history is ready.',
+        model: 'gpt-6-astra',
+        metadata: {
+          cliType: 'codex', model: 'gpt-6-astra', effort: 'medium',
+          providerSessionId: 'thread-fixture', host: 'agent-runner-01',
+          queueMs: 1000, durationMs: 4000, inputTokens: 100,
+          cachedInputTokens: 900, outputTokens: 50, reasoningTokens: 20,
+          cost: 0.0042, currency: 'USD', priceCatalogueVersion: 'TokenEconomy 0.3.5',
+          usageClass: 'chat-turn',
+        },
       }],
+      metadataEnabled: true,
     }),
   }));
   await page.route('**/hubs/**', route => route.abort());
@@ -176,7 +192,7 @@ for (const theme of ['light', 'dark'] as const) {
       localStorage.setItem('atp.studio.theme', selectedTheme);
     }, theme);
 
-    await page.goto('/#/chat-history');
+    await page.goto('/#/chat-history', { waitUntil: 'domcontentloaded' });
     await dismissErrorDialogs(page);
 
     const history = page.getByTestId('orchestrator-chat-history');
@@ -196,6 +212,16 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(page.getByTestId('orch-side-sheet')).toBeVisible();
     await expect(page.getByTestId('orchestrator-conversation'))
       .toContainText('Deliver central Chat History with live context summaries');
+    await expect(page.getByTestId('orch-chat-usage-summary')).toContainText('1 turn · 1,050 tokens · $0.004 estimated');
+    const toggle = page.getByTestId('orch-chat-metadata-toggle');
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.getByTestId('orch-chat-usage-summary')).not.toContainText('1,050 tokens');
+    await toggle.click();
+    await expect(page.getByTestId('orch-chat-usage-summary')).toContainText('1,050 tokens');
+    const chatScreenshotPath = join(RESULTS, `orchestrator-task-chat-usage-${theme}.png`);
+    await page.getByTestId('orch-side-sheet').screenshot({ path: chatScreenshotPath });
+    await testInfo.attach(`Task chat usage ${theme}`, { path: chatScreenshotPath, contentType: 'image/png' });
     await page.getByTestId('orch-context-badge').click();
     await expect(page.getByTestId('orch-context-header')).toHaveAttribute('data-context-key', TASK_CONTEXT_KEY);
   });

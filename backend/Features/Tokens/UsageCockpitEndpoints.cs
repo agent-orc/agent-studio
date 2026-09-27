@@ -23,7 +23,11 @@ public sealed record UsageSlotPool(string Name, int? Occupied, int? Capacity, Us
 public sealed record UsageCockpitResponse(int SnapshotVersion, string WorkspaceId, string TimeZone,
     DayOfWeek WeekStart, DateTime GeneratedAt, UsageCalendar Calendar,
     IReadOnlyList<UsageCli> Clis, UsageCostProjection Cost, IReadOnlyList<UsageRun> Runs,
-    IReadOnlyList<UsageSlotPool> Slots, IReadOnlyDictionary<string, UsageSourceState> Sources);
+    IReadOnlyList<UsageSlotPool> Slots, IReadOnlyDictionary<string, UsageSourceState> Sources)
+{
+    /// <summary>Interactive chat is a separate usage class from coding runs.</summary>
+    public IReadOnlyList<RemoteChatUsage> ChatTurns { get; init; } = [];
+}
 
 public static class UsageCockpitEndpoints
 {
@@ -35,7 +39,7 @@ public static class UsageCockpitEndpoints
             BusBackedProjectTokenUsageReader ledger, AgentMessageBusStore bus,
             TaskRunnerService runner, ClientIdentityStore clients,
             AttemptAuthorityService reviews,
-            IConfiguration configuration) =>
+            IConfiguration configuration, RemoteChatWorkBroker chatWork) =>
         {
             var workspace = string.IsNullOrWhiteSpace(workspaceId)
                 ? workspaces.List().FirstOrDefault(item => item.IsDefault) ?? workspaces.List().FirstOrDefault()
@@ -217,7 +221,10 @@ public static class UsageCockpitEndpoints
                 ? new UsageSourceState("complete", now, null)
                 : new UsageSourceState("partial", now, null, "One slot source is unavailable.");
             return Results.Ok(new UsageCockpitResponse(1, workspace.Id, calendar.TimeZone,
-                calendar.WeekStart, now, calendar, clis, cost, runs, slots, sourceStates));
+                calendar.WeekStart, now, calendar, clis, cost, runs, slots, sourceStates)
+            {
+                ChatTurns = chatWork.GetUsage().Where(row => visibleNames.Contains(row.ProjectName)).ToArray()
+            });
         });
     }
 

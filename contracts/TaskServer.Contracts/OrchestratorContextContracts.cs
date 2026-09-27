@@ -72,7 +72,31 @@ public sealed record OrchestratorContextTokenUsageDto(
     long InputTokens,
     long OutputTokens,
     long CacheReadTokens,
-    long CacheCreationTokens);
+    long CacheCreationTokens)
+{
+    public long ReasoningTokens { get; init; }
+    public string? ThinkingLevel { get; init; }
+}
+
+public sealed record OrchestratorContextTurnMetadataDto
+{
+    public string? ProviderSessionId { get; init; }
+    public string? Host { get; init; }
+    public string? Model { get; init; }
+    public string? Effort { get; init; }
+    public string? CliType { get; init; }
+    public DateTime? QueuedAt { get; init; }
+    public DateTime? StartedAt { get; init; }
+    public DateTime? FinishedAt { get; init; }
+    public long? InputTokens { get; init; }
+    public long? CachedInputTokens { get; init; }
+    public long? OutputTokens { get; init; }
+    public long? ReasoningTokens { get; init; }
+    public decimal? Cost { get; init; }
+    public string? Currency { get; init; }
+    public string? PriceCatalogueVersion { get; init; }
+    public string UsageClass { get; init; } = "chat-turn";
+}
 
 public sealed record OrchestratorContextAttachmentDto(
     string Alt,
@@ -88,7 +112,10 @@ public sealed record OrchestratorContextTurnDto(
     string? ErrorMessage = null,
     string? ErrorDetail = null,
     IReadOnlyList<OrchestratorContextAttachmentDto>? Attachments = null,
-    OrchestratorContextReceiptDto? Receipt = null);
+    OrchestratorContextReceiptDto? Receipt = null)
+{
+    public OrchestratorContextTurnMetadataDto? Metadata { get; init; }
+}
 
 public sealed record OrchestratorContextTranscriptResponse(
     OrchestratorContextDto Context,

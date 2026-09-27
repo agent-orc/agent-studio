@@ -41,6 +41,7 @@ export interface OrchestratorTokenUsage {
   thinkingLevel?: string | null;
   inputTokens: number;
   outputTokens: number;
+  reasoningTokens?: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
 }
@@ -145,9 +146,32 @@ export interface OrchestratorChatTurn {
   text: string;
   model?: string | null;
   tokenUsage?: OrchestratorTokenUsage | null;
+  metadata?: ChatTurnMetadata | null;
   errorMessage?: string | null;
   contextReceipt?: OrchestratorContextReceipt | null;
   attachments?: OrchestratorChatAttachment[] | null;
+}
+
+/** Durable Agent Studio receipt, independent of the CAC package release. */
+export interface ChatTurnMetadata {
+  providerSessionId?: string | null;
+  host?: string | null;
+  model?: string | null;
+  effort?: string | null;
+  cliType?: string | null;
+  queuedAt?: string | null;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  queueMs?: number | null;
+  durationMs?: number | null;
+  inputTokens?: number | null;
+  cachedInputTokens?: number | null;
+  outputTokens?: number | null;
+  reasoningTokens?: number | null;
+  cost?: number | null;
+  currency?: string | null;
+  priceCatalogueVersion?: string | null;
+  usageClass?: 'chat-turn';
 }
 
 /** Context blocks the backend composed into one orchestrator reply request. */
@@ -241,6 +265,7 @@ export interface OrchestratorChatResponse {
   project: string;
   turns: OrchestratorChatTurn[];
   executionContext?: ChatExecutionContext | null;
+  metadataEnabled?: boolean;
 }
 
 export interface ChatExecutionContext {

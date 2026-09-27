@@ -84,6 +84,16 @@ history aligned with repaired task receipts without rewriting evidence logs.
 
 ## Workspace usage cockpit read contract (HUC-S1)
 
+Chat turns are a separate usage class. Their durable receipts live on the
+assistant transcript turns, with normalized token dimensions and a cost
+estimated at the turn's finish time. `chatTurns` in the cockpit response
+projects interactive remote chat by host and project: active turns, heavy
+turns occupying a coding slot, measured CPU share, completed tokens and cost.
+The host capacity and header usage views read the same remote broker facts.
+Chat amounts are not folded into coding run totals, so clients must show the
+class separately. The runtime aggregate currently covers completed turns
+since Task Server startup; historical totals remain in the transcripts.
+
 `GET /api/usage/cockpit?workspaceId={id}` returns a versioned, read-only
 snapshot for the named workspace. Omit `workspaceId` to select the default
 workspace. An optional `primaryCli` chooses which CLI is marked primary; it

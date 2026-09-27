@@ -182,11 +182,11 @@ public sealed partial class TaskServerStore
         await using var command = Command(connection, """
             SELECT turn_id, created_at, role, body, model,
                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                   error_message, error_detail, attachments_json, receipt_json
+                   error_message, error_detail, attachments_json, receipt_json, metadata_json
               FROM (
                     SELECT sequence, turn_id, created_at, role, body, model,
                            input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                           error_message, error_detail, attachments_json, receipt_json
+                           error_message, error_detail, attachments_json, receipt_json, metadata_json
                       FROM orchestrator_context_turns
                      WHERE context_key = $context
                      ORDER BY sequence DESC
@@ -293,11 +293,11 @@ public sealed partial class TaskServerStore
             INSERT INTO orchestrator_context_turns(
                 context_key, turn_id, created_at, role, body, model,
                 input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                error_message, error_detail, attachments_json, receipt_json, payload_sha256)
+                error_message, error_detail, attachments_json, receipt_json, metadata_json, payload_sha256)
             VALUES (
                 $context, $turn, $created, $role, $body, $model,
                 $input, $output, $cache_read, $cache_creation,
-                $error, $detail, $attachments, $receipt, $sha);
+                $error, $detail, $attachments, $receipt, $metadata, $sha);
             """, ct, transaction,
             ("$context", context.ContextKey),
             ("$turn", canonicalTurn.TurnId),
@@ -315,6 +315,7 @@ public sealed partial class TaskServerStore
                 ? null
                 : JsonSerializer.Serialize(canonicalTurn.Attachments)),
             ("$receipt", receiptJson),
+            ("$metadata", canonicalTurn.Metadata is null ? null : JsonSerializer.Serialize(canonicalTurn.Metadata)),
             ("$sha", payloadSha));
 
         var summary = string.Equals(canonicalTurn.Role, "user", StringComparison.Ordinal)
@@ -563,12 +564,19 @@ public sealed partial class TaskServerStore
 
     private static OrchestratorContextTurnDto ReadOrchestratorContextTurn(SqliteDataReader reader)
     {
+        var metadata = reader.IsDBNull(13)
+            ? null
+            : JsonSerializer.Deserialize<OrchestratorContextTurnMetadataDto>(reader.GetString(13));
         var usage = reader.GetInt64(5) == 0 && reader.GetInt64(6) == 0
                     && reader.GetInt64(7) == 0 && reader.GetInt64(8) == 0
             ? null
             : new OrchestratorContextTokenUsageDto(
                 reader.IsDBNull(4) ? null : reader.GetString(4),
-                reader.GetInt64(5), reader.GetInt64(6), reader.GetInt64(7), reader.GetInt64(8));
+                reader.GetInt64(5), reader.GetInt64(6), reader.GetInt64(7), reader.GetInt64(8))
+            {
+                ReasoningTokens = metadata?.ReasoningTokens ?? 0,
+                ThinkingLevel = metadata?.Effort,
+            };
         return new OrchestratorContextTurnDto(
             reader.GetString(0), Parse(reader.GetString(1)), reader.GetString(2), reader.GetString(3),
             reader.IsDBNull(4) ? null : reader.GetString(4),
@@ -580,7 +588,10 @@ public sealed partial class TaskServerStore
                 : JsonSerializer.Deserialize<IReadOnlyList<OrchestratorContextAttachmentDto>>(reader.GetString(11)),
             reader.IsDBNull(12)
                 ? null
-                : JsonSerializer.Deserialize<OrchestratorContextReceiptDto>(reader.GetString(12)));
+                : JsonSerializer.Deserialize<OrchestratorContextReceiptDto>(reader.GetString(12)))
+        {
+            Metadata = metadata,
+        };
     }
 
     private static void ValidateOrchestratorContextTurn(OrchestratorContextTurnDto turn)

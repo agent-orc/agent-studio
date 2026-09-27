@@ -210,6 +210,7 @@ public static class ProjectSettingsEndpoints
                     remoteExecutionEnabled = kv.Value.RemoteExecutionEnabled,
                     orchestratorModel = kv.Value.OrchestratorModel,
                     orchestratorThinkingLevel = kv.Value.OrchestratorThinkingLevel,
+                    chatMetadataEnabled = kv.Value.ChatMetadataEnabled,
                     cliExecutionEngine = defaults.ResolveCliExecutionEngine(kv.Key).ExecutionEngine,
                     cliExecutionEngineSource = defaults.ResolveCliExecutionEngine(kv.Key).Source,
                     cliExecutionEngineOverride = kv.Value.CliExecutionEngine,
@@ -1098,6 +1099,29 @@ public static class ProjectSettingsEndpoints
         // The orchestrator's model can be tuned per project. Defaults to
         // Opus when null. This is the only knob today; per-call overrides
         // are not exposed.
+        app.MapGet("/api/projects/{projectName}/chat-metadata", (
+            string projectName, ProjectSettingsService settings, ProjectRegistry projects,
+            WorkspaceSettingsService workspaceSettings) =>
+        {
+            var project = projects.FindByIdOrDisplayName(projectName);
+            if (project is null) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            var overrideValue = settings.Get(project.DisplayName).ChatMetadataEnabled;
+            var inherited = workspaceSettings.Get(project.WorkspaceId).ChatMetadataEnabled ?? true;
+            return Results.Ok(new { enabled = overrideValue ?? inherited, projectOverride = overrideValue, workspaceDefault = inherited });
+        });
+
+        app.MapPut("/api/projects/{projectName}/chat-metadata", (
+            string projectName, AgentStudio.Registry.SetChatMetadataRequest req,
+            ProjectSettingsService settings, ProjectRegistry projects,
+            WorkspaceSettingsService workspaceSettings) =>
+        {
+            var project = projects.FindByIdOrDisplayName(projectName);
+            if (project is null) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            settings.SetChatMetadataEnabled(project.DisplayName, req.Enabled);
+            return Results.Ok(new { enabled = req.Enabled ?? workspaceSettings.Get(project.WorkspaceId).ChatMetadataEnabled ?? true,
+                projectOverride = req.Enabled });
+        });
+
         app.MapPut("/api/projects/{projectName}/orchestrator-model", (string projectName, SetOrchestratorModelRequest req, ProjectSettingsService settings, TaskScannerService scanner) =>
         {
             var known = scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));

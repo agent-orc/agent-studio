@@ -122,8 +122,20 @@ public sealed class OrchestratorContextStoreTests
             "orchestrator",
             "The central receipt is persisted.",
             "gpt-5.5",
-            new OrchestratorContextTokenUsageDto("gpt-5.5", 700, 90, 10, 0),
-            Receipt: receipt);
+            new OrchestratorContextTokenUsageDto("gpt-5.5", 700, 90, 10, 0)
+            { ReasoningTokens = 20, ThinkingLevel = "medium" },
+            Receipt: receipt)
+        {
+            Metadata = new OrchestratorContextTurnMetadataDto
+            {
+                ProviderSessionId = "thread-123", Host = "agent-runner-01",
+                Model = "gpt-5.5", Effort = "medium", CliType = "codex",
+                QueuedAt = DateTime.UtcNow.AddSeconds(-3), StartedAt = DateTime.UtcNow.AddSeconds(-2),
+                FinishedAt = DateTime.UtcNow, InputTokens = 700, CachedInputTokens = 10,
+                OutputTokens = 90, ReasoningTokens = 20, Cost = 0.003m,
+                Currency = "USD", PriceCatalogueVersion = "TokenEconomy 0.3.5",
+            },
+        };
         await store.AppendOrchestratorContextTurnAsync(
             project.ProjectId,
             null,
@@ -140,6 +152,8 @@ public sealed class OrchestratorContextStoreTests
         Assert.Equal("project:Agent Studio", persistedReply.Receipt.ContextKey);
         Assert.Equal(new string('a', 64), Assert.Single(persistedReply.Receipt.Sources).Sha256);
         Assert.DoesNotContain("The central receipt", JsonSerializer.Serialize(persistedReply.Receipt));
+        Assert.Equal(reply.Metadata, persistedReply.Metadata);
+        Assert.Equal(20, persistedReply.TokenUsage?.ReasoningTokens);
 
         var context = Assert.Single(await store.ListOrchestratorContextsAsync(false, default));
         Assert.Equal(user.Body, context.Summary);

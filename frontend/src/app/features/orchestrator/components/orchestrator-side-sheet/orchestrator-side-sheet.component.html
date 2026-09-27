@@ -145,6 +145,26 @@
           </section>
         } @else if (effectiveProject()) {
           <section class="sheet__chat">
+            <div class="sheet__usage-summary" data-testid="orch-chat-usage-summary">
+              @if (metadataEnabled()) {
+                <span [title]="chatTotals().providerSessionIds.join(', ')">{{ chatTotals().turns }} {{ chatTotals().turns === 1 ? 'turn' : 'turns' }} · {{ chatTotals().tokens.toLocaleString() }} tokens
+                  @if (chatTotals().pricedTurns === chatTotals().turns && chatTotals().turns > 0) {
+                    · ${{ chatTotals().cost.toFixed(3) }} estimated
+                  } @else if (chatTotals().turns > 0) {
+                    · cost incomplete
+                  }
+                  @if (chatTotals().turns > 0) {
+                    · {{ (chatTotals().elapsedMs / 1000).toFixed(1) }}s total
+                    ({{ (chatTotals().queueMs / 1000).toFixed(1) }}s queued)
+                    @if (chatTotals().models.length) { · {{ chatTotals().models.join(', ') }} }
+                  }
+                </span>
+              }
+              <button type="button" data-testid="orch-chat-metadata-toggle"
+                      [attr.aria-pressed]="metadataEnabled()" (click)="toggleMetadata()">
+                {{ metadataEnabled() ? 'Hide usage' : 'Show usage' }}
+              </button>
+            </div>
             <div #conversationHost class="sheet__conversation" data-testid="orchestrator-conversation">
               <cac-conversation-view
                 variant="embedded"

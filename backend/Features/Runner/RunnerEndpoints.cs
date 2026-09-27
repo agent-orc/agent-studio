@@ -321,13 +321,17 @@ public static class RunnerEndpoints
         // session, scoped to one project tab. The Task Server centrally owns
         // the managed context, transcript, receipts, summary, and lifecycle.
         runnerGroup.MapGet("/{projectName}/orchestrator-chat",
-            async (string projectName, TaskScannerService scanner, OrchestratorChatService chatService, CancellationToken ct) =>
+            async (string projectName, TaskScannerService scanner, OrchestratorChatService chatService,
+                AgentStudio.Projects.ProjectSettingsService projectSettings,
+                AgentStudio.Registry.ProjectRegistry projects,
+                AgentStudio.Registry.WorkspaceSettingsService workspaceSettings, CancellationToken ct) =>
             {
                 var entry = scanner.GetWatchPaths().FirstOrDefault(e => e.Name == projectName);
                 if (entry == null) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
                 var turns = await chatService.ReadAsync(projectName, entry.Path, context: null, 1000, ct);
                 var executionContext = chatService.ResolveExecutionContext(projectName, entry.Path);
-                return Results.Ok(new { project = projectName, turns, executionContext });
+                return Results.Ok(new { project = projectName, turns, executionContext,
+                    metadataEnabled = ChatMetadataEnabled(projectName, projectSettings, projects, workspaceSettings) });
             });
 
         runnerGroup.MapPost("/{projectName}/orchestrator-chat",
@@ -370,6 +374,9 @@ public static class RunnerEndpoints
             string rawContextKey,
             TaskScannerService scanner,
             OrchestratorChatService chatService,
+            AgentStudio.Projects.ProjectSettingsService projectSettings,
+            AgentStudio.Registry.ProjectRegistry projects,
+            AgentStudio.Registry.WorkspaceSettingsService workspaceSettings,
             CancellationToken ct)
         {
             if (!OrchestratorContextKey.TryParse(rawContextKey, out var key))
@@ -378,7 +385,19 @@ public static class RunnerEndpoints
             if (entry == null) return Results.NotFound(new { error = $"Unknown project '{key.ProjectId}'" });
             var turns = await chatService.ReadAsync(key.ProjectId!, entry.Path, key, 1000, ct);
             var executionContext = chatService.ResolveExecutionContext(key.ProjectId!, entry.Path, key);
-            return Results.Ok(new { contextKey = key.Value, project = key.ProjectId, turns, executionContext });
+            return Results.Ok(new { contextKey = key.Value, project = key.ProjectId, turns, executionContext,
+                metadataEnabled = ChatMetadataEnabled(key.ProjectId!, projectSettings, projects, workspaceSettings) });
+        }
+
+        static bool ChatMetadataEnabled(string projectName,
+            AgentStudio.Projects.ProjectSettingsService projectSettings,
+            AgentStudio.Registry.ProjectRegistry projects,
+            AgentStudio.Registry.WorkspaceSettingsService workspaceSettings)
+        {
+            var project = projects.FindByIdOrDisplayName(projectName);
+            return projectSettings.Get(project?.DisplayName ?? projectName).ChatMetadataEnabled
+                ?? workspaceSettings.Get(project?.WorkspaceId).ChatMetadataEnabled
+                ?? true;
         }
 
         static async Task<IResult> SendContextChat(
@@ -409,14 +428,23 @@ public static class RunnerEndpoints
         }
 
         runnerGroup.MapGet("/project:{projectId}/orchestrator-chat",
-            (string projectId, TaskScannerService scanner, OrchestratorChatService chatService, CancellationToken ct) =>
-                ReadContextChat($"project:{projectId}", scanner, chatService, ct));
+            (string projectId, TaskScannerService scanner, OrchestratorChatService chatService,
+                AgentStudio.Projects.ProjectSettingsService projectSettings,
+                AgentStudio.Registry.ProjectRegistry projects,
+                AgentStudio.Registry.WorkspaceSettingsService workspaceSettings, CancellationToken ct) =>
+                ReadContextChat($"project:{projectId}", scanner, chatService, projectSettings, projects, workspaceSettings, ct));
         runnerGroup.MapGet("/workbench:{projectId}/{workbenchKey}/orchestrator-chat",
-            (string projectId, string workbenchKey, TaskScannerService scanner, OrchestratorChatService chatService, CancellationToken ct) =>
-                ReadContextChat($"workbench:{projectId}/{workbenchKey}", scanner, chatService, ct));
+            (string projectId, string workbenchKey, TaskScannerService scanner, OrchestratorChatService chatService,
+                AgentStudio.Projects.ProjectSettingsService projectSettings,
+                AgentStudio.Registry.ProjectRegistry projects,
+                AgentStudio.Registry.WorkspaceSettingsService workspaceSettings, CancellationToken ct) =>
+                ReadContextChat($"workbench:{projectId}/{workbenchKey}", scanner, chatService, projectSettings, projects, workspaceSettings, ct));
         runnerGroup.MapGet("/task:{projectId}/{taskKey}/orchestrator-chat",
-            (string projectId, string taskKey, TaskScannerService scanner, OrchestratorChatService chatService, CancellationToken ct) =>
-                ReadContextChat($"task:{projectId}/{taskKey}", scanner, chatService, ct));
+            (string projectId, string taskKey, TaskScannerService scanner, OrchestratorChatService chatService,
+                AgentStudio.Projects.ProjectSettingsService projectSettings,
+                AgentStudio.Registry.ProjectRegistry projects,
+                AgentStudio.Registry.WorkspaceSettingsService workspaceSettings, CancellationToken ct) =>
+                ReadContextChat($"task:{projectId}/{taskKey}", scanner, chatService, projectSettings, projects, workspaceSettings, ct));
 
         runnerGroup.MapPost("/project:{projectId}/orchestrator-chat",
             (string projectId, SendOrchestratorChatRequest req, HttpContext ctx, TaskScannerService scanner, OrchestratorChatService chatService, CancellationToken ct) =>

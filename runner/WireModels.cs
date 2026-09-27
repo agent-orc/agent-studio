@@ -360,16 +360,19 @@ public sealed record RemoteChatWorkCompletionRequest(
     string? CliType = null,
     string? ConfiguredCliType = null,
     string? ConfiguredModel = null,
-    string? QuotaFallbackReason = null);
+    string? QuotaFallbackReason = null,
+    string? ProviderSessionId = null);
 
 public sealed record OrchestratorTokenUsage
 {
     public string? Model { get; init; }
     public int InputTokens { get; init; }
     public int OutputTokens { get; init; }
+    public int ReasoningTokens { get; init; }
     public int CacheReadTokens { get; init; }
     public int CacheCreationTokens { get; init; }
     public bool? InputIncludesCached { get; init; }
+    public string? ThinkingLevel { get; init; }
 }
 
 public sealed record ChatExecutionContext(

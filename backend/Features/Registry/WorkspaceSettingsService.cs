@@ -59,6 +59,18 @@ public sealed class WorkspaceSettingsService
         }
     }
 
+    public void SetChatMetadataEnabled(string workspaceId, bool? enabled)
+    {
+        if (string.IsNullOrWhiteSpace(workspaceId)) throw new ArgumentException("Workspace is required.", nameof(workspaceId));
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var current = _cache.TryGetValue(workspaceId, out var value) ? value : new WorkspaceSettings();
+            _cache[workspaceId] = current with { ChatMetadataEnabled = enabled };
+            Persist();
+        }
+    }
+
     public void SetUsageCalendar(string workspaceId, string timeZone, DayOfWeek weekStart)
     {
         if (string.IsNullOrWhiteSpace(workspaceId)) throw new ArgumentException("Workspace is required.", nameof(workspaceId));

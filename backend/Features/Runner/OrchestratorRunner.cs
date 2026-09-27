@@ -131,8 +131,8 @@ public class OrchestratorRunner
             result.Ok,
             result.ParsedText,
             result.EffectiveModel ?? configuredModel,
-            result.Usage,
-            CapturedSessionId: null,
+            result.Usage is null ? null : result.Usage with { ThinkingLevel = result.EffectiveThinkingLevel ?? thinkingLevel },
+            CapturedSessionId: result.ProviderSessionId,
             error)
         {
             Latency = result.Latency,
@@ -202,8 +202,8 @@ public class OrchestratorRunner
                 false,
                 result.ParsedText,
                 result.EffectiveModel ?? model,
-                result.Usage,
-                null,
+                result.Usage is null ? null : result.Usage with { ThinkingLevel = result.EffectiveThinkingLevel ?? thinkingLevel },
+                result.ProviderSessionId,
                 error)
             {
                 Latency = result.Latency,
@@ -222,8 +222,8 @@ public class OrchestratorRunner
             true,
             result.ParsedText,
             result.EffectiveModel ?? model,
-            result.Usage,
-            null,
+            result.Usage is null ? null : result.Usage with { ThinkingLevel = result.EffectiveThinkingLevel ?? thinkingLevel },
+            result.ProviderSessionId,
             null)
         {
             Latency = result.Latency,

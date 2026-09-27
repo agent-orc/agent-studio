@@ -1,5 +1,6 @@
 import type { OrchestratorChatTurn } from '../../../../features/orchestrator';
 import type { ChatEvent, ConversationEvent, RawLineRange } from 'coding-agent-chat/core';
+import { supportsLibraryTurnMetadata, toLibraryTurnMetadata } from '../../chat-turn-metadata.adapter';
 
 /**
  * Pure helpers for the orchestrator side sheet. Extracted from the
@@ -81,6 +82,7 @@ export function sameOrchestratorChatTurns(
       && (left.errorMessage ?? null) === (right.errorMessage ?? null)
       && sameContextReceipt(left.contextReceipt, right.contextReceipt)
       && sameTokenUsage(left.tokenUsage, right.tokenUsage)
+      && JSON.stringify(left.metadata ?? null) === JSON.stringify(right.metadata ?? null)
       && sameAttachments(left.attachments, right.attachments);
   });
 }
@@ -146,12 +148,14 @@ export function buildOrchestratorConversationEvents(
   inlineEvents: readonly ChatEvent[],
   projectName: string | null,
   source: string,
+  metadataEnabled = true,
 ): ConversationEvent[] {
   const persisted = suppressLocalDuplicates(serverTurns, localTurns);
   const turns: readonly OptimisticOrchestratorChatTurn[] = [...persisted, ...localTurns];
   const projected: { event: ConversationEvent; inputIndex: number }[] = [];
 
   turns.forEach((turn, index) => {
+    const libraryMetadata = metadataEnabled && supportsLibraryTurnMetadata() ? toLibraryTurnMetadata(turn) : null;
     const localAttachments = turn.localAttachments?.map(attachment => ({
       alt: attachment.alt,
       url: attachment.previewUrl,
@@ -178,6 +182,10 @@ export function buildOrchestratorConversationEvents(
         rawRange: rangeFor(source, index),
         body,
         actor: turn.role === 'user' ? 'You' : 'Orchestrator',
+        ...(libraryMetadata ? {
+          turnMetadata: libraryMetadata.metadata,
+          turnMetadataCapabilities: libraryMetadata.capabilities,
+        } : {}),
       },
     });
 

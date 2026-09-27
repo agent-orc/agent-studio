@@ -73,6 +73,8 @@ public sealed class CodexOneShotTests
         Assert.True(result.Usage.InputIncludesCached);
         Assert.Equal(42, result.Usage.OutputTokens);
         Assert.Equal(9, result.RichUsage!.ReasoningOutput);
+        Assert.Equal(9, result.Usage.ReasoningTokens);
+        Assert.Equal("019-test", result.ProviderSessionId);
     }
 
     [Fact]

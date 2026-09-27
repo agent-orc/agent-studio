@@ -339,7 +339,11 @@ public sealed class TaskServerOrchestratorChatPersistence(
                 turn.TokenUsage.InputTokens,
                 turn.TokenUsage.OutputTokens,
                 turn.TokenUsage.CacheReadTokens,
-                turn.TokenUsage.CacheCreationTokens);
+                turn.TokenUsage.CacheCreationTokens)
+            {
+                ReasoningTokens = turn.TokenUsage.ReasoningTokens,
+                ThinkingLevel = turn.TokenUsage.ThinkingLevel,
+            };
         OrchestratorContextReceiptDto? receipt = null;
         if (turn.ContextReceipt is
             {
@@ -381,7 +385,28 @@ public sealed class TaskServerOrchestratorChatPersistence(
             turn.ErrorDetail,
             turn.Attachments?.Select(item =>
                 new OrchestratorContextAttachmentDto(item.Alt, item.RelativePath)).ToArray(),
-            receipt);
+            receipt)
+        {
+            Metadata = turn.Metadata is null ? null : new OrchestratorContextTurnMetadataDto
+            {
+                ProviderSessionId = turn.Metadata.ProviderSessionId,
+                Host = turn.Metadata.Host,
+                Model = turn.Metadata.Model,
+                Effort = turn.Metadata.Effort,
+                CliType = turn.Metadata.CliType,
+                QueuedAt = turn.Metadata.QueuedAt,
+                StartedAt = turn.Metadata.StartedAt,
+                FinishedAt = turn.Metadata.FinishedAt,
+                InputTokens = turn.Metadata.InputTokens,
+                CachedInputTokens = turn.Metadata.CachedInputTokens,
+                OutputTokens = turn.Metadata.OutputTokens,
+                ReasoningTokens = turn.Metadata.ReasoningTokens,
+                Cost = turn.Metadata.Cost,
+                Currency = turn.Metadata.Currency,
+                PriceCatalogueVersion = turn.Metadata.PriceCatalogueVersion,
+                UsageClass = turn.Metadata.UsageClass,
+            },
+        };
     }
 
     private static OrchestratorChatTurn FromDto(OrchestratorContextTurnDto turn)
@@ -395,6 +420,8 @@ public sealed class TaskServerOrchestratorChatPersistence(
                 OutputTokens = checked((int)turn.TokenUsage.OutputTokens),
                 CacheReadTokens = checked((int)turn.TokenUsage.CacheReadTokens),
                 CacheCreationTokens = checked((int)turn.TokenUsage.CacheCreationTokens),
+                ReasoningTokens = checked((int)turn.TokenUsage.ReasoningTokens),
+                ThinkingLevel = turn.TokenUsage.ThinkingLevel,
             };
         OrchestratorContextReceipt? receipt = null;
         if (turn.Receipt is not null)
@@ -433,6 +460,29 @@ public sealed class TaskServerOrchestratorChatPersistence(
             Text = turn.Body,
             Model = turn.Model,
             TokenUsage = usage,
+            QueuedAt = turn.Metadata?.QueuedAt,
+            StartedAt = turn.Metadata?.StartedAt,
+            FinishedAt = turn.Metadata?.FinishedAt,
+            CliType = turn.Metadata?.CliType,
+            Metadata = turn.Metadata is null ? null : new ChatTurnMetadata
+            {
+                ProviderSessionId = turn.Metadata.ProviderSessionId,
+                Host = turn.Metadata.Host,
+                Model = turn.Metadata.Model,
+                Effort = turn.Metadata.Effort,
+                CliType = turn.Metadata.CliType,
+                QueuedAt = turn.Metadata.QueuedAt,
+                StartedAt = turn.Metadata.StartedAt,
+                FinishedAt = turn.Metadata.FinishedAt,
+                InputTokens = turn.Metadata.InputTokens is { } input ? checked((int)input) : null,
+                CachedInputTokens = turn.Metadata.CachedInputTokens is { } cached ? checked((int)cached) : null,
+                OutputTokens = turn.Metadata.OutputTokens is { } output ? checked((int)output) : null,
+                ReasoningTokens = turn.Metadata.ReasoningTokens is { } reasoning ? checked((int)reasoning) : null,
+                Cost = turn.Metadata.Cost,
+                Currency = turn.Metadata.Currency,
+                PriceCatalogueVersion = turn.Metadata.PriceCatalogueVersion,
+                UsageClass = turn.Metadata.UsageClass,
+            },
             ErrorMessage = turn.ErrorMessage,
             ErrorDetail = turn.ErrorDetail,
             Attachments = turn.Attachments?.Select(item => new OrchestratorChatAttachment

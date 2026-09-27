@@ -155,6 +155,7 @@ public sealed record CliOneShotResult(
     AgentMessageLatency Latency,
     string? Error)
 {
+    public string? ProviderSessionId { get; init; }
     /// <summary>The quota decision used immediately before this call.</summary>
     public QuotaAdmissionPlan? QuotaAdmission { get; init; }
 

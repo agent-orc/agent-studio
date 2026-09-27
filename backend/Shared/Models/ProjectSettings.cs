@@ -2,6 +2,8 @@ namespace AgentStudio.Shared;
 
 public record ProjectSettings
 {
+    /// <summary>Per-project override for chat usage display. Null inherits the workspace setting.</summary>
+    public bool? ChatMetadataEnabled { get; init; }
     /// <summary>Default-on creation classification. Stored here until project definition v2 accepts tagging.autoTag.</summary>
     public bool AutoTag { get; init; } = true;
     /// <summary>

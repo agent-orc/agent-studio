@@ -3271,6 +3271,7 @@ public sealed partial class TaskServerStore
                 error_detail TEXT,
                 attachments_json TEXT,
                 receipt_json TEXT,
+                metadata_json TEXT,
                 payload_sha256 TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS runners(
@@ -3770,6 +3771,7 @@ public sealed partial class TaskServerStore
             CREATE INDEX IF NOT EXISTS ix_archive_manifests_state ON archive_manifests(state);
             """, ct);
         await EnsureColumnAsync(connection, "events", "sequence", "INTEGER", ct);
+        await EnsureColumnAsync(connection, "orchestrator_context_turns", "metadata_json", "TEXT", ct);
         await EnsureColumnAsync(connection, "run_completions", "needs_input_message", "TEXT", ct);
         await EnsureColumnAsync(connection, "run_completions", "salvage_branch", "TEXT", ct);
         await EnsureColumnAsync(connection, "run_completions", "salvage_commit_sha", "TEXT", ct);

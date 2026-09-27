@@ -12,6 +12,8 @@ public record OrchestratorTokenUsage
     public string? Model { get; init; }
     public int InputTokens { get; init; }
     public int OutputTokens { get; init; }
+    /// <summary>Reasoning tokens are a subset of output tokens for Codex.</summary>
+    public int ReasoningTokens { get; init; }
     public int CacheReadTokens { get; init; }
     public int CacheCreationTokens { get; init; }
     /// <summary>
