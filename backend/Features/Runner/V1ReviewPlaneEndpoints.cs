@@ -2196,9 +2196,11 @@ public sealed class V1ReviewExecutorRegistry
         string runnerId,
         Contract.CapabilityAdvertisementRequest request)
     {
-        if (request.SchemaVersion != Contract.CapabilityProtocol.CurrentSchemaVersion)
+        if (request.SchemaVersion is not (
+            Contract.CapabilityProtocol.LegacySchemaVersion or
+            Contract.CapabilityProtocol.CurrentSchemaVersion))
             throw new ArgumentException(
-                $"Capability schema {request.SchemaVersion} is unsupported; expected " +
+                $"Capability schema {request.SchemaVersion} is unsupported; expected 1 or " +
                 $"{Contract.CapabilityProtocol.CurrentSchemaVersion}.");
         if (request.FreshForSeconds is < 30 or > 900)
             throw new ArgumentException("Capability freshness must be between 30 and 900 seconds.");

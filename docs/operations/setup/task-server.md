@@ -334,6 +334,18 @@ an archived artifact,
 of an empty body. Restoring rewrites the content back and re-verifies every
 file's hash before clearing `archived`.
 
+The management-scoped `GET /api/v1/management/credentials` and
+`PUT /api/v1/management/credentials` routes expose and update only credential
+metadata. The record follows
+[`registry.schema.json`](../../credentials-and-logins/registry.schema.json):
+installation, host and credential ID form its key; service bindings identify
+each consumer; every unknown date requires a reason. A write carries
+`sourceInstanceId`, `expectedGeneration` and UTC `observedAt`. A newer generation
+must name the generation it supersedes. Stale generation, instance or observation
+time is rejected. The management principal is required; secret values, token
+hashes and credential-bearing URLs are never accepted. The host or CLI retains
+native refresh and custody.
+
 Management routes, all under `/api/v1/management/retention`:
 
 | Route | Purpose | Scope |
