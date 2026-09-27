@@ -122,6 +122,29 @@ async function openSideSheetForProject(page: Page): Promise<string> {
 test.describe('Project chat fix - silent drop, sluggishness, parallel use', () => {
   test('shows queued runner reason and interactive usage while a reply waits', async ({ page }) => {
     await installFrontendOverride(page);
+    await page.route('**/api/auth/status', route => route.fulfill({ json: {
+      profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
+    } }));
+    await page.route('**/api/watch-paths', route => route.fulfill({ json: [{
+      name: 'Chat fixture', path: '/tmp/chat-fixture', rootPath: '/tmp/chat-fixture',
+      repositoryPath: '/tmp/chat-fixture',
+    }] }));
+    await page.route('**/api/workspaces', route => route.fulfill({ json: [{
+      id: 'workspace-chat-fixture', displayName: 'Chat fixture', sortOrder: 0,
+      isDefault: true, projects: [{
+        id: 'Chat fixture', displayName: 'Chat fixture', shortCode: 'CF',
+        workspaceId: 'workspace-chat-fixture', storageLocation: '/tmp/chat-fixture',
+        archived: false, urls: [],
+      }],
+    }] }));
+    await page.route(/\/api\/tasks\/grouped(?:\?|$)/, route => route.fulfill({ json: {
+      preparation: [], ready: [], progress: [], review: [], completed: [], archive: [],
+    } }));
+    await page.route(/\/api\/tasks\/archive(?:\?|$)/, route => route.fulfill({ json: {
+      items: [], total: 0, offset: 0, limit: 50, hasMore: false,
+    } }));
+    await page.route('**/api/runner/status', route =>
+      route.fulfill({ json: { projects: {} } }));
     await page.route(/\/api\/cli\/codex\/models(?:\?|$)/, route => route.fulfill({ json: {
       source: 'test', models: [{
         id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', multiplier: null,
@@ -141,13 +164,7 @@ test.describe('Project chat fix - silent drop, sluggishness, parallel use', () =
         activeTurns: 1, heavyTurns: 1, cpuPercent: 54,
         tokens: 1200, costUsd: 0.03,
       }] }));
-    await page.goto('/', { waitUntil: 'domcontentloaded' });
-    await setTheme(page, 'light');
-    await page.getByTestId('orch-side-sheet-toggle').click();
-    const composer = page.locator('cac-chat textarea');
-    await expect(composer).toBeVisible();
-    const project = 'Chat fixture';
-    await installChatMocks(page, project, {
+    await installChatMocks(page, 'Chat fixture', {
       handlePost: async () => {
         await new Promise(resolve => setTimeout(resolve, 7_000));
         return { status: 200, reply: {
@@ -155,6 +172,11 @@ test.describe('Project chat fix - silent drop, sluggishness, parallel use', () =
         } };
       },
     });
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+    await setTheme(page, 'light');
+    await page.getByTestId('orch-side-sheet-toggle').click();
+    const composer = page.locator('cac-chat textarea');
+    await expect(composer).toBeVisible();
     await composer.fill('How is this task progressing?');
     await page.locator('cac-chat').getByRole('button', { name: 'Send' }).click();
     const waiting = page.getByTestId('orchestrator-chat-waiting');

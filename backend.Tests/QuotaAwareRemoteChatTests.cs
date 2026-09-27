@@ -1,4 +1,5 @@
 using AgentStudio.Cli;
+using AgentStudio.Orchestrator;
 using AgentStudio.Projects;
 using AgentStudio.Registry;
 using AgentStudio.Review;
@@ -15,8 +16,12 @@ public sealed class QuotaAwareRemoteChatTests : IDisposable
     private readonly string _root = Path.Combine(
         Path.GetTempPath(), "quota-remote-chat-" + Guid.NewGuid().ToString("N"));
 
-    [Fact]
-    public async Task Unreachable_assigned_host_runs_chat_on_workstation_and_records_timeline()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("task:fallback-remote-chat/AGT-2901")]
+    [InlineData("workbench:fallback-remote-chat/AGT-W43")]
+    public async Task Unreachable_assigned_host_preserves_chat_context_on_workstation_fallback(
+        string? contextKey)
     {
         const string projectName = "fallback-remote-chat";
         var watchPath = Path.Combine(_root, "projects", projectName);
@@ -58,12 +63,15 @@ public sealed class QuotaAwareRemoteChatTests : IDisposable
             NullLogger<OrchestratorChatService>.Instance,
             projectSettings: settings, projects: projects, remoteWork: broker);
 
+        OrchestratorContextKey? context = null;
+        if (contextKey is not null)
+            Assert.True(OrchestratorContextKey.TryParse(contextKey, out context));
         var reply = await service.SendAsync(
             projectName, watchPath,
             new SendOrchestratorChatRequest(
                 "Answer briefly.", Attachments: null,
                 Model: ModelIds.Gpt56Sol, ThinkingLevel: "medium"),
-            CancellationToken.None);
+            clientId: null, context, CancellationToken.None);
 
         Assert.True(runner.WasCalled);
         Assert.Contains("Ran on the workstation because runner-offline was unreachable.", reply.Text);
@@ -77,9 +85,14 @@ public sealed class QuotaAwareRemoteChatTests : IDisposable
             projects.FindByStorageLocation(watchPath),
             settings.Get(projectName).IntegrationBranch);
         Assert.NotNull(repository);
-        Assert.Equal("local", broker.GetContext(new RemoteChatWorkRoute(
+        var route = new RemoteChatWorkRoute(
             "runner-offline", repository.ProjectId, projectName,
-            repository.RepositoryUrl, repository.DefaultBranch))?.ExecutionKind);
+            repository.RepositoryUrl, repository.DefaultBranch)
+            { ContextKey = contextKey };
+        Assert.Equal("local", broker.GetContext(route)?.ExecutionKind);
+        Assert.Equal("local", service.ResolveExecutionContext(projectName, watchPath, context).ExecutionKind);
+        if (contextKey is not null)
+            Assert.Null(broker.GetContext(route with { ContextKey = null }));
     }
 
     [Fact]

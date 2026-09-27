@@ -41,6 +41,7 @@ import { OrchestratorPanelHeaderComponent } from '../orchestrator-panel-header/o
 import { OrchestratorJumpLatestComponent } from '../orchestrator-jump-latest/orchestrator-jump-latest.component';
 import { OrchestratorContextReceiptComponent } from '../orchestrator-context-receipt/orchestrator-context-receipt.component';
 import { OrchestratorContextPickerComponent } from '../orchestrator-context-picker/orchestrator-context-picker.component';
+import { OrchestratorChatWaitingComponent } from '../orchestrator-chat-waiting/orchestrator-chat-waiting.component';
 import { OrchestratorPanelStateService } from '../../state/orchestrator-panel-state.service';
 import { OrchestratorChatActivityService } from '../../state/orchestrator-chat-activity.service';
 import { OrchestratorContextDigestService } from '../../state/orchestrator-context-digest.service';
@@ -83,6 +84,7 @@ import { StudioTabStateService } from '../../../studio-shell/services/studio-tab
     OrchestratorContextHeaderComponent,
     OrchestratorContextReceiptComponent,
     OrchestratorContextPickerComponent,
+    OrchestratorChatWaitingComponent,
     ChatSwitcherRailComponent,
     OrchestratorPanelHeaderComponent,
     OrchestratorJumpLatestComponent,
@@ -385,16 +387,6 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
     return key ? this.chatActivity.pendingContextKeys().has(key) : false;
   });
   readonly errorMsg = signal<string | null>(null);
-  readonly remoteChatStatus = signal<{
-    contextKey: string; state: 'queued' | 'running'; runnerId: string;
-    queuedAt: string; reason: string | null;
-  } | null>(null);
-  readonly remoteChatWaitingLabel = computed(() => {
-    const status = this.remoteChatStatus();
-    if (status?.state !== 'queued' || status.contextKey !== this.contextKey()) return null;
-    const since = new Date(status.queuedAt).toLocaleTimeString();
-    return `Waiting for ${status.runnerId} since ${since}. ${status.reason ?? 'The runner has not picked up this turn.'}`;
-  });
   readonly executionContext = signal<ChatExecutionContext | null>(null);
   /** Project scope may explicitly omit context once. Task and Dossier scope are mandatory. */
   readonly contextDismissed = signal(false);
@@ -644,18 +636,6 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
     // is the convergence fallback for the always-present shell indicator.
     this.contextPollTimer = setVisibleInterval(() => {
       this.refreshContextSessions();
-      const project = this.effectiveProject();
-      const key = this.contextKey();
-      if (project && key && this.sending()) {
-        this.jobService.getRemoteChatWorkStatus(project, key).subscribe({
-          next: status => {
-            if (this.contextKey() === key && this.sending())
-              this.remoteChatStatus.set(status ? { ...status, contextKey: key } : null);
-          },
-          error: () => this.remoteChatStatus.update(current =>
-            current?.contextKey === key ? null : current),
-        });
-      }
     }, 2_000);
 
     this.maybeSeedDemoEvents();
@@ -960,7 +940,6 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
       pending: true,
     };
     this.localTurns.update((curr) => [...curr, localTurn]);
-    this.remoteChatStatus.set(null);
     this.chatActivity.start(contextKey);
     const lazy = await import('./orchestrator-side-sheet.lazy');
 
@@ -1007,7 +986,6 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
         }
         if (contextStillVisible) this.contextAttachments.set([]);
         this.chatActivity.finish(contextKey);
-        this.remoteChatStatus.update(current => current?.contextKey === contextKey ? null : current);
         this.refreshContextSessions();
         // Fetch the server's view of the conversation. While the local turn
         // is still in the list, `suppressLocalDuplicates` hides the matching
@@ -1029,7 +1007,6 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
       },
       error: (err) => {
         this.chatActivity.finish(contextKey);
-        this.remoteChatStatus.update(current => current?.contextKey === contextKey ? null : current);
         this.refreshContextSessions();
         const message = orchestratorContextErrorMessage(err, 'Failed to send');
         if (this.contextKey() === contextKey) {

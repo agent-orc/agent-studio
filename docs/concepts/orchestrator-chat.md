@@ -133,10 +133,15 @@ transcript so a pinned task and the board no longer share one history.
 - `GET /api/runner/{contextKey}/orchestrator-chat` returns the transcript for a
   navigation context. `{contextKey}` is the same canonical key as the session
   registry — `project:<PROJ>` (one path segment) or `task:<PROJ>/<KEY>` (two).
-  The response is `{ contextKey, project, turns }`.
+  The response is `{ contextKey, project, turns, executionContext }`.
 - `POST /api/runner/{contextKey}/orchestrator-chat` sends a user message and
   persists both turns to that context's transcript, returning
-  `{ contextKey, project, reply }`.
+  `{ contextKey, project, reply, executionContext }`.
+
+The execution context uses the same context key as the transcript. A task or
+Dossier turn that falls back to the workstation retains its own checkout
+metadata; reading that context does not pick up another turn's metadata from
+the same project.
 
 Storage is context-keyed in the selected topology. A remote Task Server uses
 its SQLite store. The monolith profile uses its existing context-keyed JSONL

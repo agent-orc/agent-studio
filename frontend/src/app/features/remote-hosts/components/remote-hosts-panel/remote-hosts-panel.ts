@@ -3,7 +3,7 @@ import { TaskService } from '../../../../services/task.service';
 import { RemoteHostsService } from '../../services/remote-hosts.service';
 import { ReviewQueueService } from '../../services/review-queue.service';
 import { RemoteHostCardComponent } from '../remote-host-card/remote-host-card';
-import type { HostActionKind, HostProjectSlots, RemoteChatUsage, RemoteHost } from '../../models/remote-host.model';
+import type { HostActionKind, HostProjectSlots, RemoteHost } from '../../models/remote-host.model';
 import type {
   HostProjectPolicyChange,
   RuntimeCapacityChange,
@@ -145,17 +145,9 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
     if (this.usageHandle) clearInterval(this.usageHandle);
   }
 
-  chatUsageFor(host: RemoteHost): readonly RemoteChatUsage[] {
-    const names = new Set([host.name, host.id, host.clientId]
-      .map(name => name.toLowerCase()));
-    return this.interactiveUsage().filter(row => names.has(row.hostName.toLowerCase()));
-  }
-
   reload(): void { this.service.reload(); }
   reconnect(id: string): void { this.service.reconnect(id); }
-  linkFailureMessage(host: RemoteHost): string {
-    return host.runnerLink?.lastError ?? 'The runner heartbeat is late and recovery is active.';
-  }
+  linkFailureMessage(host: RemoteHost): string { return host.runnerLink?.lastError ?? 'The runner heartbeat is late and recovery is active.'; }
 
   boardSlots(host: RemoteHost): number {
     const truth = this.boardRunningTruth();
@@ -193,13 +185,9 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
 
   toggleRetired(): void { this.showRetired.update(value => !value); }
 
-  roleSlots(group: PhysicalHostGroup): Readonly<Record<string, number>> {
-    return Object.fromEntries(group.roles.map(role => [role.id, this.boardSlots(role)]));
-  }
+  roleSlots(group: PhysicalHostGroup): Readonly<Record<string, number>> { return Object.fromEntries(group.roles.map(role => [role.id, this.boardSlots(role)])); }
 
-  groupSlots(group: PhysicalHostGroup): number {
-    return group.roles.reduce((total, role) => total + this.boardSlots(role), 0);
-  }
+  groupSlots(group: PhysicalHostGroup): number { return group.roles.reduce((total, role) => total + this.boardSlots(role), 0); }
 
   openWizard(): void { this.wizardOpen.set(true); }
   closeWizard(): void { this.wizardOpen.set(false); }

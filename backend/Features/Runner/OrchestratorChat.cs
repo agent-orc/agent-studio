@@ -589,6 +589,7 @@ public class OrchestratorChatService
             projectName, context, req, userTurn.Ts);
 
         var remoteRoute = _remoteWork is null ? null : ResolveRemoteRoute(projectName, watchPath);
+        var contextRoute = remoteRoute is null ? null : remoteRoute with { ContextKey = context?.Value };
         var holdsSessionGate = remoteRoute is null;
         var queuedAt = DateTime.UtcNow;
         if (holdsSessionGate)
@@ -663,7 +664,7 @@ public class OrchestratorChatService
                         try
                         {
                             var remote = await _remoteWork.EnqueueTurnAsync(
-                                remoteRoute with { ContextKey = context?.Value },
+                                contextRoute!,
                                 fullPrompt,
                                 effectiveModel,
                                 effectiveThinking,
@@ -704,7 +705,7 @@ public class OrchestratorChatService
                             }
                             executionNote = $"Ran on the workstation because {remoteRoute.RunnerId} was unreachable.";
                             if (result.Success)
-                                _remoteWork.RecordLocalFallback(remoteRoute, new ChatExecutionContext(
+                                _remoteWork.RecordLocalFallback(contextRoute!, new ChatExecutionContext(
                                     "local", "local", workingDirectory,
                                     _git?.ReadBranchAt(workingDirectory),
                                     _git?.ReadHeadShaAt(workingDirectory),
@@ -1748,11 +1749,13 @@ public class OrchestratorChatService
     /// cached yet; local projects read branch and HEAD directly from the same
     /// repository root used by the local Codex one-shot.
     /// </summary>
-    public ChatExecutionContext ResolveExecutionContext(string projectName, string watchPath)
+    public ChatExecutionContext ResolveExecutionContext(
+        string projectName, string watchPath, OrchestratorContextKey? context = null)
     {
         var route = ResolveRemoteRoute(projectName, watchPath);
         if (route != null && _remoteWork != null)
         {
+            route = route with { ContextKey = context?.Value };
             var observed = _remoteWork.GetContext(route);
             if (observed != null) return observed;
             _remoteWork.RequestInspection(route);
