@@ -135,6 +135,21 @@ public class ProjectSettingsService
         }
     }
 
+    public void SetBatchGate(string projectName, AgentStudio.Pipeline.BatchGateFormationOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        if (!options.IsValid || !options.DocumentationOnly)
+            throw new ArgumentException("The pilot requires valid documentation-only thresholds.", nameof(options));
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var value) ? value : new ProjectSettings();
+            _cache[key] = current with { BatchGate = options };
+            Persist();
+        }
+    }
+
     /// <summary>
     /// AGT-2839: may the local integration gate stand on the Remote Review
     /// verdict with the same integration tip and tested tree? Null clears the override and falls

@@ -108,7 +108,8 @@ public sealed record ReviewPlanDto(
     int LibraryVersion = 0,
     string? CarriedOverFrom = null,
     IReadOnlyList<ReviewVerdictDto>? CarriedVerdicts = null,
-    ScopedReviewPlanDto? ScopedReview = null);
+    ScopedReviewPlanDto? ScopedReview = null,
+    bool BuildTestDeferredToBatch = false);
 
 public sealed record CreateReviewSubjectRequest(
     string TaskId,

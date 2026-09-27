@@ -5448,6 +5448,16 @@ public class GitService
     {
         var (resolved, error, code) = RunGitArgs(
             repoRoot, "rev-parse", "--verify", $"{immutableResultRef}^{{commit}}");
+        if (code != 0
+            && immutableResultRef.StartsWith("refs/heads/agent-studio/results/", StringComparison.Ordinal))
+        {
+            var (_, fetchError, fetchCode) = RunGitArgs(
+                repoRoot, "fetch", "origin", $"{immutableResultRef}:{immutableResultRef}");
+            if (fetchCode != 0)
+                return new BatchReplayResult(false, null, [], [], fetchError.Trim());
+            (resolved, error, code) = RunGitArgs(
+                repoRoot, "rev-parse", "--verify", $"{immutableResultRef}^{{commit}}");
+        }
         if (code != 0 || !string.Equals(resolved.Trim(), expectedResultSha, StringComparison.OrdinalIgnoreCase))
             return new BatchReplayResult(false, null, [], [],
                 code == 0 ? "Immutable result ref does not resolve to the expected SHA." : error.Trim());
@@ -5496,6 +5506,45 @@ public class GitService
         var old = expectedOldSha ?? new string('0', nextSha.Length);
         var (_, error, code) = RunGitArgs(repoRoot, "update-ref", candidateRef, nextSha, old);
         return new BatchCandidateRefResult(code == 0, code == 0 ? null : error.Trim());
+    }
+
+    /// <summary>Publish only the tested batch SHA with an exact remote pre-tip lease.</summary>
+    public GitPushResult PublishBatchCandidate(
+        string repoRoot, string integrationBranch, string preTipSha,
+        string testedCandidateSha, CancellationToken ct)
+    {
+        if (!IsLikelyBranchName(integrationBranch)
+            || !ReviewSubjectStore.IsValidResultSha(preTipSha)
+            || !ReviewSubjectStore.IsValidResultSha(testedCandidateSha))
+            return new GitPushResult(false, testedCandidateSha, "invalid-subject", "Invalid batch publication subject.");
+        if (!IsAncestor(repoRoot, preTipSha, testedCandidateSha))
+            return new GitPushResult(false, testedCandidateSha, "untested-topology", "Candidate does not descend from the recorded pre-tip.");
+        var (before, lookupError, lookupCode) = RunGitArgs(
+            repoRoot, ct, "ls-remote", "--heads", "origin", integrationBranch);
+        var remoteBefore = lookupCode == 0 ? before.Split('\t')[0].Trim() : null;
+        if (!string.Equals(remoteBefore, preTipSha, StringComparison.OrdinalIgnoreCase))
+            return new GitPushResult(false, testedCandidateSha, "stale-base",
+                lookupCode == 0 ? "Remote integration tip moved before publication." : lookupError.Trim());
+        var refName = $"refs/heads/{integrationBranch}";
+        // The shared ref lease excludes platform publishers. Keep the network
+        // mutation an ordinary fast-forward push; no forced update is allowed.
+        var (_, pushError, pushCode) = RunGitArgs(repoRoot, ct,
+            "push", "origin", $"{testedCandidateSha}:{refName}");
+        if (pushCode != 0)
+            return new GitPushResult(false, testedCandidateSha, "stale-base", pushError.Trim());
+        var (after, verifyError, verifyCode) = RunGitArgs(
+            repoRoot, ct, "ls-remote", "--heads", "origin", integrationBranch);
+        var remoteAfter = verifyCode == 0 ? after.Split('\t')[0].Trim() : null;
+        return string.Equals(remoteAfter, testedCandidateSha, StringComparison.OrdinalIgnoreCase)
+            ? new GitPushResult(true, testedCandidateSha, "verified", null)
+            : new GitPushResult(false, testedCandidateSha, "integration-unverified", verifyError.Trim());
+    }
+
+    public string? FetchBatchIntegrationTip(string repoRoot, string branch, CancellationToken ct)
+    {
+        if (!IsLikelyBranchName(branch)) return null;
+        var (_, _, code) = RunGitArgs(repoRoot, ct, "fetch", "origin", branch);
+        return code == 0 ? GetBranchTip(repoRoot, $"origin/{branch}") : null;
     }
 
     public GitPushResult PushBatchCandidateRef(
