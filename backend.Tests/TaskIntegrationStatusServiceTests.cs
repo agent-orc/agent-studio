@@ -82,6 +82,59 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "MachineBound")]
+    public void BuildLookup_CaseDistinctRepositoryRoots_KeepSeparateOrigins()
+    {
+        var first = SeedDevelopMainRepo("case-repo");
+        if (Directory.Exists(Path.Combine(_tempDir, "CASE-REPO"))) return;
+        var second = SeedDevelopMainRepo("CASE-REPO");
+        var repos = new[] { first, second };
+        var origins = new[] { "https://example.invalid/first.git", "https://example.invalid/second.git" };
+        // Distinct configured subdirectories exercise resolved repository-root
+        // memoization independently of the configured-path lookup cache.
+        var paths = repos.Select((repo, i) => Path.Combine(repo, $"project-{i}")).ToArray();
+        foreach (var path in paths) Directory.CreateDirectory(path);
+        var config = new ConfigurationBuilder().AddInMemoryCollection(
+            paths.SelectMany((path, i) => new Dictionary<string, string?>
+            {
+                [$"WatchPaths:{i}:Name"] = $"Project-{i}",
+                [$"WatchPaths:{i}:Path"] = path,
+                [$"WatchPaths:{i}:RepositoryPath"] = path,
+            })).Build();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
+        var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
+        var log = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var reads = new List<string>();
+        var service = new TaskIntegrationStatusService(git, settings, log,
+            NullLogger<TaskIntegrationStatusService>.Instance, TimeProvider.System,
+            readOriginUrl: root =>
+            {
+                reads.Add(root);
+                return origins[Array.IndexOf(repos, root)];
+            });
+        var jobs = repos.SelectMany((repo, i) =>
+        {
+            settings.SetIntegrationBranch($"Project-{i}", "develop");
+            var sha = RunGit(repo, "rev-parse develop").Out.Trim();
+            return Enumerable.Range(0, 2).Select(j =>
+                Job($"case-{i}-{j}", $"CASE-{i}-{j}", $"Project-{i}", repo, log,
+                    commits: [Commit(sha) with { Repository = origins[i] }]) with { WatchPath = paths[i] });
+        }).ToArray();
+
+        var statuses = service.BuildLookup(jobs);
+
+        Assert.Equal(repos, reads);
+        foreach (var job in jobs)
+        {
+            var status = statuses[job.TaskKey];
+            Assert.Equal(IntegrationStatuses.Integrated, status.Status);
+            Assert.False(status.ReachUnavailable);
+        }
+    }
+
+    [Fact]
     public void BuildLookup_AttemptArtifactsDoNotOverrideMissingCommitPresence()
     {
         // The curated integrator lands the work under a merge(KEY) commit on
@@ -1328,9 +1381,9 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
     private static IConfiguration EmptyConfig()
         => new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>()).Build();
 
-    private string SeedDevelopMainRepo()
+    private string SeedDevelopMainRepo(string? directoryName = null)
     {
-        var repo = Path.Combine(_tempDir, "repo-" + Guid.NewGuid().ToString("N")[..8]);
+        var repo = Path.Combine(_tempDir, directoryName ?? "repo-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(repo);
         RunGit(repo, "init -q -b main");
         RunGit(repo, "config user.email test@example.com");

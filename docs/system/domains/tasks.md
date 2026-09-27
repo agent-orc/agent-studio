@@ -1046,6 +1046,8 @@ their authoritative checks; display state never grants permission to mutate.
   config signature and primary origin. The 45 s sweep checks effective config
   separately. `TaskIntegrationStatusService` also memoizes origin once per
   repository in authoritative action lookups, using Git's own config semantics.
+  Origin memoization compares repository paths case-sensitively on Unix and
+  case-insensitively on Windows, so case-distinct checkouts retain separate origins.
 - **`RequestRefresh(projectName, trigger)` primes a repository immediately.** A
   mutation path that already knows it just changed a repository's ref state
   does not have to wait for the debounced watcher or the periodic sweep;

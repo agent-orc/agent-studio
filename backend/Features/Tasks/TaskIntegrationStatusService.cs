@@ -141,7 +141,8 @@ public sealed class TaskIntegrationStatusService
         // Git itself interprets includes, conditional includes and worktree config.
         // A new background generation resolves it again, so external config edits
         // cannot be hidden behind a partial filesystem parser or a long TTL.
-        var origins = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        var origins = new Dictionary<string, string?>(OperatingSystem.IsWindows()
+            ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         foreach (var job in jobs.Where(job => DeliveredLanes.Contains(job.State)))
         {
             var groups = BuildRepositoryGroups(job, origins);
