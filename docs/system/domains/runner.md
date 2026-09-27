@@ -524,6 +524,26 @@ rollout decision.
   reopens renewal and final-write delivery, restores the coding runner badge,
   and projects leased ReviewAttempts back into Auto Review activity. Omitted,
   mismatched, terminal, or superseded records are never reopened.
+- `RemoteRunStopRequestStore` (AGT-2935): the monolith Task Server writes an
+  attempt and fence scoped stop command under
+  `<TaskRepository>/.metadata/remote-run-stop-requests.json` before
+  `POST /api/tasks/{jobId}/stop` returns 202. The response includes the command
+  id, target attempt and fence, reason, expiry, and requested state. An optional
+  `commandId` query parameter makes retries idempotent; reusing it with different
+  input returns 409. `GET /api/tasks/{jobId}/stop/{commandId}` reads the durable
+  requested, observed, or terminal receipt. Only a granted renewal for the
+  matching attempt and fence can observe the command and receive the directive;
+  the directive carries the command id and fence for runner attribution.
+  `observed` records that the server included it in a granted renewal response;
+  a lost response does not consume it, so the next renewal repeats the command.
+  Settlement, release, supersession, or expiry retires it. A temporary route
+  outage leaves the request pending until renewal resumes within the command's
+  one-day expiry; authority expiry and the runner's salvage and `Stopped`
+  completion policy remain separate. Park and dependency hold affect admission,
+  not the active worker. The standalone Task Server steering action from I1
+  likewise allows `queue` and `park` only without an active lease. This stop
+  receipt path serves the current monolith API; the standalone v1 lease wire
+  reserves a stop directive but does not yet expose an active-stop command.
 - `backend/Features/Clients/ClientDeletionPolicy.cs` (AGT-2748): the pure
   eligibility decision for permanently deleting a retired client identity,
   shared by `DELETE /api/clients/{id}/permanent` and the bulk

@@ -166,7 +166,7 @@ public sealed class LeaseHeartbeat
     {
         StopRequest = directive;
         _log(
-            $"operator stop requested task={directive.TaskKey} reason={directive.Reason} " +
+            $"operator stop requested task={directive.TaskKey} command={directive.CommandId ?? "unknown"} reason={directive.Reason} " +
             $"requestedAt={directive.RequestedAtUtc:o} by={directive.RequestedBy ?? "unknown"}; " +
             "terminating the worker process tree and handing back");
         stopRun.Cancel();

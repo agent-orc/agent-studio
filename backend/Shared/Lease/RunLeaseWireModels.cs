@@ -81,7 +81,9 @@ public sealed record RunStopDirectiveDto(
     string Reason,
     DateTime RequestedAtUtc,
     string? AttemptId = null,
-    string? RequestedBy = null);
+    string? RequestedBy = null,
+    string? CommandId = null,
+    long? FencingToken = null);
 
 /// <summary>Wire projection of the server-held run-lease record.</summary>
 public sealed record RunLeaseInfoDto(
