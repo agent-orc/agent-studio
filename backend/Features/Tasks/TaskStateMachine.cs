@@ -213,6 +213,7 @@ public class TaskStateMachine
                         transitionCause, transitionDetail);
                     RecordParkedBlocker(recheck.FolderPath, targetState, reason, transitionCause, transitionDetail);
                     _scanner.InvalidateCache();
+                    _scanner.PublishCoreFromFolder(recheck.FolderPath, recheck.WatchPath, recheck.ProjectName, targetState);
                     EnqueueEvidence(recheck.WatchPath, recheck.ProjectName, recheck.Id, recheck.State, targetState);
                 }
                 return new MoveJobOutcome(MoveJobStatus.Success, NewFolderPath: recheck.FolderPath);
@@ -286,6 +287,8 @@ public class TaskStateMachine
             // pre-move snapshot. The 250 ms FileSystemWatcher debounce alone
             // is too slow for that round-trip.
             _scanner.InvalidateCache();
+            _scanner.RemoveCore(recheck);
+            _scanner.PublishCoreFromFolder(targetDir, recheck.WatchPath, recheck.ProjectName, targetState);
             EnqueueEvidence(recheck.WatchPath, recheck.ProjectName, targetSlug, recheck.State, targetState);
             // Hand the post-move path back to the caller so chat-log writes
             // and follow-up files cannot land in the now-vanished source
@@ -381,6 +384,7 @@ public class TaskStateMachine
         for (int i = 0; i < ordered.Count; i++)
         {
             TaskJsonFile.UpdateOrder(ordered[i].FolderPath, (i + 1) * step, _logger);
+            _scanner.PublishCoreFromFolder(ordered[i].FolderPath, ordered[i].WatchPath, ordered[i].ProjectName, ordered[i].State);
         }
         _scanner.InvalidateCache();
         _notifier?.PublishBulkChanged();
@@ -628,6 +632,7 @@ public class TaskStateMachine
                 File.WriteAllText(jobJsonPath, placeholder);
             }
             _scanner.InvalidateCache();
+            _scanner.MoveCoreFromKnownFolder(sourceFolder, targetDir, watchPath, targetState);
             // Archive / dead-letter / restore are real lane crossings: capture
             // their evidence too. Project label falls back to the watch-path
             // leaf since this path has no TaskInfo/ProjectName.
@@ -666,6 +671,7 @@ public class TaskStateMachine
                 if (IsUnderFlatLayout(recheck.FolderPath))
                     TaskLayoutIndex.Rebuild(recheck.WatchPath, _logger);
                 _scanner.InvalidateCache();
+                _scanner.RemoveCore(recheck);
                 _notifier?.PublishDeleted(recheck.ProjectName, recheck.Id, recheck.WatchPath);
                 return true;
             }
@@ -1008,6 +1014,8 @@ public class TaskStateMachine
             TaskLayoutIndex.Rebuild(recheck.WatchPath, _logger);
             TaskLayoutIndex.Rebuild(canonicalTarget, _logger);
             _scanner.InvalidateCache();
+            _scanner.RemoveCore(recheck);
+            _scanner.PublishCoreFromFolder(targetDir, canonicalTarget, destinationProject.DisplayName, recheck.State);
             _notifier?.PublishMoved(destinationProject.DisplayName, jobId, canonicalTarget, recheck.State, recheck.State);
         }
         catch (Exception ex)
@@ -1151,6 +1159,8 @@ public class TaskStateMachine
         for (int i = 0; i < ordered.Count; i++)
         {
             TaskJsonFile.UpdateOrder(ordered[i].FolderPath, i + 1, _logger);
+            _scanner.PublishCoreFromFolder(ordered[i].FolderPath, ordered[i].WatchPath,
+                ordered[i].ProjectName, ordered[i].State);
         }
         _scanner.InvalidateCache();
         return true;
@@ -1191,6 +1201,7 @@ public class TaskStateMachine
                 if (folder == null) continue;
             }
             TaskJsonFile.UpdateOrder(folder, i + 1, _logger);
+            _scanner.PublishCoreFromKnownFolder(folder);
         }
         _scanner.InvalidateCache();
         // A bulk reorder rewrites many order fields, possibly across lanes;

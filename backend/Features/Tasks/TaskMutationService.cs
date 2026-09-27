@@ -71,6 +71,7 @@ public class TaskMutationService
     private bool Updated(TaskInfo info)
     {
         _scanner.InvalidateCache();
+        _scanner.PublishCoreFromFolder(info.FolderPath, info.WatchPath, info.ProjectName, info.State);
         _notifier.PublishUpdated(info.ProjectName, info.Id, info.WatchPath);
         return true;
     }
@@ -84,7 +85,12 @@ public class TaskMutationService
     /// (<c>lastProgressAt</c>), or land on a job that the user-facing
     /// surface (Move, CreateJob) is about to push for separately.
     /// </summary>
-    private bool Updated() { _scanner.InvalidateCache(); return true; }
+    private bool Updated(string folderPath)
+    {
+        _scanner.InvalidateCache();
+        _scanner.PublishCoreFromKnownFolder(folderPath);
+        return true;
+    }
 
     public bool SetJobModel(string jobId, string? model, string? watchPath = null)
     {
@@ -100,7 +106,7 @@ public class TaskMutationService
             ModelMetadataRegistry.ResolveThinkingLevel(info.CliType, normalizedModel, info.ThinkingLevel) ?? "",
             _logger);
         AppendModelChangeMarker(info, previousModel, normalizedModel);
-        return Updated();
+        return Updated(info);
     }
 
     /// <summary>
@@ -152,7 +158,7 @@ public class TaskMutationService
         var normalized = ModelMetadataRegistry.ResolveThinkingLevel(info.CliType, info.Model, thinkingLevel);
         TaskJsonFile.UpdateField(info.FolderPath, "thinkingLevel", normalized ?? "", _logger);
         TaskJsonFile.UpdateField(info.FolderPath, "thinkingLevelExplicit", !string.IsNullOrWhiteSpace(thinkingLevel), _logger);
-        return Updated();
+        return Updated(info);
     }
 
     /// <summary>
@@ -166,7 +172,7 @@ public class TaskMutationService
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
         TaskJsonFile.UpdateField(info.FolderPath, "epicId", epicId ?? "", _logger);
-        return Updated();
+        return Updated(info);
     }
 
     public bool SetJobCliType(string jobId, string cliType, string? watchPath = null)
@@ -195,7 +201,7 @@ public class TaskMutationService
         {
             TaskJsonFile.UpdateField(info.FolderPath, "sessionName", "", _logger);
         }
-        return Updated();
+        return Updated(info);
     }
 
     public bool SetJobUseOwnSession(string jobId, bool useOwn, string? watchPath = null)
@@ -203,7 +209,7 @@ public class TaskMutationService
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
         TaskJsonFile.UpdateField(info.FolderPath, "useOwnSession", useOwn, _logger);
-        return Updated();
+        return Updated(info);
     }
 
     public bool SetJobCommit(string jobId, TaskCommitInfo commit, string? watchPath = null)
@@ -217,7 +223,7 @@ public class TaskMutationService
     {
         if (!Directory.Exists(folderPath)) return false;
         AppendJobCommitOnFolder(folderPath, commit);
-        return Updated();
+        return Updated(folderPath);
     }
 
     /// <summary>
@@ -497,7 +503,7 @@ public class TaskMutationService
                 HasModelMismatch = entries.Any(entry => entry.ModelMismatch),
             };
             TaskJsonFile.UpdateFieldOrThrow(folderPath, "tokenSummary", summary);
-            return Updated();
+            return Updated(folderPath);
         }
         catch (Exception ex)
         {
@@ -517,7 +523,7 @@ public class TaskMutationService
         try
         {
             TaskJsonFile.UpdateFieldOrThrow(folderPath, "tokenSummary", summary);
-            return Updated();
+            return Updated(folderPath);
         }
         catch (Exception ex)
         {
@@ -668,7 +674,7 @@ public class TaskMutationService
     {
         if (!Directory.Exists(folderPath)) return false;
         TaskJsonFile.UpdateField(folderPath, "completionClaim", claim!, _logger);
-        return Updated();
+        return Updated(folderPath);
     }
 
     /// <summary>
@@ -733,7 +739,7 @@ public class TaskMutationService
             && !TaskJsonFile.UpdateField(folderPath, "enteredLaneAt", entered, _logger)) return false;
         return TaskJsonFile.UpdateField(folderPath, "commits", updated, _logger)
             && TaskJsonFile.UpdateField(folderPath, "commit", updated.Count > 0 ? updated[^1] : null!, _logger)
-            && Updated();
+            && Updated(folderPath);
     }
 
     /// <summary>
@@ -773,7 +779,7 @@ public class TaskMutationService
         var normalized = TaskIntegrationBranch.NormalizeRef(integrationBranch);
         if (normalized is null) return false;
         TaskJsonFile.UpdateField(folderPath, "integrationBranch", normalized, _logger);
-        return Updated();
+        return Updated(folderPath);
     }
 
     /// <summary>
@@ -788,7 +794,7 @@ public class TaskMutationService
         if (!Directory.Exists(folderPath) || !CliContextModes.IsValid(contextMode)) return false;
         TaskJsonFile.UpdateField(
             folderPath, "contextMode", CliContextModes.Normalize(contextMode), _logger);
-        return Updated();
+        return Updated(folderPath);
     }
 
     /// <summary>
@@ -802,7 +808,7 @@ public class TaskMutationService
         if (contextMode is null)
         {
             TaskJsonFile.RemoveField(folderPath, "contextMode", _logger);
-            return Updated();
+            return Updated(folderPath);
         }
 
         return SetContextModeOnFolder(folderPath, contextMode);
@@ -854,7 +860,7 @@ public class TaskMutationService
 
             records.Add(record);
             TaskJsonFile.UpdateFieldOrThrow(folderPath, "integrationRecords", records);
-            Updated();
+            Updated(folderPath);
             return new IntegrationRecordWriteResult(true, true);
         }
         catch (Exception ex)
@@ -893,7 +899,7 @@ public class TaskMutationService
             // Drop the obsolete operator-override array (removed feature) so the
             // file is not left carrying a dead field after a rewrite.
             TaskJsonFile.RemoveField(folderPath, "excludedCommits", _logger);
-            return Updated();
+            return Updated(folderPath);
         }
         catch (Exception ex)
         {
@@ -972,7 +978,7 @@ public class TaskMutationService
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
         TaskJsonFile.UpdateField(info.FolderPath, "taskType", TaskTypes.Normalize(taskType), _logger);
-        return Updated();
+        return Updated(info);
     }
 
     /// <summary>
@@ -994,7 +1000,7 @@ public class TaskMutationService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         TaskJsonFile.UpdateField(info.FolderPath, "tags", clean, _logger);
-        return Updated();
+        return Updated(info);
     }
 
     /// <summary>
@@ -1023,7 +1029,7 @@ public class TaskMutationService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         TaskJsonFile.UpdateField(info.FolderPath, "tags", merged, _logger);
-        return Updated();
+        return Updated(info);
     }
 
     /// <summary>
@@ -1047,7 +1053,7 @@ public class TaskMutationService
             jobId, clean.DependsOn.Count, clean.RelatedTo.Count, clean.BlockedBy.Count,
             clean.Supersedes.Count, clean.FollowUpOf.Count, clean.RaisedFollowUps.Count,
             clean.Workbenches.Count);
-        return Updated();
+        return Updated(info);
     }
 
     /// <summary>Applies one audited incremental waits-on edit without replacing unrelated references.</summary>
@@ -1137,7 +1143,7 @@ public class TaskMutationService
                 jobId, previous, trimmed);
         }
         TaskJsonFile.UpdateField(info.FolderPath, "title", trimmed, _logger);
-        return Updated();
+        return Updated(info);
     }
 
     public bool UpdateContextUsage(string jobId, ContextUsageSnapshot snapshot, string? watchPath = null)
@@ -1177,7 +1183,7 @@ public class TaskMutationService
                     : DateTime.UtcNow.ToString("o"),
             },
             _logger);
-        return Updated();
+        return Updated(folderPath);
     }
 
     /// <summary>
@@ -1212,7 +1218,7 @@ public class TaskMutationService
         _logger.LogInformation(
             "task-release-set job={JobId} released={Released} dependents={Dependents}",
             jobId, released, dependents.Count);
-        return Updated();
+        return Updated(info);
     }
 
     /// <summary>
@@ -1535,7 +1541,7 @@ public class TaskMutationService
     {
         if (!Directory.Exists(folderPath)) return false;
         TaskJsonFile.UpdateField(folderPath, "provenance", provenance, _logger);
-        return Updated();
+        return Updated(folderPath);
     }
 
     /// <summary>
@@ -1550,7 +1556,7 @@ public class TaskMutationService
     {
         if (!Directory.Exists(folderPath)) return false;
         TaskJsonFile.UpdateField(folderPath, "externalCompletion", externalCompletion, _logger);
-        return Updated();
+        return Updated(folderPath);
     }
 
     public string? CreateJob(CreateTaskRequest req)
@@ -1761,6 +1767,7 @@ public class TaskMutationService
             });
 
         _scanner.InvalidateCache();
+        _scanner.PublishCoreFromFolder(jobDir, entry.Path, entry.Name, targetState ?? string.Empty);
         // Push a typed jobCreated to connected clients so other tabs render
         // the new card within ~1s instead of waiting for the next board poll.
         // Resolve the just-written TaskInfo so the bridge can ship the canonical
@@ -1871,7 +1878,7 @@ public class TaskMutationService
         // prompt.md does not affect kanban-card fields, but UpdateJobFile is
         // user-initiated (edit prompt) and the next read should see the
         // change for any consumer that pulls TaskDetail with the prompt body.
-        return Updated();
+        return Updated(info);
     }
 
     /// <summary>
@@ -2000,6 +2007,7 @@ public class TaskMutationService
             // PendingIntent appears on TaskInfo (kanban card shows the intent),
             // so the snapshot must be invalidated for the next read to see it.
             _scanner.InvalidateCache();
+            _scanner.PublishCoreFromKnownFolder(info.FolderPath);
             return intent;
         }
         catch (Exception ex)
@@ -2040,6 +2048,7 @@ public class TaskMutationService
             File.Move(path, stash);
             // pending-intent.json gone → TaskInfo.PendingIntent should be null.
             _scanner.InvalidateCache();
+            _scanner.PublishCoreFromKnownFolder(jobFolder);
             return intent;
         }
         catch (Exception ex)
@@ -2063,6 +2072,7 @@ public class TaskMutationService
             if (File.Exists(canonical)) File.Delete(canonical);
             if (File.Exists(stash)) File.Delete(stash);
             _scanner.InvalidateCache();
+            _scanner.PublishCoreFromKnownFolder(jobFolder);
             return true;
         }
         catch (Exception ex)
@@ -2094,6 +2104,7 @@ public class TaskMutationService
                 File.Move(stash, canonical);
             }
             _scanner.InvalidateCache();
+            _scanner.PublishCoreFromKnownFolder(jobFolder);
         }
         catch (Exception ex)
         {
@@ -2135,7 +2146,7 @@ public class TaskMutationService
                 WriteAllTextWithRetry(path, contents);
             }
 
-            return Updated();
+            return Updated(folderPath);
         }
         catch (Exception ex)
         {

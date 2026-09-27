@@ -1763,6 +1763,8 @@ The standalone Linux Runner owns one clean checkout per project and executor. It
 
 **Consequences.** A successful run leaves version, duration, cache, and subject evidence. Failed runs cannot poison shared cache entries. An unchanged second run can prove cache reuse. Existing Build Profile discovery remains only for repositories that have not adopted the contract. M2 owns sandbox, container, micro-VM, mandatory Windows Docker execution, and the restricted `windows-host` profile. M3 owns diagnosis and healing actions. Migration starts on the Linux Runner and fixes forward without a prolonged parallel execution model. CI/CD remains a product-owned pipeline direction, including integration runs, deploy stages, and project statistics.
 
+**Revision (2026-09-19).** Empty cache blocks are not reusable entries and are never published. Pre-fix empty entries are compatibility misses. Incomplete entries are atomically quarantined under a per-entry lock and become misses instead of preparation failures; a cache-class failure reported by the prepare command remains an environment outcome and receives one immediate clean integration-gate retry. Repeated unused bindings surface as project-definition warnings.
+
 **Implementation pointers.** Shared contract and executor: [`ProjectPreparation.cs`](../../../../contracts/TaskServer.Contracts/ProjectPreparation.cs). Gate: [`BuildTestGateRunner.cs`](../../../../backend/Features/Pipeline/BuildTestGateRunner.cs). Runner checkout and lease: [`GitWorkspace.cs`](../../../../runner/GitWorkspace.cs). Operator setup: [`preparation-isolation-orchestrator.md`](../../../operations/setup/preparation-isolation-orchestrator.md).
 
 **Status.** Accepted.
