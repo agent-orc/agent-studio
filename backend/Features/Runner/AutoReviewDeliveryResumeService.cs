@@ -44,6 +44,7 @@ public sealed class AutoReviewDeliveryResumeService
     private readonly TaskTransitionService _transitions;
     private readonly HumanReviewEscalation _escalation;
     private readonly ILogger<AutoReviewDeliveryResumeService> _logger;
+    private readonly AgentStudio.Pipeline.BatchGateRuntime? _batchGate;
 
     public AutoReviewDeliveryResumeService(
         TaskScannerService scanner,
@@ -53,7 +54,8 @@ public sealed class AutoReviewDeliveryResumeService
         RemoteDeliveryIntegrationCoordinator integration,
         TaskTransitionService transitions,
         HumanReviewEscalation escalation,
-        ILogger<AutoReviewDeliveryResumeService> logger)
+        ILogger<AutoReviewDeliveryResumeService> logger,
+        AgentStudio.Pipeline.BatchGateRuntime? batchGate = null)
     {
         _scanner = scanner;
         _authority = authority;
@@ -63,6 +65,7 @@ public sealed class AutoReviewDeliveryResumeService
         _transitions = transitions;
         _escalation = escalation;
         _logger = logger;
+        _batchGate = batchGate;
     }
 
     /// <summary>
@@ -139,6 +142,9 @@ public sealed class AutoReviewDeliveryResumeService
             ? null
             : _authority.GetTaskProjection(taskKey!).CurrentReviewAttempt;
         var settlement = RemoteDeliverySettlementStore.Read(task.FolderPath);
+        if (_batchGate?.IsPendingCurrentReview(task, review) == true)
+            return new AutoReviewResumeOutcome(AutoReviewResumeAction.None,
+                "batch-gate-pending", Resumed: false);
         if (!RemoteDeliverySettlementStore.MatchesAttempt(settlement, review?.AttemptId))
             settlement = null;
 

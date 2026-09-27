@@ -1530,6 +1530,19 @@ public class ProjectSettingsService
             clamped?.ToString() ?? "cleared", projectName);
     }
 
+    public void SetBatchGate(string projectName, AgentStudio.Pipeline.BatchGateFormationOptions options)
+    {
+        if (!options.IsValid) throw new ArgumentOutOfRangeException(nameof(options));
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var value) ? value : new ProjectSettings();
+            _cache[key] = current with { BatchGate = options };
+            Persist();
+        }
+    }
+
     private static TestExecutionPolicy? NormalizeTestExecution(TestExecutionPolicy? policy)
     {
         if (policy is null) return null;

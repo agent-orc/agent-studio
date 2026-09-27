@@ -1,4 +1,5 @@
 using AgentStudio.Pipeline;
+using AgentStudio.Git;
 using Contract = AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Runner;
@@ -21,25 +22,53 @@ public sealed class RemoteReviewPlanBuilder
 
     private readonly AspectRunnerService _aspects;
     private readonly IConfiguration _configuration;
+    private readonly GitService? _git;
 
     public RemoteReviewPlanBuilder(
         AspectRunnerService aspects,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        GitService? git = null)
     {
         _aspects = aspects;
         _configuration = configuration;
+        _git = git;
     }
 
     public Contract.ReviewPlanDto Build(
         TaskInfo? task,
         string? repositoryPath,
         ProjectSettings? projectSettings,
-        string? integrationRef)
+        string? integrationRef,
+        string? resultSha = null)
     {
         var toolPlan = V1ReviewPlaneEndpoints.FallbackPlan(
             repositoryPath,
             projectSettings?.BuildProfile,
             integrationRef);
+        var changedPaths = OrchestrationExecutionModeParser.Parse(
+                _configuration["Orchestration:ExecutionMode"]) == OrchestrationExecutionMode.Monolith
+            && projectSettings?.BatchGate.Enabled == true
+            && IntegrationStrategies.Normalize(projectSettings.IntegrationStrategy)
+                != IntegrationStrategies.PullRequest
+            && !string.IsNullOrWhiteSpace(repositoryPath)
+            && !string.IsNullOrWhiteSpace(integrationRef)
+            && !string.IsNullOrWhiteSpace(resultSha)
+            ? _git?.ChangedPathsAgainstMergeBase(repositoryPath, integrationRef, resultSha)
+            : null;
+        var deferred = BatchGateRoutingPolicy.ShouldDefer(projectSettings?.BatchGate, changedPaths);
+        if (deferred)
+        {
+            toolPlan = toolPlan with
+            {
+                Commands = toolPlan.Commands
+                    .Where(command => !string.Equals(command.Aspect, "build-tests", StringComparison.OrdinalIgnoreCase))
+                    .ToArray(),
+                RequiredAspects = toolPlan.RequiredAspects
+                    .Where(aspect => !string.Equals(aspect, "build-tests", StringComparison.OrdinalIgnoreCase))
+                    .ToArray(),
+                BuildTestDeferredToBatch = true,
+            };
+        }
         if (task is null || TaskModes.IsReportOnly(task.Mode))
             return toolPlan;
 
@@ -52,7 +81,7 @@ public sealed class RemoteReviewPlanBuilder
             TaskType = task.TaskType,
             Tags = task.Tags,
         };
-        var inputs = Inputs(task, integrationRef);
+        var inputs = Inputs(task, integrationRef, deferred);
         var defaultModel = _configuration.GetValue(
             "ReviewDecisionOrchestrator:AspectModel",
             PipelineStepModelDefaults.SupportModel);
@@ -131,7 +160,8 @@ public sealed class RemoteReviewPlanBuilder
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
-    private static AspectRunInputs Inputs(TaskInfo task, string? integrationRef)
+    private static AspectRunInputs Inputs(TaskInfo task, string? integrationRef,
+        bool buildTestDeferredToBatch)
     {
         var taskBody = Read(Path.Combine(task.FolderPath, "prompt.md"), 64_000, task.Id);
         var recentLog = Read(Path.Combine(task.FolderPath, "cli-output.log"), 16_000, string.Empty);
@@ -141,7 +171,10 @@ public sealed class RemoteReviewPlanBuilder
             $"This aspect runs on a remote Review Executor at the immutable Result-SHA. " +
             $"The executor appends the authoritative changed-file list and unified diff against " +
             $"the merge-base with {baseline} before invoking the aspect. " +
-            "Use that appended material; do not infer the change from the Studio checkout.";
+            "Use that appended material; do not infer the change from the Studio checkout." +
+            (buildTestDeferredToBatch
+                ? " The full build and test suite is deferred to a closed documentation batch gate after this model review. Assess authored tests and available cheap checks; the final suite verdict belongs to the batch candidate."
+                : string.Empty);
         return new AspectRunInputs(
             task.ProjectName,
             task.Id,

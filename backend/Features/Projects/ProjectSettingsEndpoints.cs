@@ -239,6 +239,7 @@ public static class ProjectSettingsEndpoints
                     // BuildProfileGate so the UI can show why a declared-but-
                     // unvalidated project is not being picked up.
                     buildProfile = kv.Value.BuildProfile,
+                    batchGate = kv.Value.BatchGate,
                     buildProfilePickupAllowed = BuildProfileGate.AllowsAutoPickup(kv.Value.BuildProfile),
                     // F35: resolved per-lane strategy map (defaults filled in).
                     // The board uses this for the lane-header icon + the
@@ -650,6 +651,43 @@ public static class ProjectSettingsEndpoints
                 return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
             settings.SetAutoTag(projectName, req.Enabled);
             return Results.Ok(new { autoTag = settings.Get(projectName).AutoTag });
+        });
+
+        app.MapPut("/api/projects/{projectName}/batch-gate", (string projectName,
+            BatchGateFormationOptions req, ProjectSettingsService settings,
+            TaskScannerService scanner, IConfiguration configuration) =>
+        {
+            if (!scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (!req.IsValid || !req.DocumentationOnly)
+                return Results.BadRequest(new { error = "The batch pilot requires valid documentation-only limits." });
+            if (req.Enabled && OrchestrationExecutionModeParser.Parse(
+                    configuration["Orchestration:ExecutionMode"]) != OrchestrationExecutionMode.Monolith)
+                return Results.BadRequest(new { error = "The batch pilot requires Monolith execution mode." });
+            if (req.Enabled && IntegrationStrategies.Normalize(settings.Get(projectName).IntegrationStrategy)
+                == IntegrationStrategies.PullRequest)
+                return Results.BadRequest(new { error = "The batch pilot requires a direct integration branch." });
+            settings.SetBatchGate(projectName, req);
+            return Results.Ok(settings.Get(projectName).BatchGate);
+        });
+        app.MapGet("/api/projects/{projectName}/batch-gate/report", (string projectName,
+            BatchGateStore batches, TaskScannerService scanner) =>
+        {
+            if (!scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            var completed = scanner.ScanAllAutomationJobs()
+                .Where(task => task.State == TaskStates.Completed
+                               && string.Equals(task.ProjectName, projectName, StringComparison.OrdinalIgnoreCase))
+                .Select(task => task.Key ?? task.Id)
+                .ToHashSet(StringComparer.Ordinal);
+            return Results.Ok(batches.Observe(projectName, completed));
+        });
+        app.MapGet("/api/projects/{projectName}/batch-gate/batches", (string projectName,
+            BatchGateStore batches, TaskScannerService scanner) =>
+        {
+            if (!scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            return Results.Ok(batches.Batches(projectName));
         });
 
         // Flag-gated local CLI execution engine. The effective value resolves

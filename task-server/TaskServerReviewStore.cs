@@ -921,6 +921,11 @@ public sealed partial class TaskServerStore
             throw new ArgumentException("A source bundle review subject requires its SHA-256 content digest.");
         if (request.Plan.Commands.Count == 0 || request.Plan.RequiredAspects.Count == 0)
             throw new ArgumentException("Review plan commands and required aspects are required.");
+        if (request.Plan.BuildTestDeferredToBatch
+            && (request.Plan.Commands.Any(command => string.Equals(
+                    command.Aspect, "build-tests", StringComparison.OrdinalIgnoreCase))
+                || request.Plan.RequiredAspects.Contains("build-tests", StringComparer.OrdinalIgnoreCase)))
+            throw new ArgumentException("A deferred build/test plan cannot execute or require a per-card full-suite aspect.");
         if (!ReviewLibraryStepPolicy.ValidPlan(request.Plan, request.ExpectedResultSha))
             throw new ArgumentException("Review library step digest or subject is invalid.");
         var commandIds = request.Plan.Commands.Select(command => command.StepId).ToHashSet(StringComparer.Ordinal);
@@ -1111,7 +1116,10 @@ public sealed partial class TaskServerStore
         if (request.Commands.Any(command => command.Signal is not null || command.ExitCode is null or < 0))
             return ("ReviewInfra", "CommandTerminated");
         if (request.Verdicts.Any(verdict =>
-                verdict.Status is not ("pass" or "concerns" or "block" or "fail")))
+                verdict.Status is not ("pass" or "concerns" or "block" or "fail")
+                && !(subject.Plan.BuildTestDeferredToBatch
+                    && verdict.Aspect == "build-tests"
+                    && verdict.Status == "deferred-to-batch")))
             return ("ReviewInfra", "InvalidAspectVerdict");
         // AGT-2819: a failing verification command is attributed before it is
         // graded. Only a failure the merge base did not already have charges the

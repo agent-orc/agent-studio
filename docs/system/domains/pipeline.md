@@ -60,6 +60,48 @@ These metrics measure local exact-subject gate requests; they do not estimate
 batch green rate or answer the staging-lane decision in the
 [Gates Dossier](../../operations/gates/index.html#sect5).
 
+## Batch gate documentation pilot
+
+`backend/Features/Pipeline/BatchGate/` contains the closed-manifest policy,
+membership digest, append-only replay and member evidence records, bounded
+halving policy, coordinator lease, publication preconditions, and pilot metric
+projection. `GitService.ReplayBatchMember` exposes the existing conflict-free
+mechanical rebase through a disposable detached worktree; candidate refs carry
+the manifest digest and coordinator fence. The D10 prerequisite estimate is
+[recorded with its limits](../../operations/gates/d10-measurement.md).
+The Task Server gate subject can bind a combined candidate SHA, manifest digest,
+base SHA and member run IDs; its existing claimable executor still checks the
+exact candidate SHA. An infrastructure retry excludes the host of the previous
+attempt.
+
+The per-project `BatchGate` setting is off by default. `PUT
+/api/projects/{projectName}/batch-gate` enables the documentation-only pilot
+and sets its close and diagnostic limits in Monolith execution mode. Engine
+mode cannot enable the pilot or freeze a deferred review plan. `RemoteReviewPlanBuilder` checks the
+actual changed paths against the result SHA before it freezes the plan. When
+all paths are documentation, it records `BuildTestDeferredToBatch` and leaves
+the full-suite commands for the batch. A passed settled Remote Review writes a
+durable pending subject and stays in Auto Review. `BatchGateWorker` closes a
+manifest at four members, eight maximum, after 15 minutes, or at two under
+queue or host pressure. It assembles a detached candidate, records its run
+before calling the exact-SHA `BuildTestGateRunner`, and publishes under the
+shared ref-mutation lease only when the remote tip remains the recorded base.
+The native per-member record and verified integration history must exist before
+the worker moves a card to Human Review. The restart resume path leaves pending
+batch members alone. Disabling the setting sends unpublished members through
+the existing per-task integration gate with the same immutable result subject.
+`GET /api/projects/{projectName}/batch-gate/batches` exposes each closed
+manifest's latest phase and reason, including visible red and paused outcomes.
+The adjacent `/batch-gate/report` endpoint projects pilot measures and the
+correctness floor from durable batch records.
+
+The pilot currently executes its full suite through the backend's exact-SHA
+gate runner. The separate claimable `GateAttempt` host path remains an opt-in
+remote-gate rollout under D7 to D9. Red cohorts and lost authority stay visible
+and cannot release members. Pilot measurements and the D10 prerequisite are
+recorded in the [Gates Dossier](../../operations/gates/index.html#sect7) and
+[D10 measurement](../../operations/gates/d10-measurement.md).
+
 ## Key Code
 
 The creation-time `auto-tag` step (AGT-2804) is separate from the card's coding

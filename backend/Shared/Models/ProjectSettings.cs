@@ -2,6 +2,8 @@ namespace AgentStudio.Shared;
 
 public record ProjectSettings
 {
+    /// <summary>Opt-in documentation delivery batch gate. Disabling it returns pending, unpublished members to the per-task gate.</summary>
+    public AgentStudio.Pipeline.BatchGateFormationOptions BatchGate { get; init; } = new();
     /// <summary>Default-on creation classification. Stored here until project definition v2 accepts tagging.autoTag.</summary>
     public bool AutoTag { get; init; } = true;
     /// <summary>

@@ -600,6 +600,7 @@ public static class V1ReviewPlaneEndpoints
             TaskTransitionService transitions,
             HumanReviewEscalation escalation,
             RemoteDeliveryIntegrationCoordinator remoteIntegration,
+            BatchGateRuntime batchGate,
             TimelineLog timeline,
             FailureInterventionService failureInterventions,
             IntegrationBranchGateReporter integrationGates,
@@ -691,6 +692,14 @@ public static class V1ReviewPlaneEndpoints
                     "Outcome must be Pass, ProductFailure, IntegrationBranchDefect, ReviewInfra, "
                     + "Inconclusive, or Cancellation."));
 
+            if (!BatchGateRoutingPolicy.ValidDeferredAspect(request,
+                    currentReview.Subject.Plan))
+                return Results.Conflict(new Contract.ApiError("batch-gate-aspect-mismatch",
+                    "A deferred batch plan cannot report a per-card build/test pass."));
+
+            request = BatchGateRoutingPolicy.RecordDeferredAspect(request,
+                currentReview.Subject.Plan);
+
             var settled = authority.SettleReview(new SettleReviewAttemptRequest(
                 new AttemptWriteReference(
                     attemptId,
@@ -728,6 +737,26 @@ public static class V1ReviewPlaneEndpoints
             // redo the same I/O for no new information.
             if (settled.Status == AttemptWriteStatus.Duplicate)
             {
+                if (settled.ReviewAttempt.Subject.Plan?.BuildTestDeferredToBatch == true
+                    && settled.ReviewAttempt.Outcome == ReviewTerminalOutcome.Pass
+                    && string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
+                {
+                    var source = authority.GetRun(settled.ReviewAttempt.SourceRunAttemptId);
+                    try
+                    {
+                        if (!batchGate.QueueSettledReview(task, settled.ReviewAttempt, source, receivedAt))
+                            return Results.Json(new Contract.ApiError("batch-gate-evidence-missing",
+                                "The deferred review has no complete batch subject."),
+                                statusCode: StatusCodes.Status503ServiceUnavailable);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogError(ex, "batch-gate-queue-replay-failed attempt={AttemptId}", attemptId);
+                        return Results.Json(new Contract.ApiError("batch-gate-queue-failed",
+                            "The durable batch queue write failed."),
+                            statusCode: StatusCodes.Status503ServiceUnavailable);
+                    }
+                }
                 logger.LogInformation(
                     "review-report-duplicate attempt={AttemptId} outcome={Outcome} roundTripMs={RoundTripMs}",
                     attemptId, request.Outcome, (long)reportStopwatch.Elapsed.TotalMilliseconds);
@@ -891,6 +920,35 @@ public static class V1ReviewPlaneEndpoints
                     settled.ReviewAttempt.Outcome?.ToString(),
                     settledReviewPlan,
                     request.Verdicts);
+                if (settledReviewPlan?.BuildTestDeferredToBatch == true
+                    && settled.ReviewAttempt.Outcome == ReviewTerminalOutcome.Pass)
+                {
+                    try
+                    {
+                        if (batchGate.QueueSettledReview(task, settled.ReviewAttempt, sourceRun, receivedAt))
+                        {
+                            EnqueueEvidenceProjection();
+                            return Results.Ok(new Contract.ReviewReportDto(
+                                "rrpt_" + HashId($"{attemptId}:{request.IdempotencyKey}"),
+                                attemptId, settled.ReviewAttempt.Subject.SubjectId,
+                                request.Outcome, request.FailureClassification, request.Summary,
+                                reportHash, receivedAt, RetryScheduled: false,
+                                TaskStates.AutoReview,
+                                EvidenceProjection: Contract.ReviewEvidenceProjectionStatus.Queued));
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogError(ex, "batch-gate-queue-failed attempt={AttemptId}", attemptId);
+                        EnqueueEvidenceProjection();
+                        return Results.Json(new Contract.ApiError("batch-gate-queue-failed",
+                            "Review passed, but the durable batch queue write failed."),
+                            statusCode: StatusCodes.Status503ServiceUnavailable);
+                    }
+                    return Results.Json(new Contract.ApiError("batch-gate-evidence-missing",
+                        "The deferred build/test review did not have a complete batch subject."),
+                        statusCode: StatusCodes.Status503ServiceUnavailable);
+                }
                 // Carried onto the Human Review lane row as the verdict's
                 // qualifier: the integration outcome behind the park.
                 string? integrationOutcome = null;

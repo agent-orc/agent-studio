@@ -1756,7 +1756,8 @@ public static class LeaseEndpoints
                         task,
                         repositoryPath,
                         taskProjectSettings,
-                        integrationRef));
+                        integrationRef,
+                        run.ResultSha));
             }
 
             if (!isEpicPlanning

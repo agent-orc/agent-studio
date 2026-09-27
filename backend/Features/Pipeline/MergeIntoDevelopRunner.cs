@@ -41,6 +41,7 @@ public sealed class MergeIntoDevelopRunner
     private readonly AgentStudio.Git.GitStateIndexService? _gitStateIndex;
     private readonly AgentStudio.Tasks.AcceptanceRailHostedService? _acceptanceRail;
     private readonly IntegrationWorktreeProvider _integrationWorktrees;
+    private readonly ProjectRefMutationLeaseService? _refMutationLeases;
     private readonly IConfiguration? _configuration;
     private readonly AgentStudio.Tasks.TimelineLog? _timeline;
     private readonly TimeSpan? _preMainTimeout;
@@ -80,7 +81,8 @@ public sealed class MergeIntoDevelopRunner
         AgentStudio.Tasks.AcceptanceRailHostedService? acceptanceRail = null,
         IntegrationWorktreeProvider? integrationWorktrees = null,
         IConfiguration? configuration = null,
-        AgentStudio.Tasks.TimelineLog? timeline = null)
+        AgentStudio.Tasks.TimelineLog? timeline = null,
+        ProjectRefMutationLeaseService? refMutationLeases = null)
     {
         _git = git;
         _pipelineLog = pipelineLog;
@@ -101,6 +103,7 @@ public sealed class MergeIntoDevelopRunner
         _integrationWorktrees = integrationWorktrees ?? new IntegrationWorktreeProvider(git);
         _configuration = configuration;
         _timeline = timeline;
+        _refMutationLeases = refMutationLeases;
         // No hard-coded fallback here (AGT-2843): an unset explicit timeout is
         // resolved per call, per project, by ResolveGateTimeout.
         _preMainTimeout = preMainTimeout is { } configured && configured > TimeSpan.Zero
@@ -166,6 +169,19 @@ public sealed class MergeIntoDevelopRunner
             await _mergeGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
             try
             {
+                // Direct integration and auto-main advancement share the same
+                // cross-process publish fence as the batch gate.
+                var repository = _git.ResolveRepoRootForWatchPath(watchPath)
+                    ?? watchPath ?? string.Empty;
+                var repositoryKey = AgentStudio.TaskServer.Contracts.RepositoryIdentityContract
+                    .FromUrl(_git.ReadOriginUrlAt(repository)) ?? repository;
+                using var refLease = _refMutationLeases is null
+                    ? null
+                    : await _refMutationLeases.AcquireAsync(
+                        project, repositoryKey, integrationBranch, ct).ConfigureAwait(false);
+                if (refLease is not null && !refLease.IsCurrent)
+                    return MergeIntoIntegrationResult.Of(
+                        MergeIntoIntegrationOutcome.Error, error: "The ref-mutation lease was lost.");
                 return await RunSerializedAsync(
                     project, jobId, jobFolderPath, watchPath,
                     integrationBranch, integrationStrategy, pipelineType, ct).ConfigureAwait(false);
@@ -1433,6 +1449,18 @@ public sealed class MergeIntoDevelopRunner
         {
             var repoRoot = _git.ResolveRepoRootForWatchPath(watchPath)
                 ?? (string.IsNullOrWhiteSpace(watchPath) ? null : watchPath);
+            var repositoryKey = string.IsNullOrWhiteSpace(repoRoot)
+                ? null
+                : AgentStudio.TaskServer.Contracts.RepositoryIdentityContract
+                    .FromUrl(_git.ReadOriginUrlAt(repoRoot)) ?? repoRoot;
+            using var publishLease = _refMutationLeases is null || string.IsNullOrWhiteSpace(repoRoot)
+                ? null
+                : await _refMutationLeases.AcquireAsync(project, repositoryKey!,
+                    IsReleaseBranch(integrationBranch) && HasDevelopLine(repoRoot)
+                        ? "develop" : integrationBranch, ct).ConfigureAwait(false);
+            if (publishLease is not null && !publishLease.IsCurrent)
+                return new GitPushResult(false, approvedSha ?? string.Empty,
+                    "lease-lost", "The shared ref-mutation lease was lost before push.");
             if (!string.IsNullOrWhiteSpace(repoRoot)
                 && IsReleaseBranch(integrationBranch)
                 && HasDevelopLine(repoRoot))

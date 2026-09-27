@@ -705,6 +705,10 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.IPipelineModelCatalogueProvid
     AgentStudio.Pipeline.CliPipelineModelCatalogueProvider>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PipelineStepEconomyAdvisor>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.MergeIntoDevelopRunner>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.ProjectRefMutationLeaseService>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGateStore>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGateLeaseService>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGateRuntime>();
 builder.Services.AddSingleton<AgentStudio.GeneratedFiles.FileGenerationIndex>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ProjectPipelineCostService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ILintScssRunner,
