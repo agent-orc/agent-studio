@@ -70,6 +70,8 @@ services:
         SHA: ${SCENARIO_BUILD_SHA:?set SCENARIO_BUILD_SHA}
     environment:
       TaskServer__AuthTokenFile: /run/secrets/studio_token
+    ports:
+      - "127.0.0.1:${STUDIO_BFF_PORT:-5072}:5072"
     secrets:
       - source: studio_token
         target: /run/secrets/studio_token
