@@ -17,8 +17,8 @@ Targets:
            Docker required; runs on Windows and Linux in under three minutes
            at --level smoke.
   compose  Runs against the docker-compose stack. --level smoke reuses the
-           default-profile boot/health checks. --level full starts the
-           distributed Task Server and Studio BFF plus the scenario's
+           one-box boot/health checks. --level full starts the
+           Task Server and Studio BFF plus the scenario's
            fake-CLI runner image, then drives the same typed steps as inproc.
   remote   Runs only the non-destructive management-plane steps (bootstrap a
            scenario principal, create a scenario project/task, take a backup,
@@ -235,13 +235,12 @@ run_compose_full() {
     scenario_compose_diagnostics_written=0
     local compose_file="$repo_root/docker-compose.yml"
     local compose_override="$repo_root/testsupport/scenario/docker-compose.scenario.yml"
-    local studio_token="scenario-studio-token-000000000000000000000000"
-    local engine_token="scenario-engine-token-000000000000000000000000"
-    local runner_token="scenario-runner-token-000000000000000000000000"
+    local studio_token=""
+    local engine_token=""
+    local runner_token=""
     local compose=(
         docker compose --project-name "$project_name"
         --file "$compose_file" --file "$compose_override"
-        --profile distributed --profile runner
     )
 
     trap compose_full_on_exit EXIT
@@ -250,9 +249,6 @@ run_compose_full() {
     export SCENARIO_HOST_DIR="$scenario_compose_host_dir"
     export STUDIO_TASKSERVER_PORT=0
     export STUDIO_BFF_PORT=0
-    export DISTRIBUTED_STUDIO_TOKEN="$studio_token"
-    export DISTRIBUTED_ENGINE_TOKEN="$engine_token"
-    export DISTRIBUTED_RUNNER_TOKEN="$runner_token"
     export SCENARIO_BUILD_VERSION="$build_version"
     export SCENARIO_BUILD_SHA="${SCENARIO_BUILD_SHA:-scenario}"
     export SCENARIO_TASK_SERVER_IMAGE="${project_name}-task-server:local"
@@ -264,10 +260,6 @@ run_compose_full() {
     export SCENARIO_GID
     SCENARIO_GID="$(id -g)"
     mkdir -p "$scenario_compose_host_dir/home"
-    (
-        umask 077
-        printf '%s\n' "$runner_token" >"$scenario_compose_host_dir/runner.token"
-    )
 
     echo "scenario: building task-server.Tests ($configuration)..." >&2
     dotnet build "$repo_root/task-server.Tests/TaskServer.Tests.csproj" \
@@ -277,6 +269,14 @@ run_compose_full() {
     "${compose[@]}" config --quiet
     "${compose[@]}" build task-server studio-bff orchestrator-engine agent-host-distributed
     "${compose[@]}" up --detach task-server studio-bff orchestrator-engine
+
+    studio_token="$("${compose[@]}" exec -T task-server cat /run/agent-studio-secrets/studio_token)"
+    engine_token="$("${compose[@]}" exec -T task-server cat /run/agent-studio-secrets/engine_token)"
+    runner_token="$("${compose[@]}" exec -T task-server cat /run/agent-studio-secrets/runner_token)"
+    (
+        umask 077
+        printf '%s\n' "$runner_token" >"$scenario_compose_host_dir/runner.token"
+    )
 
     local binding
     binding="$(wait_for_compose_port task-server 5071)"
@@ -321,7 +321,7 @@ run_compose() {
         return
     fi
 
-    echo "scenario: running compose smoke checks (default profile: orchestrator-api + frontend)..." >&2
+    echo "scenario: running compose smoke checks (one-box Task Server authority)..." >&2
     local junit="$report_dir/scenario-compose-smoke.junit.xml"
     local markdown="$report_dir/scenario-compose-smoke.md"
     local status=0

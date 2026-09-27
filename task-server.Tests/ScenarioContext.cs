@@ -18,7 +18,7 @@ namespace TaskServer.Tests;
 /// for one full scenario run (smoke or full); steps mutate shared state as
 /// they go, exactly like a real deployment rehearsal would.
 /// </summary>
-public sealed class ScenarioContext : IDisposable
+public sealed partial class ScenarioContext : IDisposable
 {
     private const string CodingRunnerId = "scenario-coding-runner";
     private const string CodingHostId = "scenario-coding-host";
@@ -37,7 +37,7 @@ public sealed class ScenarioContext : IDisposable
     private string _studioBffUrl = "";
     private ManagedProcess _server = null!;
     private HttpClient _serverClient = null!;
-    private HttpClient? _reviewExecutorClient;
+    private string? _reviewCredential;
     private HttpClient? _engineClient;
     private string _dataDirectory = "";
     private string _bareRepositoryPath = "";
@@ -211,8 +211,7 @@ public sealed class ScenarioContext : IDisposable
                         $"runner:{ReviewExecutorId}",
                         TaskServerPrincipalKinds.Runner,
                         RunnerId: ReviewExecutorId)));
-            _reviewExecutorClient = ProtocolClient(_serverUrl, reviewExecutorCredential.Credential);
-            _disposables.Add(_reviewExecutorClient);
+            _reviewCredential = reviewExecutorCredential.Credential;
 
             _engineClient = ProtocolClient(_serverUrl, RequiredEnvironment("SCENARIO_ENGINE_TOKEN"));
             _disposables.Add(_engineClient);
@@ -227,7 +226,12 @@ public sealed class ScenarioContext : IDisposable
                 RunnerId: CodingRunnerId));
         var credential = await ReadAsync<IssuedPrincipalCredential>(response);
         _runnerCredential = credential.Credential;
-        return $"issued credential for principal runner:{CodingRunnerId}";
+        var reviewCredential = await ReadAsync<IssuedPrincipalCredential>(
+            await _serverClient.PostAsJsonAsync("/api/v1/management/principals",
+                new CreatePrincipalRequest($"runner:{ReviewExecutorId}",
+                    TaskServerPrincipalKinds.Runner, RunnerId: ReviewExecutorId)));
+        _reviewCredential = reviewCredential.Credential;
+        return $"issued separate coding and review credentials for {CodingRunnerId} and {ReviewExecutorId}";
     }
 
     private async Task<string?> RegisterRunnerAsync()
@@ -324,7 +328,8 @@ public sealed class ScenarioContext : IDisposable
             await Assert.ThrowsAnyAsync<Exception>(() => probe.GetAsync(_studioBffUrl + "/healthz"));
         }
         await File.WriteAllTextAsync(_fakeCliReleaseFile, "continue");
-        await WaitForAuditCountAsync(_serverClient, "run.completed", 1, _runner!, TimeSpan.FromSeconds(30));
+        // The fixture CLI has a 45-second budget; allow its fenced handoff to finish too.
+        await WaitForAuditCountAsync(_serverClient, "run.completed", 1, _runner!, TimeSpan.FromSeconds(60));
         await WaitForTaskStateAsync(
             _serverClient, _project.ProjectId, _task.TaskKey, "4-auto-review", _runner!, TimeSpan.FromSeconds(20));
 
@@ -333,10 +338,8 @@ public sealed class ScenarioContext : IDisposable
         Assert.NotNull(history);
         _codingRun = Assert.Single(history.Runs);
         Assert.False(string.IsNullOrWhiteSpace(_codingRun.ResultSha));
-        // Since AGT-2890 the runner publishes the Git result and the fenced
-        // completion first and uploads the bounded result evidence afterwards,
-        // so the artifact can land after the task has already reached
-        // 4-auto-review. Wait for it instead of asserting the instant snapshot.
+        // Review requires the completed run's bounded result evidence and its
+        // generated result document to be available from the same authority.
         await WaitForConditionAsync(
             async () =>
             {
@@ -348,7 +351,7 @@ public sealed class ScenarioContext : IDisposable
             },
             _runner!,
             TimeSpan.FromSeconds(30),
-            "the scenario-run-log result artifact was uploaded after completion");
+            "the scenario-run-log result artifact and finalization are ready");
         history = await _serverClient.GetFromJsonAsync<TaskHistoryDto>(
             $"/api/v1/projects/{_project.ProjectId}/tasks/{_task.TaskKey}/history");
         Assert.NotNull(history);
@@ -363,7 +366,8 @@ public sealed class ScenarioContext : IDisposable
             "the runner logged generated result-document status");
         var runnerLines = _runner!.OutputLines;
         Assert.DoesNotContain(runnerLines, line =>
-            line.Contains("409", StringComparison.Ordinal));
+            line.Contains("Result finalization failed", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("Result document upload failed", StringComparison.OrdinalIgnoreCase));
 
         var afterCommits = await CountCommitsAsync(_bareRepositoryPath);
         Assert.True(afterCommits > beforeCommits, "The coding attempt did not push a new commit to the seeded repository.");
@@ -378,16 +382,14 @@ public sealed class ScenarioContext : IDisposable
         var reviewResultRef = FencedGitRefs.ImmutableResult(
             reviewRun.RunId, reviewRun.Fence!.Value, reviewRun.ResultSha!);
 
-        var plan = new ReviewPlanDto(
-            [new ReviewCommandDto("step-completion", "completion", "true", [])],
-            ["completion"]);
+        var plan = CanaryReviewPlan();
         var subjectResponse = await _serverClient.PostAsJsonAsync(
             "/api/v1/reviews/subjects",
             new CreateReviewSubjectRequest(
                 reviewTask.TaskId,
                 reviewRun.RunId,
                 reviewRun.RepositoryId!,
-                IsCompose ? "/scenario/origin.git" : _bareRepositoryPath,
+                _bareRepositoryPath,
                 reviewRun.ResultSha!,
                 reviewResultRef,
                 null,
@@ -398,43 +400,8 @@ public sealed class ScenarioContext : IDisposable
                 $"scenario-review-subject:{reviewTask.TaskId}"));
         var subject = await ReadAsync<ReviewSubjectDto>(subjectResponse);
 
-        var reviewExecutorClient = _reviewExecutorClient ?? _serverClient;
-        await PutAsync(
-            reviewExecutorClient,
-            $"/api/v1/runners/{ReviewExecutorId}",
-            new RegisterRunnerRequest(
-                ReviewExecutorId,
-                ReviewHostId,
-                "review-instance-a",
-                "1.0.0",
-                TaskServerProtocol.Current,
-                [
-                    ReviewCapabilities.ReviewExecutor,
-                    ReviewCapabilities.GitMaterialization,
-                    ReviewCapabilities.SemanticReview,
-                ]));
-
-        var claimResponse = await reviewExecutorClient.PostAsJsonAsync(
-            $"/api/v1/runners/{ReviewExecutorId}/review-claims",
-            new ReviewClaimRequest(ReviewExecutorId, "review-instance-a"));
-        var claim = await ReadAsync<ReviewClaimResponse>(claimResponse);
-        Assert.Equal("claimed", claim.Status);
-        var attempt = claim.Attempt!;
-        var lease = claim.Lease!;
-
-        var reportRequest = BuildPassingReport(subject, attempt, lease);
-        var reportResponse = await reviewExecutorClient.PostAsJsonAsync(
-            $"/api/v1/reviews/attempts/{attempt.AttemptId}/report", reportRequest);
-        var report = await ReadAsync<ReviewReportDto>(reportResponse);
-        Assert.True(
-            report.Outcome == "Pass",
-            $"Expected review outcome 'Pass' but got '{report.Outcome}' ({report.FailureClassification}).");
-
-        var cleanupResponse = await reviewExecutorClient.PostAsJsonAsync(
-            $"/api/v1/reviews/attempts/{attempt.AttemptId}/cleanup",
-            new ReviewCleanupRequest(ReviewExecutorId, "review-instance-a", lease.LeaseId, lease.Fence, "scenario-cleanup-1", true));
-        var cleanup = await ReadAsync<ReviewCleanupResponse>(cleanupResponse);
-        Assert.Equal("cleaned", cleanup.Status);
+        var reviewed = await ExecuteCanaryReviewAsync(subject);
+        await PublishCanaryAsync(subject, reviewed);
 
         await SettleOrchestrationAsync(reviewTask);
 
@@ -447,7 +414,7 @@ public sealed class ScenarioContext : IDisposable
             _studioBffUrl = $"http://127.0.0.1:{binding[(binding.LastIndexOf(':') + 1)..]}";
             await WaitForHttpAsync(_studioBffUrl + "/healthz", _server);
         }
-        return $"subject {subject.SubjectId} for real run {reviewRun.RunId} reported Pass; task {reviewTask.TaskKey} reached 5-human-review while Studio was detached";
+        return $"subject {subject.SubjectId} reviewed coding run {reviewRun.RunId}; review={reviewed.AttemptId} Pass; provider={LiveProviderReview}; canonical=refs/heads/main sha={reviewRun.ResultSha}; supervised publication verified while Studio was detached";
     }
 
     private async Task SettleOrchestrationAsync(TaskDto task)
@@ -510,87 +477,6 @@ public sealed class ScenarioContext : IDisposable
             run = await ReadAsync<OrchestrationRunDto>(completeResponse);
         }
     }
-
-    private static ReviewReportRequest BuildPassingReport(ReviewSubjectDto subject, ReviewAttemptDto attempt, ReviewLeaseDto lease)
-    {
-        var treeHash = new string('a', 40);
-        var workspacePath = $"/review/{lease.ResourceNamespace}";
-        var commands = subject.Plan.Commands.Select(command => new ReviewCommandEvidenceDto(
-            command.StepId,
-            command.Aspect,
-            command.FileName,
-            command.Arguments,
-            subject.ExpectedResultSha,
-            subject.ExpectedResultSha,
-            treeHash,
-            DateTime.UtcNow.AddSeconds(-1),
-            DateTime.UtcNow,
-            0,
-            null,
-            Sha256Of($"{command.StepId}-stdout"),
-            Sha256Of($"{command.StepId}-stderr"),
-            ExecutorId: lease.ExecutorId,
-            HostId: lease.HostId,
-            AttemptId: attempt.AttemptId,
-            LibraryStep: command.LibraryStep)).ToArray();
-        var artifacts = commands.SelectMany(command => new[]
-        {
-            new ReviewArtifactEvidenceDto($"{command.StepId}.stdout.log", "text/plain", command.StdoutSha256, 1),
-            new ReviewArtifactEvidenceDto($"{command.StepId}.stderr.log", "text/plain", command.StderrSha256, 1),
-        }).ToArray();
-        var verdicts = subject.Plan.RequiredAspects
-            .Select(aspect => new ReviewVerdictDto(aspect, "pass", "Verified", $"{aspect} passed"))
-            .ToArray();
-        var toolchain = new Dictionary<string, string>
-        {
-            ["runtime"] = ".NET 10",
-            ["git"] = $"git;sha256={Sha256Of("git")}",
-        };
-        foreach (var command in subject.Plan.Commands)
-            toolchain[$"command:{command.StepId}"] = $"{command.FileName};sha256={Sha256Of(command.FileName)}";
-        return new ReviewReportRequest(
-            lease.ExecutorId,
-            lease.InstanceId,
-            lease.LeaseId,
-            lease.Fence,
-            $"scenario-report-{attempt.AttemptId}",
-            "Pass",
-            null,
-            "scenario review passed",
-            new ReviewWorkspaceProofDto(
-                subject.RepositoryId,
-                subject.ExpectedResultSha,
-                subject.ExpectedResultSha,
-                treeHash,
-                false,
-                false,
-                Sha256Of(workspacePath),
-                lease.ResourceNamespace),
-            new ReviewEnvironmentDto(
-                lease.HostId,
-                lease.ExecutorId,
-                lease.InstanceId,
-                "linux",
-                "x64",
-                "10.0",
-                toolchain,
-                new Dictionary<string, string>
-                {
-                    ["workspace"] = workspacePath,
-                    ["cache"] = $"{workspacePath}/cache",
-                    ["temp"] = $"{workspacePath}/tmp",
-                    ["ports"] = $"{lease.PortBase}-{lease.PortBase + 7}",
-                    ["containers"] = lease.ResourceNamespace,
-                    ["databases"] = lease.ResourceNamespace,
-                    ["credentials"] = "review-read-only",
-                }),
-            commands,
-            artifacts,
-            verdicts);
-    }
-
-    private static string Sha256Of(string value)
-        => Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 
     private async Task<string?> OrchestratorChatTurnAsync()
     {

@@ -5,7 +5,6 @@
 **/*.env
 **/*.token
 **/.git-credentials
-**/git-credentials
 !**/*.env.template
 !**/*.env.example
 !**/*.token.template
@@ -25,6 +24,7 @@ artifacts
 docs/**
 !docs/app/
 !docs/app/**
+# OrchestratorApi embeds the reviewed route inventory as a compiled resource.
 !docs/studio-route-ownership/
 !docs/studio-route-ownership/routes.json
 **/*.log
