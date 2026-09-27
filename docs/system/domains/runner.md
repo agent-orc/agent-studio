@@ -34,6 +34,14 @@ state.
 
 ## Key Code
 
+`runner/WorkstationProfile.cs` and
+[workstation runner-host setup](../../operations/setup/workstation-runner-host.md)
+adapt the same `agent-host` binary for a Windows operator workstation. Its
+named local roots and required tools are checked again before worker creation;
+preview links are bounded result artifacts. The Connector remains the browser
+edge, and the native host manager owns installation and service lifecycle. The
+Task Server remains the sole claim, lease, and report authority.
+
 ### Claimable gate host and Task API
 
 `RUNNER_ROLE=gate` starts `RemoteGateDaemon` as a polling Agent Host service.

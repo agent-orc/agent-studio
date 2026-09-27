@@ -816,7 +816,8 @@ public sealed class RemoteRunnerDaemon
                             claim.ContinuationBaseSha,
                             claim.PreviousSession,
                             claim.MechanicalDelta,
-                            claim.FreshRunReason)));
+                            claim.FreshRunReason,
+                            claim.RequiredCapabilities)));
                     idleWatchdog.RecordActiveSlots(active.Count);
                 }
 
@@ -910,10 +911,32 @@ public sealed class RemoteRunnerDaemon
             $"persisted authority deadline exhausted task={slot.TaskKey} " +
             $"attempt={slot.AttemptId} stop-before={stopBefore:o}; " +
             "reaping the contained process generation before any replacement");
-        await WorktreeProcessReaper.ReapAsync(
-            slot.WorktreePath,
-            _log,
-            CancellationToken.None);
+        if (OperatingSystem.IsWindows())
+        {
+            // Windows has no /proc worktree sweep. The persisted PID and start
+            // time identify this exact detached worker generation after sleep.
+            if (slot.ProcessId is not { } processId || slot.ProcessStartedAtUtc is null)
+                throw new InvalidOperationException(
+                    $"Expired workstation attempt '{slot.AttemptId}' has no proven worker process identity.");
+            ProcessSignalGuard.TryKillTree(
+                processId,
+                "workstation-authority-deadline",
+                slot.ProcessStartedAtUtc,
+                _log);
+            for (var attempt = 0; attempt < 20
+                                  && DurableAgentProcess.InspectForReattach(slot).IsLive; attempt++)
+                await Task.Delay(TimeSpan.FromMilliseconds(100), CancellationToken.None);
+            if (DurableAgentProcess.InspectForReattach(slot).IsLive)
+                throw new InvalidOperationException(
+                    $"Expired workstation attempt '{slot.AttemptId}' still has a live worker; refusing new claims.");
+        }
+        else
+        {
+            await WorktreeProcessReaper.ReapAsync(
+                slot.WorktreePath,
+                _log,
+                CancellationToken.None);
+        }
         state.Save(slot with
         {
             Phase = "authority-deadline-exhausted",

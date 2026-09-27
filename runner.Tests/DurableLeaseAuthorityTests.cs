@@ -54,6 +54,38 @@ public sealed class DurableLeaseAuthorityTests
     }
 
     [Fact]
+    public async Task Resume_after_workstation_sleep_stops_before_another_renewal_or_replay()
+    {
+        using var temp = new TempDirectory();
+        var now = new DateTime(2026, 9, 27, 8, 0, 0, DateTimeKind.Utc);
+        var options = Options(temp.Path);
+        var lease = Lease(now, now.AddMinutes(15));
+        var authority = DurableLeaseAuthority.Open(
+            temp.Path, lease.ExpiresAt, TimeSpan.FromMinutes(1), true, () => now);
+        var offline = new OfflineHandler();
+        using var http = new HttpClient(offline) { BaseAddress = new Uri("http://localhost") };
+        using var client = new TaskServerClient(http, options.RunnerId);
+        using var stop = new CancellationTokenSource();
+        var heartbeat = new LeaseHeartbeat(
+            client, options, lease, _ => { },
+            (_, _) =>
+            {
+                now = now.AddMinutes(20);
+                return Task.CompletedTask;
+            },
+            authority: authority,
+            utcNow: () => now);
+
+        await heartbeat.RunAsync(stop, CancellationToken.None);
+
+        Assert.Equal(1, offline.Calls);
+        Assert.True(heartbeat.LeaseLost);
+        Assert.False(authority.ReplayAllowed);
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => authority.WaitForConfirmedAsync(CancellationToken.None));
+    }
+
+    [Fact]
     public async Task Reconnection_renews_fence_before_replay_is_allowed()
     {
         using var temp = new TempDirectory();
@@ -193,7 +225,8 @@ public sealed class DurableLeaseAuthorityTests
             {
                 stop.Cancel();
                 return Task.CompletedTask;
-            });
+            },
+            utcNow: () => now);
 
         await heartbeat.RunAsync(stop, CancellationToken.None);
 
@@ -274,10 +307,15 @@ public sealed class DurableLeaseAuthorityTests
 
     private sealed class OfflineHandler : HttpMessageHandler
     {
+        public int Calls { get; private set; }
+
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
-            => throw new HttpRequestException("Task Server partitioned");
+        {
+            Calls++;
+            throw new HttpRequestException("Task Server partitioned");
+        }
     }
 
     private sealed class FailThenRenewHandler(

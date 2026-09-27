@@ -182,6 +182,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Retention and archive dossier (policy defaults, archive stages, Task Server management contract, full backup sets) | [operations/retention-und-archiv/index.html](../operations/retention-und-archiv/index.html) |
 | Task Server legacy migration, signed cutover evidence, retention, archive, restore, and full backup operator commands | [legacy migration](../operations/setup/task-server.md#legacy-single-writer-migration) · [retention and archive](../operations/setup/task-server.md#retention-against-the-sqlite-store) |
 | Standalone remote runner / agent host daemon (Linux) | [operations/setup/linux-runner-host.md](../operations/setup/linux-runner-host.md) |
+| Workstation runner-host profile (Windows roots, tools, preview evidence, same Task Server authority) | [operations/setup/workstation-runner-host.md](../operations/setup/workstation-runner-host.md) |
 | Guided multi-machine setup (Control Plane, join token, Agent Hosts) | [operations/setup/multi-machine.md](../operations/setup/multi-machine.md) |
 | Website onboarding source copy (Demo, Single Machine, Multi Machine) | [operations/setup/website-onboarding-template.md](../operations/setup/website-onboarding-template.md) |
 | Runner-host resource governance (Linux cgroups, coding/review role defaults, AIMD capacity boundary) | [target architecture](../operations/haertung-verteilte-ausfuehrung/target-architecture/resource-governance.md) |
