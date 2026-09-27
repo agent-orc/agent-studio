@@ -190,7 +190,8 @@ public static class LeaseEndpoints
                     if (task is not null)
                         mutations.RollbackStashedPendingIntent(task.FolderPath);
                     if (task is { State: TaskStates.Progress }
-                        && req.Outcome is "runner-environment-preparation-failed" or "runner-salvage-failed" or "runner-results-handling-failed")
+                        && req.Outcome is ("runner-environment-preparation-failed"
+                            or "runner-salvage-failed" or "runner-results-handling-failed"))
                     {
                         var budget = new RemoteClaimFailureBudget(
                             loggerFactory.CreateLogger<RemoteClaimFailureBudget>(),

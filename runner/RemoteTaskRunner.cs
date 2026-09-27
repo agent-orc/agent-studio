@@ -846,6 +846,26 @@ public sealed class RemoteTaskRunner
         }
         catch (WorktreeSalvageException ex)
         {
+            var latestSlot = _state.LoadAll().FirstOrDefault(item =>
+                                 string.Equals(item.AttemptId, slot.AttemptId, StringComparison.Ordinal))
+                             ?? slot;
+            if (!heartbeat.LeaseLost && ShouldReleasePrelaunchSalvageFailure(
+                    _client.UsesDurableTaskServer, reattach,
+                    latestSlot.Phase, latestSlot.ProcessId, latestSlot.ProcessStartedAtUtc))
+            {
+                // Preparation tried to salvage a checkout before any agent
+                // process started. There is no result to recover from the
+                // outbox, so release the lease with the same bounded budget as
+                // other infrastructure failures.
+                releaseOnly = true;
+                handedBack = true;
+                teardownAttempted = true;
+                (infrastructureFailureCode, infrastructureFailureDetail) =
+                    PrelaunchSalvageRelease(ex, _options.Hostname);
+                _log($"remote-prelaunch-salvage-failed task={taskKey} " +
+                    $"branch={ex.Branch} {infrastructureFailureDetail}");
+                return 1;
+            }
             if (outbox is not null)
             {
                 outbox.RecordHandoffState("transfer-recovery");
@@ -1115,6 +1135,19 @@ public sealed class RemoteTaskRunner
             }
         }
     }
+
+    internal static bool ShouldReleasePrelaunchSalvageFailure(
+        bool usesDurableTaskServer, bool reattach, string phase,
+        int? processId, DateTime? processStartedAtUtc)
+        => usesDurableTaskServer && !reattach
+            && string.Equals(phase, "claimed", StringComparison.Ordinal)
+            && processId is null && processStartedAtUtc is null;
+
+    internal static (string Outcome, string Detail) PrelaunchSalvageRelease(
+        WorktreeSalvageException exception, string host)
+        => ("runner-salvage-failed",
+            $"{OneLine(exception.InnerException?.Message ?? exception.Message)}; " +
+            $"worktree={exception.WorktreePath}; host={host}");
 
     private async Task<RemoteExecutionResult> ExecuteAsync(
         PersistedRunnerSlot slot, GitWorkspace workspace, LogShipper shipper,
