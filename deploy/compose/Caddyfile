@@ -1,12 +1,18 @@
 # Caddy config for the containerised frontend: static Angular bundle plus a
-# reverse proxy for the versioned Task Server edge. Plain HTTP stays on the
-# loopback-published one-box port; a LAN edge needs its own HTTPS listener.
+# reverse proxy for the API. Plain HTTP - TLS termination is the host's concern.
 # Port 8080, not 80: the container runs as a non-root user with no
 # CAP_NET_BIND_SERVICE, so it cannot bind a privileged port.
 :8080 {
 	encode zstd gzip
 
-	@api path /api /api/* /hubs /hubs/* /healthz /readyz
+	# The distributed Studio API is served by the BFF. Other Studio routes
+	# remain on the compatibility API until route ownership moves.
+	@distributed path /api/v1 /api/v1/* /hubs /hubs/*
+	handle @distributed {
+		reverse_proxy {$STUDIO_BFF_UPSTREAM:studio-bff:5072}
+	}
+
+	@api path /api /api/* /healthz /readyz
 	handle @api {
 		reverse_proxy {$STUDIO_API_UPSTREAM:orchestrator-api:5031}
 	}

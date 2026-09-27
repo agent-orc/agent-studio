@@ -625,6 +625,15 @@ public static class ProjectSettingsEndpoints
             return Results.Ok(settings.Get(projectName));
         });
 
+        app.MapPut("/api/projects/{projectName}/automatic-failure-continuations", (
+            string projectName, SetCrashRecoveryRequest req, ProjectSettingsService settings, TaskScannerService scanner) =>
+        {
+            var known = scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            settings.SetAutomaticFailureContinuationsEnabled(projectName, req.Enabled);
+            return Results.Ok(settings.Get(projectName));
+        });
+
         // Flag-gated local CLI execution engine. The effective value resolves
         // process environment -> project override -> workspace default -> CAR
         // platform default.
@@ -999,6 +1008,24 @@ public static class ProjectSettingsEndpoints
             return Results.Ok(new { cleared = true });
         });
 
+        app.MapGet("/api/projects/{projectName}/gate-result-cache", (
+            string projectName, TaskScannerService scanner) =>
+        {
+            if (!scanner.GetWatchPaths().Any(entry =>
+                    string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            return Results.Ok(new GateResultCache().Report(projectName));
+        });
+        app.MapDelete("/api/projects/{projectName}/gate-result-cache", async (
+            string projectName, TaskScannerService scanner, CancellationToken ct) =>
+        {
+            if (!scanner.GetWatchPaths().Any(entry =>
+                    string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            await new GateResultCache().InvalidateAsync(projectName, ct);
+            return Results.Ok(new { invalidated = true });
+        });
+
         // DELETE clears the build profile entirely, reverting the project to the
         // legacy "no onboarding gate" behaviour.
         app.MapDelete("/api/projects/{projectName}/build-profile", (
@@ -1236,6 +1263,7 @@ public static class ProjectSettingsEndpoints
                 RemoteProjectRepositoryResolver.ReadRepositoryDefaultBranch(project)).IntegrationRef;
             return remoteReviewPlans.Build(task, repositoryPath, taskSettings, integrationRef);
         });
+
     }
 
     private static bool IsKnownPipelineStep(string? stepId, string pipelineType = PipelineTypes.Task)

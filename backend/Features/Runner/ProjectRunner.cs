@@ -1216,6 +1216,10 @@ public class ProjectRunner
             Mode = _mode,
             ActiveJobId = _activeJobId,
             ActiveExecution = activeExec,
+            ActiveRuns = _activeRuns.Snapshot().Where(run => run.HoldsExecutionSlot)
+                .Select(run => new ActiveRunStatus(run.JobId, run.CliType,
+                    run.CliType is null ? null : _router.Get(run.CliType).GetExecution(GetJobKey(run.JobId)),
+                    run.QuotaFallbackReason)).ToList(),
             QuotaFallbackModel = activeRun?.FallbackFromCliType == null ? null : activeExec?.Model,
             QuotaFallbackReason = activeRun?.QuotaFallbackReason,
             ProviderLimits = providerLimits,
@@ -8585,11 +8589,23 @@ public class ProjectRunner
     /// </summary>
     private bool IsUnpickableEpic(TaskInfo job)
     {
-        if (!TaskKinds.IsEpic(job.Kind)) return false;
-        _logger.LogWarning(
-            "[taskboard] skipping epic card {Job} on {Project} in pickup lane {State}: epics are containers, not pickable work items",
-            job.Id, ProjectName, job.State);
-        return true;
+        if (TaskKinds.IsEpic(job.Kind))
+        {
+            _logger.LogWarning(
+                "[taskboard] skipping epic card {Job} on {Project} in pickup lane {State}: epics are containers, not pickable work items",
+                job.Id, ProjectName, job.State);
+            return true;
+        }
+        // AGT-2795: a decision card is a decision request the operator resolves;
+        // it is never code-executed and must never be auto-picked into a run.
+        if (TaskKinds.IsDecision(job.Kind))
+        {
+            _logger.LogWarning(
+                "[taskboard] skipping decision card {Job} on {Project} in pickup lane {State}: decision cards are decided, not executed",
+                job.Id, ProjectName, job.State);
+            return true;
+        }
+        return false;
     }
 
     private List<DisplayedPickupCandidate> ListPickupCandidatesInDisplayedOrder()

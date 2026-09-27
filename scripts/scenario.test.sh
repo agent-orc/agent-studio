@@ -52,6 +52,14 @@ case "$command" in
     config|build|up|down)
         exit 0
         ;;
+    exec)
+        case "$*" in
+            *studio_token) printf 'scenario-contract-studio-token\n' ;;
+            *engine_token) printf 'scenario-contract-engine-token\n' ;;
+            *runner_token) printf 'scenario-contract-runner-token\n' ;;
+            *) exit 2 ;;
+        esac
+        ;;
     images)
         printf 'sha256:scenario-task-server\n'
         ;;
@@ -118,10 +126,8 @@ scenario_compose_json="$(
     SCENARIO_BUILD_SHA=scenario-contract \
     SCENARIO_TASK_SERVER_IMAGE=scenario-contract-task-server:local \
     SCENARIO_STUDIO_BFF_IMAGE=scenario-contract-studio-bff:local \
+    SCENARIO_ORCHESTRATOR_ENGINE_IMAGE=scenario-contract-engine:local \
     SCENARIO_AGENT_HOST_IMAGE=scenario-contract-agent-host:local \
-    DISTRIBUTED_STUDIO_TOKEN=scenario-contract-studio-token \
-    DISTRIBUTED_ENGINE_TOKEN=scenario-contract-engine-token \
-    DISTRIBUTED_RUNNER_TOKEN=scenario-contract-runner-token \
     docker compose \
         --project-name scenario-contract-rendered \
         --file "$repo_root/docker-compose.yml" \
@@ -142,6 +148,10 @@ const expected = {
     image: "scenario-contract-studio-bff:local",
     dockerfile: "studio-bff/Dockerfile",
   },
+  "orchestrator-engine": {
+    image: "scenario-contract-engine:local",
+    dockerfile: "orchestrator-engine/Dockerfile",
+  },
   "agent-host-distributed": {
     image: "scenario-contract-agent-host:local",
     dockerfile: "testsupport/scenario/runner.Dockerfile",
@@ -156,15 +166,10 @@ for (const [serviceName, contract] of Object.entries(expected)) {
     throw new Error(`${serviceName} does not build ${contract.dockerfile}`);
   }
 }
-for (const source of ["studio_token", "engine_token", "runner_token"]) {
-  const secret = config.services["task-server"].secrets
-    .find(candidate => candidate.source === source);
-  if (!secret || String(secret.uid) !== "10001" || String(secret.gid) !== "10001") {
-    throw new Error(`task-server/${source} is not readable by UID/GID 10001`);
-  }
-  if (String(secret.mode) !== "0400") {
-    throw new Error(`task-server/${source} mode is not 0400`);
-  }
+const secretVolume = config.services["task-server"].volumes
+  .find(volume => volume.target === "/run/agent-studio-secrets");
+if (secretVolume?.source !== "secrets" || !secretVolume.read_only) {
+  throw new Error("task-server must read the Compose credential volume");
 }
 if (config.services["task-server"].build.args.VERSION !== process.argv[2]
     || config.services["studio-bff"].build.args.VERSION !== process.argv[2]) {

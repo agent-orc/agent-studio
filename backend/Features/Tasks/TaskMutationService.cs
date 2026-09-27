@@ -30,6 +30,7 @@ public class TaskMutationService
     // tests that construct TaskMutationService directly may pass null and
     // simply skip the timeline event.
     private readonly TimelineLog? _timeline;
+    private readonly OrchestratorLog? _activityFeed;
     private readonly GitService? _git;
     // Lane mutex: serialise the slug-uniqueness check + folder create in
     // CreateJob with the other lane writers (move/archive/delete) so two
@@ -45,7 +46,7 @@ public class TaskMutationService
     /// </summary>
     private readonly IAtomicJsonFileWriter? _keyFileWriter;
 
-    public TaskMutationService(TaskScannerService scanner, ClientIdentityStore clients, ProjectRegistry projectRegistry, TaskChangeNotifier notifier, ILogger<TaskMutationService> logger, TimelineLog? timeline = null, LaneMutexRegistry? laneMutex = null, GitService? git = null, IAtomicJsonFileWriter? fileWriter = null)
+    public TaskMutationService(TaskScannerService scanner, ClientIdentityStore clients, ProjectRegistry projectRegistry, TaskChangeNotifier notifier, ILogger<TaskMutationService> logger, TimelineLog? timeline = null, LaneMutexRegistry? laneMutex = null, GitService? git = null, IAtomicJsonFileWriter? fileWriter = null, OrchestratorLog? activityFeed = null)
     {
         _scanner = scanner;
         _clients = clients;
@@ -53,6 +54,7 @@ public class TaskMutationService
         _notifier = notifier;
         _logger = logger;
         _timeline = timeline;
+        _activityFeed = activityFeed;
         _laneMutex = laneMutex ?? LaneMutexRegistry.NullSingleton;
         _git = git;
         _keyFileWriter = fileWriter;
@@ -71,6 +73,7 @@ public class TaskMutationService
     private bool Updated(TaskInfo info)
     {
         _scanner.InvalidateCache();
+        _scanner.PublishCoreFromFolder(info.FolderPath, info.WatchPath, info.ProjectName, info.State);
         _notifier.PublishUpdated(info.ProjectName, info.Id, info.WatchPath);
         return true;
     }
@@ -84,7 +87,12 @@ public class TaskMutationService
     /// (<c>lastProgressAt</c>), or land on a job that the user-facing
     /// surface (Move, CreateJob) is about to push for separately.
     /// </summary>
-    private bool Updated() { _scanner.InvalidateCache(); return true; }
+    private bool Updated(string folderPath)
+    {
+        _scanner.InvalidateCache();
+        _scanner.PublishCoreFromKnownFolder(folderPath);
+        return true;
+    }
 
     public bool SetJobModel(string jobId, string? model, string? watchPath = null)
     {
@@ -100,7 +108,7 @@ public class TaskMutationService
             ModelMetadataRegistry.ResolveThinkingLevel(info.CliType, normalizedModel, info.ThinkingLevel) ?? "",
             _logger);
         AppendModelChangeMarker(info, previousModel, normalizedModel);
-        return Updated();
+        return Updated(info);
     }
 
     /// <summary>
@@ -152,7 +160,7 @@ public class TaskMutationService
         var normalized = ModelMetadataRegistry.ResolveThinkingLevel(info.CliType, info.Model, thinkingLevel);
         TaskJsonFile.UpdateField(info.FolderPath, "thinkingLevel", normalized ?? "", _logger);
         TaskJsonFile.UpdateField(info.FolderPath, "thinkingLevelExplicit", !string.IsNullOrWhiteSpace(thinkingLevel), _logger);
-        return Updated();
+        return Updated(info);
     }
 
     /// <summary>
@@ -166,7 +174,7 @@ public class TaskMutationService
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
         TaskJsonFile.UpdateField(info.FolderPath, "epicId", epicId ?? "", _logger);
-        return Updated();
+        return Updated(info);
     }
 
     public bool SetJobCliType(string jobId, string cliType, string? watchPath = null)
@@ -195,7 +203,7 @@ public class TaskMutationService
         {
             TaskJsonFile.UpdateField(info.FolderPath, "sessionName", "", _logger);
         }
-        return Updated();
+        return Updated(info);
     }
 
     public bool SetJobUseOwnSession(string jobId, bool useOwn, string? watchPath = null)
@@ -203,7 +211,7 @@ public class TaskMutationService
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
         TaskJsonFile.UpdateField(info.FolderPath, "useOwnSession", useOwn, _logger);
-        return Updated();
+        return Updated(info);
     }
 
     public bool SetJobCommit(string jobId, TaskCommitInfo commit, string? watchPath = null)
@@ -217,7 +225,7 @@ public class TaskMutationService
     {
         if (!Directory.Exists(folderPath)) return false;
         AppendJobCommitOnFolder(folderPath, commit);
-        return Updated();
+        return Updated(folderPath);
     }
 
     /// <summary>
@@ -497,7 +505,7 @@ public class TaskMutationService
                 HasModelMismatch = entries.Any(entry => entry.ModelMismatch),
             };
             TaskJsonFile.UpdateFieldOrThrow(folderPath, "tokenSummary", summary);
-            return Updated();
+            return Updated(folderPath);
         }
         catch (Exception ex)
         {
@@ -517,7 +525,7 @@ public class TaskMutationService
         try
         {
             TaskJsonFile.UpdateFieldOrThrow(folderPath, "tokenSummary", summary);
-            return Updated();
+            return Updated(folderPath);
         }
         catch (Exception ex)
         {
@@ -668,7 +676,7 @@ public class TaskMutationService
     {
         if (!Directory.Exists(folderPath)) return false;
         TaskJsonFile.UpdateField(folderPath, "completionClaim", claim!, _logger);
-        return Updated();
+        return Updated(folderPath);
     }
 
     /// <summary>
@@ -733,7 +741,7 @@ public class TaskMutationService
             && !TaskJsonFile.UpdateField(folderPath, "enteredLaneAt", entered, _logger)) return false;
         return TaskJsonFile.UpdateField(folderPath, "commits", updated, _logger)
             && TaskJsonFile.UpdateField(folderPath, "commit", updated.Count > 0 ? updated[^1] : null!, _logger)
-            && Updated();
+            && Updated(folderPath);
     }
 
     /// <summary>
@@ -773,7 +781,7 @@ public class TaskMutationService
         var normalized = TaskIntegrationBranch.NormalizeRef(integrationBranch);
         if (normalized is null) return false;
         TaskJsonFile.UpdateField(folderPath, "integrationBranch", normalized, _logger);
-        return Updated();
+        return Updated(folderPath);
     }
 
     /// <summary>
@@ -788,7 +796,7 @@ public class TaskMutationService
         if (!Directory.Exists(folderPath) || !CliContextModes.IsValid(contextMode)) return false;
         TaskJsonFile.UpdateField(
             folderPath, "contextMode", CliContextModes.Normalize(contextMode), _logger);
-        return Updated();
+        return Updated(folderPath);
     }
 
     /// <summary>
@@ -802,7 +810,7 @@ public class TaskMutationService
         if (contextMode is null)
         {
             TaskJsonFile.RemoveField(folderPath, "contextMode", _logger);
-            return Updated();
+            return Updated(folderPath);
         }
 
         return SetContextModeOnFolder(folderPath, contextMode);
@@ -854,7 +862,7 @@ public class TaskMutationService
 
             records.Add(record);
             TaskJsonFile.UpdateFieldOrThrow(folderPath, "integrationRecords", records);
-            Updated();
+            Updated(folderPath);
             return new IntegrationRecordWriteResult(true, true);
         }
         catch (Exception ex)
@@ -893,7 +901,7 @@ public class TaskMutationService
             // Drop the obsolete operator-override array (removed feature) so the
             // file is not left carrying a dead field after a rewrite.
             TaskJsonFile.RemoveField(folderPath, "excludedCommits", _logger);
-            return Updated();
+            return Updated(folderPath);
         }
         catch (Exception ex)
         {
@@ -972,7 +980,24 @@ public class TaskMutationService
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
         TaskJsonFile.UpdateField(info.FolderPath, "taskType", TaskTypes.Normalize(taskType), _logger);
-        return Updated();
+        return Updated(info);
+    }
+
+    /// <summary>
+    /// AGT-2795: replace-all write of the structured <c>decision</c> object on a
+    /// decision card. The caller (the decision-card service) owns validation and
+    /// the transition side effects; this writer is deliberately thin so it can
+    /// persist the requested, decided, and reopened shapes alike.
+    /// </summary>
+    public bool SetDecisionContent(string jobId, DecisionContent decision, string? watchPath = null)
+    {
+        var info = _scanner.FindJob(jobId, watchPath);
+        if (info == null) return false;
+        if (!TaskJsonFile.UpdateField(info.FolderPath, "decision", decision, _logger)) return false;
+        _logger.LogInformation(
+            "decision-content-set job={JobId} status={Status} chosen={Chosen}",
+            jobId, decision.Status, decision.ChosenOptionId ?? "");
+        return Updated(info);
     }
 
     /// <summary>
@@ -994,7 +1019,7 @@ public class TaskMutationService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         TaskJsonFile.UpdateField(info.FolderPath, "tags", clean, _logger);
-        return Updated();
+        return Updated(info);
     }
 
     /// <summary>
@@ -1023,7 +1048,7 @@ public class TaskMutationService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         TaskJsonFile.UpdateField(info.FolderPath, "tags", merged, _logger);
-        return Updated();
+        return Updated(info);
     }
 
     /// <summary>
@@ -1047,7 +1072,7 @@ public class TaskMutationService
             jobId, clean.DependsOn.Count, clean.RelatedTo.Count, clean.BlockedBy.Count,
             clean.Supersedes.Count, clean.FollowUpOf.Count, clean.RaisedFollowUps.Count,
             clean.Workbenches.Count);
-        return Updated();
+        return Updated(info);
     }
 
     /// <summary>Applies one audited incremental waits-on edit without replacing unrelated references.</summary>
@@ -1137,7 +1162,7 @@ public class TaskMutationService
                 jobId, previous, trimmed);
         }
         TaskJsonFile.UpdateField(info.FolderPath, "title", trimmed, _logger);
-        return Updated();
+        return Updated(info);
     }
 
     public bool UpdateContextUsage(string jobId, ContextUsageSnapshot snapshot, string? watchPath = null)
@@ -1177,7 +1202,7 @@ public class TaskMutationService
                     : DateTime.UtcNow.ToString("o"),
             },
             _logger);
-        return Updated();
+        return Updated(folderPath);
     }
 
     /// <summary>
@@ -1212,7 +1237,7 @@ public class TaskMutationService
         _logger.LogInformation(
             "task-release-set job={JobId} released={Released} dependents={Dependents}",
             jobId, released, dependents.Count);
-        return Updated();
+        return Updated(info);
     }
 
     /// <summary>
@@ -1535,7 +1560,7 @@ public class TaskMutationService
     {
         if (!Directory.Exists(folderPath)) return false;
         TaskJsonFile.UpdateField(folderPath, "provenance", provenance, _logger);
-        return Updated();
+        return Updated(folderPath);
     }
 
     /// <summary>
@@ -1550,7 +1575,7 @@ public class TaskMutationService
     {
         if (!Directory.Exists(folderPath)) return false;
         TaskJsonFile.UpdateField(folderPath, "externalCompletion", externalCompletion, _logger);
-        return Updated();
+        return Updated(folderPath);
     }
 
     public string? CreateJob(CreateTaskRequest req)
@@ -1580,18 +1605,48 @@ public class TaskMutationService
 
         var acceptanceScope = TaskAcceptanceScopes.Normalize(req.AcceptanceScope);
         if (req.AcceptanceScope is not null && acceptanceScope is null) return null;
+        if (req.Kind is not null && !TaskKinds.All.Contains(req.Kind.Trim(), StringComparer.OrdinalIgnoreCase)) return null;
 
         // Backlog is the default landing lane when the caller supplies no
         // targetState. An explicit valid lane is authoritative. In particular,
         // operator and automation callers may intentionally create a card in a
         // review lane; silently clamping those requests to Backlog loses the
         // caller's routing decision and lets later guards misclassify the card.
+        var isDecision = TaskKinds.IsDecision(req.Kind);
+        // AGT-2795: a decision card is a decision request, not runnable work. Its
+        // structured content is validated up front so a malformed request is
+        // rejected before a card folder is created, and a default create lands it
+        // in preparation with the decision badge rather than backlog.
+        DecisionContent? decisionContent = null;
+        if (isDecision)
+        {
+            decisionContent = (req.Decision ?? new DecisionContent()) with
+            {
+                Status = DecisionStatuses.Pending,
+                ChosenOptionId = null,
+                Rationale = null,
+                DecidedBy = null,
+                DecidedAt = null,
+                RecordPath = null,
+                History = [],
+                Dependants = (req.Decision?.Dependants ?? [])
+                    .Where(key => !string.IsNullOrWhiteSpace(key))
+                    .Select(key => key.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList(),
+                Decider = string.IsNullOrWhiteSpace(req.Decision?.Decider)
+                    ? DecisionDeciders.Operator : req.Decision.Decider.Trim(),
+            };
+            if (DecisionCardPolicy.ValidateContent(decisionContent).Count > 0) return null;
+        }
+
         var targetState = string.IsNullOrWhiteSpace(req.TargetState)
-            ? TaskStates.Backlog
+            ? isDecision ? TaskStates.Preparation : TaskStates.Backlog
             : TaskStates.All.Contains(req.TargetState, StringComparer.Ordinal)
                 ? req.TargetState
                 : null;
         if (targetState == null) return null;
+        if (isDecision && targetState != TaskStates.Preparation) return null;
 
         // Sanitize ID: transliterate umlauts, lowercase, replace spaces with dashes, only allow safe chars
         var baseSlug = string.IsNullOrWhiteSpace(req.Id)
@@ -1711,8 +1766,11 @@ public class TaskMutationService
         // (research on, else off) - see planning-research-task-kinds note.
         var effectiveMode = TaskModes.Normalize(req.Mode);
         jobJson["mode"] = effectiveMode;
-        if (req.NoBranchExpected || AcceptanceIntegrationPolicy.IsNoBranchTaskType(req.TaskType))
+        if (req.NoBranchExpected || isDecision || AcceptanceIntegrationPolicy.IsNoBranchTaskType(req.TaskType))
             jobJson["noBranchExpected"] = true;
+        // AGT-2795: persist the validated decision content on a decision card.
+        if (isDecision && decisionContent != null)
+            jobJson["decision"] = decisionContent;
         jobJson["allowWebAccess"] = req.AllowWebAccess ?? (effectiveMode == TaskModes.Research);
         if (req.Fixture)
             jobJson["fixture"] = true;
@@ -1760,7 +1818,34 @@ public class TaskMutationService
                 ["createdBy"] = string.IsNullOrWhiteSpace(req.CreatedBy) ? ownerClientId : req.CreatedBy.Trim(),
             });
 
+        // AGT-2795: a decision card opens its ledger with decision_requested so
+        // its history shows the fork the moment it is raised.
+        if (isDecision && decisionContent != null)
+            _timeline?.Append(
+                jobDir,
+                TimelineEventKinds.DecisionRequested,
+                string.Equals(req.CreationSource, TimelineActors.Orchestrator, StringComparison.OrdinalIgnoreCase)
+                    ? TimelineActors.Orchestrator
+                    : TimelineActors.Human(ownerClientId),
+                summary: string.IsNullOrWhiteSpace(decisionContent.Question)
+                    ? "Decision requested"
+                    : $"Decision requested: {decisionContent.Question}",
+                details: new()
+                {
+                    ["decider"] = decisionContent.Decider,
+                    ["options"] = decisionContent.Options.Count.ToString(),
+                });
+        if (isDecision && decisionContent != null)
+            _activityFeed?.Append(entry.Path, new OrchestratorLogEntry
+            {
+                Kind = OrchestratorLogKinds.Decision,
+                Topic = OrchestratorLogTopics.DecisionCard,
+                Summary = $"Decision requested: {decisionContent.Question}",
+                JobId = jobId,
+            });
+
         _scanner.InvalidateCache();
+        _scanner.PublishCoreFromFolder(jobDir, entry.Path, entry.Name, targetState ?? string.Empty);
         // Push a typed jobCreated to connected clients so other tabs render
         // the new card within ~1s instead of waiting for the next board poll.
         // Resolve the just-written TaskInfo so the bridge can ship the canonical
@@ -1871,7 +1956,7 @@ public class TaskMutationService
         // prompt.md does not affect kanban-card fields, but UpdateJobFile is
         // user-initiated (edit prompt) and the next read should see the
         // change for any consumer that pulls TaskDetail with the prompt body.
-        return Updated();
+        return Updated(info);
     }
 
     /// <summary>
@@ -2000,6 +2085,7 @@ public class TaskMutationService
             // PendingIntent appears on TaskInfo (kanban card shows the intent),
             // so the snapshot must be invalidated for the next read to see it.
             _scanner.InvalidateCache();
+            _scanner.PublishCoreFromKnownFolder(info.FolderPath);
             return intent;
         }
         catch (Exception ex)
@@ -2040,6 +2126,7 @@ public class TaskMutationService
             File.Move(path, stash);
             // pending-intent.json gone → TaskInfo.PendingIntent should be null.
             _scanner.InvalidateCache();
+            _scanner.PublishCoreFromKnownFolder(jobFolder);
             return intent;
         }
         catch (Exception ex)
@@ -2063,6 +2150,7 @@ public class TaskMutationService
             if (File.Exists(canonical)) File.Delete(canonical);
             if (File.Exists(stash)) File.Delete(stash);
             _scanner.InvalidateCache();
+            _scanner.PublishCoreFromKnownFolder(jobFolder);
             return true;
         }
         catch (Exception ex)
@@ -2094,6 +2182,7 @@ public class TaskMutationService
                 File.Move(stash, canonical);
             }
             _scanner.InvalidateCache();
+            _scanner.PublishCoreFromKnownFolder(jobFolder);
         }
         catch (Exception ex)
         {
@@ -2135,7 +2224,7 @@ public class TaskMutationService
                 WriteAllTextWithRetry(path, contents);
             }
 
-            return Updated();
+            return Updated(folderPath);
         }
         catch (Exception ex)
         {

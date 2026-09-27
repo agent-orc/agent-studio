@@ -1,4 +1,6 @@
 services:
+  bootstrap:
+    image: "${SCENARIO_TASK_SERVER_IMAGE:?set SCENARIO_TASK_SERVER_IMAGE}"
   task-server:
     image: "${SCENARIO_TASK_SERVER_IMAGE:?set SCENARIO_TASK_SERVER_IMAGE}"
     build:
@@ -11,27 +13,15 @@ services:
       BOOTSTRAP_RUNNER_ID: scenario-coding-runner
       TaskServer__MinimumLeaseSeconds: "5"
       TaskServer__MaximumLeaseSeconds: "30"
-    secrets:
-      - source: studio_token
-        target: /run/secrets/studio_token
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
-      - source: engine_token
-        target: /run/secrets/engine_token
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
-      - source: runner_token
-        target: /run/secrets/runner_token
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
-      - source: review_runner_token
-        target: /run/secrets/review_runner_token
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
+
+  orchestrator-engine:
+    image: "${SCENARIO_ORCHESTRATOR_ENGINE_IMAGE:?set SCENARIO_ORCHESTRATOR_ENGINE_IMAGE}"
+    build:
+      context: .
+      dockerfile: orchestrator-engine/Dockerfile
+      args:
+        VERSION: ${SCENARIO_BUILD_VERSION:?set SCENARIO_BUILD_VERSION}
+        SHA: ${SCENARIO_BUILD_SHA:?set SCENARIO_BUILD_SHA}
 
   studio-bff:
     image: "${SCENARIO_STUDIO_BFF_IMAGE:?set SCENARIO_STUDIO_BFF_IMAGE}"
@@ -75,7 +65,3 @@ services:
       - type: bind
         source: ${SCENARIO_HOST_DIR:?set SCENARIO_HOST_DIR}
         target: /scenario
-    secrets:
-      - source: runner_token
-        target: /run/secrets/runner_token
-        mode: 0400

@@ -1,379 +1,199 @@
 #!/usr/bin/env bash
-# Hermetic acceptance check for the container-image release path.
-#
-# Every scenario below builds from this checkout's Dockerfiles through the
-# "dev" profile services (docker-compose.yml), so no registry access is
-# required and every commit - not just tagged releases - proves the exact
-# Dockerfiles and compose wiring that `docker compose --profile <name> up`
-# runs against the published images.
-#
-#   1. default:      task-server + engine + BFF + frontend (one authority).
-#   2. compatibility: versioned proxy forwards while legacy writes fail closed.
-#   3. runner:       a containerised agent-host registers against the Task
-#                    Server and claims a seeded task through to
-#                    4-auto-review, using a fake CLI fixture.
-# The legacy proxy is available for migration, but no legacy runner services
-# are exposed: it rejects the old runner protocol routes.
-#
-# Requires: docker compose v2, curl, jq, git.
+# One-box deployment smoke. Default builds this checkout; set
+# COMPOSE_SMOKE_MODE=images to exercise published release images.
 set -euo pipefail
-
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 repository_version="$(tr -d '\r\n' < "$repo_root/VERSION")"
-if [ -z "$repository_version" ]; then
-    echo "VERSION must contain the repository version" >&2
-    exit 64
-fi
-if [ -n "${AGENT_STUDIO_VERSION:-}" ] \
-    && [ "$AGENT_STUDIO_VERSION" != "$repository_version" ]; then
+if [ -n "${AGENT_STUDIO_VERSION:-}" ] && [ "$AGENT_STUDIO_VERSION" != "$repository_version" ]; then
     echo "AGENT_STUDIO_VERSION $AGENT_STUDIO_VERSION does not match VERSION $repository_version" >&2
     exit 64
 fi
 export AGENT_STUDIO_VERSION="$repository_version"
-
-# Kept as a small, Docker-free seam for the version-resolution regression.
 if [ "${1:-}" = "--print-build-version" ]; then
     printf '%s\n' "$AGENT_STUDIO_VERSION"
     exit 0
 fi
-if [ "$#" -ne 0 ]; then
-    echo "usage: $0 [--print-build-version]" >&2
-    exit 64
+test "$#" -eq 0 || { echo "usage: $0 [--print-build-version]" >&2; exit 64; }
+mode="${COMPOSE_SMOKE_MODE:-dev}"
+test "$mode" = dev || test "$mode" = images || { echo "invalid COMPOSE_SMOKE_MODE" >&2; exit 64; }
+project="${COMPOSE_SMOKE_PROJECT:-agent-studio-smoke-$$}"
+export STUDIO_UI_PORT="${COMPOSE_SMOKE_UI_PORT:-14011}"
+export STUDIO_TASKSERVER_PORT="${COMPOSE_SMOKE_TASKSERVER_PORT:-15071}"
+export STUDIO_ALLOWED_ORIGINS="http://127.0.0.1:${STUDIO_UI_PORT}"
+fixture="$(mktemp -d)"
+override="$fixture/override.yaml"
+compose=(docker compose --project-name "$project" -f "$repo_root/docker-compose.yml" -f "$override")
+if [ "$mode" = dev ]; then
+    suffix=-dev
+    services=(task-server-dev orchestrator-engine-dev studio-bff-dev orchestrator-api-dev web-dev agent-host-distributed-dev agent-host-review-distributed-dev)
+    profiles=(--profile dev)
+    build=(--build)
+else
+    suffix=""
+    services=(task-server orchestrator-engine studio-bff orchestrator-api web agent-host-distributed agent-host-review-distributed)
+    profiles=()
+    build=()
 fi
-
-project_name="${COMPOSE_SMOKE_PROJECT:-agent-studio-smoke}"
-ui_port="${COMPOSE_SMOKE_UI_PORT:-4011}"
-api_port="${COMPOSE_SMOKE_API_PORT:-5031}"
-taskserver_port="${COMPOSE_SMOKE_TASKSERVER_PORT:-5071}"
-bff_port="${COMPOSE_SMOKE_BFF_PORT:-5072}"
-compose=(docker compose --project-name "$project_name")
-fixture_dir=""
-runner_override=""
-bootstrap_fixture=""
-
-down()
-{
-    "${compose[@]}" --profile dev --profile legacy \
-        down --volumes --remove-orphans >/dev/null 2>&1 || true
-}
-
-finish()
-{
-    status="$1"
+finish() {
+    status=$?
     trap - EXIT HUP INT TERM
     if [ "$status" -ne 0 ]; then
-        "${compose[@]}" ps || true
-        "${compose[@]}" logs --no-color || true
+        "${compose[@]}" "${profiles[@]}" ps || true
+        "${compose[@]}" "${profiles[@]}" logs --no-color --tail 100 || true
+        if [ "${COMPOSE_SMOKE_KEEP_ON_FAIL:-0}" = 1 ]; then
+            printf 'compose-smoke-debug-project=%s fixture=%s\n' "$project" "$fixture" >&2
+            exit "$status"
+        fi
     fi
-    down
-    [ -n "$fixture_dir" ] && rm -rf "$fixture_dir"
-    [ -n "$runner_override" ] && rm -f "$runner_override"
-    [ -n "$bootstrap_fixture" ] && rm -rf "$bootstrap_fixture"
+    image_id="$("${compose[@]}" "${profiles[@]}" images -q "task-server${suffix}" 2>/dev/null | head -n1)"
+    if [ -n "$image_id" ]; then
+        docker run --rm --user 0 -v "$fixture:/fixtures" --entrypoint chown \
+            "$image_id" -R "$(id -u):$(id -g)" /fixtures >/dev/null 2>&1 || true
+    fi
+    "${compose[@]}" "${profiles[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
+    rm -rf "$fixture"
     exit "$status"
 }
-
-trap 'finish $?' EXIT
+trap finish EXIT
 trap 'exit 130' HUP INT TERM
-
-healthy_count()
-{
-    "${compose[@]}" ps --format json | grep -o '"Health":"healthy"' | wc -l | tr -d ' '
-}
-
-wait_for_http()
-{
-    url="$1"
-    deadline=$((SECONDS + 60))
-    until curl --fail --silent --show-error --output /dev/null "$url" 2>/dev/null; do
-        [ "$SECONDS" -lt "$deadline" ] || { echo "timed out waiting for $url" >&2; return 1; }
-        sleep 1
+wait_for_http() {
+    local url="$1" deadline=$((SECONDS + 90))
+    until curl --fail --silent --output /dev/null "$url"; do
+        [ "$SECONDS" -lt "$deadline" ] || { echo "timeout: $url" >&2; return 1; }
+        sleep 2
     done
 }
-
-task_server_call()
-{
-    method="$1" path="$2" token="$3"
-    shift 3
-    curl --fail --silent --show-error \
-        -X "$method" \
-        -H "Authorization: Bearer $token" \
-        -H "X-Task-Protocol-Version: 2" \
-        -H "Content-Type: application/json" \
-        "http://127.0.0.1:${taskserver_port}${path}" \
-        "$@"
+call() {
+    local method="$1" path="$2"
+    shift 2
+    curl --fail --silent --show-error -X "$method" \
+        -H "Authorization: Bearer $studio_token" \
+        -H "Origin: http://127.0.0.1:${STUDIO_UI_PORT}" \
+        -H 'X-Task-Protocol-Version: 2' \
+        -H 'Content-Type: application/json' \
+        "http://127.0.0.1:${STUDIO_UI_PORT}${path}" "$@"
 }
-
-# teardown_scenario <compose-array-name> <profile...> -- <service...>
-teardown_scenario()
-{
-    local -n compose_ref="$1"
-    shift
-    local -a profiles=()
-    while [ "$1" != "--" ]; do
-        profiles+=(--profile "$1")
-        shift
-    done
-    shift
-    "${compose_ref[@]}" "${profiles[@]}" stop "$@" >/dev/null
-    "${compose_ref[@]}" "${profiles[@]}" rm --force "$@" >/dev/null
-}
-
 cd "$repo_root"
-down
-
-export STUDIO_UI_PORT="$ui_port"
-export STUDIO_API_PORT="$api_port"
-export STUDIO_TASKSERVER_PORT="$taskserver_port"
-export STUDIO_BFF_PORT="$bff_port"
-export DISTRIBUTED_STUDIO_TOKEN="${DISTRIBUTED_STUDIO_TOKEN:-smoke-studio-token-0000000000000000000000}"
-export DISTRIBUTED_ENGINE_TOKEN="${DISTRIBUTED_ENGINE_TOKEN:-smoke-engine-token-0000000000000000000000}"
-export DISTRIBUTED_RUNNER_TOKEN="${DISTRIBUTED_RUNNER_TOKEN:-smoke-runner-token-0000000000000000000000}"
-export DISTRIBUTED_REVIEW_RUNNER_TOKEN="${DISTRIBUTED_REVIEW_RUNNER_TOKEN:-smoke-review-token-0000000000000000000000}"
-export STUDIO_ALLOWED_ORIGINS="http://127.0.0.1:${ui_port}"
-
-"${compose[@]}" config --quiet
-
-default_services="$("${compose[@]}" config --services | sort)"
-test "$default_services" = "$(printf 'agent-host-distributed\nagent-host-review-distributed\nfrontend\norchestrator-engine\nstudio-bff\ntask-server')"
-legacy_services="$("${compose[@]}" --profile legacy config --services | sort)"
-test "$legacy_services" = "$(printf 'agent-host-distributed\nagent-host-review-distributed\nfrontend\norchestrator-api\norchestrator-engine\nstudio-bff\ntask-server')"
-if "${compose[@]}" --profile dev config --services | grep -Eq '^agent-host-(coding|review)(-dev)?$'; then
-    echo 'unsupported legacy runner protocol service reappeared in Compose' >&2
-    exit 1
-fi
-
-# Exercise the retained bootstrap entry point in an empty installation copy.
-# It must select the Task Server profile and preserve every generated secret.
-bootstrap_fixture="$(mktemp -d)"
-mkdir -p "$bootstrap_fixture/scripts"
-cp docker-compose.yml .env.example runner.env.template "$bootstrap_fixture/"
-cp scripts/compose-runner-bootstrap.sh scripts/compose-distributed-bootstrap.sh "$bootstrap_fixture/scripts/"
-(
-    cd "$bootstrap_fixture"
-    file_mode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
-    bash scripts/compose-runner-bootstrap.sh >/dev/null
-    test -s .env && test -s runner.env && test ! -e runner.token
-    test "$(file_mode .env)" = 600
-    test "$(file_mode runner.env)" = 600
-    first_tokens="$(grep '^DISTRIBUTED_.*_TOKEN=' .env)"
-    test "$(printf '%s\n' "$first_tokens" | cut -d= -f2 | sort -u | wc -l)" -eq 4
-    bash scripts/compose-runner-bootstrap.sh >/dev/null
-    test "$first_tokens" = "$(grep '^DISTRIBUTED_.*_TOKEN=' .env)"
-)
-rm -rf "$bootstrap_fixture"
-bootstrap_fixture=""
-
-# --- Scenario 1: source-built one-box authority and browser boundary -------
-echo "=== default profile ==="
-"${compose[@]}" --profile dev up --build --wait \
-    task-server-dev orchestrator-engine-dev studio-bff-dev frontend-dev
-
-ui_binding="$("${compose[@]}" port frontend-dev 8080)"
-resolved_ui_port="${ui_binding##*:}"
-
-health="$(curl --fail --silent "http://127.0.0.1:${resolved_ui_port}/healthz")"
-grep -q '"status":"live"' <<<"$health"
-
-homepage="$(curl --fail --silent "http://127.0.0.1:${resolved_ui_port}/")"
-grep -q '<app-root' <<<"$homepage"
-
-direct_protocol="$(task_server_call GET /api/v1/protocol "$DISTRIBUTED_STUDIO_TOKEN")"
-edge_protocol="$(curl --fail --silent "http://127.0.0.1:${resolved_ui_port}/api/v1/protocol")"
-test "$edge_protocol" = "$direct_protocol"
-unauthenticated_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
-    "http://127.0.0.1:${taskserver_port}/api/v1/workspaces")"
-test "$unauthenticated_status" = 401
-
-no_origin_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
-    -X POST -H 'Content-Type: application/json' -d '{"name":"rejected"}' \
-    "http://127.0.0.1:${resolved_ui_port}/api/v1/workspaces")"
-test "$no_origin_status" = 403
-foreign_origin_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
-    -X POST -H 'Origin: https://foreign.invalid' -H 'Content-Type: application/json' \
-    -d '{"name":"rejected"}' "http://127.0.0.1:${resolved_ui_port}/api/v1/workspaces")"
-test "$foreign_origin_status" = 403
-unknown_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
-    "http://127.0.0.1:${resolved_ui_port}/api/not-owned")"
-test "$unknown_status" = 404
-created_workspace="$(curl --fail --silent -X POST \
-    -H "Origin: http://127.0.0.1:${resolved_ui_port}" \
-    -H 'Content-Type: application/json' -d '{"name":"Browser smoke"}' \
-    "http://127.0.0.1:${resolved_ui_port}/api/v1/workspaces")"
-workspace_id="$(jq -r '.workspaceId' <<<"$created_workspace")"
-test -n "$workspace_id" && test "$workspace_id" != null
-task_server_call GET /api/v1/workspaces "$DISTRIBUTED_STUDIO_TOKEN" | jq -e --arg id "$workspace_id" \
-    '.[] | select(.workspaceId == $id)' >/dev/null
-principal_ids_before="$(task_server_call GET /api/v1/management/principals "$DISTRIBUTED_STUDIO_TOKEN" \
-    | jq -r '.[].principalId' | sort)"
-"${compose[@]}" restart task-server-dev >/dev/null
-wait_for_http "http://127.0.0.1:${taskserver_port}/readyz"
-task_server_call GET /api/v1/workspaces "$DISTRIBUTED_STUDIO_TOKEN" | jq -e --arg id "$workspace_id" \
-    '.[] | select(.workspaceId == $id)' >/dev/null
-principal_ids_after="$(task_server_call GET /api/v1/management/principals "$DISTRIBUTED_STUDIO_TOKEN" \
-    | jq -r '.[].principalId' | sort)"
-test "$principal_ids_before" = "$principal_ids_after"
-printf 'checkpoint=principal-ids-preserved\n'
-
-deadline=$((SECONDS + 30))
-until [ "$(healthy_count)" -eq 4 ]; do
-    [ "$SECONDS" -lt "$deadline" ] || { echo 'one-box services did not recover health after restart' >&2; exit 1; }
-    sleep 1
-done
-
-teardown_scenario compose dev -- task-server-dev orchestrator-engine-dev studio-bff-dev frontend-dev
-
-printf '%s\n' \
-    "compose-smoke=passed" \
-    "scenario=default" \
-    "services=task-server,orchestrator-engine,studio-bff,frontend" \
-    "health=$health" \
-    "browser-shell=app-root" \
-    "browser-mutation=task-server:$workspace_id" \
-    "unknown-and-foreign-origin=closed" \
-    "direct-unauthenticated=closed" \
-    "restart=workspace-and-principals-preserved" \
-    "ui-port=$resolved_ui_port" \
-    "task-server-port=$taskserver_port"
-
-# --- Scenario 2: compatibility proxy must not write its local store -------
-echo "=== compatibility proxy ==="
-export TASK_SERVER_BASE_URL="http://task-server-dev:5071"
-"${compose[@]}" --profile dev up --build --wait \
-    task-server-dev orchestrator-api-dev
-
-test "$(healthy_count)" -eq 2
-
-direct_protocol="$(curl --fail --silent "http://127.0.0.1:${taskserver_port}/api/v1/protocol")"
-api_binding="$("${compose[@]}" port orchestrator-api-dev 5031)"
-resolved_api_port="${api_binding##*:}"
-proxied_protocol="$(curl --fail --silent "http://127.0.0.1:${resolved_api_port}/api/v1/protocol")"
-test "$proxied_protocol" = "$direct_protocol"
-
-legacy_write_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
-    -X POST -H 'Content-Type: application/json' -d '{}' \
-    "http://127.0.0.1:${resolved_api_port}/api/projects")"
-test "$legacy_write_status" = 404
-legacy_claim_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
-    -X POST -H 'Content-Type: application/json' -d '{}' \
-    "http://127.0.0.1:${resolved_api_port}/api/runner/claim")"
-test "$legacy_claim_status" = 404
-
-printf '%s\n' \
-    "compose-smoke=passed" \
-    "scenario=compatibility" \
-    "services=task-server,orchestrator-api(proxy)" \
-    "protocol-proxy=matched" \
-    "legacy-write-and-claim=closed"
-
-teardown_scenario compose dev -- task-server-dev orchestrator-api-dev
-unset TASK_SERVER_BASE_URL
-
-# --- Scenario 3: agent-host registers against the Task Server and --------
-#     claims a seeded task through to 4-auto-review, via a fake CLI.
-echo "=== runner (agent-host <-> Task Server) profile ==="
-fixture_dir="$(mktemp -d)"
-smoke_uid="$(id -u)"
-smoke_gid="$(id -g)"
-if [ "$smoke_uid" -eq 0 ]; then
-    echo "compose smoke must run as a non-root host user" >&2
-    exit 64
-fi
-bare_repo="$fixture_dir/origin.git"
-seed_repo="$fixture_dir/seed"
-git init --quiet --bare "$bare_repo"
-git init --quiet -b main "$seed_repo"
-printf 'compose smoke fixture\n' > "$seed_repo/README.md"
-git -C "$seed_repo" -c user.name="Compose Smoke" -c user.email="smoke@example.invalid" add .
-git -C "$seed_repo" -c user.name="Compose Smoke" -c user.email="smoke@example.invalid" commit --quiet -m fixture
-git -C "$seed_repo" remote add origin "$bare_repo"
-git -C "$seed_repo" push --quiet -u origin main
-git -C "$bare_repo" symbolic-ref HEAD refs/heads/main
-mkdir -p "$fixture_dir/home" "$fixture_dir/runner-work" "$fixture_dir/state"
-
-cat > "$fixture_dir/topology-agent.sh" <<'FAKE_CLI'
+mkdir -p "$fixture/home" "$fixture/work" "$fixture/state"
+git init --quiet --bare "$fixture/origin.git"
+git init --quiet -b main "$fixture/seed"
+printf 'compose smoke fixture\n' > "$fixture/seed/README.md"
+git -C "$fixture/seed" -c user.name='Compose Smoke' -c user.email='smoke@example.invalid' add .
+git -C "$fixture/seed" -c user.name='Compose Smoke' -c user.email='smoke@example.invalid' commit --quiet -m fixture
+git -C "$fixture/seed" remote add origin "$fixture/origin.git"
+git -C "$fixture/seed" push --quiet -u origin main
+git -C "$fixture/origin.git" symbolic-ref HEAD refs/heads/main
+cat > "$fixture/fake-cli.sh" <<'FAKE'
 #!/bin/sh
 set -eu
-if [ "${1:-}" = "--version" ]; then
-  printf 'topology-agent 1.0.0\n'
-  exit 0
-fi
+if [ "${1:-}" = '--version' ]; then printf 'fake-cli 1.0\n'; exit 0; fi
 mkdir -p "$JOB_RESULTS_DIR"
 printf 'compose smoke artifact\n' > "$JOB_RESULTS_DIR/proof.txt"
-printf '{"type":"agent_message","text":"compose smoke run complete"}\n'
-printf '{"type":"tool","name":"fixture-tool"}\n'
+printf '{"type":"agent_message","text":"compose smoke complete"}\n'
 printf '[[TASK_DONE]]\n'
-FAKE_CLI
-chmod +x "$fixture_dir/topology-agent.sh"
-
-runner_override="$(mktemp)"
-cat > "$runner_override" <<OVERRIDE
+FAKE
+chmod +x "$fixture/fake-cli.sh"
+chmod -R a+rwX "$fixture"
+cat > "$override" <<OVERRIDE
 services:
-  agent-host-distributed-dev:
-    user: "$smoke_uid:$smoke_gid"
+  agent-host-distributed${suffix}:
     volumes:
-      - $fixture_dir:/fixtures
-    secrets:
-      - source: runner_token
-        uid: "$smoke_uid"
-        gid: "$smoke_gid"
-        mode: 0400
+      - $fixture:/fixtures
+      - secrets:/run/agent-studio-secrets:ro
     environment:
-      HOME: /fixtures/home
-      RUNNER_WORKDIR: /fixtures/runner-work
+      RUNNER_SERVER_URL: http://task-server${suffix}:5071
+      RUNNER_ID: distributed-runner
+      RUNNER_NAME: distributed-runner
+      RUNNER_ALLOW_INSECURE_HTTP: "1"
+      RUNNER_AUTH_TOKEN_FILE: /run/agent-studio-secrets/runner_token
+      RUNNER_WORKDIR: /fixtures/work
       RUNNER_STATE_DIR: /fixtures/state
       RUNNER_GIT_REMOTE: file:///fixtures/origin.git
       RUNNER_GIT_PUSH_REMOTE: file:///fixtures/origin.git
-      RUNNER_CLI_BIN: /fixtures/topology-agent.sh
+      RUNNER_CLI_BIN: /fixtures/fake-cli.sh
       RUNNER_TTL_SECONDS: "60"
       RUNNER_MAX_PARALLELISM: "1"
       RUNNER_POLL_SECONDS: "1"
 OVERRIDE
-
-compose_r3=(docker compose --project-name "$project_name" -f docker-compose.yml -f "$runner_override")
-"${compose_r3[@]}" --profile dev up --build --wait task-server-dev
-wait_for_http "http://127.0.0.1:${taskserver_port}/readyz"
-
-workspace="$(task_server_call POST /api/v1/workspaces "$DISTRIBUTED_STUDIO_TOKEN" \
-    -d '{"name":"Compose smoke"}')"
-workspace_id="$(jq -r '.workspaceId' <<<"$workspace")"
-
-project="$(task_server_call POST /api/v1/projects "$DISTRIBUTED_STUDIO_TOKEN" \
-    -d "$(jq -n --arg ws "$workspace_id" '{workspaceId: $ws, name: "Agent Studio", taskKeyPrefix: "SMK"}')")"
-project_id="$(jq -r '.projectId' <<<"$project")"
-
-task="$(task_server_call POST "/api/v1/projects/$project_id/tasks" "$DISTRIBUTED_STUDIO_TOKEN" \
-    -d '{"title":"Compose smoke task","body":"Prove agent-host claims and completes.","state":"2-ready"}')"
-task_key="$(jq -r '.taskKey' <<<"$task")"
-
-"${compose_r3[@]}" --profile dev build agent-host-distributed-dev
-"${compose_r3[@]}" --profile dev up --wait --no-deps agent-host-distributed-dev
-
-deadline=$((SECONDS + 60))
-task_state=""
-until [ "$task_state" = "4-auto-review" ]; do
-    history="$(task_server_call GET "/api/v1/projects/$project_id/tasks/$task_key/history" "$DISTRIBUTED_STUDIO_TOKEN")"
-    task_state="$(jq -r '.task.state' <<<"$history")"
-    [ "$SECONDS" -lt "$deadline" ] || {
-        echo "task $task_key did not reach 4-auto-review (last state: $task_state)" >&2
+# The override is only for the disposable fake CLI. The normal compose file
+# remains the deployment contract.
+"${compose[@]}" "${profiles[@]}" config --quiet
+"${compose[@]}" "${profiles[@]}" up "${build[@]}" --wait "${services[@]}"
+wait_for_http "http://127.0.0.1:${STUDIO_UI_PORT}/healthz"
+grep -q '<app-root' < <(curl --fail --silent "http://127.0.0.1:${STUDIO_UI_PORT}/")
+test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    "http://127.0.0.1:${STUDIO_UI_PORT}/api/not-owned")" = 404
+test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    "http://127.0.0.1:${STUDIO_UI_PORT}/api")" = 404
+test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    -X POST -H 'Origin: https://foreign.invalid' -H 'Content-Type: application/json' \
+    -d '{"name":"rejected"}' \
+    "http://127.0.0.1:${STUDIO_UI_PORT}/api/v1/workspaces")" = 403
+test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    -X POST -H 'Content-Type: application/json' -d '{"name":"rejected"}' \
+    "http://127.0.0.1:${STUDIO_UI_PORT}/api/v1/workspaces")" = 403
+test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    -X POST -H 'Content-Type: application/json' -d '{}' \
+    "http://127.0.0.1:${STUDIO_UI_PORT}/api/projects")" = 404
+curl --fail --silent --show-error --dump-header - --output /dev/null "http://127.0.0.1:${STUDIO_UI_PORT}/api/v1/protocol" \
+    | grep -qi '^X-Studio-Backend: studio-bff'
+studio_token="$("${compose[@]}" exec -T "task-server${suffix}" cat /run/agent-studio-secrets/studio_token)"
+review_registration_deadline=$((SECONDS + 30))
+until curl --fail --silent --show-error \
+    -H "Authorization: Bearer $studio_token" -H 'X-Task-Protocol-Version: 2' \
+    "http://127.0.0.1:${STUDIO_TASKSERVER_PORT}/api/v1/management/remote-hosts" \
+    | jq -e 'any(.[]; .runnerId == "distributed-review-runner")' >/dev/null; do
+    [ "$SECONDS" -lt "$review_registration_deadline" ] || {
+        echo 'review host did not register with Task Server' >&2
         exit 1
     }
-    [ "$task_state" = "4-auto-review" ] || sleep 2
-done
-
-"${compose_r3[@]}" --profile dev build agent-host-review-distributed-dev
-"${compose_r3[@]}" --profile dev up --wait --no-deps agent-host-review-distributed-dev
-deadline=$((SECONDS + 30))
-until task_server_call GET /api/v1/management/remote-hosts "$DISTRIBUTED_STUDIO_TOKEN" \
-    | jq -e '([.[].runnerId] | index("distributed-runner") != null and index("distributed-review-runner") != null)' >/dev/null; do
-    [ "$SECONDS" -lt "$deadline" ] || { echo 'coding and review registrations did not become visible' >&2; exit 1; }
     sleep 1
 done
-
-printf '%s\n' \
-    "compose-smoke=passed" \
-    "scenario=runner" \
-    "task-key=$task_key" \
-    "task-state=$task_state" \
-    "runner-roles=coding,review"
-
-teardown_scenario compose_r3 dev -- task-server-dev agent-host-distributed-dev agent-host-review-distributed-dev
+secret_sha="$("${compose[@]}" exec -T "task-server${suffix}" sha256sum /run/agent-studio-secrets/studio_token | cut -d' ' -f1)"
+# Rotate while the Runner is idle, then prove its new credential can claim and
+# finish a task. No bearer value is copied through the host shell or logs.
+if [ "$mode" = dev ]; then rotate_mode=(--dev); else rotate_mode=(); fi
+old_runner_sha="$("${compose[@]}" exec -T "task-server${suffix}" sha256sum /run/agent-studio-secrets/runner_token | cut -d' ' -f1)"
+old_review_sha="$("${compose[@]}" exec -T "task-server${suffix}" sha256sum /run/agent-studio-secrets/review_runner_token | cut -d' ' -f1)"
+COMPOSE_PROJECT_NAME="$project" COMPOSE_ROTATE_OVERRIDE_FILE="$override" \
+    "$repo_root/scripts/compose-rotate.sh" runner "${rotate_mode[@]}"
+new_runner_sha="$("${compose[@]}" exec -T "task-server${suffix}" sha256sum /run/agent-studio-secrets/runner_token | cut -d' ' -f1)"
+test "$old_runner_sha" != "$new_runner_sha"
+test "$("${compose[@]}" exec -T "task-server${suffix}" stat -c %a /run/agent-studio-secrets/runner_token)" = 600
+COMPOSE_PROJECT_NAME="$project" COMPOSE_ROTATE_OVERRIDE_FILE="$override" \
+    "$repo_root/scripts/compose-rotate.sh" review-runner "${rotate_mode[@]}"
+new_review_sha="$("${compose[@]}" exec -T "task-server${suffix}" sha256sum /run/agent-studio-secrets/review_runner_token | cut -d' ' -f1)"
+test "$old_review_sha" != "$new_review_sha"
+test "$("${compose[@]}" exec -T "task-server${suffix}" stat -c %a /run/agent-studio-secrets/review_runner_token)" = 600
+COMPOSE_PROJECT_NAME="$project" COMPOSE_ROTATE_OVERRIDE_FILE="$override" \
+    "$repo_root/scripts/compose-rotate.sh" studio "${rotate_mode[@]}"
+new_studio_sha="$("${compose[@]}" exec -T "task-server${suffix}" sha256sum /run/agent-studio-secrets/studio_token | cut -d' ' -f1)"
+test "$secret_sha" != "$new_studio_sha"
+test "$("${compose[@]}" exec -T "task-server${suffix}" stat -c %a /run/agent-studio-secrets/studio_token)" = 600
+studio_token="$("${compose[@]}" exec -T "task-server${suffix}" cat /run/agent-studio-secrets/studio_token)"
+workspace="$(call POST /api/v1/workspaces -d '{"name":"Compose smoke"}')"
+workspace_id="$(jq -r '.workspaceId' <<<"$workspace")"
+project_json="$(call POST /api/v1/projects -d "$(jq -n --arg ws "$workspace_id" '{workspaceId:$ws,name:"Agent Studio",taskKeyPrefix:"SMK"}')")"
+project_id="$(jq -r '.projectId' <<<"$project_json")"
+task="$(call POST "/api/v1/projects/$project_id/tasks" -d '{"title":"Compose smoke task","body":"Prove claim and review.","state":"2-ready"}')"
+task_key="$(jq -r '.taskKey' <<<"$task")"
+deadline=$((SECONDS + 120))
+state=""
+until [ "$state" = '4-auto-review' ]; do
+    history="$(call GET "/api/v1/projects/$project_id/tasks/$task_key/history")"
+    state="$(jq -r '.task.state' <<<"$history")"
+    [ "$SECONDS" -lt "$deadline" ] || { echo "task $task_key stalled at $state" >&2; exit 1; }
+    sleep 2
+done
+"${compose[@]}" exec -T "task-server${suffix}" dotnet task-server.dll backup full --json > "$fixture/backup.json"
+jq -e '.id // .backupId' "$fixture/backup.json" >/dev/null
+"${compose[@]}" "${profiles[@]}" down
+# The fake runner leaves a completed attempt in its disposable workspace.
+# Restart the control plane to prove persistent credentials and task data.
+restart_services=("task-server${suffix}" "orchestrator-engine${suffix}" "studio-bff${suffix}" "orchestrator-api${suffix}" "web${suffix}")
+"${compose[@]}" "${profiles[@]}" up "${build[@]}" --wait "${restart_services[@]}"
+new_secret_sha="$("${compose[@]}" exec -T "task-server${suffix}" sha256sum /run/agent-studio-secrets/studio_token | cut -d' ' -f1)"
+test "$new_secret_sha" = "$new_studio_sha"
+history="$(call GET "/api/v1/projects/$project_id/tasks/$task_key/history")"
+test "$(jq -r '.task.taskKey' <<<"$history")" = "$task_key"
+printf 'compose-smoke=passed mode=%s task=%s state=%s backup=created secrets=rotated-and-reused data=retained\n' "$mode" "$task_key" "$state"

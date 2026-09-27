@@ -21,7 +21,8 @@ public sealed record StudioClientSummaryDto(
     DateTime? LastSeenAt,
     DateTime? RetiredAt,
     string? RetiredReason,
-    DateTime? PermanentlyDeletedAt);
+    DateTime? PermanentlyDeletedAt,
+    int ActiveGateCount = 0);
 
 public sealed record StudioClientListResponse(IReadOnlyList<StudioClientSummaryDto> Clients);
 

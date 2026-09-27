@@ -308,8 +308,15 @@ public record CreateTaskRequest
     public string? TargetState { get; init; }
     /// <summary>Optional CLI backend (claude|codex|gemini). Defaults to claude when omitted.</summary>
     public string? CliType { get; init; }
-    /// <summary>Card kind: <c>task</c> (default) or <c>epic</c>. See <see cref="TaskKinds"/>.</summary>
+    /// <summary>Card kind: <c>task</c> (default), <c>epic</c>, or <c>decision</c>. See <see cref="TaskKinds"/>.</summary>
     public string? Kind { get; init; }
+
+    /// <summary>
+    /// AGT-2795: structured decision content (question, options, recommendation,
+    /// decider, due date). Required and validated when <see cref="Kind"/> is
+    /// <see cref="TaskKinds.Decision"/>; ignored for every other kind.
+    /// </summary>
+    public DecisionContent? Decision { get; init; }
     /// <summary>Optional parent epic id (assignment way 1: at create time). The new card is created as a sub-task of this epic.</summary>
     public string? EpicId { get; init; }
     /// <summary>Execution mode: <c>coding</c> (default) | <c>planning</c> | <c>research</c> | <c>concept</c>. See <see cref="TaskModes"/>.</summary>
@@ -459,6 +466,49 @@ public record SetJobTagsRequest
 {
     public List<string> Tags { get; init; } = [];
 }
+
+/// <summary>
+/// Body for <c>POST /api/tasks/{id}/decision</c> (AGT-2795): the decider's
+/// chosen option and optional rationale.
+/// </summary>
+public record DecideCardRequest
+{
+    public string? OptionId { get; init; }
+    public string? Rationale { get; init; }
+}
+
+/// <summary>
+/// Body for <c>POST /api/tasks/{id}/decision/reopen</c> (AGT-2795): an optional
+/// note explaining why a settled decision is being reopened.
+/// </summary>
+public record ReopenDecisionRequest
+{
+    public string? Note { get; init; }
+}
+
+/// <summary>Typed outcome of a decision-card operation, mapped to HTTP by the endpoint.</summary>
+public enum DecisionCardStatus
+{
+    Success,
+    NotFound,
+    NotDecision,
+    InvalidRequest,
+    Conflict,
+    Forbidden,
+}
+
+/// <summary>
+/// Result of a decide/reopen operation. On <see cref="DecisionCardStatus.Success"/>
+/// the mutated <see cref="Decision"/> and resulting lane
+/// <see cref="TargetState"/> are populated. On <see cref="DecisionCardStatus.InvalidRequest"/> the
+/// <see cref="Errors"/> carry the per-field reasons.
+/// </summary>
+public record DecisionCardOutcome(
+    DecisionCardStatus Status,
+    DecisionContent? Decision = null,
+    string? TargetState = null,
+    IReadOnlyList<DecisionCardError>? Errors = null,
+    string? Message = null);
 
 /// <summary>
 /// Body for <c>PUT /api/tasks/{id}/task-type</c>. Validated via

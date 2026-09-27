@@ -223,9 +223,8 @@ export class DetailHeaderComponent {
 
   /**
    * State-dependent presentation for the Human Review acceptance primary. Null
-   * for every other primary (Run now, Stop run, ...). When the work has already
-   * landed it carries the landed-status pill text and relabels the button to
-   * "Accept"; otherwise the offer stays "Merge into Develop".
+   * for every other primary (Run now, Stop run, ...). The acceptance label
+   * remains "Accept" while Git membership supplies the landed-status facts.
    */
   readonly mergeAcceptView = computed<MergeAcceptView | null>(() => {
     const p = this.triagePrimary();
@@ -243,8 +242,7 @@ export class DetailHeaderComponent {
   /**
    * Primary-action ids whose label and effect depend on the live git landed
    * status. The Human Review acceptance (`mark-done`) is the sole one today: it
-   * reads "Merge into Develop" vs "Accept" off `landedState`, so it must not act
-   * (or show a guessed label) while the git status is still loading (AGT-2006).
+   * must not act while the git status is still loading (AGT-2006).
    */
   private readonly GIT_DEPENDENT_PRIMARY_IDS: ReadonlySet<string> = new Set(['mark-done']);
 

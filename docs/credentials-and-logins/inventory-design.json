@@ -1,0 +1,225 @@
+{
+  "schemaVersion": 1,
+  "sourceTaskKey": "AGT-2968",
+  "recordClass": "proposed-kind-catalogue",
+  "notALiveInventory": true,
+  "registrySchema": "registry.schema.json",
+  "unknownMetadataPolicy": "Never infer creation from mtime, host verification from narrative, or credential expiry from a different source. Import unknown values as null with reasons.",
+  "kinds": [
+    {
+      "kind": "claude_oauth_token",
+      "provider": "claude",
+      "renewalMethod": "R1",
+      "locatorAdapter": "environment-file",
+      "locatorDesign": "/etc/agent-runner/provider-auth.env",
+      "ownerRole": "Runner provider owner",
+      "scopeDesign": "Host and provider account; Coding and Review",
+      "expiryRule": "unknown unless issuance receipt",
+      "evidenceClass": "operator-reported runner.env drift",
+      "requiredDates": [
+        "createdAt",
+        "discoveredAt",
+        "lastVerifiedAt",
+        "lastRenewedAt",
+        "expiresAt",
+        "rotationDueAt",
+        "accessTokenExpiresAt"
+      ],
+      "discoveryStatus": "not-surveyed-in-this-run"
+    },
+    {
+      "kind": "claude_native_login",
+      "provider": "claude",
+      "renewalMethod": "R2",
+      "locatorAdapter": "native-cli-store",
+      "locatorDesign": "~/.claude/.credentials.json",
+      "ownerRole": "Runner provider owner",
+      "scopeDesign": "Host and provider account",
+      "expiryRule": "refreshable session; access expiry separate",
+      "evidenceClass": "operator-reported inactive stale copy",
+      "requiredDates": [
+        "createdAt",
+        "discoveredAt",
+        "lastVerifiedAt",
+        "lastRenewedAt",
+        "expiresAt",
+        "rotationDueAt",
+        "accessTokenExpiresAt"
+      ],
+      "discoveryStatus": "not-surveyed-in-this-run"
+    },
+    {
+      "kind": "codex_chatgpt_login",
+      "provider": "codex",
+      "renewalMethod": "R3",
+      "locatorAdapter": "native-cli-store",
+      "locatorDesign": "~/.codex/auth.json or configured native store",
+      "ownerRole": "Runner provider owner",
+      "scopeDesign": "Host account; all clean-context consumers",
+      "expiryRule": "refreshable session; access expiry separate",
+      "evidenceClass": "operator-reported 62 hard-link bindings",
+      "requiredDates": [
+        "createdAt",
+        "discoveredAt",
+        "lastVerifiedAt",
+        "lastRenewedAt",
+        "expiresAt",
+        "rotationDueAt",
+        "accessTokenExpiresAt"
+      ],
+      "discoveryStatus": "not-surveyed-in-this-run"
+    },
+    {
+      "kind": "github_https_token",
+      "provider": "github",
+      "renewalMethod": "R4",
+      "locatorAdapter": "credential-helper",
+      "locatorDesign": "~/.git-credentials (reported); protected helper target",
+      "ownerRole": "Repository service owner",
+      "scopeDesign": "Explicit repository set and read/write grants",
+      "expiryRule": "issuer supplied or unknown",
+      "evidenceClass": "operator-reported product repository pushes",
+      "requiredDates": [
+        "createdAt",
+        "discoveredAt",
+        "lastVerifiedAt",
+        "lastRenewedAt",
+        "expiresAt",
+        "rotationDueAt",
+        "accessTokenExpiresAt"
+      ],
+      "discoveryStatus": "not-surveyed-in-this-run"
+    },
+    {
+      "kind": "github_provisioning_oauth",
+      "provider": "github",
+      "renewalMethod": "R4",
+      "locatorAdapter": "credential-helper",
+      "locatorDesign": "Workstation credential manager; locator undiscovered",
+      "ownerRole": "Repository administrator",
+      "scopeDesign": "Deploy-key administration for selected repositories",
+      "expiryRule": "issuer supplied or unknown",
+      "evidenceClass": "operator-reported GitHub API registration",
+      "requiredDates": [
+        "createdAt",
+        "discoveredAt",
+        "lastVerifiedAt",
+        "lastRenewedAt",
+        "expiresAt",
+        "rotationDueAt",
+        "accessTokenExpiresAt"
+      ],
+      "discoveryStatus": "not-surveyed-in-this-run"
+    },
+    {
+      "kind": "github_deploy_key",
+      "provider": "github",
+      "renewalMethod": "R5",
+      "locatorAdapter": "ssh-private-key",
+      "locatorDesign": "Host-local per-repository key; exact path undiscovered",
+      "ownerRole": "Repository service owner",
+      "scopeDesign": "One repository; write only when required",
+      "expiryRule": "none; rotationDueAt policy",
+      "evidenceClass": "operator-reported ed25519 workspace key",
+      "requiredDates": [
+        "createdAt",
+        "discoveredAt",
+        "lastVerifiedAt",
+        "lastRenewedAt",
+        "expiresAt",
+        "rotationDueAt",
+        "accessTokenExpiresAt"
+      ],
+      "discoveryStatus": "not-surveyed-in-this-run"
+    },
+    {
+      "kind": "task_server_principal",
+      "provider": "task-server",
+      "renewalMethod": "R6",
+      "locatorAdapter": "service-secret",
+      "locatorDesign": "Restricted service token file or Docker secret",
+      "ownerRole": "Installation administrator",
+      "scopeDesign": "Studio, engine, Coding or Review scopes; host binding",
+      "expiryRule": "issuer overlap deadline; primary lifetime policy",
+      "evidenceClass": "source-backed principal store; host inventory pending",
+      "requiredDates": [
+        "createdAt",
+        "discoveredAt",
+        "lastVerifiedAt",
+        "lastRenewedAt",
+        "expiresAt",
+        "rotationDueAt",
+        "accessTokenExpiresAt"
+      ],
+      "discoveryStatus": "not-surveyed-in-this-run"
+    },
+    {
+      "kind": "wireguard_peer",
+      "provider": "wireguard",
+      "renewalMethod": "R7",
+      "locatorAdapter": "network-key",
+      "locatorDesign": "Endpoint private key and optional preshared-key reference",
+      "ownerRole": "Network administrator",
+      "scopeDesign": "Gateway peer, allowed IPs and endpoint",
+      "expiryRule": "none; rotationDueAt policy",
+      "evidenceClass": "deployment-contract kind; host inventory pending",
+      "requiredDates": [
+        "createdAt",
+        "discoveredAt",
+        "lastVerifiedAt",
+        "lastRenewedAt",
+        "expiresAt",
+        "rotationDueAt",
+        "accessTokenExpiresAt"
+      ],
+      "discoveryStatus": "not-surveyed-in-this-run"
+    },
+    {
+      "kind": "provider_api_key",
+      "provider": "provider-specific",
+      "renewalMethod": "R8",
+      "locatorAdapter": "environment-file",
+      "locatorDesign": "provider-auth.env or selected provider native store",
+      "ownerRole": "Provider account administrator",
+      "scopeDesign": "Explicit provider/project and billing mode",
+      "expiryRule": "issuer supplied or unknown",
+      "evidenceClass": "Claude provisioning alternative; OpenAI use unconfirmed",
+      "requiredDates": [
+        "createdAt",
+        "discoveredAt",
+        "lastVerifiedAt",
+        "lastRenewedAt",
+        "expiresAt",
+        "rotationDueAt",
+        "accessTokenExpiresAt"
+      ],
+      "discoveryStatus": "not-surveyed-in-this-run"
+    },
+    {
+      "kind": "administration_ssh_key",
+      "provider": "ssh",
+      "renewalMethod": "R9",
+      "locatorAdapter": "ssh-private-key",
+      "locatorDesign": "Administrator protected store; remote authorized public key",
+      "ownerRole": "Host administrator",
+      "scopeDesign": "Host provisioning and restricted administration",
+      "expiryRule": "none unless issuer policy; rotationDueAt policy",
+      "evidenceClass": "source-backed host provisioning dependency",
+      "requiredDates": [
+        "createdAt",
+        "discoveredAt",
+        "lastVerifiedAt",
+        "lastRenewedAt",
+        "expiresAt",
+        "rotationDueAt",
+        "accessTokenExpiresAt"
+      ],
+      "discoveryStatus": "not-surveyed-in-this-run"
+    }
+  ],
+  "additionalDeploymentDiscovery": [
+    "TLS certificates",
+    "backup/archive service credentials",
+    "bootstrap and recovery custody references"
+  ]
+}

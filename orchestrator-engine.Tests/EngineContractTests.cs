@@ -1,9 +1,9 @@
 using AgentStudio.OrchestratorEngine;
 using AgentStudio.TaskServer;
 using AgentStudio.TaskServer.Contracts;
+using Microsoft.Extensions.Options;
 using System.Net;
 using System.Text.Json;
-using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace OrchestratorEngine.Tests;
@@ -11,30 +11,29 @@ namespace OrchestratorEngine.Tests;
 public sealed class EngineContractTests
 {
     [Fact]
-    public async Task Engine_claim_uses_the_Task_Server_HTTP_enum_contract()
+    public async Task Engine_claim_uses_numeric_stage_values_expected_by_task_server()
     {
-        string? body = null;
-        using var handler = new CaptureHandler(async request =>
+        string? requestJson = null;
+        using var http = new HttpClient(new CaptureHandler(async request =>
         {
-            body = await request.Content!.ReadAsStringAsync();
+            requestJson = await request.Content!.ReadAsStringAsync();
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent("{\"status\":\"empty\"}"),
             };
-        });
-        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:5071") };
+        })) { BaseAddress = new Uri("http://localhost") };
         using var client = new EngineTaskServerClient(http);
 
-        await client.ClaimAsync(new OrchestrationClaimRequest(
-            "engine-a", "instance-a", [OrchestrationStage.ReviewDecision]), default);
+        await client.ClaimAsync(
+            new OrchestrationClaimRequest("engine", "instance", [OrchestrationStage.ReviewDecision]),
+            CancellationToken.None);
 
-        using var json = JsonDocument.Parse(body!);
-        Assert.Equal(JsonValueKind.Number,
-            json.RootElement.GetProperty("supportedStages")[0].ValueKind);
+        using var body = JsonDocument.Parse(requestJson!);
+        Assert.Equal(0, body.RootElement.GetProperty("supportedStages")[0].GetInt32());
     }
 
-    private sealed class CaptureHandler(
-        Func<HttpRequestMessage, Task<HttpResponseMessage>> respond) : HttpMessageHandler
+    private sealed class CaptureHandler(Func<HttpRequestMessage, Task<HttpResponseMessage>> respond)
+        : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken) => respond(request);
@@ -65,6 +64,9 @@ public sealed class EngineContractTests
         Assert.Equal(5, options.PostProcessingConcurrency);
         Assert.Equal(3, options.GateDispatchConcurrency);
         Assert.Equal(2, options.CompletionJudgeConcurrency);
+        Assert.False(options.RemotePostBuildTestEnabled);
+        values["REMOTE_POST_BUILD_TEST_GATE_ENABLED"] = "1";
+        Assert.True(EngineOptions.Parse(key => values.GetValueOrDefault(key)).RemotePostBuildTestEnabled);
     }
 
     [Fact]
@@ -86,6 +88,35 @@ public sealed class EngineContractTests
             () => EngineOptions.Parse(key => insecure.GetValueOrDefault(key))).Message);
         Assert.Contains("CLIENT_CREDENTIAL", Assert.Throws<ArgumentException>(
             () => EngineOptions.Parse(key => anonymous.GetValueOrDefault(key))).Message);
+    }
+
+    [Fact]
+    public void Engine_reads_owner_only_credential_file_and_rejects_exposed_or_ambiguous_input()
+    {
+        using var temp = new TempDirectory();
+        var file = Path.Combine(temp.Path, "engine.token");
+        File.WriteAllText(file, "file-secret\n");
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(file, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        var values = new Dictionary<string, string?>
+        {
+            ["SERVER_URL"] = "http://task-server:5071",
+            ["CLIENT_ID"] = "engine-a",
+            ["ENGINE_ALLOW_INSECURE_HTTP"] = "1",
+            ["CLIENT_CREDENTIAL_FILE"] = file,
+        };
+
+        Assert.Equal("file-secret", EngineOptions.Parse(key => values.GetValueOrDefault(key)).ClientCredential);
+        values["CLIENT_CREDENTIAL"] = "other-secret";
+        Assert.Contains("only one", Assert.Throws<ArgumentException>(
+            () => EngineOptions.Parse(key => values.GetValueOrDefault(key))).Message);
+        values.Remove("CLIENT_CREDENTIAL");
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(file, UnixFileMode.UserRead | UnixFileMode.GroupRead);
+            Assert.Contains("owner-readable", Assert.Throws<ArgumentException>(
+                () => EngineOptions.Parse(key => values.GetValueOrDefault(key))).Message);
+        }
     }
 
     [Fact]
@@ -392,7 +423,9 @@ public sealed class EngineContractTests
             Assert.DoesNotContain("TaskScanner", text);
             Assert.DoesNotContain("TaskServerStore", text);
             Assert.DoesNotContain("Microsoft.Data.Sqlite", text);
-            Assert.DoesNotContain("File.", text);
+            // EngineOptions reads one owner-only principal credential file at startup.
+            if (Path.GetFileName(source) != "EngineOptions.cs")
+                Assert.DoesNotContain("File.", text);
             Assert.DoesNotContain("Directory.", text);
         }
     }

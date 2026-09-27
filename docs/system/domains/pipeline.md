@@ -27,6 +27,39 @@ pipeline view.
   records the serialized-argument failure mode and the validation and resource
   caps required before parallel work starts.
 
+## Exact-SHA gate verdict cache
+
+`BuildTestGateRunner` reuses a deterministic terminal verdict only for an exact
+tested tree SHA and the same gate-profile digest. The digest includes the build
+profile, resolved verify commands and selection inputs, gate mode, pipeline
+definition version, and executor toolchain identity. A changed input is a miss.
+The local fallback identity includes the effective `dotnet --version` result
+from each command directory, as well as the `node` and `npm` versions when
+installed. Version probing fails closed for cache use: a failed probe runs the
+gate without reusing or recording a verdict.
+The lookup runs after exact-SHA materialization and before project preparation,
+so a hit skips preparation and the verify suite. A command-selection adviser
+defers lookup until the resolved plan is known.
+The cache never substitutes a result for a missing or unverified SHA, an
+infrastructure failure, or a skipped gate. It is independent of the preparation
+dependency cache and the Remote Review baseline-result cache.
+
+`GateResultCache` stores the original run's evidence and completion time under
+local application data. It retains at most 128 entries per project for 30 days,
+with a 2 MB limit per entry. The runner serializes requests for one project, so
+concurrent requests for the same key cannot both execute. `GateVerdictSource`
+marks `Executed` and `CacheHit` separately in the result and pipeline step;
+`gate_verdict_cache_hit` carries the original run ID, time, SHA, digest and
+evidence path in the task timeline. A cached step records zero execution time.
+
+Operators can read `GET /api/projects/{projectName}/gate-result-cache` for the
+same-SHA re-test rate: repeated SHA executions divided by executions in the
+latest 4,096 execution window. Cache hits are counted separately. `DELETE` on
+the same endpoint invalidates that project's verdicts and measurement window.
+These metrics measure local exact-subject gate requests; they do not estimate
+batch green rate or answer the staging-lane decision in the
+[Gates Dossier](../../operations/gates/index.html#sect5).
+
 ## Key Code
 
 - [Model Routing Policy](./model-routing-policy.md) is the canonical model and
@@ -159,6 +192,27 @@ steer the pipeline in this policy version.
   rewrite in-flight work. The code-owned default definition is version zero;
   the first project override becomes version one. Successful cleanup of a
   canonical Remote Review report creates the decision run transactionally.
+- `contracts/TaskServer.Contracts/GateContracts.cs`,
+  `task-server/TaskServerGateStore.cs`, `runner/RemoteGateDaemon.cs`, and
+  `orchestrator-engine/OrchestrationStageHandlers.cs`: the dedicated claimable
+  gate pilot. The Task Server persists the immutable result subject, one live
+  attempt, a fenced lease, phase events, cleanup and the report. The Agent Host
+  gate role materializes the declared ref or digest-pinned bundle in the Review
+  workspace namespace and executes only the frozen plan. The Engine dispatches
+  the post-build-test plan through the public Task API when
+  `REMOTE_POST_BUILD_TEST_GATE_ENABLED=1`; the switch defaults off, leaving the
+  existing backend gate active. Review plans carry each verify command's working
+  subdirectory as a typed field. The Review Executor resolves it inside the
+  candidate and baseline workspaces, and the gate dispatcher preserves it for
+  the Gate Executor's exact-subject run. A lost lease waits for
+  positive host cleanup attestation before a higher-fence retry and otherwise
+  ends as GateInfra.
+  `GET /api/v1/projects/{projectId}/tasks/{taskIdentity}/gates` exposes the
+  Studio read model from Task Server facts. Host snapshots and Studio client
+  summaries derive `activeGateCount` from claimed, materializing, running,
+  reporting, and cleaning Task Server attempts. The registered-host canary and
+  throughput comparison remain the operator's rollout gate; bridge teardown
+  is a separate card.
 - `backend/Features/TestRuns/`: the separate project test-run lifecycle. These
   runs belong to commits rather than cards and expose planned order, scope,
   host, state, result, duration, and derived card attachments through
@@ -243,6 +297,7 @@ steer the pipeline in this policy version.
   pipeline history. `operatorOverride: true` is the explicit,
   target-Completed-only exception; no-branch task metadata is exempt without an
   override.
+
   `DeliveryRefResolver` chooses the immutable result ref first, then an
   attributed commit branch, then `runner/<runner>/<task-key>`, with
   `task/<slug>` only as the legacy local fallback. Remote delivery is fetched
@@ -537,6 +592,53 @@ steer the pipeline in this policy version.
   activity time. It reads the current execution root only.
 - `frontend/src/app/features/task-pipeline/` and the task-detail Overview:
   pipeline presentation.
+
+### Failure continuation on the same card
+
+`POST /api/tasks/{jobId}/failure/continue` reads the current integration
+projection, review subject, and latest failed pipeline step. It builds an
+`extend` follow-up on the existing card, with the failed stage, reason, delivery
+ref and SHA, integration branch tip, the three conflict stages and files when
+recorded, and the step's verdict summary. It passes no model, CLI, or thinking
+override, so the card's pins remain authoritative. The normal continuation
+admission queues a review-lane card in Ready, and the task timeline receives an
+`integration_recovery_queued` event with the source, failed stage, and evidence
+reference. The prompt is retained as `prompt-N.md` in the card history and asks
+the new delivery report to cite the failure evidence it resolved.
+An integrated delivery is refused before pipeline history is considered.
+For a pending delivery, only a step completed after the current review subject
+may supply failure context; an older failed step cannot revive a prior delivery.
+
+`IntegrationContinuationPrompt.Build` is the shared prompt text for this
+operator action, the automatic remote conflict or attribution agent round, the
+existing operator rebase recovery, the council review finding round, and the
+solution-quality review concern reissue. The mechanical gate-environment retry
+first reuses the unchanged delivery and its passed review. When that retry
+budget parks the delivery, it uses the same builder to queue one automatic
+agent continuation for that delivery; a later repeat of the same delivery parks
+with the card action. A new delivery receives its own one-round budget. The
+existing automatic budgets remain in their respective
+policies (`IntegrationRecoveryBudget`, solution-quality reissue policy, and
+`GateEnvironmentRetryPolicy`), with `GateEnvironmentContinuationPolicy` limiting
+the parked gate continuation to one. The council review finding round is capped
+at one automatic reissue before it parks for operator review.
+
+`ProjectSettings.AutomaticFailureContinuationsEnabled` controls automatic
+integration and review continuations and the automatic gate-environment retry
+sweep for each project. The Settings page exposes it; the operator action on a
+parked card remains available when it is off. Existing projects default to on,
+and each automatic mechanism still applies its own durable round budget.
+
+The task-detail delivery panel presents the exact failed stage and recorded
+files or bounded gate evidence excerpt, plus the continuation as its primary
+action. A containment answer of
+`unknown`, or an integration projection with `reachUnavailable=true`, presents
+a re-check action. The projection keeps `pending` for wire compatibility but
+marks the failed Git reach explicitly; the completion contract interprets it
+as unknown, so acceptance does not claim the delivery is absent. Human
+acceptance still only moves an already integrated card; a 409 for an
+unintegrated delivery returns to this panel instead of opening the generic
+move-error dialog.
 
 ## Invariants
 
@@ -1232,7 +1334,7 @@ operator changes cause the step to fail before its writer runs.
   intent, supersedes the current delivery generation, moves the card to the
   front of Ready, and writes `Automatically started a new agent round to
   preserve unambiguous delivery SHA attribution.` to the timeline. This loop is
-  limited to two automatic rounds per fenced delivery chain. Re-reviewing one
+  limited to one automatic round per fenced delivery chain. Re-reviewing one
   delivery shares the budget across review epochs; a newly published delivery
   starts a fresh budget. Repetition reaches Human Review with the failed step
   and conflicted files visible. Every
@@ -1333,9 +1435,9 @@ broken. An operator had to requeue every one by hand.
   own `requeued-infrastructure` timeline receipts so the rail and the card
   projection agree on the retry number.
 - **Integration recovery round.** `RemoteIntegrationContinuationPolicy.Decide`
-  (`backend/Features/Pipeline/IntegrationAgentRoundService.cs`) opens at most two
-  automatic steer rounds per fenced delivery chain when the merge-first
-  integrator returns `AgentRoundRequired`, then leaves a repeat for Human Review.
+  (`backend/Features/Pipeline/IntegrationAgentRoundService.cs`) opens at most one
+  automatic steer round per fenced delivery chain when the merge-first
+  integrator returns `AgentRoundRequired` or `Conflict`, then leaves a repeat for Human Review.
   The round saves a `steer` pending intent, retains the ambiguous delivery as
   superseded history, queues the card at the front of Ready, and states itself as
   `integration_recovery_queued` with `automatic=true` and the persisted
