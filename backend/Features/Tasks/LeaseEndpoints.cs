@@ -245,6 +245,7 @@ public static class LeaseEndpoints
             CliQuotaWaitPolicyService quotaWaitPolicy,
             QuotaAdmissionService quotaAdmission,
             QuotaAdmissionRecorder quotaAdmissionRecorder,
+            ModelRoutingPolicyRegistry modelRouting,
             CancellationToken ct) =>
         {
             var logger = loggerFactory.CreateLogger("AgentStudio.Tasks.RemoteRunnerClaim");
@@ -711,6 +712,31 @@ public static class LeaseEndpoints
                         continue;
                     }
                     var cliType = quotaPlan.CliType;
+                    var modelCapability = capabilityRegistry.CliModelCapabilityFor(
+                        req.RunnerId.Trim(),
+                        req.CapabilityInstanceId,
+                        cliType);
+                    var modelAdmission = ModelPinAdmissionPolicy.Evaluate(
+                        cliType,
+                        quotaPlan.Model,
+                        explicitlyPinned: task.ModelExplicit && !quotaPlan.IsFallback,
+                        modelCapability?.InstalledVersion,
+                        modelCapability?.SupportedModels);
+                    if (!modelAdmission.IsAllowed)
+                    {
+                        RecordRejection(
+                            task,
+                            modelAdmission.Code ?? ModelPinAdmissionPolicy.RejectionCode,
+                            modelAdmission.Reason);
+                        logger.LogWarning(
+                            "remote-runner-coding-claim-skipped-model runner={Runner} task={TaskKey} cli={CliType} model={Model} reason={Reason}",
+                            req.RunnerName,
+                            task.Key ?? task.TaskKey ?? task.Id,
+                            cliType,
+                            quotaPlan.Model,
+                            modelAdmission.Reason);
+                        continue;
+                    }
                     var requiredCapabilities = (req.RequiredCapabilities ?? [])
                         .Append(CapabilityProtocol.CodingExecutor)
                         .Append(CapabilityProtocol.CliExecution(cliType))
@@ -917,6 +943,12 @@ public static class LeaseEndpoints
                 var taskKey = candidate.Key ?? candidate.TaskKey;
                 if (string.IsNullOrWhiteSpace(taskKey)) taskKey = candidate.Id;
                 var runSpec = BuildRunSpec(candidate, settings, prompts, dossierMaintenance, candidateQuotaPlan);
+                runSpec = AgentStudio.Runner.MechanicalFreshRunRoutePolicy.Qualify(
+                    runSpec, candidate,
+                    AgentStudio.Runner.SessionContinuationLedgerStore.PeekFreshReason(candidate.FolderPath)
+                        ?? (AgentStudio.Runner.SessionContinuationLedgerStore.PeekDelta(candidate.FolderPath) is null
+                            ? null : "pending-mechanical-continuation"),
+                    modelRouting);
                 PromptEnrichmentPreparation? enrichmentPreparation = null;
                 try
                 {
@@ -1131,7 +1163,10 @@ public static class LeaseEndpoints
                     LeaseInstanceId: req.CapabilityInstanceId,
                     RunSpec: runSpec,
                     ContinuationBaseRef: continuationBase?.Ref,
-                    ContinuationBaseSha: continuationBase?.CommitSha), admission.ReasonCode));
+                    ContinuationBaseSha: continuationBase?.CommitSha,
+                    PreviousSession: AgentStudio.Runner.SessionContinuationLedgerStore.Latest(claimedFolderPath),
+                    MechanicalDelta: AgentStudio.Runner.SessionContinuationLedgerStore.ConsumeDelta(claimedFolderPath),
+                    FreshRunReason: AgentStudio.Runner.SessionContinuationLedgerStore.ConsumeFreshReason(claimedFolderPath)), admission.ReasonCode));
             }
             finally
             {
@@ -1236,7 +1271,7 @@ public static class LeaseEndpoints
                 // AGT-2870: an operator stop is not a verdict on the work. The
                 // card returns to Ready, where a queued follow-up or the next
                 // pickup continues from the salvage this attempt left behind.
-                "environmentfailure" or "stopped" => TaskStates.Ready,
+                "environmentfailure" or "stopped" or "mechanicalfallback" => TaskStates.Ready,
                 _ => string.Empty,
             };
             var operatorStopped = string.Equals(outcome, "stopped", StringComparison.Ordinal);
@@ -1245,7 +1280,7 @@ public static class LeaseEndpoints
             if (targetState.Length == 0)
                 return Results.BadRequest(new RemoteRunCompletionResponse(
                     req.TaskKey, reportedOutcome, TaskStates.Progress,
-                    "Outcome must be Done, NoOp, Blocked, NeedsInput, Unknown, EnvironmentFailure, or Stopped."));
+                    "Outcome must be Done, NoOp, Blocked, NeedsInput, Unknown, EnvironmentFailure, Stopped, or MechanicalFallback."));
 
             // AGT-2178: Epic planning is source-read-only - it produces no commit
             // and therefore no fenced ResultSha. The 2177 ResultSha gate only
@@ -1276,6 +1311,12 @@ public static class LeaseEndpoints
             }
 
             var attemptId = req.AttemptId.Trim();
+            if (req.SessionContinuation is { } sessionEvidence
+                && (!string.Equals(sessionEvidence.AttemptId, attemptId, StringComparison.Ordinal)
+                    || !string.Equals(sessionEvidence.TaskKey, req.TaskKey, StringComparison.OrdinalIgnoreCase)))
+                return Results.BadRequest(new RemoteRunCompletionResponse(
+                    req.TaskKey, reportedOutcome, TaskStates.Progress,
+                    "Session continuation evidence does not match the fenced attempt."));
             var epoch = req.AuthorityEpoch.Value;
             if (!string.IsNullOrWhiteSpace(req.ImmutableResultRef)
                 && !string.IsNullOrWhiteSpace(req.ResultSha))
@@ -1401,7 +1442,20 @@ public static class LeaseEndpoints
                     req.TaskKey,
                     attemptId);
             }
-            var tokenReceipt = tokenReceipts.PersistFromLog(task, attemptId, req.RunnerId);
+            var tokenReceipt = tokenReceipts.PersistFromLog(
+                task,
+                attemptId,
+                req.RunnerId,
+                req.OutcomeDecision?.RawFacts.EffectiveModel);
+            if (req.SessionContinuation is { } completedSession)
+            {
+                AgentStudio.Runner.SessionContinuationLedgerStore.Append(
+                    task.FolderPath,
+                    AgentStudio.Runner.SessionContinuationLedgerStore.WithReceiptFallback(
+                        completedSession, tokenReceipt.TotalTokens));
+                if (!string.IsNullOrWhiteSpace(completedSession.CapturedSessionId))
+                    sessions.BackfillLatestSessionEventCapturedId(task.Id, completedSession.CapturedSessionId, task.WatchPath);
+            }
             if (!tokenReceipt.Persisted && !string.IsNullOrWhiteSpace(tokenReceipt.Warning))
             {
                 loggerFactory.CreateLogger("AgentStudio.Tasks.RemoteRunnerCompletion").LogWarning(
@@ -2242,7 +2296,7 @@ public static class LeaseEndpoints
                     // A verified completion is the delivery hand-off; an unverified
                     // one is requeued for another delivery round by the runner, and
                     // an operator stop returns the card without claiming either.
-                    transitionCause: deliveryFailure is null && !operatorStopped
+                    transitionCause: deliveryFailure is null && !operatorStopped && outcome != "mechanicalfallback"
                         ? LaneChangeCauses.Delivered
                         : LaneChangeCauses.RunnerRequeue,
                     transitionDetail: operatorStopped
@@ -2280,6 +2334,28 @@ public static class LeaseEndpoints
                         task.PendingIntent.Mode,
                         position);
                 }
+            }
+            if (outcome == "mechanicalfallback"
+                && !string.IsNullOrWhiteSpace(req.ImmutableResultRef)
+                && !string.IsNullOrWhiteSpace(req.ResultSha))
+            {
+                var ready = scanner.FindJob(task.Id, task.WatchPath) ?? task;
+                if (!AgentStudio.Runner.ContinuationBaseStore.Save(
+                    ready.FolderPath,
+                    new AgentStudio.Runner.ContinuationBaseRecord(
+                        req.ImmutableResultRef, req.ResultSha,
+                        req.SessionContinuation?.FallbackReason ?? "mechanical-fallback",
+                        attemptId, DateTime.UtcNow)))
+                    loggerFactory.CreateLogger("AgentStudio.Tasks.RemoteRunnerCompletion").LogWarning(
+                        "mechanical-fallback-continuation-base-save-failed task={TaskKey} attempt={AttemptId}",
+                        req.TaskKey, attemptId);
+            }
+            if (outcome == "mechanicalfallback")
+            {
+                var ready = scanner.FindJob(task.Id, task.WatchPath) ?? task;
+                AgentStudio.Runner.SessionContinuationLedgerStore.SaveFreshReason(
+                    ready.FolderPath,
+                    req.SessionContinuation?.FallbackReason ?? "resumed-round-failed");
             }
 
             // The claim guard and this mint share ReviewAttemptTaskLifecycleService's

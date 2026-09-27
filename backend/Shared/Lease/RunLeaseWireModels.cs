@@ -227,7 +227,10 @@ public sealed record RunnerClaimResponse(
     // on the integration branch.
     string? ContinuationBaseRef = null,
     string? ContinuationBaseSha = null,
-    IReadOnlyList<string>? ReprobeCapabilities = null);
+    IReadOnlyList<string>? ReprobeCapabilities = null,
+    AgentStudio.TaskServer.Contracts.SessionContinuationLedgerEntry? PreviousSession = null,
+    AgentStudio.TaskServer.Contracts.MechanicalRoundDelta? MechanicalDelta = null,
+    string? FreshRunReason = null);
 
 /// <summary>Fenced request for the server-rendered Epic decomposition prompt.</summary>
 public sealed record RemoteEpicPlanningPromptRequest(
@@ -289,7 +292,8 @@ public sealed record RemoteRunCompletionRequest(
     string? ImmutableResultRef = null,
     string? ArtifactManifestDigest = null,
     string? IntegrationBranch = null,
-    string? NeedsInputMessage = null);
+    string? NeedsInputMessage = null,
+    AgentStudio.TaskServer.Contracts.SessionContinuationLedgerEntry? SessionContinuation = null);
 
 public sealed record RemoteRunCompletionResponse(
     string TaskKey,

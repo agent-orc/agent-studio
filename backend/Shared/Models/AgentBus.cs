@@ -103,7 +103,9 @@ public sealed record AgentMessageTokens(
     /// way; null identifies legacy rows that predate this provenance field.
     /// </summary>
     [property: JsonPropertyName("inputIncludesCached")] bool? InputIncludesCached = null,
-    [property: JsonPropertyName("usageNormalization")] string? UsageNormalization = null);
+    [property: JsonPropertyName("usageNormalization")] string? UsageNormalization = null,
+    [property: JsonPropertyName("pinnedModel")] string? PinnedModel = null,
+    [property: JsonPropertyName("modelMismatch")] bool ModelMismatch = false);
 
 /// <summary>
 /// Snapshot of the model's context-window state at the moment one turn completed.

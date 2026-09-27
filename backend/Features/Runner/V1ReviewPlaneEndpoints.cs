@@ -1528,9 +1528,6 @@ public static class V1ReviewPlaneEndpoints
         var commands = verify.Commands
             .Select((command, index) =>
             {
-                var shellCommand = string.IsNullOrWhiteSpace(command.WorkingSubdir)
-                    ? command.Command
-                    : $"cd -- {ShellQuote(command.WorkingSubdir)} && {command.Command}";
                 // AGT-2446 root cause: the contract default of 1800s starved
                 // dotnet build/test on the review host once several attempts ran
                 // in parallel - the killed process surfaced as
@@ -1548,12 +1545,13 @@ public static class V1ReviewPlaneEndpoints
                     $"verify-{index + 1}",
                     command.Kind == VerifyCommandKind.Lint ? "lint" : "build-tests",
                     "sh",
-                    ["-lc", shellCommand],
+                    ["-lc", command.Command],
                     TimeoutSeconds: 7200,
                     CompareToBaseline: true,
                     BaselineMode: command.Kind == VerifyCommandKind.Test
                         ? Contract.ReviewBaselineModes.TestFailures
-                        : Contract.ReviewBaselineModes.ExitStatus);
+                        : Contract.ReviewBaselineModes.ExitStatus,
+                    WorkingSubdir: command.WorkingSubdir);
             })
             .ToList();
         if (commands.Count == 0)
@@ -1955,9 +1953,6 @@ public static class V1ReviewPlaneEndpoints
         => context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is not RunnerPrincipal principal
            || string.Equals(principal.RunnerId, runnerId, StringComparison.Ordinal);
 
-    private static string ShellQuote(string value)
-        => "'" + value.Replace("'", "'\"'\"'", StringComparison.Ordinal) + "'";
-
     private static string? ReviewArtifactTail(
         IReadOnlyList<Contract.ReviewArtifactEvidenceDto> artifacts,
         string? sha256)
@@ -2246,7 +2241,8 @@ public sealed class V1ReviewExecutorRegistry
                     capability.LimitedUntil,
                     capability.CredentialModifiedAt,
                     capability.EvidenceId,
-                    capability.EvidenceExcerpt);
+                    capability.EvidenceExcerpt,
+                    capability.SupportedModels);
             })
             .GroupBy(capability => capability.Key, StringComparer.Ordinal)
             .Select(group => group.Last())
@@ -2832,6 +2828,34 @@ public sealed class V1ReviewExecutorRegistry
     }
 
     /// <summary>
+    /// Returns the model-admission evidence advertised by the current coding
+    /// runner instance. A null model list means discovery was inconclusive and
+    /// callers must leave the post-run mismatch guard responsible for safety.
+    /// </summary>
+    public CliModelCapability? CliModelCapabilityFor(
+        string runnerId,
+        string? instanceId,
+        string cliType)
+    {
+        var key = Contract.CapabilityProtocol.CliExecution(cliType);
+        lock (_gate)
+        {
+            if (string.IsNullOrWhiteSpace(instanceId)
+                || !_registrations.TryGetValue(runnerId, out var registration)
+                || !string.Equals(registration.InstanceId, instanceId, StringComparison.Ordinal)
+                || !_capabilityStates.TryGetValue(runnerId, out var state)
+                || !string.Equals(state.InstanceId, instanceId, StringComparison.Ordinal))
+                return null;
+
+            var capability = state.Capabilities.FirstOrDefault(item =>
+                string.Equals(item.Key, key, StringComparison.Ordinal));
+            return capability is null
+                ? null
+                : new CliModelCapability(capability.Version, capability.SupportedModels);
+        }
+    }
+
+    /// <summary>
     /// Test seam: backdates this runner's recorded capability failures so the
     /// cooldown-expiry path can be exercised without waiting out the real
     /// two-minute backoff. Never called in production.
@@ -3007,6 +3031,10 @@ public sealed class V1ReviewExecutorRegistry
             string message)
             => new(false, message, required);
     }
+
+    public sealed record CliModelCapability(
+        string? InstalledVersion,
+        IReadOnlyList<string>? SupportedModels);
 
     public sealed record ReviewExecutor(string HostId, IReadOnlySet<string> Capabilities);
 

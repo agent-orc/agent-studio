@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using System.Text.Json.Serialization;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Shared;
 
@@ -310,19 +311,21 @@ public static class ModelMetadataRegistry
     private static readonly ModelMetadata[] Entries =
     [
         Claude(ModelIds.ClaudeOpus5, "Claude Opus 5", isDefault: true, context: 1_000_000,
-            thinkingLevels: ["low", "medium", "high", "xhigh", "max"], defaultThinkingLevel: "high"),
+            aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeOpus5),
+            thinkingLevels: ["low", "medium", "high", "xhigh", "max"], defaultThinkingLevel: "high",
+            minimumCliVersion: "2.1.281"),
         Claude(ModelIds.ClaudeFable51, "Claude Fable 5.1", context: 200_000,
-            aliases: ["claude-fable-5.1"],
+            aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeFable51),
             thinkingLevels: ["low", "medium", "high", "xhigh", "max"], defaultThinkingLevel: "high"),
         Claude(ModelIds.ClaudeSonnet5, "Claude Sonnet 5", context: 200_000),
-        Claude(ModelIds.ClaudeOpus48, "Claude Opus 4.8", context: 200_000, aliases: ["claude-opus-4.8"]),
-        Claude(ModelIds.ClaudeOpus47, "Claude Opus 4.7", context: 200_000, aliases: ["claude-opus-4.7"]),
-        Claude(ModelIds.ClaudeOpus46, "Claude Opus 4.6", context: 200_000, aliases: ["claude-opus-4.6"]),
-        Claude(ModelIds.ClaudeOpus45, "Claude Opus 4.5", context: 200_000, aliases: ["claude-opus-4.5"]),
-        Claude(ModelIds.ClaudeSonnet46, "Claude Sonnet 4.6", context: 200_000, aliases: ["claude-sonnet-4.6"]),
-        Claude(ModelIds.ClaudeSonnet45, "Claude Sonnet 4.5", context: 200_000, aliases: ["claude-sonnet-4.5"]),
+        Claude(ModelIds.ClaudeOpus48, "Claude Opus 4.8", context: 200_000, aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeOpus48)),
+        Claude(ModelIds.ClaudeOpus47, "Claude Opus 4.7", context: 200_000, aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeOpus47)),
+        Claude(ModelIds.ClaudeOpus46, "Claude Opus 4.6", context: 200_000, aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeOpus46)),
+        Claude(ModelIds.ClaudeOpus45, "Claude Opus 4.5", context: 200_000, aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeOpus45)),
+        Claude(ModelIds.ClaudeSonnet46, "Claude Sonnet 4.6", context: 200_000, aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeSonnet46)),
+        Claude(ModelIds.ClaudeSonnet45, "Claude Sonnet 4.5", context: 200_000, aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeSonnet45)),
         Claude(ModelIds.ClaudeHaiku45, "Claude Haiku 4.5", context: 200_000,
-            aliases: ["claude-haiku-4.5", "claude-haiku-4-5-20251001"]),
+            aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeHaiku45)),
         // gpt-5.5 is the current Codex/OpenAI default. codex-cli 0.143 on a
         // ChatGPT account rejects gpt-5-codex with a 400 invalid_request, so
         // the default must be the account-valid model (AGT-1941). Pricing is
@@ -810,10 +813,12 @@ public static class ModelMetadataRegistry
         long context = 200_000,
         string[]? aliases = null,
         string[]? thinkingLevels = null,
-        string? defaultThinkingLevel = null)
+        string? defaultThinkingLevel = null,
+        string? minimumCliVersion = null)
         => new(id, label, "anthropic", isDefault, Deprecated: false, Available: true,
             ContextWindow: context, Aliases: aliases,
-            ThinkingLevels: thinkingLevels, DefaultThinkingLevel: defaultThinkingLevel);
+            ThinkingLevels: thinkingLevels, DefaultThinkingLevel: defaultThinkingLevel,
+            MinimumCliVersion: minimumCliVersion);
 
     private static string? VendorForCli(string? cliType)
     {

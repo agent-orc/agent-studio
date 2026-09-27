@@ -1,6 +1,6 @@
 # Runner Domain Map
 
-Version: 2026-09-19
+Version: 2026-09-26
 Status: System-of-record map for runner-side changes.
 
 Use this when a change touches task pickup, active execution, post-run outcome
@@ -34,13 +34,54 @@ state.
 
 ## Key Code
 
+### Claimable gate host and Task API
+
+`RUNNER_ROLE=gate` starts `RemoteGateDaemon` as a polling Agent Host service.
+Use a stable `RUNNER_ID`, a unique runner instance, the normal Task Server URL
+and runner credential with `tasks:read`, `runs:write`, `reviews:claim`, and
+`reviews:write` scopes, and a gate work directory separate from coding and
+review work. The host registers the `gate-executor` role and advertises fresh
+`gate-executor`, `gate:git` or `gate:source-bundle`, repository, and toolchain
+capabilities. Admission requires a free gate slot. The Engine switch
+`REMOTE_POST_BUILD_TEST_GATE_ENABLED=0` keeps the backend gate active by default;
+the operator enables it only for a bounded canary. An eligible replacement
+Agent Host is the only retry target. A spent budget becomes `GateInfra`.
+Deploy the updated Review Executor with the backend before issuing new review
+plans: verify commands now carry a typed working subdirectory, which older
+executors would ignore.
+
+The public `/api/v1/gates` Task API has these operations:
+
+| Route | Caller and purpose |
+| --- | --- |
+| `POST /subjects`, `POST /subjects/{subjectId}/cancel` | Engine creates an immutable source-run, gate-id, plan-hash subject or cancels it. |
+| `GET /subjects/{subjectId}`, `GET /review-sources/{reviewSubjectId}` | Read durable gate state and the declared source snapshot. |
+| `POST /claims` | Gate host claims eligible queued work with a fresh capability advertisement and free slot. |
+| `POST /attempts/{attemptId}/renew`, `/phase`, `/report`, `/containment` | Gate host renews its lease, records phase, submits the fenced result, and confirms cleanup after restart. |
+
+Gate mutations require the corresponding Task Server scopes. A runner principal's
+ID must match the claimed executor ID on every mutation. Each report carries
+the lease ID, fence, authority epoch, tested SHA and tree, dirty proof, command
+evidence, and cleanup status. Stale or conflicting reports are rejected. Host
+shutdown keeps an interrupted claim without reporting a tool failure. Host
+restart reads the persisted claim, reaps its owned process tree, removes its
+namespace, and confirms containment before it claims more work. The Task Server
+retains the subject, attempts, phases, and terminal classification across a
+restart; the Engine retains no attempt state. See the
+[Gates Dossier](../../operations/gates/index.html#sect4) for the contract and
+rollout decision.
+
 - `runner/ArtifactTransferPolicy.cs`, `runner/RemoteTaskRunner.cs`,
   `backend/Features/Diagnostics/ArtifactIngestionEndpoints.cs`, and
   `task-server/TaskServerEndpoints.cs`: post-delivery
   result evidence transport. Git result or salvage publication and fenced
   completion happen first. The server advertises its base64-safe request
-  budget plus project file and total caps; the runner selects bounded files,
-  excludes Playwright traces, videos, dependency trees, and build output,
+  budget. On the v1 plane, post-completion artifact ingest, event ingest, and
+  result finalization require the exact runner, instance, and lease id alongside
+  the fence; the server admits them only while that completed lease remains the
+  current authority. A completed lease needs no later release request.
+  The server also advertises project file and total caps; the runner selects
+  bounded files, excludes Playwright traces, videos, dependency trees, and build output,
   then uploads one manifest-bound file per request. Deterministic skips are
   written to `results/deliverables.md` before the manifest is created. A later
   HTTP 413/507 never rewrites a manifested file; it is recorded as the
@@ -310,6 +351,21 @@ state.
   worktree teardown. An incomplete or absent acknowledgement retains the
   worktree. A genuine summary failure is allowed through so the marked
   `TaskTransitionService` scaffold remains the honest terminal backstop.
+  Integration recovery carries a compact mechanical delta on the claim. The
+  runner resumes one prior clean-context session only when task, provider,
+  host-bound clean home, repository, worktree, branch and delivery ref/SHA
+  agree with the task's durable continuation ledger. The ledger records each
+  fenced generation's input and captured session IDs, decision, typed reason,
+  token total and duration. A resumed round stops at 300 seconds or the
+  1,211,213-token observation threshold. Semantic conflicts and invalid
+  sessions return to Ready for a policy-qualified fresh claim. The original
+  task prompt is never resent on the resume path.
+  On the standalone Task Server plane, both direct claims and accepted host
+  permits carry a policy-qualified route with the mechanical delta. A resumed
+  fallback completes as typed `MechanicalFallback`, records its reason with the
+  fenced session entry, and returns the task to Ready. The next claim reads
+  that reason, qualifies its fresh route before execution, and carries the
+  recorded result ref and SHA as its continuation base when available.
 - `runner/ReviewStateStore.cs`, `runner/ReviewSlotReconciler.cs`,
   `runner/DurableReviewProcess.cs`, `runner/RemoteReviewDaemon.cs`, and
   `runner/RemoteReviewExecutor.cs`: durable
@@ -769,6 +825,17 @@ state.
   standalone Task Server carry the salvage ref and exact commit in the
   continuation claim, and the runner verifies that pair before preparing the
   sibling run's worktree.
+- The Claude Code `unrecognized_model` stderr marker is also a provider request
+  refusal, even when the process exits 0 after running Haiku. The shared
+  outcome adapter compares the requested model with Claude `modelUsage` keys
+  or Codex terminal result models, so a substituted model cannot be accepted
+  as a successful completion.
+- Mechanical continuation deltas on the standalone Task Server are stored with
+  the version-fenced Ready task update. Direct claims consume one pending delta;
+  host permit acceptance returns the same delta on idempotent replay. The
+  claimed run id stays in the durable store so a restart cannot offer that
+  instruction to a later generation. The runner still verifies session and
+  branch lineage before it uses the delta.
 - Account-level provider session, usage, and rate limits are CLI capability
   state, not task outcomes. The local runner records `claude: limited until
   <time>` in runner status, persists the current card in provider-scoped
@@ -1388,6 +1455,13 @@ current Ready-lane value as `executionLocation.lastRejection`; the card and
 detail header render it inline. Successful dispatch clears it, and a later lane
 generation cannot inherit it. Missing repository registration is also projected
 as a failed project preflight in Execution Hosts before a Runner polls.
+
+Model-pin admission runs before both local spawn and remote lease acquisition.
+Claude pins use the registry minimum against the installed CLI version already
+reported by health and capability probes. Codex pins use the live catalogue;
+remote Runners advertise that catalogue with their CLI capability. A rejected
+model pin uses the same durable Ready-card dispatch-rejection surface and does
+not consume pending intent, move the card, or create a run.
 
 The build-profile gate is evaluated inside the remote candidate loop, after a
 Ready card is known to be routed to that Runner. A closed gate records the

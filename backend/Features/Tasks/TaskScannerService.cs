@@ -154,6 +154,34 @@ public class TaskScannerService : ITaskScanner
         _statsMetadataCache?.Invalidate();
     }
 
+    /// <summary>Publish one durable mutation to the cache-only core projection.</summary>
+    public void PublishCoreFromFolder(string folder, string watchPath, string projectName, string state)
+    {
+        if (_indexCache is null) return;
+        var entry = new WatchPathEntry { Name = projectName, Path = watchPath };
+        var updated = ScanJobFolder(folder, entry, state);
+        if (updated is not null) _indexCache.PublishCore(updated);
+        else _indexCache.RemoveCoreByFolder(folder);
+    }
+
+    public void RemoveCore(TaskInfo info) => _indexCache?.RemoveCore(info);
+
+    public void PublishCoreFromKnownFolder(string folder)
+    {
+        var known = _indexCache?.GetCoreByFolder(folder);
+        if (known is not null)
+            PublishCoreFromFolder(folder, known.WatchPath, known.ProjectName, known.State);
+    }
+
+    public void MoveCoreFromKnownFolder(string sourceFolder, string targetFolder,
+        string watchPath, string state)
+    {
+        var known = _indexCache?.GetCoreByFolder(sourceFolder);
+        _indexCache?.RemoveCoreByFolder(sourceFolder);
+        PublishCoreFromFolder(targetFolder, watchPath,
+            known?.ProjectName ?? Path.GetFileName(watchPath), state);
+    }
+
     private static string? ReadArchiveState(string jobDir)
     {
         var path = Path.Combine(jobDir, "archive-manifest.json");
@@ -751,7 +779,8 @@ public class TaskScannerService : ITaskScanner
                 RelatedWikiPages = ReadRelatedWikiPages(raw, entry),
                 Provenance = ReadProvenance(raw),
                 ExternalCompletion = ReadExternalCompletion(raw),
-                RemoteDispatchRejection = ReadRemoteDispatchRejection(raw)
+                RemoteDispatchRejection = ReadRemoteDispatchRejection(raw),
+                Decision = ReadDecision(raw)
             };
             // Re-stat first so a self-heal this scan performed itself (the
             // divergent-id repair above, the ownerClientId migration below) is
@@ -1352,6 +1381,25 @@ public class TaskScannerService : ITaskScanner
         try
         {
             return JsonSerializer.Deserialize<ExternalCompletionInfo>(ext.GetRawText(), TaskJsonFile.ReadOpts);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// AGT-2795: reads the structured <c>decision</c> object off a decision card.
+    /// Returns null when absent or malformed so a corrupt block renders the card
+    /// inert rather than fatal.
+    /// </summary>
+    private static DecisionContent? ReadDecision(JsonElement raw)
+    {
+        if (!raw.TryGetProperty("decision", out var dec) || dec.ValueKind != JsonValueKind.Object)
+            return null;
+        try
+        {
+            return JsonSerializer.Deserialize<DecisionContent>(dec.GetRawText(), TaskJsonFile.ReadOpts);
         }
         catch
         {

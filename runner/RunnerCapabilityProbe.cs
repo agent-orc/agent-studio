@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using System.Diagnostics;
+using System.Text.Json;
 using AgentStudio.TaskServer.Contracts;
 
 namespace AgentRunner;
@@ -20,11 +21,12 @@ internal static class RunnerCapabilityProbe
             Capability(
                 options.Role == "review"
                     ? CapabilityProtocol.ReviewExecutor
-                    : CapabilityProtocol.CodingExecutor,
+                    : options.Role == "gate" ? GateCapabilities.Executor : CapabilityProtocol.CodingExecutor,
                 "executor",
                 typeof(RunnerCapabilityProbe).Assembly.GetName().Version?.ToString(),
                 options.Role),
-            Capability(CapabilityProtocol.GitFetch, "source", ToolVersion("git"), "git"),
+            Capability(CapabilityProtocol.GitFetch, "source", ToolVersion("git"), "git",
+                options.Role == "gate" && !OnPath("git") ? "unavailable" : "ready"),
             Capability(CapabilityProtocol.RepositoryAccess, "source", null, options.GitRemote ?? "server-routed"),
             Capability(CapabilityProtocol.Disk, "foundation", null, Path.GetPathRoot(options.WorkDir)),
             Capability(
@@ -78,7 +80,7 @@ internal static class RunnerCapabilityProbe
                     options.ExecEngine));
             }
         }
-        else
+        else if (options.Role == "review")
         {
             AddCodingCliCapabilities(
                 list,
@@ -90,6 +92,12 @@ internal static class RunnerCapabilityProbe
             list.Add(Capability(ReviewCapabilities.SourceBundleMaterialization, "review", null, "artifact"));
             list.Add(Capability(ReviewCapabilities.BaselineComparison, "review", null, "merge-base"));
             list.Add(Capability(ReviewCapabilities.DependencyPreparation, "review", null, "build-profile"));
+        }
+        else
+        {
+            list.Add(Capability(GateCapabilities.GitMaterialization, "gate", ToolVersion("git"), "git",
+                OnPath("git") ? "ready" : "unavailable"));
+            list.Add(Capability(GateCapabilities.BundleMaterialization, "gate", null, "artifact"));
         }
         AddToolchain(list, CapabilityProtocol.DotNet, "dotnet");
         AddToolchain(list, CapabilityProtocol.Node, "node");
@@ -163,6 +171,15 @@ internal static class RunnerCapabilityProbe
             }))
             .Distinct(StringComparer.Ordinal)
             .ToArray();
+
+    public static IReadOnlyList<string> GateRegistrationCapabilities(RunnerOptions options)
+        => new[]
+        {
+            GateCapabilities.Executor, GateCapabilities.GitMaterialization,
+            GateCapabilities.BundleMaterialization, CapabilityProtocol.GitFetch,
+            CapabilityProtocol.RepositoryAccess, CapabilityProtocol.Disk,
+            CapabilityProtocol.TaskServerConnectivity,
+        }.Concat(options.RequiredCapabilities).Distinct(StringComparer.Ordinal).ToArray();
 
     public static HostTelemetrySnapshotDto? Telemetry(
         HostTelemetrySample? sample,
@@ -241,6 +258,10 @@ internal static class RunnerCapabilityProbe
             var auth = providerAuth.Current(binary);
             var binaryAvailable = ProviderAuthProbe.ExecutableExists(binary);
             var installation = binaryAvailable ? InspectCli(binary) : null;
+            var supportedModels = string.Equals(cliType, AgentCliProcess.CodexCli, StringComparison.OrdinalIgnoreCase)
+                && installation is not null
+                ? CodexModels(installation)
+                : null;
             capabilities.Add(Capability(
                 CapabilityProtocol.CliExecution(cliType),
                 "cli-execution",
@@ -249,7 +270,8 @@ internal static class RunnerCapabilityProbe
                 binaryAvailable ? ProviderAuthProbe.Ready : ProviderAuthProbe.Unavailable,
                 binaryAvailable
                     ? $"CLI binary '{binary}' is available for {cliType} cards."
-                    : $"CLI binary '{binary}' was not found; {cliType} cards cannot execute."));
+                    : $"CLI binary '{binary}' was not found; {cliType} cards cannot execute.",
+                supportedModels: supportedModels));
             capabilities.Add(Capability(
                 CapabilityProtocol.ProviderAuthentication(cliType),
                 "provider-auth",
@@ -299,7 +321,8 @@ internal static class RunnerCapabilityProbe
         DateTimeOffset? limitedUntil = null,
         DateTimeOffset? credentialModifiedAt = null,
         string? evidenceId = null,
-        string? evidenceExcerpt = null)
+        string? evidenceExcerpt = null,
+        IReadOnlyList<string>? supportedModels = null)
         => new(
             key,
             category,
@@ -312,7 +335,8 @@ internal static class RunnerCapabilityProbe
             limitedUntil?.UtcDateTime,
             credentialModifiedAt?.UtcDateTime,
             evidenceId,
-            evidenceExcerpt);
+            evidenceExcerpt,
+            supportedModels);
 
     private static string Platform()
         => $"{(OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsLinux() ? "linux" : "other")}:{RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant()}";
@@ -368,6 +392,69 @@ internal static class RunnerCapabilityProbe
         }
     }
 
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, ModelCatalogCache>
+        CodexModelCatalogs = new(StringComparer.OrdinalIgnoreCase);
+
+    private static IReadOnlyList<string>? CodexModels(CliInstallation installation)
+    {
+        var cacheKey = $"{installation.Path}\0{installation.Version}";
+        if (CodexModelCatalogs.TryGetValue(cacheKey, out var cached)
+            && DateTime.UtcNow - cached.ObservedAt < TimeSpan.FromMinutes(60))
+            return cached.Models;
+
+        try
+        {
+            using var process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = installation.Path,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true,
+                }
+            };
+            process.StartInfo.ArgumentList.Add("debug");
+            process.StartInfo.ArgumentList.Add("models");
+            if (!process.Start()) return null;
+            var stdout = process.StandardOutput.ReadToEndAsync();
+            var stderr = process.StandardError.ReadToEndAsync();
+            if (!process.WaitForExit(10_000))
+            {
+                try { process.Kill(entireProcessTree: true); } catch { }
+                return null;
+            }
+            Task.WaitAll([stdout, stderr], 1_000);
+            if (process.ExitCode != 0) return null;
+
+            var output = stdout.Result;
+            var first = output.IndexOf('{');
+            var last = output.LastIndexOf('}');
+            if (first < 0 || last <= first) return null;
+            using var document = JsonDocument.Parse(output[first..(last + 1)]);
+            if (!document.RootElement.TryGetProperty("models", out var models)
+                || models.ValueKind != JsonValueKind.Array)
+                return null;
+            var result = models.EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.Object
+                               && item.TryGetProperty("visibility", out var visibility)
+                               && string.Equals(visibility.GetString(), "list", StringComparison.OrdinalIgnoreCase))
+                .Select(item => item.TryGetProperty("slug", out var slug) ? slug.GetString()?.Trim() : null)
+                .Where(model => !string.IsNullOrWhiteSpace(model))
+                .Cast<string>()
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (result.Length == 0) return null;
+            CodexModelCatalogs[cacheKey] = new ModelCatalogCache(DateTime.UtcNow, result);
+            return result;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private static string? ResolveExecutable(string executable)
     {
         if (string.IsNullOrWhiteSpace(executable)) return null;
@@ -385,6 +472,7 @@ internal static class RunnerCapabilityProbe
     }
 
     private sealed record CliInstallation(string Version, string Path);
+    private sealed record ModelCatalogCache(DateTime ObservedAt, IReadOnlyList<string> Models);
 
     private static long? DiskFreeBytes()
     {

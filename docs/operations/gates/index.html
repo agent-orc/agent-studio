@@ -405,10 +405,11 @@ svg.diagram .num { font: 700 10px var(--article-sans); fill: var(--gate-note); l
   <p>Batching decides <i>what</i> a suite run covers. This section decides <i>who owns the run</i>. The
   direct SSH subprocess described by the source Dossier is no longer the canonical Remote Review
   build/test path: that work is claimed by an Agent Host as part of a durable, fenced
-  <code>ReviewAttempt</code>. The remaining gap is narrower and still open. Integration and release
-  gates run under the integration owner's in-process exact-subject transaction, so they are not
-  independently claimable, pipeline-stage-neutral <code>GateAttempt</code>s. The contract below remains
-  the proposed replacement for that ownership gap, not a description of shipped gate-step behavior.</p>
+  <code>ReviewAttempt</code>. On 25 September 2026, a dedicated
+  <code>GateAttempt</code> pilot was added behind a default-off switch for the
+  post-build-test stage. Integration and release gates still run under the integration
+  owner's in-process exact-subject transaction. The contract below governs the new
+  pilot and any later gate migration; it does not claim that the operator canary has passed.</p>
 
   <h3>What the replacement must make true</h3>
   <table>
@@ -538,11 +539,13 @@ svg.diagram .num { font: 700 10px var(--article-sans); fill: var(--gate-note); l
   removed or explicitly retained is a separate choice, and it must not survive by accident. The teardown
   threshold is open decision <a href="#d9">D9</a>.</p>
   <div class="box warn">
-    <b>Status of this section.</b> The dedicated <code>GateSubject</code>, <code>GateAttempt</code>,
-    <code>GateLease</code>, <code>GatePlan</code>, and <code>GateReport</code> contract is not implemented.
-    Review-plane primitives now prove the materialization, lease, fence, evidence, and cleanup patterns,
-    but they remain coupled to the Review lifecycle. The choice in D7 and the integration/release-gate
-    migration are still open.
+    <b>Implementation status, 25 September 2026.</b> The dedicated
+    <code>GateSubject</code>, <code>GateAttempt</code>, <code>GateLease</code>,
+    <code>GatePlan</code>, and <code>GateReport</code> pilot is implemented behind the
+    default-off post-build-test switch. The registered-host canary, restart matrix,
+    and throughput comparison are operator-run follow-ups. The backend gate remains
+    active while the switch is off. Integration/release-gate migration and SSH bridge
+    teardown are separate work.
   </div>
 
   <h2 id="sect5"><span class="number">&sect;5</span> Validation economy: what survives from async validation</h2>
@@ -555,7 +558,7 @@ svg.diagram .num { font: 700 10px var(--article-sans); fill: var(--gate-note); l
     <thead><tr><th>Principle</th><th>Status</th><th>Why it holds</th></tr></thead>
     <tbody>
       <tr><td><b>No model-based test selection</b></td><td>Explicitly rejected</td><td>It spends the expensive resource, tokens, to save the cheapest one, CPU. Recorded as rejected on 25 July 2026 and not reopened here.</td></tr>
-      <tr><td><b>Per-SHA gate cache</b></td><td>Recommended, unbuilt</td><td>Bind the gate result to the tested tree SHA; an identical SHA skips the run. The gate ran about 3.65 times per task and 84% of its total time was retries, much of it on barely-changed trees. Largest lever for the smallest effort, and it pays off under every option in &sect;3 and &sect;4.</td></tr>
+      <tr><td><b>Per-SHA gate cache</b></td><td>Implemented for local exact-subject gates</td><td>Bind the gate result to the tested tree SHA and gate-profile digest; an identical key skips the verify suite. The gate ran about 3.65 times per task and 84% of its total time was retries, much of it on barely-changed trees. Largest lever for the smallest effort, and it pays off under every option in &sect;3 and &sect;4. Remote Review candidate execution remains outside this cache.</td></tr>
       <tr><td><b>Deterministic test scoping</b></td><td>Partly implemented</td><td><code>TestSelectionPlanner</code> now derives work-package test projects and class slices from the exact diff, preserves explicit filters or defaults to <code>Category!=MachineBound</code>, and falls back conservatively. The proposed maintained configuration table, selection digest, and staleness guard remain open.</td></tr>
       <tr><td><b>Staging lane and test-integration branch</b></td><td>Measure first</td><td>Net benefit hinges on the batch green rate. A red five-card batch can cost up to five further individual runs, which is slower than per-card testing would have been. &sect;3 answers the same question with a closed manifest and bounded halving, so this is now the same decision, taken once (<a href="#d10">D10</a>).</td></tr>
     </tbody>
@@ -735,6 +738,8 @@ svg.diagram .num { font: 700 10px var(--article-sans); fill: var(--gate-note); l
   </div>
 
   <h3>Remote gate</h3>
+  <p>The first remote gate delivery keeps the switch off. The registered host canary and throughput
+    comparison precede any change to the default.</p>
   <div class="decision" id="d7" data-decision-id="gate-ownership-shape" data-decision-kind="single" data-decision-label="Primary shape of remote gate execution" data-decision-status="decided" data-selected-option-id="claimable-step">
     <h3>D7 &middot; Primary shape of remote gate execution</h3>
     <label data-option-id="claimable-step" data-option-label="A &middot; Claimable GateAttempt in the Task Server protocol (recommended)"><input type="radio" name="gate-ownership-shape" value="claimable-step" checked><span><b>A &middot; A dedicated claimable gate step, with capability as an admission predicate and review workspace primitives reused but not the review lifecycle (recommended)</b><span class="d">Task Server owns durable gate truth, Engine owns dispatch, Agent Host executes. Share workspace materialization, containment namespace, command evidence and cleanup; keep the review attempt as the semantic review lifecycle. Start the catalogue with the post-build-test gate only.</span></span></label>

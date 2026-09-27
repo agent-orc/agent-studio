@@ -436,6 +436,8 @@ builder.Services.AddSingleton<TestRunService>();
 // AGT-2717: canonical read-time merge of local + remote review attempts.
 builder.Services.AddSingleton<ReviewProjectionService>();
 builder.Services.AddSingleton<TaskTransitionService>();
+builder.Services.AddSingleton<DecisionCardService>();
+builder.Services.AddSingleton<DecisionRecordService>();
 builder.Services.AddSingleton<IBatchMoveItemExecutor, BatchMoveItemExecutor>();
 builder.Services.AddSingleton<BatchMoveJobCoordinator>();
 if (!publicDemoExecutionProfile)
@@ -570,6 +572,7 @@ builder.Services.AddSingleton<SystemKeepAwake>(sp =>
     return new SystemKeepAwake(request, enabled);
 });
 builder.Services.AddSingleton<TaskRunnerService>();
+builder.Services.AddSingleton<ITaskCoreRuntime, TaskCoreRuntime>();
 builder.Services.AddSingleton<CrashRecoveryService>();
 builder.Services.AddSingleton<StaleProgressArchiver>();
 // Run-Liveness Slice A: the phase-aware "no zombie survives 60s" monitor
@@ -1534,6 +1537,7 @@ var taskScanner = app.Services.GetRequiredService<TaskScannerService>();
 taskScanner.SetIndexCache(jobIndexCache);
 taskScanner.SetStatsMetadataCache(jobStatsMetadataCache);
 watcher.OnJobChanged += _ => jobIndexCache.Invalidate(TaskIndexCache.InvalidationSource.External);
+watcher.OnPathChanged += jobIndexCache.NotifyCoreFileChanged;
 watcher.OnJobChanged += _ => jobStatsMetadataCache.Invalidate();
 // AGT-2703: the board ETag needs the events the line above filters out. The
 // task index only cares about task.json semantics and folder structure, while

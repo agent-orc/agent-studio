@@ -25,9 +25,10 @@ public sealed class TaskServerClient : IDisposable
     private readonly string? _configuredClientId;
     private readonly string? _runnerInstanceIdOverride;
     private readonly RunnerOptions? _options;
-    // Per-run caches, evicted on completion/release so the long-lived daemon does
-    // not retain every claimed task's lease and full prompt body for its lifetime.
+    // Per-run caches, evicted on release after post-completion evidence transport
+    // so the long-lived daemon does not retain every claimed task's lease and prompt.
     private readonly ConcurrentDictionary<string, (string RunId, RunLeaseInfoDto Lease, string InstanceId)> _v1Leases = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, string> _v1CompletedLeases = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, string> _v1TaskBodies = new(StringComparer.OrdinalIgnoreCase);
     private bool _useV1;
     private bool _supportsCapabilityAdvertisement;
@@ -159,7 +160,7 @@ public sealed class TaskServerClient : IDisposable
         _supportsHostOrchestrator =
             _options?.Role != "review"
             && serverCapabilities.Contains("host-orchestrator", StringComparer.Ordinal);
-        _useV1 = _options?.Role == "review"
+        _useV1 = _options?.Role is "review" or "gate"
             ? serverCapabilities.Contains("review-plane", StringComparer.Ordinal)
             : serverCapabilities.Contains("coding-plane", StringComparer.Ordinal);
     }
@@ -181,8 +182,10 @@ public sealed class TaskServerClient : IDisposable
         {
             var options = _options ?? throw new InvalidOperationException("Runner options are unavailable for v1 registration.");
             var runnerId = options.RunnerId;
-            string[] capabilities = options.Role == "review"
-                ? [.. RunnerCapabilityProbe.ReviewRegistrationCapabilities(options)]
+            string[] capabilities = options.Role is "review" or "gate"
+                ? [.. options.Role == "gate"
+                    ? RunnerCapabilityProbe.GateRegistrationCapabilities(options)
+                    : RunnerCapabilityProbe.ReviewRegistrationCapabilities(options)]
                 : [
                     Contract.ReviewCapabilities.CodingExecutor,
                     "claim",
@@ -464,7 +467,17 @@ public sealed class TaskServerClient : IDisposable
             RepositoryUrl: options.GitRemote,
             DefaultBranch: options.BaseBranch,
             RunId: acceptance.Run.RunId,
-            LeaseInstanceId: acceptance.Lease.InstanceId);
+            LeaseInstanceId: acceptance.Lease.InstanceId,
+            PreviousSession: acceptance.PreviousSession,
+            MechanicalDelta: acceptance.MechanicalDelta,
+            RunSpec: acceptance.MechanicalFreshRoute is { } hostRoute
+                ? new RunSpecDto(hostRoute.CliType, hostRoute.Model, hostRoute.ThinkingLevel,
+                    ContextMode: CodingAgentRunner.Model.CliContextModes.Clean)
+                : null,
+            FreshRunReason: acceptance.MechanicalDelta is null
+                ? acceptance.MechanicalFreshRoute?.Reason : null,
+            ContinuationBaseRef: acceptance.ContinuationBaseRef,
+            ContinuationBaseSha: acceptance.ContinuationBaseSha);
     }
 
     public async Task ReconcileHostRunAsync(
@@ -772,15 +785,22 @@ public sealed class TaskServerClient : IDisposable
             RunId: claim.Run.RunId,
             LeaseInstanceId: RunnerInstanceId,
             ReconciliationActions: FromContract(claim.ReconciliationActions),
-            RunSpec: claim.ModelFallback is null
-                ? null
-                : new RunSpecDto(
-                    claim.ModelFallback.CliType,
-                    claim.ModelFallback.To,
-                    claim.ModelFallback.ThinkingLevel,
-                    ContextMode: CodingAgentRunner.Model.CliContextModes.Clean),
+            RunSpec: claim.MechanicalFreshRoute is { } mechanicalRoute
+                ? new RunSpecDto(mechanicalRoute.CliType, mechanicalRoute.Model, mechanicalRoute.ThinkingLevel,
+                    ContextMode: CodingAgentRunner.Model.CliContextModes.Clean)
+                : claim.ModelFallback is null
+                    ? null
+                    : new RunSpecDto(
+                        claim.ModelFallback.CliType,
+                        claim.ModelFallback.To,
+                        claim.ModelFallback.ThinkingLevel,
+                        ContextMode: CodingAgentRunner.Model.CliContextModes.Clean),
             ContinuationBaseRef: claim.ContinuationBaseRef,
-            ContinuationBaseSha: claim.ContinuationBaseSha);
+            ContinuationBaseSha: claim.ContinuationBaseSha,
+            PreviousSession: claim.PreviousSession,
+            MechanicalDelta: claim.MechanicalDelta,
+            FreshRunReason: claim.MechanicalDelta is null
+                ? claim.MechanicalFreshRoute?.Reason : null);
     }
 
     private void AdoptRuntimeCapacity(Contract.RuntimeCapacitySettingsDto? capacity)
@@ -872,6 +892,45 @@ public sealed class TaskServerClient : IDisposable
                    },
                    ct)
                 ?? new Contract.ReviewClaimResponse("empty", Message: "Empty review claim response.");
+    }
+
+    public async Task<Contract.GateClaimResponse> ClaimGateAsync(Contract.GateClaimRequest request, CancellationToken ct)
+        => await PostJsonAsync<Contract.GateClaimRequest, Contract.GateClaimResponse>(
+               "/api/v1/gates/claims", request, ct)
+           ?? throw new TaskServerException(500, "Empty gate claim response.");
+
+    public async Task<Contract.GateLease> RenewGateAsync(
+        string attemptId, Contract.GateRenewRequest request, CancellationToken ct)
+        => await PostJsonAsync<Contract.GateRenewRequest, Contract.GateLease>(
+               $"/api/v1/gates/attempts/{Uri.EscapeDataString(attemptId)}/renew", request, ct)
+           ?? throw new TaskServerException(500, "Empty gate renewal response.");
+
+    public async Task<Contract.GateAttempt> AdvanceGateAsync(
+        string attemptId, Contract.GatePhaseRequest request, CancellationToken ct)
+        => await PostJsonAsync<Contract.GatePhaseRequest, Contract.GateAttempt>(
+               $"/api/v1/gates/attempts/{Uri.EscapeDataString(attemptId)}/phase", request, ct)
+           ?? throw new TaskServerException(500, "Empty gate phase response.");
+
+    public async Task<Contract.GateStatus> ReportGateAsync(
+        string attemptId, Contract.SubmitGateReportRequest request, CancellationToken ct)
+        => await PostJsonAsync<Contract.SubmitGateReportRequest, Contract.GateStatus>(
+               $"/api/v1/gates/attempts/{Uri.EscapeDataString(attemptId)}/report", request, ct)
+           ?? throw new TaskServerException(500, "Empty gate report response.");
+
+    public async Task<Contract.GateStatus> ConfirmGateContainmentAsync(
+        string attemptId, Contract.GateContainmentRequest request, CancellationToken ct)
+        => await PostJsonAsync<Contract.GateContainmentRequest, Contract.GateStatus>(
+               $"/api/v1/gates/attempts/{Uri.EscapeDataString(attemptId)}/containment", request, ct)
+           ?? throw new TaskServerException(500, "Empty gate containment response.");
+
+    public async Task<Contract.GateStatus?> GetGateStatusAsync(string subjectId, CancellationToken ct)
+    {
+        using var response = await _http.GetAsync($"/api/v1/gates/subjects/{Uri.EscapeDataString(subjectId)}", ct);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        var detail = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            throw new TaskServerException((int)response.StatusCode, $"Gate status failed: {Trim(detail)}");
+        return JsonSerializer.Deserialize<Contract.GateStatus>(detail, Json);
     }
 
     public async Task<Contract.ReviewLeaseDto> RenewReviewLeaseAsync(
@@ -1280,6 +1339,15 @@ public sealed class TaskServerClient : IDisposable
         if (!_useV1)
             return await PostJsonAsync<RunLeaseReleaseRequest, RunLeaseResponse>("/api/runner/lease/release", req, ct)
                    ?? new RunLeaseResponse("Invalid", false, null, "Empty release response.");
+        if (_v1CompletedLeases.TryGetValue(req.TaskKey, out var completedLeaseId)
+            && _v1Leases.TryGetValue(req.TaskKey, out var completedAuthority)
+            && string.Equals(completedLeaseId, req.LeaseId, StringComparison.Ordinal)
+            && string.Equals(completedAuthority.Lease.RunnerId, req.RunnerId, StringComparison.Ordinal)
+            && completedAuthority.Lease.FencingToken == req.FencingToken)
+        {
+            ForgetCompletedLease(req.TaskKey, req.LeaseId);
+            return new RunLeaseResponse("Released", false, null, "Run already completed by Task Server.");
+        }
         if (!_v1Leases.TryGetValue(req.TaskKey, out var cached))
         {
             _v1TaskBodies.TryRemove(req.TaskKey, out _);
@@ -1307,6 +1375,17 @@ public sealed class TaskServerClient : IDisposable
         _v1TaskBodies.TryRemove(req.TaskKey, out _);
         _hostAcceptedWork.TryRemove(req.TaskKey, out _);
         return new RunLeaseResponse(response?.Status ?? "Released", false, authority.Lease, response?.Message);
+    }
+
+    internal void ForgetCompletedLease(string taskKey, string leaseId)
+    {
+        if (!_v1Leases.TryGetValue(taskKey, out var authority)
+            || !string.Equals(authority.Lease.LeaseId, leaseId, StringComparison.Ordinal))
+            return;
+        _v1CompletedLeases.TryRemove(taskKey, out _);
+        _v1Leases.TryRemove(taskKey, out _);
+        _v1TaskBodies.TryRemove(taskKey, out _);
+        _hostAcceptedWork.TryRemove(taskKey, out _);
     }
 
     public async Task<LogIngestResponse?> IngestLogsAsync(LogIngestRequest req, CancellationToken ct)
@@ -1546,9 +1625,17 @@ public sealed class TaskServerClient : IDisposable
                 SalvageCommitSha: req.SalvageRecoveryCommitSha ?? req.SalvageCommitSha,
                 // AGT-2820: gate items are not legacy-only. A completion that
                 // names an incident must name it on both planes.
-                GateItems: req.GateItems),
+                GateItems: req.GateItems,
+                SessionContinuation: req.SessionContinuation),
             ct);
-        return new RemoteRunCompletionResponse(req.TaskKey, typedOutcome, "4-auto-review");
+        _v1CompletedLeases[req.TaskKey] = req.LeaseId;
+        var targetState = string.Equals(typedOutcome,
+            Contract.ExecutionOutcomeKind.MechanicalFallback.ToString(), StringComparison.Ordinal)
+            ? "2-ready"
+            : !string.IsNullOrWhiteSpace(req.NeedsInputMessage)
+                || req.OutcomeDecision?.Outcome == Contract.ExecutionOutcomeKind.ProviderRejectedRequest
+                ? "5-human-review" : "4-auto-review";
+        return new RemoteRunCompletionResponse(req.TaskKey, typedOutcome, targetState);
     }
 
     public async Task<ResultHandoffAck> AcknowledgeResultHandoffAsync(
@@ -1635,7 +1722,8 @@ public sealed class TaskServerClient : IDisposable
                         payload.NeedsInputMessage,
                         payload.SalvageBranch,
                         payload.SalvageCommitSha,
-                        payload.GateItems),
+                        payload.GateItems,
+                        payload.SessionContinuation),
                     ct);
                 return;
             }

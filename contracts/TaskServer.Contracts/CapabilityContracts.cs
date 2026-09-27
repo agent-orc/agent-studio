@@ -53,7 +53,8 @@ public sealed record AdvertisedCapabilityDto(
     DateTime? LimitedUntil = null,
     DateTime? CredentialModifiedAt = null,
     string? EvidenceId = null,
-    string? EvidenceExcerpt = null);
+    string? EvidenceExcerpt = null,
+    IReadOnlyList<string>? SupportedModels = null);
 
 public sealed record CapabilityAdvertisementRequest(
     string RunnerId,
@@ -163,7 +164,8 @@ public sealed record CapabilityHealthDto(
     DateTime? LimitedUntil = null,
     DateTime? CredentialModifiedAt = null,
     string? EvidenceId = null,
-    string? EvidenceExcerpt = null);
+    string? EvidenceExcerpt = null,
+    IReadOnlyList<string>? SupportedModels = null);
 
 /// <summary>One CLI installation observed by a runner capability probe.</summary>
 public sealed record InstalledCliDto(
@@ -232,7 +234,8 @@ public sealed record RunnerCapabilitySnapshotDto(
     int ReviewsLost = 0,
     IReadOnlyList<InstalledCliDto>? InstalledClis = null,
     HostCliUpdateDto? CliUpdate = null,
-    RunnerReleaseIdentityDto? Release = null);
+    RunnerReleaseIdentityDto? Release = null,
+    int ActiveGateCount = 0);
 
 public static class InstalledCliProjection
 {

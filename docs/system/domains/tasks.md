@@ -1,6 +1,6 @@
 # Tasks Domain Map
 
-Version: 2026-09-15
+Version: 2026-09-27
 Status: System-of-record map for task storage, lanes, and API mutation changes.
 
 Use this when a change touches job folders, lane states, task metadata,
@@ -91,6 +91,32 @@ or commit attribution.
 - [docs/operations/setup/task-server.md#legacy-single-writer-migration](../../operations/setup/task-server.md#legacy-single-writer-migration)
   is the operator sequence for inventorying, freezing, importing, proving, and
   cutting over a legacy workspace.
+
+## Decision cards
+
+The `decision` card kind is distinct from area and facet tags and from an Epic.
+`POST /api/tasks` accepts a `decision` object with a question, two to four
+structured options (`id`, `label`, `consequences`, `effort`, `risk`), an optional
+recommendation and reason, a decider, and an optional due date. The decider is a
+client id or role (for example `role:owner`, with `operator` by default). Decision cards start in
+`1-preparation` and cannot enter a runner lane.
+
+`POST /api/tasks/{id}/decision` records the selected option, optional rationale,
+client identity, and timestamp, then moves the card to `6-completed` and writes
+an ADR-style record in the project wiki under `operations/decisions/`.
+Request, decision, and reopen actions also appear in the project activity feed.
+`DecisionRecordService` supplies the receipt format shared with Dossier decisions;
+`WorkbenchDecisionService` keeps the Dossier lifecycle, while the card service
+binds the same record to card lanes and dependency gates.
+`POST /api/tasks/{id}/decision/reopen` requires a note, returns the card to
+`1-preparation`, and appends the reopen entry to the same record. A generic lane
+move cannot return a decided card to Preparation; only the reopen lifecycle has
+the permit for that transition. A dependant
+whose `references.dependsOn` points to a pending decision reports the key in
+`blockedBy`; moves into Ready or Progress and runner claims are refused while
+the decision is pending. Deciding only releases that dependency gate. Applying
+the choice to prompts or creating implementation cards belongs to the separate
+apply delivery.
 
 ## Result history
 
@@ -1061,6 +1087,41 @@ outcome, request Git spawns and Git timeouts. It contains no task content or
 filesystem paths. The existing `task-op` Server-Timing duration and background
 `git-index-run` rollups retain their distinct boundaries. The capture and
 offline reducer protocol is in [measurement.md](../../task-switch-performance/measurement.md).
+
+## Bounded task core read (AGT-2953)
+
+`GET /api/tasks/{jobId}/core?project=PROJ-002` is an additive task-switch
+contract. The existing `GET /api/tasks/{jobId}` remains the full-detail route
+during migration. The `project` handle is required and resolved against the
+registry before a scoped principal can see a core. An unknown project or a
+known, indexed-but-absent task returns `404` with `state=missing`; an identity
+whose index is still hydrating returns `202` with `state=warming`. A known
+record whose sidecar refresh or safety sweep is pending returns `state=stale`.
+Durable deletion tombstones known core aliases immediately, so a deleted task
+does not reappear or wait for hydration to return `missing`.
+
+`TaskIndexCache.GetCore` is keyed and cache-only. It never calls `EnsureFresh`,
+`FindJob`, Git, token aggregation, review readers, or a filesystem search.
+The index producer reads `status.md`, `prompt.md`, and `logs/timeline.jsonl`
+outside the request, publishing UTF-8-safe heads with original lengths and
+SHA-256 hashes. Status text is capped at 1 KiB, prompt text at 2 KiB, and the
+last five timeline events at 2 KiB total. The whole JSON body is capped at
+16 KiB. Missing sidecars are explicit. The prompt exposes its full-document
+link, and the timeline exposes a sequence cursor for older events. No model
+summarizes these fields. The route reads runtime and lease facts from memory,
+and its ETag combines per-task core and runtime versions without Git state.
+API field writes and lane moves publish the changed core after the durable
+write. Dependency-affecting writes also rebuild the core reference graph from
+resident task facts and republish dependent blocker fields and core versions
+before acknowledgment. This includes release, reference edits, moves and
+deletion; an unrelated dirty task does not force a core request to scan. The
+sidecar watcher refreshes changed heads outside HTTP requests.
+
+This contract is the D1 and D3 recommendation in
+[the task-switch performance dossier](../../task-switch-performance/index.html).
+Its legacy-handler 486 ms p50 and 2,183 ms p95 are the measured comparison
+baseline. The proposed core p95 of at most 30 ms is an acceptance target,
+not an observed saving or a frontend saving.
 
 ## Conditional board reads (AGT-2703)
 

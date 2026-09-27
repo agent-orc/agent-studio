@@ -25,6 +25,8 @@ public sealed record RemoteCompletionEnvelopeDecision(
 /// Prevents any terminal coding RunAttempt from being treated as delivered
 /// unless the server can persist its complete immutable result envelope.
 /// Environment-preparation failures are exempt because no coding checkout ran.
+/// A mechanical fallback is also exempt: it returns the fenced attempt to Ready
+/// for a new coding generation and is not a delivered ReviewSubject.
 /// </summary>
 public static class RemoteCompletionEnvelopePolicy
 {
@@ -38,7 +40,7 @@ public static class RemoteCompletionEnvelopePolicy
         bool hasArtifactManifestDigest)
     {
         var outcome = reportedOutcome?.Trim().ToLowerInvariant() ?? string.Empty;
-        if (!requiresEnvelope || outcome == "environmentfailure")
+        if (!requiresEnvelope || outcome == "environmentfailure" || outcome == "mechanicalfallback")
         {
             return new RemoteCompletionEnvelopeDecision(
                 RemoteCompletionEnvelopeDisposition.NotRequired,

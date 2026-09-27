@@ -111,6 +111,15 @@ public interface ICliExecutionService
     /// <summary>Most recent parsed per-turn usage snapshot (+ observed-at + run start), or null. The runner mirrors it onto the agent message bus.</summary>
     (ParsedTurnUsage Usage, DateTime ObservedAt, DateTime StartedAt)? GetLastParsedTurnUsage(string jobKey) => null;
 
+    /// <summary>All provider-attributed model usage rows from the latest turn.</summary>
+    (IReadOnlyList<ParsedTurnUsage> Usages, DateTime ObservedAt, DateTime StartedAt)? GetLastParsedTurnUsages(string jobKey)
+    {
+        var single = GetLastParsedTurnUsage(jobKey);
+        return single is { } value
+            ? ([value.Usage], value.ObservedAt, value.StartedAt)
+            : null;
+    }
+
     /// <summary>Whether this CLI emits a session id on every run. When true, a missing captured id is a capture-loss the runner routes to Recovery. A stub that never does stays false.</summary>
     bool EmitsSessionId => false;
 

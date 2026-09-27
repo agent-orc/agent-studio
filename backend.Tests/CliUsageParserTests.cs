@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts;
 
 using Xunit;
 
@@ -13,6 +14,21 @@ namespace AgentStudio.Tests;
 public class CliUsageParserTests
 {
     private static readonly CliModelRegistry Registry = new();
+
+    [Theory]
+    [InlineData("claude-opus-5-5", "claude-opus-5")]
+    [InlineData("claude-opus-5-5", "claude-opus-5-20260925")]
+    [InlineData("claude-opus-4.8", "claude-opus-4-8")]
+    [InlineData("claude-haiku-4.5", "claude-haiku-4-5-20251001")]
+    public void Usage_attribution_shares_registry_alias_identity_with_outcome(
+        string pinned,
+        string observed)
+    {
+        Assert.False(ModelAttribution.IsMismatch(pinned, observed));
+        Assert.Equal(
+            ModelMetadataRegistry.Find(pinned)?.Id,
+            ExecutionModelIdentity.Normalize(observed));
+    }
 
     [Fact]
     public void ClaudeParser_ExtractsTokensAndContextWindow()
@@ -60,6 +76,43 @@ public class CliUsageParserTests
         Assert.True(parser.TryParse(frame, modelHint: "claude-haiku-4-5", Registry, out var usage));
         Assert.Equal("claude-haiku-4-5", usage.Model);
         Assert.Equal(200_000, usage.ContextWindow!.TotalSize);
+    }
+
+    [Fact]
+    public void ClaudeParser_UsesActualModelUsageModelAndFlagsPinnedMismatch()
+    {
+        var parser = new ClaudeUsageParser();
+        var frame = JsonDocument.Parse("""
+        {
+          "type": "result",
+          "subtype": "success",
+          "is_error": false,
+          "result": "ok",
+          "usage": {
+            "input_tokens": 11,
+            "output_tokens": 7,
+            "cache_read_input_tokens": 13,
+            "cache_creation_input_tokens": 17
+          },
+          "modelUsage": {
+            "claude-haiku-4-5-20251001": {
+              "inputTokens": 11,
+              "outputTokens": 7,
+              "cacheReadInputTokens": 13,
+              "cacheCreationInputTokens": 17
+            }
+          }
+        }
+        """).RootElement;
+
+        var usages = parser.ParseAll(frame, "claude-opus-5-5", Registry);
+
+        var usage = Assert.Single(usages);
+        Assert.Equal("claude-haiku-4-5-20251001", usage.Model);
+        Assert.Equal("claude-opus-5-5", usage.PinnedModel);
+        Assert.True(usage.ModelMismatch);
+        Assert.Equal(11, usage.Input);
+        Assert.Equal(7, usage.Output);
     }
 
     [Fact]

@@ -79,6 +79,17 @@ public sealed class ModelRoutingPolicyGuardTests
     }
 
     [Fact]
+    public void ProviderRejectionFallback_ResolvesRegisteredModelAlias()
+    {
+        var registry = new ModelRoutingPolicyRegistry();
+
+        var fallback = registry.ProviderRejectionFallback(CliTypes.Claude, "claude-opus-5-5");
+
+        Assert.NotNull(fallback);
+        Assert.Equal(ModelIds.ClaudeOpus5, fallback.FromModel);
+    }
+
+    [Fact]
     public void Provider_rejection_sibling_must_clear_the_cards_correctness_floor()
     {
         var registry = new ModelRoutingPolicyRegistry();

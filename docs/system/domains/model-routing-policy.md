@@ -87,6 +87,26 @@ Its `version` must match this page. The registry owns tier ids, concrete Codex
 routes, task-type intake defaults, and correctness floors; appsettings must not
 redefine them.
 
+A fresh coding claim after a resumed mechanical integration round is qualified
+again when the round found a semantic conflict or the deterministic gate failed.
+An integration recovery claim with a pending mechanical delta is qualified before
+admission at the stronger of its correctness floor and Terra/medium. This also
+covers a fresh run when the runner rejects the resume for a missing or stale
+session, changed provider, or lineage mismatch after claim. A resumed round may
+therefore use the same qualified route. Explicit operator pins retain their
+existing policy treatment.
+The claim keeps a route that clears the policy floor; otherwise it selects the
+registry's provider route at the stronger of the task's correctness floor and
+Sol/medium for a semantic conflict, or Terra/medium for a gate failure. The
+fresh-run reason is visible in the task's continuation ledger; the selected
+model is visible in the run-session event.
+The standalone Task Server uses the same versioned policy document for both
+direct claims and accepted host permits. A pending mechanical delta gets at
+least Terra/medium before the runner checks session admission; a recorded
+semantic fallback gets at least Sol/medium on the next fresh claim. Task text
+that names a critical boundary raises the route to Sol/xhigh. The claim carries
+the selected CLI, model, thinking level, and reason to the runner.
+
 When a new task has no explicit model pin (`modelExplicit=false`), model
 qualification starts from this convention:
 
@@ -117,6 +137,16 @@ to never return a null thinking level. Haiku-class models remain in use only
 on the separate pipeline-support/classification path
 (`ModelFamilyResolver`/`PipelineStepModelDefaults`), which never calls this
 registry.
+
+An explicit pin is also an execution constraint, not a preference. Before a
+local process starts, Studio checks a Claude pin against the model registry's
+minimum CLI version and a Codex pin against the installed CLI's live model
+catalogue. Remote claim admission applies the same policy to the Runner's
+advertised CLI version and Codex catalogue. An unsupported pin stays Ready and
+gets the durable `model-unsupported` dispatch reason. For example,
+`claude-opus-5-5` requires Claude Code 2.1.281; a host on 2.1.270 reports
+`model unsupported by installed CLI 2.1.270 (minimum 2.1.281)` and does not
+spawn the CLI.
 
 The create-task UI shows the recommendation, policy version, task type, tier,
 and whether economy mode caused a safe one-step downgrade. Choosing a model or

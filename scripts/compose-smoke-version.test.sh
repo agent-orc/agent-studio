@@ -25,12 +25,9 @@ fi
 grep -F "does not match VERSION $expected" "$error_file" > /dev/null
 
 # Compose must pass the resolved repository version to every dev build. The
-# temporary project directory supplies the required runner.env without
-# modifying the checkout; config rendering does not contact the Docker daemon.
-: > "$config_root/runner.env"
+# Config rendering does not contact the Docker daemon.
 compose_json="$(
     AGENT_STUDIO_VERSION="$resolved" \
-    DISTRIBUTED_ENGINE_TOKEN=compose-smoke-version-test \
     docker compose \
         --project-directory "$config_root" \
         -f "$repo_root/docker-compose.yml" \

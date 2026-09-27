@@ -159,8 +159,7 @@
       <!--
         The landed-status ("Merged to develop") is intentionally NOT shown here.
         The task's on-develop state lives once, at the task commit (git pane
-        landed ladder). When the work has already landed the primary relabels to
-        "Accept" and its hover tooltip explains why; no separate pill is needed. -->
+        landed ladder). The primary reads "Accept"; no separate pill is needed. -->
       @if (triagePrimary(); as primary) {
         <button type="button"
                 class="detail__triage-primary"

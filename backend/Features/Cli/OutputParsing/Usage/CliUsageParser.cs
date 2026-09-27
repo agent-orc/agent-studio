@@ -22,7 +22,9 @@ public sealed record ParsedTurnUsage(
     long CacheWrite,
     long? ReasoningOutput,
     AgentMessageContextWindow? ContextWindow,
-    bool InputIncludesCached = false)
+    bool InputIncludesCached = false,
+    string? PinnedModel = null,
+    bool ModelMismatch = false)
 {
     /// <summary>Sum of all tokens that occupied the context this turn.</summary>
     public long ContextUsed => Input + CacheRead;
@@ -35,7 +37,9 @@ public sealed record ParsedTurnUsage(
         Model: Model,
         Dollars: null,
         ContextWindow: ContextWindow,
-        InputIncludesCached: InputIncludesCached);
+        InputIncludesCached: InputIncludesCached,
+        PinnedModel: PinnedModel,
+        ModelMismatch: ModelMismatch);
 }
 
 /// <summary>
@@ -59,6 +63,12 @@ public interface ICliUsageParser
     /// <see cref="AgentMessageContextWindow.TotalSize"/> unset.</param>
     /// <param name="usage">The parsed snapshot when the return is true.</param>
     bool TryParse(JsonElement frame, string? modelHint, ICliModelRegistry modelRegistry, out ParsedTurnUsage usage);
+
+    IReadOnlyList<ParsedTurnUsage> ParseAll(
+        JsonElement frame,
+        string? modelHint,
+        ICliModelRegistry modelRegistry)
+        => TryParse(frame, modelHint, modelRegistry, out var usage) ? [usage] : [];
 }
 
 /// <summary>Resolves a model id to its known context-window size.</summary>
@@ -93,7 +103,8 @@ public sealed class ClaudeUsageParser : ICliUsageParser
         if (!frame.TryGetProperty("usage", out var u) || u.ValueKind != JsonValueKind.Object) return false;
 
         var declaredModel = frame.TryGetProperty("model", out var md) ? md.GetString() : null;
-        var model = declaredModel ?? modelHint;
+        var observedModels = ObservedModels(frame);
+        var model = observedModels.Count == 1 ? observedModels[0] : declaredModel ?? modelHint;
 
         var input      = GetLong(u, "input_tokens");
         var output     = GetLong(u, "output_tokens");
@@ -109,8 +120,60 @@ public sealed class ClaudeUsageParser : ICliUsageParser
             CacheRead: cacheRead,
             CacheWrite: cacheWrite,
             ReasoningOutput: null,
-            ContextWindow: contextWindow);
+            ContextWindow: contextWindow,
+            PinnedModel: modelHint,
+            ModelMismatch: ModelAttribution.IsMismatch(modelHint, model));
         return true;
+    }
+
+    public IReadOnlyList<ParsedTurnUsage> ParseAll(
+        JsonElement frame,
+        string? modelHint,
+        ICliModelRegistry modelRegistry)
+    {
+        if (frame.ValueKind != JsonValueKind.Object
+            || !frame.TryGetProperty("modelUsage", out var modelUsage)
+            || modelUsage.ValueKind != JsonValueKind.Object)
+            return TryParse(frame, modelHint, modelRegistry, out var fallbackUsage) ? [fallbackUsage] : [];
+
+        var result = new List<ParsedTurnUsage>();
+        foreach (var property in modelUsage.EnumerateObject())
+        {
+            if (property.Value.ValueKind != JsonValueKind.Object) continue;
+            var value = property.Value;
+            var input = GetLongEither(value, "inputTokens", "input_tokens");
+            var output = GetLongEither(value, "outputTokens", "output_tokens");
+            var cacheRead = GetLongEither(value, "cacheReadInputTokens", "cache_read_input_tokens");
+            var cacheWrite = GetLongEither(value, "cacheCreationInputTokens", "cache_creation_input_tokens");
+            if (input + output + cacheRead + cacheWrite <= 0) continue;
+            var model = property.Name.Trim();
+            result.Add(new ParsedTurnUsage(
+                model,
+                input,
+                output,
+                cacheRead,
+                cacheWrite,
+                ReasoningOutput: null,
+                BuildContextWindow(model, input, cacheRead, modelRegistry),
+                PinnedModel: modelHint,
+                ModelMismatch: ModelAttribution.IsMismatch(modelHint, model)));
+        }
+
+        return result.Count > 0
+            ? result
+            : TryParse(frame, modelHint, modelRegistry, out var aggregateUsage) ? [aggregateUsage] : [];
+    }
+
+    private static List<string> ObservedModels(JsonElement frame)
+    {
+        if (!frame.TryGetProperty("modelUsage", out var modelUsage)
+            || modelUsage.ValueKind != JsonValueKind.Object)
+            return [];
+        return modelUsage.EnumerateObject()
+            .Select(property => property.Name.Trim())
+            .Where(model => model.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     private static AgentMessageContextWindow? BuildContextWindow(string? model, long input, long cacheRead, ICliModelRegistry registry)
@@ -131,6 +194,9 @@ public sealed class ClaudeUsageParser : ICliUsageParser
 
     private static long GetLong(JsonElement obj, string name)
         => obj.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt64(out var n) ? n : 0L;
+
+    private static long GetLongEither(JsonElement obj, string first, string second)
+        => GetLong(obj, first) is var value && value > 0 ? value : GetLong(obj, second);
 }
 
 /// <summary>
@@ -173,7 +239,9 @@ public sealed class CodexUsageParser : ICliUsageParser
             CacheWrite: 0,
             ReasoningOutput: reasoning,
             ContextWindow: contextWindow,
-            InputIncludesCached: normalized.InputIncludesCached);
+            InputIncludesCached: normalized.InputIncludesCached,
+            PinnedModel: modelHint,
+            ModelMismatch: ModelAttribution.IsMismatch(modelHint, model));
         return true;
     }
 
@@ -190,6 +258,15 @@ public sealed class CodexUsageParser : ICliUsageParser
 
     private static long GetLong(JsonElement obj, string name)
         => obj.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt64(out var n) ? n : 0L;
+}
+
+public static class ModelAttribution
+{
+    public static bool IsMismatch(string? pinnedModel, string? observedModel)
+    {
+        if (string.IsNullOrWhiteSpace(pinnedModel) || string.IsNullOrWhiteSpace(observedModel)) return false;
+        return !ExecutionModelIdentity.Equivalent(pinnedModel, observedModel);
+    }
 }
 
 /// <summary>

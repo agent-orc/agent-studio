@@ -1,0 +1,140 @@
+{
+  "schemaVersion": 1,
+  "sourceTaskKey": "AGT-2968",
+  "repositoryRevision": "67e00aedcbea58bb9d0d05ae723ad335685a40f4",
+  "inspectedAt": "2026-09-26T14:42:46.362595+00:00",
+  "method": "Read-only repository source inspection plus operator-provided incident history; no host credential inspection or current UI claim.",
+  "sources": [
+    {
+      "path": "runner/ProviderCredentialMonitor.cs",
+      "sha256": "9ca4057222108b5210fd21aea8371a32ee5e9e3139518ba8a9a38360c65b4f87",
+      "anchors": [
+        "Inspect",
+        "ExpiryWarningWindow",
+        "FindExpiry"
+      ]
+    },
+    {
+      "path": "runner/RunnerCapabilityProbe.cs",
+      "sha256": "39785f0516f305413840555f0b15d8d84a0e2971847152e4323a8337dc16e09f",
+      "anchors": [
+        "Advertise",
+        "AuthStatusArguments",
+        "PresenceOnly",
+        "Decide"
+      ]
+    },
+    {
+      "path": "contracts/TaskServer.Contracts/CapabilityContracts.cs",
+      "sha256": "e8b828ed5835c757fdea31cb935f06c1ed23effa1719b9ced98ca61ae35f6c06",
+      "anchors": [
+        "CapabilityHealthDto",
+        "CapabilityFailureRequest"
+      ]
+    },
+    {
+      "path": "backend/Features/Management/ProviderAuthProvisioning.cs",
+      "sha256": "8794def525e8a826af68f96453a06c65ce163bfd3520664e484d7956fc0033ba",
+      "anchors": [
+        "ProviderAuthEnvironmentFile",
+        "SupportedEnvironmentVariables"
+      ]
+    },
+    {
+      "path": "backend/Features/Management/ClaudeSignIn.cs",
+      "sha256": "bb5915f0c5be2d2987456e04548bdf4a23a27c6d03c4f4bb3f006f2b4599268f",
+      "anchors": [
+        "claude",
+        "setup-token"
+      ]
+    },
+    {
+      "path": "backend/Features/Management/CodexSignIn.cs",
+      "sha256": "d8c07d7866f02e5eb2a91f1c234a53a95b2bd6be6a963880b2cc0896472b7e3d",
+      "anchors": [
+        "codex"
+      ]
+    },
+    {
+      "path": "backend/Features/Management/ProviderRejectionFleetService.cs",
+      "sha256": "f81dcb0af669e0df15dda9726a95680f5cba9bb4742f15cd5aa5aef2d6d86961",
+      "anchors": [
+        "ProviderRejectedRequest"
+      ]
+    },
+    {
+      "path": "contracts/TaskServer.Contracts/PrincipalContracts.cs",
+      "sha256": "c7873ac5eeddcce367c543134a9c0f8acc4e4f08d39414e82823ad6877dafb70",
+      "anchors": [
+        "RotatePrincipalRequest",
+        "TaskServerScopes"
+      ]
+    },
+    {
+      "path": "task-server/TaskServerPrincipalStore.cs",
+      "sha256": "c0642c3bf8f0484e81b0712d8f5e30333ccae2648bd4b44bc7e9141455aa72a7",
+      "anchors": [
+        "RotatePrincipalAsync"
+      ]
+    },
+    {
+      "path": "docs/operations/setup/cli-relogin-runbook.md",
+      "sha256": "02b8c6c14d383873689761c4e2e70a49e5064a1f044f01ae23e2c489cffa31fb",
+      "anchors": [
+        "14 days",
+        "provider-auth.env"
+      ]
+    },
+    {
+      "path": "docs/operations/setup/control-plane-docker.md",
+      "sha256": "e4f0ca0a7a8ff1daf9341aa182f5a18337629a2795a82c6149626eade0d57ee8",
+      "anchors": [
+        "Docker secrets",
+        "WireGuard"
+      ]
+    },
+    {
+      "path": "docs/deployment-story/index.html",
+      "sha256": "10381f1005bde1eb170491b091f9b8fb8aab5a1c9d27ea81d420e2feb3282802",
+      "anchors": [
+        "One box"
+      ]
+    },
+    {
+      "path": "docs/task-server-bus/index.html",
+      "sha256": "e01fcb99692cd52bbf92498a82e28d74f497e41eae5fa080ff4c98eb98f0c398",
+      "anchors": [
+        "Task Server"
+      ]
+    }
+  ],
+  "externalReferences": [
+    {
+      "url": "https://developers.openai.com/codex/auth/",
+      "consultedAt": "2026-09-26",
+      "purpose": "Device auth, storage and automatic refresh"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/authentication",
+      "consultedAt": "2026-09-26",
+      "purpose": "Claude login and environment source contract"
+    },
+    {
+      "url": "https://docs.github.com/en/authentication/connecting-to-github-with-ssh/managing-deploy-keys",
+      "consultedAt": "2026-09-26",
+      "purpose": "Per-repository key scope and lack of expiry"
+    },
+    {
+      "url": "https://docs.github.com/en/rest/deploy-keys/deploy-keys",
+      "consultedAt": "2026-09-26",
+      "purpose": "Registration and provisioning-token lifecycle side effects"
+    }
+  ],
+  "historicalStatusEvidence": {
+    "source": "operator brief",
+    "url": "https://status.openai.com/",
+    "incidentId": null,
+    "archivedResponse": null,
+    "independentlyVerified": false
+  }
+}

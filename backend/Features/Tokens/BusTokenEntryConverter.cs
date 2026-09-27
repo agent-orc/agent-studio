@@ -34,6 +34,8 @@ internal static class BusTokenEntryConverter
                 ThinkingLevel = t.ThinkingLevel,
                 InputIncludesCached = t.InputIncludesCached,
                 UsageNormalization = t.UsageNormalization,
+                PinnedModel = t.PinnedModel,
+                ModelMismatch = t.ModelMismatch,
             };
 
         return new OrchestratorLogEntry
