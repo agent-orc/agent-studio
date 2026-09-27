@@ -60,6 +60,28 @@ These metrics measure local exact-subject gate requests; they do not estimate
 batch green rate or answer the staging-lane decision in the
 [Gates Dossier](../../operations/gates/index.html#sect5).
 
+## Batch gate pilot groundwork
+
+`backend/Features/Pipeline/BatchGate/` contains the closed-manifest policy,
+membership digest, append-only replay and member evidence records, bounded
+halving policy, coordinator lease, publication preconditions, and pilot metric
+projection. `GitService.ReplayBatchMember` exposes the existing conflict-free
+mechanical rebase through a disposable detached worktree; candidate refs carry
+the manifest digest and coordinator fence. The D10 prerequisite estimate is
+[recorded with its limits](../../operations/gates/d10-measurement.md).
+The Task Server gate subject can bind a combined candidate SHA, manifest digest,
+base SHA and member run IDs; its existing claimable executor still checks the
+exact candidate SHA. An infrastructure retry excludes the host of the previous
+attempt.
+
+This code has no route from a settled Remote Review or claimable batch gate
+execution yet. The per-card gate and integration path remains authoritative;
+no project setting enables batch routing. Do not treat a closed manifest, a
+temporary candidate ref, or the new member record store as a released card
+without the exact-SHA gate execution, shared ref-mutation lease, verified
+publication, and lane-release wiring described in the
+[Gates Dossier](../../operations/gates/index.html#sect3).
+
 ## Key Code
 
 The creation-time `auto-tag` step (AGT-2804) is separate from the card's coding

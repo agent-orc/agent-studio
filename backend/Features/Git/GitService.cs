@@ -141,6 +141,12 @@ public static class MergeIntoIntegrationOutcomePolicy
 /// </summary>
 public sealed record RebasedCommitReplacement(string OriginalSha, string RebasedSha);
 
+/// <summary>Conflict-free replay in a disposable detached worktree without moving a canonical ref.</summary>
+public sealed record BatchReplayResult(
+    bool Success, string? TipSha, IReadOnlyList<RebasedCommitReplacement> Replacements,
+    IReadOnlyList<string> ConflictedFiles, string? Error);
+public sealed record BatchCandidateRefResult(bool Success, string? Error);
+
 /// <summary>
 /// Result of <see cref="GitService.MergeBranchIntoIntegration"/>. On
 /// <see cref="MergeIntoIntegrationOutcome.Conflict"/> the working tree is left
@@ -5443,6 +5449,87 @@ public class GitService
     /// commit without an unresolved textual conflict is eligible. The delivery
     /// ref and integration branch are never moved by this probe.
     /// </summary>
+    public BatchReplayResult ReplayBatchMember(
+        string repoRoot, string immutableResultRef, string expectedResultSha, string batchTip)
+    {
+        var (resolved, error, code) = RunGitArgs(
+            repoRoot, "rev-parse", "--verify", $"{immutableResultRef}^{{commit}}");
+        if (code != 0 || !string.Equals(resolved.Trim(), expectedResultSha, StringComparison.OrdinalIgnoreCase))
+            return new BatchReplayResult(false, null, [], [],
+                code == 0 ? "Immutable result ref does not resolve to the expected SHA." : error.Trim());
+        // A delivery already based on the batch tip needs no rewritten commit
+        // objects. Preserve an explicit identity mapping for every original
+        // commit so the member evidence is complete on the common fast path.
+        var (_, _, descendantCode) = RunGitArgs(
+            repoRoot, "merge-base", "--is-ancestor", batchTip, expectedResultSha);
+        if (descendantCode == 0)
+        {
+            var (merges, mergeError, mergeCode) = RunGitArgs(
+                repoRoot, "rev-list", "--count", "--merges",
+                $"{batchTip}..{expectedResultSha}", RevisionsOnly);
+            if (mergeCode != 0 || !int.TryParse(merges.Trim(), out var mergeCount)
+                || mergeCount != 0)
+                return new BatchReplayResult(false, null, [], [],
+                    mergeCode == 0 ? "Non-linear batch member history has ambiguous SHA attribution."
+                        : mergeError.Trim());
+            var commits = ReadFirstParentRange(
+                repoRoot, batchTip, expectedResultSha, out var rangeError);
+            if (commits is null || commits.Count == 0)
+                return new BatchReplayResult(false, null, [], [],
+                    rangeError ?? "Batch member adds no commits to the candidate.");
+            return new BatchReplayResult(true, expectedResultSha,
+                commits.Select(sha => new RebasedCommitReplacement(sha, sha)).ToArray(), [], null);
+        }
+        if (descendantCode != 1)
+            return new BatchReplayResult(false, null, [], [],
+                "Batch tip ancestry could not be verified.");
+        var replay = TryMechanicalRebase(repoRoot, immutableResultRef, batchTip);
+        return new BatchReplayResult(
+            replay.Success, replay.RebasedTip, replay.Replacements,
+            replay.ConflictedFiles, replay.Error);
+    }
+
+    public BatchCandidateRefResult UpdateBatchCandidateRef(
+        string repoRoot, string candidateRef, string nextSha, string? expectedOldSha)
+    {
+        if (!Regex.IsMatch(candidateRef,
+                @"^refs/agent-studio/batch-candidates/[a-f0-9]{32}/[a-f0-9]{64}/[1-9][0-9]*$",
+                RegexOptions.CultureInvariant)
+            || !Regex.IsMatch(nextSha, "^[a-fA-F0-9]{40,64}$", RegexOptions.CultureInvariant)
+            || expectedOldSha is not null
+            && !Regex.IsMatch(expectedOldSha, "^[a-fA-F0-9]{40,64}$", RegexOptions.CultureInvariant))
+            return new BatchCandidateRefResult(false, "Invalid batch candidate ref or SHA.");
+        var old = expectedOldSha ?? new string('0', nextSha.Length);
+        var (_, error, code) = RunGitArgs(repoRoot, "update-ref", candidateRef, nextSha, old);
+        return new BatchCandidateRefResult(code == 0, code == 0 ? null : error.Trim());
+    }
+
+    public GitPushResult PushBatchCandidateRef(
+        string repoRoot, string candidateRef, string expectedSha, CancellationToken ct)
+    {
+        if (!Regex.IsMatch(candidateRef,
+                @"^refs/agent-studio/batch-candidates/[a-f0-9]{32}/[a-f0-9]{64}/[1-9][0-9]*$",
+                RegexOptions.CultureInvariant)
+            || !Regex.IsMatch(expectedSha, "^[a-fA-F0-9]{40,64}$", RegexOptions.CultureInvariant))
+            return new GitPushResult(false, expectedSha, "invalid-batch-ref", "Invalid candidate ref or SHA.");
+        var (local, localError, localCode) = RunGitArgs(
+            repoRoot, "rev-parse", "--verify", candidateRef);
+        if (localCode != 0 || !string.Equals(local.Trim(), expectedSha, StringComparison.OrdinalIgnoreCase))
+            return new GitPushResult(false, expectedSha, "candidate-mismatch", localError.Trim());
+        var (_, pushError, pushCode) = RunGitArgs(
+            repoRoot, ct, "push", "origin", $"{expectedSha}:{candidateRef}");
+        if (pushCode != 0)
+            return new GitPushResult(false, expectedSha, "push-failed", pushError.Trim());
+        var (remote, remoteError, remoteCode) = RunGitArgs(
+            repoRoot, ct, "ls-remote", "origin", candidateRef);
+        var resolved = remote.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Split('\t')[0].Trim())
+            .FirstOrDefault();
+        return remoteCode == 0 && string.Equals(resolved, expectedSha, StringComparison.OrdinalIgnoreCase)
+            ? new GitPushResult(true, expectedSha, "verified", null)
+            : new GitPushResult(false, expectedSha, "remote-unverified", remoteError.Trim());
+    }
+
     private MechanicalRebaseAttempt TryMechanicalRebase(
         string repoRoot,
         string sourceRef,
