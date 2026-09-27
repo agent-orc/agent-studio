@@ -351,8 +351,10 @@ public sealed class TaskServerStoreTests
         Assert.True(replacement.Lease!.Fence > claim.Lease.Fence);
     }
 
-    [Fact]
-    public async Task Three_identical_prelaunch_failures_escalate_and_stop_claiming()
+    [Theory]
+    [InlineData("runner-environment-preparation-failed")]
+    [InlineData("runner-salvage-failed")]
+    public async Task Three_identical_prelaunch_failures_escalate_and_stop_claiming(string failureCode)
     {
         using var temp = new TempDirectory();
         var store = Store(temp.Path);
@@ -366,7 +368,7 @@ public sealed class TaskServerStoreTests
             Assert.Equal("claimed", claim.Status);
             await store.ReleaseLeaseAsync(claim.Run!.RunId,
                 new LeaseReleaseRequest("runner-a", "instance-a", claim.Lease!.LeaseId,
-                    claim.Lease.Fence, "runner-environment-preparation-failed",
+                    claim.Lease.Fence, failureCode,
                     Detail: "fatal: not a git repository"), "runner-a", default);
             var current = await store.GetTaskAsync(project.ProjectId, task.TaskId, default);
             Assert.Equal(attempt == 3 ? "5e-escalated" : "2-ready", current!.State);
@@ -389,7 +391,7 @@ public sealed class TaskServerStoreTests
         Assert.Equal("claimed", retried.Status);
         await store.ReleaseLeaseAsync(retried.Run!.RunId,
             new LeaseReleaseRequest("runner-a", "instance-a", retried.Lease!.LeaseId,
-                retried.Lease.Fence, "runner-environment-preparation-failed",
+                retried.Lease.Fence, failureCode,
                 Detail: "fatal: not a git repository"), "runner-a", default);
         Assert.Equal("2-ready", (await store.GetTaskAsync(project.ProjectId, task.TaskId, default))!.State);
     }

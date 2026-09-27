@@ -187,7 +187,9 @@ test('shows the same informational candidate on the Ready card and in Execution 
   await expect(failure).toContainText('3 failures on agent-runner-01');
   await expect(failure).toContainText('48c9f04a9955a23e');
   await failure.screenshot({ path: join(RESULTS, 'runner-environment-failure-execution-hosts--mocked.png') });
+  await page.screenshot({ path: join(RESULTS, 'runner-environment-failure-execution-hosts-page--mocked.png'), fullPage: true });
   await setTheme(page, 'dark');
   await expect(failure).toBeVisible();
   await failure.screenshot({ path: join(RESULTS, 'runner-environment-failure-execution-hosts-dark--mocked.png') });
+  await page.screenshot({ path: join(RESULTS, 'runner-environment-failure-execution-hosts-page-dark--mocked.png'), fullPage: true });
 });

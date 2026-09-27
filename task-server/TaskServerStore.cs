@@ -30,7 +30,6 @@ public sealed partial class TaskServerStore
     // 20 keeps a single-use mechanical continuation delta on each task and
     // binds its claim to the fenced run for replay and restart safety.
     // 21 adds versioned engine steering receipts.
-    // 21 adds versioned engine steering receipts.
     // 22 adds transactional queued-follow-up claim, start acknowledgement,
     // rollback, and terminal supersession state.
     // 23 persists the per-card runner infrastructure failure fingerprint budget.
