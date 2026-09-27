@@ -635,6 +635,8 @@ export interface TaskInfo {
    * that were soft-deleted from the registry) render as a faint ghost chip.
    */
   tags?: string[];
+  /** Auto-tag outcome. A proposal needs operator review before its tags are attached. */
+  taggingStatus?: 'tagged' | 'tags-proposed' | null;
   /**
    * F34 cross-references to other tasks by F33 stable key. Always present
    * (backend surfaces an empty instance when absent on disk). Drives the

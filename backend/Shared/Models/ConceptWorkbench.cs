@@ -51,6 +51,7 @@ public sealed record ConceptWorkbenchDescriptor
     /// the field and the catalogue projection can surface it.
     /// </summary>
     public List<string> Tags { get; init; } = [];
+    public string? TaggingStatus { get; init; }
     public List<string> SourceTaskKeys { get; init; } = [];
     public List<ConceptImplementationTask> ImplementationTasks { get; init; } = [];
 }
