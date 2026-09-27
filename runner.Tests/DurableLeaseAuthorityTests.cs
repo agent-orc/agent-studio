@@ -39,6 +39,31 @@ public sealed class DurableLeaseAuthorityTests
     }
 
     [Fact]
+    public async Task Granted_renewal_delivers_the_fenced_stop_without_losing_authority()
+    {
+        using var temp = new TempDirectory();
+        var now = new DateTime(2026, 9, 27, 8, 0, 0, DateTimeKind.Utc);
+        var options = Options(temp.Path);
+        var lease = Lease(now, now.AddMinutes(5)) with { AttemptId = "attempt-stop", AuthorityEpoch = 3 };
+        var directive = new RunStopDirectiveDto(lease.TaskKey, "followup", now,
+            lease.AttemptId, "operator", "stop-command", lease.FencingToken);
+        using var http = new HttpClient(new StopRenewalHandler(lease, directive))
+        {
+            BaseAddress = new Uri("http://localhost"),
+        };
+        using var client = new TaskServerClient(http, options.RunnerId);
+        using var stop = new CancellationTokenSource();
+        var heartbeat = new LeaseHeartbeat(client, options, lease, _ => { });
+
+        await heartbeat.RunAsync(stop, CancellationToken.None);
+
+        Assert.True(stop.IsCancellationRequested);
+        Assert.False(heartbeat.LeaseLost);
+        Assert.Equal("stop-command", heartbeat.StopRequest?.CommandId);
+        Assert.Equal(lease.FencingToken, heartbeat.StopRequest?.FencingToken);
+    }
+
+    [Fact]
     public async Task Controlled_time_keeps_the_generation_alive_for_ten_minutes_and_stops_before_expiry()
     {
         using var temp = new TempDirectory();
@@ -325,8 +350,25 @@ public sealed class DurableLeaseAuthorityTests
                 Content = new StringContent(
                     JsonSerializer.Serialize(new RunLeaseResponse("Renewed", true, lease)),
                     Encoding.UTF8,
-                    "application/json"),
+                "application/json"),
             };
+        }
+    }
+
+    private sealed class StopRenewalHandler(
+        RunLeaseInfoDto lease,
+        RunStopDirectiveDto directive) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var payload = JsonSerializer.Serialize(new RunLeaseResponse(
+                "Renewed", true, lease, StopRequest: directive));
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(payload, Encoding.UTF8, "application/json"),
+            });
         }
     }
 
