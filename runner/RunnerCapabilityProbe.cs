@@ -37,6 +37,8 @@ internal static class RunnerCapabilityProbe
                 connectivity?.Status == TaskServerConnectivityStates.Unreachable ? "unavailable" : "ready",
                 ConnectivityDetail(connectivity)),
             Capability($"platform:{Platform()}", "platform", RuntimeInformation.OSDescription, RuntimeInformation.ProcessArchitecture.ToString()),
+            Capability($"platform:{PlatformClass()}",
+                "platform", RuntimeInformation.OSDescription, RuntimeInformation.ProcessArchitecture.ToString()),
         };
         if (options.Role == "coding")
         {
@@ -340,6 +342,11 @@ internal static class RunnerCapabilityProbe
 
     private static string Platform()
         => $"{(OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsLinux() ? "linux" : "other")}:{RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant()}";
+
+    private static string PlatformClass()
+        => OperatingSystem.IsWindows() ? "windows"
+            : OperatingSystem.IsLinux() ? "linux"
+            : OperatingSystem.IsMacOS() ? "macos" : "other";
 
     internal static bool OnPath(string executable)
     {

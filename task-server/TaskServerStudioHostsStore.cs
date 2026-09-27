@@ -219,6 +219,14 @@ public sealed partial class TaskServerStore
         var normalizedHostId = hostId.Trim();
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
+            var lifecycle = await ReadStudioHostLifecycleAsync(
+                connection, transaction, normalizedHostId, ct);
+            if (lifecycle?.PermanentlyDeletedAt is not null)
+                throw new TaskServerConflictException(
+                    "host-removed", "A permanently removed host cannot be revived.");
+            if (lifecycle?.RetiredAt is not null)
+                throw new TaskServerConflictException(
+                    "host-retired", "A retired host cannot be revived through the drain control.");
             var exists = Convert.ToInt32(
                 await ScalarAsync(
                     connection, "SELECT COUNT(*) FROM runners WHERE host_id = $host;",
@@ -287,8 +295,15 @@ public sealed partial class TaskServerStore
                     retired_reason = excluded.retired_reason,
                     version = excluded.version,
                     updated_at = excluded.updated_at;
+                INSERT INTO host_admission(host_id, operator_drain_reason, operator_drain_at, updated_at)
+                VALUES ($host, $drainReason, $now, $now)
+                ON CONFLICT(host_id) DO UPDATE SET
+                    operator_drain_reason = excluded.operator_drain_reason,
+                    operator_drain_at = excluded.operator_drain_at,
+                    updated_at = excluded.updated_at;
                 """, ct, transaction,
                 ("$host", normalizedHostId), ("$retiredAt", Iso(now)), ("$reason", reason),
+                ("$drainReason", reason ?? "host-retired"),
                 ("$deleted", existing?.PermanentlyDeletedAt is null ? null : Iso(existing.PermanentlyDeletedAt.Value)),
                 ("$version", version), ("$now", Iso(now)));
 
@@ -319,6 +334,17 @@ public sealed partial class TaskServerStore
                 return;
             }
 
+            var occupiedCoding = await CountOccupiedHostSlotsAsync(
+                connection, transaction, normalizedHostId, ct);
+            var occupiedReview = Convert.ToInt32(await ScalarAsync(connection, """
+                SELECT COUNT(*) FROM review_attempts
+                 WHERE host_id = $host AND status IN ('leased', 'process-unknown', 'reported');
+                """, ct, transaction, ("$host", normalizedHostId)) ?? 0);
+            if (occupiedCoding + occupiedReview > 0)
+                throw new TaskServerConflictException(
+                    "host-authority-active",
+                    "Host removal waits for coding and review authority to settle or expire.");
+
             var now = UtcNow;
             var retiredAt = existing?.RetiredAt ?? now;
             var retiredReason = existing?.RetiredReason ?? "permanently-deleted";
@@ -337,8 +363,17 @@ public sealed partial class TaskServerStore
                 ("$host", normalizedHostId), ("$retiredAt", Iso(retiredAt)), ("$reason", retiredReason),
                 ("$deleted", Iso(now)), ("$version", version), ("$now", Iso(now)));
 
-            // A soft, durable tombstone only: runners/runner_capabilities rows
-            // for this host are never touched, preserving audit/history.
+            await ExecuteAsync(connection, """
+                INSERT INTO host_admission(host_id, operator_drain_reason, operator_drain_at, updated_at)
+                VALUES ($host, 'host-removed', $now, $now)
+                ON CONFLICT(host_id) DO UPDATE SET
+                    operator_drain_reason = excluded.operator_drain_reason,
+                    operator_drain_at = excluded.operator_drain_at,
+                    updated_at = excluded.updated_at;
+                UPDATE runners SET status = 'retired' WHERE host_id = $host;
+                """, ct, transaction, ("$host", normalizedHostId), ("$now", Iso(now)));
+            // Preserve runner and capability rows for audit while closing new
+            // admission. The registration boundary rejects this tombstone.
             result = new StudioHostLifecycleDto(normalizedHostId, retiredAt, retiredReason, now, version, now);
             await AuditAsync(
                 connection, transaction, actorId, "studio.host.permanently-deleted", "host", normalizedHostId,
