@@ -26,7 +26,7 @@ export class OrchestratorChatWaitingComponent implements OnInit, OnDestroy {
   readonly waitingLabel = computed(() => {
     const status = this.status();
     if (!this.sending() || status?.state !== 'queued' || status.contextKey !== this.contextKey()) return null;
-    const since = new Date(status.queuedAt).toLocaleTimeString();
+    const since = new Date(status.queuedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
     return `Waiting for ${status.runnerId} since ${since}. ${status.reason ?? 'The runner has not picked up this turn.'}`;
   });
   private timer: VisibleIntervalHandle | null = null;
