@@ -317,7 +317,7 @@
         <tr><td><b>Orchestration</b></td><td>Sessions, context digests, durable decisions, budgets, policy, event cursor, Engine commands.</td><td>Executes an explicitly admitted model or tool operation when host capability is required; cannot decide the task transition.</td><td>Engine for decisions; agent for executable work.</td></tr>
         <tr><td><b>Dev seat</b></td><td>Stores only durable references or results that belong to a task.</td><td>Files below declared roots, repository reads and writes, Git hygiene, CLI discovery and quota probes, launcher and URL actions, local previews.</td><td>Workstation Operations Agent, initially the Connector's local handler set.</td></tr>
         <tr><td><b>Host control</b></td><td>Runner identity, admission, task-run capacity policy, leases, task-linked health facts.</td><td>Service drain or restart request, connectivity probes, agent upgrade preparation, host diagnostics, operational command status.</td><td>Agent-only host under a host-scoped principal.</td></tr>
-        <tr><td><b>Dossiers</b></td><td>Task relationship, decision receipt, implementation card creation, durable evidence references.</td><td>Render, capture, validate links, inspect a repository checkout, and run bounded document tooling.</td><td>Workstation or quality-host Operations Agent.</td></tr>
+        <tr><td><b>Dossiers</b></td><td>Task relationship, decision receipt, implementation card creation, durable evidence references.</td><td>Render, capture, validate links, inspect a repository checkout, and run bounded document tooling.</td><td>Runner-host Operations Agent with the required local or review capability.</td></tr>
         <tr><td><b>Audit</b></td><td>Authoritative audit for task and policy mutations; records requested operation id and accepted result digest.</td><td>Operational attempt log with actor, agent principal, permit, timestamps, output bounds, result digest, and correlation id.</td><td>Both stores, joined by immutable ids.</td></tr>
       </tbody>
     </table>
@@ -335,7 +335,7 @@
     <figure class="breakout">
       <svg viewBox="0 0 1120 760" role="img" aria-labelledby="target-title target-desc">
         <title id="target-title">Target topology with Task Server and Operations Server</title>
-        <desc id="target-desc">Several frontend products use their own browser edge or local Connector. Those edges call the Task Server for durable task state and the Operations Server for executable operations. The Task Server controls the Orchestrator Engine and issues task-linked operation permits. The Operations Server sends commands over outbound authenticated channels to workstation, runner-host, and quality-host Operations Agents.</desc>
+        <desc id="target-desc">Several frontend products use their own browser edge or local Connector. Those edges call the Task Server for durable task state and the Operations Server for executable operations. The Task Server controls the Orchestrator Engine and issues task-linked operation permits. The Operations Server sends commands over outbound authenticated channels to runner-host Operations Agents on workstations and other capable hosts.</desc>
         <defs>
           <marker id="arrow-target" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="var(--article-link)"/></marker>
           <marker id="arrow-execution" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="var(--article-good)"/></marker>
@@ -400,16 +400,16 @@
         <text class="svg-sub" x="54" y="648">policy and decision evaluation</text>
         <text class="svg-tiny" x="54" y="675">Task Server client</text>
         <rect class="svg-execution" x="352" y="594" width="220" height="106" rx="9"/>
-        <text class="svg-label" x="372" y="624">Workstation Agent</text>
+        <text class="svg-label" x="372" y="624">Runner-host Agent</text>
         <text class="svg-sub" x="372" y="648">files, Git, CLI, launchers</text>
         <text class="svg-tiny" x="372" y="675">outbound channel</text>
         <rect class="svg-execution" x="610" y="594" width="220" height="106" rx="9"/>
         <text class="svg-label" x="630" y="624">Runner-host Agent</text>
-        <text class="svg-sub" x="630" y="648">fleet and host operations</text>
+        <text class="svg-sub" x="630" y="648">coding and host operations</text>
         <text class="svg-tiny" x="630" y="675">outbound channel</text>
         <rect class="svg-execution" x="868" y="594" width="218" height="106" rx="9"/>
-        <text class="svg-label" x="888" y="624">Quality-host Agent</text>
-        <text class="svg-sub" x="888" y="648">review, render, capture</text>
+        <text class="svg-label" x="888" y="624">Runner-host Agent</text>
+        <text class="svg-sub" x="888" y="648">review, render, capture steps</text>
         <text class="svg-tiny" x="888" y="675">outbound channel</text>
 
         <path class="svg-flow-target" d="M230 512 V554 H174 V594"/>
@@ -482,7 +482,7 @@
       <tbody>
         <tr><td><b>Workstation</b><br><code>workstation</code></td><td>Web, local Connector, Task Server, Operations Server, Engine, and workstation Operations Agent on one developer machine. The Connector can initially host the local agent adapter in-process.</td><td>Browser and Connector remain loopback. Central services may use loopback or a private process boundary. No LAN listener.</td><td>Local development, a single operator, and Windows-integrated Git, CLI and launcher operations.</td></tr>
         <tr><td><b>One-box Docker</b><br><code>one-box</code></td><td>Web edge, studio-bff, Task Server, Operations Server, Engine, and a container-capable Operations Agent in one Compose project. Host-native operations use a separately enrolled host agent instead of a Docker socket.</td><td>Only the HTTPS edge is published to the LAN. Task and Operations services remain private to the Compose network. LAN exposure is explicit and uses an Origin allowlist.</td><td><b>Recommended standard product deployment</b> after full route and security parity. It gives AGT-2736 and AGT-2738 one reproducible artifact family.</td></tr>
-        <tr><td><b>Distributed</b><br><code>distributed</code></td><td>Task Server, Operations Server and Engine may share <code>task-server-01</code> as separate containers initially; Runner and quality agents stay on separate hosts. Local Studio uses its loopback Connector. Other frontends use their own edge.</td><td>Private TLS on WireGuard. Agents connect outbound. Public interface exposes neither server. A compromised Runner remains outside the control-plane host boundary.</td><td>Phase B, agent-only hosts, independent frontend products, and later fleet growth.</td></tr>
+        <tr><td><b>Distributed</b><br><code>distributed</code></td><td>Task Server, Operations Server and Engine may share <code>task-server-01</code> as separate containers initially; Runner hosts may keep coding and review slots on separate machines. Local Studio uses its loopback Connector. Other frontends use their own edge.</td><td>Private TLS on WireGuard. Agents connect outbound. Public interface exposes neither server. A compromised Runner remains outside the control-plane host boundary.</td><td>Phase B, agent-only hosts, independent frontend products, and later fleet growth.</td></tr>
       </tbody>
     </table>
     <div class="callout" data-tone="warn">
