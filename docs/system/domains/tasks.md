@@ -1109,6 +1109,16 @@ path.
   endpoint alongside each repository's index age, with a warning when
   `tasks/grouped` p95 exceeds 1 s or total spawns exceed 20/min.
 
+Task detail has a separate opt-in diagnostic trace. `X-Task-Switch-Trace: 1`
+enables bounded stage timing for `GET /api/tasks/{jobId}` only. Canonical UUID
+`X-Task-Request-Id` and `X-Task-Switch-Id` response headers correlate a browser
+switch with its detail request. One `task-switch-trace` JSON log record is
+emitted after the response write, with exclusive stage timings, written bytes,
+outcome, request Git spawns and Git timeouts. It contains no task content or
+filesystem paths. The existing `task-op` Server-Timing duration and background
+`git-index-run` rollups retain their distinct boundaries. The capture and
+offline reducer protocol is in [measurement.md](../../task-switch-performance/measurement.md).
+
 ## Bounded task core read (AGT-2953)
 
 `GET /api/tasks/{jobId}/core?project=PROJ-002` is an additive task-switch
