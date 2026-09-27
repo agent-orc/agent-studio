@@ -2,10 +2,12 @@ import { provideZonelessChangeDetection } from '@angular/core';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
 import { provideRouter } from '@angular/router';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { OrchestratorContextDigest } from '../../models/orchestrator.model';
 import { OrchestratorSideSheetComponent } from './orchestrator-side-sheet.component';
+import { OrchestratorChatWaitingComponent } from '../orchestrator-chat-waiting/orchestrator-chat-waiting.component';
 
 describe('OrchestratorSideSheetComponent · ORCH-1 context digest', () => {
   beforeEach(() => sessionStorage.removeItem('atp.studio.orchestratorOpen.v1'));
@@ -39,6 +41,34 @@ describe('OrchestratorSideSheetComponent · ORCH-1 context digest', () => {
     expect(request.request.method).toBe('GET');
     return request;
   }
+
+  it('shows the assigned runner and queued time while a remote turn waits', async () => {
+    const fixture = await makeFixture();
+    const component = fixture.componentInstance;
+    const http = TestBed.inject(HttpTestingController);
+    component.activeProject.set('Agent Studio');
+    component.chatActivity.start('project:Agent Studio');
+    fixture.detectChanges();
+    expectSessionsRequest(http).flush({ sessions: [] });
+    const waitingComponent = fixture.debugElement.query(By.directive(OrchestratorChatWaitingComponent))
+      .componentInstance as OrchestratorChatWaitingComponent;
+    waitingComponent.status.set({
+      contextKey: 'project:Agent Studio', state: 'queued', runnerId: 'agent-runner-01',
+      queuedAt: '2026-09-26T07:18:40Z', reason: 'Provider unavailable',
+    });
+    fixture.detectChanges();
+    const waiting = fixture.nativeElement.querySelector('[data-testid="orchestrator-chat-waiting"]');
+    expect(waiting?.textContent).toContain('agent-runner-01');
+    expect(waiting?.textContent).toContain('Provider unavailable');
+    expect(waiting?.textContent).toContain('since');
+    waitingComponent.status.set({
+      contextKey: 'project:Agent Studio', state: 'running', runnerId: 'agent-runner-01',
+      queuedAt: '2026-09-26T07:18:40Z', reason: null,
+    });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="orchestrator-chat-waiting"]')).toBeNull();
+    fixture.destroy();
+  });
 
   it('uses the visible Refresh action to force context, then reconcile chat and sessions', async () => {
     const fixture = await makeFixture();

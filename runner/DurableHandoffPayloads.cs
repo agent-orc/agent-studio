@@ -16,7 +16,8 @@ public sealed record DurableCompletionPayload(
     string? SalvageCommitSha = null,
     // AGT-2820: the incident lines this completion carries. Journalled with the
     // payload so a replayed or recovered outbox item reports the same incident.
-    IReadOnlyList<string>? GateItems = null);
+    IReadOnlyList<string>? GateItems = null,
+    AgentStudio.TaskServer.Contracts.SessionContinuationLedgerEntry? SessionContinuation = null);
 
 public sealed record DurableRunContextPayload(
     string RepositoryId,

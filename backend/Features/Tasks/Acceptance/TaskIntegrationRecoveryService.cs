@@ -1,3 +1,6 @@
+using AgentStudio.Runner;
+using AgentStudio.TaskServer.Contracts;
+
 namespace AgentStudio.Tasks;
 
 public sealed record TaskIntegrationRecoveryResult(
@@ -95,6 +98,15 @@ public sealed class TaskIntegrationRecoveryService
                 internalError: true);
         }
 
+        var conflict = status.Failure?.ConflictReport;
+        SessionContinuationLedgerStore.SaveDelta(current.FolderPath, new MechanicalRoundDelta(
+            conflict?.IntegrationTipSha ?? string.Empty,
+            subject.ResultRef,
+            subject.ResultSha,
+            conflict?.ConflictedFiles ?? [],
+            prompt,
+            "Verify the updated delivery with the relevant focused checks, then run the required deterministic delivery gate."));
+
         var position = _states.PromoteToReadyTop(
             current.Id,
             current.WatchPath,
@@ -160,18 +172,10 @@ public sealed class TaskIntegrationRecoveryService
         string integrationBranch,
         IntegrationConflictReport? conflictReport = null)
     {
-        var conflictedFiles = conflictReport?.ConflictedFiles.Count > 0
-            ? string.Join(", ", conflictReport.ConflictedFiles)
-            : "none recorded";
-        return "## STEER\n\n"
-            + $"Integration recovery for {job.Key ?? job.Id}. "
-            + $"Resume the existing delivery branch '{subject.ResultRef}' at the fenced result {subject.ResultSha}. "
-            + $"Fetch the latest 'origin/{integrationBranch}' and produce a delivery state that integrates cleanly. "
-            + $"Prefer merging 'origin/{integrationBranch}' into the existing delivery branch and resolving conflicts there over rewriting delivery history. "
-            + $"Conflicted files from the integration report: {conflictedFiles}. "
-            + "If rewriting is unavoidable, retain a one-to-one delivery commit mapping: do not squash, split, drop, or combine delivery commits. "
-            + "Do not redo the feature work. Run the relevant tests and finish with the normal task terminal sentinel. "
-            + "Do not move or push the integration branch ref; publish only the updated delivery branch for a new delivery gate and review round.";
+        return IntegrationContinuationPrompt.Build(
+            job.Key ?? job.Id, subject.ResultRef, subject.ResultSha,
+            integrationBranch, "merge-into-develop", "The reviewed delivery did not integrate.",
+            conflictReport);
     }
 
     private static TaskIntegrationRecoveryResult Failed(

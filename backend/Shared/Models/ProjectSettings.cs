@@ -2,6 +2,8 @@ namespace AgentStudio.Shared;
 
 public record ProjectSettings
 {
+    /// <summary>Default-on creation classification. Stored here until project definition v2 accepts tagging.autoTag.</summary>
+    public bool AutoTag { get; init; } = true;
     /// <summary>
     /// Maximum raw bytes retained for one remote-run result artifact. The
     /// server further clamps this against its advertised request-body budget so
@@ -31,6 +33,9 @@ public record ProjectSettings
     /// Orphan working-tree commits still require operator confirmation.
     /// </summary>
     public bool CrashRecoveryEnabled { get; init; } = true;
+
+    /// <summary>Allow bounded automatic failure continuations for this project's integration and review gates.</summary>
+    public bool AutomaticFailureContinuationsEnabled { get; init; } = true;
 
     /// <summary>
     /// Controls when the platform pushes runner-owned commits. Default is
@@ -573,6 +578,8 @@ public record PipelineStepCondition
 /// </summary>
 public record PipelineStepSetting
 {
+    /// <summary>Built-in prompt-enrichment block ids explicitly adopted by this project.</summary>
+    public List<string>? EnrichmentBlockIds { get; init; }
     /// <summary>
     /// Optional bounded iteration count for steps that own an iterative loop.
     /// Today this is consumed by the UI-pipeline routing step. Null preserves

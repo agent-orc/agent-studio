@@ -635,6 +635,8 @@ export interface TaskInfo {
    * that were soft-deleted from the registry) render as a faint ghost chip.
    */
   tags?: string[];
+  /** Auto-tag outcome. A proposal needs operator review before its tags are attached. */
+  taggingStatus?: 'tagged' | 'tags-proposed' | null;
   /**
    * F34 cross-references to other tasks by F33 stable key. Always present
    * (backend surfaces an empty instance when absent on disk). Drives the
@@ -1118,6 +1120,7 @@ export interface PromptEnrichmentCandidate {
   signals: string[];
   decision: 'appended' | 'rejected-budget' | 'rejected-project-disabled' | string;
   reason: string;
+  missingPath?: string | null;
   estimatedTokens: number;
 }
 
@@ -1125,6 +1128,9 @@ export interface PromptEnrichmentBlock {
   id: string;
   title: string;
   source: string;
+  project?: string;
+  repository?: string;
+  sourceVerification?: 'repository' | 'pipeline-explicit' | string;
   revision: string;
   digestSha256: string;
   tier: string;
@@ -2000,6 +2006,7 @@ export interface ProjectSnapshot {
   settings: {
     autoCommit: boolean;
     crashRecoveryEnabled: boolean;
+    automaticFailureContinuationsEnabled?: boolean;
     autoPushStrategy: 'never' | 'on-completed' | 'always-immediate';
     runnerMode: string | null;
     orchestratorModel: string | null;

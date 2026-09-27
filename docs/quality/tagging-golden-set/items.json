@@ -1,0 +1,1138 @@
+{
+  "status": "proposed",
+  "approvedBy": null,
+  "approvedAt": null,
+  "sampledAt": "2026-09-25",
+  "project": "Agent Studio",
+  "items": [
+    {
+      "kind": "card",
+      "id": "project-execution-model-separate-pickup-mode-automanualpaused-from-execution-location-localrunner-id",
+      "title": "Project execution model: separate pickup mode (auto/manual/paused) from execution location (local/runner-id)",
+      "text": "## Operator-Befund (Robert, 24.07.): \"auto-continuous sollte nicht = lokaler Runner sein.\"\nHeute quetscht das executionRunner-Feld ZWEI Dimensionen in einen Wert: Pickup-MODUS (auto-continuous | manual | paused) und Ausfuehrungs-ORT (implizit lokal | agent-runner-01). Folge: \"auto-continuous\" bedeutet versteckt \"lokal\"; ein Projekt kann nicht \"automatisch UND remote\" ohne Runner-Zuweisung ausdruecken, und Umzuege (heute: TE/AIP/AOW -> agent-runner-01) aendern versehentlich auch den Modus-Charakter.\n\n## Auftrag\n(1) DATENMODELL: zwei Felder - pickupMode: auto|manual|paused und executionLocation: local|<runner-id> (Default-Aufloesung dokumentieren). MIGRATION der bestehenden project-settings (auto-continuous -> auto+local; <runner-id> -> auto+<runner-id>; manual/paused -> Modus, Ort bleibt) - rueckwaertskompatibel lesen, alte Werte beim Schreiben migrieren, keine Bruchkante fuer bestehende Configs/Tests.\n(2) API: bestehende PUT-Routen (execution-runner) semantisch sauber abbilden; neue Felder in GET /api/projects/settings.\n(3) UI (Projekt-Settings, Deck-Ausschnitt): zwei getrennte Controls (Modus-Toggle + Ort-Auswahl aus Runner-Registry), Anzeige folgt dem Settings-Layout-Standard.\n(4) Runner-Claim-Logik: Ort entscheidet WER claimt, Modus entscheidet OB automatisch angeboten wird - Tests fuer alle Kombinationen inkl. paused+remote.\nTests + Doku; dotnet-Gate-Filter; NUR im Task-Branch committen/pushen.\n\n---\n_[operator-restored 24.07.: prompt.md fehlte durch Anlage-Feldfehler (prompt statt promptMarkdown); Text aus Session-Transcript rekonstruiert]_\n\n## Steer-Runde (Operator, Nacht 25.07.)\nDeine letzte Runde wurde durch einen SENTINEL-FEHLALARM beendet: der Scanner hat ein [[TASK_BLOCKED]]-Literal in deinem Code-Diff als echtes Sentinel gewertet. Es gab kein Hindernis.\nAuf Branch runner/agent-runner-01/AGT-2295 einfach weiterarbeiten und die Aufgabe zu Ende bringen. Sentinel-Literale in Code/Diffs kuenftig maskieren (z.B. mit Unterstrich [[TASK_BLO_CKED]] im Beispieltext).",
+      "tags": [
+        "execution-and-runner"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-07-24T11:42:52.6684508Z",
+      "taskKey": "AGT-2295",
+      "rationale": "The card describes pickup, CLI execution, runner hosts, or worktree isolation; its title is “Project execution model: separate pickup mode (auto/manual/paused) from execution location (local/runner-id)”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "epic-worktree-branch-verarbeitung-isolation-scoped-commit-recycling-lanes-multi-system-spaeter",
+      "title": "EPIC: Runner-/Pipeline-Verarbeitung & Zuverlaessigkeit - Worktree-Isolation, scoped Commit, Recycling, Lanes, Pickup-Atomaritaet, Reissue, Review-Qualitaet (Multi-System spaeter)",
+      "text": "Dachepic fuer das Worktree-/Branch-Verarbeitungsmodell. Detaillierte Spec: concept-worktree-branch-distribution-lanes.html + Analysis-Report 'Konzept: Worktree-/Branch-Modell'. Angepasst nach kritischem Pruefstand: ZUERST stabilisieren, dann single-machine bauen (Recycling, scoped commit), Lane nur als BADGE (kein Key-Rename ausser nach SSOT), Multi-System (Lease/verteilte Merge-Queue) HINTEN dran.",
+      "tags": [
+        "execution-and-runner"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-06-08T20:42:02.7421104Z",
+      "taskKey": "ASS-1661",
+      "rationale": "The card describes pickup, CLI execution, runner hosts, or worktree isolation; its title is “EPIC: Runner-/Pipeline-Verarbeitung & Zuverlaessigkeit - Worktree-Isolation, scoped Commit, Recycling, Lanes, Pickup-Atomarit”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "host-cli-lifecycle-versions-in-execution-hosts-minimum-cli-version-per-model-host-owned-upgrade-with-drain-drift-alarm",
+      "title": "Host CLI lifecycle: versions in Execution Hosts, minimum CLI version per model, host-owned upgrade with drain, drift alarm",
+      "text": "# Host CLI lifecycle: versions visible, minimum version per model, host-owned upgrade with drain, drift alarm\n\nOperator decision 2026-09-12. Driving case: on 2026-09-12 the fleet could not use gpt-6-astra because agent-runner-01 runs codex-cli 0.144.1 (astra needs 0.153 or newer, current 0.154.0) and claude-code 2.1.202 (current 2.1.269). The product showed the model as \"Not offered by codex-cli 0.144.1\" (AGT-2707) but offered no way to fix it and did not say why; the operator upgraded by hand as root over SSH. A third party installing the product hits the same wall at the first provider model change. Today the agent CLIs are installed by docs/operations/setup/linux-runner-host.md and scripts/remote-runner-onboard.sh with an unpinned `npm i -g`, and the runner's sudo allowlist (agent-runner-deploy) has no upgrade command.\n\n## Deliver\n\n1. **Versions in the capability snapshot.** Every host reports the installed CLIs with name, version, install path and the timestamp of the check; Execution Hosts shows them per host with the age of the check. The remote runner and the review daemon collect this the same way.\n2. **Minimum CLI version per model.** The model registry (CliModels.cs, Gpt6Astra and friends) carries the minimum CLI version that offers the model. When a host's CLI is older, the catalog shows \"needs codex-cli ≥ 0.153 (host has 0.144.1)\" instead of only \"not offered\", the Ready-card wait reason says the same, and the orchestrator feed gets one line per host and model (deduplicated).\n3. **Host-owned upgrade with drain.** Action \"Update CLIs\" in Execution Hosts per host: the host drains (no new claims; waits until running runs and reviews finish, with a visible countdown and a cancel), upgrades the two packages through the existing agent-runner-deploy sudo allowlist (a new allowlisted subcommand that upgrades exactly @openai/codex and @anthropic-ai/claude-code to a version the Task Server names, never arbitrary npm), runs the CLI probes (version, login status, model list), records a host event, and resumes claims. Failure leaves the previous version in place (npm install of a pinned version into a staging prefix, swap on success).\n4. **Version policy.** The Task Server holds the target versions (settings with defaults from the release); a host that is below target shows a drift chip in Execution Hosts and one alarm in the feed after 24 hours; the installe",
+      "tags": [
+        "execution-and-runner"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-09-12T08:28:21.0927665Z",
+      "taskKey": "AGT-2778",
+      "rationale": "The card describes pickup, CLI execution, runner hosts, or worktree isolation; its title is “Host CLI lifecycle: versions in Execution Hosts, minimum CLI version per model, host-owned upgrade with drain, drift alarm”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "a-coding-run-can-saturate-the-shared-runner-host-the-runner-must-bound-what-one-run-may-consume",
+      "title": "A coding run can saturate the shared runner host; the runner must bound what one run may consume",
+      "text": "# A coding run can saturate the shared runner host; the runner must bound what one run may consume\n\n## Finding (17.09.2026, agent-runner-01 = 12 cores shared by 2 coding slots and 2 review slots, operator evidence)\n\nThree times today an Opus coding run, asked to reproduce a flaky test \"under contention\", started CPU busy loops on the host and drove the load average far past the core count while other work ran:\n\n| Time | Card | What ran | Load (1 min) | Collateral |\n| --- | --- | --- | --- | --- |\n| 14:09-14:27 | AGT-2859 | `/tmp/stress.sh 24` = 24 `while :; do :; done` loops | 76 | AGT-2858 review suite and AGT-2860 coding run slowed; review flaked |\n| 21:30-21:35 | AGT-2864 | 49 `bash -c while :; do :; done` | 35 | develop->main promotion gate running in parallel |\n| 21:45-22:05 | AGT-2864 | 24, then 104 busy loops | 41 | host otherwise idle |\n\nEach time the operator killed the loops by hand (`pkill -f 'while :[;] do :[;] done'`); the runs continued unharmed and delivered. Nothing in the runner limits a detached coding worker's process tree: no CPU quota, no nice level, no child-process count, no load-based throttle for the run itself (the load-aware admission in `RUNNER_CLAIM_MAX_LOAD_PER_CORE` only delays new claims). A single run can therefore degrade every other slot on the host and, through the review executor, turn healthy reviews into timing failures.\n\n## Deliver\n\n1. Resource envelope per detached worker: run each coding worker (and each review worker) in its own cgroup with a CPU weight/quota derived from the slot count (for example `cpu.max` = `cores / (codingSlots + reviewSlots)` with burst, and `cpu.weight` so reviews are not starved by coding), plus a `pids.max` cap sized for a build/test tree (dotnet + node + shells, a few hundred), so a runaway agent cannot fork hundreds of loops. Use systemd transient scopes (`systemd-run --scope -p CPUQuota=... -p TasksMax=...`) or the cgroup v2 API directly; document the chosen mechanism and how it survives the KillMode=process / PrivateTmp=no decisions of AGT-2750.\n2. Visibility: the runner logs the worker's CPU seconds and peak tasks at the end of a run and reports them in the delivery (`results/status.md` block or the run summary), so a card that needed 2,000 CPU seconds is distinguishable from one that spun.\n3. Load-aware backpressure for a running run is out of scope; the envelope is the mechanism. But",
+      "tags": [
+        "execution-and-runner"
+      ],
+      "state": "6-completed",
+      "createdAt": "2026-09-17T21:26:19.3603702Z",
+      "taskKey": "AGT-2866",
+      "rationale": "The card describes pickup, CLI execution, runner hosts, or worktree isolation; its title is “A coding run can saturate the shared runner host; the runner must bound what one run may consume”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "a-provider-rejection-of-the-model-request-is-not-a-cli-crash-classify-it-fall-back-to-the-declared-sibling-model-and-tell-the-operator",
+      "title": "A provider rejection of the model request is not a CLI crash: classify it, fall back to the declared sibling model, and tell the operator",
+      "text": "# A provider rejection of the model request is not a CLI crash: classify it, fall back to the declared sibling model, and tell the operator\n\n## Finding (18.09.2026 12:04, agent-runner-01, AGT-2806 on codex / gpt-6-astra, operator evidence)\n\nFourteen minutes into a healthy run (39 tool calls, tests running) the provider refused the next model request and the turn failed. From `tasks/002/AGT-2806/logs/cli-output.log`:\n\n```\n[10:04:11.279] [stdout] {\"type\":\"error\",\"message\":\"{ \\\"type\\\": \\\"error\\\", \\\"error\\\": { \\\"type\\\": \\\"invalid_request_error\\\", \\\"code\\\": \\\"unsupported_parameter\\\", \\\"message\\\": \\\"The access_programs parameter is not enabled for this organization.\\\", \\\"param\\\": \\\"access_programs.cyber\\\" }, \\\"status\\\": 400 }\"}\n[10:04:11.279] [stdout] {\"type\":\"turn.failed\",\"error\":{...same...}}\n[10:04:12.957] [system] [runner] provider-auth state=retrying provider=codex; last-good capability retained\n[10:04:12.972] [system] [runner] CLI exited 1; launchFailed=False typedOutcome=CliCrash recovery=TerminateHonestly classifier=execution-outcome/v1 legacyOutcome=Unknown\n```\n\nWhat the pipeline did: outcome `Unknown`, salvage pushed, card back to `2-ready` with the same model, i.e. it would have re-run on gpt-6-astra and could hit the same refusal again at any point. The journal additionally logged `runner-provider-auth-probe-degraded binary=codex outcome=transient ... Transient auth error` for it, which it is not: the login was fine, the organisation is not enrolled in the access program this model asked for on that request. The operator moved the card to gpt-5.6-sol by hand; it then finished in six minutes on the salvaged state. Three other gpt-6-astra runs the same hour did not hit the refusal, so it depends on the conversation content, not on the card.\n\n## Deliver\n\n1. Typed outcome: a provider `invalid_request_error` / `unsupported_parameter` / model-or-feature-not-enabled answer (HTTP 400/403/404 on the model request, for any provider) is classified as `ProviderRejectedRequest` with the provider's `code`, `param` and message, not as `CliCrash` and not as a transient auth error. It does not touch the provider-auth capability state.\n2. Model fallback for the continuation: the routing policy declares a sibling for such refusals per model (for `gpt-6-astra`: `gpt-5.6-sol` at the same thinking level; for Claude models the declared Anthropic sibling; from the Token Econo",
+      "tags": [
+        "token-economy",
+        "reliability"
+      ],
+      "state": "6-completed",
+      "createdAt": "2026-09-18T10:35:44.8736572Z",
+      "taskKey": "AGT-2874",
+      "rationale": "The card describes model routing, quota, token usage, or cost; its title is “A provider rejection of the model request is not a CLI crash: classify it, fall back to the declared sibling model, and tell ”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "concept-the-task-server-as-the-bus-between-the-orchestrator-engine-and-the-runner-and-review-daemons-make-agt-w49-explicit-many-runner-host-agents-no-separate-workstation-agent-quality-as-pipeline-steps",
+      "title": "Concept: the Task Server as the bus between the orchestrator engine and the runner and review daemons (make AGT-W49 explicit; many runner-host agents, no separate workstation agent, quality as pipeline steps)",
+      "text": "# Concept: the Task Server as the bus between the orchestrator engine and the runner and review daemons (make AGT-W49 explicit)\n\n## Operator direction (2026-09-25, reading AGT-W49)\n\n\"The orchestrator engine should steer the runner daemon and the review daemon. According to the diagram this happens through the Task Server: the task is updated there. The Task Server becomes a bus system. The orchestrator reads on this bus, looks at everything and gives feedback there. The daemons check for new work and process tasks. Good concept, please make it explicit.\"\n\n## Deliverable\n\nExtend the Dossier AGT-W49 (`docs/operations/operations-server-backchannel`) or, if it is cleaner, add a sibling Dossier that AGT-W49 and AGT-W57 (delivery chain) link to, so that the bus model is explicit and verifiable against the code on `develop`:\n\n1. The bus, precisely: which persisted task facts and events are the messages (task.json fields, lane transitions, references, attempt authority records, review attempts and settlements, run leases, artifact ingests, the timeline), who writes each of them (orchestrator engine, Task Server itself, runner daemon, review daemon, operator), who reads them, and with which guarantee (fencing tokens, authority epochs, leases, idempotent replays). Name the concrete types and endpoints from the code (`AttemptAuthorityService`, `RemoteDeliverySettlementStore`, `V1ReviewPlaneEndpoints`, the runner claim endpoints, `RemoteDeliveryIntegration`, `AutoReviewDeliveryResumeService`), not paraphrases.\n2. The steering loop: how the orchestrator engine steers the daemons only by writing to the bus (lane moves, model and prompt changes, continue rounds, holds and parks, review requests) and never by talking to a daemon directly; how a daemon discovers work (claims, polling cadence, capability advertisement, slot admission) and reports back (heartbeats, ingests, outcomes, salvage); where the feedback the operator direction asks for appears (the timeline, the card, the operator feed) and what is missing today.\n3. Diagrams in the house style (hand-drawn SVG, `Abb. N` captions): the bus with its message classes; one sequence for a coding card from Ready to integrated; one sequence for a review attempt; one for an operator continue round; one for an outage and the replay (use the 2026-09-24/25 tunnel outage as the worked example: heartbeat loss, lease expiry, quarantin",
+      "tags": [
+        "execution-and-runner",
+        "architecture"
+      ],
+      "state": "2-ready",
+      "createdAt": "2026-09-25T06:13:28.3375086Z",
+      "taskKey": "AGT-2905",
+      "rationale": "The card describes pickup, CLI execution, runner hosts, or worktree isolation; its title is “Concept: the Task Server as the bus between the orchestrator engine and the runner and review daemons (make AGT-W49 explicit;”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "a-task-server-restart-during-the-pre-develop-gate-leaves-the-un-gated-merge-on-the-integration-branch-and-marks-the-card-integrated",
+      "title": "A Task Server restart during the pre-develop gate leaves the un-gated merge on the integration branch and marks the card integrated",
+      "text": "# A Task Server restart during the pre-develop gate leaves the un-gated merge on the integration branch and marks the card integrated\n\n## Symptom (16.09.2026, Stable v0.4.0 rollout, three restarts at 13:07, 13:17 and 13:47)\nEach restart hit a running pre-develop build gate (AGT-2703 at 13:06, AGT-2816 at 13:18, AGT-2794 at 13:33). The gate process died with the backend, no rollback ran, and the merge commit stayed on the integration branch: the Studio-owned integration worktree (`%TEMP%\\agent-studio-integration\\agent-taskboard-dev-7cad6883`) sits at `db4afad43` = origin/develop 3d4168c80 + `831aff3cf` (AGT-2703, never gated) + `0af3306bc` (AGT-2816, never gated) + `db4afad43` (AGT-2843, gate running). The next integrations were merged on top of the un-gated ones, so a later gate tests and, on success, pushes all of them together; on failure the rollback returns only to the previous un-gated tip. Meanwhile AGT-2703 and AGT-2816 show `integration.status=integrated, detail=anchor-ancestor` on the card although neither commit is on origin/develop, and AGT-2794 shows `pending` with nothing scheduled to resume its integration.\n\n## Expected\n- A gate that does not reach a verdict (process gone, restart, timeout of the host) is recorded as an interrupted run, and startup recovery either rolls the integration branch back to the pre-merge tip or re-runs the gate for that exact merge before anything else is merged on top. Un-gated merges never accumulate on the integration branch.\n- `integration.status=integrated` requires the delivery to be reachable from the pushed remote integration branch (origin/develop); a delivery reachable only from a local or worktree branch is `merged-locally` (or `pending`) with that detail, and the card timeline says which.\n- A card whose integration was interrupted is re-queued for integration automatically after restart (sequence resumes), without a new remote review when the review verdict is still valid for the same SHA.\n- Tests: restart harness in backend.Tests that kills a fake gate mid-run, restarts the runner service and asserts rollback-or-resume plus the projection; projection test for local-only ancestry. Related: AGT-2780 (restart contract), AGT-2824 (integration retry without new review), AGT-2832 (integration worktree), AGT-2838 (stale integration state).\n\n## Working rules\n- Base on current origin/develop. Keep the change focus",
+      "tags": [
+        "gates-and-review"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-09-16T11:53:38.5957075Z",
+      "taskKey": "AGT-2849",
+      "rationale": "The card describes review evidence, acceptance, or validation gates; its title is “A Task Server restart during the pre-develop gate leaves the un-gated merge on the integration branch and marks the card inte”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "completed-push-backstop-push-only-the-integrated-result-stop-retrying-superseded-run-commits",
+      "title": "Completed-push backstop: push only the integrated result, stop retrying superseded run commits",
+      "text": "# Completed-push backstop: push only the integrated result, stop retrying superseded run commits\n\n## Context (operator finding 2026-09-07)\n\n- `CompletedPushBackstopHostedService` runs every 15 minutes over every completed card and calls `PushCompletedJobCommitsAsync`, which pushes each entry of `task.json commits[]` to the project's main branch (`GitService.PushShaAsync`).\n- QS-85 (Quality Studio) completed with 42 attributed commits from 73 fences; only the two commits of the final, integrated fence are ancestors of `origin/main`. The other 40 are superseded intermediate commits. The backstop pushes all 40 every cycle, GitHub rejects each as non-fast-forward, and the backend logs `Auto-push skipped … remote-rejected … ! [rejected] <sha> -> main (non-fast-forward)`: 4,009 such lines and as many GitHub pushes on 2026-09-07 alone, plus one `managed-repo-push-failure` bus event per attempt. The card's integration is `integrated` (anchor-ancestor), so nothing is missing; the loop is pure waste and hides real push failures in the log.\n\n## Changes\n\n1. Push selection: for a completed card the backstop pushes only commits that are reachable from the card's integrated result (`integration.sha` or the reviewed result SHA) and not yet on the remote main; commits that are neither ancestors of the integrated result nor of the remote main are marked `superseded` in the commit record and skipped permanently.\n2. Backoff and terminal state: a commit rejected as non-fast-forward is retried with exponential backoff (15 min, 1 h, 6 h, 24 h) and after the fourth rejection recorded as `push-rejected` with the git error; the backstop no longer touches it. The card shows the state in the integration panel, and a single bus event is emitted when the state changes, not per attempt.\n3. Skip integrated cards: when `integration.status == integrated` and the integrated SHA is on the remote main, the backstop skips the card entirely.\n4. Log discipline: one summary line per backstop cycle (cards scanned, pushed, skipped-superseded, rejected) instead of a warning per commit.\n5. Tests: unit tests for the selection rule (integrated ancestor pushed, superseded skipped, remote-rejected backoff and terminal state), a backstop cycle test with a fake git service that counts push calls (one push per pending commit, zero for an integrated card), and a log assertion for the summary line.\n\n## Acceptan",
+      "tags": [
+        "delivery-chain",
+        "reliability"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-09-07T18:33:36.241318Z",
+      "taskKey": "AGT-2761",
+      "rationale": "The card describes integration, branches, commits, or promotion to the target branch; its title is “Completed-push backstop: push only the integrated result, stop retrying superseded run commits”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "feature-commit-diff-default-aggregated-filter-when-multiple-commits",
+      "title": "FEATURE: Commit-Diff - Default alle Commits aggregiert; Commit-Filter nur wenn >1 Commit",
+      "text": "## Wunsch\nIn der Commit-/Diff-Ansicht (Code Review / Files-Diff) eines Tasks:\n1. **Default = ALLE Commits aggregiert** anzeigen (kombinierter Diff ueber alle Commits des Tasks).\n2. **Commit-Filter** ist verfuegbar **nur wenn es mehr als einen Commit gibt** - damit kann man die Ansicht auf einen **einzelnen Commit** einschraenken.\n3. Bei genau **1 Commit**: kein Filter (nicht noetig).\n\n## Anforderung\n- Aggregierter All-Commits-Diff als Standardansicht.\n- Filter/Selector (z.B. \"Alle\" + je Commit) nur bei >1 Commit einblenden; \"Alle\" ist default selektiert.\n\n## Bezug\nCode-Review-/Commit-Diff-Ansicht im Job-Details. Verwandt: ASS-761/762 (manuelle Commit-Overrides entfernt). Styling ueber zentrale Tokens (ASS-737).\n\n\n---\n\n## Continuous Session Note - 2026-06-05 09:38\n\nDein vorheriger codex-Run endete als silent finish mit OFFENEN Punkten (git-pane.component nicht fertig). Setze JETZT vollstaendig um:\n- Default: ALLE Commits aggregiert anzeigen (der Diff zeigt per Default die ueber alle Task-Commits aggregierten Datei-Aenderungen).\n- Commit-Filter nur anzeigen, wenn es >1 Commit gibt; bei genau 1 Commit kein Filter.\n- Frontend `git-pane.component.ts/.html` + `task.service.ts` (default selected = null/\"all\") an die backend-Aggregate-Endpoints anbinden, die du schon begonnen hast.\n- Tests/Specs angleichen.\nVISUAL EVIDENCE PFLICHT: Screenshot, der den aggregierten \"alle Commits\"-Default zeigt (bei einem Task mit mehreren Commits). `dotnet build` + `ng build` gruen. Erst dann [[TASK_DONE]], sonst [[TASK_BLOCKED:<grund>]].",
+      "tags": [
+        "delivery-chain"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-06-04T22:42:45.7712037Z",
+      "taskKey": "ASS-980",
+      "rationale": "The card describes integration, branches, commits, or promotion to the target branch; its title is “FEATURE: Commit-Diff - Default alle Commits aggregiert; Commit-Filter nur wenn >1 Commit”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "branch-lifecycle-reclaim-a-tasks-remote-branches-once-its-delivery-is-integrated-and-promoted",
+      "title": "Branch lifecycle: reclaim a task's remote branches once its delivery is integrated and promoted",
+      "text": "# Branch lifecycle: reclaim a task's remote branches once its delivery is integrated and promoted\n\n## Context (2026-09-13)\n\nThe org repos carry thousands of remote branches that nothing deletes:\n\n| Repo | Remote branches | `agent-studio/results` | `agent-studio/salvage` | `agent-studio/quarantine` | `runner/*` | `task/*` |\n|---|---|---|---|---|---|---|\n| agent-studio | 2,410 | 1,125 | 982 | 160 | 119 | ~20 |\n| quality-studio | 2,579 | 1,212 | 1,207 | 144 | 2 | ~10 |\n| token-economy | 117 | 52 | 50 | 9 | 2 | 2 |\n\nOn agent-studio 1,024 of these refs already have their tip contained in `origin/main` (525 results, 407 salvage, 86 runner, 6 quarantine); 529 results and 384 salvage refs are older than 30 days.\n\nWhat exists today only covers a small slice:\n\n- `GitBranchRetentionService` (`backend/Features/Git/GitBranchRetention.cs`, hosted, `GitRetention:RetentionDays=7`): deletes `task/*` and `runner/*` refs whose tip is contained in both develop and main. `IsManagedBranch` ignores every `agent-studio/*` namespace, which is 97 % of the refs.\n- `GitCleanupService` (Project Hub Git-Management, `GET /api/git/cleanup/plan`, `POST /api/git/cleanup/execute`, AGT-2009): operator-confirmed plan for local and remote `task/*` branches, `refs/backups/*` and stale worktrees.\n- `ArchivedResultRefPruner`: prunes only the local remote-tracking copies of results/quarantine refs for archived cards and never contacts origin.\n\nThe runner creates the three big namespaces (`runner/GitWorkspace.cs`): `agent-studio/results/<attempt>/fence-<n>/<sha>` is the immutable delivery proof pushed per attempt, `agent-studio/salvage/<runner>/<task>/<attempt>/fence-<n>/<sha>` is the WIP backup before a worktree teardown, `agent-studio/quarantine/<runner>/<task>/...` holds work the runner refused to deliver.\n\n## Goal\n\nA task's remote refs are reclaimed automatically when the task no longer needs them, so the repos stop accumulating branches. Event-driven, part of the integration path, not a separate operator chore.\n\n## Requirements\n\n1. **Policy as one component.** Extend `BranchRetentionPolicy` to classify every ref by namespace (`task`, `runner`, `delivery`, `results`, `salvage`, `quarantine`, unknown) and decide with explicit reasons. Rules:\n   - `task/<key>`, `runner/<runner>/<key>*`, `delivery/<key>`: delete once the task's delivery is integrated (`integration.status == integrated`) and the tip ",
+      "tags": [
+        "delivery-chain"
+      ],
+      "state": "6-completed",
+      "createdAt": "2026-09-13T06:42:06.1013051Z",
+      "taskKey": "AGT-2793",
+      "rationale": "The card describes integration, branches, commits, or promotion to the target branch; its title is “Branch lifecycle: reclaim a task's remote branches once its delivery is integrated and promoted”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "a-quality-gate-that-is-red-on-the-integration-branch-must-fail-the-branch-not-every-card",
+      "title": "A quality gate that is red on the integration branch must fail the branch, not every card",
+      "text": "# A quality gate that is red on the integration branch must fail the branch, not every card that passes through it\n\n## Observed (operator, 2026-09-14)\n\nThe whole board sat in Human Review and nothing could be accepted. The cause was\nnot any card. `npm --prefix frontend run lint` had been failing on `develop`\nitself, so the review step `verify-5` exited 1 for every delivery, every remote\nreview graded `ProductFailure`, and the acceptance rail refused each card with\n\"Remote Review ended with 'ProductFailure', not Pass\". Deliveries then piled up\nand were integrated by hand instead, which is how the operator merges of the\nlast weeks happened.\n\nThe failing step is `lint:components`\n(`frontend/scripts/check-component-size.mjs`). Its baseline file\n`frontend/scripts/component-size-baseline.json` was last written on 2026-08-19\nand eight components had grown past it since, with no baseline row at all for\nthree of them:\n\n| Component | Growth against baseline |\n| --- | --- |\n| `project-wiki-section.ts` | total 4602 to 5169 |\n| `app.ts` | total 5477 to 5626 |\n| `overview-pane.component.ts` | total 4336 to 4366 |\n| `explorer-workspace-tree.component.ts` | total 931 to 937 |\n| `project-product-runtime-panel.component.ts` | total 1083 to 1103 |\n| `remote-host-card.ts`, `project-urls-panel.component.ts`, `workbench-viewer-header.component.ts` | over budget with no baseline row |\n\nThe measured state was recorded in `209ec40c0` so the gate measures new growth\nagain. That unblocks the fleet and settles nothing else. This card settles the\nrest.\n\n## Deliver\n\n1. **A red gate on the integration branch is reported as such.** When a review\n   command fails, decide whether it also fails on the merge base before\n   attributing it to the delivery. A step that is already red on the integration\n   branch must produce a distinct outcome, visible as an integration-branch\n   defect with its own alert, and must not grade the card `ProductFailure`. The\n   card's own new failures must still block it. This is the load-bearing part of\n   the card: the failure mode is not the debt, it is that weeks of accumulated\n   debt on one branch presented as a product failure on unrelated cards.\n2. **Split the three components that are far past every budget.** `app.ts`\n   (5626), `project-wiki-section.ts` (5169) and `overview-pane.component.ts`\n   (4366) against a total budget of 900. Split controllers, temp",
+      "tags": [
+        "gates-and-review",
+        "reliability"
+      ],
+      "state": "6-completed",
+      "createdAt": "2026-09-14T18:36:32.6515128Z",
+      "taskKey": "AGT-2819",
+      "rationale": "The card describes review evidence, acceptance, or validation gates; its title is “A quality gate that is red on the integration branch must fail the branch, not every card”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "concept-the-remote-host-integrates-gate-merge-push-the-local-studio-only-observes",
+      "title": "Concept: the remote host integrates (gate, merge, push); the local Studio only observes",
+      "text": "# Concept: the remote host integrates (gate, merge, push); the local Studio only observes\n\nMode: concept. Deliverable: extend the existing Dossier `docs/operations/remote-gate-zielbild/` (AGT-W18, \"Remote Gate Target Architecture\", decisions D1-D6 still open) and its extracted page `docs/concepts/platform-architecture/remote-gate.md` so that the target covers the whole integration step, not only the gate. House style as in the other Dossiers (`index.html`, `workbench.json`, the `data-concept-section` blocks, English). No product code.\n\n## What the operator decided (18.09.2026, verbatim, on AGT-2839)\n\n\"Das Zielbild sollte sein, dass der Remote-Host auch merged. Der lokale Studio soll nur schauen.\"\n\nTarget picture: the remote host also merges. The local Studio only watches.\n\nContext of the remark: AGT-2839 lets the **local** integration gate reuse a passed remote review when the reviewed integration tip is unchanged. That optimises a step the operator does not want to exist locally at all.\n\n## Current state to establish (verify against develop, state dates)\n\n- Integration runs inside the Studio backend on the operator's Windows workstation: `MergeIntoDevelopRunner` / `GitService` (direct merge, mechanical merge, rebase fallback), then the pre-develop gate (`BuildTestGateRunner`, work-package test selection since AGT-2854) in `%TEMP%\\agentstudio-review-gates`, then push. One card at a time.\n- The existing Dossier AGT-W18 moves only the **gate** to a claimed, leased, fenced `GateAttempt` on a capable host; merge authority and push stay with the Studio. `AGT-2262` (remove the SSH bridge) is parked behind it. The Batch Gate page (`docs/concepts/platform-architecture/batch-gate.md`) and `docs/concepts/platform-architecture/rebase-merge-and-integration-invariants.md` define ref-mutation authority.\n- Operating evidence, 17.-18.09.2026 (operator log, all on the reference installation):\n  - The Windows gate is serial and takes about 40 minutes per card; on 18.09. eight reviewed cards queued behind it while the 12-core Linux host had capacity.\n  - Three reviewed deliveries were rolled back for exceeding the wall-clock budget by 0.01-1.2 % with no failing test (AGT-2826, AGT-2839, AGT-2869) while the workstation ran at 100 % CPU because the operator was working on it (card AGT-2872).\n  - Windows-only red tests surfaced only in this gate (`GateFlakyRerunBehaviorTests`, `S",
+      "tags": [
+        "delivery-chain",
+        "architecture"
+      ],
+      "state": "2-ready",
+      "createdAt": "2026-09-18T16:30:39.4114405Z",
+      "taskKey": "AGT-2881",
+      "rationale": "The card describes integration, branches, commits, or promotion to the target branch; its title is “Concept: the remote host integrates (gate, merge, push); the local Studio only observes”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "feature-card-pills-declutter-remove-lane-mirroring-and-concern-tags",
+      "title": "FEATURE: Card-Pills entruempeln - Lane-spiegelnde Labels (ready/review/auto-review/human-review) + Concern-Tags raus; nur Nicht-aus-Lane-Info",
+      "text": "## Regel (User)\nAuf den Cards sollen **keine Pills/Tags erscheinen, die nur die Lane/den State spiegeln** - die Lane sagt das schon. Zusaetzlich die Orchestrator-Concern-Tags raus. Prinzip: **Karte zeigt nur Info, die NICHT aus der Lane ableitbar ist.**\n\n## ENTFERNEN\n- **Lane-/State-spiegelnde Labels:** `ready`, `review ready`, `ready to sign off`, `auto review`, `human review` - alles, was die aktuelle Lane widerspiegelt (die Karte liegt ja schon in der Lane).\n- **Concern-/Classifier-Tags:** `requirement:concerns`, `quality:concerns`, `Q&As` (und vergleichbare concern/classifier-Marker).\n\n## BEHALTEN\n- **\"Reviewed\"-Indikator** (dass es reviewed wurde, sieht man der Lane NICHT an -> bleibt; z.B. das gruene Review-Haken/Badge).\n- **Owner-Pill bleibt** (ausdruecklicher User-Wunsch).\n- **Task-Type** (Bug/Feature/Chore), **CLI/Model**, echte **Inhalts-Tags** (Architecture / Quality / Performance / Docs / Security ...), **Commit-Info**, sinnvoller **Run-State** (running / continue).\n\n## Gilt fuer\nalle Lanes (Ready / Auto-Review / Human-Review / ...). Keine Lane-Spiegelung mehr auf der Karte.\n\n## Bezug\nStandard-Card-Komponente **ASS-748**, Tags/Status-Render-Logik. Scoping ASS-744. Tokens ASS-737.",
+      "tags": [
+        "task-and-board-ui"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-06-04T21:27:44.7530925Z",
+      "taskKey": "ASS-1220",
+      "rationale": "The card describes board and task interaction surfaces; its title is “FEATURE: Card-Pills entruempeln - Lane-spiegelnde Labels (ready/review/auto-review/human-review) + Concern-Tags raus; nur Nic”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "pre-develop-gate-a-run-budget-overrun-by-seconds-must-not-cost-a-full-re-review-re-run-the-gate-measure-contention-report-the-slow-tests",
+      "title": "Pre-develop gate: a run-budget overrun by seconds must not cost a full re-review; re-run the gate, measure contention, report the slow tests",
+      "text": "# Pre-develop gate: a run-budget overrun by seconds must not cost a full re-review; re-run the gate, measure contention, report the slow tests\n\n## Finding (16.-18.09.2026, Stable v0.8.0, Windows integration host, operator evidence)\n\nThree reviewed and passed deliveries were rolled back by the Windows pre-develop gate because a verification command exceeded its wall-clock budget by seconds, with no failing test:\n\n| Card | Command | Budget | Consumed | Overrun |\n| --- | --- | --- | --- | --- |\n| AGT-2839 (16.09.) | `dotnet test task-server.Tests/TaskServer.Tests.csproj --filter Category!=MachineBound` | 1,800,000 ms | 1,800,164 ms | 0.009 % |\n| AGT-2826 (16.09.) | `npm run test:ci -- --include=...` (10 spec globs, frontend) | 1,800,000 ms | 1,822,495 ms | 1.2 % |\n| AGT-2869 (18.09. 10:16) | `dotnet test backend.Tests/OrchestratorApi.Tests.csproj --filter Category!=MachineBound` | 3,600,000 ms | 3,600,359 ms | 0.01 % |\n\n`integration.detail` for each: \"... violated gate-run budget (limit=..., consumed=..., phase=verification) ... develop was rolled back to <sha> and nothing was pushed; start a steer round so the delivery builds on top of the current integration branch.\" The card then sits in `4-auto-review` with `conflict-skipped`; nothing retries. AGT-2839 and AGT-2826 sat there for two days until the operator created new review attempts by hand; each retry costs a full remote review (about 45 minutes of executor time) before the gate may run again.\n\nContext of the 18.09. case: the same suite passed the gate in about 40 minutes three times earlier that day (AGT-2867, AGT-2868 and the 0.8.0 cards). During the AGT-2869 gate the host showed 100 % CPU for minutes, the Stable API process held 6.5-9 GB working set, the task list endpoint needed 17 s, a disk cleanup ran, and the operator was working on the machine. The budget is pure wall clock, so it measures the machine, not the delivery.\n\n## Deliver\n\n1. A budget overrun is classified as `GateEnvironment`, not as a delivery failure, when no test failed before the cut-off: the rollback message says so, and the card is not told to \"start a steer round\".\n2. Automatic gate re-run: after a budget overrun the integration service re-queues the *gate* for the same reviewed delivery (same review verdict, same merge candidate if the integration branch has not moved; otherwise the normal re-validation path), bounded (for examp",
+      "tags": [
+        "gates-and-review",
+        "testing"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-09-18T09:51:33.3602256Z",
+      "taskKey": "AGT-2872",
+      "rationale": "The card describes review evidence, acceptance, or validation gates; its title is “Pre-develop gate: a run-budget overrun by seconds must not cost a full re-review; re-run the gate, measure contention, report”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "remote-laeufe-volle-review-pipeline",
+      "title": "KRITISCH Remote-Reise: external_completion von Runner-Daemons muss die VOLLE Review-Pipeline durchlaufen (Aspects, Code-Review, Gate)",
+      "text": "SYSTEMISCHER FUND 2026-07-11 (erster Remote-Betriebstag, Beleg AGT-2107): Remote-Laeufe von agent-runner-01 schliessen via external_completion ab (Timeline: \"Completed externally by agent-runner-01\"). Der ExternalCompletionService (gebaut fuer Out-of-Band-Abschluesse wie Operator-Chat, siehe dessen Doku-Kommentar) schreibt Status/Deliverables/Lane - aber KEINE Aspects, KEIN Code-Review-One-Shot, KEIN Completion-Gate. Folge: Alle remote gelieferten Karten landen OHNE Quality-Grade/Verdict im Review (Robert bei 2107: \"Commit da, Activity vollstaendig - warum kein Review?\").\n\n1. FIX: Fuer Completions, deren source ein registrierter RUNNER-Client ist (Kind service/agent-runner-*), nach dem external_completion denselben Post-Processing-Pfad anstossen wie bei lokalen Laeufen (AutoReviewPostProcessingQueue: Aspects, Code-Review-Grade, Completion-Gate) - der Task-Branch liegt auf origin (runner/agent-runner-01/<KEY>), Diff-Grundlage ist vorhanden.\n2. ABGRENZUNG: Echte Out-of-Band-Abschluesse (Operator-Chat, Mensch) behalten das bisherige leichte Verhalten - Unterscheidung ueber die Client-Identity (Kind), nicht heuristisch.\n3. UEBERGANG: Karten, die seit Remote-Aktivierung (11.07. ~15:26) ohne Grade durchliefen, auflisten (results/), damit der Operator sie per Retro-Grading (AGT-2120-Mechanik) nachziehen kann.\n4. Tests: remote-completion-Fixture -> Post-Processing laeuft; chat-completion-Fixture -> unveraendert.\nReferenzen: ExternalCompletionService.cs, RunFinishedSignal, AGT-2004 (Claim-Pfad), AGT-2120 (Re-Run/Retro-Grade).\n\n---\n\n## Operator-approved fully remote correction - 2026-07-13\n\nThe previous broad implementation was reverted. Retain this card as the integration issue, but correct its execution topology.\n\n1. A registered Remote Coding Executor completion must first submit an acknowledged immutable result envelope linked to its RunAttempt.\n2. The Task Server then schedules a separately fenced ReviewAttempt. It must not check out the repository or run build, test, model, vision, or review CLIs.\n3. Full post-processing executes through AGT-2184 on a Remote Review Executor at the exact submitted Result-SHA. All aspects, commands, and artifacts bind to that subject.\n4. Genuine human or operator out-of-band completion remains an explicit separate path and cannot be inferred heuristically.\n5. Auto Review settles only the current Result-SHA. Review infrastructure r",
+      "tags": [
+        "gates-and-review",
+        "testing"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-07-11T13:39:37.584Z",
+      "taskKey": "AGT-2121",
+      "rationale": "The card describes review evidence, acceptance, or validation gates; its title is “KRITISCH Remote-Reise: external_completion von Runner-Daemons muss die VOLLE Review-Pipeline durchlaufen (Aspects, Code-Revie”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "consolidate-new-dossier-gates-batch-gate-and-remote-gate-from-w36-w18-w2-evidence-appendix-from-w28-and-w29",
+      "title": "Consolidate: new Dossier 'Gates: batch gate and remote gate' from W36, W18, W2; evidence appendix from W28 and W29",
+      "text": "Implement the approved concept described in `docs/operations/dossier-consolidation-and-area-tags/index.html`.\n\nThe concept document is the source of truth. Preserve its stated\nconstraints, recommendation, evidence, and open-decision outcomes.\n\n# Consolidate: Gates\n\nMode: concept. Source of truth: AGT-W55 (§3, §4, D1, D2) and the AGT-W53 matrix.\n\nCreate docs/operations/gates with index.html and workbench.json merging W36 batch gate (closed manifest, exact candidate, bounded red-batch isolation, review-first operator amendment), W18 remote gate target architecture (claimable gate step, exact SHA, lease, fail-closed, open migration) and W2 async validation (SHA cache and deterministic test-scope principles). Add an evidence appendix with the W28 pipeline time economy baseline (847 tasks, dated) and the W29 reissue-convergence negative result in one paragraph each. Keep open decisions as inline decision blocks. House style, English. Record W2, W18, W36 as superseded by the new key and W28, W29, W30 as historical in their descriptors.\n\n## Operator decisions (Dossier AGT-W55, 2026-09-13 07:53 UTC)\n\n- D1 Target set: A, sixteen Dossiers as proposed in §2.\n- D2 Archiving rule: A, archive when the durable knowledge has a documentation home; the consolidation card writes the artefact if it is missing. Operator note: a Dossier that is superseded by a theme Dossier needs no artefact, its content lives in the theme Dossier; artefacts are only for historical Dossiers whose knowledge has no home (§4 table).\n- D3 Area taxonomy: A, the ten areas from §5, refined per project.\n- D4 Auto-tagging scope: on card creation in every project, on Dossier creation and on wiki articles. Operator note: tag everything that is not archived, so the backfill covers all non-archived cards, Dossiers and wiki articles.\n- D5 Model class: A, a new classification route in model routing, cheapest available model, low thinking.\n- D6 Maintenance: A, periodic proposals as decision cards (retire, merge, add, glossary updates).\n\nUmbrella card: AGT-2797 (spawned by the Dossier decision) stays the program record; this card carries one slice of it.",
+      "tags": [
+        "gates-and-review"
+      ],
+      "state": "6-completed",
+      "createdAt": "2026-09-13T07:55:39.1641589Z",
+      "taskKey": "AGT-2801",
+      "rationale": "The card describes review evidence, acceptance, or validation gates; its title is “Consolidate: new Dossier 'Gates: batch gate and remote gate' from W36, W18, W2; evidence appendix from W28 and W29”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "a-reviewinfra-verdict-schedules-a-fresh-review-attempt-without-operator-help",
+      "title": "A ReviewInfra verdict schedules a fresh review attempt without operator help",
+      "text": "# A ReviewInfra verdict schedules a fresh review attempt without operator help\n\n## Symptom (15.09.2026 16:56, AGT-2836)\nThe remote review of AGT-2836 ended with outcome ReviewInfra, classification AspectTimeout (one aspect model call timed out). The card stayed in 4-auto-review with liveStatus attempt 1 and \"next steps\" listed, but no new review attempt was created for 18 minutes; the operator had to POST /move 4-auto-review to get a new attempt. Earlier operations notes say an infra retry copies the plan into a fresh attempt; today it did not happen.\n\n## Expected\n- Every ReviewInfra outcome (AspectTimeout, ToolUnavailable, BaselineUnavailable, workspace failures) schedules a replacement attempt for the same delivery SHA automatically, with bounded backoff (for example 1, 3, 9 minutes) and a cap (3 attempts), then parks the card with a named reason.\n- The replacement attempt reuses the passed verify results of the failed attempt when the SHA and commands are unchanged, and re-runs only what failed or was not run.\n- The card timeline shows \"review infra retry n/3 scheduled\" and the reason.\n- Tests for the scheduling, the cap and the timeline entry; reproduce with a fake aspect that times out.\n\n## Working rules\n- Base on current origin/develop. Keep the change focused on this card.\n- Tests that fail without the change; docs where behaviour or operations change.\n- Run only the targeted test classes and a build; the remote review runs the full suite.\n- status.md names each acceptance item with its code and test.\n\n\n---\n\n## Continuous Session Note - 2026-09-18 21:34\n\nCode-quality fix round (trigger: review concern, requested by the product owner on 18.09.2026 for every delivered card whose last review passed with a code-quality concern).\n\nThe card's delivery is integrated on develop. Its last review accepted it with this open code-quality concern (review of 2026-09-15T21:48Z):\n\n> Likely orphaned private helper ReviewPlanForInfrastructureRetry left in V1ReviewPlaneEndpoints.cs after its only call site was removed and its logic reimplemented in ReviewInfrastructureRetryScheduler.FireDue\n\nReviewer detail:\n\n## Model reply\n\n```\nI reviewed the diff across `AttemptAuthorityService.cs` (new `ScheduleReviewInfrastructureRetry`/`DueReviewInfrastructureRetries`/`ClearScheduledReviewInfrastructureRetry`, and the `HasReviewInfrastructureRetryBudget` refactor into a shared `Rev",
+      "tags": [
+        "gates-and-review",
+        "operations"
+      ],
+      "state": "6-completed",
+      "createdAt": "2026-09-15T19:46:24.4896419Z",
+      "taskKey": "AGT-2841",
+      "rationale": "The card describes review evidence, acceptance, or validation gates; its title is “A ReviewInfra verdict schedules a fresh review attempt without operator help”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "review-concerns-get-one-automatic-fix-round-every-run-records-who-triggered-it-and-why",
+      "title": "Review concerns get one automatic fix round; every run records who triggered it and why",
+      "text": "# A review aspect that ends with concerns gets one automatic fix round, and every run says who triggered it and why\n\n## Finding (18.09.2026, product owner on AGT-2794, operator analysis)\n\nThe product owner's words: \"Es gibt zwar einen Code-Quality-Concern, der wurde aber nicht bearbeitet. Hier erwarte ich zukünftig noch einen Rerun, der das fixt und behebt. [...] Bei den einzelnen Runs möchte ich auch klarer sehen, wer sie getriggert hat und warum. [...] Wenn die Code-Quality mal angemeckert wurde und es einen neuen Run gab, dann soll auch klar sein, dass es ein Code-Quality-Rerun war.\"\n\nAGT-2794 (stale-branch sweep): the code-quality aspect of review `review_01bb31c8...` ended `status=concerns; summary=Clean, well-structured diff with one dead no-op assertion in a new spec file`. The card was accepted and integrated; the dead assertion is on develop; the Result lists it as an open item. Nothing ever worked on it. Its four runs all read \"TRIGGER Initial start\" although run 2 was a lint continuation and run 3 an integration recovery.\n\nWhy:\n\n1. Only `Block` leads to a follow-up. `contracts/TaskServer.Contracts/ReviewGradingPolicy.cs` L43-53 maps `concerns` to `PassWithConcerns`; `ReviewDecisionOrchestrator.cs` around L2530 reissues only when `report.Overall == AspectStatus.Block`, otherwise the accept branch moves the card to `5-human-review` with `accept-with-concerns` (around L2625-2682). An unparseable verdict and an aspect infra crash are also downgraded to `Concerns` (`AspectRunnerService.cs` L659-689), so they end in the same lane without anyone looking.\n2. Run triggers are not recorded. `RunRecord.Intent` (`backend/Features/Runner/RunTimeline.cs` L24-26, L713) is `SessionEvent.Kind`, whose producers know only `start | continue | recovery | restart | reissue` (`RunPlanner.cs` L92-238, `ProjectRunner.cs` around L8220, `LeaseEndpoints.cs` around L1035 writes `start` for every remote claim). `evtKind` is `continue` only when a session id is resumed (`RunPlanner.cs` L198-238), so remote runs and runs after a cleared session all log `start` and the UI (`overview-runs.component.ts` L82-97 `triggerLabel`) prints \"Initial start\". `EventReason` is null on the continue path. There is no kind for review finding, review concern, integration recovery, timeout continuation, operator continuation or replan, no actor, and no link to the aspect that caused the run.\n\n## D",
+      "tags": [
+        "gates-and-review"
+      ],
+      "state": "2-ready",
+      "createdAt": "2026-09-18T19:25:56.4078463Z",
+      "taskKey": "AGT-2887",
+      "rationale": "The card describes review evidence, acceptance, or validation gates; its title is “Review concerns get one automatic fix round; every run records who triggered it and why”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "visual-evidence-priority-screenshots-clickable",
+      "title": "Visual feedback: surface Playwright screenshots prominently on task + workspace feed, clickable",
+      "text": "# Visual evidence: surface screenshots prominently and make them clickable\n\n## Symptom\n\nThe user has emphasised repeatedly that visual feedback (Playwright screenshots, captured images, before/after comparisons) is *the* primary signal that something actually shipped. Today the rendered task documents rarely show those screenshots, and when they do appear they are not clickable - the user cannot open the full image, cannot scrub through a sequence, cannot tell whether the Playwright run that produced them passed or failed.\n\n## Goal\n\nScreenshots become the loudest line in the task review surface. The workspace-level activity feed gains a \"visual feedback\" lane that aggregates the latest screenshots across all projects.\n\n## Deliverables\n\n1. **Per-task surface**:\n   - Above the chat / Markdown body, a horizontal strip of any screenshots produced during the task's runs. Each thumbnail is ~120 px tall, captioned with the spec name and the timestamp.\n   - Click a thumbnail to open a lightbox: full-size image, prev/next navigation, optional pass/fail badge, and a \"open in Explorer\" link to the file on disk.\n   - The strip is populated from `<job>/results/*.png` and from `frontend/test-results/**/*.png` when the spec was billable for the job.\n   - When no screenshots exist, the strip is hidden (no placeholder takes space).\n2. **Workspace activity feed surface**:\n   - A new section (or filter) on the workspace activity stream titled \"Visual evidence\" that shows a continuous reel of recent screenshots across all projects.\n   - Same lightbox behaviour. Filter by project. Clicking the reel item navigates to the originating task.\n3. **Backend**:\n   - Existing image-harvesting flow (per `docs/protocol-style.md`) is reused. New endpoint `GET /api/jobs/{jobId}/screenshots?watchPath=...` returns the ordered list of screenshot file references with timestamp + caption.\n   - Workspace endpoint `GET /api/workspace/screenshots?windowHours=N&projectFilter=` returns the cross-project reel.\n4. **Tests**:\n   - A task with three screenshots renders the strip in chronological order.\n   - Lightbox prev/next navigation cycles correctly.\n   - The reel renders entries grouped by hour bucket.\n\n## Constraints\n\n- The strip respects the per-CLI image retention rules in `docs/protocol-style.md`. Do not invent new retention policy.\n- No CDN or external image host. Files stay local.\n- English UI,",
+      "tags": [
+        "observation"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-05-05T10:32:59.3099224Z",
+      "taskKey": "ASS-1637",
+      "rationale": "The card describes watcher signals, telemetry, or the activity feed; its title is “Visual feedback: surface Playwright screenshots prominently on task + workspace feed, clickable”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "activity-feed-on-hover-timestamp-pro-nachricht-subtil",
+      "title": "Activity-Feed: On-Hover-Timestamp pro Nachricht (subtil)",
+      "text": "## Ziel\nKleiner Frontend-Task: In der **Activity-/Orchestrator-Feed-Ansicht** pro Nachricht **on hover einen Timestamp** zeigen - subtil. Aktuell sieht man nicht, WANN eine Nachricht passiert ist.\n\n## Anforderungen\n- Subtiler **On-Hover-Timestamp** (z.B. title/tooltip oder dezent eingeblendet) pro Activity-Nachricht; bricht das Layout nicht.\n- Die Daten **existieren bereits**: jede Activity-Zeile traegt eine Zeit (`[HH:MM:SS.mmm]` in cli-output.log; `atUtc` in logs/timeline.jsonl). Nur im UI nicht sichtbar.\n- Konsistent fuer System-/Orchestrator-/Supervisor-/stdout-Nachrichten.\n\n## Code-Pointer\n- `frontend/src/app/features/task-detail/components/protocol-pane/run-timeline/run-timeline.component.*` (Activity/Timeline-Rendering).\n- Datenquelle Timestamp: `logs/timeline.jsonl` (`atUtc`) bzw. die geparste Activity.\n\n## Akzeptanz\n- Hover ueber eine Activity-Nachricht zeigt den Zeitpunkt; subtil, kein Layout-Bruch.\n- Vorher/Nachher-Screenshot; ng build + Tests gruen.",
+      "tags": [
+        "observation"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-06-21T22:25:15.700237Z",
+      "taskKey": "ASS-1765",
+      "rationale": "The card describes watcher signals, telemetry, or the activity feed; its title is “Activity-Feed: On-Hover-Timestamp pro Nachricht (subtil)”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "activity-view-entruempeln-einzeiler-kontextmenue",
+      "title": "Activity-View entruempeln: Banner schliessbar, Einzeiler-Events mit Kontextmenue, Artefakt-Rendering (Operator-Feedback)",
+      "text": "OPERATOR-FEEDBACK Robert 2026-07-11 (Screenshots der Activity-View von AGT-2081 liegen beim Operator). Platz ist kostbar - dieselbe Entruempelungs-Linie wie beim Chat-Header (MC-4/AGT-2087):\n\n1. RUNNING-BANNER (\"Agent is still working - click Interim status to peek\") muss SCHLIESSBAR sein (X); der \"Interim status\"-Button wirkt deplatziert -> Layout-Revamp des Kopfbereichs.\n2. EINZEILER-EVENTS: Agent-Event-Kopf (Message) und Metadaten-Zeile (Modell, think-Level, Uhrzeit, Wall time) auf EINE Zeile verdichten; Metadaten-Details + Toggles wandern in ein KONTEXTMENUE am Event. \"CLI\"- und \"Trace\"-Ansicht sind KEINE First-Class-Buttons mehr (super selten gebraucht) -> Toggle im Kontextmenue.\n3. TOOL-USE-INTEGRATION: Parser-Hinweise wie \"Tool router reported exit code 1, expected: tool-result\" duerfen NICHT als eigene Events zwischen den Bloecken stehen (wirkt wie ein Fehler, ist noisy) - sie gehoeren IN den zugehoerigen Tool-Use-Block, zugeklappt, als Detail. (Die URSACHE des Parser-Hinweises ist eine separate Bugfix-Karte - hier nur die Darstellung.)\n4. ABSCHLUSS-RENDERING: \"todo_list\" / \"Turn completed (tokens: N)\" ordentlich darstellen (kompakte Abschlusszeile mit formatierter Tokenzahl, z.B. 14,6M statt 14587328).\n5. ARTEFAKT-BLOECKE: Die Batch von \"unknown\"-Eintraegen (results/playwright/...png-Pfade) ist unverstaendlich -> als ordentliche Datei-/Bild-Liste rendern (Dateiname, Thumbnail wo Bild, Flaechen-Gruppierung), nicht als anonyme unknown-Kacheln.\n\nStyle-Hard-Rules, beide Themes, echte Screenshots der neuen Activity-View in results/.",
+      "tags": [
+        "observation",
+        "operations"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-07-11T09:23:13.503Z",
+      "taskKey": "AGT-2088",
+      "rationale": "The card describes watcher signals, telemetry, or the activity feed; its title is “Activity-View entruempeln: Banner schliessbar, Einzeiler-Events mit Kontextmenue, Artefakt-Rendering (Operator-Feedback)”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "consolidate-new-dossier-observation-watcher-telemetry-project-feed-from-w15-w38-w16",
+      "title": "Consolidate: new Dossier 'Observation: watcher, telemetry, project feed' from W15, W38, W16",
+      "text": "Implement the approved concept described in `docs/operations/dossier-consolidation-and-area-tags/index.html`.\n\nThe concept document is the source of truth. Preserve its stated\nconstraints, recommendation, evidence, and open-decision outcomes.\n\n# Consolidate: Observation\n\nMode: concept. Source of truth: AGT-W55 (§3, D1) and the AGT-W53 matrix.\n\nCreate docs/operations/observation with index.html and workbench.json merging W15 global orchestrator watcher (observe-first design, delivered detector and visual-guardian cards, open safe-rescue fence choices), W38 organisation-wide telemetry layer (hybrid local JSONL plus pushed semantic observations, open pilot decision) and W16 project feed (feed goal, timeline of decisions and events, now reading watcher observations and telemetry). Keep every open decision as an inline decision block. One figure, four concept sections, house style, English. Record W15, W16, W38 as superseded by the new key in their descriptors.\n\n## Operator decisions (Dossier AGT-W55, 2026-09-13 07:53 UTC)\n\n- D1 Target set: A, sixteen Dossiers as proposed in §2.\n- D2 Archiving rule: A, archive when the durable knowledge has a documentation home; the consolidation card writes the artefact if it is missing. Operator note: a Dossier that is superseded by a theme Dossier needs no artefact, its content lives in the theme Dossier; artefacts are only for historical Dossiers whose knowledge has no home (§4 table).\n- D3 Area taxonomy: A, the ten areas from §5, refined per project.\n- D4 Auto-tagging scope: on card creation in every project, on Dossier creation and on wiki articles. Operator note: tag everything that is not archived, so the backfill covers all non-archived cards, Dossiers and wiki articles.\n- D5 Model class: A, a new classification route in model routing, cheapest available model, low thinking.\n- D6 Maintenance: A, periodic proposals as decision cards (retire, merge, add, glossary updates).\n\nUmbrella card: AGT-2797 (spawned by the Dossier decision) stays the program record; this card carries one slice of it.",
+      "tags": [
+        "observation"
+      ],
+      "state": "6-completed",
+      "createdAt": "2026-09-13T07:55:37.7115005Z",
+      "taskKey": "AGT-2800",
+      "rationale": "The card describes watcher signals, telemetry, or the activity feed; its title is “Consolidate: new Dossier 'Observation: watcher, telemetry, project feed' from W15, W38, W16”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "analyse-timeline-activity-performance-bei-langen-stroemen---messen-budget-virtualisierung",
+      "title": "Analyse: Timeline-/Activity-Performance bei langen Stroemen - messen, Budget, Virtualisierung",
+      "text": "Operator-Mandat (11.08.): \"Performance im Blick behalten - extra Task und Analyse anlegen.\" Kontext: Task-Timelines der 2577-Klasse (hunderte Eintraege, grosse Payload-Bloecke) machen Scrolling zaeh und Renderzeiten spuerbar; das Redesign (AGT-2631) aendert die Darstellung - die Performance braucht eigene Betrachtung.\n\n## Auftrag (Analyse + gezielte Fixes)\n\n1. MESSEN an realen Faellen (AGT-2577, ein QS-Umsetzungs-Task): Erst-Render-Zeit, Scroll-FPS, Speicher bei 500+ Eintraegen; Zahlen VOR Optimierung in results/.\n2. Ursachen klassifizieren: DOM-Groesse (alle Eintraege gerendert?), Payload-Bloecke (offene Riesen-Codebloecke), Change-Detection-Kosten, SignalR-Update-Pfad (Re-Render-Breite je Event).\n3. Fixes umsetzen, wo eindeutig: Virtual Scrolling/Windowing fuer den Strom, Payloads lazy (nur eingeklappte Koepfe im DOM, Inhalt bei Expand), Update-Pfad gezielt (nur neue Eintraege patchen).\n4. Budget festlegen und dokumentieren (Guideline-Anhang): Ziel-Werte fuer Erst-Render und Scroll bei 1000 Eintraegen; Nachher-Zahlen belegen.\n5. Koordination mit AGT-2631 (Redesign) - Windowing als dessen technische Basis benennen, nicht doppelt bauen.\n\n## Akzeptanz\n\n- Vorher/Nachher-Zahlen dokumentiert; 1000-Eintraege-Strom fluessig (Budget eingehalten); Payloads lazy; dotnet test + App-Build gruen.",
+      "tags": [
+        "observation",
+        "performance"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-08-11T16:19:04.1094849Z",
+      "taskKey": "AGT-2640",
+      "rationale": "The card describes watcher signals, telemetry, or the activity feed; its title is “Analyse: Timeline-/Activity-Performance bei langen Stroemen - messen, Budget, Virtualisierung”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "app-vermessung-feedback-webseite",
+      "title": "App-Vermessung: Feedback-Webseite - jeder Screenshot mit visuellem Befund",
+      "text": "Konzept Abschnitt 4.2. Input: der Sweep-Korpus + Manifest aus der Vorgaenger-Karte (results/sweep-2026-07-11/).\n1. Fuer JEDEN Screenshot ein visueller Befund (Modell schaut auf die Pixel): Was ist schwer lesbar? Was ist gut? Was verbessern? Consistency-Verstoesse (Style-Hard-Rules!), Ausrichtung, visuelle Elemente. Ehrlich und konkret, kein Gefaelligkeits-Review.\n2. FEEDBACK-WEBSEITE: eine browsbare, self-contained HTML-Seite (Stil der Mockup-Familie): Screenshot-Liste, daneben je Bild der Befund, Befund-Schwere (gut/mittel/kritisch) filterbar, Sprungmarken je Flaeche. Ablage docs/design/app-survey-2026-07-11.html + results/.\n3. Querverweise: Befunde, die bereits Karten haben (z.B. bekannte offene UI-Karten), verlinken statt duplizieren.\nZweitmeinungs-Pass (Modellwechsel) ueber die kritischen Befunde vor Abgabe.\n\n\n## Nachtrag Operator (2026-07-11 09:05) - KORPUS-PFAD ABSOLUT\nDer Sweep-Korpus liegt NICHT im Repo, sondern im Task-Ordner der Vorgaenger-Karte:\nC:/Projects/agent-taskboard-workspace/projects/agent-taskboard/tasks/002/AGT-2072/results/sweep-2026-07-11/\n(138 Eintraege inkl. manifest.json). Von dort lesen; die Feedback-Webseite wie geplant nach docs/design/ + results/ DIESER Karte schreiben.\n\n\n---\n\n## Continuous Session Note - 2026-07-11 08:59\n\nOperator: Der Sweep-Korpus liegt hier (absoluter Pfad, ausserhalb des Repos): C:/Projects/agent-taskboard-workspace/projects/agent-taskboard/tasks/002/AGT-2072/results/sweep-2026-07-11/ - 138 Eintraege inkl. manifest.json. Von dort lesen und die Befundungs-Webseite wie im Prompt beschrieben bauen. Nicht erneut blocken.",
+      "tags": [
+        "observation"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-07-10T22:07:05.512Z",
+      "taskKey": "AGT-2073",
+      "rationale": "The card describes watcher signals, telemetry, or the activity feed; its title is “App-Vermessung: Feedback-Webseite - jeder Screenshot mit visuellem Befund”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "explorer-lane-dots-match-board-lane-truth-epics-and-lane-colors-no-green-for-review",
+      "title": "Explorer lane dots: match board lane truth (epics) and lane colors (no green for review)",
+      "text": "Operator sighting (2026-08-23, Token Economy board): the explorer tree shows a GREEN lane dot on \"Board\" while every board lane displays 0 tasks. Cause found: the tree's lane dots (explorer-lane-dashboard: one dot per card in ready/progress/humanReview) count TE-8 - an EPIC in 5-human-review - while the board lanes hide epics (epics have their own Epics view). Second confusion: the human-review dot uses --studio-board-nav-lane-human-review-fg which renders GREEN in the current theme - semantically clashing with Delivered/green and with the Review lane's own dark-red icon.\n\nFix both: (1) tree lane dots must count exactly what the board lanes show (same filter - exclude epics, or show epics in both; follow the board's truth); (2) lane-dot colors must match the lane colors used in the board headers (human-review = the Review lane hue, not green; green reserved for Delivered). Add a spec asserting dot count == visible board lane count for a fixture with an epic, and a visual check in both themes. Admin design guideline applies.\r\n\r\n---\r\n\r\n## Steer (Loop-Tick): Konflikt - origin/develop frisch rebasen, fachlich aufloesen, neu liefern.",
+      "tags": [
+        "task-and-board-ui"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-08-23T17:07:58.5313542Z",
+      "taskKey": "AGT-2676",
+      "rationale": "The card describes board and task interaction surfaces; its title is “Explorer lane dots: match board lane truth (epics) and lane colors (no green for review)”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "board-filter-integrationstalled-aktiver-filter-unsichtbar-und-nicht-abschaltbar",
+      "title": "Board-Filter (integration:stalled): aktiver Filter unsichtbar und nicht abschaltbar",
+      "text": "Operator-Beleg (10.08., Folge des AGT-2588-Banner-Links): Nach Aktivierung des Filters (Klick auf \"and N more\" im Integrations-Alarm) bleibt der Board-Filter aktiv, ist aber nicht richtig sichtbar und verschwindet nicht wieder - kein erkennbarer Weg zurueck zur ungefilterten Sicht.\n\n## Auftrag\n\n1. Aktiver Board-Filter wird als sichtbarer Chip ueber dem Board angezeigt (Label \"integration:stalled\" bzw. Filter-Name, X zum Entfernen) - gilt generisch fuer alle Query-Filter der Board-Sicht (auch projects:...-Filter aus Activity-Links).\n2. Entfernen per X, per Esc und per Navigation auf die Board-Route ohne Query; URL spiegelt den Zustand (Filter weg = Query weg).\n3. Leerzustand ehrlich: Trifft der Filter 0 Karten, sagt die Flaeche das (\"0 Karten fuer Filter X\" + Entfernen-Aktion) statt leer auszusehen.\n4. Design-Guideline-konform (flaechig, kompakt).\n\n## Akzeptanz\n\n- Filter sichtbar als Chip, entfernbar (X/Esc/Route), URL konsistent, 0-Treffer-Zustand benannt; Screenshots in results/; App-Build gruen.",
+      "tags": [
+        "task-and-board-ui"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-08-10T09:49:16.5108273Z",
+      "taskKey": "AGT-2593",
+      "rationale": "The card describes board and task interaction surfaces; its title is “Board-Filter (integration:stalled): aktiver Filter unsichtbar und nicht abschaltbar”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "board-lane-header-calm-typography-one-baseline-name-first-width",
+      "title": "Board lane header: calm typography, one baseline, name-first width",
+      "text": "Operator sighting (2026-08-11, screenshot of the Post-Processing lane header): the lane header is visually restless - mixed font families/sizes between lane name, count, \"0 active / 10 waiting\" status, and icon buttons; elements do not sit on one baseline; the lane NAME truncates to \"Po...\" while fixed decorations (avatar, count, status text, icons) keep full width.\n\nFix per admin design guideline (dossier AGT-W1 - read first, extend Dos&Donts if this anti-pattern is missing):\n1. One type hierarchy for lane headers: lane name primary, count + active/waiting status secondary, SAME font family, defined sizes - no ad-hoc mixes.\n2. Single baseline: avatar, name, count, status, icons vertically centered on one line.\n3. Name-first width rule (same as tree entries, see AGT-2642): the name gets available width before decorations; collapse status to compact form (\"0/10\") when narrow; full text in tooltip; ellipsis last resort.\nApply to board lane headers everywhere (all lanes, all projects). Screenshot before/after evidence in results/.\r\n\r\n---\r\n\r\n## Steer (Loop-Tick): Konflikt - origin/develop frisch rebasen, fachlich aufloesen, neu liefern.\r\n\n\n---\n\n## Continuous Session Note - 2026-08-12 10:23\n\nAutomatic integration recovery for AGT-2644. The platform first tried a direct merge of delivery 'refs/heads/agent-studio/results/run_0fd1e30242304863bb606a049e2a1483/fence-3/5cf8811500eaa593d77600baabe3cec9e744385c' at 5cf8811500eaa593d77600baabe3cec9e744385c into 'develop', then a mechanical three-way/rerere merge, and only then a mechanical rebase. Those paths could not preserve unambiguous commit attribution: Mechanical rebase conflicted and was aborted: Rebasing (1/3)\rRebasing (2/3)\rRebasing (3/3)\rerror: could not apply 5cf881150... wip(runner): salvage before teardown - outcome Done\nhint: Resolve all conflicts manually, mark them as resolved with\nhint: \"git add/rm <conflicted_files>\", then run \"git rebase --continue\".\nhint: You can instead skip this commit: run \"git rebase --skip\".\nhint: To abort and get back to the state before \"git rebase\", run \"git rebase --abort\".\nhint: Disable this message with \"git config set advice.mergeConflict false\"\nCould not apply 5cf881150... # wip(runner): salvage before teardown - outcome Done. Continue from the existing delivery, resolve the integration conflict, and preserve a one-to-one delivery commit history: do not squash, split, dro",
+      "tags": [
+        "task-and-board-ui"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-08-11T17:43:19.3993006Z",
+      "taskKey": "AGT-2644",
+      "rationale": "The card describes board and task interaction surfaces; its title is “Board lane header: calm typography, one baseline, name-first width”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "consolidate-new-dossier-task-and-board-ui-decisions-from-w27-w35-w45-w21-w52-w48-w17-w20",
+      "title": "Consolidate: new Dossier 'Task and board UI decisions' from W27, W35, W45, W21, W52, W48, W17, W20",
+      "text": "Implement the approved concept described in `docs/operations/dossier-consolidation-and-area-tags/index.html`.\n\nThe concept document is the source of truth. Preserve its stated\nconstraints, recommendation, evidence, and open-decision outcomes.\n\n# Consolidate: Task and board UI decisions\n\nMode: concept. Source of truth: AGT-W55 (§3, D1) and the AGT-W53 matrix.\n\nCreate docs/operations/task-and-board-ui with index.html and workbench.json: one section per topic, each with the decision taken (date, card) or the open choices as an inline decision block: W27 narrative task view, W35 task timeline redesign, W45 escalation view information architecture, W21 task header and chat chips, W52 project scope switch, W48 task-detail usage block (decided), W17 protocol condensation (rules in force), W20 status.md finalisation (decided, documented). Keep screenshots or figures that carry the argument; drop duplicated layout prose. House style, English. Record the eight sources as superseded by the new key in their descriptors; W20 and W48 keep their decided history.\n\n## Operator decisions (Dossier AGT-W55, 2026-09-13 07:53 UTC)\n\n- D1 Target set: A, sixteen Dossiers as proposed in §2.\n- D2 Archiving rule: A, archive when the durable knowledge has a documentation home; the consolidation card writes the artefact if it is missing. Operator note: a Dossier that is superseded by a theme Dossier needs no artefact, its content lives in the theme Dossier; artefacts are only for historical Dossiers whose knowledge has no home (§4 table).\n- D3 Area taxonomy: A, the ten areas from §5, refined per project.\n- D4 Auto-tagging scope: on card creation in every project, on Dossier creation and on wiki articles. Operator note: tag everything that is not archived, so the backfill covers all non-archived cards, Dossiers and wiki articles.\n- D5 Model class: A, a new classification route in model routing, cheapest available model, low thinking.\n- D6 Maintenance: A, periodic proposals as decision cards (retire, merge, add, glossary updates).\n\nUmbrella card: AGT-2797 (spawned by the Dossier decision) stays the program record; this card carries one slice of it.",
+      "tags": [
+        "task-and-board-ui"
+      ],
+      "state": "6-completed",
+      "createdAt": "2026-09-13T07:55:39.5059903Z",
+      "taskKey": "AGT-2802",
+      "rationale": "The card describes board and task interaction surfaces; its title is “Consolidate: new Dossier 'Task and board UI decisions' from W27, W35, W45, W21, W52, W48, W17, W20”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "lanemutexregistryconcurrencytests-and-duplicatetaskkeytests-still-fail-in-every-linux-full-suite-run-after-agt-2859",
+      "title": "LaneMutexRegistryConcurrencyTests and DuplicateTaskKeyTests still fail in every Linux full-suite run after AGT-2859",
+      "text": "# LaneMutexRegistryConcurrencyTests and DuplicateTaskKeyTests still fail in every Linux full-suite run after AGT-2859\n\n## Finding (17./18.09.2026, review executor agent-runner-01, operator evidence)\n\nAfter AGT-2859 (integrated 17.09. 16:54 as ef1f59c88, which touched `DuplicateTaskKeyTests`, `TaskJsonFile.cs`, `TaskMutationService.cs`) the Linux review executor's `verify-3` (`dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build -p:ParallelizeTestCollections=false`) keeps producing the same two red tests on unrelated deliveries:\n\n| Review | Card | Initial run | Targeted re-run |\n| --- | --- | --- | --- |\n| review_1f0f3dba (00:43) | AGT-2865 (update-service) | `DuplicateTaskKeyTests.Dedup_KeepsOldestOnContestedKey_ReKeysNamesake_PreservesContent_AndIsIdempotent`, `LaneMutexRegistryConcurrencyTests.ConcurrentMoveAndDelete_OnSameSlug_NeverProducesPartialFolder`, `TaskFileHistoryEndpointsTests.CodeFileHistory_UsesProjectRepositoryWhenScopedToCode` | LaneMutex and TaskFileHistory red again |\n| review_76d8aaf1 (02:14) | AGT-2866 (runner cgroups) | DuplicateTaskKey, LaneMutex | LaneMutex red again; the grade notes \"Step verify-3 is already exiting 1 on the merge base\" |\n\nEarlier today the same two names appeared in AGT-2819's and AGT-2857's reviews (11:04, 11:59) and `LaneMutex...ConcurrentMoveAndDelete` is the example name hard-coded in AGT-2853's fake-dotnet test, i.e. it has been the canonical flake for weeks. In isolation both classes are green on the same host and commit (`--filter FullyQualifiedName~LaneMutexRegistryConcurrencyTests|FullyQualifiedName~TaskFileHistoryEndpointsTests`: 3 x 12/12; `DuplicateTaskKeyTests`: 3 x 14/14).\n\nError shapes:\n\n```\nLaneMutexRegistryConcurrencyTests.ConcurrentMoveAndDelete_OnSameSlug_NeverProducesPartialFolder\n  Assert.Empty() Failure: Collection was not empty          (a partial folder survived the concurrent move/delete)\nDuplicateTaskKeyTests.Dedup_KeepsOldestOnContestedKey_ReKeysNamesake_PreservesContent_AndIsIdempotent\n  Assert.Equal() Failure: Expected \"DEM-6\" Actual \"DEM-5\"    (the re-keyed namesake gets a different counter)\nTaskFileHistoryEndpointsTests.CodeFileHistory_UsesProjectRepositoryWhenScopedToCode\n  TaskCanceledException / HttpRequestException: The client aborted the request\n```\n\nEvery affected review costs a full 45-minute executor slot and an operator replan; with two of these per full run the pa",
+      "tags": [
+        "gates-and-review",
+        "reliability"
+      ],
+      "state": "6-completed",
+      "createdAt": "2026-09-18T00:16:11.2544213Z",
+      "taskKey": "AGT-2867",
+      "rationale": "The card describes review evidence, acceptance, or validation gates; its title is “LaneMutexRegistryConcurrencyTests and DuplicateTaskKeyTests still fail in every Linux full-suite run after AGT-2859”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "concept-switching-between-tasks-must-be-immediate-core-information-first-git-and-enrichments-later-task-detail-two-phase-git-off-the-request-path",
+      "title": "Concept: switching between tasks must be immediate; core information first, git and enrichments later (task detail two-phase, git off the request path)",
+      "text": "# Concept: switching between tasks must be immediate; core information first, git and enrichments later\n\n## Operator direction (2026-09-25)\n\n\"The performance when switching tasks is far too slow for me. I want dramatic improvements here. The core information must be available massively faster. Git and other things may take longer. The entry is probably a Dossier.\"\n\n## Evidence from the Stable backend log of 2026-09-25 (v0.8.0)\n\n`task-operation-timing operation=GET /api/tasks/{jobId}` exceeds its 30 ms budget on every call; measured today between roughly 230 ms and 2.7 s per task detail request (the exact distribution of the day is in the operator's report and reproducible from `.api.log.out`). `GET /api/tasks/grouped` takes 300 ms to 1 s. `git-info request=git-index-run spawns=68 gitMs=4759 breakdown=[configx68=4759ms]`: one index run spawns `git config` 68 times for 4.8 s. After the host wake this morning one `git config` spawn took 11 hours (`git slow-spawn command=config elapsedMs=40345891`), which shows git spawns sit on the request path. The task detail response bundles `info` (with integration verdict, merge signal, review projection, token summary, execution location), `promptMarkdown`, `statusMarkdown`, `log`, `promptHistory`, `reviewEvidence`, `contextUsage`, `enrichmentReport`, `titleHistory` in one payload. Earlier work: AGT-2202 (git-derived integration verdict), the TaskIndexCache and HEAD memoization (operator memory: slowness equals invalidated cache), the OrchestratorApi performance wave of 2026-09-01 (no-op invalidations, uncached paths).\n\n## Deliverable\n\nA Dossier `docs/operations/task-switch-performance` (English, house style of `docs/operations/haertung-verteilte-ausfuehrung/index.html`, SVG figures, `workbench.json` schemaVersion 1) that answers, with measurements, why a task switch is slow and how it becomes immediate:\n\n1. Measurement: instrument or replay the task switch end to end on the operator's Stable (frontend navigation, the requests it fires, backend timing per stage: index lookup, task.json read, git spawns, integration verdict, review projection, token summary, markdown rendering, response size). Publish a table per stage with p50 and p95 and the number of git spawns per switch. State the target: core information rendered within 100 ms on the workstation, the rest progressive.\n2. Core set definition: which fields the operator",
+      "tags": [
+        "task-and-board-ui",
+        "architecture"
+      ],
+      "state": "2-ready",
+      "createdAt": "2026-09-25T06:36:43.2518414Z",
+      "taskKey": "AGT-2910",
+      "rationale": "The card describes board and task interaction surfaces; its title is “Concept: switching between tasks must be immediate; core information first, git and enrichments later (task detail two-phase,”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "concept-dossier-consolidation-and-area-tags-dossier-agt-w55-consolidation-of-the-dossier-list-to-16-theme-dossiers-and-a-general-area-tag-system-with-auto-tagging",
+      "title": "Concept: Dossier consolidation and area tags (Dossier AGT-W55: consolidation of the Dossier list to 16 theme Dossiers and a general area-tag system with auto-tagging)",
+      "text": "# Dossier consolidation and area tags\n\nConcept card for the Dossier docs/operations/dossier-consolidation-and-area-tags. The Dossier holds the consolidation map (AGT-W53 verdicts applied on 2026-09-13), the archiving rule with artefacts, the area-and-tag system, six operator decisions D1-D6 and nine implementation tasks. After the operator decides in the Dossier, promote-concept creates the implementation cards from workbench.json.\n\nSummary: Plan for the operator's decision on AGT-W53 (2026-09-13): the current Dossier list shrinks from 37 to 16 (four new theme Dossiers for delivery chain, observation, gates and task UI; the North star rewritten to the September topology; eleven kept), partially superseded Dossiers are merged into their theme Dossier and recorded as superseded, implemented ones are archived only when their durable knowledge has a documentation home (artefact table per Dossier). Second part: the review's categories become a general tag system with areas that own a glossary (ubiquitous language), area and facet tags on cards and Dossiers, an auto-tagging pipeline step that runs by default in every project on card and Dossier creation with a cheap classification model route, a backfill for the 862 untagged cards and 54 Dossiers, and maintenance proposals as decision cards. Six operator decisions D1-D6, nine implementation cards.",
+      "tags": [
+        "dossiers-and-documentation",
+        "architecture"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-09-13T07:44:35.7809012Z",
+      "taskKey": "AGT-2796",
+      "rationale": "The card describes Dossiers, wiki articles, or documentation lifecycle; its title is “Concept: Dossier consolidation and area tags (Dossier AGT-W55: consolidation of the Dossier list to 16 theme Dossiers and a g”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "dossier-nachfuehrungs-step-karten-mit-dossier-referenz-aktualisieren-ihr-dossier-bei-lieferung",
+      "title": "Dossier-Nachfuehrungs-Step: Karten mit Dossier-Referenz aktualisieren ihr Dossier bei Lieferung",
+      "text": "Operator-Festlegung (10.08., Anlass kontext-orchestrator-chats): \"Die Dossier-Seite sollte kontinuierlich von den Tasks, die sie erstellt haben, aktualisiert werden - hier muss es die entsprechenden Steps geben. Tasks sollen verlinkt und sichtbar sein. Es soll ein lebendes Dokument sein.\"\n\nBausteine, die existieren (nicht neu bauen): references.workbenches + Keys (AGT-2533), Viewer-Kopf mit Live-Lane-Punkten (AGT-2534), zentrale Seite + SignalR (AGT-2535), documented-Lifecycle (AGT-2537, in Arbeit), Refresh-Karten (AGT-2538), Dossier-Pflicht-Kontrakt (AGT-2548).\n\n## Auftrag\n\n1. Pipeline-Step \"Dossier-Nachfuehrung\" fuer Karten mit Dossier-Referenz (references.workbenches bzw. sourceTaskKeys-Rueckkante): Bei Lieferung ergaenzt der Agent im referenzierten Dossier einen kompakten Umsetzungs-Stand (welcher Slice, was geliefert, Datum, Karten-Key) an definierter Stelle (eigener \"Umsetzung\"-Abschnitt; Schema im Template v2 aus AGT-2536 verankern). Der Step gehoert in den Auftragskontext (Prompt-Kontrakt analog AGT-2548) UND wird als Pipeline-Schritt sichtbar (Timeline-Eintrag, analog status.md-Pflicht).\n2. Status-Automatik: Erste laufende Referenz-Karte flippt das Dossier von decision-pending/decided auf einen sichtbaren \"in Umsetzung\"-Stand (Summary-Marker genuegt, Schema-Erweiterung nur falls noetig); alle Referenzen terminal -> Vorschlag documented (AGT-2537-Mechanik nutzen).\n3. Konfliktarm: Nachfuehrungs-Schreibzugriffe sind append-only in den Umsetzungs-Abschnitt (keine Umformulierung von Entscheidungsteilen), damit parallele Slices nicht kollidieren (Serial-Merge-Lehre 09./10.08.).\n4. Referenzfall: die sechs Kontext-Chat-Slices (AGT-2572..2577) gegen docs/operations/kontext-orchestrator-chats/ - deren Lieferungen muessen das Dossier sichtbar nachfuehren.\n\n## Akzeptanz\n\n- Liefernde Referenz-Karte hinterlaesst Umsetzungs-Eintrag im Dossier + Timeline-Step; Status-Marker wechselt automatisch; append-only belegt; dotnet test + App-Build gruen; Beispiel am Referenzfall in results/.\r\n\r\n---\r\n\r\n## Steer-Runde (Orchestrator, 10.08. nachmittags): Rebase + Neu-Lieferung\r\n\r\nDeine Lieferung ist conflict-skipped (develop zieht durch Sofort-Integration laufend weiter).\r\nBitte: origin/develop frisch fetchen, Arbeit vom Results-/Fence-Branch auf den aktuellen Stand\r\nrebasen, Konflikte fachlich aufloesen, Tests fahren, regulaer neu liefern. Keine Scope-Aenderungen.\r\n\r\n\r\n---\r\n\r",
+      "tags": [
+        "dossiers-and-documentation"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-08-10T00:14:36.3067907Z",
+      "taskKey": "AGT-2580",
+      "rationale": "The card describes Dossiers, wiki articles, or documentation lifecycle; its title is “Dossier-Nachfuehrungs-Step: Karten mit Dossier-Referenz aktualisieren ihr Dossier bei Lieferung”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "human-decision-needed-feature-project-wiki-and-common-problems-library",
+      "title": "Human decision needed: FEATURE — Project Wiki + Common-Problems-Library als First-Class-Citizen pro Projekt (Ordner-Wiki mit ADR, Occurrence-Log, Protokoll, Massnahmen, Ideen)",
+      "text": "# Project Wiki + Common-Problems-Library als First-Class-Citizen\n\n## Motivation\nOperator (2026-05-27): \"Wir haben ja immer wieder diese genauen Probleme und Bugs. Lass uns mal eine Library erstellen, wo die aktuellen Probleme und Bugs immer wieder auftreten. First-Class Citizen auf Projektebene, wo ich Common-Problems sammle und ordne.\"\n\nHeute (innerhalb von 24h) sind diese Probleme MEHRFACH aufgetreten und kosten jedes Mal Diagnose-Zeit:\n\n| Problem | Erscheinung | Anzahl Vorkommen heute |\n|---|---|---|\n| EACCES (POSIX permission denied) | Claude-CLI kann file nicht schreiben (z.B. JobMutationService.cs) | mind. 1, in mehreren Jobs |\n| Claude-Code tool permission denied | \"Permission denied and could not request permission from user\" | mind. 2 Runs |\n| Circuit-breaker 3x consecutive failure | mode auto-continuous -> manual | 10x heute |\n| Stale-progress orphan race | job-folder verschwindet mid-pickup -> orphan-<slug>-<date> | min. 3x |\n| Copilot CLI exit=1 nach 0.0s | Copilot scheitert sofort, picked aber im Round-Robin | min. 7x |\n| Project filter name divergenz | Agent Task Processor (WatchPath) vs Agent Software Studio (Registry) | dauerhaft |\n| Workspace-Create unsichtbar | persistiert auf disk, fehlt im /api/registry/workspaces | 1x sichtbar |\n| Job-Card zeigt \"human\" statt Modell | agent-Field-Leak | bei jedem neuen Job |\n| Direkt-Schreibzugriff auf Workspace-Folders | Agent (ich) schrieb mehrfach mit Write statt API | 2x in einer Session |\n\nJedes mal \"neu\" diagnostizieren ist nicht haltbar. Wir brauchen ein **First-Class-Wissens-Lager** im Repo, das ein Agent (und ein Operator) ZUERST konsultiert, wenn ein Symptom auftaucht, und das systematisch befuellt wird mit jedem neuen Vorkommen.\n\n## Konzept\n\n### Ablage-Struktur\nNeu unter `docs/wiki/` (alternative: `wiki/` als Top-Level-Ordner — fuer Diskussion). Innerhalb:\n\n```\ndocs/wiki/\n  README.md                                     # Index + Suche-Anleitung + Konventionen\n  common-problems/\n    README.md                                   # Index aller bekannten Probleme + Tag-Cloud + Status\n    eacces-on-dev-file-writes/\n      README.md                                 # Exec-Summary: was, wann zuerst, Status (open/mitigated/fixed)\n      occurrences.md                            # Timeline jedes Vorkommens (UTC, Job-ID, Agent, betroffener Pfad)\n      protocol.md                               # Detail-Root-C",
+      "tags": [
+        "dossiers-and-documentation"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-05-27T08:56:51.0078828Z",
+      "taskKey": "ASS-1318",
+      "rationale": "The card describes Dossiers, wiki articles, or documentation lifecycle; its title is “Human decision needed: FEATURE — Project Wiki + Common-Problems-Library als First-Class-Citizen pro Projekt (Ordner-Wiki mit ”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "dossier-review-round-2-cluster-delivery-chain-agt-w57-and-the-dossiers-it-absorbs-w7-w18-w43-w47-w49",
+      "title": "Dossier review round 2, cluster Delivery chain: AGT-W57 and the Dossiers it absorbs (W7, W18, W43, W47, W49)",
+      "text": "# Dossier review round 2, cluster Delivery chain: AGT-W57 and the Dossiers it absorbs (W7, W18, W43, W47, W49)\n\n## Cluster\n\nConsolidated Dossier of this cluster: AGT-W57 Delivery chain: integration, recovery, robustness (`docs/operations/delivery-chain`).\n\nDossiers to review in this card:\n- AGT-W57 Delivery chain: integration, recovery, robustness (new, from AGT-2799)\n- AGT-W7 Verteilte Ausfuehrung (German, the oldest execution Dossier)\n- AGT-W18 Remote Gate Target Architecture (extended by AGT-2881 with D1-D14, parked for operator decision)\n- AGT-W43 Runner link as part of the application (in-progress; D1 decided 2026-09-09, S2 AGT-2763 done, S3 AGT-2764 pending)\n- AGT-W47 Studio route ownership and local connector\n- AGT-W49 Operations Server backchannel beside the Task Server (target-set member per AGT-W55)\n\nCluster notes: AGT-W49 is in the AGT-W55 target set and is expected to stay current or partially-superseded; AGT-W18 carries the operator direction 'the remote host integrates, the local Studio observes' (2026-09-18) which must not be lost.\n\n## Review contract (same for every cluster card of this round)\n\nContext: the operator asked on 2026-09-24 for a fresh review of every Agent Studio Dossier. The previous round is AGT-W53 (`docs/operations/dossier-review-2026-09`, matrix of 2026-09-13) and its consolidation decisions live in AGT-W55 (`docs/operations/dossier-consolidation-and-area-tags`, D1-D6 decided 2026-09-13: target set of 16 Dossiers, superseded Dossiers need no artefact, open content moves into the consolidated Dossier). The consolidation cards AGT-2798 to AGT-2802 have since rewritten the North star (AGT-W14) and created the four consolidated Dossiers AGT-W57 (Delivery chain), AGT-W58 (Observation), AGT-W59 (Gates) and AGT-W60 (Task and board UI). The Dossier list therefore shows most descriptors as `review-requested` again: their last review predates the consolidation. This round records, per Dossier, whether it is still current after the consolidation, and against the code that is on `develop` today.\n\nRead first: `docs/operations/README.md` (section \"Dossier relevance reviews\" defines the `review` block and its verdict vocabulary), the AGT-W53 and AGT-W55 Dossiers, and the consolidated Dossier of your cluster. Then read every Dossier of your cluster completely (`index.html` and `workbench.json`; the `key` field in `workbench.json` maps the A",
+      "tags": [
+        "dossiers-and-documentation"
+      ],
+      "state": "6-completed",
+      "createdAt": "2026-09-24T15:45:04.7956004Z",
+      "taskKey": "AGT-2894",
+      "rationale": "The card describes Dossiers, wiki articles, or documentation lifecycle; its title is “Dossier review round 2, cluster Delivery chain: AGT-W57 and the Dossiers it absorbs (W7, W18, W43, W47, W49)”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "dossier-review-round-2-cluster-observation-agt-w58-and-the-dossiers-it-absorbs-w15-w38-w16-w17",
+      "title": "Dossier review round 2, cluster Observation: AGT-W58 and the Dossiers it absorbs (W15, W38, W16, W17)",
+      "text": "# Dossier review round 2, cluster Observation: AGT-W58 and the Dossiers it absorbs (W15, W38, W16, W17)\n\n## Cluster\n\nConsolidated Dossier of this cluster: AGT-W58 Observation: watcher, telemetry, project feed (`docs/operations/observation`).\n\nDossiers to review in this card:\n- AGT-W58 Observation: watcher, telemetry, project feed (new, from AGT-2800)\n- AGT-W15 Global Orchestrator Watcher\n- AGT-W38 Organization-wide telemetry layer\n- AGT-W16 Projekt-Feed: High-Level-Timeline aus Entscheidungen und Ereignissen (in-progress)\n- AGT-W17 Protokoll-Verdichtung: Supervisor-Zeilen, Tool-Call-Cluster, Edit-Zeilen (in-progress)\n\nCluster notes: W16 and W17 are marked in-progress; verify whether their implementation cards landed and whether the remaining scope is represented in AGT-W58.\n\n## Review contract (same for every cluster card of this round)\n\nContext: the operator asked on 2026-09-24 for a fresh review of every Agent Studio Dossier. The previous round is AGT-W53 (`docs/operations/dossier-review-2026-09`, matrix of 2026-09-13) and its consolidation decisions live in AGT-W55 (`docs/operations/dossier-consolidation-and-area-tags`, D1-D6 decided 2026-09-13: target set of 16 Dossiers, superseded Dossiers need no artefact, open content moves into the consolidated Dossier). The consolidation cards AGT-2798 to AGT-2802 have since rewritten the North star (AGT-W14) and created the four consolidated Dossiers AGT-W57 (Delivery chain), AGT-W58 (Observation), AGT-W59 (Gates) and AGT-W60 (Task and board UI). The Dossier list therefore shows most descriptors as `review-requested` again: their last review predates the consolidation. This round records, per Dossier, whether it is still current after the consolidation, and against the code that is on `develop` today.\n\nRead first: `docs/operations/README.md` (section \"Dossier relevance reviews\" defines the `review` block and its verdict vocabulary), the AGT-W53 and AGT-W55 Dossiers, and the consolidated Dossier of your cluster. Then read every Dossier of your cluster completely (`index.html` and `workbench.json`; the `key` field in `workbench.json` maps the AGT-W key to its folder under `docs/operations/`).\n\nFor every Dossier in your cluster deliver:\n\n1. A verdict from the README vocabulary: `current`, `partially-superseded`, `superseded` or `historical`. Judge against two references: (a) the consolidated Dossier of the cluster and",
+      "tags": [
+        "dossiers-and-documentation"
+      ],
+      "state": "6-completed",
+      "createdAt": "2026-09-24T15:45:09.059412Z",
+      "taskKey": "AGT-2896",
+      "rationale": "The card describes Dossiers, wiki articles, or documentation lifecycle; its title is “Dossier review round 2, cluster Observation: AGT-W58 and the Dossiers it absorbs (W15, W38, W16, W17)”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "tag-ui-chips-and-filters-on-board-list-dossier-list-and-wiki-area-glossary-pages",
+      "title": "Tag UI: chips and filters on board, list, Dossier list and wiki; area glossary pages",
+      "text": "Implement the approved concept described in `docs/operations/dossier-consolidation-and-area-tags/index.html`.\n\nThe concept document is the source of truth. Preserve its stated\nconstraints, recommendation, evidence, and open-decision outcomes.\n\n# Tag UI\n\nContext: AGT-W55 §5; depends on the tag system backend card.\n\nDeliver: tag chips on cards, task list rows, Dossier list rows and wiki tree entries; area and tag filters on board, list, Dossier list and wiki search that share one filter state; a 'tags proposed' marker with accept or reject per proposal; area glossary pages in the wiki with the terms and links to tagged items; the existing design system, no new colours beyond the registry colour; tests and screenshots at desktop and phone width.\n\n## Operator decisions (Dossier AGT-W55, 2026-09-13 07:53 UTC)\n\n- D1 Target set: A, sixteen Dossiers as proposed in §2.\n- D2 Archiving rule: A, archive when the durable knowledge has a documentation home; the consolidation card writes the artefact if it is missing. Operator note: a Dossier that is superseded by a theme Dossier needs no artefact, its content lives in the theme Dossier; artefacts are only for historical Dossiers whose knowledge has no home (§4 table).\n- D3 Area taxonomy: A, the ten areas from §5, refined per project.\n- D4 Auto-tagging scope: on card creation in every project, on Dossier creation and on wiki articles. Operator note: tag everything that is not archived, so the backfill covers all non-archived cards, Dossiers and wiki articles.\n- D5 Model class: A, a new classification route in model routing, cheapest available model, low thinking.\n- D6 Maintenance: A, periodic proposals as decision cards (retire, merge, add, glossary updates).\n\nUmbrella card: AGT-2797 (spawned by the Dossier decision) stays the program record; this card carries one slice of it.\n\n\n---\n\n## Continuous Session Note - 2026-09-25 07:52\n\n# Operator decision recorded: build the tag UI against the AGT-2804 contract now\n\nThe park `missing-tag-proposal-api` is cleared: do not wait for AGT-2804. The backend contract for tag proposals is defined in the AGT-2804 card prompt and in the AGT-W55 Dossier (proposals as decision cards, area and facet tags from the AGT-2803 registry, which is integrated on `develop`). Implement the UI against that contract: chips and filters on board, list, Dossier list and wiki, plus the area glossary pages, u",
+      "tags": [
+        "task-and-board-ui"
+      ],
+      "state": "2-ready",
+      "createdAt": "2026-09-13T07:55:40.8466254Z",
+      "taskKey": "AGT-2805",
+      "rationale": "The card describes board and task interaction surfaces; its title is “Tag UI: chips and filters on board, list, Dossier list and wiki; area glossary pages”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "agt-2156-apptooltip-direktive-bauen",
+      "title": "AGT-2156: [appTooltip]-Direktive bauen + 15 native title-Sites konvertieren (Drift-Regel hat kein Gegenstueck im Code)",
+      "text": "# AGT-2156: [appTooltip]-Direktive + Konvertierung der Drift-Sites\n\n## Befund (12.07. Nacht, Operator)\nDie Drift-Regel \"tooltip-canonical-directive\" (Tooltips via [appTooltip], nicht native\ntitle=/[attr.title]) hat KEIN Gegenstueck im Code: Es existiert weder eine Direktive mit\nSelector appTooltip noch der von der Regel referenzierte Pfad frontend/src/app/components/tooltip/.\nDer MachineBound-Live-Test meldet 15 bad-variant-Sites (Liste: Testoutput\nCodePatternDriftAnalysisServiceTests.Analyze_AgainstLiveDevCheckout, u.a. cli-window-analysis,\nremote-host-card, studio-shell, git-pane, beautiful-results.renderer.ts).\n\n## Umfang\n1. **Direktive bauen** unter frontend/src/app/components/tooltip/ (Pfad = Exclude der Regel):\n   Standalone-Directive, Selector [appTooltip], string-Input; leichtgewichtiges Overlay\n   (Positionierung, Verzoegerung ~300ms, Dark/Light via Tokens, kein CDK-Import noetig,\n   Escape-sicher). An Agent Studios bestehende Tooltip-Optik anlehnen ([tooltip]-Inputs\n   der Dot-Komponenten als Stilreferenz).\n2. **15 Sites konvertieren**: [attr.title]=\"expr\" -> [appTooltip]=\"expr\", statisches\n   title=\"text\" -> appTooltip=\"text\"; beautiful-results.renderer.ts (Template-String)\n   gesondert betrachten - dort ggf. title bewusst belassen UND die Regel-Ausnahme\n   dokumentieren, wenn das gerenderte HTML ausserhalb von Angular lebt.\n3. Jede betroffene Standalone-Komponente importiert die Direktive.\n4. **Gate-Hinweis**: Der Live-Test traegt Category=MachineBound und ist aus den\n   Verify-Gates ausgenommen (BuildProfile-Filter, Operator 12.07.). Nach dieser Karte\n   muss er lokal gruen sein: dotnet test --filter Category=MachineBound als Verifikation.\n\n## Verifikation\nng build gruen; MachineBound-Testlauf: tooltip-canonical-directive drift=0; Screenshot\neines Tooltips light/dark ins Task-Log.\n\n---\n\n## Escalated Reissue Audit Note (2026-07-13)\n\nThe previous implementation reached completion evidence, but the build/test gate escalated. Re-run the current pipeline and resolve or verify the gate without discarding existing task-branch work.\n\nThis is a reissue of the existing card, not a fresh implementation. Inspect and preserve existing task-branch/worktree changes. End only after the current pipeline has produced an honest terminal verdict.",
+      "tags": [
+        "task-and-board-ui"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-07-12T02:05:29.472Z",
+      "taskKey": "AGT-2156",
+      "rationale": "The card describes board and task interaction surfaces; its title is “AGT-2156: [appTooltip]-Direktive bauen + 15 native title-Sites konvertieren (Drift-Regel hat kein Gegenstueck im Code)”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "container-images-as-release-artifacts-every-service-published-and-pinned-compose-runs-from-images",
+      "title": "Container images as release artifacts: every service published and pinned, compose runs from images",
+      "text": "## Current operator recovery: reproduced Windows Retention gate and shared Task Server fix (2026-09-08 13:55 UTC)\n\nThis is the current bounded recovery instruction. Preserve the complete immutable reviewed delivery 0db3ecb70475c2a186d7bc1c0f29cf194d856b26 and reconcile its final content onto CURRENT durable develop. All 33 delivery files were independently compared with the successful frozen Docker source and match. Review review_749c14283ab6400f8fc6c331d3b779ef passed all aspects and commands. Do not recreate image/Compose/scenario work or import the quota-fallback feature. The managed runner owns commits and pushes.\n\nActual Windows integration gate c047ae7f8fe64ebcbce60cc0b03db8fc on merge d670bc0078b45810e9a7d18282b47094342cddb8 failed retention.Tests: 7 failed, 54 passed, 0 skipped, 61 total. develop was rolled back; nothing was pushed. Operator independently reproduced exactly all seven failures on an isolated Windows checkout at d670bc0078. Full log/TRX: /home/agent/operator-verification/2026-09-08/retention-gate-d670-baseline.log and retention-gate-d670-baseline.trx. Copy these real failures into results.\n\nFive failures are strict RetentionTestWorkspace.Dispose cleanup of temporary Git fixtures: UnauthorizedAccessException for read-only Git object files. Affected tests: RetentionRuntimeCommitTests.ApplyCommitsDeletionsOfTrackedRuntimeFilesAndSucceedsWithWarningsOnly; UntrackedRuntimeFilesAreDeletedWithoutFailingTheRun; FileTreeFullBackupServiceTests.MalformedPointerOnARealTaskIsAWarningNotAnException; CreateVerifyRestoreIntoEmptyDirectoryRoundTripsHotUntrackedAndColdData; ForeignArchiveManifestUnderResultsIsIgnoredAndDoesNotAbortTheBackup. Make cleanup portable for files owned by that temporary fixture while preserving strict errors and path containment. Do not swallow failures, skip tests, touch live repositories, or follow links outside the fixture.\n\nTwo failures are RetentionExcerptWriterTests.HeadAndTailStillCarryTheConfiguredLineCounts (expects \"line 1\\n\", actual markdown is CRLF) and HugeLogWithThousandsOfErrorsStaysWithinEverySectionCap (section parser reports 0 instead of 1..20 on CRLF). Correct the test parsing/expectations to handle platform line endings without weakening configured head/tail counts or per-section caps. Keep production semantics unchanged unless the measured cause requires a production fix. Add only meaningful focused covera",
+      "tags": [
+        "delivery-chain"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-09-06T19:43:11.0857471Z",
+      "taskKey": "AGT-2729",
+      "rationale": "The card describes integration, branches, commits, or promotion to the target branch; its title is “Container images as release artifacts: every service published and pinned, compose runs from images”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "evidenz-screenshots-quellen-label-real-mocked-composite-erwuenscht-bildreferenzen",
+      "title": "Evidenz-Screenshots: Quellen-Label (real/mocked), Composite erwuenscht, kaputte Bild-Referenzen als Finding",
+      "text": "# Evidenz-Screenshots vertrauenswuerdig machen: Quellen-Label + echtes Backend + valide Bild-Referenzen\n\n## Justierung (Operator, 2026-06-10): ZUSAMMENGESETZTE Screenshots sind ERWUENSCHT\nComposite-/zusammengesetzte Evidenz-Bilder bleiben ausdruecklich erlaubt und erwuenscht (gute Verdichtung). Es geht NICHT um ein Verbot - es geht um EHRLICHE KENNZEICHNUNG der Quellen und funktionierende Referenzen.\n\n## Vorfall (ASS-1683)\nScreenshot entstand in e2e-Lauf OHNE Backend (alle API-Routen gemockt) und passte nicht zur echten UI; zusaetzlich verlinkte status.md ein nicht existierendes Bild (protocol-status-md-run-timeline-02.png vs. tatsaechlich protocol-status-version-history.png).\n\n## Aufgabe\n1. Quellen-Label: Jeder Evidenz-Screenshot traegt seine Quelle - 'real' (gegen laufendes Backend, seit ASS-1713 im Worktree per dynamischem Port moeglich) oder 'mocked' (e2e mit gemockten Routen). Kennzeichnung im Dateinamen-Suffix (--mocked) + status.md-Hinweis; Task-Detail zeigt das Label dezent (text-only). Composite-Bilder listen die Quellen ihrer Teile.\n2. Empfehlung statt Zwang: Run-Regeln (agent-rules/prompts) empfehlen fuer UI-Abnahme-Evidenz das echte Backend; mocked bleibt erlaubt, aber gekennzeichnet.\n3. Referenz-Validierung: status.md-Bild-Links beim Persistieren/Anzeigen pruefen; kaputte Referenz = sichtbares Review-Finding statt stumm leeres Bild.\n\n## Akzeptanz\nLabel sichtbar (real/mocked) inkl. Composite-Faelle; kaputte Bild-Referenz erzeugt Finding; Build+Tests gruen; keine Endpoint-Renames.",
+      "tags": [
+        "observation"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-06-10T10:00:21.5671096Z",
+      "taskKey": "ASS-1749",
+      "rationale": "The card describes watcher signals, telemetry, or the activity feed; its title is “Evidenz-Screenshots: Quellen-Label (real/mocked), Composite erwuenscht, kaputte Bild-Referenzen als Finding”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "agent-studio-docker-deployable-one-compose-file-runs-the-complete-product-from-published-images",
+      "title": "Agent Studio Docker-deployable: one compose file runs the complete product from published images",
+      "text": "# Agent Studio Docker-deployable: one compose file runs the complete product from published images\n\n## Context (operator decision 2026-09-06)\n\n- Robert: \"In diesem Zug auch das ganze Agent Studio Docker-deploybar machen.\" Today `docker compose up` gives the demo pair (legacy OrchestratorApi plus web); the `distributed` profile exists but the frontend cannot work against it because Studio routes are only partially served by the Task Server. After the route moves and the connector (D4b), the product's standard deployment is the distributed stack.\n- Inputs: images (D1), principals (D3), connector (D4b). The installer card (D9) drives this compose; the demo installer (setup/DemoInstaller.cs) is retired in its favour.\n\n## Changes\n\n1. One `docker-compose.yml` at the repository root that is the product: `task-server`, `orchestrator-engine`, `connector` (the D4b process), `web`, optional `agent-host-coding` and `agent-host-review` (profile `runner`), optional `edge` (profile `edge`, TLS via Caddy for LAN or private-network exposure). All from published images pinned by `AGENT_STUDIO_VERSION`; `build:` only under profile `dev`. Volumes: store, backup, runner workspaces; named networks; health checks; restart policies; resource limits.\n2. First-run bootstrap without manual token handling: on an empty store the Task Server bootstrap creates the Studio, Engine, and Runner principals and writes them to a mounted secrets directory that the other services read (file permissions 0600); a `bootstrap` one-shot service or the Task Server itself owns this. Re-running compose never overwrites existing secrets.\n3. `.env.example` documents every variable (version, ports, data root, UI bind address, optional edge hostname, runner CLI credentials mount). Defaults bind the UI to loopback; exposing to a LAN is an explicit variable.\n4. Runner containers: mount points for CLI credentials (Claude, Codex, Gemini) and Git credentials documented; the runner container registers with its own principal and reaches the Task Server on the compose network.\n5. Windows and macOS: verified under Docker Desktop (WSL2) with the same file; document the volume path behaviour and the loopback binding.\n6. CI: scripts/compose-smoke-test.sh runs the product stack from images (release tag) and from `dev` builds (pull request), proves UI, task creation, runner claim with a fake CLI through to review, backup c",
+      "tags": [
+        "delivery-chain",
+        "operations"
+      ],
+      "state": "3-progress",
+      "createdAt": "2026-09-06T19:45:31.1822259Z",
+      "taskKey": "AGT-2736",
+      "rationale": "The card describes integration, branches, commits, or promotion to the target branch; its title is “Agent Studio Docker-deployable: one compose file runs the complete product from published images”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "pub-1-publish-targets-ableitung-pending-badges",
+      "title": "PUB-1: Publish-Targets ableiten + Pending-Delta + Badges (read-only)",
+      "text": "Konzept: docs/concepts/publishing-workflows.md (v1, 2026-07-10) - Abschnitte 2-3. Operator-Intent: \"dead simple sehen, dass etwas Publizierbares da ist - im Prinzip nach jedem Task\".\n\n1. TARGET-ABLEITUNG pro Projekt aus Repo-Fakten (KEINE Settings): release.yml mit Tag-Trigger -> Package-Target (npm/NuGet aus Workflow/Manifest; aktuelle Version = letzter v*-Tag); deploy-website.yml/pages.yml -> Website-Target. Referenz-Repos: coding-agent-runner (NuGet 0.3.1 + Website), coding-agent-chat (npm, Erstpublish offen + Website).\n2. PENDING-DELTA pro Target: gemergte Task-Commits seit letztem Tag/Deploy, die den Pfad-Scope des Targets beruehren (Package-Quellpfade vs. website/).\n3. UI (read-only): Publish-Badges im Project Hub (\"NuGet 0.3.1 -> 4 Tasks pending\"); Chip an akzeptierten Tasks (\"publishable: npm, website\"). Null pending = KEIN Badge (Ruhe).\n4. Sonderzustand sichtbar: Package ohne jede Erstveroeffentlichung (coding-agent-chat) -> Badge \"first publish pending (manual, operator)\".\nBackend-Ableitung + Hub/Task-UI, Tests mit Fixture-Repos (Temp-Repo mit Workflows+Tags). PUB-2 (Aktionen) ist separat.",
+      "tags": [
+        "websites"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-07-09T23:10:43.527Z",
+      "taskKey": "AGT-2032",
+      "rationale": "The card describes publishing targets or public website delivery; its title is “PUB-1: Publish-Targets ableiten + Pending-Delta + Badges (read-only)”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "step-typ-task-spawner-website-relevanz",
+      "title": "Neuer Step-Typ: Task-Spawner - Website-Relevanz erkennen und Task im Zielprojekt erzeugen",
+      "text": "Operator-Direktive Robert 2026-07-10: Ein neuer TYP von Pipeline-Step, der nach Feature-Abschluss prueft: \"Ist das relevant fuer die Webseite (neue Funktion, etwas entfernt, ...)?\" - und wenn ja, einen NEUEN TASK im Website-Projekt SPAWNT. Das BESTE verfuegbare Modell generiert den Task(-Prompt); bearbeitet wird er dann vom Default-Modell des Zielprojekts.\n\nDESIGN (generisch, nicht website-hartverdrahtet):\n1. Step-Typ \"task-spawner\": Konfiguration = Zielprojekt, Relevanz-Frage/Prompt, Modell fuer die Bewertung+Generierung (Default: bestes verfuegbares Modell, z.B. claude-opus-4-8 max bzw. kuenftig hoeher), Spawn-Policy (max 1 Task pro Quell-Task, Dedup gegen bereits gespawnte).\n2. ABLAUF: Nach Merge-/Abschluss-Phase bewertet der Step den Task-Diff+Summary gegen die Relevanz-Frage. Bei JA: erzeugt eine neue Karte im Zielprojekt (0-backlog oder 2-ready per Konfig) mit generiertem Prompt, Quell-Referenz (Task-Key + Commits) und Default-Modell des Zielprojekts.\n3. ERSTER EINSATZ: Agent-Studio-Pipeline -> Website-Projekt (WEB): \"Wir haben eine Aenderung -> Webseite aktualisieren.\"\n4. SICHTBARKEIT: gespawnter Task verweist auf den Quell-Task; der Quell-Task bekommt einen Timeline-Eintrag \"spawned WEB-x\".\n5. Kein Spam: Relevanz-Schwelle konservativ, Dedup, und der Step ist pro Projekt-Pipeline explizit aktivierbar (Default aus).\nKOORDINATION: verwandt mit dem Task-Dependencies-Feature (separate Karte) - Spawn erzeugt Referenzen, Dependencies machen Wartebeziehungen daraus. Tests: Relevanz ja/nein gemockt, Dedup, Ziel-Store-Schreibweg (Disk-Layout wie File-Watcher erwartet).",
+      "tags": [
+        "websites"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-07-09T23:03:47.429Z",
+      "taskKey": "AGT-2028",
+      "rationale": "The card describes publishing targets or public website delivery; its title is “Neuer Step-Typ: Task-Spawner - Website-Relevanz erkennen und Task im Zielprojekt erzeugen”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "p2-security-apiauthusers-ohne-session-abrufbar---auth-gruppe-requirehuman-auditieren",
+      "title": "P2 Security: /api/auth/users ohne Session abrufbar - auth-Gruppe RequireHuman-auditieren",
+      "text": "# P2 Security: /api/auth/users antwortet ohne Session\n\nBefund 26.07. (Operator): GET /api/auth/users liefert die vollstaendige Benutzerliste (Usernames, Rollen, IDs) ohne authentifizierte Studio-Session - nur mit X-Client-Id. Gleiches Muster fuer weitere auth-Gruppen-GETs pruefen.\n\n## Auftrag\n1. Alle Routen der /api/auth-Gruppe auditieren: users (GET/POST), change-password u.a. - alles ausser bootstrap/login/session-Status braucht RequireHuman mit owner/admin-Rolle.\n2. Bootstrap bleibt offen NUR solange kein Owner existiert (ist so, verifiziert 409) - Test dafuer ergaenzen.\n3. Tests: 401 ohne Session fuer users-Liste; 403 fuer Nicht-Owner; Happy-Path mit Owner-Session.\n4. In QS-Security-Sensorik (BoundaryInventory) als Boundary-Fall aufnehmen, falls Kategorie passt.\n\n\n---\n\n## Continuous Session Note - 2026-07-26 17:52\n\nIntegration recovery for AGT-2351. Resume the existing delivery branch 'runner/agent-runner-01/AGT-2351' at the fenced result 95df978e76d878bdd03692157e4863e72a92fca9. Fetch the latest 'develop', rebase the delivery onto it, resolve every conflict without dropping the task's intended changes, run the relevant tests, and finish with the normal task terminal sentinel. Do not merge or push the integration branch yourself; publish only the updated delivery branch for a new operator acceptance.",
+      "tags": [
+        "security"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-07-26T09:58:26.359811Z",
+      "taskKey": "AGT-2351",
+      "rationale": "The card describes authentication, permissions, secrets, or sandbox boundaries; its title is “P2 Security: /api/auth/users ohne Session abrufbar - auth-Gruppe RequireHuman-auditieren”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "auto-detect-agent-sandbox-permission-errors-and-surface-clear-status",
+      "title": "Feature: Sandbox-/Permission-Errors aus CLI-Output erkennen und klar zurueckmelden (statt stillen Fail)",
+      "text": "## Symptom (2026-05-11 21:16)\n\nErster Codex-Run im Lotta-Dashboard-Projekt: jedes Shell-Kommando schlug fehl mit\n\n> `windows sandbox: runner error: CreateProcessAsUserW failed: 1312`\n\nDer Agent hat 9 Sekunden lang das Gleiche immer wieder probiert (auch ein simples `pwd`), dann aufgegeben mit einem deutschen Erklaerungstext und KEINEM Sentinel. Folge: Job stand als generischer \"missing-terminal-sentinel\" da, der Reviewer-Pfad konnte nichts mit dem Outcome anfangen.\n\n## Was eigentlich passieren sollte\n\nBeim ersten Auftreten eines erkennbaren **Permission-/Sandbox-Blockers** in CLI-stderr/stdout:\n\n1. Orchestrator erkennt das Pattern (Liste bekannter Fehlertexte unten)\n2. Bricht den Run sauber ab (kein 5-Minuten-Loop bei dem der Agent vergeblich retried)\n3. Schreibt eine **klare, typisierte Statusmeldung** auf den Bus + ins Chat-Log:\n   > \"Codex-Sandbox kann Shell-Kommandos nicht ausfuehren (Windows-Logon-Session-Fehler 1312). Der Agent kann das nicht selbst loesen. Empfehlung: Codex-Config `sandbox_mode = \\\"danger-full-access\\\"` setzen oder Task neu prompten mit Hinweis nur File-Tools zu nutzen.\"\n4. Job geht NICHT als generisches \"missing-sentinel\" durch — sondern bekommt einen klaren Status `blocked-environment` mit dem Hinweis als Body\n5. Auf der Karte / im Chat sichtbarer Badge: **\"Environment Blocker\"** (statt \"concerns\")\n\n## Erkennungs-Pattern (initial)\n\nDie folgenden Strings in stderr/stdout zaehlen als Sandbox-/Permission-Blocker:\n\n| CLI | Pattern | Bedeutung |\n|---|---|---|\n| Codex | `windows sandbox: runner error` | Codex-eigener Sandbox-Wrapper |\n| Codex | `CreateProcessAsUserW failed: 1312` | Windows Logon-Session-Fehler |\n| Codex | `sandbox_permissions` | falsche Codex-Permission-Config |\n| Claude | `permission denied` (bei Tool-Use) | OS-level Permission |\n| Claude | `EACCES` | unix-style permission denied |\n| Beliebig | `EPERM`, `Access is denied` | generisches OS-perm-deny |\n\nDie Liste lebt in einer Konstante `SandboxBlockerPatterns` in einer neuen Klasse `AgentEnvironmentDetector.cs`. Neue Patterns sind ein einzeiliger Add.\n\n## Implementierung\n\n1. **`AgentEnvironmentDetector`** (neu, `Services/Runner/AgentEnvironmentDetector.cs`):\n   - statische Liste `SandboxBlockerPatterns` (Regex oder Substring)\n   - Methode `bool IsSandboxBlocker(string line)` + `string Diagnose(string line, string cliType)`\n   - Diagnose-Output: 1-Satz Beschreibung + 1-Sat",
+      "tags": [
+        "security",
+        "reliability"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-05-11T21:22:23.2986979Z",
+      "taskKey": "ASS-1009",
+      "rationale": "The card describes authentication, permissions, secrets, or sandbox boundaries; its title is “Feature: Sandbox-/Permission-Errors aus CLI-Output erkennen und klar zurueckmelden (statt stillen Fail)”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "claude-auth-headless-claudecodeoauthtoken-durchreichen--probe--runbook",
+      "title": "claude-Auth headless: CLAUDE_CODE_OAUTH_TOKEN durchreichen + Probe + Runbook",
+      "text": "# claude-Auth headless/remote-deployfaehig: setup-token als Provisionierungsweg\n\n## Kontext (04.08.)\n\nclaude ist auf agent-runner-01 installiert, aber ohne Session\n(\"Not logged in\") - die Capability-Probe advertised claude korrekt nicht,\nclaude-Karten werden nie angeboten. Interaktiver Login skaliert nicht:\nDie Anmeldung muss deploy- und restartfest sein und auf kuenftige Hosts\nprovisionierbar (Robert-Anforderung).\n\n## Loesung\n\nLanglebiges Token via `claude setup-token` (einmalig interaktiv beim\nOperator erzeugt), als CLAUDE_CODE_OAUTH_TOKEN in der Host-Umgebung\nprovisioniert - gleiches Sicherheitsmuster wie RUNNER_AUTH_TOKEN\n(/etc/agent-runner/*.env, 640 root:agent, NIE in Repo/Image/Karten).\n\n## Auftrag (Runner-Seite)\n\n1. Env-Durchreichung: Der gespawnte claude-Prozess muss\n   CLAUDE_CODE_OAUTH_TOKEN sehen - auch im Clean-Context-Pfad\n   (CarWorkerExecution/CAR-B verlinkt heute die Credential-DATEI;\n   pruefen ob env-Token durch das isolierte Config-Home faellt und\n   gezielt whitelisten).\n2. Provider-Auth-Probe: `claude auth status` muss token-basierte Auth\n   als nutzbar erkennen (pruefen, ob die Probe mit gesetzter Env gruen\n   meldet; sonst Probe um den Env-Fall ergaenzen). Erst dann advertised\n   der Runner claude und der Server bietet claude-Karten an.\n3. Runbook (docs/operations/setup/linux-runner-host.md): Abschnitt\n   \"claude-Anmeldung headless\" - setup-token-Erzeugung (Operator, lokal),\n   Provisionierung, Rotation, Verifikation (runner-provider-auth-Logzeile\n   + Probekarte). Ausdruecklich: Token nie in Repo/Karten/Logs.\n4. Nachweis: mit gesetztem Token (Dummy-Wert reicht fuer den Unit-Test,\n   echter Test nach Provisionierung) advertised die Probe claude;\n   Logzeile runner-provider-auth status=ok binary=claude.\n\nDie 5 wartenden claude-Karten (AGT-2490..2494) sind der Live-Test nach\nProvisionierung.\n\n## ARCHITEKTUR-KONTRAKT Provider-Auth (Operator-Entscheid 04.08. spaet, bindend fuer 2501+2502)\n\nDie zwei Lieferungen haben unvereinbare Entwuerfe gebaut. Entschieden ist:\n1. EINE Datei /etc/agent-runner/provider-auth.env (alle Provider-Tokens:\n   CLAUDE_CODE_OAUTH_TOKEN, kuenftig weitere), 640 root:agent - exakt das\n   etablierte Muster der runner-Env-Dateien.\n2. BEIDE Units laden sie per EnvironmentFile= (nach den bestehenden Eintraegen;\n   Merkregel: EnvironmentFile schlaegt Environment=, /proc verifizieren).\n3. Provisionierung ausschliesslich v",
+      "tags": [
+        "security",
+        "operations"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-08-04T18:07:47.9032374Z",
+      "taskKey": "AGT-2501",
+      "rationale": "The card describes authentication, permissions, secrets, or sandbox boundaries; its title is “claude-Auth headless: CLAUDE_CODE_OAUTH_TOKEN durchreichen + Probe + Runbook”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "runner-provider-auth-probe-must-not-read-agent-stream-output-as-an-auth-error",
+      "title": "Runner provider auth probe must not read agent stream output as an auth error",
+      "text": "# Runner provider auth probe must not read agent stream output as an auth error\n\n## Symptom (15.09.2026, agent-runner-01, v0.3.0)\nThe coding daemon logs `runner-provider-auth-probe-degraded binary=claude outcome=transient` while real Claude runs are active. The detail is not an auth answer but a fragment of a running agent's stream-json output, e.g. `{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"content\":\"Exit code 2\\nb5c278564 fix(frontend-tests)...`. The status stays ready, but two such readings in a row could flip the provider to Unavailable and pause claims.\n\n## Expected\n- The probe runs `claude auth status --text` isolated from agent sessions (own config/session context, no shared stdout, no transcript pickup) and classifies only its own output.\n- Output that is not an auth-status answer is classified as indeterminate with a short, sanitized detail, never echoing agent content.\n- A regression test feeds a stream-json tool_result frame as probe output and asserts it is neither logout nor a leaked detail.\n\n## Working rules\n- Base on current origin/develop. Keep the change focused on this card.\n- Tests that fail without the change; docs where behaviour or operations change.\n- status.md names each acceptance item with its code and test.",
+      "tags": [
+        "security"
+      ],
+      "state": "6-completed",
+      "createdAt": "2026-09-15T09:22:18.6628882Z",
+      "taskKey": "AGT-2823",
+      "rationale": "The card describes authentication, permissions, secrets, or sandbox boundaries; its title is “Runner provider auth probe must not read agent stream output as an auth error”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "human-decision-needed-auto-detect-agent-sandbox-permission-errors-and-surface-clear-status",
+      "title": "Human decision needed: Feature: Sandbox-/Permission-Errors aus CLI-Output erkennen und klar zurueckmelden (statt stillen Fail)",
+      "text": "# Human decision needed for `auto-detect-agent-sandbox-permission-errors-and-surface-clear-status`\n\nThe orchestrator could not decide on this 4-review task unattended.\n\n**Reason from orchestrator:** NOOP after 2 prior orchestrator reissue(s); user attention required.\n\n**Original signal:** [[TASK_NOOP]]\n\n**Original reason:** (none provided)\n\nPlease review the task in 4-review (`C:\\Projects\\agent-taskboard-workspace\\projects\\agent-taskboard\\4-auto-review\\auto-detect-agent-sandbox-permission-errors-and-surface-clear-status`) and either answer the agent or change scope.",
+      "tags": [
+        "security",
+        "reliability"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-05-11T22:21:20.1794732Z",
+      "taskKey": "ASS-1283",
+      "rationale": "The card describes authentication, permissions, secrets, or sandbox boundaries; its title is “Human decision needed: Feature: Sandbox-/Permission-Errors aus CLI-Output erkennen und klar zurueckmelden (statt stillen Fail”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "task-server-principals-separate-studio-engine-and-per-runner-credentials-with-scopes-revocation-and-hub-auth",
+      "title": "Task Server principals: separate Studio, Engine, and per-Runner credentials with scopes, revocation, and hub auth",
+      "text": "# Task Server principals: separate Studio, Engine, and per-Runner credentials with scopes, revocation, and hub auth\n\n## Context (operator decision 2026-09-06)\n\n- Phase B (docs/operations/remote-task-server-local-studio.md) is approved; slice B2. The packaged install defaults to one shared bearer (`AUTH=bearer`, one service credential) and an interim profile with `StudioBearerToken` and `RunnerBearerToken`. The plan's release gates require: missing or invalid auth returns 401, insufficient scope returns 403, `X-Client-Id` alone never authorizes, and a compromised-Runner simulation cannot call Studio or management mutations.\n- No API listener may open on the private network (D2) until these negative tests pass, so this card gates the remote deployment.\n- Code: task-server/TaskServerAuthenticationMiddleware.cs, TaskServerOptions.cs, TaskServerBootstrapOptions.cs, TaskServerEndpoints.cs, TaskServerProtocolMiddleware.cs; studio-bff reads `TaskServer:AuthTokenFile`; runner reads `RUNNER_AUTH_TOKEN_FILE`; engine reads engine.env.\n\n## Changes\n\n1. Principal model: credentials are stored hash-only in the Task Server store with `principalId`, `kind` (studio, engine, runner), `scopes`, `createdAt`, `revokedAt`, `lastSeenAt`. Runners get one credential each (`runnerId` bound). Bootstrap creates the initial Studio and Engine credentials and prints them once; management endpoints under `/api/v1/management/principals` create, list, rotate, and revoke (rotation keeps the old secret valid for a configurable overlap).\n2. Route scopes: every v1 route and hub declares its required scope (`tasks:read`, `tasks:write`, `runs:claim`, `reviews:claim`, `management`, `events:subscribe`, …). Runner credentials cannot reach Studio mutations or management; Engine cannot claim runs; Studio cannot mint fences. Hub connections authenticate with the same credential and scope.\n3. `X-Client-Id` remains an identity hint for attribution only; authorization never derives from it. The interim `StudioBearerToken`/`RunnerBearerToken` profile maps onto the principal model and is marked deprecated with a removal note.\n4. Setup and join: `agent-orchestrator-setup --mode agent-host` and the runner join-token flow (setup/JoinTokenCodec.cs) mint a per-runner credential instead of copying the shared bearer; the runner stores it in its token file.\n5. Tests: negative matrix (no auth, wrong secret, revoked, wr",
+      "tags": [
+        "security",
+        "architecture"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-09-06T19:43:32.453498Z",
+      "taskKey": "AGT-2730",
+      "rationale": "The card defines scoped credentials, revocation, and authenticated principals for the Task Server and runners, so security is the area and architecture is the cross-cutting facet.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "cold-archive-on-object-storage-s3-compatible-target-off-host-copy-archive-integrity-checks-archive-retention",
+      "title": "Cold archive on object storage: S3-compatible target, off-host copy, archive integrity checks, archive retention",
+      "text": "# Cold archive on object storage: S3-compatible target, off-host copy, archive integrity checks, archive retention\n\n## Context (operator decision 2026-09-06, dossier \"Aufbewahrung und Archiv\")\n\n- Fourth card of the retention program; depends on R2 (Task Server adapter, manifests, management API). Read docs/operations/retention-und-archiv/index.html first; §5 (archive layout and targets) is binding. R1 and R2 write cold payloads to a local `ARCHIVE_PATH`; this card adds the second target the dossier names so the archive does not live on the same disk as the hot store, and gives the archive its own lifecycle.\n- The control plane moves to a Hetzner VM in Docker (AGT-2733); Hetzner Object Storage (S3-compatible) is the natural off-host target, any S3-compatible endpoint must work (MinIO in CI).\n\n## Changes\n\n1. Archive target abstraction in the `retention/` project: `LocalDirectoryTarget` (existing) and `S3Target` (endpoint, bucket, prefix, access key and secret from a secret file, path-style option, server-side checksum). Manifest and payload land under `<prefix>/<project>/<task-key>/<archivedAt>/`; the manifest records the target and the object ETags or checksums.\n2. Policy gains `archiveTarget` (local | s3) and `copyToSecondary` (write local first, then copy to S3 and verify; delete local after verification when configured). Restore reads from whichever target holds the payload and verifies sha256 before writing back.\n3. Integrity: a weekly check job samples manifests (configurable count) and verifies payload hashes against the target; discrepancies produce an audit entry and a feed event; the run history shows check runs.\n4. Archive retention: `deleteArchivedAfterYears` (default none) with an explicit two-step confirmation in the Admin UI (R3 gets a small extension: target status line and the confirmation dialog); deletions are audited with the manifest kept as a tombstone.\n5. Backup interaction: SQLite backups reference the archive by manifest; a restore of the hot store onto a machine that has the archive target configured resolves archived artifacts without copying them; documented in setup/task-server.md.\n6. Compose and installer: the control-plane compose (AGT-2733) and the installer (AGT-2738) get the archive target variables and a documented default (local volume; S3 optional).\n7. Tests: S3 target against MinIO in CI (upload, verify, restore, missing o",
+      "tags": [
+        "retention"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-09-06T20:40:54.2572776Z",
+      "taskKey": "AGT-2746",
+      "rationale": "The card describes archiving, pruning, or storage lifecycle; its title is “Cold archive on object storage: S3-compatible target, off-host copy, archive integrity checks, archive retention”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "bug-archive-ansicht-leer-852-tasks-in-7-archive-paged-archive-endpoint-fe-lazy",
+      "title": "BUG: Archive-Ansicht leer trotz 852 archivierter Tasks - pagender Archive-Endpoint + FE-Lazy-Load",
+      "text": "# BUG: Archive-Ansicht leer obwohl 852 Tasks in 7-archive liegen\n\n## Befund (Operator + Diagnose 2026-06-10)\n- Auf Platte: **852 task.json mit state=7-archive** (tasks/NNN/KEY/task.json), u.a. die 60 frisch abgenommenen+auto-archivierten Tasks.\n- `GET /api/tasks?watchPath=...` liefert KEINE archivierten (auch nicht mit includeArchived/state-Query).\n- `GET /api/tasks/grouped` hat zwar das Feld `archive` (TaskCrudEndpoints baut `Archive = SortLane(TaskStates.Archive)`), liefert aber **archive: 0** -> der Scanner haelt 7-archive aus der Default-Job-Liste raus (Scan-Log: \"852 archived slim-hydrated\"), bevor gruppiert wird.\n- Folge: Die Archive-Ansicht im Frontend ist IMMER leer. Operator kann abgeschlossene/archivierte Arbeit nicht einsehen.\n\n## Gewuenscht\nArchiv sichtbar machen, OHNE die Default-Board-Performance zu verschlechtern (852+ Eintraege gehoeren NICHT in jede Board-Response):\n1. **Dedizierter, pagender Archive-Read**: z.B. `GET /api/tasks/archive?watchPath=...&offset&limit&search` (slim TaskInfo reicht: key, title, state, completedAt/enteredLaneAt, commitCount). KEIN Vollscan pro Request - den vorhandenen slim-hydrated Scan nutzen.\n2. **FE Archive-Ansicht** auf diesen Endpoint umstellen (lazy load + Paging/Infinite-Scroll + einfacher Textfilter). Leerer Zustand nur wenn wirklich 0.\n3. grouped/`archive` Feld: entweder weiterhin leer lassen (Kommentar dokumentieren) oder Count-only liefern - aber FE+BE konsistent.\n4. Tests: Endpoint liefert die archivierten (Fixture mit 7-archive-Ordner), Paging korrekt, Default-Board-Response enthaelt weiterhin KEINE archivierten.\n\n## Constraints\n- Bestehende Endpoints/Routen NICHT umbenennen (Endpoint-Freeze waehrend Struktur-Migration); neuer Read-Endpoint ist ok.\n- Menue/Kontextmenue text-only. Zentrale Design-Tokens, keine lokalen Farben.",
+      "tags": [
+        "retention"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-06-10T07:35:02.3024794Z",
+      "taskKey": "ASS-1727",
+      "rationale": "The card describes archiving, pruning, or storage lifecycle; its title is “BUG: Archive-Ansicht leer trotz 852 archivierter Tasks - pagender Archive-Endpoint + FE-Lazy-Load”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "concept-retention-and-archiving-of-task-data-size-and-age-rules-configurable-in-the-admin-ui-cold-archive-outside-the-repository",
+      "title": "Concept: retention and archiving of task data, size and age rules configurable in the Admin UI, cold archive outside the repository",
+      "text": "# Concept: retention and archiving of task data, size rules and age rules configurable in the Admin UI, cold archive outside the repository\n\n## Context (operator request 2026-09-06)\n\n- Robert: huge artifacts must leave the live store; the rules for that must be configurable in the Admin UI; whole old entries (months old) must be archivable outside the repository; this is a big topic, to be worked and solved thoroughly, as its own piece, not mixed into the deployment chain.\n- Numbers from today (workspace repository `C:\\Projects\\agent-taskboard-workspace`): 134,000 loose objects, 18 GB loose plus 4.3 GB packs; the unpushed range alone holds 28.7 GB of raw blobs across 2,811 commits, dominated by per-task `logs/cli-output.log` (capped at 10 MB per version since July, but every version is a new blob), review stdout logs, and status snapshots. `.metadata/attempt-authority.json` grew to 118 MB with `.bak` and daily archive copies. GitHub refuses pushes above 2 GB and single files above 100 MB; the July incident (filter-repo strip of 15 blobs) and today's chunked push are symptoms of the missing retention model. See the hygiene card AGT-2728 (push catch-up, git maintenance, commit scope), which stays separate and is not re-scoped here.\n- Existing thinking: docs/operations/workspace-repo-nachhaltigkeit/index.html (Phase 1 cap at source, interval push and push health, Phase 2 history diet, Phase 3 external log store with retention). The standalone Task Server (Phase B, AGT-2729 to AGT-2739) changes the ground: after cutover the live store is the Task Server store (SQLite plus artifact files under STORE_PATH) and the Git repository becomes frozen recovery material. Retention must therefore be designed for the Task Server store first and applied to the current repository as the migration path.\n- Constraints: logs are audit evidence and are kept on purpose (never blanket-ignored); a task in History must remain readable in the UI even when its heavy artifacts are archived; archived data must be restorable; nothing is deleted without a rule the operator configured and can see.\n\n## Deliverable (concept, no implementation)\n\nA dossier under docs/operations (house style: German, SVG diagrams, see haertung-verteilte-ausfuehrung) with a decision gate. It must cover:\n\n1. Data inventory and classes: every artifact family the Task Server writes (task.json, prompt, status, timelin",
+      "tags": [
+        "retention",
+        "architecture"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-09-06T20:17:31.7445835Z",
+      "taskKey": "AGT-2742",
+      "rationale": "The card describes archiving, pruning, or storage lifecycle; its title is “Concept: retention and archiving of task data, size and age rules configurable in the Admin UI, cold archive outside the repo”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "archive--next-reuses-the-current-tab-and-the-browsers-back-button-returns-to-the-previous-task",
+      "title": "\"Archive & Next\" reuses the current tab, and the browser's Back button returns to the previous task",
+      "text": "# \"Archive & Next\" reuses the current tab, and the browser's Back button returns to the previous task\n\n## What the product owner reported (18.09.2026, while accepting cards in Done & Decide)\n\n1. \"When I review a card and click Archive & Next, a new tab is opened. That is not how it should be, the old tab should keep being used.\"\n2. \"When I then press Back in the browser, I want to get to the previous task: a browser feature.\"\n\nHe is working through a lane of delivered cards; after twenty cards the tab strip holds twenty task tabs, and Back does not walk the review history.\n\n## Where it comes from (verify against develop)\n\n- The \"& Next\" triage actions (`frontend/src/app/features/task-detail/state/triage-actions.model.ts`: `Archive & Next`, and the review lanes' Complete-and-advance primary) end in `TriageControllerService.advanceToNextInLane` / `TaskSelectionService.advanceAfterMutation`, which select the next task (`setSelectedFromAdvance`).\n- The Studio tab strip (`frontend/src/app/features/studio-shell/services/studio-tab-state.service.ts`) opens tabs with `open(tab, reuse: StudioTabReusePolicy = 'new')`. The `replace-current` policy exists but only applies when both the active and the incoming tab are *document* tabs (`isDocumentTab`: hub / workbench, `replaceActiveDocument`). A task tab is never replaced, so every advance adds a tab for the next task while the archived task's tab stays or is cleaned up separately.\n- The URL is synchronised with `syncTaskUrl(candidate, 'replace')` on advance, i.e. `history.replaceState`: the previous task never becomes a history entry, so Back leaves the review instead of returning to the previous card.\n\n## Deliver\n\n1. Advancing is navigation inside the current tab: when the user triggers an \"& Next\" action (Archive & Next, Complete & Next, Delete & Next, and the automatic advance after a move out of the lane), the next task replaces the content of the **active task tab**. Extend the reuse policy so `replace-current` works for task tabs; opening a task from the board, search or a link keeps today's behaviour (focus the existing tab of that task or open a new one). A task that is already open in another tab is focused there instead of being duplicated.\n2. Browser history: an advance pushes a history entry (`pushState`) for the next task, so Back returns to the previous task in the same tab and Forward goes ahead again. Re",
+      "tags": [
+        "task-and-board-ui"
+      ],
+      "state": "6-completed",
+      "createdAt": "2026-09-18T18:39:52.2402291Z",
+      "taskKey": "AGT-2884",
+      "rationale": "The card describes board and task interaction surfaces; its title is “\"Archive & Next\" reuses the current tab, and the browser's Back button returns to the previous task”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "admin-ui-retention-rule-editor-with-defaults-and-project-overrides-dry-run-preview-run-history-archived-task-stubs-with-restore",
+      "title": "Admin UI Retention: rule editor with defaults and project overrides, dry-run preview, run history, archived-task stubs with restore",
+      "text": "# Admin UI \"Aufbewahrung\": rule editor with defaults and project overrides, dry-run preview, run history, archived-task stubs with restore\n\n## Context (operator decision 2026-09-06, dossier \"Aufbewahrung und Archiv\")\n\n- Third card of the retention program; depends on R1 (engine, legacy file-tree adapter and routes) and R2 (Task Server tables and management API). Read docs/operations/retention-und-archiv/index.html first; §4 (rules and defaults), §6 (interface), §8 (UI) are binding. Follow the admin design guideline (docs/operations/admin-design-guideline, ADM-01 flat composition, ADM-04 detail on demand, ADM-05 one statement per fact, ADM-08 density, ADM-09 both themes, ADM-17 quiet unknowns).\n- Existing patterns to reuse: project-settings-panel (flat sections with \"Workspace default\" badge for inherited values), prompt-admin-landing (sortable table with a threshold input and bulk action), the board archive lane rows (`task-column`, flat rows, \"Load more\", filter), task-artifacts.service and TaskFilesEndpoints for artifact reads.\n- Until the Phase B cutover the Studio talks to OrchestratorApi; R1 exposes the same policy and run contract there (`/api/workspaces/{id}/retention/*`, `/api/projects/{name}/retention-policy`, `/api/tasks/{jobId}/archive` and `/restore`) backed by the file-tree adapter; after cutover the connector forwards to the Task Server routes of R2. The UI uses one service with one route family; the switch is configuration.\n\n## Changes\n\n1. Workspace Settings gains the page \"Aufbewahrung\" (English UI label \"Retention\"): a flat table of rules per artifact class (class, what it contains, hot cap per file, hot budget per task, archive after N days terminal, delete after N days for runtime classes, action), workspace defaults shown with a \"Platform default\" badge until edited, edit inline with validation (units, minimums from the contract), save with version conflict handling (reload and show the newer version). Project overrides on the project settings panel: the same table, each rule \"Workspace default\" or overridden, one click to reset.\n2. Dry-run preview: a \"Vorschau\" action runs `plan` and shows one full-width summary line (tasks, bytes to archive, bytes to delete, runtime) and a sortable table of affected tasks (key, project, lane, terminal date, bytes, rule); export as JSON. Nothing runs without a second explicit \"Jetzt ausführen\" action, wh",
+      "tags": [
+        "retention"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-09-06T20:40:37.4385697Z",
+      "taskKey": "AGT-2745",
+      "rationale": "The card describes archiving, pruning, or storage lifecycle; its title is “Admin UI Retention: rule editor with defaults and project overrides, dry-run preview, run history, archived-task stubs with r”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "agt-2145-archiv-pro-projekt-scopen",
+      "title": "AGT-2145: BUG Archiv-Ansicht zeigt global statt pro Projekt - Archiv immer auf das aktuelle Projekt scopen",
+      "text": "# AGT-2145: Archiv pro Projekt scopen\n\n## Operator-Diktat (Robert, 11.07. abends)\n\"Das Archiv zeigt das Archiv fuer alle Projekte. Das will ich nicht. Ich will das Archiv\nimmer nur in dem Projekt sehen, in dem ich bin, nicht das Globale. Beispiel: Token Economy\nhat kein einziges archiviertes Ticket, Coding Agent [Chat/Runner] vielleicht eins -\ntrotzdem sehe ich ueberall die projektuebergreifende Liste.\"\n\n## Erwartung\n- Archiv-Ansicht (Lane 7-archive bzw. Archiv-Bereich) im Projektkontext zeigt NUR\n  archivierte Tasks dieses Projekts; leeres Archiv zeigt einen leeren Zustand\n  (\"Kein archiviertes Ticket in diesem Projekt\"), nicht fremde Karten.\n- Pruefen, ob der Fehler im Frontend (fehlender Projektfilter beim Laden) oder in der\n  API (Archiv-Endpoint ignoriert Projekt-Parameter) liegt; an der Quelle fixen, nicht kaschieren.\n- Falls eine bewusste Gesamt-Archiv-Sicht existiert (Workspace-Ebene), bleibt sie als\n  explizite Workspace-Ansicht erhalten - aber nie als Default im Projektkontext.\n\n## Verifikation\nToken Economy: Archiv leer. Agent Studio: nur AGT-Archivkarten. Screenshot beider Faelle ins Task-Log.",
+      "tags": [
+        "retention"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-07-11T16:48:24.782Z",
+      "taskKey": "AGT-2145",
+      "rationale": "The card describes archiving, pruning, or storage lifecycle; its title is “AGT-2145: BUG Archiv-Ansicht zeigt global statt pro Projekt - Archiv immer auf das aktuelle Projekt scopen”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "token-darstellung-konsolidieren-tokens-sektion-raus---pro-pipeline-schritt-ein-schoenes-token-modal",
+      "title": "Token-Darstellung konsolidieren: TOKENS-Sektion raus -> pro Pipeline-Schritt ein schoenes Token-Modal",
+      "text": "# Token-Darstellung konsolidieren: TOKENS-Sektion entfernen -> pro Pipeline-Schritt ein schoenes Token-Modal\n\n## Was der User will (verifiziert, Screenshots)\nHeute gibt es DREI verschiedene, widerspruechliche Token-Darstellungen im Task-Overview:\n- \"TOKENS\"-Sektion: Orchestrator-Panel (z.B. Total 107.7k, 1 call) + \"AGENT CLI FOOTER\" (z.B. 1.1M tokens, in 45 / out 13.2k / cache-read 969.4k / cache-write 90.5k, REPORTED).\n- Pipeline pro Schritt eine TOKENS-Spalte (z.B. CORE 1.31M, $1.39).\nUser: \"Interessant, dass es unterschiedliche Token-Darstellungen gibt. Alles unter TOKENS bitte raus. Alles soll in der Pipeline erscheinen, an jedem Schritt ein schoenes Modal.\"\n\n## Soll\n1. Die komplette eigenstaendige **\"TOKENS\"-Sektion entfernen** (Orchestrator-Panel + AGENT CLI FOOTER) aus dem Overview.\n2. Token-Infos leben ausschliesslich **in der Pipeline, pro Schritt**: die vorhandene per-Step-TOKENS-Spalte bleibt, und beim Hover/Klick auf die Token-Zelle eines Schritts oeffnet sich ein **schoenes Modal** mit der Detail-Aufschluesselung dieses Schritts (Input / Output / Cache-Read / Cache-Write / Total, Calls, Kosten, Quelle REPORTED, Zeit, ggf. pro Run).\n3. Die bisher in der TOKENS-Sektion gezeigten Aggregate (Orchestrator-side, CLI-Footer) muessen den richtigen Schritten zugeordnet werden: CLI-Footer-Werte gehoeren zum CORE-Step (Agent-Run, ggf. ueber mehrere Runs kumuliert), Orchestrator-side Haiku-Usage zu den jeweiligen Orchestrator-/Aspect-/Review-Steps. So loest sich auch die \"Zahlen passen nicht zusammen\"-Verwirrung: jede Zahl hat genau einen Schritt-Kontext.\n4. Falls eine Gesamt-Summe gewuenscht ist, bleibt nur die bestehende \"Task total\"-Zeile am Ende der Pipeline (ov-pl-total) - kein separater TOKENS-Block darueber.\n\n## Code-Pointer\n- frontend/src/app/features/task-detail/components/prompt-pane/overview-pane/overview-pane.component.html: Z.152-191 (`@if (hasTokens())` TOKENS-Sektion + AGENT CLI FOOTER) ENTFERNEN; Z.384-397 per-Step Token/Cost-Zelle (Hook fuer Modal-Trigger); Z.412+ ov-pl-total bleibt.\n- overview-pane.component.ts/.scss: `tokenSummary()`, `hasTokens()`, `hasOrchestratorTokens()` - Logik in per-Step-Modal-Datenquelle ueberfuehren; pro-Step Token-Breakdown bereitstellen.\n- frontend/src/app/features/tokens/components/cli-usage-detail|cli-usage-modal als Modal-Basis wiederverwenden; frontend/src/app/features/tokens/models/tokens.model.ts.\n- task-",
+      "tags": [
+        "token-economy"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-06-05T16:30:23.7303823Z",
+      "taskKey": "ASS-890",
+      "rationale": "The card describes model routing, quota, token usage, or cost; its title is “Token-Darstellung konsolidieren: TOKENS-Sektion raus -> pro Pipeline-Schritt ein schoenes Token-Modal”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "agt-2146-model-reasoning-qualifizierung-step",
+      "title": "AGT-2146: Model-/Reasoning-Qualifizierung als Pipeline-Step - bester Agent/Level je Task (Token-Efficiency, TokenEconomy-Anbindung)",
+      "text": "# AGT-2146: Model-/Reasoning-Qualifizierung als Pipeline-Step\n\n## Operator-Diktat (Robert, 11.07. abends, sinngemaess strukturiert)\n\"Die Codex-Token werden krass schnell durchballert, dabei fahren wir die normale\nGeschwindigkeit ohne Extra-Parameter. Wir benutzen immer gpt-5.6-sol - dabei gibt es\nguenstigere Stufen fuer einfache Coding-Aufgaben. Ich will einen Mapping-Schritt:\nfuer den Typ der Aufgabe das beste Level finden - was ist schwierig, was ist einfach\nim Kontext des Projekts. Diese Qualifizierung will ich in der Pipeline SEHEN: die\nAuswahl des passenden Modells mit dem richtigen Reasoning-Level bezogen auf\nToken-Efficiency. Major Topic fuer den Coding-Agenten; wird auch ein Riesen-Thema\nfuer Benchmarks. Aber jetzt schon: In der Step-Pipeline soll es einen Step geben,\nder das beste Model mit dem besten Reasoning fuer den Task abhaengig von Task und\nTask-Kontext auswaehlt.\"\n\n## Ziel\nNeuer Pipeline-Step \"Model-Qualifizierung\" VOR der Execution:\n1. **Klassifikation**: Task-Typ + Schwierigkeit im Projektkontext einschaetzen\n   (Signale: taskType bug/feature/chore/konzept, Prompt-Umfang, betroffene Flaeche\n   [Frontend-Feinschliff vs. Backend-Architektur], Projekt-Historie aehnlicher Karten).\n   Leichtgewichtig: Heuristik + optional guenstiger LLM-Call, NICHT das teuerste Modell\n   fuer die Einstufung verbrennen.\n2. **Mapping auf Model + Reasoning-Level**: pro CLI die verfuegbare Modell-Leiter aus\n   den vorhandenen Modell-Routen/Quota-Strukturen (nichts hartkodieren; die konkreten\n   Modell-Ids kommen aus der bestehenden Routen-Konfiguration). TokenEconomy-Library\n   (SuggestModel, Preis-Historie) als Bewertungsgrundlage anbinden, sobald das Paket\n   verfuegbar ist - bis dahin Interface + lokale file:-Referenz wie bei CAR ueblich.\n3. **Sichtbarkeit in der Pipeline**: Der Step erscheint in der Step-Pipeline der Karte\n   mit Ergebnis + Begruendung (\"feature/klein/frontend -> <mittleres Modell> level medium,\n   erwartete Ersparnis vs. Default\") und ist im Task-Detail nachlesbar.\n4. **Override-Regeln**: Explizit gesetztes Modell/Level auf der Karte gewinnt IMMER\n   (Qualifizierung zeigt dann nur ihre Empfehlung an). Projekt-Default als Fallback.\n5. **Benchmark-Fundament**: Jede Qualifizierungs-Entscheidung + tatsaechlicher Verbrauch\n   + Ergebnis (Erfolg/Reissues/Grade) strukturiert loggen (JSONL im Task-Store), damit\n   spaeter Benchmarks die Mapping-Qualit",
+      "tags": [
+        "token-economy"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-07-11T16:52:14.653Z",
+      "taskKey": "AGT-2146",
+      "rationale": "The card describes model routing, quota, token usage, or cost; its title is “AGT-2146: Model-/Reasoning-Qualifizierung als Pipeline-Step - bester Agent/Level je Task (Token-Efficiency, TokenEconomy-Anbi”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "fix-copilot-quota-probe-empty-windows",
+      "title": "Fix Copilot quota probe: /api/cli/quota returns empty windows (Could not find \"Remaining reqs.\" on CLI 1.0.59)",
+      "text": "## Context\n\nCopilot quota is currently blank/broken in the live UI. `GET /api/cli/quota`\nreturns for the `copilot` snapshot:\n\n```json\n{ \"cliType\": \"copilot\", \"plan\": null, \"windows\": [], \"source\": \"/usage\",\n  \"rawSample\": \"\", \"error\": \"Could not find 'Remaining reqs.: NN%' line in CLI output.\" }\n```\n\nClaude's quota snapshot in the same response is fully populated, so the\nfailure is specific to the Copilot probe. The captured `rawSample` is empty,\nwhich means the PTY `/usage` probe got no parseable footer at all on the\ninstalled Copilot CLI (`GitHub Copilot CLI 1.0.59`, confirmed available via\n`GET /api/cli/usage`).\n\nThe probe lives in `backend/Services/Quota/CopilotQuotaProbe.cs`. It sends\n`/usage<Enter>` over a PTY and matches `Remaining reqs.: NN%`\n(`RemainingPctRegex`). The earlier \"Sonnet Maximum\" parser added by\n`in-copilot-max-habe-ich-einen-sonnet-maximum-usage` only adds a *secondary*\nwindow and never fires because the *primary* \"Remaining reqs.\" match fails\nfirst and the probe returns early with the error.\n\nThis is the Copilot equivalent of the already-fixed\n`bug-claude-usage-liefert-leere-windows-liste` and\n`gemini-quota-feedback-does-not-work-fix-that` regressions: the upstream CLI\n`/usage` output format changed (or the probe timings no longer capture it),\nleaving the per-CLI quota probe returning empty windows.\n\n## Goal\n\nMake the Copilot quota probe parse the current Copilot CLI `/usage` output so\n`GET /api/cli/quota` returns a non-empty `windows` array for `copilot`, and\nthe statusbar Copilot quota pill renders a real value instead of blank.\n\n## Required work\n\n1. Capture the real `/usage` output of the installed Copilot CLI\n   (`copilot` then `/usage`, or via the existing PTY probe with debug\n   logging) and save the raw sample to this task's `results/`.\n2. Diagnose why `rawSample` is empty: is `/usage` no longer emitting a\n   \"Remaining reqs.\" footer, did the line format change, or are the\n   `initialIdleMs` / `settleAfterSendMs` timings too short for 1.0.59?\n3. Fix `CopilotQuotaProbe.ProbeAsync` (regex and/or probe timings) to parse\n   whatever the current CLI emits. If Copilot genuinely no longer exposes a\n   remaining-requests figure, document that as a known limitation and make\n   the probe return a clean \"unavailable\" state instead of a hard parse\n   error (no scary error string in the UI).\n4. Add/extend a unit test in `backend.Tests/Copil",
+      "tags": [
+        "token-economy"
+      ],
+      "state": "7-archive",
+      "createdAt": "2026-06-03T19:38:02.418185Z",
+      "taskKey": "ASS-1256",
+      "rationale": "The card describes model routing, quota, token usage, or cost; its title is “Fix Copilot quota probe: /api/cli/quota returns empty windows (Could not find \"Remaining reqs.\" on CLI 1.0.59)”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "concept-the-reasoning-level-as-a-first-class-dimension-of-token-economy-current-state-and-target-picture",
+      "title": "Concept: model routing by assessed complexity, with analysis and plan as pipeline steps and Token Economy as the measuring authority",
+      "text": "# Concept: model routing by assessed complexity, with analysis and plan as pipeline steps and Token Economy as the measuring authority\n\nMode: concept. Deliverable: one Dossier under `docs/operations/<slug>/` with `index.html` and `workbench.json` in the house style (template `docs/operations/docker-ausfuehrungswelt-migration`), English, the four `data-concept-section` blocks, inline decisions (`data-decision-id`), and `implementationTasks` in the descriptor. This Dossier replaces the separate reasoning-level topic; keep it one theme, not two.\n\n## What the operator asked for (2026-09-14, verbatim positions)\n\n- \"The approach with regular expressions is nonsense.\"\n- The workflow should be: **work order → analysis → implementation plan → implementation**. Complexity already shows in the analysis, and becomes clearer in the plan. Analysis and implementation plan should be **pipeline steps**. Compare that against the current picture.\n- \"The whole topic should also live in Token Economy and we need the feedback\": what complexity was reported, and was it reached.\n- \"How do we recognise complexity? Is there research on this? How do we define it? Can an LLM say that something is complex? We need studies and good prompts in Token Economy to estimate it, and pipeline steps in Agent Studio.\"\n- Earlier the same day: \"The reasoning level must be displayed\", \"the reasoning level must play a bigger role in Token Economy and is a decisive factor for benchmarks and price/performance\", and for visual work the strong model should be chosen.\n\n## Current state to establish (verified 2026-09-14 against the build deployed as v0.3.0)\n\n**Where routing happens.** `pre-model-qualification` runs before the agent starts. `ModelRoutingPolicyRegistry.Recommend(taskType, catalogue, economyMode, title, prompt)` picks a tier from `backend/Policies/model-routing-policy.v1.json` (version 2026-09-13) and resolves it against the live CLI catalogue; `ModelQualificationService` carries recommended and selected model and thinking level.\n\n**How complexity is judged today.** By three regular expressions over title plus prompt:\n- `CriticalFloorSignal`: `P0|fencing|lease ownership|lease authority|stale-write|distributed authority|distributed concurrency|security|data-loss|destructive migration|concurrent state machine` raises the card to the top tier and makes it the correctness floor.\n- `SolFloorSignal`",
+      "tags": [
+        "token-economy",
+        "architecture"
+      ],
+      "state": "6-completed",
+      "createdAt": "2026-09-14T03:52:36.7150536Z",
+      "taskKey": "AGT-2815",
+      "rationale": "The card describes model routing, quota, token usage, or cost; its title is “Concept: model routing by assessed complexity, with analysis and plan as pipeline steps and Token Economy as the measuring au”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "task-overview-the-token-and-cost-block-says-what-each-number-is-its-expanders-line-up-and-agent-work-stops-showing-empty-columns",
+      "title": "Task Overview: the token and cost block says what each number is, its expanders line up, and Agent Work stops showing empty columns",
+      "text": "# Task Overview: the token and cost block says what each number is, its expanders line up, and Agent Work stops showing empty columns\n\n## Finding (18.09.2026, Stable v0.8.0, task detail Overview tab, product owner feedback with screenshot)\n\nThe lower part of the Overview tab shows, in this order: the pipeline groups (`+ TOOL`, `+ DECISION`, `+ DRIFT`), a row `TASK TOTAL SUM   2m   $3.15`, a row `TOKENS ACROSS ALL RUNS  every model · 4 r...  41.65M  $28.88`, the list `TOKENS BY RUN 4 runs` (Run #4 1.61M $1.61 ... Run #1 31.56M $20.44), and `AGENT WORK` with one row `Calls  [4 calls]  2d ago  1d ago  -  -`.\n\nThe product owner's questions, verbatim in meaning: \"What is Task Total SUM? I cannot work it out.\" \"The expand arrows must be flush with the + icons, in one line.\" \"The distinction to Agent Work is not clear.\" \"What are the 4 calls, and why is there nothing in that row?\"\n\nWhat the code does (`frontend/src/app/features/task-detail/components/prompt-pane/overview-pane/`):\n\n1. `Task total SUM` (`overview-pane.component.html`, `pipelineTotal()`) is the token and cost sum of the pipeline steps of the **currently shown pipeline execution only** (`pipelinePoll.pipeline()?.cost`), i.e. the latest run plus its pre, post and review steps. `Tokens across all runs` is the sum over every run of the card. Nothing on screen says so; \"Task total\" reads as the larger of the two and is the smaller ($3.15 against $28.88).\n2. The value `2m` is a token count: `formatTokens` in `overview-pane-formatters.ts` renders 2,000,000 as `2m` (lower-case `m`, `.0` stripped), directly beside durations like `7m 29s` and `15m` that use the same letter for minutes, while the neighbouring block renders `41.65M`. It reads as \"two minutes\".\n3. The pipeline groups expand with a `+` at the left edge; the run rows and `Tokens across all runs` expand with a `>` chevron that sits further right. Two expander styles, two columns.\n4. `Agent Work` (`overview-agent-work.component.html`): `Calls` is the number of CLI invocations (sessions) of the card, here identical to the four runs listed directly above; the two timestamps are first start and last touch without column headers; the token and cost cells are hard-coded `-`. The `Tools` row and the drill-down only render when `toolCalls > 0`, which is never the case for remote runs on this installation, so the block shows one row of mostly dashes.\n\n## Deli",
+      "tags": [
+        "token-economy"
+      ],
+      "state": "6-completed",
+      "createdAt": "2026-09-18T16:14:26.1083776Z",
+      "taskKey": "AGT-2879",
+      "rationale": "The card describes model routing, quota, token usage, or cost; its title is “Task Overview: the token and cost block says what each number is, its expanders line up, and Agent Work stops showing empty c”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "card",
+      "id": "concept-the-studio-header-as-a-responsive-compact-usage-cockpit-quota-windows-cost-slots-first-plus-a-visual-maturity-pass-for-the-layout",
+      "title": "Concept: the Studio header as a responsive, compact usage cockpit (quota windows, cost, slots first), plus a visual maturity pass for the layout",
+      "text": "# Concept: the Studio header as a responsive, compact usage cockpit, and a visual maturity pass for the layout\n\n## Operator direction (2026-09-25, with a screenshot of the Studio header)\n\n\"Especially important are the usage numbers. Please make it more responsive and compact. Also let the visuals mature noticeably. Make a great concept for responsive and cool layout improvements.\"\n\nThe screenshot shows the current header on a wide window: left the slot counters `remote 2/3`, `review 1/3`, `auto 10/17`; then quota chips `Claude 5H 19% WK 7%` and `Codex WK 15…` (the Codex chip is cut off mid-number, the 5-hour window is not visible at all); then the navigation `Usage`, `Orchestrator`, `Feed`, `Settings`; right the model chip `gpt-6-astra medium`. The chips have different heights and paddings, the counters and the chips use three different visual languages, and the whole bar consumes a full row without conveying cost.\n\n## Deliverable\n\nA Dossier `docs/operations/header-usage-cockpit` (English, house style of `docs/operations/haertung-verteilte-ausfuehrung/index.html`, `workbench.json` schemaVersion 1) plus HTML/SVG mockups inside the Dossier folder, consistent with the Admin Surface Design Guideline Dossier and the frontend design tokens (`frontend/AGENTS.md`, `docs/quality/design-principles.md`):\n\n1. Usage first: define the usage information the operator needs at a glance and its priority: per CLI the 5-hour and weekly quota windows with reset time, today's and this week's cost from the token ledger (Codex cached input corrected, AGT-2882), active runs and their live spend, the model and reasoning level in force. Specify the compact representation (one chip per CLI with both windows, a cost chip, a slot chip), the expanded representation (popover with reset times, per-project split, the ledger link) and the alarm states (quota above 80 percent, cost budget crossed, provider limited).\n2. Responsive behaviour: breakpoints from phone to ultrawide with an explicit priority order of what collapses, abbreviates or moves into an overflow menu; nothing is ever truncated mid-value; the header height and the density rules per breakpoint; keyboard and screen-reader behaviour of the chips.\n3. Visual maturity: one visual language for counters, chips and navigation (spacing scale, type scale, colour tokens for light and dark, states), the reduced set of icons, alignment and ",
+      "tags": [
+        "token-economy",
+        "architecture"
+      ],
+      "state": "2-ready",
+      "createdAt": "2026-09-25T08:34:14.8442321Z",
+      "taskKey": "AGT-2913",
+      "rationale": "The card describes model routing, quota, token usage, or cost; its title is “Concept: the Studio header as a responsive, compact usage cockpit (quota windows, cost, slots first), plus a visual maturity ”.",
+      "source": "Task API detail"
+    },
+    {
+      "kind": "dossier",
+      "id": "installer-story",
+      "title": "Installer-Story: Guided Steps, Linux all-Docker und Windows",
+      "text": "Konzept fuer die gefuehrte Einrichtung einer frischen Maschine mit allen Komponenten als Container, je einmal fuer Linux und Windows. Haelt die Sichtung des Bestands (Compose-Stack, Smoke-Test in CI, frische-VM-Harness, gefuehrter Installer mit Demo-only-Docker-Pfad), die Komponenten-Matrix Container gegen Host mit Windows-Annahmen (Docker Desktop, WSL2), die Schrittlisten beider Plattformen mit Fehlerbild und Abhilfe je Schritt, den Stand von Compose und Secrets, eine Testprotokoll-Vorlage und den Schnitt in drei Folgekarten. Kernbefund: die bestehende Beweiskette endet am leeren Studio-Board; Agent-Hosts im Container, Provider-Auth und ein Dummy-Karten-Abschlussbeweis fehlen, und fuer Windows existiert kein Installer. Diese Karte macht ausserdem das runner-Profil erstmals lokal validierbar und schliesst eine Repository-Luecke bei runner.token. [Curation 2026-08-18 (AGT-2671): DONE CHECK - the three planned validation runs (Linux VM, Windows, installer implementation) remain unexecuted as cards; stays active. Spot-checked in code: runner.env.template, scripts/compose-runner-bootstrap.sh and the runner.token .gitignore entry all exist as claimed.]",
+      "tags": [
+        "execution-and-runner"
+      ],
+      "state": "documented",
+      "createdAt": "2026-09-14T00:00:00Z",
+      "rationale": "The Dossier's summary places “Installer-Story: Guided Steps, Linux all-Docker und Windows” in pickup, CLI execution, runner hosts, or worktree isolation.",
+      "source": "docs/operations/installer-story/workbench.json"
+    },
+    {
+      "kind": "dossier",
+      "id": "nordstern",
+      "title": "North star: Agent Studio target picture and delivery",
+      "text": "The single entry point to the Agent Studio target picture at today's state. Holds the arc in three planes (durable Task Server authority, the operations boundary, and isolated execution with preparation scripts), the guardrails those planes imply, and a map of the Dossiers that are current. Live decisions are linked and never copied: Operations Server beside the Task Server (AGT-W49, decision pending) and isolated execution with preparation scripts, per-run isolation and a healing orchestrator (AGT-W51, decided 2026-09-12). Absorbs four superseded Dossiers as short history sections that name the decision which replaced each: AGT-W6 container default, AGT-W8 installer story, AGT-W22 implementation plan, AGT-W25 components and protocols. Rewritten by AGT-2798 as the first delivery slice of the consolidation programme AGT-2797 / AGT-W55, following the operator's answers to D1 and D2 of 2026-09-13.",
+      "tags": [
+        "execution-and-runner",
+        "decision"
+      ],
+      "state": "decision-pending",
+      "createdAt": "2026-09-14T00:00:00Z",
+      "rationale": "The Dossier's summary places “North star: Agent Studio target picture and delivery” in pickup, CLI execution, runner hosts, or worktree isolation.",
+      "source": "docs/operations/nordstern/workbench.json"
+    },
+    {
+      "kind": "dossier",
+      "id": "rebase-merge-and-steering",
+      "title": "Rebase, merge, and bounce steering",
+      "text": "Decision-ready attribution analysis of the current stage-specific Git hybrid: fresh recovery rounds rebase and record a new fenced subject, canonical integration preserves reviewed delivery SHAs with merge-first recovery, and promotion publishes only the gated candidate SHA. Defines deterministic backend bounce steering as the default rail, strong guardian analysis for repeated or complex conflicts, Batch Gate interplay, bounded rounds, and migration slices. [Curation 2026-08-17: stays decision-pending on the steering questions; no operator decision is recorded yet. The already-implemented invariants, the rebase-versus-merge stage matrix and the integration record contract are now written up as architecture documentation in docs/concepts/platform-architecture/rebase-merge-and-integration-invariants.md.]",
+      "tags": [
+        "delivery-chain"
+      ],
+      "state": "documented",
+      "createdAt": "2026-09-14T18:43:49Z",
+      "rationale": "The Dossier's summary places “Rebase, merge, and bounce steering” in integration, branches, commits, or promotion to the target branch.",
+      "source": "docs/operations/rebase-merge-and-steering/workbench.json"
+    },
+    {
+      "kind": "dossier",
+      "id": "delivery-chain",
+      "title": "Delivery chain: integration, recovery, robustness",
+      "text": "Theme Dossier for the path from an agent's last commit to a published release. It carries the settled Git policy per stage (renew identity on a fresh fenced recovery round, preserve delivery SHAs at canonical integration with merge first, publish only the exact gated candidate to main), the board status contract that policy depends on (integration truth derived from target-branch presence, 'completed' as an evidence-bearing statement), the five structural patterns behind the incidents of 2026-08-13 to 2026-09-12, the eleven failure classes from live operation, the measured retry tax of 2026-08-11 and 2026-08-12 (11.1 percent useful first-run coding, 88.9 percent retry tax), and the recurring failure shapes synthesised from the rolling supervision log. Recommends the wave order diagnosis contract and cause breaker first, then isolation per AGT-W51, then lifecycle ownership and executable healings. Seven open decisions: first-bounce ownership, guardian trigger, batch member assembly, flaky policy, integrated-only human review, pull-request projects, and how a mechanical rebase round is executed. Consolidates AGT-W3, W23, W37, W42, W44, W50 and synthesises AGT-W39.",
+      "tags": [
+        "delivery-chain",
+        "decision"
+      ],
+      "state": "decision-pending",
+      "createdAt": "2026-09-14T18:43:49Z",
+      "rationale": "The Dossier's summary places “Delivery chain: integration, recovery, robustness” in integration, branches, commits, or promotion to the target branch.",
+      "source": "docs/operations/delivery-chain/workbench.json"
+    },
+    {
+      "kind": "dossier",
+      "id": "remote-gate-zielbild",
+      "title": "Remote Gate Target Architecture",
+      "text": "Decision Dossier for replacing the fast but out-of-band SSH gate bridge with a first-class Tranche 0 execution contract. It compares claimable gate steps, the Review Plane, and capability-only dispatch; recommends a bounded GateAttempt protocol with capability-based admission; and defines the implementation-to-AGT-2262 teardown chain. [Curation 2026-08-18 (AGT-2671): DONE CHECK - design not yet approved by operator sight review and zero implementation of this target model exists (re-verified against develop 2026-08-24: the only Gate* types in the backend are the unrelated build-test gate's MachineGateLease in BuildTestGateRunner.cs and BuildTestGateSubject in ReviewDecisionOrchestrator.cs; no remote-gate GateSubject/GateAttempt/GateLease entity exists). AGT-2262 stays parked per its own eight-item cutover acceptance list. Stays active. DOC TRANSFER - GateSubject/GateAttempt/GateLease target model extracted to docs/concepts/platform-architecture/remote-gate.md.]",
+      "tags": [
+        "gates-and-review"
+      ],
+      "state": "active",
+      "createdAt": "2026-08-18T12:00:00Z",
+      "rationale": "The Dossier's summary places “Remote Gate Target Architecture” in review evidence, acceptance, or validation gates.",
+      "source": "docs/operations/remote-gate-zielbild/workbench.json"
+    },
+    {
+      "kind": "dossier",
+      "id": "gates",
+      "title": "Gates: batch gate and remote gate",
+      "text": "Theme Dossier for deterministic validation, consolidating AGT-W36 batch gate, AGT-W18 remote gate target architecture and AGT-W2 async validation into one current record. Section 3 keeps the batch gate in full: closed manifest and typed eligibility, mechanical replay with conflict ejection and a cascade guard, one full suite on an exact combined candidate, fenced fast-forward publication, per-member gate and integration evidence under the AGT-2543 honest-completion invariant, red classification with bounded halving and its honest-bounds table, two-level fencing and a shared ref-mutation lease with the candidate-SHA promotion train, and the operator's review-first amendment of 2026-08-18. Section 4 keeps the remote gate target: requirements R1 to R6, the GateSubject, GateAttempt, GateLease, GatePlan and GateReport contract, the central state machine, the materialization sequence, the fail-closed timeout and fallback policy with no in-process backend fallback, and the open migration behind AGT-2262. Section 5 keeps the async-validation principles that survived measurement: model-based test selection rejected, per-SHA gate cache and deterministic diff-to-project scoping recommended, staging lane measure-first. Section 10 is an evidence appendix with the AGT-W28 847-task pipeline time economy baseline and the AGT-W29 reissue-convergence negative result in one paragraph each. Ten open decisions D1 to D10 as inline decision blocks; four implementation slices. Sources recorded as superseded by this key; AGT-W28, AGT-W29 and AGT-W30 remain historical.",
+      "tags": [
+        "gates-and-review",
+        "decision"
+      ],
+      "state": "decision-pending",
+      "createdAt": "2026-09-25T05:21:12Z",
+      "rationale": "The Dossier's summary places “Gates: batch gate and remote gate” in review evidence, acceptance, or validation gates.",
+      "source": "docs/operations/gates/workbench.json"
+    },
+    {
+      "kind": "dossier",
+      "id": "observation",
+      "title": "Observation: watcher, telemetry, project feed",
+      "text": "Theme Dossier for the observation area, created by AGT-2800 under the operator's D1 decision on AGT-W55 (2026-09-13). It merges AGT-W15 Global Orchestrator Watcher (observe-first design, autonomy classes A0-A3, five detector classes, ticket proposals in review mode, delivered slices AGT-2654 and AGT-2721), AGT-W38 organization-wide telemetry layer (hybrid local JSONL plus best-effort local push, privacy posture, signal-to-action vocabulary, Agent Studio as operations hub) and AGT-W16 project feed (three audiences, deterministic incremental composition, cached batch rollups, visible token cost, the external-chat data gap) into one stack with four separate truths: the file, the cluster, the case and the projection. Observing never mutates; every action runs through the existing application authorities. Ten open decisions arrived unanswered from the sources and are kept as inline decision blocks: safe-rescue authority, fence policy, proposal auto-approval, telemetry transport, telemetry pilot, operations-hub positioning, feed curation, decision capture, rollup budget and the stakeholder sharing boundary.",
+      "tags": [
+        "observation",
+        "decision"
+      ],
+      "state": "decision-pending",
+      "createdAt": "2026-09-25T05:28:26Z",
+      "rationale": "The Dossier's summary places “Observation: watcher, telemetry, project feed” in watcher signals, telemetry, or the activity feed.",
+      "source": "docs/operations/observation/workbench.json"
+    },
+    {
+      "kind": "dossier",
+      "id": "orchestrator-waechter",
+      "title": "Global Orchestrator Watcher",
+      "text": "Decision dossier for a global intelligent exception layer above the mechanical delivery invariants. The central event bus is the shared substrate: the Watcher consumes typed escalation, integration, delivery, starvation, stale, loop, and contradiction signals, then publishes findings, recipe receipts, analyses, and decision needs into the same All-Activity-default stream. Three theme-aware mockups show interleaved Activity entries, persistent Studio-shell presence, and an AGT-2531 NoTaskBranch finding detail. The observe-first recommendation and approval-gated fence policy remain unchanged. Extended 06.09.2026 (§10): autonomous problem finding with five detector classes (repetition, contradiction, silence, drift, hygiene) seeded from the eight findings the operator made by hand that evening, findings as ticket proposals, a dedicated Watcher contingent, a proposal review mode with operator approval and a promotion rule for auto-approval, and an extended decision request. [Curation 2026-09-07 (AGT-2671): DONE CHECK - the pilot decision is still open, so this stays decision-pending and does not move to History. Section 8a's already-shipped visual QA guardian (AGT-2654) is cited as a precedent pattern in docs/concepts/platform-architecture/telemetry-layer.md. The remaining architecture content (WatcherCase contract, capability ladder, autonomy classes) and the §10 autonomous-problem-finding extension were deliberately not transferred to the architecture docs, so that an unapproved mechanism is not documented as settled.]",
+      "tags": [
+        "observation"
+      ],
+      "state": "archived",
+      "createdAt": "2026-09-07T00:00:00Z",
+      "rationale": "The Dossier's summary places “Global Orchestrator Watcher” in watcher signals, telemetry, or the activity feed.",
+      "source": "docs/operations/orchestrator-waechter/workbench.json"
+    },
+    {
+      "kind": "dossier",
+      "id": "board-statusmodell-ist-soll",
+      "title": "Board-Statusmodell: IST-Karte und SOLL-Regeln",
+      "text": "Entscheidungsreife Dossier zum Statusmodell des Boards. Sie kartiert alle Lane-Uebergaenge samt Ausloesern, Recovery und Edge-Cases, belegt die Widersprueche vom 28./29.07. und formuliert SOLL-Vertraege fuer Task-as-Truth, Multi-Runner-Takeover, Integration, Review, Accept und Archive. Der verpflichtende Brechpunkt-Katalog BP-01 bis BP-19 ist vollstaendig beantwortet. [Curation 2026-08-18 (AGT-2671): DONE CHECK - the Robert decision (E1-E14) is still open, stays active. Durable IST-lane and escalation-category taxonomy identified as a candidate for docs/system/domains/tasks.md; not transferred this pass, recommend a dedicated follow-up.]",
+      "tags": [
+        "task-and-board-ui"
+      ],
+      "state": "documented",
+      "createdAt": "2026-09-14T18:43:49Z",
+      "rationale": "The Dossier's summary places “Board-Statusmodell: IST-Karte und SOLL-Regeln” in board and task interaction surfaces.",
+      "source": "docs/operations/board-statusmodell-ist-soll/workbench.json"
+    },
+    {
+      "kind": "dossier",
+      "id": "task-and-board-ui",
+      "title": "Task and board UI decisions",
+      "text": "Consolidation of the eight task and board UI Dossiers into one current Dossier (AGT-W55 D1). Three topics carry a recorded decision and are kept with date and card: the task-detail usage block (alternative A, 11.09.2026, AGT-2769), protocol condensation (three rules in force since 09.08.2026, CAC-21 and AGT-2526, including the no-inline-diff rule the Timeline work relies on) and status.md finalisation (application-owned finalisation with a typed degraded state, approved through AGT-2585, with two adjacent slices still owned elsewhere). Four topics stay open: the narrative reading view (W27), the Timeline presentation contract (W35), the escalation information architecture (W45), and the project scope control in three parts (W52). The recommended measured overflow menu from W21 is already implemented on develop. Evidence keeps the two real light and dark captures that carry the argument, the AGT-2577 event snapshot, the 1,782-card status.md inventory and the measured narrative input bundles; duplicated layout mockups and the Timeline glossary are dropped and stay readable in the sources.",
+      "tags": [
+        "task-and-board-ui",
+        "decision"
+      ],
+      "state": "decision-pending",
+      "createdAt": "2026-09-14T00:00:00Z",
+      "rationale": "The Dossier's summary places “Task and board UI decisions” in board and task interaction surfaces.",
+      "source": "docs/operations/task-and-board-ui/workbench.json"
+    },
+    {
+      "kind": "dossier",
+      "id": "workbench-konzept",
+      "title": "Dossiers: Name, Patterns, and Becoming an App",
+      "text": "NAME DECIDED 9 AUGUST: **Dossier**. UI + documentation rename tracked as AGT-2539; website cards unblocked (AOW-13 Hub working model, WEB-18 Studio site element, dependsOn WEB-16). IN IMPLEMENTATION 9 AUGUST (operator: \"This works; go ahead\"): slices run as AGT-2533 (keys + references) -> AGT-2534 (VERY compact viewer header) / AGT-2535 (central page + project list + SignalR) / AGT-2537 (documented stage) / AGT-2538 (refresh card); AGT-2536 (template v2 + pattern field) in parallel. Open at the time: NAME (round 2: Task-*/Epic direction; recommendation Dossier, alternatives Charter/Initiative/Task Docs/Task Companion) -> followed by rename and website slice (AOW-13). Section 08 corrected: a Dossier groups the ENTIRE lifecycle. Meta-Dossier about the Dossier concept itself (operator request, 9 August). Inventory of the current mechanism, thesis: Dossier = preliminary stage of a task, partly the operator backlog, almost the ideal working model. Decision areas: name (4 candidates, recommendation Concepts, AGT-2520 collision note), navigation integration, two first-class patterns (ui-heavy vs. concept-heavy), Medium-style article layout with full-bleed mockups (demonstrated by the document itself), more app behavior (live task tracking, refresh cards, interactivity based on AGT-2520). New on 9 August: relationship to Epics (an Epic groups decided work, while a Dossier groups emerging work), central cross-project page analogous to Epics with decisions from the list, complete lifecycle: Dossiers that are not discarded track work through completion and then become documentation (documented stage); explanation of the working model on agent-orchestrator.dev as slice 7 (AOW backlog card). Also new: project-level list as a dedicated page and SignalR events (created/updated/decisionRecorded/statusChanged) for tree/lists/viewer as the multi-user foundation. Practical evidence: four new Dossiers were listed through the API but invisible in the tree until reload. New on 9 August: Dossier keys modeled after card keys (AGT-W4, automatic assignment through a project sequence, click-to-copy chip, cards reference by key; this makes the live task block derivable instead of manually maintained). Slice plan with 8 slices, keys as slice 1.",
+      "tags": [
+        "dossiers-and-documentation"
+      ],
+      "state": "documented",
+      "createdAt": "2026-08-11T14:39:56Z",
+      "rationale": "The Dossier's summary places “Dossiers: Name, Patterns, and Becoming an App” in Dossiers, wiki articles, or documentation lifecycle.",
+      "source": "docs/operations/workbench-konzept/workbench.json"
+    },
+    {
+      "kind": "dossier",
+      "id": "living-document-naming",
+      "title": "Naming the Living Decision-to-Documentation Artifact",
+      "text": "Accepted naming decision for the artifact that moves from exploration through decisions and live implementation tracking into permanent documentation. The stable product noun remains Dossier, 'living dossier' is explanatory copy, and Living Dossier remains the runner-up. Implementation tracking stays open until every consequence card is terminal. [Closed to History 2026-08-17: every consequence card is terminal (AGT-2537, AGT-2539, AGT-2580, AGT-2584, AOW-13, WEB-18, all in lane 7-archive), which is exactly the condition this Dossier set for itself. Verified in code: the Dossier maintenance pipeline step from AGT-2580 exists as post-dossier-maintenance in backend/Features/Pipeline/PipelineCatalogue.cs with backend/Features/Docs/DossierMaintenanceService.cs and prompts/runtime/mode-framing-dossier-maintenance.md; the guarded terminal transition from AGT-2537 exists as backend/Features/Docs/WorkbenchDocumentationPolicy.cs and WorkbenchDecisionService.cs; the visible product noun is Dossier in the Studio activity bar, with the Workbench* identifiers and workbench.json filenames deliberately unchanged as the decision ratified. Status moves decided to documented, so the Dossier leaves the active list and stays readable under History.]",
+      "tags": [
+        "dossiers-and-documentation"
+      ],
+      "state": "documented",
+      "createdAt": "2026-08-17T00:00:00Z",
+      "rationale": "The Dossier's summary places “Naming the Living Decision-to-Documentation Artifact” in Dossiers, wiki articles, or documentation lifecycle.",
+      "source": "docs/operations/living-document-naming/workbench.json"
+    },
+    {
+      "kind": "dossier",
+      "id": "org-security-audit-2026-08",
+      "title": "Org Security Audit — August 2026",
+      "text": "Consolidated, adversarially verified security audit across five surfaces of the organization: the public-demo Studio backend, Quality Studio, the public websites, the runner host, and the chat/token-economy libraries. Eight candidate exploit findings entered adversarial refutation; seven survived as confirmed (one high, five medium, one low) and one was reclassified as verified-mitigated with no live exploit path. A prioritized remediation table plus appendices record what was checked and dismissed, including twenty-two low and informational observations from the single-surface deep audits. Decision-pending: the operator triages; no cards were created.",
+      "tags": [
+        "security",
+        "decision"
+      ],
+      "state": "decision-pending",
+      "createdAt": "2026-08-25T00:00:00Z",
+      "rationale": "The Dossier's summary places “Org Security Audit — August 2026” in authentication, permissions, secrets, or sandbox boundaries.",
+      "source": "docs/operations/org-security-audit-2026-08/workbench.json"
+    },
+    {
+      "kind": "dossier",
+      "id": "log-retention",
+      "title": "Task-Logs: Aufbewahrung, Deckelung & Bereinigung",
+      "text": "Nachhaltige Log-Retention-Politik nach dem Workspace-Push-Block vom 27.07. (170-MB-cli-output.log sprengt GitHubs 100-MB-Limit, blockiert die ganze Welle). Belegt: HEAD-Baum bereits sauber, Block nur aus Zwischen-Commits der unpushed Historie; Log-Inhalt = roher CLI-Transkript (564k Zeilen, stdout+stderr timestamp-praefixiert). Prinzip: Log bleibt relevant + sichtbar, nur die Groesse wird an der Quelle gedeckelt. Politik deckt Roberts Punkte A-E: Archiv-Logs ab 10 Tagen stark reduzieren, konfigurierbarer transparenter Tail-Cap (25MB aktiv / 90MB Cleanup / 100MB Hard), Tail-Einheit letzte 50 Messages, komprimiertes rollierendes Runner-Backup, History-Reparatur bei Live-Input (Collapse lock-sicher, Backup-Ref). Plus Hochbubbeln der Push-Failures als sichtbarer Health-Alert. Vier offene Entscheidungen E1-E4, Schnitt in 5 Tickets (Quell-Cap, Archiv-Sweep, Runner-Backup, Push-Sichtbarkeit, Altlast-Repair). Abgeloest am 06.09.2026 durch das Dossier Aufbewahrung und Archiv (retention-und-archiv).",
+      "tags": [
+        "retention"
+      ],
+      "state": "archived",
+      "createdAt": "2026-09-06T20:45:00Z",
+      "rationale": "The Dossier's summary places “Task-Logs: Aufbewahrung, Deckelung & Bereinigung” in archiving, pruning, or storage lifecycle.",
+      "source": "docs/operations/log-retention/workbench.json"
+    },
+    {
+      "kind": "dossier",
+      "id": "retention-und-archiv",
+      "title": "Aufbewahrung und Archiv",
+      "text": "Retention- und Archivmodell fuer Task-Daten: vier Datenklassen (Autoritaet, Evidenz, schwere Arbeitsdaten, Laufzeit), Regelmodell mit Standardwerten (10 MiB je Datei, 64 MiB je Task, 50 MiB Ablehnung, schwere Daten 30 Tage und ganze Tasks 180 Tage nach Terminal ins kalte Archiv, Human-Review nie), kaltes Archiv ausserhalb von Repository und Hot-Store mit Manifest, Stub und Restore, Task-Server als Eigentuemer der Schnittstelle (/api/v1/management/retention, Zeitplan, CLI), Admin-UI mit Vorschau und Verlauf. Messung 06.09.: 2.264 Tasks, 7,6 GB Arbeitsbaum, 28,7 GB Historie in elf Tagen, davon 95 % cli-output.log-Zwischenstaende. Entscheidungen E1-E10 vom Orchestrator getroffen; Umsetzung in R1-R4 (AGT-2743..2746). Nachtrag 06.09. 23:00 (§12, E11/E12): Verduennung grosser Blobs in vier Altersstufen mit inhaltsbezogenem Auszug statt Einmalverschiebung; Vollsicherung als Feature (Sicherungssatz im Dateisystem mit Inventar-Hash, Auswertungsexport als JSONL, 7/4/12-Verduennung der Saetze, extern und per S3 sicherbar).",
+      "tags": [
+        "retention"
+      ],
+      "state": "archived",
+      "createdAt": "2026-09-06T21:05:00Z",
+      "rationale": "The Dossier's summary places “Aufbewahrung und Archiv” in archiving, pruning, or storage lifecycle.",
+      "source": "docs/operations/retention-und-archiv/workbench.json"
+    },
+    {
+      "kind": "dossier",
+      "id": "umsetzungsplan-zielbild",
+      "title": "Umsetzungsplan Richtung Zielbild",
+      "text": "Detaillierter kartenbasierter Plan vom Stand 27.07. zum Zielbild, in vier Phasen: P0 Pipeline heilen (Runner-v1/CAR, Build-Gate, Reste-Batch 2302+2375+ModelRouting), P1 Container-Default (Basis-Images E3, Installer=Container-Default, Self-Push+Tokens, Isolation/Worktree/Nachbarrepos), P2 Verteilte Plattform (Epics 2129/2130/2132, CAR-Kette 2370-2373, Control-Plane 2230/2277), P3 SSH-Tunnel ablösen + Token-Refresh-Konzept. Enthaelt Roberts Leitplanken (Container-Default sofort ab Installer, Isolation gilt dem Agent nicht den Sourcen, Self-Push mit Git+CLI-Tokens, gepflegte Basis-Images), die Spawn-Pfad-Konvergenz auf CAR (von den Entscheidungen verstaerkt), und Verifikation im selben Container mit Dockerfile-im-Repo + Image-als-Sidecar + agent-gepflegter Umgebung (E6). Buendelung nach Ueberlappung: Architektur=koordinierte Batches, Features=Tasks. Offene Punkte: Token-Refresh ohne Tunnel.",
+      "tags": [
+        "dossiers-and-documentation"
+      ],
+      "state": "documented",
+      "createdAt": "2026-09-14T00:00:00Z",
+      "rationale": "The Dossier's summary places “Umsetzungsplan Richtung Zielbild” in Dossiers, wiki articles, or documentation lifecycle.",
+      "source": "docs/operations/umsetzungsplan-zielbild/workbench.json"
+    },
+    {
+      "kind": "dossier",
+      "id": "decision-briefing",
+      "title": "Operator decision briefing",
+      "text": "Map across the eight decision-pending dossiers: one section per decision, ordered by leverage using cost of delay (95 days requeue rework in 30 days, up to 21.8 weekly quota points per wave recurrence, 1.2-day median post-processing wait). Each section carries recommendation, evidence, cost of delay, approval consequences, open questions, and a confidence tag; a closing table gives the one-line ask and recommended answer per key.",
+      "tags": [
+        "dossiers-and-documentation"
+      ],
+      "state": "archived",
+      "createdAt": "2026-08-25T00:00:00Z",
+      "rationale": "The Dossier's summary places “Operator decision briefing” in Dossiers, wiki articles, or documentation lifecycle.",
+      "source": "docs/operations/decision-briefing/workbench.json"
+    },
+    {
+      "kind": "dossier",
+      "id": "dossier-consolidation-and-area-tags",
+      "title": "Dossier consolidation and area tags",
+      "text": "Plan for the operator's decision on AGT-W53 (2026-09-13): the current Dossier list shrinks from 37 to 16 (four new theme Dossiers for delivery chain, observation, gates and task UI; the North star rewritten to the September topology; eleven kept), partially superseded Dossiers are merged into their theme Dossier and recorded as superseded, implemented ones are archived only when their durable knowledge has a documentation home (artefact table per Dossier). Second part: the review's categories become a general tag system with areas that own a glossary (ubiquitous language), area and facet tags on cards and Dossiers, an auto-tagging pipeline step that runs by default in every project on card and Dossier creation with a cheap classification model route, a backfill for the 862 untagged cards and 54 Dossiers, and maintenance proposals as decision cards. Six operator decisions D1-D6, nine implementation cards.",
+      "tags": [
+        "dossiers-and-documentation",
+        "decision"
+      ],
+      "state": "decided",
+      "createdAt": "2026-09-13T10:55:00Z",
+      "rationale": "The Dossier's summary places “Dossier consolidation and area tags” in Dossiers, wiki articles, or documentation lifecycle.",
+      "source": "docs/operations/dossier-consolidation-and-area-tags/workbench.json"
+    },
+    {
+      "kind": "dossier",
+      "id": "unverifizierte-lieferungen",
+      "title": "Unverifizierte Lieferungen",
+      "text": "Postmortem 09.08.: Zwei Remote-Lieferungen (AGT-2531 Gate-Fix, AGT-2541 Git-Prozess-Fix) existierten nur auf Salvage-Fence-Branches; AGT-2531 wurde per Worker-Outcome NoTaskBranch trotzdem still 6-completed (integration=null). Folgen: falsch-rote CAC/QS/TE-Gates (7 Karten Error-Loop), rote Baseline (Eskalationen AGT-2536/2537), blockierter Promotion-Zug; Backstop-Telemetrie verdeckte den Zustand (261x 'integrated'). SOFORTMASSNAHMEN 09.08. ABGESCHLOSSEN: card-scoped Salvage-Merges 6ea7f7978 + 720129404 auf develop, verifiziert mit Baseline-Gegenlauf (7 vorbestehende Windows-Fixture-Failures, keine Regression), Requeues mit Fence-Referenz. HAERTUNG GETAKTET: AGT-2543 (Abnahme-Invariante: NoTaskBranch/Error/Conflict nie still completed), AGT-2544 (Envelope-Pflicht: delivery-failed + Auto-Requeue mit Fence-Referenz), AGT-2545 (ehrliche Backstop-Zaehler + 30-min-Alarm). OFFEN (Operator): Fence-Chip am Board ja/nein, Auto-Reintegration vom Fence ja/nein (§6). Leitinvariante: 'Completed' ist eine beweispflichtige Aussage. [Curation 2026-08-18 (AGT-2671): DONE CHECK - open decisions and open follow-up work remain per the dossier's own sections 6-7, stays decision-pending. Completion-invariant and delivery-verification-chain content noted as a candidate for docs/concepts/distributed-agent-studio-target-architecture.md section 6 (Disconnect and restart contract currently covers connectivity loss, not the salvage-fence-push/still-completed failure mode this postmortem documents); not transferred this pass, recommend a dedicated follow-up.]",
+      "tags": [
+        "delivery-chain"
+      ],
+      "state": "documented",
+      "createdAt": "2026-09-14T18:43:49Z",
+      "rationale": "The Dossier's summary places “Unverifizierte Lieferungen” in integration, branches, commits, or promotion to the target branch.",
+      "source": "docs/operations/unverifizierte-lieferungen/workbench.json"
+    },
+    {
+      "kind": "dossier",
+      "id": "demo-instanz",
+      "title": "Public demo instance with no execution authority",
+      "text": "Decision dossier for a publicly browsable, execution-locked Agent Studio demo built from completed and deployed scenario snapshots. In addition to the pinned two-project seed, Dossier lifecycle, replay, security, hosting, and reset decisions, it defines a six-case scenario pool, recommends SVG Pelican, Shift Ledger, and The Deep Blue as the first benchmark wave, specifies scripted Orchestrator context-chat runs, a four-category TokenEconomy ledger, immutable Result Dossiers and run history, per-case token caps, staged model comparisons, and clear ownership across the demo, Token Economy, the Agent Studio website, and independently deployed outputs. [Operator approved 2026-08-17: implement as recommended; slices S1-S5 cut as AGT-2666..2670. Implementation state in section 14: S1 (seed and gallery), S2 (hard execution profile), S3 (replay-only Runner), S4 (public read-only edge), and S5 (scrub, bundle, reset contract) are delivered; S6 (launch rehearsal) is not started, so the launch invariant is not met yet.] [Curation 2026-09-07: stays in the active list, not closable - S6 (launch rehearsal) is still open, and no dossier moves to History while an attached slice is open. The deliveries of S2 and S3 are confirmed in develop (PublicDemoExecutionProfileTests, DemoReplayAdmissionPolicy, DemoReplayTraceSignature). The former status \"accepted\" and phase \"in-progress\" are not part of the descriptor vocabulary (status: active | decision-pending | decided | documented | archived, phase: informational | shaping | testing | decision-ready) and made this dossier render as \"Descriptor needs repair\"; corrected to decided/testing, the decided-and-under-delivery pair that keeps the dossier in the active list.]",
+      "tags": [
+        "dossiers-and-documentation",
+        "decision"
+      ],
+      "state": "decided",
+      "createdAt": "2026-09-07T00:00:00Z",
+      "rationale": "The Dossier's summary places “Public demo instance with no execution authority” in Dossiers, wiki articles, or documentation lifecycle.",
+      "source": "docs/operations/demo-instanz/workbench.json"
+    }
+  ]
+}

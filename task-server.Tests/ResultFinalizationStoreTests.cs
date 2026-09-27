@@ -10,6 +10,64 @@ namespace TaskServer.Tests;
 public sealed class ResultFinalizationStoreTests
 {
     [Fact]
+    public async Task Completed_lease_admits_finalization_only_with_exact_outbox_authority()
+    {
+        using var temp = new TempDirectory();
+        var generator = new SequencedGenerator(
+            ResultSummaryGeneration.Success("# Status\n\n- Result: Success\n"));
+        var store = Store(temp.Path, generator, maxAttempts: 2);
+        var (_, _, _, run, lease) = await SeedClaimedAsync(store);
+        await CompleteAsync(store, run.RunId, lease);
+
+        var missing = await Assert.ThrowsAsync<TaskServerConflictException>(() =>
+            store.FinalizeResultAsync(run.RunId,
+                Request(lease, 1) with { RunnerId = null!, InstanceId = null!, LeaseId = null! },
+                "runner-a", default));
+        Assert.Equal("lease-not-active", missing.Code);
+        var wrong = await Assert.ThrowsAsync<TaskServerConflictException>(() =>
+            store.FinalizeResultAsync(run.RunId,
+                Request(lease, 1) with { InstanceId = "another-instance" },
+                "runner-a", default));
+        Assert.Equal("stale-fence", wrong.Code);
+        Assert.Equal(0, generator.Calls);
+
+        var finalization = await store.FinalizeResultAsync(
+            run.RunId, Request(lease, 1), "runner-a", default);
+        Assert.Equal(ResultFinalizationStatus.Ready, finalization.Status);
+        Assert.Contains(await store.ListArtifactsAsync(run.RunId, default),
+            artifact => artifact.Name == "status.md");
+    }
+
+    [Fact]
+    public async Task Release_after_completion_is_idempotent_only_for_exact_authority()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path, new SequencedGenerator(), maxAttempts: 2);
+        var (_, project, task, run, lease) = await SeedClaimedAsync(store);
+        await CompleteAsync(store, run.RunId, lease);
+        var request = new LeaseReleaseRequest(
+            "runner-a", "instance-a", lease.LeaseId, lease.Fence, "runner-process-missing");
+
+        var wrong = await Assert.ThrowsAsync<TaskServerConflictException>(() =>
+            store.ReleaseLeaseAsync(run.RunId, request with { InstanceId = "another-instance" },
+                "runner-a", default));
+        Assert.Equal("stale-fence", wrong.Code);
+        var missing = await Assert.ThrowsAsync<TaskServerConflictException>(() =>
+            store.ReleaseLeaseAsync(run.RunId, request with { LeaseId = "" },
+                "runner-a", default));
+        Assert.Equal("stale-fence", missing.Code);
+
+        var first = await store.ReleaseLeaseAsync(run.RunId, request, "runner-a", default);
+        var second = await store.ReleaseLeaseAsync(run.RunId, request, "runner-a", default);
+        Assert.Equal("released", first.Status);
+        Assert.Equal("completed", first.Lease?.Status);
+        Assert.Equal("completed", second.Lease?.Status);
+        var history = await store.GetTaskHistoryAsync(project.ProjectId, task.TaskKey, 0, default);
+        Assert.Equal("blocked", Assert.Single(history!.Runs).Status);
+        Assert.DoesNotContain(history.Audit, entry => entry.Action == "lease.released");
+    }
+
+    [Fact]
     public async Task Missing_status_retries_only_summary_then_persists_real_result()
     {
         using var temp = new TempDirectory();
@@ -111,6 +169,14 @@ public sealed class ResultFinalizationStoreTests
             lease.Fence,
             attempt,
             $"result-finalization:{lease.RunId}:{attempt}");
+
+    private static async Task CompleteAsync(TaskServerStore store, string runId, LeaseDto lease)
+        => _ = await store.CompleteRunAsync(
+            runId,
+            new CompleteRunRequest(
+                "runner-a", "instance-a", lease.LeaseId, lease.Fence,
+                "blocked", "Result published.", IdempotencyKey: $"completion:{runId}", Sequence: 1),
+            "runner-a", default);
 
     private static TaskServerStore Store(
         string path,

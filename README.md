@@ -31,37 +31,29 @@
   definitions and in-flight runs remain durable Task Server data, so restarting
   the Engine does not orphan work.
 
-## Get started
+## Install with Docker
 
 ```bash
 git clone https://github.com/agent-orc/agent-studio.git
 cd agent-studio
 scripts/compose-distributed-bootstrap.sh
-docker compose --profile dev up --build --wait \
-  task-server-dev orchestrator-engine-dev studio-bff-dev \
-  frontend-dev agent-host-distributed-dev agent-host-review-distributed-dev
+docker compose --profile dev up --build --wait task-server-dev orchestrator-engine-dev studio-bff-dev orchestrator-api-dev web-dev agent-host-distributed-dev agent-host-review-distributed-dev
 ```
 
-Open [http://127.0.0.1:4011](http://127.0.0.1:4011). Docker Compose starts
-Task Server, engine, browser edge and coding/review runner roles on one box.
-The current one-box code needs a compatible published image set; until that
-release is available, use the source-built path in the
-[setup guide](./docs/operations/setup/getting-started.md). It needs at least
-8 GB of free disk space but no host .NET or Node.js install. The bootstrap
-creates local credential files; configure
-provider authentication and Git access before coding or review. See the
-[setup guide](./docs/operations/setup/getting-started.md) for prerequisites,
-persistence, and troubleshooting. As an alternative for Linux x64 release
-installs with no source checkout and no .NET prerequisite, the guided
-[`agent-orchestrator-setup`](https://github.com/agent-orc/agent-studio/releases/latest/download/agent-orchestrator-setup)
-executable offers an isolated Docker demo, a native single-machine install, and
-a guided [multi-machine](./docs/operations/setup/multi-machine.md) join flow.
-To add execution capacity against the same authority, follow the
-[Agent Host guide](./docs/operations/setup/linux-runner-host.md). The
-[one-box guide](./docs/operations/setup/getting-started.md) records the current
-route and acceptance limits.
-Source contributors use the separate
-[contributor setup](./docs/operations/setup/contributor-setup.md).
+Open [http://localhost:4011](http://localhost:4011). This source-built Compose
+path is the verified installation path for this checkout. The one-box stack
+starts the Task Server, Engine, Studio BFF, compatibility API, web UI, and coding and review hosts.
+It creates restricted principal credentials in a named volume on first start
+and reuses them on later starts. Coding tasks additionally need provider and
+Git credentials mounted into the agent host.
+
+To run a published release after its images pass post-release CI, copy
+`.env.example` to `.env`, set `AGENT_STUDIO_VERSION` to that release version,
+and run `docker compose up -d --wait`. The default UI listens only on loopback;
+LAN exposure uses the optional HTTPS edge and an exact origin allowlist. See the
+[Docker operations guide](./docs/operations/setup/docker.md) for updates,
+backups, product-managed credential rotation, credential mounts, and the current
+route coverage limit beyond `/api/v1`.
 
 ## Testing
 

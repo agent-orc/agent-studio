@@ -291,7 +291,7 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                     delivery.Sequence,
                     delivery.Request.DeliveredAtUtc);
                 var result = await _integrate(delivery.Request).ConfigureAwait(false);
-                if (result.Outcome == MergeIntoIntegrationOutcome.AgentRoundRequired)
+                if (result.Outcome is MergeIntoIntegrationOutcome.AgentRoundRequired or MergeIntoIntegrationOutcome.Conflict)
                 {
                     var continuation = await _startAgentRound(
                         delivery.Request,
@@ -453,7 +453,7 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         }
 
         var success = result.Outcome.IsSuccessfulIntegration();
-        if (result.Outcome == MergeIntoIntegrationOutcome.AgentRoundRequired)
+        if (result.Outcome is MergeIntoIntegrationOutcome.AgentRoundRequired or MergeIntoIntegrationOutcome.Conflict)
             return result;
 
         timeline.Append(

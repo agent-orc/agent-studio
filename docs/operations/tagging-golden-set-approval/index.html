@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tagging reference set approval</title>
+  <style>
+    :root { color-scheme:light dark; --bg:#f7f8fb; --surface:#fff; --ink:#182033; --muted:#5d687d; --line:#d9dfeb; --accent:#2563eb; font-family:ui-sans-serif,system-ui,sans-serif; }
+    @media (prefers-color-scheme:dark) { :root { --bg:#15171c; --surface:#1d2027; --ink:#eef0f5; --muted:#a9b1c0; --line:#383e4a; --accent:#77a5ff; } }
+    * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--ink); line-height:1.55; }
+    main { width:min(960px,calc(100% - 32px)); margin:auto; padding:40px 0; } h1 { font-size:clamp(2rem,5vw,3rem); line-height:1.1; margin:0 0 12px; }
+    section { background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:20px; margin:16px 0; }
+    a { color:var(--accent); } .muted { color:var(--muted); } .decision label { display:flex; gap:12px; align-items:flex-start; padding:12px; border:1px solid var(--line); border-radius:8px; margin:8px 0; cursor:pointer; }
+    .decision label b { display:block; } .decision label .d { display:block; color:var(--muted); } .decision textarea { width:100%; min-height:72px; padding:10px; font:inherit; background:var(--surface); color:var(--ink); border:1px solid var(--line); border-radius:8px; }
+  </style>
+</head>
+<body>
+<main>
+  <p class="muted">AGT-2804 · Operator decision · 25 September 2026</p>
+  <h1>Approve or amend the tagging reference set</h1>
+  <p class="muted">The proposed set is evidence for classification, not an operator-approved ground truth yet. This decision keeps the approval distinct from implementation.</p>
+  <section>
+    <h2>Evidence and proposal</h2>
+    <p><a href="../../quality/tagging-golden-set/index.html">Review the sampling method</a>, <a href="../../quality/tagging-golden-set/items.json">80 item assignments and rationales</a>, and <a href="../../quality/tagging-golden-set/glossaries.json">ten area glossaries</a>. The 60 cards span active, completed, and archived states and May to September 2026 creation dates. Twenty Dossiers span current and historical states. Both data files say <code>status: proposed</code> and <code>approvedBy: null</code>.</p>
+    <p>The classifier reports precision and recall against this proposal. Those numbers become approval-grade measurements only after the operator accepts or amends the reference labels and glossary terms.</p>
+  </section>
+  <section>
+    <h2>Decision</h2>
+    <div class="decision" data-decision-id="golden-set-and-glossaries" data-decision-kind="single" data-decision-label="Approve or amend the tagging golden set and glossaries">
+      <h3>D1 · Are the proposed assignments and glossaries acceptable?</h3>
+      <label data-option-id="approve" data-option-label="A · Approve the proposed set and glossaries (recommendation)"><input type="radio" name="golden-set-and-glossaries" value="approve"><span><b>A · Approve as proposed</b><span class="d">Record the operator and approval date in both data files. Future precision and recall reports can treat the reference labels as approved. No registry tags or item tags are changed by this decision alone.</span></span></label>
+      <label data-option-id="amend" data-option-label="B · Amend assignments or glossary terms"><input type="radio" name="golden-set-and-glossaries" value="amend"><span><b>B · Amend before approval</b><span class="d">Name the item ids, expected tags, or glossary terms to change in the note. The set remains proposed until the revised data is reviewed and approved.</span></span></label>
+      <div data-comment="Amendment details or approval note"><textarea placeholder="Item ids or glossary terms to amend, or an approval note"></textarea></div>
+    </div>
+  </section>
+</main>
+</body>
+</html>

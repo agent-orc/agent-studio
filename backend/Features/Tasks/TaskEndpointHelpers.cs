@@ -81,7 +81,11 @@ internal static class TaskEndpointHelpers
         MoveJobStatus.Success => Results.Ok(),
         MoveJobStatus.NotFound => Results.NotFound(),
         MoveJobStatus.TargetFolderExists => Results.Conflict(new { error = outcome.Message }),
-        MoveJobStatus.IntegrationFailed => Results.Conflict(new { error = outcome.Message }),
+        MoveJobStatus.IntegrationFailed => Results.Conflict(new
+        {
+            error = outcome.Message,
+            code = "integration-dead-end",
+        }),
         MoveJobStatus.DirectoryLocked => Results.Json(
             new { error = outcome.Message ?? "Task folder is temporarily locked by another process. Retry after the active process releases its file handles." },
             statusCode: StatusCodes.Status423Locked),
@@ -251,6 +255,7 @@ internal static class TaskEndpointHelpers
             TokenSummary = tokens,
             OrchestratorVerdict = verdict,
             WaitsOn = waitsOn,
+            BlockedBy = DecisionBlockProjection.BlockedBy(waitsOn),
             PickupHold = pickupHold,
             TransitiveWaiters = transitiveWaiters,
             PlanningSpawn = planningSpawn,
@@ -564,5 +569,8 @@ internal static class TaskEndpointHelpers
         IReadOnlyDictionary<string, string>? verdictsByJobKey,
         IReadOnlyDictionary<string, WaitsOnStatus>? waitsOnByJobKey,
         IReadOnlyDictionary<string, TransitiveWaitersStatus>? transitiveWaitersByJobKey)
-        => detail with { Info = WithRuntime(detail.Info, router, runners, tokensByJobId, verdictsByJobKey, waitsOnByJobKey, transitiveWaitersByJobKey) };
+    {
+        using var trace = TaskSwitchTrace.Span("runtime");
+        return detail with { Info = WithRuntime(detail.Info, router, runners, tokensByJobId, verdictsByJobKey, waitsOnByJobKey, transitiveWaitersByJobKey) };
+    }
 }
