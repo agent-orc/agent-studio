@@ -100,6 +100,10 @@ public sealed class BatchGateStoreTests : IDisposable
         _store.RecordReplay(new BatchGateReplayRecord(manifest.BatchId,
             manifest.MembershipDigest, member.TaskKey, Base, Base, Next,
             [new RebasedCommitReplacement(Base, Next)], [], "admitted", Now));
+        var prematureCompletion = _store.Observe("project",
+            new HashSet<string>(StringComparer.Ordinal) { member.TaskKey });
+        Assert.Equal(1, prematureCompletion.FalseCompletedCards);
+        Assert.False(prematureCompletion.CorrectnessFloorMet);
         Assert.Throws<InvalidDataException>(() => _store.RecordMember(new BatchGateMemberRecord(
             member.TaskKey, "wrong-attempt", 1, Base, [Next], manifest.BatchId,
             manifest.MembershipDigest, Base, Next, "digest", run.BatchRunId,

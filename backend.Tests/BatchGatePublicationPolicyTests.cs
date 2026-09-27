@@ -40,6 +40,10 @@ public sealed class BatchGatePublicationPolicyTests
         Assert.Equal(BatchPublishDecision.LeaseLost, Decide(refLease: false));
         Assert.Equal(BatchPublishDecision.Superseded,
             Decide(current: member with { DeliveryEpoch = 2 }));
+        Assert.Equal(BatchPublishDecision.Superseded,
+            Decide(current: member with { GateProfileDigest = "changed" }));
+        Assert.Equal(BatchPublishDecision.Superseded,
+            Decide(current: member with { IntegrationBranch = "release" }));
         Assert.Equal(BatchPublishDecision.UntestedCandidate,
             Decide(actualVerdict: verdict with { TestedCandidateSha = Base }));
     }

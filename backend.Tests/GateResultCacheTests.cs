@@ -46,6 +46,17 @@ public sealed class GateResultCacheTests : IDisposable
     }
 
     [Fact]
+    public async Task Batch_request_executes_again_on_the_same_sha()
+    {
+        var first = await Run();
+        var batch = await Run(bypass: true);
+
+        Assert.Equal(GateVerdictSource.Executed, first.VerdictSource);
+        Assert.Equal(GateVerdictSource.Executed, batch.VerdictSource);
+        Assert.Equal(2, File.ReadAllLines(Counter).Length);
+    }
+
+    [Fact]
     public async Task Profile_pipeline_version_and_toolchain_changes_all_miss()
     {
         await Run();
@@ -139,7 +150,8 @@ public sealed class GateResultCacheTests : IDisposable
     private string Command => $"echo x >> {Counter}";
 
     private Task<BuildTestGateResult> Run(
-        BuildProfile? profile = null, int version = 1, string? toolchain = null)
+        BuildProfile? profile = null, int version = 1, string? toolchain = null,
+        bool bypass = false)
     {
         var runner = new BuildTestGateRunner(
             NullLogger<BuildTestGateRunner>.Instance,
@@ -150,6 +162,7 @@ public sealed class GateResultCacheTests : IDisposable
             Project = "test-project",
             PipelineDefinitionVersion = version,
             ToolchainIdentity = toolchain,
+            BypassVerdictCache = bypass,
         }, null, profile ?? new BuildProfile { BuildCmds = [Command] },
             PostStepMode.Fail, TimeSpan.FromMinutes(1), CancellationToken.None);
     }

@@ -28,6 +28,9 @@ public sealed record TaskIntegrationRecord
     [JsonPropertyName("integrationBranch")]
     public string? IntegrationBranch { get; init; }
 
+    [JsonPropertyName("integrationTipSha")]
+    public string? IntegrationTipSha { get; init; }
+
     [JsonPropertyName("commitShas")]
     public List<string> CommitShas { get; init; } = [];
 

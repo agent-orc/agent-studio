@@ -84,12 +84,20 @@ the full-suite commands for the batch. A passed settled Remote Review writes a
 durable pending subject and stays in Auto Review. `BatchGateWorker` closes a
 manifest at four members, eight maximum, after 15 minutes, or at two under
 queue or host pressure. It assembles a detached candidate, records its run
-before calling the exact-SHA `BuildTestGateRunner`, and publishes under the
+before calling the exact-SHA `BuildTestGateRunner` with full-suite selection
+and verdict-cache bypass, and publishes under the
 shared ref-mutation lease only when the remote tip remains the recorded base.
 The native per-member record and verified integration history must exist before
 the worker moves a card to Human Review. The restart resume path leaves pending
 batch members alone. Disabling the setting sends unpublished members through
 the existing per-task integration gate with the same immutable result subject.
+Formation isolates cohorts by project, repository, branch, gate profile, and
+platform version. Before lane release, the worker checks the current run epoch,
+fence, result envelope and deferred review subject, then fetches the remote
+integration ref to verify that it still contains the tested candidate. The
+integration bookkeeping record carries the verified remote tip SHA.
+The worker's correctness-floor check includes current Completed cards, so a
+published member lacking its native gate record stops further formation.
 `GET /api/projects/{projectName}/batch-gate/batches` exposes each closed
 manifest's latest phase and reason, including visible red and paused outcomes.
 The adjacent `/batch-gate/report` endpoint projects pilot measures and the

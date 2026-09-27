@@ -45,6 +45,25 @@ public sealed class BatchGatePolicyTests
             Sha, Scope, first.Members.Select(x => x.TaskKey == "a" ? x with { DeliveryEpoch = 2 } : x).ToArray()));
     }
 
+    [Fact]
+    public void DifferentRepositoriesBranchesAndProfilesHaveDifferentFormationScopes()
+    {
+        var first = Subject("first");
+        var subjects = new[]
+        {
+            first,
+            Subject("second") with { Repository = "other-repo" },
+            Subject("third") with { IntegrationBranch = "release" },
+            Subject("fourth") with { GateProfileDigest = "other-digest" },
+        };
+        var cohorts = subjects.GroupBy(BatchGatePolicy.ScopeOf).ToArray();
+        Assert.Equal(4, cohorts.Length);
+        Assert.All(cohorts, cohort => Assert.Single(cohort));
+        Assert.Equal(Scope, BatchGatePolicy.ScopeOf(first));
+        Assert.Equal(BatchExclusionReason.GateProfileMismatch,
+            BatchGatePolicy.Exclusion(first, Scope with { GateProfileDigest = "new-digest" }, Enabled));
+    }
+
     [Theory]
     [InlineData(8, 2, 0, false)]
     [InlineData(8, 3, 0, true)]

@@ -69,6 +69,10 @@ public sealed record BatchGateFormation(
 
 public static class BatchGatePolicy
 {
+    public static BatchGateScope ScopeOf(BatchGateSubject subject)
+        => new(subject.Project, subject.Repository, subject.IntegrationBranch,
+            subject.GateProfile, subject.GateProfileDigest, subject.PlatformVersion);
+
     public static BatchGateFormation Form(
         IEnumerable<BatchGateSubject> candidates, BatchGateScope scope,
         string baseSha, BatchGateFormationOptions options,

@@ -35,6 +35,9 @@ public static class BatchGateRoutingPolicy
     public static bool IsDocumentationPath(string path)
     {
         var normalized = path.Replace('\\', '/');
+        var document = normalized.EndsWith(".md", StringComparison.OrdinalIgnoreCase)
+            || normalized.EndsWith(".html", StringComparison.OrdinalIgnoreCase);
+        if (!document) return false;
         if (normalized.StartsWith("docs/", StringComparison.OrdinalIgnoreCase)
             || normalized.StartsWith(".agents/skills/", StringComparison.OrdinalIgnoreCase))
             return true;

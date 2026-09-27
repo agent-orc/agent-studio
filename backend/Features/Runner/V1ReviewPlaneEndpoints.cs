@@ -945,6 +945,7 @@ public static class V1ReviewPlaneEndpoints
                             "Review passed, but the durable batch queue write failed."),
                             statusCode: StatusCodes.Status503ServiceUnavailable);
                     }
+                    EnqueueEvidenceProjection();
                     return Results.Json(new Contract.ApiError("batch-gate-evidence-missing",
                         "The deferred build/test review did not have a complete batch subject."),
                         statusCode: StatusCodes.Status503ServiceUnavailable);

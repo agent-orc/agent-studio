@@ -5546,6 +5546,23 @@ public class GitService
             .Select(line => line.Split('\t')[0].Trim()).FirstOrDefault();
     }
 
+    public bool RemoteIntegrationContainsCandidate(
+        string repoRoot, string branch, string candidateSha, CancellationToken ct)
+    {
+        if (!IsLikelyBranchName(branch) || !ReviewSubjectStore.IsValidResultSha(candidateSha))
+            return false;
+        var before = GetRemoteIntegrationTip(repoRoot, branch, ct);
+        if (before is null) return false;
+        var (_, _, code) = RunGitArgs(repoRoot, ct, "fetch", "--no-tags", "origin",
+            $"+refs/heads/{branch}:refs/remotes/origin/{branch}");
+        if (code != 0) return false;
+        var fetched = GetBranchTip(repoRoot, $"refs/remotes/origin/{branch}");
+        var after = GetRemoteIntegrationTip(repoRoot, branch, ct);
+        return string.Equals(before, after, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(fetched, after, StringComparison.OrdinalIgnoreCase)
+            && IsAncestor(repoRoot, candidateSha, fetched!);
+    }
+
     public GitPushResult PublishTestedBatchCandidate(
         string repoRoot, string branch, string preTip, string testedCandidate,
         CancellationToken ct)

@@ -53,6 +53,10 @@ public sealed record BuildTestGateRequest(
     public string? SubjectRef { get; init; }
     public string Lane { get; init; } = TaskStates.AutoReview;
     public string? RequiredTestLevel { get; init; }
+    /// <summary>Runs every verify command, including packages outside the changed paths.</summary>
+    public bool ForceFullSuite { get; init; }
+    /// <summary>Requires a fresh execution even when an exact-SHA verdict is cached.</summary>
+    public bool BypassVerdictCache { get; init; }
     public TestExecutionPolicy? TestExecution { get; init; }
     public IReadOnlyDictionary<string, string>? ChangedFileStatuses { get; init; }
     public string? JobFolderPath { get; init; }
@@ -467,6 +471,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
             // The SHA fixes repository-owned command definitions. Resolve the
             // same deterministic scope used after preparation before lookup.
             if (completed is null && request.RequireExactSubject
+                && !request.BypassVerdictCache
                 && SafeSha.IsMatch(testedSha ?? "")
                 && string.Equals(request.ExpectedSha, testedSha, StringComparison.OrdinalIgnoreCase))
             {
@@ -478,9 +483,10 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                         var preflight = DeterministicTestScope.Plan(
                             workspace!, preflightPlan, changedFiles,
                             request.ChangedFileStatuses, request.TestExecution,
-                            request.Lane, request.RequiredTestLevel);
+                            request.Lane, request.ForceFullSuite
+                                ? TestExecutionLevels.Full : request.RequiredTestLevel);
                         var preflightCommands = preflight.Commands
-                            .Where(command => ShouldRunForChange(command, changedFiles)).ToList();
+                            .Where(command => ShouldRunForRequest(request, command, changedFiles)).ToList();
                         if (preflightCommands.Count > 0)
                         {
                             toolchainIdentity ??= GateResultCache.LocalToolchainIdentity(preflightCommands, workspace!);
@@ -570,7 +576,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                         workspace);
                     var emptySelection = DeterministicTestScope.Plan(
                         workspace!, plan, changedFiles, request.ChangedFileStatuses,
-                        request.TestExecution, request.Lane, request.RequiredTestLevel);
+                        request.TestExecution, request.Lane,
+                        request.ForceFullSuite ? TestExecutionLevels.Full : request.RequiredTestLevel);
                     completed = NotApplicable("no verify commands derivable") with
                     {
                         TestSelection = emptySelection.Audit,
@@ -581,12 +588,15 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 {
                     var staged = DeterministicTestScope.Plan(
                         workspace!, plan, changedFiles, request.ChangedFileStatuses,
-                        request.TestExecution, request.Lane, request.RequiredTestLevel);
-                    var commands = staged.Commands.Where(c => ShouldRunForChange(c, changedFiles)).ToList();
+                        request.TestExecution, request.Lane,
+                        request.ForceFullSuite ? TestExecutionLevels.Full : request.RequiredTestLevel);
+                    var commands = staged.Commands
+                        .Where(command => ShouldRunForRequest(request, command, changedFiles)).ToList();
                     // The digest covers the resolved command plan as well as the
                     // inputs that selected it. A different selection never borrows
                     // a verdict merely because the tree SHA is unchanged.
-                    if (request.RequireExactSubject && SafeSha.IsMatch(testedSha ?? "")
+                    if (request.RequireExactSubject && !request.BypassVerdictCache
+                        && SafeSha.IsMatch(testedSha ?? "")
                         && string.Equals(request.ExpectedSha, testedSha, StringComparison.OrdinalIgnoreCase)
                         && commands.Count > 0)
                     {
@@ -2267,6 +2277,10 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         return changedFiles.Any(file =>
             file.Replace('\\', '/').StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
     }
+
+    internal static bool ShouldRunForRequest(BuildTestGateRequest request,
+        VerifyCommand command, IReadOnlyList<string>? changedFiles)
+        => request.ForceFullSuite || ShouldRunForChange(command, changedFiles);
 
     private static string Describe(VerifyCommand command)
     {

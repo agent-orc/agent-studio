@@ -109,7 +109,12 @@ public sealed class BatchGateRuntime
         {
             ct.ThrowIfCancellationRequested();
             var options = _settings.Get(project.Key).BatchGate;
-            if (!_store.Observe(project.Key).CorrectnessFloorMet)
+            var completedKeys = _scanner.ScanAllAutomationJobs()
+                .Where(task => task.State == TaskStates.Completed
+                    && string.Equals(task.ProjectName, project.Key, StringComparison.OrdinalIgnoreCase))
+                .Select(task => task.Key ?? task.Id)
+                .ToHashSet(StringComparer.Ordinal);
+            if (!_store.Observe(project.Key, completedKeys).CorrectnessFloorMet)
             {
                 _logger.LogCritical("Batch gate correctness floor failed for project {Project}; formation is stopped.",
                     project.Key);
@@ -134,44 +139,58 @@ public sealed class BatchGateRuntime
                 }
                 continue;
             }
-            var first = project.First();
-            var repo = _git.ResolveRepoRootForWatchPath(first.WatchPath);
-            if (repo is null) continue;
-            var scope = Scope(first.Subject.Project, first.Subject.Repository,
-                first.Subject.IntegrationBranch, _settings.Get(project.Key));
-            var lease = _coordinatorLeases.TryAcquire(scope, Environment.MachineName);
-            if (lease is null) continue;
-            using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            var currentLease = lease;
-            var heartbeat = Task.Run(async () =>
+            foreach (var cohort in project.GroupBy(item => BatchGatePolicy.ScopeOf(item.Subject)))
             {
+                var items = cohort.ToArray();
+                var scope = cohort.Key;
+                var lease = _coordinatorLeases.TryAcquire(scope, Environment.MachineName);
+                if (lease is null) continue;
+                using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                var currentLease = lease;
+                var heartbeat = Task.Run(async () =>
+                {
+                    try
+                    {
+                        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+                        while (await timer.WaitForNextTickAsync(linked.Token))
+                        {
+                            var renewed = _coordinatorLeases.Renew(currentLease);
+                            if (renewed is null) { linked.Cancel(); break; }
+                            currentLease = renewed;
+                        }
+                    }
+                    catch (OperationCanceledException ex) when (linked.IsCancellationRequested)
+                    {
+                        _logger.LogDebug(ex, "Batch coordinator heartbeat stopped with its cycle.");
+                    }
+                }, CancellationToken.None);
                 try
                 {
-                    using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
-                    while (await timer.WaitForNextTickAsync(linked.Token))
+                    await RecoverClaimedAsync(items, linked.Token).ConfigureAwait(false);
+                    if (items.Any(item => _store.PendingOwner(item) is null))
                     {
-                        var renewed = _coordinatorLeases.Renew(currentLease);
-                        if (renewed is null) { linked.Cancel(); break; }
-                        currentLease = renewed;
+                        var liveScope = Scope(scope.Project, scope.Repository,
+                            scope.IntegrationBranch, _settings.Get(project.Key));
+                        if (liveScope != scope)
+                        {
+                            foreach (var item in items.Where(item => _store.PendingOwner(item) is null))
+                                await FallBackAsync(item, linked.Token).ConfigureAwait(false);
+                        }
+                        else
+                        {
+                            var repo = _git.ResolveRepoRootForWatchPath(items[0].WatchPath);
+                            if (repo is not null)
+                                await ProcessProjectAsync(items, scope, repo, options,
+                                    () => currentLease, linked.Token).ConfigureAwait(false);
+                        }
                     }
                 }
-                catch (OperationCanceledException ex) when (linked.IsCancellationRequested)
+                finally
                 {
-                    _logger.LogDebug(ex, "Batch coordinator heartbeat stopped with its cycle.");
+                    linked.Cancel();
+                    await heartbeat.ConfigureAwait(false);
+                    _coordinatorLeases.Release(currentLease);
                 }
-            }, CancellationToken.None);
-            try
-            {
-                await RecoverClaimedAsync(project.ToArray(), linked.Token).ConfigureAwait(false);
-                if (project.Any(item => _store.PendingOwner(item) is null))
-                    await ProcessProjectAsync(project.ToArray(), scope, repo, options,
-                        () => currentLease, linked.Token).ConfigureAwait(false);
-            }
-            finally
-            {
-                linked.Cancel();
-                await heartbeat.ConfigureAwait(false);
-                _coordinatorLeases.Release(currentLease);
             }
         }
     }
@@ -301,6 +320,8 @@ public sealed class BatchGateRuntime
             SubjectRef = assembly.CandidateRef,
             Lane = TaskStates.AutoReview,
             TestExecution = settings.TestExecution,
+            ForceFullSuite = true,
+            BypassVerdictCache = true,
         };
         var result = await _gate.RunAsync(request, null, settings.BuildProfile,
             PostStepMode.Fail,
@@ -511,6 +532,8 @@ public sealed class BatchGateRuntime
                 Project = manifest.Scope.Project,
                 SubjectRef = assembly.CandidateRef,
                 TestExecution = settings.TestExecution,
+                ForceFullSuite = true,
+                BypassVerdictCache = true,
             }, null, settings.BuildProfile, PostStepMode.Fail,
             TimeSpan.FromSeconds(GateRunBudgetPolicy.ResolveSeconds(settings.BuildTestGateTimeoutSeconds)),
             ct).ConfigureAwait(false);
@@ -576,7 +599,9 @@ public sealed class BatchGateRuntime
         _store.RecordMember(member);
         if (!_store.CanRelease(current, manifest.BatchId, run.BatchRunId))
             throw new InvalidDataException("batch-gate-evidence-missing");
-        if (!_git.IsAncestor(repo, replay.TipAfterSha!, run.CandidateSha))
+        if (!_git.IsAncestor(repo, replay.TipAfterSha!, run.CandidateSha)
+            || !_git.RemoteIntegrationContainsCandidate(repo,
+                manifest.Scope.IntegrationBranch, run.CandidateSha, ct))
             throw new InvalidDataException("integration-unverified");
         var task = V1ReviewPlaneEndpoints.FindTask(_scanner, item.Subject.TaskKey);
         if (task is null || task.State != TaskStates.AutoReview) return;
@@ -593,6 +618,7 @@ public sealed class BatchGateRuntime
                 Classification = IntegrationRecordClasses.IntegratedVerified,
                 RecordedAtUtc = DateTime.UtcNow,
                 IntegrationBranch = manifest.Scope.IntegrationBranch,
+                IntegrationTipSha = run.CandidateSha,
                 CommitShas = replacementShas.ToList(),
                 FenceRefs = [BatchGatePolicy.CandidateRef(manifest, run.CoordinatorFence)],
                 Evidence = $"batch-run {run.BatchRunId}; tested-candidate {run.CandidateSha}; {run.EvidencePath}",
@@ -665,18 +691,45 @@ public sealed class BatchGateRuntime
         var task = V1ReviewPlaneEndpoints.FindTask(_scanner, item.Subject.TaskKey);
         var current = projection.CurrentRunAttempt;
         var review = projection.CurrentReviewAttempt;
+        var settings = _settings.Get(item.Subject.Project);
+        var liveScope = task is null ? BatchGatePolicy.ScopeOf(item.Subject)
+            : Scope(task, current?.RepositoryId ?? item.Subject.Repository, settings);
         return item.Subject with
         {
-            CurrentGeneration = task?.State == TaskStates.AutoReview
-                && current?.AttemptId == item.Subject.RunAttempt
-                && review?.AttemptId == item.ReviewAttemptId
-                && review.Outcome == ReviewTerminalOutcome.Pass
-                && current.ResultSha == item.Subject.ResultSha,
+            CurrentGeneration = IsCurrentGeneration(item, task?.State, current, review),
+            Repository = liveScope.Repository,
+            IntegrationBranch = liveScope.IntegrationBranch,
+            GateProfile = liveScope.GateProfile,
+            GateProfileDigest = liveScope.GateProfileDigest,
+            PlatformVersion = liveScope.PlatformVersion,
             ActivePerTaskGate = task is not null
                 && IntegrationGateJournal.Read(task.FolderPath) is not null,
             OwningBatchId = _store.PendingOwner(item),
         };
     }
+
+    internal static bool IsCurrentGeneration(BatchGatePendingDelivery item,
+        string? taskState, RunAttemptDto? run, ReviewAttemptDto? review)
+        => taskState == TaskStates.AutoReview
+           && run is { State: AttemptLifecycleState.Completed, ResultEnvelope: not null,
+               ResultEnvelopeDigest: not null }
+           && run.AttemptId == item.Subject.RunAttempt
+           && run.RepositoryId == item.Subject.Repository
+           && run.AuthorityEpoch == item.Subject.DeliveryEpoch
+           && run.LastFence == item.Subject.FencingToken
+           && string.Equals(run.ResultSha, item.Subject.ResultSha, StringComparison.OrdinalIgnoreCase)
+           && string.Equals(run.ResultEnvelope.ImmutableRemoteRef, item.Subject.ResultRef,
+               StringComparison.Ordinal)
+           && string.Equals(AgentStudio.TaskServer.Contracts.ResultEnvelopeDigest.Compute(
+                   run.ResultEnvelope), run.ResultEnvelopeDigest, StringComparison.OrdinalIgnoreCase)
+           && review is { State: AttemptLifecycleState.Completed,
+               Outcome: ReviewTerminalOutcome.Pass }
+           && review.AttemptId == item.ReviewAttemptId
+           && review.RepositoryId == item.Subject.Repository
+           && review.SourceRunAttemptId == run.AttemptId
+           && review.Subject.Plan?.BuildTestDeferredToBatch == true
+           && string.Equals(review.TestedResultSha, item.Subject.ResultSha,
+               StringComparison.OrdinalIgnoreCase);
 
     private async Task FallBackAsync(BatchGatePendingDelivery item, CancellationToken ct)
     {

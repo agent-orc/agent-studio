@@ -85,8 +85,13 @@ public sealed class BatchGateGitReplayTests : IDisposable
             before, candidate, CancellationToken.None);
         Assert.True(published.Success, published.Error);
         Assert.Equal(candidate, service.GetRemoteIntegrationTip(_root, "develop", CancellationToken.None));
+        Assert.True(service.RemoteIntegrationContainsCandidate(_root, "develop",
+            candidate, CancellationToken.None));
         Assert.False(service.PublishTestedBatchCandidate(_root, "develop",
             before, candidate, CancellationToken.None).Success);
+        Git("push", "-q", "--force", "origin", before + ":refs/heads/develop");
+        Assert.False(service.RemoteIntegrationContainsCandidate(_root, "develop",
+            candidate, CancellationToken.None));
     }
 
     public void Dispose()

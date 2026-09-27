@@ -1,4 +1,5 @@
 using AgentStudio.Pipeline;
+using AgentStudio.Shared;
 using Contract = AgentStudio.TaskServer.Contracts;
 using Xunit;
 
@@ -13,12 +14,35 @@ public sealed class BatchGateRuntimeContractTests : IDisposable
     [Theory]
     [InlineData("docs/operations/gates/index.html", true)]
     [InlineData("docs/start/README.md", true)]
+    [InlineData(".agents/skills/task-api/SKILL.md", true)]
     [InlineData("README.md", true)]
     [InlineData("AGENTS.md", true)]
     [InlineData("backend/Features/Pipeline/BatchGate/BatchGateRuntime.cs", false)]
     [InlineData("frontend/src/app/app.component.ts", false)]
+    [InlineData("docs/operations/gates/audit.py", false)]
+    [InlineData("docs/app/schemas/pipeline-definition.schema.json", false)]
+    [InlineData(".agents/skills/task-api/scripts/probe.sh", false)]
     public void PilotAdmitsOnlyDocumentationPaths(string path, bool expected)
         => Assert.Equal(expected, BatchGateRoutingPolicy.IsDocumentationPath(path));
+
+    [Fact]
+    public void FullBatchSuiteKeepsCommandsOutsideTheDocumentationDiff()
+    {
+        var frontendBuild = new VerifyCommand(VerifyEcosystem.Node,
+            VerifyCommandKind.Build, "frontend", "npm run build");
+        var docsOnly = new[] { "docs/operations/gates/index.html" };
+        var ordinary = new BuildTestGateRequest("repo", Sha, "test");
+        var batch = ordinary with { ForceFullSuite = true, BypassVerdictCache = true };
+
+        Assert.False(BuildTestGateRunner.ShouldRunForRequest(ordinary,
+            frontendBuild, docsOnly));
+        Assert.True(BuildTestGateRunner.ShouldRunForRequest(batch,
+            frontendBuild, docsOnly));
+        Assert.Equal(TestExecutionLevels.Full,
+            TestSelectionPlanner.ResolveLevel(null, TaskStates.AutoReview,
+                batch.ForceFullSuite ? TestExecutionLevels.Full : batch.RequiredTestLevel));
+        Assert.True(batch.BypassVerdictCache);
+    }
 
     [Fact]
     public void DeferRequiresOptInAndAProvenDocumentationOnlyDiff()
@@ -77,6 +101,43 @@ public sealed class BatchGateRuntimeContractTests : IDisposable
         Assert.Null(store.PendingOwner(pending));
         store.CompletePending(pending, "per-task-fallback");
         Assert.Empty(store.Pending());
+    }
+
+    [Fact]
+    public void LaneReleaseRequiresTheCurrentFencedRunAndMatchingDeferredReview()
+    {
+        var envelope = new Contract.ImmutableResultEnvelope("repo", "run-1", Sha, Sha,
+            "refs/heads/agent-studio/results/run-1", null, new string('c', 64));
+        var run = new RunAttemptDto("run-1", "AGT-1", "repo", null,
+            AttemptLifecycleState.Completed, null, 7, 3, DateTime.UtcNow,
+            DateTime.UtcNow, Sha, "Done", null, [], envelope,
+            Contract.ResultEnvelopeDigest.Compute(envelope));
+        var plan = new Contract.ReviewPlanDto([], [], BuildTestDeferredToBatch: true);
+        var review = new ReviewAttemptDto("review-1", "AGT-1", "repo", "run-1",
+            null, new ReviewSubjectDto("subject", "repo", Sha, "run-1", "task",
+                "policy", [], DateTime.UtcNow, Plan: plan),
+            AttemptLifecycleState.Completed, null, 1, 3, DateTime.UtcNow,
+            DateTime.UtcNow, ReviewTerminalOutcome.Pass, null, Sha, null, []);
+        var subject = new BatchGateSubject("AGT-1", "project", "repo", "develop",
+            "full", "digest", "v1", envelope.ImmutableRemoteRef!, Sha,
+            "run-1", 3, 7, Sha, true, true, true, true, false, null,
+            true, DateTimeOffset.UtcNow, 1);
+        var pending = new BatchGatePendingDelivery(subject, "review-1", "/task",
+            "/repo", DateTimeOffset.UtcNow);
+
+        Assert.True(BatchGateRuntime.IsCurrentGeneration(pending, TaskStates.AutoReview,
+            run, review));
+        Assert.False(BatchGateRuntime.IsCurrentGeneration(pending, TaskStates.AutoReview,
+            run with { AuthorityEpoch = 4 }, review));
+        Assert.False(BatchGateRuntime.IsCurrentGeneration(pending, TaskStates.AutoReview,
+            run with { LastFence = 8 }, review));
+        Assert.False(BatchGateRuntime.IsCurrentGeneration(pending, TaskStates.AutoReview,
+            run, review with { TestedResultSha = new string('b', 40) }));
+        Assert.False(BatchGateRuntime.IsCurrentGeneration(pending, TaskStates.AutoReview,
+            run, review with { Subject = review.Subject with
+            {
+                Plan = plan with { BuildTestDeferredToBatch = false },
+            } }));
     }
 
     [Fact]
