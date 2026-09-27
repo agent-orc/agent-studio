@@ -66,6 +66,31 @@ public static class ProjectSettingsEndpoints
 {
     public static void MapProjectSettingsEndpoints(this WebApplication app)
     {
+        app.MapGet("/api/projects/{projectName}/chat-metadata", (
+            string projectName, ProjectSettingsService settings, TaskScannerService scanner,
+            ProjectRegistry projects, WorkspaceSettingsService workspaceSettings) =>
+        {
+            if (!scanner.GetWatchPaths().Any(entry =>
+                string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            var project = projects.FindByIdOrDisplayName(projectName);
+            var workspaceDefault = workspaceSettings.Get(project?.WorkspaceId).ChatMetadataEnabled ?? true;
+            return Results.Ok(new {
+                chatMetadataEnabled = settings.Get(projectName).ChatMetadataEnabled ?? workspaceDefault,
+                projectOverride = settings.Get(projectName).ChatMetadataEnabled,
+                workspaceDefault,
+            });
+        });
+        app.MapPut("/api/projects/{projectName}/chat-metadata", (
+            string projectName, SetChatMetadataEnabledRequest request,
+            ProjectSettingsService settings, TaskScannerService scanner) =>
+        {
+            if (!scanner.GetWatchPaths().Any(entry =>
+                string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            settings.SetChatMetadataEnabled(projectName, request.Enabled);
+            return Results.Ok(new { chatMetadataEnabled = settings.Get(projectName).ChatMetadataEnabled });
+        });
         app.MapGet("/api/projects/{projectName}/execution", (
             string projectName,
             ProjectSettingsService settings,
@@ -209,6 +234,7 @@ public static class ProjectSettingsEndpoints
                     executionRunner = kv.Value.ExecutionRunner,
                     remoteExecutionEnabled = kv.Value.RemoteExecutionEnabled,
                     orchestratorModel = kv.Value.OrchestratorModel,
+                    chatMetadataEnabled = kv.Value.ChatMetadataEnabled,
                     orchestratorThinkingLevel = kv.Value.OrchestratorThinkingLevel,
                     cliExecutionEngine = defaults.ResolveCliExecutionEngine(kv.Key).ExecutionEngine,
                     cliExecutionEngineSource = defaults.ResolveCliExecutionEngine(kv.Key).Source,

@@ -360,7 +360,8 @@ public sealed record RemoteChatWorkCompletionRequest(
     string? CliType = null,
     string? ConfiguredCliType = null,
     string? ConfiguredModel = null,
-    string? QuotaFallbackReason = null);
+    string? QuotaFallbackReason = null,
+    string? ProviderThreadId = null);
 
 public sealed record OrchestratorTokenUsage
 {
@@ -369,6 +370,7 @@ public sealed record OrchestratorTokenUsage
     public int OutputTokens { get; init; }
     public int CacheReadTokens { get; init; }
     public int CacheCreationTokens { get; init; }
+    public int? ReasoningTokens { get; init; }
     public bool? InputIncludesCached { get; init; }
 }
 

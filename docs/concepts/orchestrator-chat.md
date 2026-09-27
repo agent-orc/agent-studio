@@ -478,3 +478,14 @@ That slice gives the user a durable conversation and visible context before the 
 - Should memory refresh be automatic after every completed job, or only after review acceptance? Review acceptance is safer because it means the user agrees the result is real.
 - Which actions need confirmation? A good first rule: read-only and draft-creation actions can run immediately; task state changes, CLI starts, stops, and continues need visible confirmation unless auto-mode already owns the decision.
 - How much of the raw transcript should be loaded into chat? The default should be summaries plus source links; full logs stay one click away.
+## Chat turn usage metadata
+
+Assistant turns now carry the executing model and effort, provider thread or
+session id, host, queued/started/finished times, normalized token counts, and
+TokenEconomy cost with its catalogue version. Queue time is measured from
+enqueue until claim; run time is measured from claim until completion. Local
+turns use the workstation host and the local session gate. Missing provider
+fields remain absent rather than becoming zero. Workspace visibility defaults
+on; a project can override it, and the chat header has a user preference.
+The `coding-agent-chat` 0.5.0 metadata binding is gated by its exact package
+version. Agent Studio keeps the adapter and DTO ready on the current 0.4.1 pin.
