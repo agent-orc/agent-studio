@@ -190,6 +190,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Remote three-unit Compose infrastructure harness | [operations/setup/remote-compose-test-harness.md](../operations/setup/remote-compose-test-harness.md) |
 | Private Hetzner Task Server with local Angular Studio (Phase A architecture, migration, security, and rollback) | [operations/remote-task-server-local-studio.md](../operations/remote-task-server-local-studio.md) |
 | Control plane on Docker (task-server-01): install, update, rollback, backup restore, firewall, WireGuard | [operations/setup/control-plane-docker.md](../operations/setup/control-plane-docker.md) |
+| Single-host Task Server rehearsal handoff: daily health, backup verification, update, rollback, and maintenance-window checklist | [operations/setup/single-host-task-server.md](../operations/setup/single-host-task-server.md) |
 | Windows Task Server fallback runbook (Phase B slice B4: install, warm standby, sub-15-minute switch drill both directions; AGT-2735) | [operations/setup/windows-fallback-runbook.md](../operations/setup/windows-fallback-runbook.md) |
 | Hosted Wiki publication (published revision, freshness SLO, credentials, atomic promotion, typed failures, rollback drill) | [operations/setup/hosted-wiki-publication.md](../operations/setup/hosted-wiki-publication.md) |
 | Common problems | [common-problems/README.md](../operations/common-problems/README.md) |

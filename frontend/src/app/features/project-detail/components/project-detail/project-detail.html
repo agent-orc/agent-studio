@@ -139,6 +139,20 @@
     </section>
 
     <section class="proj-detail__group">
+      <h3>Failure continuations</h3>
+      <label class="proj-detail__toggle">
+        <input type="checkbox"
+               data-testid="project-detail-automatic-failure-continuations"
+               [(ngModel)]="automaticFailureContinuationsDraft"
+               (ngModelChange)="onAutomaticFailureContinuationsChange()">
+        <span>Continue classified integration and review failures automatically</span>
+      </label>
+      <p class="proj-detail__hint">
+        Bounded automatic rounds use the recorded failure context. When off or the budget is spent, the task stays for review with a continuation action.
+      </p>
+    </section>
+
+    <section class="proj-detail__group">
       <h3>Auto-push</h3>
       <div class="proj-detail__push-options" data-testid="project-detail-auto-push">
         @for (opt of autoPushOptions; track opt.id) {

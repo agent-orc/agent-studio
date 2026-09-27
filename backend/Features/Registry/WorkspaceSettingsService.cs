@@ -59,6 +59,20 @@ public sealed class WorkspaceSettingsService
         }
     }
 
+    public void SetUsageCalendar(string workspaceId, string timeZone, DayOfWeek weekStart)
+    {
+        if (string.IsNullOrWhiteSpace(workspaceId)) throw new ArgumentException("Workspace is required.", nameof(workspaceId));
+        _ = TimeZoneInfo.FindSystemTimeZoneById(timeZone);
+        if (!Enum.IsDefined(weekStart)) throw new ArgumentOutOfRangeException(nameof(weekStart));
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var current = _cache.TryGetValue(workspaceId, out var value) ? value : new WorkspaceSettings();
+            _cache[workspaceId] = current with { UsageTimeZone = timeZone, UsageWeekStart = weekStart };
+            Persist();
+        }
+    }
+
     /// <summary>
     /// Sets the workspace-default orchestrator model (and optionally its thinking
     /// level). A blank model clears the model default; a null

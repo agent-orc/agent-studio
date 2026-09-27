@@ -2768,7 +2768,15 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
         if (reaction.Disposition == AgentStudio.Review.CouncilReactionDisposition.Reissue)
         {
-            var followUp = AgentStudio.Review.CouncilReviewPolicy.BuildTargetedFollowUp(reaction);
+            var subject = ReviewSubjectStore.Read(current.FolderPath);
+            var followUp = IntegrationContinuationPrompt.Build(
+                current.Key ?? current.Id,
+                subject?.ResultRef,
+                subject?.ResultSha,
+                subject?.IntegrationBranch ?? "develop",
+                "code-review-council",
+                reaction.Summary,
+                evidence: AgentStudio.Review.CouncilReviewPolicy.BuildTargetedFollowUp(reaction));
             var moved = MoveReissueToReadyTop(current, entry, "code-review-council");
             if (moved is null) return true;
 
@@ -2856,7 +2864,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             gradeReport.Grade,
             gradeReport.Findings ?? Array.Empty<string>(),
             CountPriorReissues(workspace, entry.Name, current.Id),
-            ConfiguredMaxReissues(),
+            _projectSettings?.Get(current.ProjectName).AutomaticFailureContinuationsEnabled == false
+                ? 0 : Math.Min(1, ConfiguredMaxReissues()),
             current.Id,
             targetRunAttempt: (_pipelineLog?.Read(current.FolderPath)?.Attempt
                 ?? CountPriorReissues(workspace, entry.Name, current.Id) + 1) + 1,
@@ -3342,8 +3351,12 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     {
         var findingsBlock = string.Join("; ", gate.Findings.Take(SolutionQualityGate.MaxFindings));
         var priorReissues = CountPriorReissues(workspace, entry.Name, current.Id);
+        var automaticDisabled = _projectSettings?.Get(current.ProjectName).AutomaticFailureContinuationsEnabled == false;
+        if (automaticDisabled)
+            gate = gate with { Reason = "Automatic failure continuations are disabled for this project. " + gate.Reason };
 
-        if (gate.Action == SolutionQualityGate.SolutionQualityGateAction.Escalate)
+        if (gate.Action == SolutionQualityGate.SolutionQualityGateAction.Escalate
+            || automaticDisabled)
         {
             ConcernTagWriter.ReconcileConcernTags(current.FolderPath, report.ConcernTagIds, _logger);
 
@@ -3396,7 +3409,15 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             return;
         }
 
-        var followUp = SolutionQualityGate.BuildFollowUp(gate);
+        var reviewSubject = ReviewSubjectStore.Read(current.FolderPath);
+        var followUp = IntegrationContinuationPrompt.Build(
+            current.Key ?? current.Id,
+            reviewSubject?.ResultRef,
+            reviewSubject?.ResultSha,
+            reviewSubject?.IntegrationBranch ?? "develop",
+            "solution-quality-gate",
+            gate.Reason,
+            evidence: SolutionQualityGate.BuildFollowUp(gate));
         var moved = MoveReissueToReadyTop(current, entry, "solution-quality-gate");
         if (moved == null)
         {
