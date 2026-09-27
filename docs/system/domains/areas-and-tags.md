@@ -131,6 +131,9 @@ selected ids and their URL state. A subsequent load retries the request; only a
 successful response permits pruning ids absent from the effective registry.
 The workspace view preserves project-specific selections while a project route
 resolves, since workspace tags alone cannot validate tags from other projects.
+Selections absent from the workspace dropdowns appear as removable filter chips,
+so a retained project tag never filters a multi-project view invisibly. The same
+chips expose additional selections when a URL contains several tags of one kind.
 
 The wiki's Area glossaries view reads `GET /api/projects/{project}/areas` and
 `GET /api/projects/{project}/areas/{areaId}/glossary`. It shows definitions,

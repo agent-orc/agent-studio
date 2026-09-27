@@ -20,6 +20,9 @@ export class TagFiltersComponent {
   readonly facets = computed(() => this.registry.tags().filter(tag => tag.kind !== 'area'));
   readonly area = computed(() => this.areas().find(tag => this.filters.activeTagFilter().has(tag.id))?.id ?? '');
   readonly facet = computed(() => this.facets().find(tag => this.filters.activeTagFilter().has(tag.id))?.id ?? '');
+  /** Every active selection must remain visible, even before its registry loads. */
+  readonly additionalSelections = computed(() => [...this.filters.activeTagFilter()]
+    .filter(id => id !== this.area() && id !== this.facet()));
   constructor() {
     effect(() => this.registry.loadProject(this.projectName()));
     effect(() => {
@@ -41,6 +44,12 @@ export class TagFiltersComponent {
     const selected = new Set(this.filters.activeTagFilter());
     for (const choice of choices) selected.delete(choice.id);
     if (id) selected.add(id);
+    this.filters.setTagSelection(selected);
+  }
+
+  removeSelection(id: string): void {
+    const selected = new Set(this.filters.activeTagFilter());
+    selected.delete(id);
     this.filters.setTagSelection(selected);
   }
 }

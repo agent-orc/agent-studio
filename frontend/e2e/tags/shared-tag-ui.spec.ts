@@ -7,6 +7,28 @@ const slug = (value: string) => value.trim().toLowerCase().replace(/[^a-z0-9]+/g
 test.use({ serviceWorkers: 'block', trace: 'off', video: 'off' });
 test.setTimeout(240_000);
 
+test('workspace filters expose and clear a saved project-only tag at desktop and phone width', async ({ page, devBackend }) => {
+  expect(devBackend.baseUrl).toContain(':5030');
+  mkdirSync(resultsDir, { recursive: true });
+  await page.addInitScript(() => localStorage.setItem('sharedTagFilters', JSON.stringify(['project-only'])));
+  await page.route('**/api/crash-recovery/pending**', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ pending: [] }),
+  }));
+  await page.goto('/#/board&filters=tags%3Aproject-only', { waitUntil: 'domcontentloaded', timeout: 45_000 });
+  const filters = page.getByTestId('shared-tag-filters').first();
+  await expect(filters).toBeVisible({ timeout: 30_000 });
+  await expect(filters.getByTestId('shared-facet-filter')).toHaveValue('');
+  const selected = filters.getByRole('button', { name: 'Remove tag filter project-only' });
+  await expect(selected).toBeVisible();
+  await page.screenshot({ path: path.join(resultsDir, 'tag-ui-workspace-selection-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(selected).toBeVisible();
+  await page.screenshot({ path: path.join(resultsDir, 'tag-ui-workspace-selection-phone.png') });
+  await selected.click();
+  await expect(selected).toHaveCount(0);
+  await expect.poll(() => new URL(page.url()).searchParams.get('tag')).toBeNull();
+});
+
 test('a failed project registry preserves saved tags until a successful reload', async ({ page, devBackend }) => {
   const watchPaths = await (await fetch(`${devBackend.baseUrl}/api/watch-paths`)).json() as { name: string }[];
   const project = watchPaths[0].name;
@@ -150,4 +172,5 @@ test('area and facet selection follows board, Dossier list and wiki at desktop a
     document.documentElement.setAttribute('data-studio-theme', 'dark');
   });
   await page.screenshot({ path: path.join(resultsDir, 'tag-ui-board-phone-dark--mocked.png') });
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
 });

@@ -103,6 +103,9 @@ describe('shared area and tag filters', () => {
     fixture.detectChanges();
     expect([...filters.activeTagFilter()]).toEqual(['alpha-only']);
     expect(window.location.href).toBe(persistedUrl);
+    const extra = fixture.nativeElement.querySelector('[data-testid="additional-tag-filter"]') as HTMLButtonElement;
+    expect(extra.textContent).toContain('alpha-only');
+    expect(extra.getAttribute('aria-label')).toBe('Remove tag filter alpha-only');
 
     fixture.componentRef.setInput('projectName', 'Alpha');
     fixture.detectChanges();
@@ -112,5 +115,24 @@ describe('shared area and tag filters', () => {
     expect([...filters.activeTagFilter()]).toEqual(['alpha-only']);
     expect(window.location.href).toBe(persistedUrl);
     http.verify();
+  });
+
+  it('shows and clears every selection absent from the workspace dropdowns', () => {
+    const fixture = TestBed.createComponent(TagFiltersComponent);
+    const filters = TestBed.inject(BoardFiltersService);
+    filters.setTagSelection(new Set(['execution-and-runner', 'decision', 'alpha-only', 'beta-only']));
+    fixture.detectChanges();
+    const extra = () => [...fixture.nativeElement.querySelectorAll('[data-testid="additional-tag-filter"]')] as HTMLButtonElement[];
+    expect(extra().map(button => button.textContent?.trim())).toEqual(['alpha-only ×', 'beta-only ×']);
+    expect((fixture.nativeElement.querySelector('[data-testid="shared-area-filter"]') as HTMLSelectElement).value)
+      .toBe('execution-and-runner');
+    expect((fixture.nativeElement.querySelector('[data-testid="shared-facet-filter"]') as HTMLSelectElement).value)
+      .toBe('decision');
+
+    extra()[0].click();
+    fixture.detectChanges();
+    expect(extra().map(button => button.textContent?.trim())).toEqual(['beta-only ×']);
+    expect([...filters.activeTagFilter()]).toEqual(['execution-and-runner', 'decision', 'beta-only']);
+    expect(new URLSearchParams(window.location.search).get('tag')).toBe('execution-and-runner,decision,beta-only');
   });
 });
