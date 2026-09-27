@@ -2082,7 +2082,8 @@ public class TaskMutationService
         string? activeJobId,
         string? watchPath = null,
         ModelFallbackInfo? modelFallback = null,
-        string? author = null)
+        string? author = null,
+        RunTriggerMetadata? triggerMetadata = null)
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return null;
@@ -2093,6 +2094,8 @@ public class TaskMutationService
             SavedAt = DateTime.UtcNow,
             SavedReason = string.IsNullOrWhiteSpace(reason) ? "project-busy" : reason,
             Author = string.IsNullOrWhiteSpace(author) ? null : author.Trim(),
+            TriggeredBy = triggerMetadata?.TriggeredBy,
+            TriggerReason = triggerMetadata?.TriggerReason,
             SavedAgainstActiveJobId = activeJobId,
             ModelFallback = modelFallback,
         };
