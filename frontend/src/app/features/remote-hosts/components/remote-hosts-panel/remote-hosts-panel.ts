@@ -29,6 +29,7 @@ import {
 import { stableReleaseLabel } from '../../models/host-release-drift';
 import { NotificationComponent } from '../../../../components/notification/notification.component';
 import { BetterCandidateLinesComponent } from '../../../../components/better-candidate-lines/better-candidate-lines.component';
+import { RunnerInfrastructureFailuresComponent } from '../runner-infrastructure-failures/runner-infrastructure-failures';
 
 /**
  * Execution Hosts settings page (AGT-1921).
@@ -52,6 +53,7 @@ import { BetterCandidateLinesComponent } from '../../../../components/better-can
     NotificationComponent,
     PurgeRetiredHostsDialogComponent,
     BetterCandidateLinesComponent,
+    RunnerInfrastructureFailuresComponent,
   ],
   templateUrl: './remote-hosts-panel.html',
   styleUrl: './remote-hosts-panel.scss',

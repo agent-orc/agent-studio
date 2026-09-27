@@ -21,6 +21,14 @@ import { seedRemoteHosts } from './remote-hosts.seed';
 import { ProviderAuthStatusService } from './provider-auth-status.service';
 import { NotificationService } from '../../../services/notification.service';
 
+export interface RunnerInfrastructureFailure {
+  taskKey: string;
+  attempts: number;
+  fingerprint: string;
+  host: string;
+  lastError: string;
+}
+
 /**
  * Registry + action service for the Remote-Hosts page (AGT-1921).
  *
@@ -42,6 +50,7 @@ export class RemoteHostsService {
   /** The release every host row is measured against (AGT-2826). */
   readonly stableRelease = signal<StableReleaseIdentity | null>(null);
   readonly providerRefusals = signal<readonly ProviderRejectionDailyCount[]>([]);
+  readonly runnerInfrastructureFailures = signal<readonly RunnerInfrastructureFailure[]>([]);
 
   private static readonly FRESH_CLIENT_MS = 90_000;
   private static readonly DEGRADED_CLIENT_MS = 5 * 60_000;
@@ -158,6 +167,7 @@ export class RemoteHostsService {
         this.hydrateLinkHealth();
         this.hydrateReleaseDrift();
         this.hydrateProviderRefusals();
+        this.hydrateRunnerInfrastructureFailures();
       },
       error: error => {
         this.identityDiagnostics.set([]);
@@ -179,6 +189,17 @@ export class RemoteHostsService {
       error: error => {
         this.providerRefusals.set([]);
         this.log('provider-refusals-hydrate-failed', { message: error?.message ?? 'unknown' });
+      },
+    });
+  }
+
+  private hydrateRunnerInfrastructureFailures(): void {
+    if (!this.http) return;
+    this.http.get<RunnerInfrastructureFailure[]>('/api/v1/management/runner-infrastructure-failures').subscribe({
+      next: failures => this.runnerInfrastructureFailures.set(failures ?? []),
+      error: error => {
+        this.runnerInfrastructureFailures.set([]);
+        this.log('runner-infrastructure-failures-hydrate-failed', { message: error?.message ?? 'unknown' });
       },
     });
   }
