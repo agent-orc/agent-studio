@@ -113,6 +113,44 @@ Filter semantics: ids inside one parameter are alternatives, the two parameters
 are a conjunction. A folder survives the wiki-tree filter only while it still
 has a matching descendant.
 
+## Tag UI
+
+`frontend/src/app/components/tag-filters/` owns the shared area and facet
+controls. Both write the board filter service's selected tag ids, so the board,
+focused task list, Dossier overview, wiki tree, and wiki search use the same
+selection. The selection survives in-app navigation. Areas and facets are
+separate controls but still use conjunctive matching. Project-specific registry
+entries are loaded from `GET /api/projects/{project}/tags`. Cards, task list
+rows, Dossier rows, and wiki tree entries render registry labels and colours;
+retired ids remain readable as ghost chips.
+Only the active project's entries appear in its filter controls. Switching
+projects removes the previous project's entries and clears selected ids that
+are absent from the new effective registry after it loads.
+A failed project registry request leaves the registry incomplete and preserves
+selected ids and their URL state. A subsequent load retries the request; only a
+successful response permits pruning ids absent from the effective registry.
+The workspace view preserves project-specific selections while a project route
+resolves, since workspace tags alone cannot validate tags from other projects.
+Selections absent from the workspace dropdowns appear as removable filter chips,
+so a retained project tag never filters a multi-project view invisibly. The same
+chips expose additional selections when a URL contains several tags of one kind.
+
+The wiki's Area glossaries view reads `GET /api/projects/{project}/areas` and
+`GET /api/projects/{project}/areas/{areaId}/glossary`. It shows definitions,
+synonyms, and links to matching wiki pages, Dossiers, and current cards.
+
+The proposal marker uses the typed `TagProposalsService`. Until the AGT-2804
+proposal decision endpoints are integrated, `USE_TAG_PROPOSAL_MOCK` is true and
+the service reads optional `tagProposalsMock` fixture data from local storage.
+The marker handles each pending proposal independently. Proposal identity is
+the project name plus proposal id; accepting or rejecting a proposal preserves
+same-id proposals in other projects, including their subject, tags, and state.
+The planned real calls
+are `GET /api/projects/{project}/tag-proposals` and
+`POST /api/projects/{project}/tag-proposals/{id}/decision` with an `accept` or
+`reject` choice; switching the service to HTTP is a one-line flag change once
+those routes exist. The frontend fixture does not change durable tags.
+
 ## Validation
 
 - **Unknown tag ids are refused on write.** Every write boundary (card tags,
