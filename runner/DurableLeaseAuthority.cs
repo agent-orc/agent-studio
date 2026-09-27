@@ -60,7 +60,8 @@ public sealed class DurableLeaseAuthority
                 return string.Equals(
                     _snapshot.State,
                     "confirmed",
-                    StringComparison.Ordinal);
+                    StringComparison.Ordinal)
+                    && _utcNow() < _snapshot.StopBeforeUtc;
         }
     }
 
@@ -207,6 +208,8 @@ public sealed class DurableLeaseAuthority
         Task wait;
         lock (_gate)
         {
+            if (_utcNow() >= _snapshot.StopBeforeUtc)
+                throw new InvalidOperationException("Lease authority stop-before deadline has passed.");
             if (string.Equals(
                     _snapshot.State,
                     "confirmed",
