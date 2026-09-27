@@ -218,7 +218,7 @@ export class PipelineTokenUsageComponent {
       costUsd,
       priceKnown: !anyModelUnknown,
       totalTokens,
-      context: `${scope}: ${totalTokens.toLocaleString()} total tokens.`,
+      context: `${scope}: ${totalTokens.toLocaleString('en-US')} total tokens.`,
       unpricedRuns,
       pricingGaps,
     }), usage].filter(Boolean).join('\n');

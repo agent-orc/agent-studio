@@ -1,6 +1,6 @@
 # Frontend Domain Map
 
-Version: 2026-09-19
+Version: 2026-09-27
 Status: System-of-record map for frontend changes.
 
 Use this when a change touches Angular code, visual design, task-detail,
@@ -54,6 +54,16 @@ characters return empty result groups, and a failed repository reports against
 the domains it broke without hiding the domains that succeeded.
 
 ## Entry Points
+
+Product formatting calls in `frontend/src/app` pass an explicit locale. The
+current display convention is `en-US`, including grouping and date labels;
+callers with a different documented display contract may pass another locale.
+`npm --prefix frontend run lint:structure` checks `toLocale*` methods and
+`Intl` constructors for omitted, `undefined`, or empty-array locales. The
+Angular unit-test setup additionally pins ambient `Intl` and `toLocale*`
+defaults to `en-US` so dependency and test code behaves consistently across
+Linux and Windows hosts. Diff rendering imports `diff2html`'s built ESM files
+directly so the test bundler does not resolve package TypeScript sources.
 
 - [frontend/AGENTS.md](../../../frontend/AGENTS.md) contains frontend-scoped agent
   rules and wins for files under `frontend/`.

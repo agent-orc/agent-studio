@@ -472,7 +472,7 @@ export class ProjectObservabilityPanelComponent implements OnInit, OnDestroy {
     try {
       const d = new Date(iso);
       if (Number.isNaN(d.getTime())) return iso;
-      return d.toLocaleString();
+      return d.toLocaleString('en-US');
     } catch {
       return iso;
     }

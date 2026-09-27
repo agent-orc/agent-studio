@@ -94,13 +94,13 @@ export class OrchestratorChatHistoryComponent {
     if (hours < 24) return `${hours}h ago`;
     const days = Math.floor(hours / 24);
     if (days < 7) return `${days}d ago`;
-    return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(timestamp));
+    return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium' }).format(new Date(timestamp));
   }
 
   activityTitle(value: string): string {
     const timestamp = Date.parse(value);
     return Number.isFinite(timestamp)
-      ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+      ? new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' })
         .format(new Date(timestamp))
       : 'Unknown activity time';
   }

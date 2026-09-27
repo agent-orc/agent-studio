@@ -18,7 +18,7 @@ export class BetterCandidateUsageReportComponent {
     const startDate = new Date(`${start}T00:00:00Z`);
     const endDate = new Date(`${end}T00:00:00Z`);
     endDate.setUTCDate(endDate.getUTCDate() - 1);
-    const format = new Intl.DateTimeFormat(undefined, {
+    const format = new Intl.DateTimeFormat('en-US', {
       month: 'short', day: 'numeric', timeZone: 'UTC',
     });
     return `${format.format(startDate)} to ${format.format(endDate)}`;

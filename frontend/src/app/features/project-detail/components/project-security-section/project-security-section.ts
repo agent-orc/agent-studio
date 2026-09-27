@@ -69,7 +69,7 @@ export class ProjectSecuritySectionComponent {
 
   formatTime(iso: string): string {
     if (!iso) return '';
-    try { return new Date(iso).toLocaleDateString(); } catch { return iso; }
+    try { return new Date(iso).toLocaleDateString('en-US'); } catch { return iso; }
   }
 
   openFile(rel: string) {

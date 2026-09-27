@@ -239,7 +239,7 @@ export class ProjectCliEnvironmentSectionComponent implements OnInit {
     try {
       const date = new Date(iso);
       if (Number.isNaN(date.getTime())) return iso;
-      return date.toLocaleString();
+      return date.toLocaleString('en-US');
     } catch {
       return iso;
     }

@@ -44,7 +44,7 @@ export class TaskLiveStatusComponent {
       const duration = startedAt === null ? null : elapsed(this.now() - startedAt);
       const startClock = startedAt === null
         ? null
-        : new Date(startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        : new Date(startedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
       const host = task.executionLocation?.hostDisplayName
         || task.runner?.runnerName
         || task.runner?.hostname
@@ -132,7 +132,7 @@ export class TaskLiveStatusComponent {
         tone: 'waiting',
         headline: retryAt === null
           ? 'Retry backoff · waiting for runner'
-          : `Retry scheduled ${new Date(retryAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+          : `Retry scheduled ${new Date(retryAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`,
         detail: activity.lastError || activityDetail(task, status.latestEventAt, this.now()),
         next,
         attempt: status.attempt,

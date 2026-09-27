@@ -41,6 +41,6 @@ export class DocumentDetailsMenuComponent {
   formattedTokens(): string {
     const generation = this.file().generation;
     if (!generation || generation.tokensTotal <= 0) return 'Not recorded';
-    return `${generation.tokensIn.toLocaleString()} in · ${generation.tokensOut.toLocaleString()} out · ${generation.tokensTotal.toLocaleString()} total`;
+    return `${generation.tokensIn.toLocaleString('en-US')} in · ${generation.tokensOut.toLocaleString('en-US')} out · ${generation.tokensTotal.toLocaleString('en-US')} total`;
   }
 }

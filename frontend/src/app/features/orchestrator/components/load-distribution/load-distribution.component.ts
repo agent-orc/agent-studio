@@ -109,11 +109,11 @@ export class LoadDistributionComponent implements OnInit, OnDestroy {
     this.openTaskRequest.emit({ jobId: entry.jobId, watchPath: entry.watchPath });
   }
   formatTokens(value: number): string {
-    if (value < 1_000) return value.toLocaleString();
+    if (value < 1_000) return value.toLocaleString('en-US');
     if (value < 1_000_000) return `${(value / 1_000).toFixed(value < 10_000 ? 1 : 0)}K`;
     return `${(value / 1_000_000).toFixed(2)}M`;
   }
-  formatTime(value: string): string { return new Date(value).toLocaleString(); }
+  formatTime(value: string): string { return new Date(value).toLocaleString('en-US'); }
 
   private estimatePeriodCost(model: string, tokens: number): number | null {
     const aggregate = this.store.tokens()?.byModel.find(row => row.model === model);

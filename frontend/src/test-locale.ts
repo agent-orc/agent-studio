@@ -3,11 +3,9 @@
  *
  * Node takes the operating-system locale as the default for `Intl` and for the
  * `toLocale*` helpers, and on Windows neither `LANG` nor `LC_ALL` override it.
- * A `de-DE` workstation therefore renders `1.000` where the specs expect
- * `1,000`, and the merge gate that runs this suite on the operator workstation
- * turns red while the same suite is green on a Linux review host. Product code
- * that formats without an explicit locale keeps working for the user's locale
- * at runtime; only the test process is made deterministic here.
+ * A `de-DE` workstation otherwise renders `1.000` where specs expect
+ * `1,000`. Product code uses explicit locales; this test-only fallback also
+ * makes dependency and spec code deterministic on the operator workstation.
  *
  * Calls that pass an explicit locale are left untouched.
  */

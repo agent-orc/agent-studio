@@ -128,7 +128,7 @@ export class PickupHoldComponent {
     const hold = this.hold();
     if (!hold) return '';
     const parsed = Date.parse(hold.sinceUtc);
-    return Number.isNaN(parsed) ? hold.sinceUtc : `Since ${new Date(parsed).toLocaleString()}`;
+    return Number.isNaN(parsed) ? hold.sinceUtc : `Since ${new Date(parsed).toLocaleString('en-US')}`;
   });
 
   /**

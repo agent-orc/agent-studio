@@ -77,6 +77,6 @@ export class WorkbenchInboxComponent {
     const hours = Math.floor(minutes / 60);
     if (hours < 24) return `${hours}h ago`;
     const days = Math.floor(hours / 24);
-    return days < 30 ? `${days}d ago` : new Date(ms).toLocaleDateString();
+    return days < 30 ? `${days}d ago` : new Date(ms).toLocaleDateString('en-US');
   }
 }

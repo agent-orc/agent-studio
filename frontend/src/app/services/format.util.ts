@@ -51,17 +51,17 @@ export function stateLabel(state: string): string {
 }
 
 export function formatTime(dateStr: string): string {
-  return new Date(dateStr).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return new Date(dateStr).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 }
 
 export function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleDateString();
+  return new Date(dateStr).toLocaleDateString('en-US');
 }
 
 export function formatCompactDateTime(dateStr: string): string {
   const date = new Date(dateStr);
-  const day = date.toLocaleDateString([], { month: '2-digit', day: '2-digit' });
-  const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const day = date.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' });
+  const time = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
   return `${day} ${time}`;
 }
 
@@ -87,7 +87,7 @@ export function formatRelativeShort(dateStr: string, now: number): string {
 }
 
 export function formatDateTime(dateStr: string): string {
-  return new Date(dateStr).toLocaleString([], {
+  return new Date(dateStr).toLocaleString('en-US', {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
