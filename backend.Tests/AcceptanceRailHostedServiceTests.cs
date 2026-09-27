@@ -104,9 +104,9 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
         var queued = stack.Scanner.FindJob("conflict", _watchPath)!;
         Assert.Equal(TaskStates.Ready, queued.State);
         var prompt = File.ReadAllText(Path.Combine(queued.FolderPath, "prompt.md"));
-        Assert.Contains("## STEER", prompt, StringComparison.Ordinal);
+        Assert.Contains("## CONTINUATION", prompt, StringComparison.Ordinal);
         Assert.Contains("origin/develop", prompt, StringComparison.Ordinal);
-        Assert.Contains("Do not redo the feature work", prompt, StringComparison.Ordinal);
+        Assert.Contains("Retain a one-to-one delivery commit mapping", prompt, StringComparison.Ordinal);
         Assert.Equal(ContinueModes.Steer, queued.PendingIntent!.Mode);
         Assert.Contains(
             stack.Timeline.ReadAll(queued.FolderPath),
