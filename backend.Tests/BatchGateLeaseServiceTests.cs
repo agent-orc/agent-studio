@@ -29,4 +29,30 @@ public sealed class BatchGateLeaseServiceTests
             if (Directory.Exists(root)) Directory.Delete(root, true);
         }
     }
+
+    [Fact]
+    public void ContendedGuardFailsClosedWithoutThrowingFromHeartbeatOrRelease()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "batch-lease-test-" + Guid.NewGuid().ToString("N"));
+        var scope = new BatchGateScope("p", "r", "develop", "full", "digest", "v1");
+        try
+        {
+            var leases = new BatchGateLeaseService(root);
+            var lease = leases.TryAcquire(scope, "host-a")!;
+            var folder = Assert.Single(Directory.GetDirectories(root));
+            using (var guard = new FileStream(Path.Combine(folder, "lock"),
+                       FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                Assert.Null(leases.Renew(lease));
+                Assert.False(leases.IsCurrent(lease));
+                Assert.False(leases.Release(lease));
+            }
+            Assert.True(leases.IsCurrent(lease));
+            Assert.True(leases.Release(lease));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
 }

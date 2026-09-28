@@ -750,7 +750,9 @@ public static class V1ReviewPlaneEndpoints
                     StringComparison.Ordinal))
                 ?.ReceivedAt
                 ?? DateTime.UtcNow;
-            if (batchDeferred && settled.ReviewAttempt.Outcome == ReviewTerminalOutcome.Pass)
+            string? emergencyBatchState = task.State == TaskStates.AutoReview ? null : task.State;
+            if (batchDeferred && settled.ReviewAttempt.Outcome == ReviewTerminalOutcome.Pass
+                && task.State == TaskStates.AutoReview)
             {
                 var batchSource = authority.GetRun(settled.ReviewAttempt.SourceRunAttemptId);
                 if (batchSource is null)
@@ -765,9 +767,24 @@ public static class V1ReviewPlaneEndpoints
                 catch (Exception ex)
                 {
                     logger.LogError(ex, "batch-gate-enqueue-failed attempt={AttemptId}", attemptId);
-                    return Results.Json(new Contract.ApiError(
-                        "batch-gate-evidence-missing", "The settled review could not enter the durable batch queue."),
-                        statusCode: StatusCodes.Status503ServiceUnavailable);
+                    try
+                    {
+                        await batchPilot.RunEmergencyFallbackAsync(task,
+                            settled.ReviewAttempt, batchSource,
+                            new DateTimeOffset(DateTime.SpecifyKind(receivedAt, DateTimeKind.Utc)),
+                            ct).ConfigureAwait(false);
+                        emergencyBatchState = FindTask(scanner, task.Id)?.State;
+                    }
+                    catch (Exception fallbackError)
+                    {
+                        logger.LogError(fallbackError,
+                            "batch-gate-emergency-fallback-failed attempt={AttemptId}", attemptId);
+                    }
+                    if (emergencyBatchState is not (TaskStates.HumanReview or TaskStates.Escalated))
+                        return Results.Json(new Contract.ApiError(
+                            "batch-gate-evidence-missing",
+                            "The settled review could not enter the durable batch queue or finish its per-task gate."),
+                            statusCode: StatusCodes.Status503ServiceUnavailable);
                 }
             }
             var payload = JsonSerializer.Serialize(request, Json);
@@ -794,7 +811,7 @@ public static class V1ReviewPlaneEndpoints
                     reportHash,
                     receivedAt,
                     RetryScheduled: false,
-                    task.State,
+                    emergencyBatchState ?? task.State,
                     EvidenceProjection: Contract.ReviewEvidenceProjectionStatus.Duplicate));
             }
 
@@ -861,7 +878,7 @@ public static class V1ReviewPlaneEndpoints
                     attemptId, settled.ReviewAttempt.Subject.SubjectId,
                     request.Outcome, request.FailureClassification, request.Summary,
                     reportHash, receivedAt, RetryScheduled: false,
-                    TaskStates.AutoReview,
+                    emergencyBatchState ?? TaskStates.AutoReview,
                     EvidenceProjection: Contract.ReviewEvidenceProjectionStatus.Queued));
             }
 

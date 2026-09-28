@@ -5438,10 +5438,8 @@ public class GitService
     }
 
     /// <summary>
-    /// Replays a behind-base delivery in a disposable detached worktree. Rerere
-    /// and autostash are disabled: only a rebase command that applies every
-    /// commit without an unresolved textual conflict is eligible. The delivery
-    /// ref and integration branch are never moved by this probe.
+    /// Replays one immutable batch member using the conflict-free mechanical
+    /// rebase rule and returns the original-to-replacement SHA mapping.
     /// </summary>
     public BatchReplayResult ReplayBatchMember(
         string repoRoot, string immutableResultRef, string expectedResultSha, string batchTip)
@@ -5573,6 +5571,12 @@ public class GitService
             : new GitPushResult(false, expectedSha, "remote-unverified", remoteError.Trim());
     }
 
+    /// <summary>
+    /// Replays a behind-base delivery in a disposable detached worktree. Rerere
+    /// and autostash are disabled: only a rebase command that applies every
+    /// commit without an unresolved textual conflict is eligible. The delivery
+    /// ref and integration branch are never moved by this probe.
+    /// </summary>
     private MechanicalRebaseAttempt TryMechanicalRebase(
         string repoRoot,
         string sourceRef,
