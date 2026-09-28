@@ -414,14 +414,24 @@ export class BoardFiltersService {
   toggleTagFilter(id: string): void {
     const next = new Set(this.activeTagFilter());
     if (next.has(id)) next.delete(id); else next.add(id);
-    this.activeTagFilter.set(next);
+    this.commitTagFilter(next);
     this.writeFilterHash();
   }
 
   setTagSelection(ids: ReadonlySet<string>): void {
-    this.activeTagFilter.set(new Set(ids));
-    localStorage.setItem('sharedTagFilters', JSON.stringify([...ids]));
+    this.commitTagFilter(ids);
     this.writeFilterHash();
+  }
+
+  /**
+   * The only writer of the tag filter. The selection is shared by board,
+   * list, Dossier list and wiki, so every change is persisted where the next
+   * route without a filters= segment restores it from.
+   */
+  private commitTagFilter(ids: Iterable<string>): void {
+    const next = new Set(ids);
+    this.activeTagFilter.set(next);
+    localStorage.setItem(SHARED_TAG_FILTERS_KEY, JSON.stringify([...next]));
   }
 
   toggleProject(name: string): void {
@@ -499,7 +509,7 @@ export class BoardFiltersService {
 
   clearAllFilters(): void {
     this.activeTypeFilter.set(new Set());
-    this.activeTagFilter.set(new Set());
+    this.commitTagFilter([]);
     this.activeClientFilter.set(null);
     this.activeDependsOnFilter.set(null);
     this.stalledIntegrationOnly.set(false);
@@ -563,16 +573,6 @@ export class BoardFiltersService {
     const route = routeSegmentOf(hash);
     const fromBoard = this.previousRoute === '/board' || this.previousRoute?.startsWith('/projects/') && this.previousRoute.endsWith('/board');
     this.previousRoute = route;
-    // Area and facet choices belong to the whole work surface. Route changes
-    // without a filter segment keep them; an unfiltered board-to-board URL
-    // remains authoritative for clearing an explicit board filter.
-    if (kvValueOf(hash, 'filters') == null && kvValueOf(hash, 'filter') == null
-        && (!fromBoard || route !== '/board')) {
-      this.activeTagFilter.set(new Set(safeParseStringArray(localStorage.getItem('sharedTagFilters'))));
-      return;
-    }
-    if (route === '/board' && fromBoard && kvValueOf(hash, 'filters') == null)
-      localStorage.removeItem('sharedTagFilters');
     // The route is authoritative. A board URL without a filters= segment is
     // the unfiltered board, so a hash navigation must not leave the previous
     // in-memory facets stuck on screen. Project-scoped board tabs restore
@@ -583,7 +583,6 @@ export class BoardFiltersService {
     this.explicitProjectFilter.set(false);
     localStorage.setItem('activeProjects', '[]');
     this.activeTypeFilter.set(new Set());
-    this.activeTagFilter.set(new Set());
     this.stalledIntegrationOnly.set(false);
     this.waitingForReleaseOnly.set(false);
 
@@ -619,7 +618,7 @@ export class BoardFiltersService {
       localStorage.setItem('activeProjects', JSON.stringify([...projects]));
       const oneType = types.size > 0 ? new Set([types.values().next().value as string]) : new Set<string>();
       this.activeTypeFilter.set(oneType);
-      this.activeTagFilter.set(tags);
+      this.commitTagFilter(tags);
       this.stalledIntegrationOnly.set(stalledIntegrationOnly);
       this.waitingForReleaseOnly.set(waitingForReleaseOnly);
       return;
@@ -637,8 +636,16 @@ export class BoardFiltersService {
       }
       const oneType = types.size > 0 ? new Set([types.values().next().value as string]) : new Set<string>();
       this.activeTypeFilter.set(oneType);
-      this.activeTagFilter.set(tags);
+      this.commitTagFilter(tags);
+      return;
     }
+    // Area and facet choices belong to the whole work surface: a route
+    // without a filter segment restores the shared selection, except an
+    // unfiltered board-to-board URL, which stays authoritative for clearing.
+    const boardToBoard = fromBoard && route === '/board';
+    this.commitTagFilter(boardToBoard
+      ? []
+      : safeParseStringArray(localStorage.getItem(SHARED_TAG_FILTERS_KEY)));
   }
 
   private writeFilterHash(): void {
@@ -678,7 +685,7 @@ export class BoardFiltersService {
     const tagsCsv = params.get('tag');
     if (tagsCsv) {
       const tags = new Set(tagsCsv.split(',').filter(Boolean));
-      if (tags.size > 0) this.activeTagFilter.set(tags);
+      if (tags.size > 0) this.commitTagFilter(tags);
     }
     const type = params.get('type');
     if (type) this.activeTypeFilter.set(new Set([type]));
@@ -707,6 +714,8 @@ export class BoardFiltersService {
     }
   }
 }
+
+const SHARED_TAG_FILTERS_KEY = 'sharedTagFilters';
 
 function safeParseStringArray(raw: string | null): string[] {
   if (!raw) return [];
