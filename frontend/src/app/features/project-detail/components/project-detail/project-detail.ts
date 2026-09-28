@@ -299,7 +299,7 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
       count++;
     }
     if (count === 0) return `${entries.length} entries; no orchestrator LLM calls yet.`;
-    return `${entries.length} entries; ${count} orchestrator LLM call${count === 1 ? '' : 's'}: ↑${input.toLocaleString()} / ↓${output.toLocaleString()} tokens.`;
+    return `${entries.length} entries; ${count} orchestrator LLM call${count === 1 ? '' : 's'}: ↑${input.toLocaleString('en-US')} / ↓${output.toLocaleString('en-US')} tokens.`;
   });
 
   private pollTimer: VisibleIntervalHandle | null = null;
@@ -572,7 +572,7 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
     try {
       const d = new Date(iso);
       if (Number.isNaN(d.getTime())) return iso;
-      return d.toLocaleString();
+      return d.toLocaleString('en-US');
     } catch {
       return iso;
     }

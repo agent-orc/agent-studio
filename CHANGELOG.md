@@ -12,6 +12,50 @@ release yet.
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-09-27
+
+Hotfix release. With 0.9.3 the production runner's every completion was
+rejected with `Session continuation evidence does not match the fenced
+attempt.` (14 of 14 completions between 13:20 and 15:06 UTC), because the
+runner named the lease id in the continuation ledger entry while the
+completion request carries the lease's attempt id; on the legacy runner
+plane, which the fleet uses, the two differ. The runner now records the
+lease's attempt id (`SessionContinuationEvidence.FencedAttemptId`), covered
+by unit tests for the legacy and v1 planes. The runner host was rolled back
+to the 0.9.2 build in the meantime.
+
+## [0.9.3] - 2026-09-27
+
+Second throughput release of the operations weekend: 63 commits on develop since
+0.9.2, all merged through the work-package gates on the Windows gate host.
+
+### Added
+
+- Agent Studio is Docker-deployable: one Compose file runs the complete product from published images, with backup, restore and a source-built path (AGT-2736).
+- Single-host Task Server rehearsal: control plane in Docker on the runner host, Runner credentials fenced from Studio routes, operations runbook and coordinated backup (AGT-2737).
+- Integration dead ends get an exit: a continuation extends the task with the conflict context instead of parking it (AGT-2909).
+- Bounded session continuation for mechanical rebase rounds with a durable per-generation token ledger (AGT-2921).
+- Per-SHA gate cache: the gate verdict is bound to the tested tree and an unchanged re-run is skipped (AGT-2923).
+- Claimable gate step: GateSubject, GateAttempt, lease and fenced report for the build and test gate (AGT-2925).
+- The Task Server steering boundary is enforced for continuation, stop and report paths (AGT-2933).
+- Quota fallback picks the comparable model from the Token Economy catalogue for every Claude call (AGT-2889).
+- Stable task-switch baseline correlated for the immediate task switching Dossier (AGT-2952); the Dossier is registered in the North star map (AGT-2958).
+
+### Changed
+
+- Runs no longer stop with NeedsInput to request approvals that the pipeline grants after delivery (AGT-2931).
+- Frontend unit tests run with a pinned en-US locale so the suite is deterministic on every workstation; the merge gate on a de-DE host is green again (operator commit 4da36b4a7).
+- New Dossier on develop: credentials and logins as a managed process (AGT-2968).
+
+### Fixed
+
+- Deployment regression scenario: the Compose overlay follows the bootstrap-generated secrets topology of AGT-2736 (injected scenario tokens, no published images), so the release contract test and the promotion train render the stack again.
+- Preparation cache: an empty block is no longer published; an incomplete block is rejected and rebuilt (AGT-2891).
+- Pickup no longer runs a card on claude-haiku-4-5 when the pinned Claude model is unknown to the installed CLI (AGT-2893).
+- Prompt enrichment no longer appends Agent Studio instruction blocks to cards of other projects (AGT-2908).
+- v1 plane: result finalization and lease release after the fenced completion carry the exact outbox authority instead of answering 409 (AGT-2967).
+- Interactive chat turns no longer wait behind the coding slots; chat turns have priority and heavy turns account against coding capacity (AGT-2969).
+
 ## [0.9.2] - 2026-09-26
 
 Throughput release from the 25 September operations day: 51 commits on develop

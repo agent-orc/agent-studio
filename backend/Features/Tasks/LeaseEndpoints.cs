@@ -87,14 +87,54 @@ public static class LeaseEndpoints
             RunLeaseHeartbeatRequest req,
             HttpContext context,
             RunLeaseService leases,
-            RemoteRunStopRequestStore stops) =>
+            RemoteRunStopRequestStore stops,
+            TaskScannerService scanner,
+            TaskMutationService mutations,
+            TaskSessionLog sessions) =>
         {
             if (!RunnerMatches(context, req.RunnerId)) return Results.Unauthorized();
             if (!CanonicalLeaseWritePresent(req.AttemptId, req.AuthorityEpoch, req.IdempotencyKey))
                 return Results.Conflict(new RunLeaseResponse(
                     "Invalid", false, null,
                     "AttemptId, AuthorityEpoch, and IdempotencyKey are required for lease renewal."));
-            var renewed = leases.Renew(req);
+            string? promptRejection = null;
+            string? ConfirmWorkerStart()
+            {
+                var task = FindTask(scanner, req.TaskKey);
+                if (task is null)
+                    return "The claimed task no longer exists.";
+                var stashed = mutations.ReadStashedPendingIntent(task.FolderPath);
+                if (stashed is not null
+                    && !string.Equals(
+                        AgentStudio.TaskServer.Contracts.FollowUpPromptDigest.Compute(stashed.Prompt),
+                        req.StartedPromptSha256,
+                        StringComparison.OrdinalIgnoreCase))
+                    return "The worker-start prompt hash does not match the stashed follow-up.";
+                if (!sessions.ConfirmRunStartedWithPrompt(
+                        task.Id,
+                        req.AttemptId!,
+                        req.StartedPromptSha256,
+                        allowInitialConfirmation: stashed is not null,
+                        task.WatchPath))
+                    return "The worker-start prompt hash does not match the claimed run.";
+                var acknowledged = stashed is null
+                    ? PendingIntentAcknowledgeResult.AlreadyResolved
+                    : mutations.AcknowledgeStashedPendingIntent(
+                        task.FolderPath,
+                        req.StartedPromptSha256,
+                        req.AttemptId!,
+                        source: "remote-worker-start-heartbeat");
+                if (acknowledged is not PendingIntentAcknowledgeResult.Consumed
+                    and not PendingIntentAcknowledgeResult.AlreadyResolved)
+                    return $"The worker-start follow-up acknowledgement failed: {acknowledged}.";
+                return null;
+            }
+            var renewed = leases.Renew(req, string.IsNullOrWhiteSpace(req.StartedPromptSha256)
+                ? null
+                : () => promptRejection = ConfirmWorkerStart());
+            if (promptRejection is not null)
+                return Results.Conflict(new RunLeaseResponse(
+                    "PromptMismatch", false, renewed.Lease, promptRejection));
             if (!renewed.Granted) return Results.Ok(renewed);
             var stop = stops.Peek(req.TaskKey);
             return Results.Ok(stop is null
@@ -116,6 +156,7 @@ public static class LeaseEndpoints
             RunLeaseService leases,
             RemoteRunStopRequestStore stops,
             TaskScannerService scanner,
+            TaskMutationService mutations,
             RunTimeoutContinuationService continuations,
             HumanReviewEscalation humanReviewEscalation,
             OrchestratorLog orchestratorLog,
@@ -137,7 +178,14 @@ public static class LeaseEndpoints
                 await ApplyLostWorkerContinuationAsync(
                     req, scanner, continuations, humanReviewEscalation, orchestratorLog, loggerFactory, ct);
                 stops.Clear(req.TaskKey);
-                return Results.Ok(leases.Release(req));
+                var released = leases.Release(req);
+                if (string.Equals(released.Outcome, "Released", StringComparison.OrdinalIgnoreCase))
+                {
+                    var task = FindTask(scanner, req.TaskKey);
+                    if (task is not null)
+                        mutations.RollbackStashedPendingIntent(task.FolderPath);
+                }
+                return Results.Ok(released);
             }
             finally
             {
@@ -250,6 +298,7 @@ public static class LeaseEndpoints
             CliQuotaWaitPolicyService quotaWaitPolicy,
             QuotaAdmissionService quotaAdmission,
             QuotaAdmissionRecorder quotaAdmissionRecorder,
+            TaskMutationService mutations,
             ModelRoutingPolicyRegistry modelRouting,
             CancellationToken ct) =>
         {
@@ -498,6 +547,17 @@ public static class LeaseEndpoints
                                 seedMaxParallelism: seedCeiling,
                                 effectiveMaxParallelism: req.EffectiveMaxParallelism,
                                 effectiveMaxParallelismAppliedAt: req.EffectiveMaxParallelismAppliedAt);
+                        var replayRunSpec = AddStashedFollowUp(
+                            AddPersistedPromptEnrichment(
+                                BuildRunSpec(
+                                    replayedTask,
+                                    settings,
+                                    prompts,
+                                    dossierMaintenance,
+                                    ReadPersistedQuotaPlan(replayedTask)),
+                                replayedTask),
+                            mutations.ReadStashedPendingIntent(replayedTask.FolderPath),
+                            replay.Lease.AttemptId);
                         return Results.Ok(WithCapacity(new RunnerClaimResponse(
                             RunnerClaimStatus.Claimed,
                             replay.Lease.TaskKey,
@@ -510,14 +570,7 @@ public static class LeaseEndpoints
                             TaskKind: replayedTask.Kind,
                             // A replay must describe the same run as the original
                             // claim, including the persisted enrichment framing.
-                            RunSpec: AddPersistedPromptEnrichment(
-                                BuildRunSpec(
-                                    replayedTask,
-                                    settings,
-                                    prompts,
-                                    dossierMaintenance,
-                                    ReadPersistedQuotaPlan(replayedTask)),
-                                replayedTask))));
+                            RunSpec: replayRunSpec)));
                     }
                 }
 
@@ -564,6 +617,10 @@ public static class LeaseEndpoints
                     var recoveryWrite = leases.CurrentWriteReference(
                         interruptedKey,
                         $"lane-recovery:{interruptedKey}:{req.RunnerId.Trim()}");
+                    // A free lease with no reported worker means this claim never
+                    // proved process start. Restore its reserved follow-up before
+                    // the card becomes claimable again.
+                    mutations.RollbackStashedPendingIntent(interrupted.FolderPath);
                     var preparationFailure = remoteClaimFailures.GetState(interrupted);
                     if (preparationFailure?.Attempts >= RemoteClaimFailureBudget.MaxAttempts)
                     {
@@ -1003,18 +1060,41 @@ public static class LeaseEndpoints
                     return Results.Ok(WithCapacity(new RunnerClaimResponse(
                         RunnerClaimStatus.Empty, Message: acquire.Message ?? acquire.Outcome)));
 
-                dispatchRejections.Clear(candidate);
-                var move = await transitions.MoveAsync(
-                    candidate.Id, TaskStates.Progress, candidate.WatchPath, ct,
-                    cause: $"remote-runner:{req.RunnerName.Trim()}",
-                    authorityWrite: new AttemptWriteReference(
-                        acquire.Lease.AttemptId!,
-                        acquire.Lease.FencingToken,
-                        acquire.Lease.AuthorityEpoch,
-                        $"lane-claim:{claimKey}"),
-                    transitionCause: LaneChangeCauses.Claimed);
+                var stashedIntent = candidate.PendingIntent is null
+                    ? null
+                    : mutations.ReadAndStashPendingIntent(candidate.FolderPath);
+                runSpec = AddStashedFollowUp(
+                    runSpec,
+                    stashedIntent,
+                    acquire.Lease.AttemptId);
+                MoveJobOutcome move;
+                try
+                {
+                    dispatchRejections.Clear(candidate);
+                    move = await transitions.MoveAsync(
+                        candidate.Id, TaskStates.Progress, candidate.WatchPath, ct,
+                        cause: $"remote-runner:{req.RunnerName.Trim()}",
+                        authorityWrite: new AttemptWriteReference(
+                            acquire.Lease.AttemptId!,
+                            acquire.Lease.FencingToken,
+                            acquire.Lease.AuthorityEpoch,
+                            $"lane-claim:{claimKey}"),
+                        transitionCause: LaneChangeCauses.Claimed);
+                }
+                catch
+                {
+                    if (stashedIntent is not null)
+                        mutations.RollbackStashedPendingIntent(candidate.FolderPath);
+                    leases.Release(new RunLeaseReleaseRequest(
+                        taskKey, acquire.Lease.LeaseId, acquire.Lease.FencingToken, req.RunnerId.Trim(),
+                        acquire.Lease.AttemptId, acquire.Lease.AuthorityEpoch,
+                        $"claim-exception-rollback:{taskKey}:{acquire.Lease.LeaseId}"));
+                    throw;
+                }
                 if (move.Status != MoveJobStatus.Success)
                 {
+                    if (stashedIntent is not null)
+                        mutations.RollbackStashedPendingIntent(candidate.FolderPath);
                     leases.Release(new RunLeaseReleaseRequest(
                         taskKey, acquire.Lease.LeaseId, acquire.Lease.FencingToken, req.RunnerId.Trim(),
                         acquire.Lease.AttemptId, acquire.Lease.AuthorityEpoch,
@@ -2682,6 +2762,24 @@ public static class LeaseEndpoints
                 runSpec.ModeFraming,
                 enrichmentContext),
         };
+
+    private static RunSpecDto AddStashedFollowUp(
+        RunSpecDto runSpec,
+        PendingIntent? intent,
+        string? claimId)
+        => intent is null
+            ? runSpec
+            : runSpec with
+            {
+                FollowUp = new AgentStudio.TaskServer.Contracts.FollowUpDeliveryDto(
+                    intent.Prompt,
+                    intent.Mode,
+                    AgentStudio.TaskServer.Contracts.FollowUpPromptDigest.Compute(intent.Prompt),
+                    intent.SavedAt,
+                    intent.SavedReason,
+                    intent.Author,
+                    claimId),
+            };
 
     private static RunSpecDto AddPersistedPromptEnrichment(RunSpecDto runSpec, TaskInfo task)
     {

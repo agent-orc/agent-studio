@@ -1158,7 +1158,11 @@ public sealed class RemoteReviewWorkspace
             agentUsage?.InputIncludesCached,
             reusedFromAttemptId ?? comparison?.ReusedFromAttemptId,
             (long)Math.Max(0, (reusedAge ?? comparison?.ReusedAge ?? TimeSpan.Zero).TotalSeconds),
-            comparison?.BaselineExitCode);
+            comparison?.BaselineExitCode,
+            phase == "preparation"
+                ? (_subject.Plan.Preparation ?? []).FirstOrDefault(item => item.StepId == stepId)?.LibraryStep
+                : plannedCommand?.LibraryStep
+                  ?? _subject.Plan.Commands.FirstOrDefault(item => item.StepId == stepId)?.LibraryStep);
     }
 
     private async Task<ReviewArtifactEvidenceDto> WriteArtifactAsync(

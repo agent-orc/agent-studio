@@ -265,7 +265,7 @@ function linkWaitLabel(link: RemoteRunnerLinkHealth): string {
   const since = new Date(unreachableSince);
   const time = Number.isNaN(since.getTime())
     ? unreachableSince
-    : since.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+    : since.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
   const state = link.state === 'reconnecting'
     ? `link down, reconnecting, attempt ${link.attempt}`
     : link.state === 'connecting'

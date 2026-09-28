@@ -7,6 +7,7 @@
   "include": [
     "src/**/*.spec.ts",
     "src/test-locale.ts",
+    "src/test-lazy-imports.ts",
     "src/**/*.d.ts"
   ]
 }

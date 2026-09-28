@@ -75,13 +75,13 @@ export class GlobalOrchestratorCardComponent implements OnInit, OnDestroy {
     try {
       const d = new Date(iso);
       if (Number.isNaN(d.getTime())) return iso;
-      return d.toLocaleString();
+      return d.toLocaleString('en-US');
     } catch {
       return iso;
     }
   }
 
   formatTokens(value: number): string {
-    return value.toLocaleString();
+    return value.toLocaleString('en-US');
   }
 }

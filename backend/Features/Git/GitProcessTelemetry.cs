@@ -56,7 +56,8 @@ public static class GitProcessTelemetry
         bool includeNested = false,
         TimeProvider? timeProvider = null)
     {
-        var scope = new GitRequestScope(label, logger, _current.Value, includeNested, timeProvider ?? TimeProvider.System);
+        var scope = new GitRequestScope(label, logger, _current.Value, includeNested,
+            timeProvider ?? TimeProvider.System);
         _current.Value = scope;
         return scope;
     }
@@ -66,9 +67,9 @@ public static class GitProcessTelemetry
     /// no-op when nothing is measuring) and warns on a pathologically slow
     /// individual spawn.
     /// </summary>
-    internal static void Record(string command, long elapsedMs, int exitCode)
+    internal static void Record(string command, long elapsedMs, int exitCode, bool timedOut = false)
     {
-        _current.Value?.Add(command, elapsedMs);
+        _current.Value?.Add(command, elapsedMs, timedOut);
         if (elapsedMs >= SlowSpawnWarnMs)
         {
             Logger?.LogWarning(
@@ -96,6 +97,8 @@ public static class GitProcessTelemetry
     /// </summary>
     internal static (int Spawns, long GitMs, int FileReads)? CurrentTally()
         => _current.Value is { } s ? (s.Spawns, s.GitMs, s.FileReads) : null;
+
+    internal static int CurrentTimeouts() => _current.Value?.Timeouts ?? 0;
 
     /// <summary>
     /// Diagnostic hook for a long-running scope (the git-state indexer's
@@ -187,6 +190,7 @@ public static class GitProcessTelemetry
         public int Spawns { get; private set; }
         public long GitMs { get; private set; }
         public int FileReads { get; private set; }
+        public int Timeouts { get; private set; }
 
         public GitRequestScope(
             string label,
@@ -212,20 +216,21 @@ public static class GitProcessTelemetry
             }
         }
 
-        public void Add(string command, long elapsedMs)
+        public void Add(string command, long elapsedMs, bool timedOut)
         {
-            AddLocal(command, elapsedMs);
+            AddLocal(command, elapsedMs, timedOut);
             for (var ancestor = _parent; ancestor != null; ancestor = ancestor._parent)
             {
-                if (ancestor._includeNested) ancestor.AddLocal(command, elapsedMs);
+                if (ancestor._includeNested) ancestor.AddLocal(command, elapsedMs, timedOut);
             }
         }
 
-        private void AddLocal(string command, long elapsedMs)
+        private void AddLocal(string command, long elapsedMs, bool timedOut)
         {
             lock (_gate)
             {
                 Spawns++;
+                if (timedOut) Timeouts++;
                 GitMs += elapsedMs;
                 var prev = _byCommand.TryGetValue(command, out var c) ? c : (0, 0L);
                 _byCommand[command] = (prev.Item1 + 1, prev.Item2 + elapsedMs);

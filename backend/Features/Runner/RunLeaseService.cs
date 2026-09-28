@@ -80,7 +80,7 @@ public sealed class RunLeaseService
         };
     }
 
-    public RunLeaseResponse Renew(RunLeaseHeartbeatRequest request)
+    public RunLeaseResponse Renew(RunLeaseHeartbeatRequest request, Func<string?>? beforeRenew = null)
     {
         var reference = ResolveReference(
             request.TaskKey, request.AttemptId, request.FencingToken, request.AuthorityEpoch,
@@ -89,7 +89,7 @@ public sealed class RunLeaseService
             return new RunLeaseResponse("NotHeld", false, null, "No canonical RunAttempt is held for this task.");
 
         var result = _authority.RenewRun(
-            reference, request.RunnerId, request.RequestedTtlSeconds, request.LeaseId);
+            reference, request.RunnerId, request.RequestedTtlSeconds, request.LeaseId, beforeRenew);
         return MapMutation(result, "Renewed");
     }
 

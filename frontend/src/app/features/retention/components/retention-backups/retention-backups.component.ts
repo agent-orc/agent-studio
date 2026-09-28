@@ -141,7 +141,7 @@ export class RetentionBackupsComponent implements OnInit {
 
   date(value: string): string {
     const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? '–' : date.toLocaleString();
+    return Number.isNaN(date.getTime()) ? '–' : date.toLocaleString('en-US');
   }
 
   bytes(value: number): string { return formatRetentionBytes(value); }

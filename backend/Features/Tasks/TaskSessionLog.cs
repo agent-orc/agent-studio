@@ -298,6 +298,29 @@ public class TaskSessionLog
         }
     }
 
+    /// <summary>
+    /// Adds positive worker-start proof to the fenced run row. An initial value
+    /// is accepted only while the matching intent is still stashed; replayed
+    /// heartbeats may repeat the same hash but can never replace it.
+    /// </summary>
+    public bool ConfirmRunStartedWithPrompt(
+        string jobId,
+        string runAttemptId,
+        string promptSha256,
+        bool allowInitialConfirmation,
+        string? watchPath = null)
+    {
+        if (string.IsNullOrWhiteSpace(runAttemptId) || string.IsNullOrWhiteSpace(promptSha256))
+            return false;
+        return MutateSessionEvent(
+            jobId,
+            watchPath,
+            evt => string.Equals(evt.RunAttemptId, runAttemptId, StringComparison.OrdinalIgnoreCase)
+                   && (string.Equals(evt.StartedPromptSha256, promptSha256, StringComparison.OrdinalIgnoreCase)
+                       || (allowInitialConfirmation && string.IsNullOrWhiteSpace(evt.StartedPromptSha256))),
+            evt => evt with { StartedPromptSha256 = promptSha256.ToLowerInvariant() });
+    }
+
     private static bool MatchesCloseout(SessionEvent evt, RunSessionCloseout closeout)
     {
         if (!string.IsNullOrWhiteSpace(closeout.RunAttemptId))

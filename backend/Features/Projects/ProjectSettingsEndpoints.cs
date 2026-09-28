@@ -200,6 +200,7 @@ public static class ProjectSettingsEndpoints
                 kv => new
                 {
                     autoCommit = kv.Value.AutoCommit,
+                    autoTag = kv.Value.AutoTag,
                     crashRecoveryEnabled = kv.Value.CrashRecoveryEnabled,
                     autoPushStrategy = AutoPushStrategies.Normalize(kv.Value.AutoPushStrategy),
                     runnerMode = kv.Value.RunnerMode,
@@ -641,6 +642,14 @@ public static class ProjectSettingsEndpoints
             if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
             settings.SetAutomaticFailureContinuationsEnabled(projectName, req.Enabled);
             return Results.Ok(settings.Get(projectName));
+        });
+
+        app.MapPut("/api/projects/{projectName}/auto-tag", (string projectName, SetAutoCommitRequest req, ProjectSettingsService settings, TaskScannerService scanner) =>
+        {
+            if (!scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            settings.SetAutoTag(projectName, req.Enabled);
+            return Results.Ok(new { autoTag = settings.Get(projectName).AutoTag });
         });
 
         // Flag-gated local CLI execution engine. The effective value resolves

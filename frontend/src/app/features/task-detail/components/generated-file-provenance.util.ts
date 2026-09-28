@@ -55,7 +55,7 @@ export function formatGeneratedFileTokens(tokens: number | null | undefined): st
 function formatCount(n: number): string {
   if (n >= 1_000_000) return `${trimOneDecimal(n / 1_000_000)}M`;
   if (n >= 1_000) return `${trimOneDecimal(n / 1_000)}k`;
-  return Math.max(0, Math.round(n)).toLocaleString();
+  return Math.max(0, Math.round(n)).toLocaleString('en-US');
 }
 
 function trimOneDecimal(n: number): string {
