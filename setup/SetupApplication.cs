@@ -287,12 +287,9 @@ internal static class SetupApplication
             executionUser,
             executionGroup,
             homeDirectory,
-            cliPath,
+            agentCli.ToLowerInvariant(),
             installedClis.GetValueOrDefault("claude"),
             installedClis.GetValueOrDefault("codex"),
-            agentCli.Equals("codex", StringComparison.OrdinalIgnoreCase)
-                ? "exec --skip-git-repo-check --sandbox danger-full-access -"
-                : "-p",
             gitRemote,
             gitPushRemote,
             options.MaxParallelism);

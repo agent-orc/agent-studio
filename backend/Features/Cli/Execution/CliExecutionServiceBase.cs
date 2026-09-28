@@ -350,7 +350,6 @@ public partial class GenericCliExecutionService : ICliExecutionService
            + (string.IsNullOrWhiteSpace(sessionName) ? "" : $", session={sessionName}")
            + (resumeSession ? " (resume)" : "");
 
-    /// <summary>
     public bool Stop(string jobKey, RunStopReason reason = RunStopReason.UserStop)
     {
         if (!_processes.TryGetValue(jobKey, out var info)) return false;

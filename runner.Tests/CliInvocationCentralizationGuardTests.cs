@@ -127,10 +127,10 @@ public class CliInvocationCentralizationGuardTests
     /// </summary>
     private static readonly AllowedFile[] Allowlist =
     [
-        // AGT-2370 (T1) removed two entries: runner/CliSelection.cs no longer
-        // spawns (pure invocation resolution since the dead instance path was
-        // deleted), and runner/RemoteProjectChatRunner.cs runs through CAR with
-        // PermissionMode=read-only (T1c) with no legacy fallback.
+        // runner/CliSelection.cs and runner/RemoteProjectChatRunner.cs need no
+        // entry: CliSelection only resolves the provider binary for the CAR
+        // worker and never starts a process, and project chat runs through CAR
+        // with PermissionMode=read-only.
 
         new("runner/RunnerOptions.cs",
             DocumentedException
@@ -142,13 +142,13 @@ public class CliInvocationCentralizationGuardTests
             DocumentedException
             + "AGT-2778 invokes the host-owned agent-runner-deploy update-clis boundary through sudo; "
             + "the allowlisted script installs only Task Server-pinned packages and never starts an "
-            + "agent run. AGT-2373 decides the permanent non-run process boundary."),
+            + "agent run. AGT-2373 keeps it as a permanent non-run process boundary."),
 
         new("runner/RunnerCapabilityProbe.cs",
             DocumentedException
             + "AGT-2778 directly runs --version while building the host capability snapshot; this is "
-            + "a bounded read-only installation probe, not an agent run. AGT-2373 decides the permanent "
-            + "non-run probe boundary."),
+            + "a bounded read-only installation probe, not an agent run. AGT-2373 keeps it as a "
+            + "permanent non-run probe boundary."),
 
         new("runner/Program.cs",
             DocumentedException
@@ -168,7 +168,7 @@ public class CliInvocationCentralizationGuardTests
         new("backend/Features/Cli/Routing/OneShot/ClaudeOneShot.cs",
             DocumentedException
             + "Short-lived non-agent claude call (summaries, classification, verdict extraction). "
-            + "AGT-2371 decides whether it moves onto CAR or stays as a documented exception."),
+            + "AGT-2373 keeps it as a documented non-card exception; it never runs a card prompt."),
 
         new("backend/Features/Cli/Routing/OneShot/CodexOneShot.cs",
             DocumentedException
