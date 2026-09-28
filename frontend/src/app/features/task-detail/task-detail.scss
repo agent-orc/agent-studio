@@ -1256,3 +1256,17 @@
         padding: 16px;
       }
     }
+.detail__resource-status:empty { display: none; }
+.detail__resource-status {
+  padding-inline: var(--studio-spacing-4);
+  color: var(--studio-fg-dim);
+  background: var(--studio-bg-surface);
+}
+.detail__resource-status p { margin: 0; padding-block: var(--studio-spacing-2); }
+.detail__resource-status button {
+  margin-inline-start: var(--studio-spacing-2);
+  border: 1px solid var(--studio-border);
+  color: var(--studio-fg);
+  background: transparent;
+  cursor: pointer;
+}
