@@ -44,6 +44,9 @@
       <Aliases>Runner</Aliases>
     </ProjectReference>
     <ProjectReference Include="..\testsupport\AgentStudio.TestSupport.csproj" />
+    <!-- Build order only: ConnectorNegativeMatrixTests starts the built
+         task-server.dll as a real upstream process. -->
+    <ProjectReference Include="..\task-server\TaskServer.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <!-- Block 6: same library-type aliases as the app, so tests resolve the adopted
