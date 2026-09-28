@@ -7,6 +7,9 @@
 # environment and points every service's token file at /run/secrets. The
 # bootstrap still runs, from the scenario Task Server image, so volume
 # ownership matches the product.
+#
+# Every image the overlay builds carries io.agent-studio.disposable-image so
+# scripts/docker-scenario-retention.sh can find it under any project name.
 services:
   bootstrap:
     image: "${SCENARIO_TASK_SERVER_IMAGE:?set SCENARIO_TASK_SERVER_IMAGE}"
@@ -19,6 +22,8 @@ services:
       args:
         VERSION: ${SCENARIO_BUILD_VERSION:?set SCENARIO_BUILD_VERSION}
         SHA: ${SCENARIO_BUILD_SHA:?set SCENARIO_BUILD_SHA}
+      labels:
+        io.agent-studio.disposable-image: scenario
     environment:
       BOOTSTRAP_RUNNER_ID: scenario-coding-runner
       TaskServer__MinimumLeaseSeconds: "5"
@@ -51,6 +56,8 @@ services:
       args:
         VERSION: ${SCENARIO_BUILD_VERSION:?set SCENARIO_BUILD_VERSION}
         SHA: ${SCENARIO_BUILD_SHA:?set SCENARIO_BUILD_SHA}
+      labels:
+        io.agent-studio.disposable-image: scenario
     environment:
       CLIENT_CREDENTIAL_FILE: /run/secrets/engine_token
     secrets:
@@ -68,6 +75,8 @@ services:
       args:
         VERSION: ${SCENARIO_BUILD_VERSION:?set SCENARIO_BUILD_VERSION}
         SHA: ${SCENARIO_BUILD_SHA:?set SCENARIO_BUILD_SHA}
+      labels:
+        io.agent-studio.disposable-image: scenario
     environment:
       TaskServer__AuthTokenFile: /run/secrets/studio_token
     ports:
@@ -86,6 +95,8 @@ services:
     build:
       context: .
       dockerfile: testsupport/scenario/runner.Dockerfile
+      labels:
+        io.agent-studio.disposable-image: scenario
     environment:
       HOME: /scenario/home
       DOTNET_CLI_HOME: /scenario/home
