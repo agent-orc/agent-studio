@@ -235,6 +235,25 @@ rollout decision.
   and thinking level on the session event; remote claims also persist their
   fenced Attempt id. Every new `RunRecord` carries those values independently
   of optional CLI init frames or token summaries.
+  Every new row also carries `trigger`, `triggeredBy`, `triggerReason`, and
+  `triggerSource`. The trigger is the business cause and never changes because
+  a CLI session was resumed, reconstructed, or cleared. Its closed vocabulary
+  is `initial`, `operator-continue`, `review-finding`, `review-concern`,
+  `integration-recovery`, `gate-failure`, `timeout-continuation`,
+  `recovery-after-crash`, `restart`, `replan`, and `dependency-release`.
+  `/continue` accepts an optional reason and records the authenticated user or
+  client id. A queued continuation saves its actor and reason in
+  `pending-intent.json` across both admission queueing and a busy runner slot;
+  local pickup and remote claim use those saved values. Other remote claims
+  record `runner <id>` unless a durable pipeline cause such as a review concern
+  owns the pickup. Both paths resolve queued intent provenance through
+  `PendingIntentTriggerPolicy`: crash/provider reasons record
+  `recovery-after-crash`, gate reasons record `gate-failure`, and both name
+  `pipeline` as the actor. Timeout/salvage reasons name `watchdog`; explicit
+  operator continuations retain their saved caller and reason. An open review
+  fix round takes precedence over queued intent classification on remote claims.
+  Legacy rows have null provenance;
+  readers show `not recorded` and never guess from `kind`.
 - `backend/Services/Runner/OrchestratorChatLog.cs`: typed orchestrator messages
   written into `logs/cli-output.log`.
 - `backend/Features/Tasks/CliOutputLogFile.cs` and
