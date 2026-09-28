@@ -45,7 +45,7 @@ test('measures local end-to-end core switches against the legacy detail wait', a
   const ids = [1, 2].map(index => `e2e-core-switch-${stamp}-${index}`);
   for (const id of ids) {
     await createJob({ id, title: id, watchPath, targetState: '5-human-review',
-      promptMarkdown: LARGE_PROMPT, fixture: false });
+      promptMarkdown: LARGE_PROMPT, requiresIntegration: false, fixture: false });
   }
 
   let releaseDocuments: (() => void) | null = null;

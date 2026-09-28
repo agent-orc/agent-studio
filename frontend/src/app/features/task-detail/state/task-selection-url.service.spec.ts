@@ -334,6 +334,21 @@ describe('TaskSelectionService · stable task URLs', () => {
     expect(selection.resourceStates().git.phase).toBe('idle');
   });
 
+  it('loads history and review evidence only when their tab is expanded', () => {
+    selection.openDetail(info);
+    http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+      .flush(coreFor(info, 'Agent Studio'));
+    selection.loadResourcesForTab('prompt');
+    http.expectNone(req => req.url.includes('/details/'));
+
+    selection.loadResourcesForTab('timeline');
+    http.expectOne(req => req.url.endsWith('/details/history'));
+    selection.loadResourcesForTab('evidence');
+    const evidence = http.expectOne(req => req.url.endsWith('/details/review'));
+    expect(evidence.request.params.get('evidence')).toBe('true');
+    expect(selection.resourceStates().git.phase).toBe('idle');
+  });
+
   describe('server-side resolution fallbacks', () => {
     it('lets the backend resolve a public URL whose prefix matches no project of a multi-project workspace', () => {
       registry({ id: 'PROJ-001', shortCode: 'ONE', storageLocation: 'C:\\one' },
