@@ -1,19 +1,16 @@
-using System.Collections;
 using System.Net;
 using System.Net.Http.Json;
-using System.Net.WebSockets;
 using System.Text.Json;
 using AgentStudio.Connector;
 using AgentStudio.TaskServer.Contracts;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
-using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
+using static AgentStudio.Tests.ConnectorBrowser;
 
 namespace AgentStudio.Tests;
 
@@ -65,6 +62,78 @@ public sealed class ConnectorProfileTests
             service => service.GetType().Assembly == typeof(ConnectorProfile).Assembly);
     }
 
+    /// <summary>
+    /// Route coverage (gate 4): walks every Task Server-owned operation in
+    /// docs/studio-route-ownership/routes.json, sends it through the connector
+    /// as the Studio browser would, and asserts it reached the upstream at its
+    /// approved target route with the injected Studio credential. A local
+    /// handler answering instead, a missing mapping, or a wrong target fails.
+    /// </summary>
+    [Fact]
+    public async Task Every_task_server_owned_inventory_route_is_forwarded_to_its_target()
+    {
+        var transport = new RecordingTransport();
+        await using var connector = ConnectorUnderTest.Boot(transport);
+        var csrf = await CsrfAsync(connector.Client);
+        var inventory = ConnectorRouteInventory.Load();
+        var failures = new List<string>();
+        var forwarded = 0;
+
+        foreach (var operation in inventory.TaskServerOperations)
+        {
+            var hub = operation.Method == "WS";
+            var method = hub ? HttpMethod.Post : new HttpMethod(operation.Method);
+            var requestPath = hub ? operation.Path + "/negotiate" : SamplePath(operation.Path);
+            var expected = hub ? operation.TargetRoute + "/negotiate" : ExpectedTarget(operation);
+            using var request = new HttpRequestMessage(method, requestPath);
+            if (method != HttpMethod.Get)
+            {
+                request.Headers.Add("Origin", ConnectorOptions.DefaultStudioOrigin);
+                request.Headers.Add(ConnectorSessionStore.CsrfHeaderName, csrf);
+                request.Content = JsonContent.Create(new { });
+            }
+
+            var before = transport.ProxiedRequests.Count;
+            using var response = await connector.Client.SendAsync(request);
+            var observed = transport.ProxiedRequests.Skip(before).ToArray();
+            if (response.StatusCode != HttpStatusCode.OK || observed.Length != 1)
+            {
+                failures.Add($"{operation.Method} {operation.Path}: HTTP {(int)response.StatusCode}, {observed.Length} upstream request(s)");
+                continue;
+            }
+            var upstream = observed[0];
+            if (!string.Equals(upstream.Path, expected, StringComparison.Ordinal)
+                || upstream.Method != method.Method
+                || upstream.Authorization != "Bearer studio-secret")
+            {
+                failures.Add($"{operation.Method} {operation.Path}: forwarded {upstream.Method} {upstream.Path}, expected {expected}");
+                continue;
+            }
+            forwarded++;
+        }
+
+        Assert.True(failures.Count == 0, "Task Server routes not forwarded:\n" + string.Join('\n', failures));
+        Assert.Equal(309, forwarded);
+    }
+
+    [Fact]
+    public void Parameters_embedded_in_a_literal_segment_are_expanded_by_name()
+    {
+        // Regression found by the coverage walk: "workbench:{project}" used to
+        // be forwarded verbatim, so every workbench chat turn lost its project.
+        var operation = new ConnectorRouteOperation(
+            "fe-test",
+            "POST",
+            "/api/orchestrator/sessions/workbench:{project}/{workbenchKey}/turns",
+            ConnectorRouteInventory.TaskServerClassification,
+            "/api/v1/studio/orchestrator/sessions/workbench:{project}/{workbenchKey}/turns");
+        var values = new RouteValueDictionary { ["project"] = "AGT", ["workbenchKey"] = "W 1" };
+
+        Assert.Equal(
+            "/api/v1/studio/orchestrator/sessions/workbench:AGT/W%201/turns",
+            ConnectorProxy.ExpandTarget(operation, values));
+    }
+
     [Fact]
     public async Task Host_origin_session_and_csrf_are_enforced()
     {
@@ -85,21 +154,172 @@ public sealed class ConnectorProfileTests
         }
 
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/environment")).StatusCode);
-        using var session = await SessionAsync(client);
-        var csrf = ReadCookie(session, ConnectorSessionStore.CsrfCookieName);
+        var csrf = await CsrfAsync(client);
 
-        using (var missingCsrf = new HttpRequestMessage(HttpMethod.Post, "/api/projects"))
-        {
-            missingCsrf.Headers.Add("Origin", ConnectorOptions.DefaultStudioOrigin);
-            missingCsrf.Content = JsonContent.Create(new { displayName = "test" });
+        using (var missingCsrf = Mutation(HttpMethod.Post, "/api/projects", ConnectorOptions.DefaultStudioOrigin, null))
             Assert.Equal(HttpStatusCode.Forbidden, (await client.SendAsync(missingCsrf)).StatusCode);
+
+        using var accepted = Mutation(HttpMethod.Post, "/api/projects", ConnectorOptions.DefaultStudioOrigin, csrf);
+        Assert.Equal(HttpStatusCode.OK, (await client.SendAsync(accepted)).StatusCode);
+    }
+
+    [Theory]
+    [InlineData("http://localhost:4011", HttpStatusCode.OK, null)]
+    [InlineData("http://[::1]:4011", HttpStatusCode.OK, null)]
+    [InlineData("http://127.0.0.1:4011", HttpStatusCode.Forbidden, ConnectorRequestPolicy.OriginRejected)]
+    [InlineData("http://localhost:4012", HttpStatusCode.Forbidden, ConnectorRequestPolicy.OriginRejected)]
+    [InlineData("https://localhost:4011", HttpStatusCode.Forbidden, ConnectorRequestPolicy.OriginRejected)]
+    [InlineData("http://evil.example", HttpStatusCode.Forbidden, ConnectorRequestPolicy.OriginRejected)]
+    [InlineData("null", HttpStatusCode.Forbidden, ConnectorRequestPolicy.OriginRejected)]
+    [InlineData(null, HttpStatusCode.Forbidden, ConnectorRequestPolicy.OriginRequired)]
+    public async Task Mutations_are_accepted_only_from_the_configured_studio_origins(
+        string? origin,
+        HttpStatusCode expected,
+        string? expectedCode)
+    {
+        var transport = new RecordingTransport();
+        await using var connector = ConnectorUnderTest.Boot(transport);
+        var csrf = await CsrfAsync(connector.Client);
+
+        using var request = Mutation(HttpMethod.Post, "/api/projects", origin, csrf);
+        using var response = await connector.Client.SendAsync(request);
+
+        Assert.Equal(expected, response.StatusCode);
+        if (expectedCode is not null)
+        {
+            Assert.Equal(expectedCode, await CodeAsync(response));
+            Assert.Empty(transport.ProxiedRequests);
+        }
+    }
+
+    [Fact]
+    public async Task Configured_loopback_origin_replaces_the_default_allowlist()
+    {
+        var transport = new RecordingTransport();
+        await using var connector = ConnectorUnderTest.Boot(new ConnectorTestSetup(
+            transport,
+            new MutableCredentialSource("studio-secret"),
+            Settings: new Dictionary<string, string?> { ["Connector:StudioOrigins:0"] = "http://127.0.0.1:4200" }));
+        var csrf = await CsrfAsync(connector.Client, "http://127.0.0.1:4200");
+
+        using (var configured = Mutation(HttpMethod.Post, "/api/projects", "http://127.0.0.1:4200", csrf))
+            Assert.Equal(HttpStatusCode.OK, (await connector.Client.SendAsync(configured)).StatusCode);
+        using (var defaultOrigin = Mutation(HttpMethod.Post, "/api/projects", ConnectorOptions.DefaultStudioOrigin, csrf))
+            Assert.Equal(HttpStatusCode.Forbidden, (await connector.Client.SendAsync(defaultOrigin)).StatusCode);
+    }
+
+    [Fact]
+    public async Task Replayed_csrf_tokens_are_rejected_across_sessions_logout_and_upstream_rotation()
+    {
+        var transport = new RecordingTransport();
+        await using var connector = ConnectorUnderTest.Boot(transport);
+        var origin = ConnectorOptions.DefaultStudioOrigin;
+        var tokenA = await CsrfAsync(connector.Client);
+        using var browserB = connector.NewBrowser();
+        using var sessionB = await SessionAsync(browserB);
+        var cookieB = ReadCookie(sessionB, ConnectorSessionStore.SessionCookieName);
+        var tokenB = ReadCookie(sessionB, ConnectorSessionStore.CsrfCookieName);
+
+        // Session A's token presented by browser B, which holds its own session.
+        using (var crossSession = Mutation(HttpMethod.Post, "/api/projects", origin, tokenA))
+        {
+            using var response = await browserB.SendAsync(crossSession);
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            Assert.Equal(ConnectorRequestPolicy.CsrfRejected, await CodeAsync(response));
+        }
+        // Header token that does not match the session's cookie token.
+        using (var forgedHeader = Mutation(HttpMethod.Post, "/api/projects", origin, new string('0', 64)))
+            Assert.Equal(HttpStatusCode.Forbidden, (await browserB.SendAsync(forgedHeader)).StatusCode);
+
+        // After logout, the same cookie and token no longer authorize anything.
+        using (var logout = Mutation(HttpMethod.Delete, "/connector/session", origin, tokenB))
+            Assert.Equal(HttpStatusCode.NoContent, (await browserB.SendAsync(logout)).StatusCode);
+        using (var afterLogout = Mutation(HttpMethod.Post, "/api/projects", origin, tokenB))
+        {
+            afterLogout.Headers.Add("Cookie", $"{ConnectorSessionStore.SessionCookieName}={cookieB}; {ConnectorSessionStore.CsrfCookieName}={tokenB}");
+            using var raw = connector.NewCookielessBrowser();
+            using var response = await raw.SendAsync(afterLogout);
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+            Assert.Equal(ConnectorRequestPolicy.SessionRequired, await CodeAsync(response));
         }
 
-        using var accepted = new HttpRequestMessage(HttpMethod.Post, "/api/projects");
-        accepted.Headers.Add("Origin", ConnectorOptions.DefaultStudioOrigin);
-        accepted.Headers.Add(ConnectorSessionStore.CsrfHeaderName, csrf);
-        accepted.Content = JsonContent.Create(new { displayName = "test" });
-        Assert.Equal(HttpStatusCode.OK, (await client.SendAsync(accepted)).StatusCode);
+        // An upstream switch ends every session, so A's still-valid pair dies too.
+        connector.Services.GetRequiredService<ConnectorSessionStore>().RotateAll();
+        using (var afterRotation = Mutation(HttpMethod.Post, "/api/projects", origin, tokenA))
+            Assert.Equal(HttpStatusCode.Unauthorized, (await connector.Client.SendAsync(afterRotation)).StatusCode);
+
+        Assert.Empty(transport.ProxiedRequests);
+    }
+
+    [Fact]
+    public void Sessions_expire_after_their_absolute_lifetime()
+    {
+        var time = new FakeTimeProvider(DateTimeOffset.Parse("2026-09-28T08:00:00Z"));
+        var sessions = new ConnectorSessionStore(TimeSpan.FromHours(12), time);
+        var issued = new DefaultHttpContext();
+        sessions.Issue(issued.Response);
+        var request = new DefaultHttpContext();
+        request.Request.Headers.Cookie = string.Join("; ", issued.Response.Headers.SetCookie
+            .Select(value => value!.Split(';', 2)[0]));
+
+        Assert.True(sessions.ValidateSession(request.Request, out _));
+        time.Advance(TimeSpan.FromHours(12));
+        Assert.False(sessions.ValidateSession(request.Request, out _));
+    }
+
+    [Fact]
+    public async Task First_same_origin_read_starts_a_session_without_a_bootstrap_call()
+    {
+        var transport = new RecordingTransport();
+        await using var connector = ConnectorUnderTest.Boot(transport);
+
+        using var read = new HttpRequestMessage(HttpMethod.Get, "/api/tasks/grouped");
+        read.Headers.Add("Sec-Fetch-Site", "same-origin");
+        using var response = await connector.Client.SendAsync(read);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var csrf = ReadCookie(response, ConnectorSessionStore.CsrfCookieName);
+
+        using var mutation = Mutation(HttpMethod.Post, "/api/projects", ConnectorOptions.DefaultStudioOrigin, csrf);
+        Assert.Equal(HttpStatusCode.OK, (await connector.Client.SendAsync(mutation)).StatusCode);
+
+        using var crossSite = new HttpRequestMessage(HttpMethod.Get, "/api/tasks/grouped");
+        crossSite.Headers.Add("Sec-Fetch-Site", "cross-site");
+        using var fresh = connector.NewBrowser();
+        Assert.Equal(HttpStatusCode.Unauthorized, (await fresh.SendAsync(crossSite)).StatusCode);
+    }
+
+    [Fact]
+    public async Task Hub_negotiate_needs_origin_and_session_but_no_csrf_header()
+    {
+        var transport = new RecordingTransport();
+        await using var connector = ConnectorUnderTest.Boot(transport);
+
+        using (var noSession = new HttpRequestMessage(HttpMethod.Post, "/hubs/jobs/negotiate?negotiateVersion=1"))
+        {
+            noSession.Headers.Add("Origin", ConnectorOptions.DefaultStudioOrigin);
+            Assert.Equal(HttpStatusCode.Unauthorized, (await connector.Client.SendAsync(noSession)).StatusCode);
+        }
+
+        await CsrfAsync(connector.Client);
+        using (var foreign = new HttpRequestMessage(HttpMethod.Post, "/hubs/jobs/negotiate?negotiateVersion=1"))
+        {
+            foreign.Headers.Add("Origin", "http://evil.example");
+            Assert.Equal(HttpStatusCode.Forbidden, (await connector.Client.SendAsync(foreign)).StatusCode);
+        }
+        using (var negotiate = new HttpRequestMessage(HttpMethod.Post, "/hubs/jobs/negotiate?negotiateVersion=1"))
+        {
+            negotiate.Headers.Add("Origin", ConnectorOptions.DefaultStudioOrigin);
+            Assert.Equal(HttpStatusCode.OK, (await connector.Client.SendAsync(negotiate)).StatusCode);
+        }
+        // Any other hub POST (a long-polling send) is a mutation and needs CSRF.
+        using (var send = new HttpRequestMessage(HttpMethod.Post, "/hubs/jobs?id=connection"))
+        {
+            send.Headers.Add("Origin", ConnectorOptions.DefaultStudioOrigin);
+            send.Content = new StringContent("{}");
+            Assert.Equal(HttpStatusCode.Forbidden, (await connector.Client.SendAsync(send)).StatusCode);
+        }
+
+        Assert.Equal("/hubs/v1/studio/negotiate", Assert.Single(transport.ProxiedRequests).Path);
     }
 
     [Fact]
@@ -107,17 +327,13 @@ public sealed class ConnectorProfileTests
     {
         var transport = new RecordingTransport();
         await using var connector = ConnectorUnderTest.Boot(transport);
-        using var session = await SessionAsync(connector.Client);
-        var csrf = ReadCookie(session, ConnectorSessionStore.CsrfCookieName);
+        var csrf = await CsrfAsync(connector.Client);
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/projects");
-        request.Headers.Add("Origin", ConnectorOptions.DefaultStudioOrigin);
-        request.Headers.Add(ConnectorSessionStore.CsrfHeaderName, csrf);
+        using var request = Mutation(HttpMethod.Post, "/api/projects", ConnectorOptions.DefaultStudioOrigin, csrf);
         request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "browser-token");
         request.Headers.Add("X-Forwarded-For", "203.0.113.7");
         request.Headers.Add(TaskServerProtocol.HeaderName, "999");
         request.Headers.Add("X-Client-Id", "studio-window-1");
-        request.Content = JsonContent.Create(new { displayName = "test" });
 
         Assert.Equal(HttpStatusCode.OK, (await connector.Client.SendAsync(request)).StatusCode);
         var observed = Assert.Single(transport.ProxiedRequests);
@@ -127,6 +343,21 @@ public sealed class ConnectorProfileTests
         Assert.False(observed.HasCookie);
         Assert.False(observed.HasForwardedFor);
         Assert.Equal("/api/v1/projects", observed.Path);
+    }
+
+    [Fact]
+    public async Task Forwarded_requests_carry_the_negotiated_protocol_version()
+    {
+        var transport = new RecordingTransport
+        {
+            Attach = (request, _) => (HttpStatusCode.OK, RecordingTransport.MatchingServer(request) with { ApiProtocol = 1 }),
+        };
+        await using var connector = ConnectorUnderTest.Boot(transport);
+        var csrf = await CsrfAsync(connector.Client);
+
+        using var request = Mutation(HttpMethod.Post, "/api/projects", ConnectorOptions.DefaultStudioOrigin, csrf);
+        Assert.Equal(HttpStatusCode.OK, (await connector.Client.SendAsync(request)).StatusCode);
+        Assert.Equal("1", Assert.Single(transport.ProxiedRequests).Protocol);
     }
 
     [Fact]
@@ -140,13 +371,14 @@ public sealed class ConnectorProfileTests
         // than failing the request.
         var transport = new RecordingTransport();
         await using var connector = ConnectorUnderTest.Boot(transport);
-        using var session = await SessionAsync(connector.Client);
-        var csrf = ReadCookie(session, ConnectorSessionStore.CsrfCookieName);
+        var csrf = await CsrfAsync(connector.Client);
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/tasks/tsk_core-attach-demo/move");
-        request.Headers.Add("Origin", ConnectorOptions.DefaultStudioOrigin);
-        request.Headers.Add(ConnectorSessionStore.CsrfHeaderName, csrf);
-        request.Content = JsonContent.Create(new { targetState = "2-ready" });
+        using var request = Mutation(
+            HttpMethod.Post,
+            "/api/tasks/tsk_core-attach-demo/move",
+            ConnectorOptions.DefaultStudioOrigin,
+            csrf,
+            new { targetState = "2-ready" });
 
         Assert.Equal(HttpStatusCode.OK, (await connector.Client.SendAsync(request)).StatusCode);
         var observed = Assert.Single(transport.ProxiedRequests);
@@ -156,12 +388,116 @@ public sealed class ConnectorProfileTests
     }
 
     [Fact]
+    public async Task Rotated_credential_is_used_without_a_restart()
+    {
+        var credentials = new MutableCredentialSource("studio-secret-v1");
+        var revoked = false;
+        var transport = new RecordingTransport
+        {
+            ForwardStatus = observed => revoked && observed.Authorization == "Bearer studio-secret-v1"
+                ? HttpStatusCode.Unauthorized
+                : HttpStatusCode.OK,
+        };
+        await using var connector = ConnectorUnderTest.Boot(new ConnectorTestSetup(
+            transport,
+            credentials,
+            Settings: new Dictionary<string, string?> { ["Connector:CredentialRefreshSeconds"] = "300" }));
+        var csrf = await CsrfAsync(connector.Client);
+
+        using (var before = Mutation(HttpMethod.Post, "/api/projects", ConnectorOptions.DefaultStudioOrigin, csrf))
+            Assert.Equal(HttpStatusCode.OK, (await connector.Client.SendAsync(before)).StatusCode);
+
+        // Overlap-and-prove rotation: the operator stores the new credential,
+        // then the server revokes the old one. The refresh interval (300 s)
+        // has not elapsed, so only the upstream 401 makes the connector re-read.
+        credentials.Rotate("studio-secret-v2");
+        revoked = true;
+        using (var stale = Mutation(HttpMethod.Post, "/api/projects", ConnectorOptions.DefaultStudioOrigin, csrf))
+            Assert.Equal(HttpStatusCode.Unauthorized, (await connector.Client.SendAsync(stale)).StatusCode);
+        using (var after = Mutation(HttpMethod.Post, "/api/projects", ConnectorOptions.DefaultStudioOrigin, csrf))
+            Assert.Equal(HttpStatusCode.OK, (await connector.Client.SendAsync(after)).StatusCode);
+
+        Assert.Equal(
+            ["Bearer studio-secret-v1", "Bearer studio-secret-v1", "Bearer studio-secret-v2"],
+            transport.ProxiedRequests.Select(request => request.Authorization));
+        // The new credential was proven by a fresh attach before it was used.
+        Assert.Equal("Bearer studio-secret-v2", transport.AttachAuthorizations[^1]);
+    }
+
+    [Theory]
+    [InlineData(3, 4, 1, 1, ConnectorAttachFailureCodes.ProtocolIncompatible)]
+    [InlineData(1, 2, 2, 3, ConnectorAttachFailureCodes.HubProtocolIncompatible)]
+    public async Task Protocol_mismatch_refuses_the_attach_with_an_operator_readable_reason(
+        int serverMinimumApi,
+        int serverMaximumApi,
+        int serverMinimumHub,
+        int serverMaximumHub,
+        string expectedReason)
+    {
+        var transport = new RecordingTransport
+        {
+            Attach = (request, _) =>
+            {
+                var server = RecordingTransport.ServerRange(serverMinimumApi, serverMaximumApi, serverMinimumHub, serverMaximumHub);
+                var api = ProtocolNegotiation.HighestCommon(request.MinimumApiProtocol, request.MaximumApiProtocol, serverMinimumApi, serverMaximumApi);
+                var code = api is null ? ProtocolAttachCodes.ApiProtocolIncompatible : ProtocolAttachCodes.HubProtocolIncompatible;
+                return (HttpStatusCode.UpgradeRequired, new ProtocolAttachResponse(
+                    false, code, server, null, null, null, "studio-robert-windows",
+                    $"Task Server test-server speaks {serverMinimumApi}-{serverMaximumApi} and hub {serverMinimumHub}-{serverMaximumHub}."));
+            },
+        };
+        await using var connector = ConnectorUnderTest.Boot(transport);
+        var csrf = await CsrfAsync(connector.Client);
+
+        using var request = Mutation(HttpMethod.Post, "/api/projects", ConnectorOptions.DefaultStudioOrigin, csrf);
+        using var response = await connector.Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(ConnectorProxy.AttachRefusedCode, body.GetProperty("code").GetString());
+        Assert.Equal(expectedReason, body.GetProperty("reason").GetString());
+        Assert.Contains("Task Server test-server speaks", body.GetProperty("message").GetString());
+        Assert.Empty(transport.ProxiedRequests);
+
+        using var readiness = await connector.Client.GetAsync("/readyz");
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, readiness.StatusCode);
+        var ready = await readiness.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(expectedReason, ready.GetProperty("failureCode").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(ready.GetProperty("failureReason").GetString()));
+    }
+
+    [Fact]
+    public async Task Absent_credential_refuses_the_attach_and_never_reaches_the_upstream()
+    {
+        var transport = new RecordingTransport();
+        await using var connector = ConnectorUnderTest.Boot(new ConnectorTestSetup(transport, new MutableCredentialSource(null)));
+        var csrf = await CsrfAsync(connector.Client);
+
+        using var request = Mutation(HttpMethod.Post, "/api/projects", ConnectorOptions.DefaultStudioOrigin, csrf);
+        using var response = await connector.Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(ConnectorCredentialFailureCodes.Unavailable, body.GetProperty("reason").GetString());
+        Assert.Empty(transport.ProxiedRequests);
+        Assert.Empty(transport.AttachAuthorizations);
+    }
+
+    [Fact]
     public async Task Upstream_switch_is_validated_atomic_and_rotates_sessions()
     {
         var options = TestOptions();
         var sessions = new ConnectorSessionStore();
         var transport = new RecordingTransport();
-        var manager = new ConnectorUpstreamManager(options, new TestCredentialSource(), transport, sessions);
+        var credentials = new ConnectorCredentialProvider(options, new MutableCredentialSource("studio-secret"), TimeProvider.System);
+        var manager = new ConnectorUpstreamManager(
+            options,
+            credentials,
+            transport,
+            sessions,
+            ConnectorProtocolRange.Supported,
+            ConnectorRouteInventory.Load(),
+            TimeProvider.System);
         var old = manager.Capture();
         var candidate = old with { Generation = 2, BaseUri = new Uri("https://fallback.invalid/") };
         var issued = new DefaultHttpContext();
@@ -204,6 +540,7 @@ public sealed class ConnectorProfileTests
         var json = await readiness.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("ready", json.GetProperty("status").GetString());
         Assert.Equal("remote-task-server", json.GetProperty("upstream").GetString());
+        Assert.Equal(TaskServerHubProtocol.Current, json.GetProperty("hubProtocol").GetInt32());
         Assert.Equal(ConnectorRouteInventory.Load().RouteChecksum,
             json.GetProperty("routeChecksum").GetString());
         var body = await readiness.Content.ReadAsStringAsync();
@@ -242,23 +579,22 @@ public sealed class ConnectorProfileTests
     }
 
     [Fact]
-    public void Docker_secret_requires_owner_read_only_permissions()
+    public void Credential_supplied_through_an_environment_variable_stops_the_boot()
     {
-        if (OperatingSystem.IsWindows()) return;
-
-        var path = Path.Combine(Path.GetTempPath(), $"connector-secret-{Guid.NewGuid():N}");
+        const string variable = "Connector__BearerToken";
+        var previous = Environment.GetEnvironmentVariable(variable);
+        Environment.SetEnvironmentVariable(variable, "env-studio-secret");
         try
         {
-            File.WriteAllText(path, "docker-studio-secret\n");
-            File.SetUnixFileMode(path, UnixFileMode.UserRead);
-            Assert.Equal("docker-studio-secret", ConnectorCredentialSource.ReadDockerSecret(path));
-
-            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-            Assert.Throws<InvalidOperationException>(() => ConnectorCredentialSource.ReadDockerSecret(path));
+            var exception = Assert.ThrowsAny<Exception>(() =>
+                ConnectorUnderTest.Boot(new RecordingTransport()));
+            var message = Flatten(exception);
+            Assert.Contains("Connector:BearerToken", message, StringComparison.Ordinal);
+            Assert.DoesNotContain("env-studio-secret", message, StringComparison.Ordinal);
         }
         finally
         {
-            File.Delete(path);
+            Environment.SetEnvironmentVariable(variable, previous);
         }
     }
 
@@ -284,191 +620,90 @@ public sealed class ConnectorProfileTests
         Assert.Throws<InvalidOperationException>(() => ConnectorHost.ValidateConfiguredListener(extraEndpoint));
     }
 
-    private static WebApplicationFactory<Program> BuildFactory(RecordingTransport transport)
-        => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
-        {
-            builder.UseEnvironment("Test");
-            builder.UseSetting(ConnectorProfile.ConfigurationKey, "connector");
-            builder.UseSetting("Connector:Mode", "native");
-            builder.UseSetting("Connector:Upstream:Mode", "remote");
-            builder.UseSetting("Connector:Upstream:BaseUrl", "https://task-server.invalid");
-            builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(
-                new Dictionary<string, string?>
-                {
-                    [ConnectorProfile.ConfigurationKey] = "connector",
-                    ["Connector:Mode"] = "native",
-                    ["Connector:Upstream:Mode"] = "remote",
-                    ["Connector:Upstream:BaseUrl"] = "https://task-server.invalid",
-                }));
-            builder.ConfigureTestServices(services =>
-            {
-                services.RemoveAll<IConnectorCredentialSource>();
-                services.RemoveAll<IConnectorUpstreamTransport>();
-                services.AddSingleton<IConnectorCredentialSource, TestCredentialSource>();
-                services.AddSingleton<IConnectorUpstreamTransport>(transport);
-            });
-        });
-
-    private static HttpClient CreateClient(WebApplicationFactory<Program> factory)
-        => factory.CreateClient(new WebApplicationFactoryClientOptions
-        {
-            BaseAddress = new Uri("http://[::1]:5031"),
-            HandleCookies = true,
-            AllowAutoRedirect = false,
-        });
-
     /// <summary>
-    /// A booted connector host and its client. WebApplicationFactory runs the
-    /// real entry point inside the xunit process, so
-    /// <see cref="ConnectorHost.ValidateConfiguredListener"/> reads the
-    /// configuration of whichever process started the test run. The host
-    /// therefore boots with the ambient listener configuration removed: the
-    /// connector owns exactly one endpoint and must not inherit a listener from
-    /// its launcher. The collection is serial, so no other host boots while the
-    /// ambient configuration is set aside.
+    /// Replaces each <c>{name}</c> in an inventory path with a value derived
+    /// from its position, so two aliases of one physical route (such as
+    /// <c>{id}</c> and <c>{projectId}</c>) produce the same request.
     /// </summary>
-    private sealed class ConnectorUnderTest : IAsyncDisposable
+    private static string SamplePath(string path)
     {
-        private readonly WebApplicationFactory<Program> _factory;
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return "/" + string.Join('/', segments.Select((segment, index) => SampleSegment(segment, index)));
+    }
 
-        private ConnectorUnderTest(WebApplicationFactory<Program> factory, HttpClient client)
-        {
-            _factory = factory;
-            Client = client;
-        }
-
-        public HttpClient Client { get; }
-        public IServiceProvider Services => _factory.Services;
-
-        public static ConnectorUnderTest Boot(RecordingTransport transport)
-        {
-            using var owned = new OwnedListenerConfiguration();
-            var factory = BuildFactory(transport);
-            try
-            {
-                // CreateClient starts the host, so the boot - and with it the
-                // listener guard - has to happen inside the scope rather than
-                // at the first request.
-                return new ConnectorUnderTest(factory, CreateClient(factory));
-            }
-            catch
-            {
-                factory.Dispose();
-                throw;
-            }
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            Client.Dispose();
-            await _factory.DisposeAsync();
-        }
+    private static string SampleSegment(string segment, int index)
+    {
+        if (!segment.Contains('{')) return segment;
+        if (!segment.StartsWith('{') || !segment.EndsWith('}'))
+            return System.Text.RegularExpressions.Regex.Replace(segment, @"\{[^{}/]+\}", $"p{index}");
+        return segment.Contains('*') ? $"p{index}/deep" : $"p{index}";
     }
 
     /// <summary>
-    /// Removes every variable that carries listener configuration
-    /// (<see cref="HostListenerEnvironment"/>) for the duration of a host boot
-    /// and restores the process environment afterwards.
+    /// The approved upstream path for <see cref="SamplePath"/>: a target
+    /// parameter takes the value of the same-named source parameter, else the
+    /// source parameter at the same position, else the reserved unscoped
+    /// project token for a project id the legacy route does not carry.
     /// </summary>
-    private sealed class OwnedListenerConfiguration : IDisposable
+    private static string ExpectedTarget(ConnectorRouteOperation operation)
     {
-        private readonly List<KeyValuePair<string, string?>> _removed = [];
-
-        public OwnedListenerConfiguration()
+        var source = operation.Path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var sourceIndexByName = source
+            .Select((segment, index) => (segment, index))
+            .Where(item => item.segment.StartsWith('{'))
+            .ToDictionary(item => ParameterName(item.segment), item => item.index);
+        var embeddedIndexByName = source
+            .Select((segment, index) => (segment, index))
+            .Where(item => item.segment.Contains('{') && !item.segment.StartsWith('{'))
+            .SelectMany(item => System.Text.RegularExpressions.Regex.Matches(item.segment, @"\{([^{}/]+)\}")
+                .Select(match => (name: match.Groups[1].Value, item.index)))
+            .ToDictionary(item => item.name, item => item.index);
+        var target = operation.TargetRoute.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var expanded = target.Select((segment, index) =>
         {
-            foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
+            if (!segment.Contains('{')) return segment;
+            if (!segment.StartsWith('{'))
             {
-                var name = (string)entry.Key;
-                if (!HostListenerEnvironment.Carries(name)) continue;
-                _removed.Add(new KeyValuePair<string, string?>(name, entry.Value as string));
-                Environment.SetEnvironmentVariable(name, null);
+                return System.Text.RegularExpressions.Regex.Replace(segment, @"\{([^{}/]+)\}", match =>
+                    $"p{embeddedIndexByName[match.Groups[1].Value]}");
             }
-        }
-
-        public void Dispose()
-        {
-            foreach (var (name, value) in _removed) Environment.SetEnvironmentVariable(name, value);
-        }
+            var name = ParameterName(segment);
+            if (sourceIndexByName.TryGetValue(name, out var sourceIndex))
+                return SampleSegment(source[sourceIndex], sourceIndex);
+            if (index < source.Length && source[index].StartsWith('{'))
+                return SampleSegment(source[index], index);
+            Assert.Equal("projectId", name);
+            return ConnectorProxy.UnscopedProjectToken;
+        });
+        return "/" + string.Join('/', expanded);
     }
 
-    private static async Task<HttpResponseMessage> SessionAsync(HttpClient client)
+    private static string ParameterName(string segment)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, "/connector/session");
-        request.Headers.Add("Origin", ConnectorOptions.DefaultStudioOrigin);
-        var response = await client.SendAsync(request);
-        response.EnsureSuccessStatusCode();
-        return response;
+        var value = segment[1..^1].Trim('*');
+        var constraint = value.IndexOf(':');
+        return constraint < 0 ? value : value[..constraint];
     }
 
-    private static string ReadCookie(HttpResponseMessage response, string name)
+    private static string Flatten(Exception exception)
     {
-        var prefix = name + "=";
-        var cookie = response.Headers.GetValues("Set-Cookie")
-            .Single(value => value.StartsWith(prefix, StringComparison.Ordinal));
-        return cookie[prefix.Length..cookie.IndexOf(';')];
+        var messages = new List<string>();
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+            messages.Add(current.Message);
+        return string.Join(" | ", messages);
     }
 
-    private static ConnectorOptions TestOptions() => new(
+    internal static ConnectorOptions TestOptions() => new(
         ConnectorOptions.NativeMode,
         ConnectorOptions.DefaultAuthority,
-        ConnectorOptions.DefaultStudioOrigin,
+        ConnectorOptions.DefaultStudioOrigins,
         "remote",
         new Uri("https://task-server.invalid/"),
         null,
         1,
-        "remote-task-server");
-
-    private sealed class TestCredentialSource : IConnectorCredentialSource
-    {
-        public ConnectorCredentialLoadResult Load(ConnectorOptions options)
-            => new(new ConnectorCredential("studio-secret"), null);
-    }
-
-    private sealed record ObservedRequest(
-        string Path,
-        string? Authorization,
-        string? Protocol,
-        string? ClientId,
-        bool HasCookie,
-        bool HasForwardedFor);
-
-    private sealed class RecordingTransport : IConnectorUpstreamTransport
-    {
-        public List<ObservedRequest> ProxiedRequests { get; } = [];
-
-        public Task<HttpResponseMessage> SendAsync(
-            ConnectorUpstreamSnapshot snapshot,
-            HttpRequestMessage request,
-            CancellationToken cancellationToken)
-        {
-            var path = request.RequestUri!.AbsolutePath;
-            if (path == "/readyz") return Task.FromResult(Json(HttpStatusCode.OK, new { status = "ready" }));
-            if (path == "/api/v1/protocol/compatibility")
-            {
-                return Task.FromResult(Json(HttpStatusCode.OK, new ProtocolCompatibilityResponse(
-                    true,
-                    new ProtocolRangeDto(2, 1, 2, "test", "task-server", ["studio"]))));
-            }
-
-            ProxiedRequests.Add(new ObservedRequest(
-                path,
-                request.Headers.Authorization?.ToString(),
-                request.Headers.GetValues(TaskServerProtocol.HeaderName).SingleOrDefault(),
-                request.Headers.TryGetValues("X-Client-Id", out var clientIds) ? clientIds.SingleOrDefault() : null,
-                request.Headers.Contains("Cookie"),
-                request.Headers.Contains("X-Forwarded-For")));
-            return Task.FromResult(Json(HttpStatusCode.OK, new { proxied = true }));
-        }
-
-        public Task<ClientWebSocket> ConnectWebSocketAsync(
-            ConnectorUpstreamSnapshot snapshot,
-            Uri uri,
-            IReadOnlyList<string> subProtocols,
-            string? clientId,
-            CancellationToken cancellationToken)
-            => throw new NotSupportedException();
-
-        private static HttpResponseMessage Json(HttpStatusCode status, object body)
-            => new(status) { Content = JsonContent.Create(body) };
-    }
+        "remote-task-server",
+        ConnectorOptions.DefaultCredentialTarget,
+        null,
+        ConnectorOptions.DefaultCredentialRefreshInterval,
+        ConnectorOptions.DefaultSessionLifetime);
 }

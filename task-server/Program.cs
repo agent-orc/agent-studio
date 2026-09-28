@@ -244,7 +244,7 @@ app.MapStudioP2Endpoints();
 app.MapStudioP3AdministrationEndpoints();
 app.MapHub<TaskServerEventsHub>("/hubs/events")
     .RequireTaskServerScope(TaskServerScopes.EventsSubscribe);
-app.MapHub<TaskServerStudioHub>("/hubs/v1/studio")
+app.MapHub<TaskServerStudioHub>(TaskServerHubProtocol.StudioHubPath)
     .RequireTaskServerScope(TaskServerScopes.EventsSubscribe);
 TaskServerPublicDemoExecutionRouteInventory.ValidateStartup(
     app,

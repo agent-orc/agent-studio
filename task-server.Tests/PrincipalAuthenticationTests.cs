@@ -300,7 +300,10 @@ public sealed class PrincipalAuthenticationTests
         var writeRoutesUsingReadScope = factory.Services.GetRequiredService<EndpointDataSource>().Endpoints
             .OfType<RouteEndpoint>()
             .Where(endpoint => endpoint.RoutePattern.RawText?.StartsWith("/api/v1", StringComparison.Ordinal) == true)
-            .Where(endpoint => endpoint.RoutePattern.RawText != "/api/v1/protocol/compatibility")
+            // Both protocol handshakes are POSTs that change no state; the
+            // Studio attach only needs a readable, authenticated principal.
+            .Where(endpoint => endpoint.RoutePattern.RawText is not "/api/v1/protocol/compatibility"
+                               and not "/api/v1/protocol/attach")
             .Where(endpoint => endpoint.Metadata.GetMetadata<HttpMethodMetadata>()?.HttpMethods
                 .Any(method => !HttpMethods.IsGet(method)) == true)
             .Where(endpoint => endpoint.Metadata.GetOrderedMetadata<TaskServerScopeMetadata>()

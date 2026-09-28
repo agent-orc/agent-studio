@@ -14,13 +14,17 @@ param(
 
 # Detached process supervisor invoked by the AgentOrchestrator-StudioConnector
 # Scheduled Task. Same shape as start-task-server.ps1. studio-connector.env
-# keys use the ASP.NET Core double-underscore section separator
-# (TaskServer__BaseUrl, TaskServer__AuthTokenFile, ASPNETCORE_URLS) because
-# agent-studio-bff.exe reads configuration through the standard host
-# environment-variable provider, not a bespoke KEY=VALUE reader. Re-reading
-# the file on every restart is what makes switch-upstream.ps1's profile flip
-# take effect: it rewrites TaskServer__BaseUrl, restarts this task, and the
-# next process picks up the new upstream.
+# keys use the ASP.NET Core double-underscore section separator because the
+# connector reads configuration through the standard host environment-variable
+# provider, not a bespoke KEY=VALUE reader. The hardened connector profile
+# (OrchestratorApi.exe) uses OrchestratorApi__Profile=connector and
+# Connector__Upstream__* keys and holds no secret in this file: it reads the
+# Studio credential from Windows Credential Manager and refuses to boot if a
+# credential key is present. The legacy agent-studio-bff.exe forwarder uses
+# TaskServer__BaseUrl, TaskServer__AuthTokenFile, and ASPNETCORE_URLS.
+# Re-reading the file on every restart is what makes switch-upstream.ps1's
+# profile flip take effect: it rewrites the upstream keys, restarts this task,
+# and the next process picks up the new upstream.
 
 $ErrorActionPreference = 'Stop'
 $executablePath = Join-Path $InstallRoot $ExecutableName

@@ -618,6 +618,15 @@ for the full design rationale.
   a valid persisted principal when `AUTH=bearer`. Missing, malformed, unknown,
   expired, or revoked credentials return 401. Authenticated principals without
   the route scope return 403.
+- `POST /api/v1/protocol/attach` is the Studio connector's authenticated
+  attach handshake (AGT-2984). The connector sends the inclusive `/api/v1` and
+  Studio hub protocol ranges it speaks. The server answers `200` with the
+  highest common version of each and the hub path (`/hubs/v1/studio`). It
+  answers `403 principal-kind-mismatch` for a non-Studio credential and
+  `426 api-protocol-incompatible` or `426 hub-protocol-incompatible` with an
+  operator-readable reason. The attach carries its own ranges, so it is
+  exempt from the `X-Task-Protocol-Version` header gate. `GET /api/v1/protocol`
+  advertises the hub range under `hubs`.
 - `X-Client-Id` and `X-Actor-Id` remain attribution hints. Neither participates
   in authentication or scope decisions.
 - Studio defaults to `tasks:read`, `tasks:write`, `management`, and
