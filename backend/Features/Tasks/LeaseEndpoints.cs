@@ -1756,7 +1756,12 @@ public static class LeaseEndpoints
                         task,
                         repositoryPath,
                         taskProjectSettings,
-                        integrationRef));
+                        integrationRef,
+                        RemoteReviewPlanBuilder.DeliveryChangedFiles(
+                            git,
+                            repositoryPath,
+                            deliveryRange?.MergeBaseSha ?? integrationRef,
+                            run.ResultSha)));
             }
 
             if (!isEpicPlanning

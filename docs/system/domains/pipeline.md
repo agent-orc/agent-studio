@@ -60,6 +60,72 @@ These metrics measure local exact-subject gate requests; they do not estimate
 batch green rate or answer the staging-lane decision in the
 [Gates Dossier](../../operations/gates/index.html#sect5).
 
+## Compose-render gate step (AGT-2981)
+
+A card whose diff can change the Compose stack renders it in its own gate.
+Before this step existed, only the promotion train rendered the stack.
+AGT-2736 rewrote `docker-compose.yml`, passed its Windows card gate, and broke
+release/20260927-101333Z. The scenario overlay still named services and
+secrets that no longer existed.
+
+Trigger paths (`ComposeRenderGatePolicy.IsTrigger`, repository-relative):
+
+| Path | Matches |
+|---|---|
+| `docker-compose.yml` | The root base file |
+| `deploy/compose/**` | Everything under the directory |
+| Any Dockerfile | `Dockerfile`, `*.Dockerfile`, or `Dockerfile.*` in any directory |
+| `scripts/compose-*.sh` | Compose bootstrap, rotation, and smoke scripts |
+| `scripts/scenario*.sh` | The scenario runner and its tests |
+| `testsupport/scenario/**` | The scenario overlay, runner image, and fixtures |
+
+- **Commands.** For a triggering diff the gate appends
+  `bash scripts/scenario.test.sh` and then
+  `bash scripts/compose-smoke-version.test.sh`. Each is appended only when the
+  repository carries that script. Both run `docker compose config` on the
+  base file plus overlay, and both use `node`. Neither contacts the Docker
+  daemon.
+- **Unknown diff.** An unknown diff triggers nothing. The full daemon-backed
+  `scripts/scenario.sh --target compose --level full` stays an operator and
+  release-time check.
+- **Host requirement.** The step requires `compose-render`, capability key
+  `toolchain:compose-render`: a Docker CLI with the compose plugin, meaning
+  `docker compose version` exits 0. It also requires `toolchain:node`.
+- **Advertisement.** A runner advertises the key only when that probe
+  answers. A bare `docker` binary does not qualify. The probe is cached for
+  ten minutes.
+- **Routing.** Requirements are derived from the frozen command text, the same
+  way `toolchain:dotnet` is derived for `dotnet` commands and `Category!=MachineBound`
+  is kept in the Build Profile's test commands:
+  - The Remote Review plan freezes the render steps as `compose-render-N`
+    (`build-tests`, compared on exit status against the merge base).
+    `ReviewLibraryStepPolicy` adds the requirement to their library steps, so
+    Review Plane claim admission hands the attempt only to an executor that
+    advertises it. Today that is the Linux review lane on agent-runner-01.
+  - The Remote Gate plane (`GateDispatchLoop`) adds the key to
+    `GatePlan.RequiredCapabilities`.
+  - The plan's diff is the delivery's changed paths against its merge base
+    in the Studio checkout. If that diff cannot be computed, the plan omits
+    the step, and the pre-develop gate below still owes it.
+- **In-process gate: fail closed, never skip.** The auto-review gate for local
+  cards and the `pre-develop` merge gate run on the Studio seat. They plan the
+  same step from their own diff:
+  - `PreDevelopBuildGate.AppliesTo` now also applies to a Compose-only merge.
+    Previously such a merge was skipped, or ran at build-only.
+  - A host that cannot render fails before preparation. The verdict starts
+    with `gate host cannot render Compose; route the gate to a Linux host`.
+  - That failure is an environment failure (`GateEnvironmentFailure` on the
+    merge path) with `UnmetRequirements = [toolchain:compose-render]`. The card
+    is not charged, the local auto-review gate does not retry it on the same
+    host, and the escalation reason carries the verdict.
+- **Reused Remote Review verdict.** The review verification record
+  (`logs/review-verification.json`) stores the review plan's requirements as
+  `verifiedRequirements`. When the pre-develop gate reuses that verdict
+  (AGT-2839) and it covers `toolchain:compose-render`, the render already ran
+  on a Linux host for exactly this tree, so the step is not repeated. The
+  selection audit says so. Without such coverage, the Windows gate host
+  returns the routing verdict.
+
 ## Key Code
 
 The creation-time `auto-tag` step (AGT-2804) is separate from the card's coding

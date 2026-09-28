@@ -1275,6 +1275,9 @@ public static class V1ReviewPlaneEndpoints
                 MergeBaseSha = request.Workspace.MergeBaseSha,
                 IntegrationTipSha = request.Workspace.IntegrationTipSha,
                 TestedTreeSha = request.Workspace.TreeHash,
+                VerifiedRequirements = review.Subject.Plan is { } plan
+                    ? Contract.ReviewLibraryStepPolicy.RequiredCapabilities(plan)
+                    : [],
                 BuildTestGate = buildTestGate switch
                 {
                     RemoteBuildTestGateClass.Passed => ReviewBuildTestGateClasses.Passed,
@@ -1520,7 +1523,8 @@ public static class V1ReviewPlaneEndpoints
     internal static Contract.ReviewPlanDto FallbackPlan(
         string? repositoryPath,
         BuildProfile? profile,
-        string? integrationRef)
+        string? integrationRef,
+        IReadOnlyList<string>? changedFiles = null)
     {
         var verify = VerifyCommandPlanner.Plan(repositoryPath ?? string.Empty, profile);
         var preparation = GatePreparationPlanner.Plan(
@@ -1568,6 +1572,21 @@ public static class V1ReviewPlaneEndpoints
                     WorkingSubdir: command.WorkingSubdir);
             })
             .ToList();
+        // AGT-2981: a delivery that can change the Compose stack renders it.
+        // The command text carries the compose-render host requirement, so
+        // claim admission routes the attempt to an executor that can run
+        // `docker compose config`. Compared on exit status: a render that is
+        // already red on the merge base is not charged to this delivery.
+        commands.AddRange(Contract.ComposeRenderGatePolicy
+            .Commands(repositoryPath, changedFiles)
+            .Select((command, index) => new Contract.ReviewCommandDto(
+                $"compose-render-{index + 1}",
+                "build-tests",
+                "sh",
+                ["-lc", command],
+                TimeoutSeconds: 1800,
+                CompareToBaseline: true,
+                BaselineMode: Contract.ReviewBaselineModes.ExitStatus)));
         if (commands.Count == 0)
         {
             commands.Add(new Contract.ReviewCommandDto(
