@@ -267,6 +267,8 @@ export class App implements OnInit, OnDestroy {
   private readonly lanePager = inject(LanePagerService);
   readonly selectedJob = this.jobSelection.selected;
   readonly detailPreview = this.jobSelection.detailPreview;
+  /** Bounded core of the selected task; the preview paints it before full detail. */
+  readonly selectedCore = this.jobSelection.selectedCore;
   readonly boardLoading = this.jobService.loading;
   readonly detailLoading = this.jobSelection.detailLoading;
   readonly detailLoadError = this.jobSelection.detailLoadError;

@@ -61,6 +61,11 @@ export class TaskSelectionService {
   /** How many slots ahead of the current pager index to warm. */
   private static readonly PREFETCH_LOOKAHEAD = 2;
   private static readonly DETAIL_TIMEOUT_MS = 15_000;
+  /**
+   * Longest a board click holds the full-detail request for an uncached core.
+   * A slow or warming core must not delay the full detail beyond this.
+   */
+  private static readonly CORE_FIRST_WAIT_MS = 250;
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -205,6 +210,8 @@ export class TaskSelectionService {
   private selectedCoreKey: string | null = null;
   private coreSubscription: Subscription | null = null;
   private coreLookaheadHandle: ReturnType<typeof setTimeout> | null = null;
+  /** Pending `whenCoreSettled` continuation for the selected core. */
+  private coreSettled: (() => void) | null = null;
 
   /** Monotonic event consumed by the studio shell when Back returns to a non-task URL. */
   readonly browserRouteCleared = signal(0);
@@ -393,7 +400,7 @@ export class TaskSelectionService {
   }
 
   private readSelectedCore(key: string, project: string, id: string, seed: TaskCoreView['seed']): void {
-    this.coreSubscription = this.prefetch.getCore(project, id).subscribe({
+    this.coreSubscription = this.prefetch.getCore(project, id, seed.taskKey).subscribe({
       next: (result) => {
         if (key !== this.selectedCoreKey) return;
         const previous = this.selectedCore()?.core ?? null;
@@ -403,6 +410,7 @@ export class TaskSelectionService {
           core: result.core ?? (result.state === 'warming' ? previous : null),
           state: result.state,
         });
+        this.coreSettled?.();
         if (result.core) this.markCoreReady();
         // The task changed while this read was in flight (the server itself
         // reports `ready`): revalidate once instead of trusting the reply.
@@ -415,6 +423,7 @@ export class TaskSelectionService {
       error: () => {
         if (key !== this.selectedCoreKey) return;
         this.selectedCore.update(view => view && { ...view, state: 'error' });
+        this.coreSettled?.();
         this.scheduleCoreLookahead();
       },
     });
@@ -467,9 +476,21 @@ export class TaskSelectionService {
       if (!entry) break;
       const live = this.liveRecord(entry.taskKey);
       const project = live ? this.projectHandleFor(live) : this.projectHandleForStorageReference(entry.watchPath);
-      if (project) targets.push({ project, id: entry.id });
+      if (project) targets.push({ project, id: entry.id, taskKey: entry.taskKey });
     }
     return targets;
+  }
+
+  /**
+   * Pager and advance steps. A prefetched full detail paints at once, so the
+   * preview is dropped. On a miss the stepped-to task paints from its board
+   * record and core (often a lookahead core) instead of leaving the previous
+   * task's detail on screen until the full reply lands.
+   */
+  private previewPagedEntry(entry: LanePagerEntry, detailCached: boolean): void {
+    const record = this.liveRecord(entry.taskKey);
+    if (record) this.presentCore(record);
+    this.detailPreview.set(detailCached ? null : record ?? null);
   }
 
   private clearSelectedCore(): void {
@@ -516,6 +537,10 @@ export class TaskSelectionService {
   /**
    * Board and Explorer entry point. Publishes the cheap route shell now and
    * starts detail work only after the browser has had a frame to paint it.
+   * The shell paints the board record at once; with an uncached core the
+   * full-detail request also waits until the bounded core has answered (at
+   * most `CORE_FIRST_WAIT_MS`), so its heavier render never lands in the
+   * frame that should paint the core heads.
    */
   openDetailAfterPaint(job: TaskInfo): void {
     const previewToken = ++this.openDetailToken;
@@ -531,7 +556,25 @@ export class TaskSelectionService {
       start();
       return;
     }
-    requestAnimationFrame(() => setTimeout(start, 0));
+    this.whenCoreSettled(() => requestAnimationFrame(() => setTimeout(start, 0)));
+  }
+
+  /** Run `then` once the selected core left `seeded`, or after the bounded wait. */
+  private whenCoreSettled(then: () => void): void {
+    if (this.selectedCore()?.state !== 'seeded') {
+      then();
+      return;
+    }
+    let done = false;
+    const settle = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      if (this.coreSettled === settle) this.coreSettled = null;
+      then();
+    };
+    const timer = setTimeout(settle, TaskSelectionService.CORE_FIRST_WAIT_MS);
+    this.coreSettled = settle;
   }
 
   /**
@@ -646,10 +689,9 @@ export class TaskSelectionService {
     this.browserHistoryTaskKey = null;
     this.prepareDetailLoad(() => this.loadPagerEntry(entry));
     if (entry.routeKey) writeTaskUrl(entry.routeKey, 'push', this.taskHistoryState());
-    const pagedRecord = this.liveRecord(entry.taskKey);
-    if (pagedRecord) this.presentCore(pagedRecord);
     const token = ++this.openDetailToken;
     const cached = this.prefetch.take(entry.id, entry.watchPath);
+    this.previewPagedEntry(entry, !!cached);
     if (cached) {
       this.detailLoading.set(false);
       this.triageLaneState = this.pager.snapshot()?.lane ?? cached.info.state;
@@ -671,6 +713,7 @@ export class TaskSelectionService {
         // the suppress-once flag below handles the divergence).
         this.triageLaneState = this.pager.snapshot()?.lane ?? detail.info.state;
         this.selected.set(detail);
+        this.detailPreview.set(null);
         if (!cached) this.markNextTaskRendered();
       },
       error: (err) => {
@@ -923,14 +966,13 @@ export class TaskSelectionService {
     this.browserHistoryTaskKey = null;
     this.prepareDetailLoad(() => this.loadAdvancedEntry(entry));
     if (entry.routeKey) writeTaskUrl(entry.routeKey, 'push', this.taskHistoryState());
-    const advancedRecord = this.liveRecord(entry.taskKey);
-    if (advancedRecord) this.presentCore(advancedRecord);
     const token = ++this.openDetailToken;
     // Optimistic-navigation path: serve a prefetched detail synchronously
     // when one is on hand so the panel re-renders without waiting for the
     // move POST or a fresh GET. The follow-up fetch reconciles any drift
     // (status/log tail) and is the source of truth on a cache miss.
     const cached = this.prefetch.take(entry.id, entry.watchPath);
+    this.previewPagedEntry(entry, !!cached);
     if (cached) {
       this.detailLoading.set(false);
       this.pendingTaskTabReplacement = cached.info.taskKey;
@@ -947,6 +989,7 @@ export class TaskSelectionService {
         this.clearDetailLoadFailure();
         this.pendingTaskTabReplacement = detail.info.taskKey;
         this.selected.set(detail);
+        this.detailPreview.set(null);
         if (!cached) this.markNextTaskRendered();
       },
       error: (err) => {

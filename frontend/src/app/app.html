@@ -196,7 +196,7 @@
               @defer (when studioTabState.activeTab()?.kind === 'task') {
               @if (detailPreview(); as preview) {
                 <main class="workspace__main workspace__main--studio" data-testid="studio-task">
-                  <app-task-detail-load-sections [info]="preview"
+                  <app-task-detail-load-sections [info]="preview" [core]="selectedCore()"
                     [errorMessage]="detailLoadError()?.message ?? null" (back)="closeDetail()" (retry)="retryDetailLoad()" />
                 </main>
               } @else if (selectedJob(); as detail) {
