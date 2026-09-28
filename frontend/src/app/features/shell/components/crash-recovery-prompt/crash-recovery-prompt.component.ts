@@ -30,7 +30,11 @@ export class CrashRecoveryPromptComponent implements OnInit {
   readonly busyId = signal<string | null>(null);
   readonly busyAll = signal(false);
   readonly error = signal<string | null>(null);
-  readonly open = computed(() => this.reviewPending().length > 0);
+  readonly reviewRequested = signal(false);
+  readonly open = computed(() => this.reviewPending().length > 0 && this.reviewRequested());
+
+  openReview(): void { this.reviewRequested.set(true); }
+  closeReview(): void { this.reviewRequested.set(false); }
 
   private stackDispose: (() => void) | null = null;
   private trivialNotificationId: number | null = null;
@@ -43,7 +47,10 @@ export class CrashRecoveryPromptComponent implements OnInit {
     effect(() => {
       if (this.open()) {
         if (!this.stackDispose) {
-          this.stackDispose = this.modalStack.push('crash-recovery-prompt', () => true);
+          this.stackDispose = this.modalStack.push('crash-recovery-prompt', () => {
+            this.closeReview();
+            return true;
+          });
         }
       } else if (this.stackDispose) {
         this.stackDispose();

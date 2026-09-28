@@ -2,6 +2,22 @@
   display: contents;
 }
 
+.crp__pending {
+  position: fixed;
+  z-index: 1100;
+  right: var(--studio-spacing-4);
+  bottom: var(--studio-spacing-4);
+  max-width: min(28rem, calc(100vw - 2rem));
+  padding: var(--studio-spacing-2) var(--studio-spacing-3);
+  border: 1px solid var(--studio-border-strong);
+  border-radius: 8px;
+  background: var(--studio-bg-elevated);
+  color: var(--studio-fg-strong);
+  box-shadow: var(--elevation-modal);
+  font: inherit;
+  cursor: pointer;
+}
+
 .crp {
   display: flex;
   flex-direction: column;

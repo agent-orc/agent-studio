@@ -24,6 +24,7 @@ public static class EndpointMapping
             .AddEndpointFilter<TaskOperationTimingFilter>();
         tasks.MapTaskCrudEndpoints();
         tasks.MapTaskCoreEndpoint();
+        tasks.MapTaskDetailResources();
         tasks.MapBatchMoveEndpoints();
         tasks.MapTaskFilesEndpoints();
         tasks.MapTaskRunnerEndpoints();

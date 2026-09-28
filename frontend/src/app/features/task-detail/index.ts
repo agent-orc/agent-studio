@@ -20,6 +20,7 @@ export { EpicRollupPaneComponent } from './components/epic-rollup-pane/epic-roll
 // public API instead of piercing the feature boundary (ADR-0034).
 export { PlanningSpawnPanelComponent } from './components/planning-spawn-panel/planning-spawn-panel.component';
 export { TaskSelectionService } from './state/task-selection.service';
+export type { TaskCore, TaskResource, ResourceName } from './state/task-core.model';
 export { TriageController } from './state/triage-controller.service';
 export { LanePagerService } from './state/lane-pager.service';
 export {
