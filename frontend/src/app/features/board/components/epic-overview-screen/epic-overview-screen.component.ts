@@ -179,7 +179,7 @@ export class EpicOverviewScreenComponent implements OnInit {
 
   completedDate(value: string | null | undefined): string | null {
     if (!value) return null;
-    return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(value));
+    return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium' }).format(new Date(value));
   }
 
   openEpic(epic: EpicRollup): void {

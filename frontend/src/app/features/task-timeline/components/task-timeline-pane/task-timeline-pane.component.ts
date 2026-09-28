@@ -271,8 +271,8 @@ export class TaskTimelinePaneComponent {
     if (!iso) return '';
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return iso;
-    const time = d.toLocaleTimeString();
-    return this.isToday(d) ? time : `${d.toLocaleDateString()} ${time}`;
+    const time = d.toLocaleTimeString('en-US');
+    return this.isToday(d) ? time : `${d.toLocaleDateString('en-US')} ${time}`;
   }
 
   private isToday(d: Date): boolean {
@@ -288,7 +288,7 @@ export class TaskTimelinePaneComponent {
     if (!iso) return '';
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return iso;
-    return d.toLocaleString();
+    return d.toLocaleString('en-US');
   }
 
   private runSummaryEvent(run: RunRecord): TaskTimelineEvent {

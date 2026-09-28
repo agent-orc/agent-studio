@@ -28,7 +28,7 @@ internal static class SessionContinuationEvidence
         var startedAt = slot.ProcessStartedAtUtc ?? slot.Lease.AcquiredAt;
         var finishedAt = result?.CompletedAtUtc ?? DateTime.UtcNow;
         return new SessionContinuationLedgerEntry(
-            slot.AttemptId,
+            FencedAttemptId(slot),
             slot.TaskKey,
             provider,
             workspace.RepositoryUrl ?? string.Empty,
@@ -50,6 +50,17 @@ internal static class SessionContinuationEvidence
             Math.Max(0, (finishedAt - startedAt).TotalSeconds),
             DateTime.UtcNow);
     }
+
+    /// <summary>
+    /// The attempt id the Task Server fenced for this slot. On the legacy runner
+    /// plane the slot's own attempt id is the lease id (there is no run id),
+    /// while the lease carries the server's attempt id and the completion
+    /// request sends that one; the server rejects continuation evidence whose
+    /// attempt id differs from the completion's. The lease's id wins; the
+    /// slot's id is the fallback for a lease without one.
+    /// </summary>
+    internal static string FencedAttemptId(PersistedRunnerSlot slot)
+        => string.IsNullOrWhiteSpace(slot.Lease.AttemptId) ? slot.AttemptId : slot.Lease.AttemptId;
 
     internal static (string? SessionId, long? TotalTokens) ReadWorkerEvidence(
         string workerDirectory, long? priorSessionTokens = 0)

@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, ElementRef, OnDestroy, OnInit, computed, effect, inject, input, output, signal } from '@angular/core';
-import { TaskState, type AutoLoopSnapshot, type TaskExecutionLocation, type TaskInfo, type PendingIntent, type EpicRollup } from '../../../../models/task.model';
+import { TaskState, isTerminalTaskState, type AutoLoopSnapshot, type TaskExecutionLocation, type TaskInfo, type PendingIntent, type EpicRollup } from '../../../../models/task.model';
 import { RemoteDispatchRejectionComponent } from '../../../../components/remote-dispatch-rejection/remote-dispatch-rejection.component';
 import { GitSummaryService } from '../../../../services/git-summary.service';
 import { TaskService } from '../../../../services/task.service';
@@ -319,7 +319,7 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   readonly needsAttention = computed(() => cardNeedsAttention(this.job()));
   readonly outcomeIssueBadge = computed(() => buildOutcomeIssueBadge(this.job()));
   readonly currentPendingIntent = computed(() =>
-    this.job().state === TaskState.Progress ? this.job().pendingIntent ?? null : null);
+    isTerminalTaskState(this.job().state) ? null : this.job().pendingIntent ?? null);
   readonly currentAutoLoop = computed(() =>
     this.job().state === TaskState.Progress ? this.job().autoLoop ?? null : null);
   readonly currentQuotaWait = computed(() =>

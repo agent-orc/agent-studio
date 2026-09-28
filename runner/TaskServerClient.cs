@@ -790,14 +790,18 @@ public sealed class TaskServerClient : IDisposable
             ReconciliationActions: FromContract(claim.ReconciliationActions),
             RunSpec: claim.MechanicalFreshRoute is { } mechanicalRoute
                 ? new RunSpecDto(mechanicalRoute.CliType, mechanicalRoute.Model, mechanicalRoute.ThinkingLevel,
-                    ContextMode: CodingAgentRunner.Model.CliContextModes.Clean)
-                : claim.ModelFallback is null
+                    ContextMode: CodingAgentRunner.Model.CliContextModes.Clean,
+                    FollowUp: claim.FollowUp)
+                : claim.ModelFallback is null && claim.FollowUp is null
                     ? null
                     : new RunSpecDto(
-                        claim.ModelFallback.CliType,
-                        claim.ModelFallback.To,
-                        claim.ModelFallback.ThinkingLevel,
-                        ContextMode: CodingAgentRunner.Model.CliContextModes.Clean),
+                        claim.ModelFallback?.CliType,
+                        claim.ModelFallback?.To,
+                        claim.ModelFallback?.ThinkingLevel,
+                        ContextMode: claim.ModelFallback is null
+                            ? null
+                            : CodingAgentRunner.Model.CliContextModes.Clean,
+                        FollowUp: claim.FollowUp),
             ContinuationBaseRef: claim.ContinuationBaseRef,
             ContinuationBaseSha: claim.ContinuationBaseSha,
             PreviousSession: claim.PreviousSession,
@@ -1236,7 +1240,8 @@ public sealed class TaskServerClient : IDisposable
                 req.LeaseId,
                 req.FencingToken,
                 req.RequestedTtlSeconds ?? 120,
-                ToContract(req.Inventory)),
+                ToContract(req.Inventory),
+                req.StartedPromptSha256),
             ct);
         if (response?.Lease is not null)
         {

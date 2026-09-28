@@ -407,7 +407,7 @@ export class ActivityLogViewComponent implements OnDestroy {
   }
 
   formatTime(dateStr: string): string {
-    return new Date(dateStr).toLocaleTimeString([], {
+    return new Date(dateStr).toLocaleTimeString('en-US', {
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit'

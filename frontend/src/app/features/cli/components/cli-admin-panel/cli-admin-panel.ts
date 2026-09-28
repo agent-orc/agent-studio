@@ -281,7 +281,7 @@ export class CliAdminPanelComponent implements OnInit, OnDestroy {
 
   formatReset(resetAt: string | null): string {
     if (!resetAt) return 'reset unknown';
-    return `resets ${new Date(resetAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`;
+    return `resets ${new Date(resetAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`;
   }
 
   barWidth(pct: number | null): number {

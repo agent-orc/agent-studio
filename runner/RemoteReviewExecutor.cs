@@ -1327,6 +1327,11 @@ public sealed class RemoteReviewExecutor
             throw new ArgumentException(
                 "Claim must contain an attempt, immutable subject, and review lease.",
                 nameof(claim));
+        if (!ReviewLibraryStepPolicy.ValidPlan(
+                claim.Subject.Plan, claim.Subject.ExpectedResultSha))
+            throw new ArgumentException(
+                "Claim contains an unsupported review-library step or a changed step digest.",
+                nameof(claim));
     }
 
     private static bool PathsEqual(string left, string right)

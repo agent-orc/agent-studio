@@ -47,6 +47,8 @@ const KIND_LABELS: Readonly<Record<string, string>> = {
   [TIMELINE_KIND.deliveryUnverified]: 'Delivery unverified - stamp refused',
   [TIMELINE_KIND.integrationPendingWarning]: 'Delivery not integrated',
   [TIMELINE_KIND.integrationRecoveryQueued]: 'Integration recovery queued',
+  [TIMELINE_KIND.followUpConsumed]: 'Follow-up delivered',
+  [TIMELINE_KIND.followUpSuperseded]: 'Follow-up superseded',
 };
 
 const HIDDEN_DETAILS = new Set([
@@ -165,6 +167,15 @@ export function timelineEventTitle(event: TaskTimelineEvent): string {
     return `Delivery pending${branch ? ` · ${branch}` : ''}`;
   }
 
+  if (event.kind === TIMELINE_KIND.followUpConsumed) {
+    const run = clean(event.runId);
+    return `Follow-up delivered${run ? ` to run ${run}` : ''}`;
+  }
+
+  if (event.kind === TIMELINE_KIND.followUpSuperseded) {
+    return 'Follow-up superseded by completion';
+  }
+
   return timelineKindLabel(event.kind);
 }
 
@@ -176,6 +187,8 @@ export function timelineEventSummary(event: TaskTimelineEvent): string | null {
     || event.kind === TIMELINE_KIND.taskSpawned
     || event.kind === TIMELINE_KIND.taskReleased
     || event.kind === TIMELINE_KIND.externalCompletion
+    || event.kind === TIMELINE_KIND.followUpConsumed
+    || event.kind === TIMELINE_KIND.followUpSuperseded
     || event.kind === TIMELINE_KIND.postAcceptanceReviewReportRecorded) {
     return null;
   }
@@ -267,7 +280,7 @@ function runDuration(event: TaskTimelineEvent): string | null {
   if (!raw) return null;
   const seconds = Number.parseFloat(raw.replace(',', '.'));
   if (!Number.isFinite(seconds) || seconds < 0) return null;
-  return `${seconds.toLocaleString(undefined, { maximumFractionDigits: 1 })}s`;
+  return `${seconds.toLocaleString('en-US', { maximumFractionDigits: 1 })}s`;
 }
 
 function statusFromRunSummary(summary: string): string | null {

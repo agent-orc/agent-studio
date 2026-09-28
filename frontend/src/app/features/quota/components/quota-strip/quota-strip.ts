@@ -51,7 +51,7 @@ export class QuotaStripComponent implements OnInit, OnDestroy {
     const at = this.report()?.at;
     if (!at) return null;
     try {
-      return new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      return new Date(at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
     } catch {
       return null;
     }

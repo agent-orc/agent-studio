@@ -56,7 +56,7 @@ describe('TaskDetailComponent pending follow-up line', () => {
   // AGT-2747: a saved follow-up that no run has consumed yet must be visible as
   // one quiet line, so an operator can tell "the steer is waiting" from "the
   // steer is gone" without opening the job folder.
-  async function build(pendingIntent: unknown, running: boolean) {
+  async function build(pendingIntent: unknown, running: boolean, state = '2-ready') {
     await TestBed.configureTestingModule({
       imports: [TaskDetailComponent],
       providers: [
@@ -69,7 +69,7 @@ describe('TaskDetailComponent pending follow-up line', () => {
     const fixture = TestBed.createComponent(TaskDetailComponent);
     const component = fixture.componentInstance;
     fixture.componentRef.setInput('detail', {
-      info: { id: 'AGT-2747', watchPath: '/workspace', pendingIntent },
+      info: { id: 'AGT-2747', watchPath: '/workspace', state, pendingIntent },
     });
     (component.isRunning as unknown as { set(value: boolean): void }).set(running);
     return component;
@@ -88,6 +88,12 @@ describe('TaskDetailComponent pending follow-up line', () => {
   it('stays quiet when no intent is saved', async () => {
     const component = await build(undefined, false);
     expect(component.showPendingFollowUp()).toBe(false);
+  });
+
+  it.each(['6-completed', '7-archive'])('stays quiet in terminal lane %s', async (state) => {
+    const component = await build({ mode: 'steer', prompt: 'Stale prompt.' }, false, state);
+    expect(component.showPendingFollowUp()).toBe(false);
+    expect(component.showQueuedFollowUp()).toBe(false);
   });
 });
 

@@ -89,7 +89,7 @@ export class RemoteQueueStarvationBannerComponent implements OnInit, OnDestroy {
 
   formatLimitTime(value: string): string {
     const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString('en-US');
   }
 
   cliLabel(cliType: string): string {
