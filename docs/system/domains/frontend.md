@@ -185,11 +185,21 @@ task core cache for `GET /api/tasks/{id}/core` (see
   re-created from the resident store when its tab returns; filters, lane sort,
   lane focus and collapse live in services, and `ScrollMemoryDirective`
   restores the board and lane-group scroll offsets.
-- **Seed first.** `TaskSelectionService.selectedCore` is set synchronously
-  from the board record: identity, lane, order, runtime activity/location and
-  model/thinking/CLI pins (`seedTaskCore`). Its state is `seeded` until the
-  bounded heads arrive, then `ready` or `stale`; `warming`, `missing`,
-  `denied` and `error` are explicit. The board payload is not widened with
+- **Seed first, then core, then full detail.** `TaskSelectionService.selectedCore`
+  is set synchronously from the board record: identity, lane, order, runtime
+  activity/location and model/thinking/CLI pins (`seedTaskCore`). Its state is
+  `seeded` until the bounded heads arrive, then `ready` or `stale`; `warming`,
+  `missing`, `denied` and `error` are explicit. The task route shell
+  (`TaskDetailLoadSectionsComponent`) renders it: board facts and pins paint
+  at once, the prompt, status and timeline heads paint as escaped text when
+  the core is available, with explicit empty states. Git evidence is not core
+  and keeps its own loading and retry state, so a failed full-detail request
+  never blanks core content already on screen. The shell shows while the full
+  detail loads: board and Explorer clicks, tab restore, and pager or triage
+  steps whose full detail was not prefetched. On a board or Explorer click
+  with an uncached core, the full-detail request waits until the core has
+  answered (at most 250 ms) and a frame has painted, so its heavier render
+  never competes with the core paint. The board payload is not widened with
   prompt, status or timeline heads.
 - **Key and bounds.** A core is keyed by registry project handle plus task id,
   so identical slugs in two projects never share an entry. The cache holds at
@@ -202,8 +212,10 @@ task core cache for `GET /api/tasks/{id}/core` (see
 - **Lookahead.** After the selected core is available and a frame has
   painted, only the next two pager cores are requested. Moving the window or
   leaving the task aborts lookahead that left it. The existing two-peer
-  full-detail prefetch is unchanged until the detail view renders from core
-  (Dossier card 4).
+  full-detail prefetch still serves the instant accept -> next path while its
+  30 s entries are fresh. A pager step that misses it paints the lookahead
+  core instead of leaving the previous task on screen, and cores do not
+  expire with that TTL.
 - **Invalidation is per task and per resource.** Core, runtime and content
   versions travel in the core ETag; Git and usage versions do not. A pushed
   row, a move or a successful own mutation marks only that task's core stale
@@ -215,19 +227,29 @@ task core cache for `GET /api/tasks/{id}/core` (see
   without discarding them.
 - **Eviction for correctness.** A delete (push or own reply), a `404` and a
   project leaving the visible registry evict immediately, including a reply
-  still in flight. A `403` evicts every core of that project.
+  still in flight. A `403` evicts every core of that project. Store events
+  name the task by board `taskKey`, and every in-flight read carries its
+  `taskKey`, so a delete never evicts the same slug in another project. A
+  delete reply that names only an id held by two projects revalidates both
+  instead of evicting either (the deleted one then answers `404`).
 
 Coverage: `task-core-cache.spec.ts` (cache invariants) and
-`task-selection-core.spec.ts` (board -> A -> B -> board, pager reuse,
-A -> B -> A, identical slugs, reconnect, delete, denial) assert zero grouped
-requests on selection and zero duplicate core requests. The browser proof is
-`e2e/task-detail/task-core-board-reuse.spec.ts` (fully mocked API; `PW_BASE_URL`
-may point at a served production bundle). It records the
-`task-core-select-to-ready` span, which ends when the core is available in
-`TaskSelectionService`, not at paint. The resident p95 of at most 50 ms is
-always asserted. The uncached p95 of at most 100 ms is asserted with
-`TASK_SWITCH_BUDGET=1`: on a shared runner that span is dominated by host load,
-and the enforced workstation gate is Dossier card 6. The saving is
+`task-selection-core.spec.ts` (board -> A -> B -> board, pager reuse and
+pager-miss preview, A -> B -> A, identical slugs, reconnect, delete, denial)
+assert zero grouped requests on selection and zero duplicate core requests;
+`task-detail-load-sections.component.spec.ts` covers the core rendering. The
+browser proof is `e2e/task-detail/task-core-board-reuse.spec.ts` (fully mocked
+API; `PW_BASE_URL` may point at a served production bundle). It times each
+selection from the click event to the first animation frame after the
+selected task's core facts are in the DOM, and asserts resident p95 <= 50 ms
+and uncached p95 <= 100 ms by default. A wall-clock verdict is not decidable
+on an oversubscribed host (1-minute load above the CPU count); such a run
+keeps every sample, records the load in its summary and annotates the
+skipped verdict, while the request invariants stay asserted. The mocked core
+latency makes this a client budget; the workstation gate with real reads is
+Dossier card 6. In-app
+diagnostic spans under `?perf=1`: `task-core-select-to-ready` (core available)
+and `task-core-select-to-painted` (heads rendered). The saving is
 conditional: it avoids a grouped handler of p50 350 ms / p95 956 ms and its
 roughly 2.56 MB body only where such a navigation refetch would otherwise
 occur. It is not a claim about tunnel transfer time.

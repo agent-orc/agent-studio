@@ -197,6 +197,89 @@ describe('TaskSelectionService · board record reuse', () => {
     http.expectNone(grouped);
   });
 
+  it('a pager step without a prefetched detail previews the stepped-to task from its core', async () => {
+    open(lane[0]);
+    http.expectOne(core('PROJ-A', 'a')).flush(makeCore('PROJ-A', 'a'));
+    answerDetail(lane[0]);
+    await afterPaint();
+    http.match(anyCore).forEach(r => r.flush(makeCore('PROJ-A', r.request.url.split('/')[3])));
+    expect(selection.selected()?.info.id).toBe('a');
+
+    // The two-peer full-detail prefetch for b is still in flight: a miss.
+    selection.pagerStep(1);
+    // The route shows b's board record and its lookahead core, not a's detail.
+    expect(selection.detailPreview()?.taskKey).toBe(lane[1].taskKey);
+    expect(selection.selectedCore()).toMatchObject({ state: 'ready', core: { id: 'b' }, seed: { id: 'b' } });
+
+    answerDetail(lane[1]);
+    expect(selection.selected()?.info.id).toBe('b');
+    expect(selection.detailPreview()).toBeNull();
+    await afterPaint();
+    http.match(anyCore).forEach(r => r.flush(makeCore('PROJ-A', r.request.url.split('/')[3])));
+    http.expectNone(grouped);
+  });
+
+  it('a pager step onto a prefetched detail paints it without a preview', async () => {
+    open(lane[0]);
+    http.expectOne(core('PROJ-A', 'a')).flush(makeCore('PROJ-A', 'a'));
+    answerDetail(lane[0]);
+    for (const t of [lane[1], lane[2]]) answerDetail(t);
+    await afterPaint();
+    http.match(anyCore).forEach(r => r.flush(makeCore('PROJ-A', r.request.url.split('/')[3])));
+
+    selection.pagerStep(1);
+    expect(selection.selected()?.info.id).toBe('b');
+    expect(selection.detailPreview()).toBeNull();
+    answerDetail(lane[1]);
+    await afterPaint();
+    http.match(anyCore).forEach(r => r.flush(makeCore('PROJ-A', r.request.url.split('/')[3])));
+  });
+
+  it('a board click requests the full detail only after the uncached core answered', async () => {
+    selection.openDetailAfterPaint(lane[0]);
+    TestBed.tick();
+    expect(selection.detailPreview()?.taskKey).toBe(lane[0].taskKey);
+    await afterPaint();
+    // The core is still in flight: no enrichment request competes with its paint.
+    http.expectNone(detail('a'));
+    http.expectOne(core('PROJ-A', 'a')).flush(makeCore('PROJ-A', 'a'));
+    await afterPaint();
+    expect(http.match(detail('a')).length).toBeGreaterThan(0);
+    answerDetail(lane[0]);
+    await afterPaint();
+    http.match(anyCore).forEach(r => r.flush(makeCore('PROJ-A', r.request.url.split('/')[3])));
+  });
+
+  it('a slow core holds the full detail for a bounded time only', async () => {
+    selection.openDetailAfterPaint(lane[0]);
+    TestBed.tick();
+    const pending = http.expectOne(core('PROJ-A', 'a'));
+    await new Promise(resolve => setTimeout(resolve, 300));
+    await afterPaint();
+    expect(http.match(detail('a')).length).toBeGreaterThan(0);
+    answerDetail(lane[0]);
+    pending.flush(makeCore('PROJ-A', 'a'));
+    await afterPaint();
+    http.match(anyCore).forEach(r => r.flush(makeCore('PROJ-A', r.request.url.split('/')[3])));
+  });
+
+  it('a resident core lets a board click request the full detail after one frame', async () => {
+    open(lane[0]);
+    http.expectOne(core('PROJ-A', 'a')).flush(makeCore('PROJ-A', 'a'));
+    answerDetail(lane[0]);
+    selection.closeDetail();
+
+    selection.openDetailAfterPaint(lane[0]);
+    TestBed.tick();
+    expect(selection.selectedCore()).toMatchObject({ state: 'ready', core: { id: 'a' } });
+    http.expectNone(core('PROJ-A', 'a'));
+    await afterPaint();
+    expect(http.match(detail('a')).length).toBeGreaterThan(0);
+    answerDetail(lane[0]);
+    await afterPaint();
+    http.match(anyCore).forEach(r => r.flush(makeCore('PROJ-A', r.request.url.split('/')[3])));
+  });
+
   it('A -> B -> A with late replies keeps A and issues no duplicate core read', () => {
     open(lane[0]);
     const coreA = http.expectOne(core('PROJ-A', 'a'));
