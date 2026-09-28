@@ -1,9 +1,10 @@
-import { DestroyRef, Injectable, computed, effect, inject, signal } from '@angular/core';
-import { Observable, timeout } from 'rxjs';
+import { DestroyRef, Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
+import { Observable, timeout, type Subscription } from 'rxjs';
 import { TaskDetail, TaskInfo, TaskState } from '../../../models/task.model';
+import { seedTaskCore, taskCoreKey, type TaskCoreView } from '../../../models/task-core.model';
 import { TaskService } from '../../../services/task.service';
 import { NotificationService } from '../../../services/notification.service';
-import { TaskDetailPrefetchService } from './task-detail-prefetch.service';
+import { TaskDetailPrefetchService, type TaskCoreTarget } from './task-detail-prefetch.service';
 import { LanePagerService, type LanePagerEntry, type LanePagerSnapshot } from './lane-pager.service';
 import { BoardFiltersService } from '../../board/state/board-filters.service';
 import { laneLabelFor } from './triage-actions.model';
@@ -105,6 +106,38 @@ export class TaskSelectionService {
       this.lastEnsuredJobKey = taskKey;
     });
 
+    // Task core (AGT-2956): whichever surface selected the task, seed its core
+    // from the resident board record and read only the bounded heads. The
+    // board-click, pager and advance paths call `presentCore` before their
+    // detail request; this covers deep links and details resolved elsewhere.
+    effect(() => {
+      const info = this.detailPreview() ?? this.selected()?.info ?? null;
+      if (!info) return;
+      untracked(() => {
+        if (this.selectedCore()?.seed.taskKey === info.taskKey) return;
+        this.presentCore(this.liveRecord(info.taskKey) ?? info);
+      });
+    });
+
+    // Project access: the registry projection lists only projects this viewer
+    // may see. A project leaving it evicts its cores immediately, so no core
+    // content from a revoked project can be painted from memory.
+    effect(() => {
+      const projects = this.projectLookup.allProjects();
+      const ids = new Set(projects.map(project => project.id));
+      const names = new Set(projects.map(project => project.displayName));
+      untracked(() => this.prefetch.retainCoreProjects((id, name) => ids.has(id) || names.has(name)));
+    });
+
+    const invalidated = this.prefetch.coreInvalidated.subscribe((key) => {
+      if (this.selectedCoreKey && (key === null || key === this.selectedCoreKey)) this.refreshSelectedCore();
+    });
+    this.destroyRef.onDestroy(() => {
+      invalidated.unsubscribe();
+      this.coreSubscription?.unsubscribe();
+      if (this.coreLookaheadHandle !== null) clearTimeout(this.coreLookaheadHandle);
+    });
+
     // Detail prefetch: warm the next 1..PREFETCH_LOOKAHEAD entries in the
     // current pager snapshot whenever it changes. This is what makes the
     // accept -> next-task navigation feel instant: by the time the user
@@ -161,6 +194,17 @@ export class TaskSelectionService {
   readonly selected = signal<TaskDetail | null>(null);
   /** Cheap board snapshot used to paint the task route before detail I/O. */
   readonly detailPreview = signal<TaskInfo | null>(null);
+
+  /**
+   * Bounded core of the selected task (AGT-2956). Identity, lane, runtime and
+   * pins are seeded synchronously from the resident board record; the core
+   * itself comes from the shared cache or one coalesced `/core` read. It is
+   * independent of the full-detail payload in `selected`.
+   */
+  readonly selectedCore = signal<TaskCoreView | null>(null);
+  private selectedCoreKey: string | null = null;
+  private coreSubscription: Subscription | null = null;
+  private coreLookaheadHandle: ReturnType<typeof setTimeout> | null = null;
 
   /** Monotonic event consumed by the studio shell when Back returns to a non-task URL. */
   readonly browserRouteCleared = signal(0);
@@ -300,12 +344,142 @@ export class TaskSelectionService {
   }
 
   private getDetailFor(info: TaskInfo) {
-    const project = this.projectLookup.getProjectDisplay(
-      info.projectName,
-      info.watchPath,
-    );
-    const handle = project.id ?? project.shortCode ?? project.displayName;
-    return this.withDetailTimeout(this.jobService.getDetail(info.id, undefined, handle));
+    return this.withDetailTimeout(this.jobService.getDetail(info.id, undefined, this.projectHandleFor(info)));
+  }
+
+  /** Registry handle a task's detail and core are addressed with. */
+  private projectHandleFor(info: Pick<TaskInfo, 'projectName' | 'watchPath'>): string | undefined {
+    const project = this.projectLookup.getProjectDisplay(info.projectName, info.watchPath);
+    return project.id ?? project.shortCode ?? project.displayName ?? undefined;
+  }
+
+  private liveRecord(taskKey: string): TaskInfo | undefined {
+    return this.jobService.jobs().find(task => task.taskKey === taskKey);
+  }
+
+  /**
+   * Publish the selected task's core: seed now, serve a current cached core
+   * synchronously, otherwise join or start one core read. Selection never
+   * touches the grouped board store.
+   */
+  private presentCore(info: TaskInfo): void {
+    const project = this.projectHandleFor(info);
+    if (!project) {
+      this.clearSelectedCore();
+      return;
+    }
+    const key = taskCoreKey(project, info.id);
+    const seed = seedTaskCore(info, project);
+    // Re-presenting the selected task (the after-paint half of a board click,
+    // a detail reply) only refreshes board facts. Changes to its core arrive
+    // through `coreInvalidated`; a failed read is retried here.
+    if (key === this.selectedCoreKey && this.selectedCore()?.state !== 'error') {
+      this.selectedCore.update(view => view && { ...view, seed });
+      return;
+    }
+    perfMark('task-core-select');
+    this.coreSubscription?.unsubscribe();
+    this.coreSubscription = null;
+    this.selectedCoreKey = key;
+    const cached = this.prefetch.peekCore(project, info.id);
+    if (cached && this.prefetch.isCoreCurrent(project, info.id)) {
+      this.selectedCore.set({ seed, core: cached, state: cached.state });
+      this.markCoreReady();
+      this.scheduleCoreLookahead();
+      return;
+    }
+    this.selectedCore.set({ seed, core: cached, state: cached ? 'stale' : 'seeded' });
+    this.readSelectedCore(key, project, info.id, seed);
+  }
+
+  private readSelectedCore(key: string, project: string, id: string, seed: TaskCoreView['seed']): void {
+    this.coreSubscription = this.prefetch.getCore(project, id).subscribe({
+      next: (result) => {
+        if (key !== this.selectedCoreKey) return;
+        const previous = this.selectedCore()?.core ?? null;
+        this.selectedCore.set({
+          seed,
+          // Warming keeps an older core visible; missing and denied never do.
+          core: result.core ?? (result.state === 'warming' ? previous : null),
+          state: result.state,
+        });
+        if (result.core) this.markCoreReady();
+        // The task changed while this read was in flight (the server itself
+        // reports `ready`): revalidate once instead of trusting the reply.
+        if (result.state === 'stale' && result.core?.state === 'ready') {
+          this.refreshSelectedCore();
+          return;
+        }
+        this.scheduleCoreLookahead();
+      },
+      error: () => {
+        if (key !== this.selectedCoreKey) return;
+        this.selectedCore.update(view => view && { ...view, state: 'error' });
+        this.scheduleCoreLookahead();
+      },
+    });
+  }
+
+  /** Revalidate the visible core after its task changed (push, mutation, reconnect). */
+  private refreshSelectedCore(): void {
+    const view = this.selectedCore();
+    const key = this.selectedCoreKey;
+    if (!view || !key) return;
+    const live = this.liveRecord(view.seed.taskKey);
+    const seed = live ? seedTaskCore(live, view.seed.project) : view.seed;
+    const cached = this.prefetch.peekCore(seed.project, seed.id);
+    this.coreSubscription?.unsubscribe();
+    this.selectedCore.set({
+      seed,
+      core: cached,
+      state: cached ? (this.prefetch.isCoreCurrent(seed.project, seed.id) ? cached.state : 'stale') : 'seeded',
+    });
+    this.readSelectedCore(key, seed.project, seed.id, seed);
+  }
+
+  private markCoreReady(): void {
+    perfMark('task-core-ready');
+    perfMeasure('task-core-select-to-ready', 'task-core-select', 'task-core-ready');
+  }
+
+  /**
+   * After the selected core has painted, warm only the next two pager cores.
+   * Rescheduling replaces the window, which aborts lookahead that no longer
+   * applies (the user paged past it or left the lane).
+   */
+  private scheduleCoreLookahead(): void {
+    if (this.coreLookaheadHandle !== null) clearTimeout(this.coreLookaheadHandle);
+    const run = () => {
+      this.coreLookaheadHandle = null;
+      this.prefetch.prefetchCores(this.coreLookaheadTargets());
+    };
+    const afterPaint = () => { this.coreLookaheadHandle = setTimeout(run, 0); };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(afterPaint);
+    else afterPaint();
+  }
+
+  private coreLookaheadTargets(): TaskCoreTarget[] {
+    const snap = this.pager.snapshot();
+    if (!snap || !this.selectedCoreKey) return [];
+    const targets: TaskCoreTarget[] = [];
+    for (let offset = 1; offset <= TaskDetailPrefetchService.CORE_LOOKAHEAD; offset++) {
+      const entry = snap.jobs[snap.index + offset];
+      if (!entry) break;
+      const live = this.liveRecord(entry.taskKey);
+      const project = live ? this.projectHandleFor(live) : this.projectHandleForStorageReference(entry.watchPath);
+      if (project) targets.push({ project, id: entry.id });
+    }
+    return targets;
+  }
+
+  private clearSelectedCore(): void {
+    this.coreSubscription?.unsubscribe();
+    this.coreSubscription = null;
+    this.selectedCoreKey = null;
+    this.selectedCore.set(null);
+    if (this.coreLookaheadHandle !== null) clearTimeout(this.coreLookaheadHandle);
+    this.coreLookaheadHandle = null;
+    this.prefetch.prefetchCores([]);
   }
 
   private withDetailTimeout(request: Observable<TaskDetail>): Observable<TaskDetail> {
@@ -347,6 +521,7 @@ export class TaskSelectionService {
     const previewToken = ++this.openDetailToken;
     this.prepareDetailLoad(() => this.openDetailAfterPaint(job));
     this.detailPreview.set(job);
+    this.presentCore(job);
     this.detailLoading.set(true);
     const start = () => {
       if (previewToken !== this.openDetailToken) return;
@@ -377,6 +552,7 @@ export class TaskSelectionService {
     // route is visible instead of holding the user on the board.
     this.detailPreview.set(job);
     this.triageLaneState = job.state;
+    this.presentCore(job);
     if (!opts.keepPagerSnapshot) {
       // Capture peers for `job.state` directly: at this point `selected`
       // may still be null or pointing at a prior detail in a different
@@ -470,6 +646,8 @@ export class TaskSelectionService {
     this.browserHistoryTaskKey = null;
     this.prepareDetailLoad(() => this.loadPagerEntry(entry));
     if (entry.routeKey) writeTaskUrl(entry.routeKey, 'push', this.taskHistoryState());
+    const pagedRecord = this.liveRecord(entry.taskKey);
+    if (pagedRecord) this.presentCore(pagedRecord);
     const token = ++this.openDetailToken;
     const cached = this.prefetch.take(entry.id, entry.watchPath);
     if (cached) {
@@ -513,6 +691,7 @@ export class TaskSelectionService {
     this.clearDetailLoadFailure();
     this.detailPreview.set(null);
     this.selected.set(null);
+    this.clearSelectedCore();
     this.triageLaneState = null;
     this.browserHistoryTaskKey = null;
     this.pager.clear();
@@ -547,7 +726,10 @@ export class TaskSelectionService {
     }
     const label = liveInfo?.key || liveInfo?.id || jobId;
     this.prepareDetailLoad(() => this.openDetailByTaskKey(taskKey));
-    if (liveInfo) this.detailPreview.set(liveInfo);
+    if (liveInfo) {
+      this.detailPreview.set(liveInfo);
+      this.presentCore(liveInfo);
+    }
     this.detailLoading.set(true);
     const token = ++this.openDetailToken;
     const request = liveInfo
@@ -588,6 +770,7 @@ export class TaskSelectionService {
     this.clearDetailLoadFailure();
     this.detailPreview.set(null);
     this.selected.set(null);
+    this.clearSelectedCore();
     this.triageLaneState = null;
     this.browserHistoryTaskKey = null;
     this.pager.clear();
@@ -629,6 +812,7 @@ export class TaskSelectionService {
         this.detailLoading.set(false);
         this.detailPreview.set(null);
         this.selected.set(null);
+        this.clearSelectedCore();
         this.triageLaneState = null;
         this.browserHistoryTaskKey = null;
         this.browserRouteCleared.update(value => value + 1);
@@ -739,6 +923,8 @@ export class TaskSelectionService {
     this.browserHistoryTaskKey = null;
     this.prepareDetailLoad(() => this.loadAdvancedEntry(entry));
     if (entry.routeKey) writeTaskUrl(entry.routeKey, 'push', this.taskHistoryState());
+    const advancedRecord = this.liveRecord(entry.taskKey);
+    if (advancedRecord) this.presentCore(advancedRecord);
     const token = ++this.openDetailToken;
     // Optimistic-navigation path: serve a prefetched detail synchronously
     // when one is on hand so the panel re-renders without waiting for the

@@ -170,6 +170,68 @@ AGT-2410 acute-only status contract, and every event kind uses the same
 row-width grid so Watcher Problem and Decision projections can join the stream
 without a parallel surface.
 
+## Task core cache and board reuse (AGT-2956)
+
+Task navigation reads the board it already holds. `TaskService` stays the
+single owner of the grouped board store; `TaskDetailPrefetchService` owns two
+independent caches: the existing 30 s full-detail lookahead, and the bounded
+task core cache for `GET /api/tasks/{id}/core` (see
+[Bounded task core read](tasks.md#bounded-task-core-read-agt-2953)).
+
+- **Selection never reads the grouped board.** Board click, Explorer, pager,
+  triage advance, deep link, Back/Forward and editor-tab switches do not call
+  `TaskService.refresh`. Only mutation replies, SignalR events, the reconnect
+  resync and the 30 s conditional heartbeat do. The board component is
+  re-created from the resident store when its tab returns; filters, lane sort,
+  lane focus and collapse live in services, and `ScrollMemoryDirective`
+  restores the board and lane-group scroll offsets.
+- **Seed first.** `TaskSelectionService.selectedCore` is set synchronously
+  from the board record: identity, lane, order, runtime activity/location and
+  model/thinking/CLI pins (`seedTaskCore`). Its state is `seeded` until the
+  bounded heads arrive, then `ready` or `stale`; `warming`, `missing`,
+  `denied` and `error` are explicit. The board payload is not widened with
+  prompt, status or timeline heads.
+- **Key and bounds.** A core is keyed by registry project handle plus task id,
+  so identical slugs in two projects never share an entry. The cache holds at
+  most 48 cores and 512 KiB of estimated body bytes, evicting least recently
+  used first. Full-detail TTL expiry and `clear()` never touch cores.
+- **One request per task.** Concurrent reads of one core share a request. A
+  foreground read joins an in-flight lookahead. A late reply for a task the
+  operator already left is retained as a visited core but never replaces the
+  selected one.
+- **Lookahead.** After the selected core is available and a frame has
+  painted, only the next two pager cores are requested. Moving the window or
+  leaving the task aborts lookahead that left it. The existing two-peer
+  full-detail prefetch is unchanged until the detail view renders from core
+  (Dossier card 4).
+- **Invalidation is per task and per resource.** Core, runtime and content
+  versions travel in the core ETag; Git and usage versions do not. A pushed
+  row, a move or a successful own mutation marks only that task's core stale
+  and patches its lane facts in place; the next read revalidates with
+  `If-None-Match`, so an unchanged core costs a 304. A reply that raced a
+  change of its task is kept for paint but not trusted as current.
+  `gitStateChanged`, sidecar generations and an unchanged grouped snapshot
+  leave every core current. Reconnect and bulk changes mark all cores stale
+  without discarding them.
+- **Eviction for correctness.** A delete (push or own reply), a `404` and a
+  project leaving the visible registry evict immediately, including a reply
+  still in flight. A `403` evicts every core of that project.
+
+Coverage: `task-core-cache.spec.ts` (cache invariants) and
+`task-selection-core.spec.ts` (board -> A -> B -> board, pager reuse,
+A -> B -> A, identical slugs, reconnect, delete, denial) assert zero grouped
+requests on selection and zero duplicate core requests. The browser proof is
+`e2e/task-detail/task-core-board-reuse.spec.ts` (fully mocked API; `PW_BASE_URL`
+may point at a served production bundle). It records the
+`task-core-select-to-ready` span, which ends when the core is available in
+`TaskSelectionService`, not at paint. The resident p95 of at most 50 ms is
+always asserted. The uncached p95 of at most 100 ms is asserted with
+`TASK_SWITCH_BUDGET=1`: on a shared runner that span is dominated by host load,
+and the enforced workstation gate is Dossier card 6. The saving is
+conditional: it avoids a grouped handler of p50 350 ms / p95 956 ms and its
+roughly 2.56 MB body only where such a navigation refetch would otherwise
+occur. It is not a claim about tunnel transfer time.
+
 ## Key Code
 
 - `frontend/src/app/features/board/`: kanban lanes, task cards, project tabs,
