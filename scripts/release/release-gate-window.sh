@@ -5,7 +5,9 @@
 # While the wrapped gate command runs, this helper throttles both units with a
 # runtime CPUQuota, waits a bounded time for a hot host to cool down, measures
 # the load at gate start and end, and restores the recorded quotas on every
-# exit path: success, failure, and INT/TERM/HUP.
+# exit path: success, failure, and INT/TERM/HUP. The gate runs in its own
+# process group; on a signal the whole group is stopped (TERM, then KILL after
+# a grace period) before the quotas are restored.
 #
 # Design decision: a runtime CPUQuota window, not a dedicated high-CPUWeight
 # slice. See docs/operations/develop-main-promotion.md#gate-capacity-window.
@@ -34,6 +36,8 @@ Environment:
   RELEASE_GATE_MAX_LOAD_FACTOR    Hot-host threshold as a multiple of the core count (default: 2).
   RELEASE_GATE_SETTLE_SECONDS     Longest wait for a hot host to cool before the gate starts (default: 300).
   RELEASE_GATE_POLL_SECONDS       Load poll interval while waiting (default: 15).
+  RELEASE_GATE_STOP_GRACE_SECONDS On a signal, how long the gate process group gets to exit after
+                                  SIGTERM before it is sent SIGKILL (default: 30).
   RELEASE_GATE_CPU_COUNT          Core count override (default: nproc).
   RELEASE_GATE_LOADAVG_FILE       Load source (default: /proc/loadavg).
   RELEASE_GATE_SYSTEMCTL          systemctl path (default: /usr/bin/systemctl, the sudoers path).
@@ -42,7 +46,7 @@ EOF
 }
 
 gate_window_log() {
-  printf '[release-gate-window] %s\n' "$*" >&2
+  printf '[release-gate-window] %s\n' "$*" >&2 || true
 }
 
 # --- Pure policy -------------------------------------------------------------
@@ -123,6 +127,24 @@ gate_window_set_quota() {
   "${sudo_prefix[@]}" "$systemctl" set-property --runtime "$unit" "CPUQuota=$quota"
 }
 
+# Stops every process in the gate's process group: SIGTERM first, SIGKILL for
+# whatever is still alive after the grace period. Returns only once no process
+# of the group remains, so the caller never restores quotas under live gate work.
+gate_window_stop_group() {
+  local pgid=$1 grace=$2 deadline killed=
+  kill -TERM -- "-$pgid" 2>/dev/null || return 0
+  deadline=$((SECONDS + grace))
+  while kill -0 -- "-$pgid" 2>/dev/null; do
+    if [[ -z "$killed" ]] && ((SECONDS >= deadline)); then
+      gate_window_log "gate process group $pgid outlived SIGTERM by ${grace}s; sending SIGKILL"
+      kill -KILL -- "-$pgid" 2>/dev/null || true
+      killed=1
+    fi
+    # Waiting for this foreground sleep also reaps the exited group leader.
+    sleep 0.2
+  done
+}
+
 record_value() {
   printf '%s=%s\n' "$1" "$2" >> "$record_file"
 }
@@ -163,6 +185,7 @@ main() {
   local factor=${RELEASE_GATE_MAX_LOAD_FACTOR:-2}
   local settle=${RELEASE_GATE_SETTLE_SECONDS:-300}
   local poll=${RELEASE_GATE_POLL_SECONDS:-15}
+  stop_grace=${RELEASE_GATE_STOP_GRACE_SECONDS:-30}
   local cores=${RELEASE_GATE_CPU_COUNT:-$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN)}
   loadavg_file=${RELEASE_GATE_LOADAVG_FILE:-/proc/loadavg}
   systemctl=${RELEASE_GATE_SYSTEMCTL:-/usr/bin/systemctl}
@@ -174,7 +197,7 @@ main() {
     sudo_prefix=(sudo -n)
   fi
   local number
-  for number in "$reserved" "$settle" "$poll" "$cores"; do
+  for number in "$reserved" "$settle" "$poll" "$cores" "$stop_grace"; do
     [[ "$number" =~ ^[0-9]+$ ]] || {
       printf 'Gate window numbers must be non-negative integers: %s\n' "$number" >&2
       exit 2
@@ -243,12 +266,23 @@ main() {
 
   child_pid=
   gate_started=
+  gate_launching=
+  pending_signal=
   on_signal() {
     local signal=$1 code=$2
+    if [[ -n "$gate_launching" && -z "$child_pid" ]]; then
+      # The gate is being forked and its process group is not known yet;
+      # the launch sequence replays this signal once child_pid is set.
+      pending_signal="$signal $code"
+      return 0
+    fi
     trap - INT TERM HUP
-    gate_window_log "received SIG$signal; stopping the gate and restoring runner quotas"
+    # The train pipes this helper into tee, which dies with the same INT; a
+    # log write must not turn into a SIGPIPE death before the quotas are back.
+    trap '' PIPE
+    gate_window_log "received SIG$signal; stopping the gate process group and restoring runner quotas"
     if [[ -n "$child_pid" ]]; then
-      kill -TERM "$child_pid" 2>/dev/null || true
+      gate_window_stop_group "$child_pid" "$stop_grace"
       wait "$child_pid" 2>/dev/null || true
     fi
     [[ -z "$gate_started" ]] \
@@ -324,8 +358,18 @@ main() {
   local gate_rc
   gate_started=$(date +%s)
   set +e
-  "$@" &
+  # Job control puts the gate in its own process group (pgid == child_pid) so
+  # a signal can stop every descendant, not only the immediate child. Without
+  # job control bash would also point the gate's stdin at /dev/null; keep that.
+  gate_launching=1
+  set -m
+  "$@" < /dev/null &
   child_pid=$!
+  set +m
+  if [[ -n "$pending_signal" ]]; then
+    # shellcheck disable=SC2086 # "<name> <code>" splits into two arguments.
+    on_signal $pending_signal
+  fi
   wait "$child_pid"
   gate_rc=$?
   set -e

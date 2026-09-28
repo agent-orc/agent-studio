@@ -151,11 +151,16 @@ full gate and, on every `--execute` run:
    every `RELEASE_GATE_POLL_SECONDS` (default `15`) for at most
    `RELEASE_GATE_SETTLE_SECONDS` (default `300`) while the throttle takes
    effect, then starts the gate regardless and logs that it started hot;
-4. runs the gate and measures the load at its start and end and its duration;
-   and
+4. runs the gate in its own process group and measures the load at its start
+   and end and its duration; and
 5. restores the recorded quotas from a trap on every exit path: a green or red
-   gate, a helper error, and `INT`, `TERM`, or `HUP` (the helper stops the gate
-   first). An unlimited unit is restored with the empty `CPUQuota=` reset.
+   gate, a helper error, and `INT`, `TERM`, or `HUP`. On a signal the helper
+   first stops the whole gate process group, not only its immediate child: it
+   sends `SIGTERM` to the group, sends `SIGKILL` to whatever is still alive
+   after `RELEASE_GATE_STOP_GRACE_SECONDS` (default `30`), and restores the
+   quotas only once no process of the group remains, so no orphaned test or
+   build process keeps running at full runner load. An unlimited unit is
+   restored with the empty `CPUQuota=` reset.
 
 `RELEASE_GATE_WINDOW` selects the policy: `auto` (default) applies the window
 when the units are loaded and, when a quota cannot be set (for example the
