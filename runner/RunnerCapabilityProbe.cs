@@ -126,9 +126,8 @@ internal static class RunnerCapabilityProbe
                 OnPath("git") ? "ready" : "unavailable"));
             list.Add(Capability(GateCapabilities.BundleMaterialization, "gate", null, "artifact"));
         }
-        AddToolchain(list, CapabilityProtocol.DotNet, "dotnet");
-        AddToolchain(list, CapabilityProtocol.Node, "node");
-        AddToolchain(list, CapabilityProtocol.Playwright, "playwright");
+        foreach (var requirement in ReviewLibraryStepPolicy.ToolchainRequirements)
+            AddToolchain(list, requirement.Key, requirement.ProbeExecutable);
         AddComposeRender(list, ComposeRenderVersion);
         return list;
     }
@@ -190,7 +189,18 @@ internal static class RunnerCapabilityProbe
         .Distinct(StringComparer.Ordinal)
         .ToArray();
 
-    public static IReadOnlyList<string> ReviewRegistrationCapabilities(RunnerOptions options)
+    /// <summary>
+    /// The review-claim identity. Both Task Server implementations match a
+    /// sealed library-v1 plan against THIS set, not against the minutely
+    /// advertisement, so it carries every toolchain key the review library can
+    /// require whose executable the host probe finds (AGT-2987). Before that,
+    /// toolchain keys lived only in the advertisement and every dotnet or npm
+    /// plan was silently unclaimable. <c>RUNNER_REQUIRED_CAPABILITIES</c> stays
+    /// an additive override through <see cref="ReviewRequirements"/>.
+    /// </summary>
+    public static IReadOnlyList<string> ReviewRegistrationCapabilities(
+        RunnerOptions options,
+        Func<string, bool>? onPath = null)
         => ReviewRequirements(options)
             .Concat(new[]
             {
@@ -204,7 +214,15 @@ internal static class RunnerCapabilityProbe
                 CapabilityProtocol.CliExecution(item.CliType),
                 CapabilityProtocol.ProviderAuthentication(item.CliType),
             }))
+            .Concat(ReviewToolchainCapabilities(onPath ?? OnPath))
             .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+    /// <summary>Review-library toolchain keys whose probe executable is present on this host.</summary>
+    public static IReadOnlyList<string> ReviewToolchainCapabilities(Func<string, bool> onPath)
+        => ReviewLibraryStepPolicy.ToolchainRequirements
+            .Where(requirement => onPath(requirement.ProbeExecutable))
+            .Select(requirement => requirement.Key)
             .ToArray();
 
     public static IReadOnlyList<string> GateRegistrationCapabilities(RunnerOptions options)
