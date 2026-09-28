@@ -34,13 +34,16 @@ docker compose up -d --wait
 
 The root file uses `ghcr.io/agent-orc` images tagged `v<AGENT_STUDIO_VERSION>`.
 Only services under the `dev` profile contain `build:`. The published-image
-path is verified by the post-release smoke run, separate from this checkout's
-source-build verification.
+path is verified by the Release workflow's `Smoke published one-box images`
+step, after `Publish pinned release images`, separate from this checkout's
+source-build verification. That job needs GHCR read access and the complete
+compatible image set containing the installation changes.
 
 N-1 upgrade evidence needs both the prior and current compatible image sets
 published under `v<version>`, plus a Docker job that can pull them and run
 `scripts/compose-upgrade-test.sh` with `PREVIOUS_VERSION` and
-`CURRENT_VERSION`. A source build cannot supply that evidence. Supported
+`CURRENT_VERSION`. This script is a release follow-up; the current Release
+workflow does not invoke it. A source build cannot supply that evidence. Supported
 desktop and VM placement still needs clean Windows/macOS Docker Desktop and
 Ubuntu VM jobs with provider login and Git fetch/push credentials.
 
