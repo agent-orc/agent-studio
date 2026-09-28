@@ -112,6 +112,18 @@ public sealed class RunnerOptions
     /// </summary>
     public IReadOnlyList<string> RequiredCapabilities { get; init; } = [];
 
+    /// <summary>Use the ordinary runner-host daemon with workstation-local admissions.</summary>
+    public bool IsWorkstation { get; init; }
+
+    /// <summary>Named local source roots. A local Git source must remain inside one of these roots.</summary>
+    public IReadOnlyList<WorkstationRepositoryRoot> WorkstationRepositoryRoots { get; init; } = [];
+
+    /// <summary>Executable names that must still be present when a workstation starts a claim.</summary>
+    public IReadOnlyList<string> WorkstationRequiredTools { get; init; } = [];
+
+    /// <summary>Optional declared preview origin and lifetime for result artifacts.</summary>
+    public WorkstationPreview? WorkstationPreview { get; init; }
+
     /// <summary>Branch to check out for the run. When empty, the runner stays on <see cref="BaseBranch"/>.</summary>
     public string? Branch { get; init; }
 
@@ -422,6 +434,15 @@ public sealed class RunnerOptions
                 .Select(value => value.ToLowerInvariant())
                 .Distinct(StringComparer.Ordinal)
                 .ToArray(),
+            IsWorkstation = OptIn(Val("workstation", "RUNNER_WORKSTATION")),
+            WorkstationRepositoryRoots = WorkstationProfile.ParseRoots(
+                Val("workstation-roots", "RUNNER_WORKSTATION_ROOTS")),
+            WorkstationRequiredTools = WorkstationProfile.ParseTools(
+                Val("workstation-tools", "RUNNER_WORKSTATION_TOOLS")),
+            WorkstationPreview = WorkstationProfile.ParsePreview(
+                Val("preview-origin", "RUNNER_PREVIEW_ORIGIN"),
+                Val("preview-reachability", "RUNNER_PREVIEW_REACHABILITY", "operator-browser"),
+                Val("preview-lifetime-seconds", "RUNNER_PREVIEW_LIFETIME_SECONDS", "3600")),
             Branch = Val("branch", "RUNNER_BRANCH") is { Length: > 0 } b ? b : null,
             BaseBranch = Val("base-branch", "RUNNER_BASE_BRANCH", "main"),
             CliType = Val("cli-type", "RUNNER_CLI_TYPE", CliSelection.ClaudeCli).Trim().ToLowerInvariant(),
@@ -505,6 +526,12 @@ public sealed class RunnerOptions
             if (!string.IsNullOrWhiteSpace(Env(removed)))
                 throw new ArgumentException($"{removed} was removed in AGT-2373; use RUNNER_CLI_TYPE and provider-specific CLI paths.");
         }
+        if (options.ReviewCredentialEnvironment.Any(WorkerEdgeCredentialBoundary.IsProtectedName))
+            throw new ArgumentException("RUNNER_REVIEW_CREDENTIAL_ENV cannot include Task Server or browser-edge credentials.");
+        if (!options.IsWorkstation && (options.WorkstationRepositoryRoots.Count > 0
+                                       || options.WorkstationRequiredTools.Count > 0
+                                       || options.WorkstationPreview is not null))
+            throw new ArgumentException("Workstation roots, tools, and preview require RUNNER_WORKSTATION=1.");
 
         var taskKey = positional ?? (overrides.TryGetValue("task", out var tk) ? tk : null);
         return (options, string.IsNullOrWhiteSpace(taskKey) ? null : taskKey.Trim(), once, help);

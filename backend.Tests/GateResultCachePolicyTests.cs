@@ -19,7 +19,8 @@ public sealed class GateResultCachePolicyTests
             {
                 Assert.Equal("--version", argument);
                 Assert.Equal(repository, directory);
-                return Path.GetFileName(executable) == "dotnet" ? sdk : "unchanged";
+                // The resolved executable carries a platform extension on Windows (dotnet.exe).
+                return Path.GetFileNameWithoutExtension(executable) == "dotnet" ? sdk : "unchanged";
             });
 
         Assert.NotEqual(Identity("10.0.301"), Identity("10.0.302"));

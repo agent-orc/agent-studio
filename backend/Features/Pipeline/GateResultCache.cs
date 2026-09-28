@@ -181,7 +181,7 @@ public sealed class GateResultCache
         var paths = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator);
         foreach (var name in names)
         {
-            var path = paths.Select(dir => Path.Combine(dir, name))
+            var path = paths.SelectMany(dir => ExecutableFileNames(name).Select(file => Path.Combine(dir, file)))
                 .FirstOrDefault(File.Exists);
             if (path is null) { parts.Add(name + ":missing"); continue; }
             var info = new FileInfo(path);
@@ -202,6 +202,22 @@ public sealed class GateResultCache
         }
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join("|", parts))))
             .ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// File names under which a launcher may exist on PATH. On Windows the
+    /// launchers carry an extension (dotnet.exe, node.exe, npm.cmd); looking
+    /// for the bare name only reported every tool as missing there, so the
+    /// identity never saw an SDK change on a Windows gate host.
+    /// </summary>
+    private static IEnumerable<string> ExecutableFileNames(string name)
+    {
+        yield return name;
+        if (!OperatingSystem.IsWindows()) yield break;
+        var extensions = (Environment.GetEnvironmentVariable("PATHEXT") ?? ".COM;.EXE;.BAT;.CMD")
+            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (var extension in extensions)
+            yield return name + extension.ToLowerInvariant();
     }
 
     private static string ReadToolVersion(string executable, string directory, string argument)

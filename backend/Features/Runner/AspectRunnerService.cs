@@ -293,6 +293,7 @@ public sealed class AspectRunnerService
                 document.Tag)
             {
                 IsInfraFailure = string.Equals(step.Verdict, "environmental", StringComparison.OrdinalIgnoreCase),
+                EvidenceChecked = document.EvidenceChecked,
             };
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -345,13 +346,9 @@ public sealed class AspectRunnerService
             var ok = true;
             AspectVerdict verdict;
 
-            // Environmental retry-once (AGT-2021 / AGT-1944): a missing / corrupt /
-            // unparseable verdict caused by the reviewing CLI dying (the backend
-            // cut that killed the aspect runner mid-run) is an INFRASTRUCTURE
-            // fault, not the agent's work. Re-run the aspect exactly once with the
-            // environmental backoff; only when the retry again yields no output do
-            // we mark it an InfraCrash. A CLI that DID reply (even garbage) is not
-            // an infra fault - it keeps the existing review:unparseable concern.
+            // Retry every missing or unparseable aspect verdict exactly once.
+            // A second non-empty but malformed reply is surfaced as
+            // review:unparseable; a second empty/dead reply is infrastructure.
             var envRetries = 0;
             while (true)
             {
@@ -359,11 +356,8 @@ public sealed class AspectRunnerService
                     await InvokeAspectCliAsync(def, inputs, cliBinary, model, thinkingLevel, prompt, perAspectTimeout, ct);
 
                 var parsed = AspectVerdictParsing.ParseVerdict(response);
-                var infraNoVerdict = parsed == null && (!ok || string.IsNullOrWhiteSpace(response));
-                if (!infraNoVerdict)
+                if (parsed != null)
                 {
-                    // Got a real verdict, or a non-empty reply we can turn into a
-                    // deterministic review:unparseable concern (existing behaviour).
                     verdict = BuildVerdict(def, response);
                     break;
                 }
@@ -373,10 +367,20 @@ public sealed class AspectRunnerService
                 {
                     // Retry budget spent: the reviewer died twice. Record it as an
                     // environmental InfraCrash, never the card's unfinished work.
-                    verdict = BuildInfraFailureVerdict(def, envRetries);
-                    _logger.LogWarning(
-                        "Aspect runner '{AspectId}' produced no verdict for {Project}/{JobId} even after {Retries} environmental retry; recording InfraCrash flagged environmental (AGT-2021).",
-                        def.Id, inputs.Project, inputs.JobId, envRetries);
+                    if (ok && !string.IsNullOrWhiteSpace(response))
+                    {
+                        verdict = BuildVerdict(def, response);
+                        _logger.LogWarning(
+                            "Aspect runner '{AspectId}' returned an unparseable verdict twice for {Project}/{JobId}; surfacing review:unparseable.",
+                            def.Id, inputs.Project, inputs.JobId);
+                    }
+                    else
+                    {
+                        verdict = BuildInfraFailureVerdict(def, envRetries);
+                        _logger.LogWarning(
+                            "Aspect runner '{AspectId}' produced no verdict for {Project}/{JobId} even after {Retries} environmental retry; recording InfraCrash flagged environmental (AGT-2021).",
+                            def.Id, inputs.Project, inputs.JobId, envRetries);
+                    }
                     break;
                 }
 
@@ -578,7 +582,7 @@ public sealed class AspectRunnerService
         sb.AppendLine();
         sb.AppendLine("Required sentinel format (literal characters — do NOT wrap in code fences, blockquotes, or quotes):");
         sb.AppendLine();
-        sb.AppendLine("[[ASPECT_VERDICT: status=<pass|concerns|block>; summary=<one short sentence, no semicolons or brackets>]]");
+        sb.AppendLine("[[ASPECT_VERDICT: status=<pass|concerns|block>; summary=<one short sentence, no semicolons or brackets>; evidence_checked=<comma-separated repository paths or none>; missing=<specific finding or none>]]");
         sb.AppendLine();
         sb.AppendLine("Example of a complete reply:");
         sb.AppendLine();
@@ -695,7 +699,10 @@ public sealed class AspectRunnerService
             Status: status,
             Summary: summary,
             Body: BuildBody(response, summary),
-            ConcernTagId: status == AspectStatus.Pass ? null : $"{def.ConcernNamespace}:concerns");
+            ConcernTagId: status == AspectStatus.Pass ? null : $"{def.ConcernNamespace}:concerns")
+        {
+            EvidenceChecked = AspectVerdictParsing.ParseVerdictField(response, "evidence_checked"),
+        };
     }
 
     private static string BuildBody(string response, string fallback)

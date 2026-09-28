@@ -160,8 +160,8 @@ internal sealed class DurableAgentProcess
 
     /// <summary>
     /// The environment differences between the daemon and the coding worker it
-    /// starts. Everything else is inherited, which is what the run's caches and
-    /// the provider configuration rely on.
+    /// starts. Tool paths, caches, and provider configuration are inherited;
+    /// browser-edge and Task Server secrets are removed.
     ///
     /// <para>Credentials: the daemon needs all provider credentials for its
     /// capability probes, but a detached worker receives only the credential for
@@ -180,6 +180,7 @@ internal sealed class DurableAgentProcess
         IDictionary<string, string?> environment,
         string? cliType)
     {
+        WorkerEdgeCredentialBoundary.RemoveFrom(environment);
         if (ProviderAuthEnvironment.TryGetForCli(cliType, out var authName, out var authValue))
             environment[authName] = authValue;
         else
@@ -223,7 +224,8 @@ internal sealed class DurableAgentProcess
             RunId: runId,
             ResumeSessionId: resumeSessionId,
             CleanContextKey: cleanContextKey,
-            Environment: environment,
+            Environment: environment?.Where(entry => !WorkerEdgeCredentialBoundary.IsProtectedName(entry.Key))
+                .ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.OrdinalIgnoreCase),
             TokenCeiling: tokenCeiling,
             TokenBaseline: tokenBaseline);
     }

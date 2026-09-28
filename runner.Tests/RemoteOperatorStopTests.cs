@@ -83,7 +83,7 @@ public sealed class RemoteOperatorStopTests : IDisposable
 
         try
         {
-            var slot = await WaitForWorkingAgentAsync(options.StateDir, stop.Token);
+            var slot = await WaitForWorkingAgentAsync(options.StateDir, stop.Token, logs);
             worker = Process.GetProcessById(slot.ProcessId!.Value);
 
             // The operator presses Pause and Send: the server parks the stop and
@@ -170,18 +170,24 @@ public sealed class RemoteOperatorStopTests : IDisposable
 
     private static async Task<PersistedRunnerSlot> WaitForWorkingAgentAsync(
         string stateDirectory,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ConcurrentQueue<string> logs)
     {
-        while (!cancellationToken.IsCancellationRequested)
+        try
         {
-            var slot = new RunnerStateStore(stateDirectory).LoadAll().SingleOrDefault();
-            if (slot?.ProcessId is > 0
-                && File.Exists(Path.Combine(slot.WorktreePath, "stopped-work.txt")))
-                return slot;
-            await Task.Delay(50, cancellationToken);
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                var slot = new RunnerStateStore(stateDirectory).LoadAll().SingleOrDefault();
+                if (slot?.ProcessId is > 0
+                    && File.Exists(Path.Combine(slot.WorktreePath, "stopped-work.txt")))
+                    return slot;
+                await Task.Delay(50, cancellationToken);
+            }
         }
-
-        throw new OperationCanceledException(cancellationToken);
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        throw new Xunit.Sdk.XunitException(
+            "worker never reached the stop fixture. Runner journal:"
+            + Environment.NewLine + string.Join(Environment.NewLine, logs));
     }
 
     private static async Task WaitForExitAsync(Process process, TimeSpan timeout)
@@ -246,7 +252,9 @@ public sealed class RemoteOperatorStopTests : IDisposable
                     reason,
                     DateTime.UtcNow,
                     lease.AttemptId,
-                    "operator@example.invalid"));
+                    "operator@example.invalid",
+                    "stop-command",
+                    lease.FencingToken));
 
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
@@ -292,6 +300,13 @@ public sealed class RemoteOperatorStopTests : IDisposable
                     break;
                 case "/api/runner/artifacts":
                     response = new ArtifactIngestResponse(lease.TaskKey, 0, []);
+                    break;
+                case "/api/runner/artifacts/limits":
+                    response = new ArtifactTransferLimitsResponse(
+                        25L * 1024 * 1024, 18L * 1024 * 1024, 100L * 1024 * 1024);
+                    break;
+                case "/api/runner/artifacts/outcome":
+                    response = new { status = "partial" };
                     break;
                 case "/api/runner/completion":
                     response = await ObserveCompletionAsync(request, cancellationToken);

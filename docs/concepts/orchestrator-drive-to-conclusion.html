@@ -236,6 +236,7 @@
       <li><strong>Prefer session-resume.</strong> On retry, prefer resuming the same run over a from-scratch rebuild, so good
           partial work is not thrown away.</li>
     </ol>
+    <p>For a sleeping runner host, resume is admitted only by a fresh fenced Task Server confirmation. The persisted stop-before deadline also gates result replay; a wake after that deadline stops the worker generation before another offline retry. A restarted Windows workstation kills the proven expired worker tree by persisted PID and start time. This is a synthetic sleep contract, not an observed incident. See the <a href="../operations/setup/workstation-runner-host.md">workstation runner-host runbook</a>.</p>
 
     <h3>The four-terminal model</h3>
     <p>Every post-run path ends in exactly one of four owned terminals. Two transient states feed them:</p>
@@ -383,6 +384,13 @@
         </tr>
       </thead>
       <tbody>
+        <tr>
+          <td>2026-09-27</td>
+          <td><code>AGT-2887</code><br><span class="small">product-finding-infrastructure-words</span></td>
+          <td>No reviewer crashed. A product block mentioning "infra crash" or "no parseable verdict" was reproduced as a review-infrastructure decision.</td>
+          <td>The shared follow-up policy inferred infrastructure from the free-text summary.</td>
+          <td>Only explicit runner markers now select infrastructure handling. Local and v1 consumer regressions verify that product blocks reach a coding round and marked reviewer failures retain the infrastructure route.</td>
+        </tr>
         <tr>
           <td>2026-06-19<br><span class="small">(seed)</span></td>
           <td><code>ASS-1757</code><br><span class="small">feature-kontext-tab-gelesene-wissens-dokumente</span></td>
