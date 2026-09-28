@@ -174,7 +174,7 @@ jobs:
           artifacts/publish/task-server/task-server --version | tee /tmp/task-server.version
           artifacts/publish/orchestrator-engine/orchestrator-engine --version | tee /tmp/orchestrator-engine.version
           artifacts/publish/agent-host-linux-x64/agent-host --version | tee /tmp/agent-host.version
-          artifacts/publish/setup/agent-orchestrator-setup --version | tee /tmp/setup.version
+          artifacts/publish/setup/agent-studio-setup --version | tee /tmp/setup.version
           grep -F "$VERSION" /tmp/task-server.version
           grep -F "$VERSION" /tmp/orchestrator-engine.version
           grep -F "$VERSION" /tmp/agent-host.version
@@ -184,7 +184,7 @@ jobs:
           grep -F "$SHA" /tmp/agent-host.version
           grep -F "$SHA" /tmp/setup.version
           test "$(od -An -tx1 -N4 artifacts/publish/agent-host-linux-x64/agent-host | tr -d ' \n')" = '7f454c46'
-          test "$(od -An -tx1 -N4 artifacts/publish/setup/agent-orchestrator-setup | tr -d ' \n')" = '7f454c46'
+          test "$(od -An -tx1 -N4 artifacts/publish/setup/agent-studio-setup | tr -d ' \n')" = '7f454c46'
           test "$(od -An -tx1 -N8 artifacts/publish/agent-host-osx-arm64/agent-host | tr -d ' \n')" = 'cffaedfe0c000001'
 
       - name: Create guided setup executable, three archives, and SHA-256 checksums
@@ -257,6 +257,8 @@ jobs:
     needs: version
     runs-on: windows-latest
     timeout-minutes: 30
+    env:
+      WINDOWS_CODESIGN_PFX: ${{ secrets.WINDOWS_CODESIGN_PFX }}
     steps:
       - name: Check out exact tag
         uses: actions/checkout@v4
@@ -291,6 +293,34 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'orchestrator-engine win-x64 publish failed.' }
           dotnet publish studio-bff/StudioBff.csproj @common --output artifacts/publish/studio-bff
           if ($LASTEXITCODE -ne 0) { throw 'studio-bff win-x64 publish failed.' }
+          dotnet publish setup/AgentOrchestratorSetup.csproj @common --output artifacts/publish/setup
+          if ($LASTEXITCODE -ne 0) { throw 'agent-studio-setup win-x64 publish failed.' }
+
+      - name: Sign Windows setup when a certificate is configured
+        if: ${{ env.WINDOWS_CODESIGN_PFX != '' }}
+        env:
+          WINDOWS_CODESIGN_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PASSWORD }}
+        shell: pwsh
+        run: |
+          $certificate = Join-Path $env:RUNNER_TEMP 'agent-studio-codesign.pfx'
+          [IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:WINDOWS_CODESIGN_PFX))
+          try {
+            $signTool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
+              Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+            if (-not $signTool) { throw 'Windows SDK signtool.exe was not found.' }
+            & $signTool sign /fd SHA256 /f $certificate /p $env:WINDOWS_CODESIGN_PASSWORD artifacts/publish/setup/agent-studio-setup.exe
+            if ($LASTEXITCODE -ne 0) { throw 'Windows setup signing failed.' }
+            & $signTool verify /pa artifacts/publish/setup/agent-studio-setup.exe
+            if ($LASTEXITCODE -ne 0) { throw 'Windows setup signature verification failed.' }
+          } finally {
+            Remove-Item -LiteralPath $certificate -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Stage Windows setup executable
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path windows-package -Force | Out-Null
+          Copy-Item artifacts/publish/setup/agent-studio-setup.exe windows-package/agent-studio-setup.exe
 
       - name: Verify published identities
         env:
@@ -342,13 +372,124 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-release-artifacts
-          path: windows-package/*.zip
+          path: |
+            windows-package/*.zip
+            windows-package/agent-studio-setup.exe
           if-no-files-found: error
           retention-days: 7
 
+  install-smoke-linux:
+    name: Install smoke with Linux setup (Docker)
+    needs: test-build-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-release-artifacts
+          path: artifacts/release
+      - name: Authenticate to the release image registry
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Install, verify, and purge
+        run: |
+          set -euo pipefail
+          chmod +x artifacts/release/agent-studio-setup
+          install_root="$RUNNER_TEMP/agent-studio-install-smoke"
+          trap 'artifacts/release/agent-studio-setup uninstall --install-dir "$install_root" --purge || true' EXIT
+          artifacts/release/agent-studio-setup --unattended \
+            --release-dir artifacts/release --install-dir "$install_root"
+          curl --fail --silent http://127.0.0.1:4011/healthz
+          docker compose --project-name agent-studio \
+            --env-file "$install_root/.env" \
+            -f "$install_root/releases/$(tr -d '\r\n' < "$install_root/releases/"*/VERSION)/docker-compose.yml" \
+            ps --status running
+
+  install-smoke-windows:
+    name: Install smoke with Windows setup (native services)
+    needs: publish-windows
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-release-artifacts
+          path: artifacts/release
+      - name: Verify executable identity and help
+        shell: pwsh
+        run: |
+          $setup = 'artifacts/release/agent-studio-setup.exe'
+          if (-not (Test-Path -LiteralPath $setup)) { throw 'Windows setup executable is missing.' }
+          $version = & $setup --version
+          if ($LASTEXITCODE -ne 0 -or $version -notmatch '^agent-studio-setup ') { throw 'Windows setup version check failed.' }
+          $helpText = & $setup --help
+          if ($LASTEXITCODE -ne 0 -or ($helpText -join "`n") -notmatch 'rollback') { throw 'Windows setup help check failed.' }
+      # The hosted Windows runner has no Linux container engine, so it proves
+      # the native path: the checksum-verified win-x64 package installed as
+      # the D6 scheduled tasks, health, uninstall keeping data, and purge.
+      - name: Install, verify, uninstall, and purge the native services
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $release = (Resolve-Path artifacts/release).Path
+          $setup = Join-Path $release 'agent-studio-setup.exe'
+          Get-ChildItem -LiteralPath $release -File -Filter '*.zip' | ForEach-Object {
+            '{0}  {1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name
+          } | Set-Content -LiteralPath (Join-Path $release 'SHA256SUMS') -Encoding ascii
+          $installDir = Join-Path $env:RUNNER_TEMP 'agent-studio-native'
+          $data = Join-Path $installDir 'data'
+          $tasks = 'AgentOrchestrator-TaskServer', 'AgentOrchestrator-Engine', 'AgentOrchestrator-StudioConnector'
+          function Invoke-Setup { & $setup @args; if ($LASTEXITCODE -ne 0) { throw "agent-studio-setup $args failed." } }
+          function Assert-Healthy {
+            $ready = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:5071/readyz
+            if ($ready.Content -notmatch '"status":"ready"' -or $ready.Content -notmatch '"mode":"Normal"') { throw "Task Server not ready: $($ready.Content)" }
+            $live = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:5031/healthz
+            if ($live.Content -notmatch '"status":"live"') { throw "Studio connector not live: $($live.Content)" }
+          }
+          function Assert-Tasks([bool] $present) {
+            foreach ($task in $tasks) {
+              $found = $null -ne (Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue)
+              if ($found -ne $present) { throw "$task registered=$found, expected $present." }
+            }
+          }
+
+          Invoke-Setup --unattended --target native --release-dir $release --install-dir $installDir
+          Assert-Tasks $true
+          Assert-Healthy
+
+          Invoke-Setup uninstall --install-dir $installDir
+          Assert-Tasks $false
+          if (-not (Test-Path -LiteralPath $data)) { throw 'Uninstall without --purge removed the task data.' }
+          if (-not (Test-Path -LiteralPath "$env:ProgramData\AgentOrchestrator\server.env")) { throw 'Uninstall without --purge removed the configuration.' }
+
+          Invoke-Setup --unattended --target native --release-dir $release --install-dir $installDir
+          Assert-Healthy
+          Invoke-Setup uninstall --install-dir $installDir --purge
+          Assert-Tasks $false
+          if (Test-Path -LiteralPath $data) { throw 'Purge left the task data.' }
+          if (Test-Path -LiteralPath "$env:ProgramData\AgentOrchestrator") { throw 'Purge left the configuration.' }
+      - name: Install and remove the connector profile
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $release = (Resolve-Path artifacts/release).Path
+          $setup = Join-Path $release 'agent-studio-setup.exe'
+          $installDir = Join-Path $env:RUNNER_TEMP 'agent-studio-connector'
+          $token = Join-Path $env:RUNNER_TEMP 'upstream.token'
+          Set-Content -LiteralPath $token -Value ('0' * 64) -NoNewline -Encoding ascii
+          & $setup --unattended --mode connector --server-url http://127.0.0.1:5071 --token-file $token --release-dir $release --install-dir $installDir
+          if ($LASTEXITCODE -ne 0) { throw 'Connector install failed.' }
+          $live = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:5031/healthz
+          if ($live.Content -notmatch '"status":"live"') { throw "Studio connector not live: $($live.Content)" }
+          if (Get-ScheduledTask -TaskName 'AgentOrchestrator-TaskServer' -ErrorAction SilentlyContinue) { throw 'Connector mode installed a local Task Server.' }
+          & $setup uninstall --install-dir $installDir --purge
+          if ($LASTEXITCODE -ne 0) { throw 'Connector uninstall failed.' }
+          if (Get-ScheduledTask -TaskName 'AgentOrchestrator-StudioConnector' -ErrorAction SilentlyContinue) { throw 'Connector task is still registered.' }
+
   publish-release:
     name: Merge artifacts and publish the GitHub Release
-    needs: [version, test-build-release, publish-windows]
+    needs: [version, test-build-release, publish-windows, install-smoke-linux, install-smoke-windows]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -371,8 +512,9 @@ jobs:
 
       - name: Recompute the combined SHA256SUMS
         run: |
-          chmod +x artifacts/release/agent-orchestrator-setup
+          chmod +x artifacts/release/agent-studio-setup
           (cd artifacts/release && rm -f SHA256SUMS && sha256sum * > SHA256SUMS)
+          (cd artifacts/release && sha256sum -c SHA256SUMS)
 
       - name: Attest release assets
         uses: actions/attest-build-provenance@v2
@@ -380,7 +522,8 @@ jobs:
           subject-path: |
             artifacts/release/*.tar.gz
             artifacts/release/*.zip
-            artifacts/release/agent-orchestrator-setup
+            artifacts/release/agent-studio-setup
+            artifacts/release/agent-studio-setup.exe
 
       - name: Create GitHub Release
         env:
@@ -389,7 +532,8 @@ jobs:
           gh release create "$GITHUB_REF_NAME"
           artifacts/release/*.tar.gz
           artifacts/release/*.zip
-          artifacts/release/agent-orchestrator-setup
+          artifacts/release/agent-studio-setup
+          artifacts/release/agent-studio-setup.exe
           artifacts/release/SHA256SUMS
           --verify-tag
           --generate-notes

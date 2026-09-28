@@ -148,24 +148,130 @@ function Wait-TaskServerDrain {
     return $false
 }
 
-function Restart-FallbackScheduledTask {
+function Stop-FallbackScheduledTask {
     param(
         [Parameter(Mandatory)] [string] $TaskName,
         [int] $StopTimeoutSeconds = 30
     )
     $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-    if ($null -ne $task -and $task.State -ne 'Ready') {
-        Stop-ScheduledTask -TaskName $TaskName
-        $deadline = [DateTime]::UtcNow.AddSeconds($StopTimeoutSeconds)
-        do {
-            Start-Sleep -Milliseconds 250
-            $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
-        } while ($task.State -ne 'Ready' -and [DateTime]::UtcNow -lt $deadline)
-        if ($task.State -ne 'Ready') {
-            throw "Scheduled task did not stop before restart: $TaskName"
+    if ($null -eq $task -or $task.State -eq 'Ready') { return }
+    Stop-ScheduledTask -TaskName $TaskName
+    $deadline = [DateTime]::UtcNow.AddSeconds($StopTimeoutSeconds)
+    do {
+        Start-Sleep -Milliseconds 250
+        $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+    } while ($task.State -ne 'Ready' -and [DateTime]::UtcNow -lt $deadline)
+    if ($task.State -ne 'Ready') {
+        throw "Scheduled task did not stop: $TaskName"
+    }
+}
+
+function Restart-FallbackScheduledTask {
+    param(
+        [Parameter(Mandatory)] [string] $TaskName,
+        [int] $StopTimeoutSeconds = 30
+    )
+    Stop-FallbackScheduledTask -TaskName $TaskName -StopTimeoutSeconds $StopTimeoutSeconds
+    Start-ScheduledTask -TaskName $TaskName
+}
+
+function Copy-FallbackRelease {
+    <#
+    Stages a verified win-x64 release package as InstallBase\release-<version>
+    through a PID-scoped staging folder and returns the release directory. An
+    already staged release is reused only when its VERSION matches, which is
+    what lets the installer re-activate an older release for a rollback.
+    #>
+    param(
+        [Parameter(Mandatory)] [string] $PackageRoot,
+        [Parameter(Mandatory)] [string] $InstallBase,
+        [Parameter(Mandatory)] [string[]] $RequiredFiles
+    )
+    $packageRoot = (Resolve-Path -LiteralPath $PackageRoot).Path
+    foreach ($required in @($RequiredFiles) + 'VERSION', 'RELEASE-SHA') {
+        if (-not (Test-Path -LiteralPath (Join-Path $packageRoot $required))) {
+            throw "Release package is incomplete; missing $required in $packageRoot."
         }
     }
-    Start-ScheduledTask -TaskName $TaskName
+    $version = (Get-Content -LiteralPath (Join-Path $packageRoot 'VERSION') -TotalCount 1).Trim()
+    if ([string]::IsNullOrWhiteSpace($version)) { throw "VERSION file in $packageRoot is empty." }
+    $releaseDirectory = Join-Path $InstallBase "release-$version"
+    New-Item -ItemType Directory -Path $InstallBase -Force | Out-Null
+    if (-not (Test-Path -LiteralPath $releaseDirectory)) {
+        $staging = "$releaseDirectory.staging.$PID"
+        if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
+        Copy-Item -LiteralPath $packageRoot -Destination $staging -Recurse
+        Move-Item -LiteralPath $staging -Destination $releaseDirectory
+        Write-FallbackLog "Staged release $version at $releaseDirectory."
+    }
+    else {
+        $installedVersion = (Get-Content -LiteralPath (Join-Path $releaseDirectory 'VERSION') -TotalCount 1).Trim()
+        if ($installedVersion -ne $version) {
+            throw "Existing release directory has version $installedVersion, expected ${version}: $releaseDirectory"
+        }
+        Write-FallbackLog "Release $version is already staged."
+    }
+    return $releaseDirectory
+}
+
+function Set-FallbackCurrentRelease {
+    <#
+    Stops the running tasks so no process keeps executing the old binaries,
+    then points InstallBase\current at ReleaseDirectory. The tasks start
+    again when the caller registers them.
+    #>
+    param(
+        [Parameter(Mandatory)] [string] $InstallBase,
+        [Parameter(Mandatory)] [string] $ReleaseDirectory,
+        [Parameter(Mandatory)] [string[]] $TaskNames
+    )
+    foreach ($taskName in $TaskNames) { Stop-FallbackScheduledTask -TaskName $taskName }
+    # Ending a task stops its supervisor loop; a service executable it started
+    # can outlive it and keep the port, so the binaries are stopped by path.
+    $installPrefix = [IO.Path]::GetFullPath($InstallBase).TrimEnd('\') + '\'
+    Get-Process -Name 'task-server', 'orchestrator-engine', 'agent-studio-bff' -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -and $_.Path.StartsWith($installPrefix, [StringComparison]::OrdinalIgnoreCase) } |
+        Stop-Process -Force
+    $current = Join-Path $InstallBase 'current'
+    if (Test-Path -LiteralPath $current) {
+        $item = Get-Item -LiteralPath $current -Force
+        if (-not ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw "Refusing to replace non-junction current path: $current"
+        }
+        & cmd.exe /d /c "rmdir `"$current`"" | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Could not remove the previous current junction.' }
+    }
+    & cmd.exe /d /c "mklink /J `"$current`" `"$ReleaseDirectory`"" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Could not create the current junction.' }
+    return $current
+}
+
+function Get-FallbackScriptRoot {
+    <#
+    Scheduled tasks must reference start scripts that outlive the installer's
+    temporary package extraction, so they are registered from the staged
+    release's deploy-windows copy. A source checkout without that copy falls
+    back to the scripts next to the caller.
+    #>
+    param(
+        [Parameter(Mandatory)] [string] $Current,
+        [Parameter(Mandatory)] [string] $CallerRoot
+    )
+    $staged = Join-Path $Current 'deploy-windows'
+    if (Test-Path -LiteralPath $staged) { return $staged }
+    return (Resolve-Path -LiteralPath (Join-Path $CallerRoot '..')).Path
+}
+
+function Protect-FallbackSecretFile {
+    <#
+    ProgramData grants the local Users group read access by default. Credential
+    files are narrowed to the installing account (the scheduled tasks run as
+    it), SYSTEM, and Administrators.
+    #>
+    param([Parameter(Mandatory)] [string] $Path)
+    $account = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    & icacls.exe $Path /inheritance:r /grant:r "${account}:(R,W)" '*S-1-5-18:(F)' '*S-1-5-32-544:(F)' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Could not restrict access to $Path." }
 }
 
 function Get-LatestVerifiedFullBackupId {
