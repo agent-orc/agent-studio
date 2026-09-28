@@ -1,7 +1,8 @@
 import { Injectable, inject } from '@angular/core';
-import { Observable, of, ReplaySubject } from 'rxjs';
+import { Observable, of, ReplaySubject, Subscription } from 'rxjs';
 import { TaskDetail } from '../../../models/task.model';
 import { TaskService } from '../../../services/task.service';
+import type { TaskCore } from './task-core.model';
 
 /**
  * Tiny in-memory prefetch + cache for `TaskDetail` payloads keyed by
@@ -33,6 +34,49 @@ export class TaskDetailPrefetchService {
 
   private readonly cache = new Map<string, { detail: TaskDetail; cachedAt: number }>();
   private readonly inFlight = new Map<string, ReplaySubject<TaskDetail>>();
+  private readonly cores = new Map<string, { core: TaskCore; cachedAt: number }>();
+  private readonly coreRequests = new Map<string, Subscription>();
+
+  private coreKey(id: string, project: string): string { return `${project}::${id}`; }
+
+  prefetchCore(id: string, project: string): void {
+    const key = this.coreKey(id, project);
+    if (this.takeCore(id, project) || this.coreRequests.has(key)) return;
+    const request = this.jobService.getCore(id, project).subscribe({
+      next: core => { if (core.state !== 'warming') this.storeCore(core, project); },
+      error: () => this.coreRequests.delete(key),
+      complete: () => this.coreRequests.delete(key),
+    });
+    if (!request.closed) this.coreRequests.set(key, request);
+  }
+
+  keepLookahead(keys: ReadonlySet<string>): void {
+    for (const [key, request] of this.coreRequests) {
+      if (!keys.has(key)) { request.unsubscribe(); this.coreRequests.delete(key); }
+    }
+  }
+
+  storeCore(core: TaskCore, project: string): void {
+    const key = this.coreKey(core.id, project);
+    this.cores.delete(key);
+    this.cores.set(key, { core, cachedAt: Date.now() });
+    while (this.cores.size > 16) this.cores.delete(this.cores.keys().next().value!);
+  }
+
+  takeCore(id: string, project: string): TaskCore | null {
+    const key = this.coreKey(id, project);
+    const entry = this.cores.get(key);
+    if (!entry) return null;
+    if (Date.now() - entry.cachedAt >= TaskDetailPrefetchService.TTL_MS) {
+      this.cores.delete(key); return null;
+    }
+    return entry.core;
+  }
+
+  getOrFetchCore(id: string, project: string): Observable<TaskCore> {
+    const cached = this.takeCore(id, project);
+    return cached ? of(cached) : this.jobService.getCore(id, project);
+  }
 
   private keyOf(id: string, watchPath: string): string {
     return `${watchPath}::${id}`;
@@ -125,11 +169,16 @@ export class TaskDetailPrefetchService {
    */
   invalidate(id: string, watchPath: string): void {
     this.cache.delete(this.keyOf(id, watchPath));
+    for (const [key, entry] of this.cores) {
+      if (entry.core.id === id) this.cores.delete(key);
+    }
   }
 
   /** Drop everything. Used on lane / project change. */
   clear(): void {
     this.cache.clear();
+    this.cores.clear();
+    this.keepLookahead(new Set());
     // In-flight prefetches keep going; their results just won't be
     // consumed. Cheap enough that we don't bother aborting.
   }

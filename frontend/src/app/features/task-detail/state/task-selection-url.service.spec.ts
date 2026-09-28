@@ -29,6 +29,23 @@ describe('TaskSelectionService · stable task URLs', () => {
   } as unknown as TaskInfo;
 
   const detail = { info } as unknown as TaskDetail;
+  const coreFor = (task: TaskInfo, projectId = 'PROJ-001') => ({
+    state: 'ready', projectId, projectName: task.projectName, id: task.id,
+    taskKey: task.taskKey, key: task.key, title: task.title,
+    kind: 'task', taskType: 'chore', lane: task.state, archiveState: null,
+    enteredLaneAt: '2026-09-28T00:00:00Z', order: task.order, mode: 'coding',
+    released: false, pendingIntent: false, coreVersion: 1,
+    pins: { model: null, modelExplicit: false, thinkingLevel: null,
+      thinkingLevelExplicit: false, cliType: null, contextMode: null,
+      useOwnSession: null, allowWebAccess: false, noBranchExpected: false },
+    blocking: { dependencyBlocked: false, dependencyState: 'ready', dependencies: [] },
+    runtime: { attemptId: null, runnerId: null, runnerName: null, hostname: null,
+      executionStatus: null, location: 'none', heartbeatAt: null, leaseState: 'none', leaseId: null },
+    runtimeVersion: 'v1',
+    statusSummary: { state: 'missing', text: null, originalBytes: 0, hash: null, cursor: null },
+    prompt: { state: 'missing', text: null, originalBytes: 0, hash: null, cursor: null, continuationUrl: null },
+    timeline: { state: 'missing', events: [], cursor: null, continuationUrl: null },
+  });
 
   beforeEach(async () => {
     sessionStorage.clear();
@@ -55,15 +72,18 @@ describe('TaskSelectionService · stable task URLs', () => {
   });
 
   it('round-trips a canonical key without a watch path or URL normalization', () => {
+    projects.setWorkspaces(([{ projects: [{ id: 'PROJ-001', shortCode: 'AGT',
+      displayName: 'Agent Studio', storageLocation: 'C:\\private\\project' }] }]
+      ) as unknown as RegistryWorkspaceListItem[]);
     history.replaceState(null, '', '/studio?view=git#/tasks/AGT-2124');
 
     selection.restoreFromUrl();
 
-    const request = http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2124'));
+    const request = http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2124/core'));
     expect(request.request.params.has('watchPath')).toBe(false);
-    request.flush(detail);
+    request.flush(coreFor(info));
 
-    expect(selection.selected()?.info.key).toBe('AGT-2124');
+    expect(selection.selectedCore()?.key).toBe('AGT-2124');
     expect(`${location.pathname}${location.search}${location.hash}`)
       .toBe('/studio?view=git#/tasks/AGT-2124');
   });
@@ -86,15 +106,29 @@ describe('TaskSelectionService · stable task URLs', () => {
     expect(location.href).not.toContain('watchPath');
   });
 
+  it('resolves a public task URL after projects arrive without prior board state', async () => {
+    history.replaceState(null, '', '/#/tasks/AGT-2124');
+    selection.restoreFromUrl();
+    http.expectNone(req => req.url.includes('/api/tasks/AGT-2124'));
+    projects.setWorkspaces(([{ projects: [{ id: 'PROJ-001', shortCode: 'AGT',
+      displayName: 'Agent Studio', storageLocation: 'C:\\private\\project' }] }]
+      ) as unknown as RegistryWorkspaceListItem[]);
+    TestBed.tick();
+    await Promise.resolve();
+    http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2124/core'))
+      .flush(coreFor(info));
+    expect(selection.selectedCore()?.taskKey).toBe(info.taskKey);
+  });
+
   it('uses pushState for user navigation and clears selection on browser Back', () => {
     const push = vi.spyOn(history, 'pushState');
 
     selection.openDetail(info);
 
-    const request = http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug'));
+    const request = http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug/core'));
     expect(request.request.params.has('watchPath')).toBe(false);
     expect(request.request.params.get('project')).toBe('Agent Studio');
-    request.flush(detail);
+    request.flush(coreFor(info, 'Agent Studio'));
     expect(push).toHaveBeenCalled();
     expect(location.hash).toBe('#/tasks/AGT-2124');
 
@@ -107,6 +141,9 @@ describe('TaskSelectionService · stable task URLs', () => {
   });
 
   it('pushes an advance and restores its prior task, lane anchor, and pager position on popstate', () => {
+    projects.setWorkspaces(([{ projects: [{ id: 'PROJ-001', shortCode: 'AGT',
+      displayName: 'Agent Studio', storageLocation: 'C:\\private\\project' }] }]
+      ) as unknown as RegistryWorkspaceListItem[]);
     const nextInfo = {
       ...info,
       id: 'next-task',
@@ -127,18 +164,18 @@ describe('TaskSelectionService · stable task URLs', () => {
     expect(selection.advanceAfterMutation(info.taskKey)).toBe(true);
     expect(push).toHaveBeenCalled();
     expect(location.hash).toBe('#/tasks/AGT-2125');
-    http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2125'))
-      .flush({ info: nextInfo } as TaskDetail);
+    http.expectOne(req => req.url.endsWith('/api/tasks/next-task/core'))
+      .flush(coreFor(nextInfo));
     expect(pager.position()).toBe(1);
     expect(pager.total()).toBe(1);
 
     history.replaceState(firstState, '', firstUrl);
     window.dispatchEvent(new PopStateEvent('popstate', { state: firstState }));
     const archivedInfo = { ...info, state: '7-archive' } as TaskInfo;
-    http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2124'))
-      .flush({ info: archivedInfo } as TaskDetail);
+    http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2124/core'))
+      .flush(coreFor(archivedInfo));
 
-    expect(selection.selected()?.info).toMatchObject({ key: 'AGT-2124', state: '7-archive' });
+    expect(selection.selectedCore()).toMatchObject({ key: 'AGT-2124', lane: '7-archive' });
     expect(selection.triageLaneState).toBe('5-human-review');
     expect(pager.position()).toBe(1);
     expect(pager.total()).toBe(2);
@@ -151,9 +188,12 @@ describe('TaskSelectionService · stable task URLs', () => {
   });
 
   it('clears the browser-history reconciliation marker when another task is selected', () => {
+    projects.setWorkspaces(([{ projects: [{ id: 'PROJ-001', shortCode: 'AGT',
+      displayName: 'Agent Studio', storageLocation: 'C:\\private\\project' }] }]
+      ) as unknown as RegistryWorkspaceListItem[]);
     history.replaceState(null, '', '/#/tasks/AGT-2124');
     selection.restoreFromUrl(true);
-    http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2124')).flush(detail);
+    http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2124/core')).flush(coreFor(info));
 
     const nextInfo = {
       ...info,
@@ -174,9 +214,10 @@ describe('TaskSelectionService · stable task URLs', () => {
     expect(selection.selected()).toBeNull();
     expect(selection.detailLoading()).toBe(true);
 
-    http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug')).flush(detail);
-    expect(selection.selected()).toEqual(detail);
-    expect(selection.detailPreview()).toBeNull();
+    http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug/core'))
+      .flush(coreFor(info, 'Agent Studio'));
+    expect(selection.selectedCore()?.id).toBe(info.id);
+    expect(selection.detailPreview()?.id).toBe(info.id);
     expect(selection.detailLoading()).toBe(false);
   });
 
@@ -184,7 +225,7 @@ describe('TaskSelectionService · stable task URLs', () => {
     vi.useFakeTimers();
     try {
       selection.openDetail(info);
-      const request = http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug'));
+      const request = http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug/core'));
 
       await vi.advanceTimersByTimeAsync(15_000);
 
@@ -205,14 +246,14 @@ describe('TaskSelectionService · stable task URLs', () => {
 
     selection.openDetailByTaskKey(staleTaskKey);
 
-    const request = http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug'));
+    const request = http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug/core'));
     expect(request.request.params.get('project')).toBe('Agent Studio');
     expect(request.request.params.has('watchPath')).toBe(false);
-    request.flush({ info: staleInfo } as TaskDetail);
+    request.flush(coreFor(staleInfo, 'Agent Studio'));
 
     expect(selection.detailLoading()).toBe(false);
     expect(selection.detailLoadError()).toBeNull();
-    expect(selection.selected()?.info.id).toBe('human-readable-slug');
+    expect(selection.selectedCore()?.id).toBe('human-readable-slug');
   });
 
   it('resolves a cold stale-lane tab through its containing registry project', () => {
@@ -228,27 +269,56 @@ describe('TaskSelectionService · stable task URLs', () => {
 
     selection.openDetailByTaskKey(staleTaskKey);
 
-    const request = http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug'));
+    const request = http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug/core'));
     expect(request.request.params.get('project')).toBe('PROJ-001');
     expect(request.request.params.has('watchPath')).toBe(false);
-    request.flush(detail);
+    request.flush(coreFor(info));
   });
 
   it('ends a failed tab load with a retryable error state', () => {
     tasks.jobs.set([info]);
 
     selection.openDetailByTaskKey(info.taskKey);
-    http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug'))
+    http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug/core'))
       .flush({ title: 'Temporary failure' }, { status: 503, statusText: 'Unavailable' });
 
     expect(selection.detailLoading()).toBe(false);
     expect(selection.detailLoadError()?.taskLabel).toBe('AGT-2124');
 
     selection.retryDetailLoad();
-    const retry = http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug'));
-    retry.flush(detail);
+    const retry = http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug/core'));
+    retry.flush(coreFor(info, 'Agent Studio'));
 
     expect(selection.detailLoadError()).toBeNull();
-    expect(selection.selected()).toEqual(detail);
+    expect(selection.selectedCore()?.id).toBe(info.id);
+  });
+
+  it('keeps the final A selection when A, B, A navigation supersedes late replies', () => {
+    const other = { ...info, id: 'other-task', key: 'AGT-2125',
+      taskKey: 'C:\\private\\project::other-task', title: 'Other task' } as TaskInfo;
+    selection.openDetail(info);
+    const firstA = http.expectOne(req => req.url.endsWith('/human-readable-slug/core'));
+    selection.openDetail(other);
+    const requestB = http.expectOne(req => req.url.endsWith('/other-task/core'));
+    selection.openDetail(info);
+    const finalA = http.expectOne(req => req.url.endsWith('/human-readable-slug/core'));
+
+    expect(firstA.cancelled).toBe(true);
+    expect(requestB.cancelled).toBe(true);
+    finalA.flush(coreFor(info, 'Agent Studio'));
+    expect(selection.selectedCore()?.taskKey).toBe(info.taskKey);
+    expect(selection.detailPreview()?.title).toBe(info.title);
+  });
+
+  it('keeps core usable when usage alone fails', () => {
+    selection.openDetail(info);
+    http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+      .flush(coreFor(info, 'Agent Studio'));
+    selection.loadResource('usage');
+    http.expectOne(req => req.url.endsWith('/human-readable-slug/details/usage'))
+      .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
+    expect(selection.selectedCore()?.id).toBe(info.id);
+    expect(selection.resourceStates().usage.phase).toBe('error');
+    expect(selection.resourceStates().git.phase).toBe('idle');
   });
 });

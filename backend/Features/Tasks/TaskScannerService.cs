@@ -1753,7 +1753,7 @@ public class TaskScannerService : ITaskScanner
     /// pane to render the blog-style timeline of task extensions written by
     /// Extend mode.
     /// </summary>
-    private static List<TaskPromptHistoryEntry> ReadPromptHistory(string jobFolder)
+    internal static List<TaskPromptHistoryEntry> ReadPromptHistory(string jobFolder)
     {
         var result = new List<TaskPromptHistoryEntry>();
         if (!Directory.Exists(jobFolder)) return result;
@@ -1788,7 +1788,7 @@ public class TaskScannerService : ITaskScanner
     /// absent. A backend restart therefore preserves the honest distinction
     /// without requiring another core run.
     /// </summary>
-    private TaskSummaryState ResolveSummaryState(string jobKey, string? statusMarkdown)
+    internal TaskSummaryState ResolveSummaryState(string jobKey, string? statusMarkdown)
     {
         var live = _summaryService.GetState(jobKey);
         if (live != null) return live;
@@ -1876,7 +1876,7 @@ public class TaskScannerService : ITaskScanner
         return [];
     }
 
-    private ContextUsageSnapshot? ReadContextUsage(string jobDir)
+    internal ContextUsageSnapshot? ReadContextUsage(string jobDir)
     {
         var jobJsonPath = Path.Combine(jobDir, "task.json");
         if (!File.Exists(jobJsonPath)) return null;
@@ -2147,7 +2147,7 @@ public class TaskScannerService : ITaskScanner
         return (fullPath, contentType);
     }
 
-    private static List<TaskLogEntry> BuildLog(string dir)
+    internal static List<TaskLogEntry> BuildLog(string dir)
     {
         var entries = new List<TaskLogEntry>();
 

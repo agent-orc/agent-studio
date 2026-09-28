@@ -34,6 +34,7 @@ import { LayoutPanesService } from './services/layout-panes.service';
 import { TaskArtifactsService } from './services/task-artifacts.service';
 import { LanePagerService } from './state/lane-pager.service';
 import { TaskSelectionService } from './state/task-selection.service';
+import { resourceReasonLabel } from './state/task-core.model';
 import { ClaudeSessionPollService } from '../polling/services/claude-session-poll.service';
 import { SessionEventsPollService } from '../polling/services/session-events-poll.service';
 import { RunTimelinePollService } from '../polling/services/run-timeline-poll.service';
@@ -187,6 +188,12 @@ export class TaskDetailComponent implements OnDestroy {
   /** Lane-pager snapshot state for the header (read-only facades). */
   private readonly lanePager = inject(LanePagerService);
   private readonly jobSelection = inject(TaskSelectionService);
+  readonly resourceStates = this.jobSelection.resourceStates;
+  readonly resourceReasonLabel = resourceReasonLabel;
+  retryResource(name: 'git' | 'usage' | 'review' | 'history'): void {
+    this.jobSelection.loadResource(name);
+  }
+  retryDocuments(): void { this.jobSelection.retryDocuments(); }
   /**
    * True while the selection is fetching the next/previous task without a
    * warmed prefetch to paint instantly. Drives the header's small loading
@@ -478,18 +485,20 @@ export class TaskDetailComponent implements OnDestroy {
     // state on actual job changes, no-ops on same-job refreshes.
     this.git.setJob(d.info);
 
-    this.errorMsg.set(null);
-    if (d.info.model) {
-      this.modelDraft.set(d.info.model);
-    } else {
-      const def = this.availableModels().find((m) => m.isDefault);
-      this.modelDraft.set(def?.id ?? '');
-    }
-    this.thinkingLevelDraft.set(d.info.thinkingLevel ?? null);
-    const nextCliType = (d.info.cliType ?? 'claude') as CliType;
-    if (nextCliType !== this.cliTypeDraft()) {
-      this.cliTypeDraft.set(nextCliType);
-      this.loadModelCatalog(nextCliType);
+    if (isJobSwitch) {
+      this.errorMsg.set(null);
+      if (d.info.model) {
+        this.modelDraft.set(d.info.model);
+      } else {
+        const def = this.availableModels().find((m) => m.isDefault);
+        this.modelDraft.set(def?.id ?? '');
+      }
+      this.thinkingLevelDraft.set(d.info.thinkingLevel ?? null);
+      const nextCliType = (d.info.cliType ?? 'claude') as CliType;
+      if (nextCliType !== this.cliTypeDraft()) {
+        this.cliTypeDraft.set(nextCliType);
+        this.loadModelCatalog(nextCliType);
+      }
     }
 
     if (isJobSwitch) {
@@ -602,6 +611,8 @@ export class TaskDetailComponent implements OnDestroy {
     // would also pull working-tree state for a task that, by the
     // worktree-isolation rule, doesn't get to render that data.
     if (this.panesVisible().git && this.isActiveJob()) {
+      if (this.resourceStates().git.phase === 'idle')
+        setTimeout(() => this.jobSelection.loadResource('git'), 0);
       this.git.startAutoRefresh();
     } else {
       this.git.stopAutoRefresh();
@@ -1353,6 +1364,7 @@ export class TaskDetailComponent implements OnDestroy {
 
   togglePane(name: 'prompt' | 'protocol' | 'git'): void {
     const next = this.layout.togglePane(name);
+    if (name === 'git' && next.git) this.jobSelection.loadResource('git');
     if (name === 'git' && next.git && !this.gitStatus()) {
       // Lazy-load git status the first time the pane is shown.
       this.refreshGit();

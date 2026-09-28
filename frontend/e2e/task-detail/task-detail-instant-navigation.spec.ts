@@ -6,6 +6,8 @@ import { dismissDevErrorDialog, setTheme } from '../helpers/theme';
 const WATCH_PATH = 'C:/fixtures/task-detail-navigation';
 const TASK_ID = 'agt-2577-heavy';
 const TASK_KEY = `${WATCH_PATH}::${TASK_ID}`;
+const PEER_ID = 'agt-2578-peer';
+const PEER_KEY = `${WATCH_PATH}::${PEER_ID}`;
 
 function json(route: Route, body: unknown, status = 200): Promise<void> {
   return route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
@@ -40,29 +42,57 @@ function task() {
   };
 }
 
-function detail() {
+function peerTask() {
+  return { ...task(), id: PEER_ID, taskKey: PEER_KEY, key: 'AGT-2578',
+    displayKey: 'AGT-2578', title: 'Peer task', order: 2 };
+}
+
+function core() {
   return {
-    info: task(),
-    promptMarkdown: '# Heavy task\n\nLoaded detail content.',
-    statusMarkdown: 'Ready for review.',
-    contextUsage: null,
-    log: [],
-    promptHistory: [],
-    titleHistory: [],
-    reviewEvidence: [],
-    summaryState: null,
+    state: 'ready', projectId: 'fixture', projectName: 'fixture',
+    id: TASK_ID, taskKey: TASK_KEY, key: 'AGT-2577',
+    title: 'Heavy task with many runs and artifacts', kind: 'task',
+    taskType: 'chore', lane: '5-human-review', archiveState: null,
+    enteredLaneAt: '2026-08-11T10:00:00Z', order: 1, mode: 'coding',
+    released: false, pendingIntent: false, coreVersion: 7,
+    pins: { model: 'gpt-5.2-codex', modelExplicit: true,
+      thinkingLevel: null, thinkingLevelExplicit: false, cliType: 'codex',
+      contextMode: null, useOwnSession: null, allowWebAccess: false,
+      noBranchExpected: false },
+    actions: { canEdit: true, canMove: true, canDelete: true, canContinue: true },
+    blocking: { blockerType: null, blockerCondition: null, blockerStatus: null,
+      blockerDescription: null, needsInput: null, dependencyBlocked: false,
+      dependencyState: 'ready', dependencies: [] },
+    runtime: { attemptId: 'attempt-1', runnerId: null, runnerName: null,
+      hostname: null, executionStatus: null, location: 'none',
+      heartbeatAt: null, leaseState: 'none', leaseId: null },
+    runtimeVersion: 'v1',
+    statusSummary: { state: 'ready', text: 'Ready for review.', originalBytes: 17,
+      hash: 'status', cursor: null },
+    prompt: { state: 'ready', text: '# Heavy task\n\nBounded core prompt.',
+      originalBytes: 800_000, hash: 'prompt', cursor: '2048',
+      continuationUrl: `/api/tasks/${TASK_ID}/files/prompt.md?project=fixture` },
+    timeline: { state: 'ready', events: [{ sequence: 1, ts: '2026-08-11T10:00:00Z',
+      kind: 'note', actor: 'system', runId: 'attempt-1', summary: 'Recent work' }],
+      cursor: '1', continuationUrl: `/api/tasks/${TASK_ID}/timeline?project=fixture` },
   };
 }
 
-function grouped() {
+function resource(name: string, data: unknown) {
+  return { id: TASK_ID, taskKey: TASK_KEY, projectId: 'fixture', attemptId: 'attempt-1',
+    coreVersion: 7, resource: name, version: 'v1', computedAt: '2026-08-11T10:00:00Z',
+    state: 'ready', data, reason: null };
+}
+
+function grouped(includePeer = false) {
   return {
     backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
-    failedPickup: [], codeNotComplete: [], autoReview: [], humanReview: [task()],
+    failedPickup: [], codeNotComplete: [], autoReview: [], humanReview: includePeer ? [task(), peerTask()] : [task()],
     escalated: [], completed: [], archive: [],
   };
 }
 
-async function mockApplication(page: Page): Promise<void> {
+async function mockApplication(page: Page, includePeer = false): Promise<void> {
   await page.route('**/api/**', route => json(route, []));
   await page.route('**/api/auth/status', route => json(route, {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
@@ -84,10 +114,20 @@ async function mockApplication(page: Page): Promise<void> {
   }]));
   await page.route('**/api/cli/usage**', route => json(route, { items: [] }));
   await page.route('**/api/cli/quota**', route => json(route, { at: '2026-08-11T10:00:00Z', snapshots: [] }));
+  await page.route('**/api/projects/*/workbenches**', route => json(route, { items: [] }));
   await page.route('**/api/tasks/archive**', route => json(route, { items: [], total: 0, offset: 0, limit: 50 }));
   await page.route(/\/api\/runner\/status(\?|$)/, route => json(route, { projects: {} }));
-  await page.route('**/api/tasks', route => json(route, [task()]));
-  await page.route('**/api/tasks/grouped**', route => json(route, grouped()));
+  await page.route('**/api/tasks', route => json(route, includePeer ? [task(), peerTask()] : [task()]));
+  await page.route('**/api/tasks/grouped**', route => json(route, grouped(includePeer)));
+  await page.route(`**/api/tasks/${TASK_ID}/runs**`, route => json(route, {
+    runCount: 0, firstStartedAt: null, lastActivityAt: null,
+    hasActiveRun: false, runs: [], promptEntries: [], refinements: [], runnerEvents: [],
+  }));
+  await page.route(`**/api/tasks/${TASK_ID}/session-events**`, route =>
+    json(route, { events: [], sessionChain: [] }));
+  await page.route(`**/api/tasks/${TASK_ID}/plan**`, route =>
+    json(route, { hasPlan: false, source: null, snapshotCount: 0,
+      activeItemId: null, items: [], unassignedSubActions: [] }));
   await page.route(`**/api/tasks/${TASK_ID}/pipeline**`, route => json(route, {
     pipeline: { id: 'fixture', displayName: 'Fixture', version: 1, pre: [], core: [], post: [], allSteps: [] },
     execution: null,
@@ -107,25 +147,30 @@ async function clickCard(page: Page): Promise<void> {
 }
 
 async function firstHeadPaintMs(page: Page): Promise<number> {
-  await page.waitForFunction(() => performance.getEntriesByName('task-head-first-paint').length > 0);
+  await page.waitForFunction(() => performance.getEntriesByName('task-core-ready').length > 0);
   return page.evaluate(() => {
     const click = performance.getEntriesByName('task-card-click').at(-1);
-    const paint = performance.getEntriesByName('task-head-first-paint').at(-1);
+    const paint = performance.getEntriesByName('task-core-ready').at(-1);
     if (!click || !paint) throw new Error('Task navigation performance marks are missing');
     return Math.round(paint.startTime - click.startTime);
   });
 }
 
-test('opens the task head before heavy detail data resolves', async ({ page }) => {
+test('paints complete bounded core before large documents resolve in both themes', async ({ page }) => {
   await mockApplication(page);
-  let detailRequested = false;
-  let releaseDetail!: () => void;
-  const detailGate = new Promise<void>(resolve => { releaseDetail = resolve; });
-  await page.route(new RegExp(`/api/tasks/${TASK_ID}(\\?|$)`), async route => {
-    detailRequested = true;
-    await detailGate;
-    await json(route, detail());
+  let documentsRequested = 0;
+  let releaseDocuments!: () => void;
+  const documentGate = new Promise<void>(resolve => { releaseDocuments = resolve; });
+  await page.route(`**/api/tasks/${TASK_ID}/core**`, route => json(route, core()));
+  await page.route(`**/api/tasks/${TASK_ID}/details/documents**`, async route => {
+    documentsRequested++;
+    await documentGate;
+    const name = new URL(route.request().url()).searchParams.get('name');
+    await json(route, resource('documents', { name,
+      markdown: name === 'prompt' ? '# Heavy task\n\n' + 'Large markdown. '.repeat(40_000) : 'Ready for review.',
+      summaryState: null }));
   });
+  await page.route(`**/api/tasks/${TASK_ID}/details/usage**`, route => json(route, { error: 'usage offline' }, 503));
 
   try {
     await page.goto('/');
@@ -136,12 +181,6 @@ test('opens the task head before heavy detail data resolves', async ({ page }) =
         capture: true,
         once: true,
       });
-      const observer = new MutationObserver(() => {
-        if (!document.querySelector('[data-testid="task-detail-head"]')) return;
-        observer.disconnect();
-        requestAnimationFrame(() => performance.mark('task-head-first-paint'));
-      });
-      observer.observe(document.body, { childList: true, subtree: true });
     });
 
     await clickCard(page);
@@ -152,8 +191,14 @@ test('opens the task head before heavy detail data resolves', async ({ page }) =
     await expect(head).toContainText('Heavy task with many runs and artifacts');
 
     expect(firstTaskHeadPaintMs, 'task head must paint within the immediate-navigation budget').toBeLessThan(100);
-    await expect.poll(() => detailRequested).toBe(true);
-    await expect(page.getByTestId('task-detail-load-sections').locator('[aria-busy="true"]')).toHaveCount(3);
+    const completeCore = page.getByTestId('task-core');
+    await expect(completeCore).toBeVisible();
+    for (const id of ['identity', 'state', 'pins', 'execution', 'status', 'prompt', 'timeline'])
+      await expect(page.getByTestId(`task-core-${id}`)).toBeVisible();
+    await expect(page.getByTestId('task-core-status')).toContainText('Ready for review.');
+    await expect(page.getByTestId('task-core-prompt')).toContainText('Bounded core prompt.');
+    await expect(page.getByTestId('task-core-timeline')).toContainText('Recent work');
+    await expect.poll(() => documentsRequested).toBe(2);
     await expect(page.getByTestId('studio-board')).toHaveCount(0);
 
     const resultsDir = process.env.JOB_RESULTS_DIR;
@@ -161,7 +206,7 @@ test('opens the task head before heavy detail data resolves', async ({ page }) =
       mkdirSync(resultsDir, { recursive: true });
       writeFileSync(
         path.join(resultsDir, 'task-detail-navigation-after.json'),
-        `${JSON.stringify({ firstTaskHeadPaintMs, budgetMs: 100, detailPendingAtPaint: detailRequested }, null, 2)}\n`,
+        `${JSON.stringify({ firstTaskHeadPaintMs, budgetMs: 100, documentsPendingAtPaint: documentsRequested }, null, 2)}\n`,
       );
       await page.screenshot({
         path: path.join(resultsDir, 'task-detail-navigation-after-loading-light--mocked.png'),
@@ -174,21 +219,209 @@ test('opens the task head before heavy detail data resolves', async ({ page }) =
       });
     }
 
-    releaseDetail();
-    await expect(page.getByTestId('task-detail-load-sections')).toHaveCount(0);
+    releaseDocuments();
+    await expect(page.getByTestId('task-core')).toHaveCount(0);
+    await expect(page.getByTestId('task-resource-status')).toContainText('Usage information unavailable');
+    await expect(page.getByTestId('error-dialog-overlay')).toHaveCount(0);
   } finally {
-    releaseDetail();
+    releaseDocuments();
+  }
+});
+
+test('pending crash recovery stays reviewable without blocking task navigation', async ({ page }) => {
+  await mockApplication(page);
+  let releaseDocuments!: () => void;
+  const documentGate = new Promise<void>(resolve => { releaseDocuments = resolve; });
+  await page.route('**/api/crash-recovery/pending', route => json(route, { pending: [{
+    id: 'recovery-1', projectName: 'fixture', jobId: TASK_ID,
+    reason: 'Uncommitted changes after restart', repoRoot: WATCH_PATH,
+    message: 'Recovery', files: ['src/example.ts'], createdAt: '2026-08-11T10:00:00Z',
+    classification: 'review',
+  }] }));
+  await page.route(`**/api/tasks/${TASK_ID}/core**`, route => json(route, core()));
+  await page.route(`**/api/tasks/${TASK_ID}/details/documents**`, async route => {
+    await documentGate;
+    const name = new URL(route.request().url()).searchParams.get('name');
+    return json(route, resource('documents', { name,
+      markdown: name === 'prompt' ? 'Prompt' : 'Status', summaryState: null }));
+  });
+
+  try {
+    await page.goto('/');
+    await dismissDevErrorDialog(page);
+    await expect(page.getByTestId('crash-recovery-open')).toBeVisible();
+    await expect(page.getByTestId('crash-recovery-prompt')).toHaveCount(0);
+    await clickCard(page);
+    await expect(page.getByTestId('task-core')).toBeVisible();
+    await expect(page.getByTestId('crash-recovery-open')).toBeVisible();
+    await page.getByTestId('crash-recovery-open').click();
+    await expect(page.getByTestId('crash-recovery-prompt')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('crash-recovery-prompt')).toHaveCount(0);
+    await expect(page.getByTestId('crash-recovery-open')).toBeVisible();
+  } finally {
+    releaseDocuments();
+  }
+});
+
+test('keeps keyboard pager and browser history identity while documents and Git hang', async ({ page }) => {
+  await mockApplication(page, true);
+  await page.route(`**/api/tasks/${TASK_ID}/core**`, route => json(route, core()));
+  await page.route('**/api/tasks/AGT-2577/core**', route => json(route, core()));
+  await page.route(`**/api/tasks/${PEER_ID}/core**`, route => json(route, {
+    ...core(), id: PEER_ID, taskKey: PEER_KEY, key: 'AGT-2578', title: 'Peer task', order: 2,
+  }));
+  await page.route('**/api/tasks/AGT-2578/core**', route => json(route, {
+    ...core(), id: PEER_ID, taskKey: PEER_KEY, key: 'AGT-2578', title: 'Peer task', order: 2,
+  }));
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/api/tasks/*/details/documents**', async route => {
+    await gate;
+    const id = route.request().url().includes(PEER_ID) ? PEER_ID : TASK_ID;
+    const key = id === PEER_ID ? PEER_KEY : TASK_KEY;
+    const name = new URL(route.request().url()).searchParams.get('name');
+    await json(route, { ...resource('documents', { name, markdown: 'Ready', summaryState: null }), id, taskKey: key });
+  });
+  try {
+    await page.goto('/');
+    await dismissDevErrorDialog(page);
+    await clickCard(page);
+    await expect(page.getByTestId('task-core')).toContainText('Bounded core prompt.');
+    await expect(page.getByTestId('task-core-resources')).toContainText('Git: idle');
+    await expect(page.getByTestId('task-core-status')).toContainText('Ready for review.');
+    await expect(page.getByTestId('task-core-next')).toBeEnabled();
+    await page.keyboard.press('j');
+    await expect(page.getByTestId('task-detail-head')).toContainText('Peer task');
+    await expect(page.getByTestId('task-core')).toHaveAttribute('data-core-version', '7');
+    await page.keyboard.press('k');
+    await expect(page.getByTestId('task-detail-head')).toContainText('Heavy task with many runs and artifacts');
+    await page.goBack();
+    await expect(page.getByTestId('task-detail-head')).toContainText('Peer task');
+    await page.goForward();
+    await expect(page.getByTestId('task-detail-head')).toContainText('Heavy task with many runs and artifacts');
+  } finally {
+    release();
+  }
+});
+
+test('opens a public task URL before any board response arrives', async ({ page }) => {
+  await mockApplication(page);
+  let releaseBoard!: () => void;
+  const boardGate = new Promise<void>(resolve => { releaseBoard = resolve; });
+  await page.route('**/api/tasks/grouped**', async route => {
+    await boardGate;
+    await json(route, grouped());
+  });
+  await page.route('**/api/tasks/AGT-2577/core**', route => json(route, core()));
+  let releaseDocuments!: () => void;
+  const documentGate = new Promise<void>(resolve => { releaseDocuments = resolve; });
+  await page.route(`**/api/tasks/${TASK_ID}/details/documents**`, async route => {
+    await documentGate;
+    await json(route, resource('documents', { name: 'prompt', markdown: 'Ready', summaryState: null }));
+  });
+  try {
+    await page.goto('/#/tasks/AGT-2577');
+    await dismissDevErrorDialog(page);
+    await expect(page.getByTestId('task-core')).toBeVisible();
+    await expect(page.getByTestId('task-core-prompt')).toContainText('Bounded core prompt.');
+    await expect(page.getByTestId('studio-board')).toHaveCount(0);
+  } finally {
+    releaseBoard();
+    releaseDocuments();
+  }
+});
+
+test('measures thirty cached-core browser switches without waiting for documents', async ({ page }) => {
+  test.setTimeout(120_000);
+  await mockApplication(page, true);
+  await page.route(`**/api/tasks/${TASK_ID}/core**`, route => json(route, core()));
+  await page.route(`**/api/tasks/${PEER_ID}/core**`, route => json(route, {
+    ...core(), id: PEER_ID, taskKey: PEER_KEY, key: 'AGT-2578', title: 'Peer task', order: 2,
+  }));
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/api/tasks/*/details/documents**', async route => {
+    await gate;
+    await json(route, { error: 'cancelled' }, 503);
+  });
+  try {
+    await page.goto('/');
+    await dismissDevErrorDialog(page);
+    await clickCard(page);
+    await expect(page.getByTestId('task-core')).toBeVisible();
+    const samples: number[] = [];
+    for (let index = 0; index < 30; index++) {
+      const before = await page.evaluate(() => performance.getEntriesByName('task-core-ready').length);
+      await page.evaluate(() => document.addEventListener('keydown', () =>
+        performance.mark('cached-core-switch-start'), { capture: true, once: true }));
+      await page.keyboard.press(index % 2 === 0 ? 'j' : 'k');
+      await page.waitForFunction(count => performance.getEntriesByName('task-core-ready').length > count, before);
+      await expect(page.getByTestId('task-detail-head'))
+        .toContainText(index % 2 === 0 ? 'Peer task' : 'Heavy task with many runs and artifacts');
+      samples.push(await page.evaluate(() => {
+        const start = performance.getEntriesByName('cached-core-switch-start').at(-1)!;
+        const ready = performance.getEntriesByName('task-core-ready').at(-1)!;
+        return ready.startTime - start.startTime;
+      }));
+    }
+    const sorted = [...samples].sort((a, b) => a - b);
+    const p95 = sorted[Math.ceil(sorted.length * 0.95) - 1];
+    const output = process.env.JOB_RESULTS_DIR;
+    if (output) writeFileSync(path.join(output, 'task-core-cached-switches.json'),
+      JSON.stringify({ environment: 'local Linux Chromium, mocked core transport', samples: samples.length,
+        p50Ms: sorted[14], p95Ms: p95, maxMs: sorted.at(-1) }, null, 2) + '\n');
+    expect(p95).toBeLessThanOrEqual(100);
+  } finally {
+    release();
+  }
+});
+
+test('waits for the Git pane and keeps the task usable when Git times out', async ({ page }) => {
+  await mockApplication(page);
+  await page.route(`**/api/tasks/${TASK_ID}/core**`, route => json(route, core()));
+  await page.route(`**/api/tasks/${TASK_ID}/details/documents**`, route => {
+    const name = new URL(route.request().url()).searchParams.get('name');
+    return json(route, resource('documents', { name,
+      markdown: name === 'prompt' ? '# Heavy task\n\nLoaded detail content.' : 'Ready for review.',
+      summaryState: null }));
+  });
+  await page.route(`**/api/tasks/${TASK_ID}/details/usage**`, route =>
+    json(route, resource('usage', { contextUsage: null })));
+  let gitRequested = 0;
+  let releaseGit!: () => void;
+  const gitGate = new Promise<void>(resolve => { releaseGit = resolve; });
+  await page.route(`**/api/tasks/${TASK_ID}/details/git**`, async route => {
+    gitRequested++;
+    await gitGate;
+    await json(route, { error: 'refresh timed out' }, 503);
+  });
+  try {
+    await page.goto('/');
+    await dismissDevErrorDialog(page);
+    await clickCard(page);
+    await expect(page.getByTestId('studio-pane-toggle-git')).toBeVisible();
+    expect(gitRequested).toBe(0);
+    await page.getByTestId('studio-pane-toggle-git').click();
+    await expect.poll(() => gitRequested).toBe(1);
+    await expect(page.getByTestId('studio-task')).toBeVisible();
+    releaseGit();
+    await expect(page.getByTestId('task-resource-status')).toContainText('Git information unavailable');
+    await expect(page.getByTestId('studio-pane-toggle-git')).toBeVisible();
+    await expect(page.getByTestId('error-dialog-overlay')).toHaveCount(0);
+  } finally {
+    releaseGit();
   }
 });
 
 test('keeps the task head and gives every failed section a retry', async ({ page }) => {
   await mockApplication(page);
   let attempt = 0;
-  await page.route(new RegExp(`/api/tasks/${TASK_ID}(\\?|$)`), route => {
+  await page.route(`**/api/tasks/${TASK_ID}/core**`, route => {
     attempt++;
     return attempt === 1
       ? json(route, { title: 'Temporary failure' }, 503)
-      : json(route, detail());
+      : json(route, core());
   });
 
   await page.goto('/');
@@ -211,6 +444,6 @@ test('keeps the task head and gives every failed section a retry', async ({ page
   }
 
   await page.getByTestId('task-detail-section-retry-activity').click();
-  await expect(page.getByTestId('task-detail-load-sections')).toHaveCount(0);
+  await expect(page.getByTestId('task-core')).toBeVisible();
   expect(attempt).toBe(2);
 });
