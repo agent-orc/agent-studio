@@ -23,6 +23,10 @@ readonly effective_environment_wait_seconds=5
 readonly maximum_deps_json_bytes=$((16 * 1024 * 1024))
 readonly smoke_timeout_seconds=10
 readonly restart_observation_seconds=15
+readonly completion_watch_seconds=600
+readonly completion_poll_seconds=15
+readonly coding_unit="agent-runner.service"
+readonly last_promotion_file="$deploy_root/last-promotion"
 readonly -a release_units=(agent-runner.service agent-runner-review.service)
 readonly review_unit="agent-runner-review.service"
 readonly -a review_env_files=(/etc/agent-runner/runner-review.env /etc/agent-runner/review.env)
@@ -828,6 +832,101 @@ restart_release_services() {
   done
 }
 
+# A healthy restart is not a working release. Stable 0.9.3 restarted cleanly and
+# then had every completion rejected for almost two hours (AGT-2985). The
+# runner logs "handed back to the local board" only after the Task Server has
+# accepted a completion, on the legacy and the v1 plane alike; a rejected one
+# surfaces as "/completion -> 4xx". Prints the first acceptance and returns 0,
+# or prints the number of rejected completions and returns 1 when the window
+# closes without one.
+watch_for_accepted_completion() {
+  local since_epoch="$1"
+  local window_seconds="$2"
+  local deadline=$((SECONDS + window_seconds))
+  local journal=""
+  local accepted
+
+  while :; do
+    journal="$(journalctl -u "$coding_unit" --since "@$since_epoch" -o cat --no-pager 2>/dev/null)" \
+      || journal=""
+    accepted="$(grep -m 1 -F "handed back to the local board: " <<<"$journal" || true)"
+    if [[ -n "$accepted" ]]; then
+      printf '%s\n' "$accepted"
+      return 0
+    fi
+    ((SECONDS < deadline)) || break
+    sleep "$completion_poll_seconds"
+  done
+  grep -cE '/completion -> [45][0-9][0-9]' <<<"$journal" || true
+  return 1
+}
+
+record_last_promotion() {
+  local release_id="$1"
+  local previous_release_id="$2"
+  local activated_epoch="$3"
+  local temporary
+
+  temporary="$(mktemp "$deploy_root/.last-promotion.XXXXXX")"
+  printf 'release=%s\nprevious=%s\nactivated=%s\n' \
+    "$release_id" "$previous_release_id" "$activated_epoch" >"$temporary"
+  chmod 0644 "$temporary"
+  mv -fT -- "$temporary" "$last_promotion_file"
+}
+
+last_promotion_value() {
+  local key="$1"
+  local value
+
+  [[ -f "$last_promotion_file" && ! -L "$last_promotion_file" ]] || return 1
+  value="$(awk -F= -v key="$key" '$1 == key { print substr($0, index($0, "=") + 1) }' \
+    "$last_promotion_file" | tail -n 1)"
+  printf '%s\n' "$value"
+}
+
+# Post-restart smoke: within completion_watch_seconds of the last activation at
+# least one completion must be accepted, otherwise print the rollback command.
+verify_completions() {
+  local release_id
+  local previous_release_id
+  local activated_epoch
+  local remaining
+  local observation
+  local detail
+
+  release_id="$(last_promotion_value release)" \
+    || die "no recorded promotion to verify: $last_promotion_file"
+  previous_release_id="$(last_promotion_value previous)" || previous_release_id=""
+  activated_epoch="$(last_promotion_value activated)" || activated_epoch=""
+  [[ "$release_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] \
+    || die "recorded promotion has an invalid release id"
+  [[ -z "$previous_release_id" || "$previous_release_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] \
+    || die "recorded promotion has an invalid previous release id"
+  [[ "$activated_epoch" =~ ^[0-9]+$ ]] || die "recorded promotion has an invalid activation time"
+
+  remaining=$((activated_epoch + completion_watch_seconds - $(date +%s)))
+  ((remaining > 0)) || remaining=0
+  printf 'agent-runner-deploy: waiting up to %ss for %s to report an accepted completion from release %s\n' \
+    "$remaining" "$coding_unit" "$release_id"
+  if observation="$(watch_for_accepted_completion "$activated_epoch" "$remaining")"; then
+    logger -p authpriv.notice -t agent-runner-deploy \
+      "action=verify-completions release=$release_id result=accepted" || true
+    printf 'agent-runner-deploy: completion accepted after release %s: %s\n' "$release_id" "$observation"
+    return 0
+  fi
+
+  if [[ "$observation" =~ ^[1-9][0-9]*$ ]]; then
+    detail="no completion was accepted within ${completion_watch_seconds}s of its activation; $observation completion(s) were rejected"
+  else
+    detail="no completion was attempted within ${completion_watch_seconds}s of its activation, so the release is unproven"
+  fi
+  logger -p authpriv.notice -t agent-runner-deploy \
+    "action=verify-completions release=$release_id previous=${previous_release_id:-none} result=failed rejected=${observation:-0}" || true
+  printf 'agent-runner-deploy: release %s is active, but %s\n' "$release_id" "$detail" >&2
+  print_rollback_hint "$previous_release_id"
+  die "post-restart completion check failed for release $release_id"
+}
+
 promote_release() {
   command -v find >/dev/null || die "find is required"
   command -v readlink >/dev/null || die "readlink is required"
@@ -963,6 +1062,8 @@ promote_release() {
   chown -R root:root "$accepted_release"
   install -d -o "$service_user" -g "$service_group" -m 0750 "$incoming_root"
 
+  local activated_epoch
+  activated_epoch="$(date +%s)"
   restart_release_services \
     "$release_id" \
     "$previous_release_id" \
@@ -971,6 +1072,8 @@ promote_release() {
   logger -p authpriv.notice -t agent-runner-deploy \
     "action=release release=$release_id previous=${previous_release_id:-none} source=$incoming_root target=$release_root result=activated" || true
   printf 'agent-runner-deploy: promoted and activated release %s at %s\n' "$release_id" "$release_root"
+  record_last_promotion "$release_id" "$previous_release_id" "$activated_epoch"
+  verify_completions
 }
 
 main() {
@@ -998,6 +1101,9 @@ main() {
     1:restart-review)
       restart_review_unit
       ;;
+    1:verify-completions)
+      verify_completions
+      ;;
     3:update-clis)
       update_clis "$2" "$3"
       ;;
@@ -1015,7 +1121,7 @@ main() {
       configure_role "$2" "$3" "$4"
       ;;
     *)
-      die "usage: agent-runner-deploy [--force|--restart-review-drain] | drain | restart-review [--force] | update-clis <codex-version> <claude-version> | config <coding|review> RUNNER_MAX_PARALLELISM <1-6> [--force]"
+      die "usage: agent-runner-deploy [--force|--restart-review-drain] | drain | restart-review [--force] | verify-completions | update-clis <codex-version> <claude-version> | config <coding|review> RUNNER_MAX_PARALLELISM <1-6> [--force]"
       ;;
   esac
 }

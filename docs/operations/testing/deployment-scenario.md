@@ -21,9 +21,17 @@ real processes rather than an in-memory test host. The fixture and steps are dat
 the assertions are typed C#
 ([`task-server.Tests/ScenarioContext.cs`](../../../task-server.Tests/ScenarioContext.cs)).
 
-`smoke` runs the first six steps (bootstrap through auto-review) and is the
-gate every deployment card build must pass. `full` runs every step and is the
-deeper release gate.
+`smoke` runs the seven smoke-level steps (bootstrap through auto-review) and
+is the gate every deployment card build and the develop-to-main promotion train
+must pass. `full` runs every step and is the deeper release gate.
+
+The coding attempt runs on both runner planes (AGT-2985). Step 5 drives the v1
+plane of the distributed Task Server, where the claim carries a run id. Step 6
+drives the legacy plane that the production fleet uses: the backend monolith
+serves `/api/runner/claim` and `/api/runner/completion`, the claim carries no
+run id, and the runner's own ids and the server's fenced attempt id can drift
+there. Stable 0.9.3 passed the old v1-only scenario and then had every
+production completion rejected on the legacy plane.
 
 | # | Step | Level | Proves |
 |---|---|---|---|
@@ -32,15 +40,16 @@ deeper release gate.
 | 3 | Create task | smoke | The seeded workspace/project/task exist in `2-ready`. |
 | 4 | Claim task | smoke | The runner claims the task under a fenced lease. |
 | 5 | Run with the fake CLI | smoke | The runner drives a fake coding CLI that runs the fixture's known-passing and known-failing checks, commits, and pushes; the task reaches `4-auto-review` with an immutable result handoff. In Compose, Studio BFF is stopped before the run is released. |
-| 6 | Auto-review | smoke | The same run's review subject is claimed, reported, and cleaned up; the task reaches `5-human-review`. In Compose, the real Engine executes all five decision stages while Studio BFF stays stopped, then Studio BFF is restarted. |
-| 7 | Orchestrator chat turn with context receipt | full | A chat turn round-trips with a persisted context receipt (token budget, sources). |
-| 8 | Backup | full | `POST /api/v1/management/backups` returns a file digest. |
-| 9 | Restore into an empty store, inventory hash equality | full | A second, empty Task Server instance restores that backup and reports the same SHA-256 (the most direct "before vs. after" equality check the store exposes today; see "Known gaps"). |
+| 6 | Run with the fake CLI on the legacy runner plane | smoke | The backend monolith, a second real runner, and the fixture repository served over smart HTTP (`git http-backend` behind `testsupport/GitSmartHttpServer.cs`; the project registry accepts only http(s) URLs) run as sibling processes. The runner passes the project delivery preflight, claims over `/api/runner/claim`, runs the fake CLI, and completes over `/api/runner/completion` with session-continuation evidence. The completion is accepted, the task reaches `4-auto-review`, the ledger entry names the server's fenced attempt id (not the lease id), and a new commit lands. It fails with the production symptom on the 0.9.3 runner code. |
+| 7 | Auto-review | smoke | The same run's review subject is claimed, reported, and cleaned up; the task reaches `5-human-review`. In Compose, the real Engine executes all five decision stages while Studio BFF stays stopped, then Studio BFF is restarted. |
+| 8 | Orchestrator chat turn with context receipt | full | A chat turn round-trips with a persisted context receipt (token budget, sources). |
+| 9 | Backup | full | `POST /api/v1/management/backups` returns a file digest. |
+| 10 | Restore into an empty store, inventory hash equality | full | A second, empty Task Server instance restores that backup and reports the same SHA-256 (the most direct "before vs. after" equality check the store exposes today; see "Known gaps"). |
 
 ## How to run each target
 
 ```bash
-scripts/scenario.sh --target inproc --level smoke   # < 3 minutes, no Docker, Windows or Linux
+scripts/scenario.sh --target inproc --level smoke   # about one minute on an idle host, no Docker
 scripts/scenario.sh --target inproc --level full
 scripts/scenario.sh --target compose --level smoke  # folded default-profile health check
 scripts/scenario.sh --target compose --level full   # distributed stack + fake-CLI runner
@@ -50,16 +59,23 @@ scripts/scenario.sh --target remote --level smoke --remote-url https://... --rem
 - **`inproc`** reuses the `TopologyTests` process-orchestration pattern
   (`testsupport/BuiltProcessLauncher.cs`, `testsupport/ProcessWaiters.cs`,
   `testsupport/ManagedProcess.cs`): it boots `task-server.dll` and
-  `agent-host.dll` as sibling `dotnet test`-owned processes. Build the
+  `agent-host.dll` as sibling `dotnet test`-owned processes, and for the
+  legacy-plane step also `OrchestratorApi.dll` (from a temporary working
+  directory, because the monolith writes `logs/` beside its content root) and a
+  second `agent-host.dll`. `task-server.Tests` builds the backend for that
+  reason without referencing it. The legacy runner does not inherit the host's
+  `RUNNER_*` variables, so a managed runner host can run the scenario. Build the
   solution first (or let `scripts/scenario.sh` do it); no Docker, no network
-  beyond `127.0.0.1`.
+  beyond `127.0.0.1`. Every step runs on Linux only.
 - **`compose`** at `--level smoke` delegates to the folded
   `scripts/compose-smoke-test.sh` check for the default `orchestrator-api` and
   `frontend` stack. At `--level full`, it builds the `task-server`,
   `studio-bff`, `orchestrator-engine`, and `agent-host-distributed` services from the development
   checkout with the `distributed` and `runner` profiles, applies
-  `testsupport/scenario/docker-compose.scenario.yml`, and runs the same nine
-  typed steps as `inproc`. The product stack lets its one-shot `bootstrap`
+  `testsupport/scenario/docker-compose.scenario.yml`, and runs the same ten
+  typed steps as `inproc`. The legacy-plane step runs its backend monolith and
+  runner as host processes there too: neither is part of the distributed
+  Compose stack. The product stack lets its one-shot `bootstrap`
   container generate the principal tokens inside the `secrets` volume; the
   override instead injects the harness's own tokens as Compose secrets from
   `DISTRIBUTED_*_TOKEN` and points every service's token file at
@@ -178,6 +194,14 @@ by the scenario itself.
   driving a real run needs a runner already attached to that specific
   deployment, which a scenario script visiting from outside cannot provision
   without becoming a deployment tool itself.
+- **Legacy-plane result artifacts are not shipped.** Since AGT-2890 the runner
+  uploads result artifacts after the fenced completion. The v1 Task Server
+  admits that with the outbox authority; the backend monolith answers
+  `409 RunAttempt is Completed`, so a legacy-plane run records
+  `artifacts=partial uploaded=0` and ships no result artifacts. The
+  legacy-plane step therefore asserts completion acceptance and the ledger
+  entry, not artifacts. Found by the step itself (AGT-2985); it needs its own
+  fix card.
 - **The Engine post-processing stage is still a decision loop.** It does not
   execute `post-build-test-gate`; that checkout-bound step still belongs to
   the local backend pipeline. The Compose scenario proves Runner completion

@@ -131,6 +131,30 @@ public sealed class GitWorkspaceTests : IDisposable
         Assert.Empty(probeRefs.StdOut);
     }
 
+    // AGT-2985: on a fresh host the delivery preflight creates the shared clone
+    // before the first claim. A `--no-checkout` clone left an empty index there,
+    // so the first preparation saw every tracked file as a staged deletion and
+    // refused the "stable checkout with local changes" three times in a row.
+    [Fact]
+    public async Task Project_preflight_clone_is_a_stable_checkout_the_first_claim_can_prepare()
+    {
+        await SeedOriginAsync();
+        // A hosted repository's HEAD names its default branch; without it a
+        // clone checks nothing out either way and the defect stays hidden.
+        await GitAsync(_origin, "symbolic-ref", "HEAD", "refs/heads/main");
+        var preflight = await GitWorkspace.PreflightProjectAsync(
+            PreflightOptions(), "PROJ-016", _origin, "main", _ => { }, CancellationToken.None);
+        Assert.True(preflight.Succeeded, preflight.Detail);
+
+        var workspace = CreateProjectWorkspace(_origin);
+        Assert.Equal(string.Empty, (await GitAsync(workspace.SharedRepoPath, "status", "--porcelain")).StdOut);
+        await workspace.PrepareAsync(CancellationToken.None);
+
+        Assert.Equal("main", (await GitAsync(workspace.SharedRepoPath, "branch", "--show-current")).StdOut);
+        Assert.Equal(string.Empty, (await GitAsync(workspace.SharedRepoPath, "status", "--porcelain")).StdOut);
+        await workspace.TeardownAsync("Done", CancellationToken.None);
+    }
+
     [Fact]
     public async Task Project_preflight_fails_when_registered_clone_cannot_be_created()
     {

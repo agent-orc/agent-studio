@@ -12,6 +12,17 @@ release yet.
 
 ## [Unreleased]
 
+### Fixed
+
+- The runner's slot attempt id is the lease's attempt id, so no consumer of the slot can drift from the attempt the server fenced; on the legacy runner plane it was the lease id (AGT-2985).
+- On a fresh runner host the project delivery preflight makes a full clone; its `--no-checkout` clone made the first claim of every project fail environment preparation three times with "Stable checkout has local changes" (AGT-2985).
+
+### Added
+
+- Legacy-plane completion contract test: claim over `/api/runner/claim`, the production slot, continuation evidence and completion request, accepted by `POST /api/runner/completion`; it fails on the 0.9.3 runner code (AGT-2985).
+- The deployment regression scenario runs the coding attempt on both runner planes: a new smoke step boots the backend monolith, a second real runner and a smart-HTTP fixture repository for the legacy plane the fleet uses (AGT-2985).
+- `agent-runner-deploy` waits up to ten minutes after a promotion for an accepted completion and otherwise prints the rollback command; `agent-runner-deploy verify-completions` reruns the check (AGT-2985).
+
 ## [0.9.4] - 2026-09-27
 
 Hotfix release. With 0.9.3 the production runner's every completion was

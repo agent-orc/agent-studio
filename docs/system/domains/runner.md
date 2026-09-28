@@ -391,7 +391,15 @@ rollout decision.
   host-bound clean home, repository, worktree, branch and delivery ref/SHA
   agree with the task's durable continuation ledger. The ledger records each
   fenced generation's input and captured session IDs, decision, typed reason,
-  token total and duration. A resumed round stops at 300 seconds or the
+  token total and duration. Each entry names the attempt the server fenced, and
+  the completion endpoint rejects evidence that names another one.
+  `RunnerStateStore.Create` therefore takes the slot's attempt id from the
+  lease's attempt id; only a lease without one falls back to the run id, then
+  the lease id. On the legacy plane the claim carries no run id, and before
+  AGT-2985 the slot used the lease id, so Stable 0.9.3 rejected every
+  production completion with continuation evidence. The legacy-plane contract
+  test (`backend.Tests/LegacyRunnerCompletionContractTests.cs`) and the
+  deployment scenario's legacy-plane step keep that path under a gate. A resumed round stops at 300 seconds or the
   1,211,213-token observation threshold. Semantic conflicts and invalid
   sessions return to Ready for a policy-qualified fresh claim. The original
   task prompt is never resent on the resume path.
@@ -1392,7 +1400,10 @@ rollout decision.
   publishes that result as diagnostics only: it never grants or denies another
   project's claim. Before a project receives a lease, its delivery preflight
   requires the registered fetch and push URLs, an exact remote integration
-  branch, and a real create/delete push of a temporary runner ref. Proofs expire
+  branch, and a real create/delete push of a temporary runner ref. On a fresh
+  host the preflight creates the shared project clone with a full checkout: a
+  `--no-checkout` clone left an empty index that the first claim's stable
+  checkout update refused as local changes (AGT-2985). Proofs expire
   after five minutes because branch and credential state can change without a
   settings write. A failed or unconfigured project stays Ready while unrelated
   projects assigned to the same host remain claimable. Execution Hosts and the
