@@ -545,9 +545,10 @@ create owner-only `.env`, `runner.env`, and four service credentials first:
 
 | Profile | Services | Purpose |
 |---|---|---|
-| (none) | `task-server`, `orchestrator-engine`, `studio-bff`, `frontend`, coding and review `agent-host` services | Transitional one-box baseline with one task authority. See [Getting started](./getting-started.md) for route and acceptance limits. |
-| `legacy` | `orchestrator-api` | Compatibility API forwards only versioned routes to the same Task Server. Old runner services are absent because their protocol routes are rejected. |
-| `dev` | a `-dev` sibling of every service above | Builds from this checkout's Dockerfiles instead of pulling. This is the only place `build:` is wired in the compose file; name the exact `-dev` services you want (e.g. `docker compose --profile dev up --build orchestrator-api-dev frontend-dev`) rather than a bare `--profile dev up`, which also starts every profile-less default service and collides on their ports. |
+| (none) | `bootstrap`, `task-server`, `orchestrator-engine`, `studio-bff`, `orchestrator-api`, `web`, `agent-host-distributed` (coding), `agent-host-review-distributed` (review) | Transitional one-box baseline with one task authority. `orchestrator-api` is the compatibility API: it forwards only versioned `/api/v1` routes to the same Task Server, rejects every other `/api` route, and mounts no workspace or project store. See [Getting started](./getting-started.md) for route and acceptance limits. |
+| `ops` | `credential-manager` | One-shot credential rotation and revocation against the shared secrets volume. |
+| `edge` | `edge` | Caddy HTTPS listener for an explicit private-network origin; pair it with `STUDIO_ALLOWED_ORIGINS`. |
+| `dev` | a `-dev` sibling of every default and `ops` service | Builds from this checkout's Dockerfiles instead of pulling. This is the only place `build:` is wired in the compose file; name the exact `-dev` services you want (e.g. `docker compose --profile dev up --build task-server-dev web-dev`) rather than a bare `--profile dev up`, which also starts every profile-less default service and collides on their ports. |
 
 The disposable Compose topology explicitly sets
 `ENGINE_ALLOW_INSECURE_HTTP=1` and `RUNNER_ALLOW_INSECURE_HTTP=1` only for
@@ -575,6 +576,7 @@ settings.
 | `ENGINE_AUTH_TOKEN_FILE` | One-time bootstrap input for the initial Engine principal | Generated and written by packaged setup |
 | `STUDIO_AUTH_TOKEN`, `ENGINE_AUTH_TOKEN` | Direct bootstrap alternatives for ephemeral deployments | Unset |
 | `BOOTSTRAP_RUNNER_ID` and `BOOTSTRAP_RUNNER_AUTH_TOKEN(_FILE)` | Optional bound Runner bootstrap for deterministic Compose or topology harnesses | Unset |
+| `BOOTSTRAP_REVIEW_RUNNER_ID` and `BOOTSTRAP_REVIEW_RUNNER_AUTH_TOKEN(_FILE)` | Optional second bound Runner principal for the review host. Both values must be set together; the id and the credential must differ from the coding Runner's. Compose sets them from `review_runner_token`. | Unset |
 | `AUTH_TOKEN_FILE`, `AUTH_TOKEN` | Deprecated shared bearer input, mapped to the bootstrap Studio principal only | Unset |
 | `TaskServer:MinimumLeaseSeconds` | Lower clamp for Runner leases | `30` |
 | `TaskServer:MaximumLeaseSeconds` | Upper clamp for Runner leases | `600` |
@@ -609,6 +611,13 @@ for the Docker control-plane variables and the packaged installer prompts,
 and the
 [retention and archive dossier, §5](../retention-und-archiv/index.html#archiv-s3)
 for the full design rationale.
+
+The Studio BFF (`studio-bff`) reads two settings of its own:
+
+| Setting | Meaning | Default |
+|---|---|---|
+| `TaskServer:BaseUrl` | Task Server origin the BFF forwards `/api/v1` and `/hubs` to. Required. | None; startup fails |
+| `Studio:AllowedOrigins` (`STUDIO_ALLOWED_ORIGINS` in Compose) | Comma-separated browser origins. Each entry must be an exact `scheme://host[:port]` origin, either HTTPS or loopback HTTP; any other entry stops startup. A request with a foreign `Origin` gets 403 `studio-origin-rejected`, as does a POST, PUT, PATCH or DELETE without an `Origin`. | `http://127.0.0.1:4011,http://localhost:4011` |
 
 - Configure at most one direct value or file for each bootstrap principal.
 - `GET /api/v1/protocol` and `POST /api/v1/protocol/compatibility` remain open
