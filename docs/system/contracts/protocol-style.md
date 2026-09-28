@@ -129,6 +129,17 @@ Successful finalization is `Ready`. Exhaustion is the typed terminal state
 `Degraded`, remains reviewable, and may use the marked transition scaffold only
 as the explicit fallback described above.
 
+Generated model output is validated before the deterministic Result rewrite or
+any `status.md` replacement. It must start with `# Status`, carry valid Result
+and Case fields and a nonempty Duration, and include nonempty Overview (Problem
+and Solution), What Was Done, and Open Items sections. Greetings, empty sections,
+and unfilled prompt placeholders fail generation. A malformed response receives
+one retry with the identical prompt; exhausted format retries leave the previous
+Result untouched and are not repeated by the finalization loop. The `summary`
+pipeline step records failure reasons and both attempt outcomes, and ad-hoc usage
+records mark rejected responses as failed. Interim summaries use the same
+validation without changing the stored Result or pipeline step.
+
 Hard rules:
 
 - No `# Status` is omitted. No extra `H1`s are added (`## Overview` is an H2 and leads the body).
