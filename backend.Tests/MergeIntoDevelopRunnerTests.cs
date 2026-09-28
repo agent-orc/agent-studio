@@ -1470,6 +1470,76 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         Assert.Equal(outcome.MergedSha, queued.ApprovedSha);
     }
 
+    /// <summary>
+    /// AGT-2936 (D8): a successor review generation created while the merge
+    /// and gate ran refuses the publication fence. The stale merge is rolled
+    /// back locally and never reaches the push queue.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_RefusedPublicationFence_RollsBackTheMergeAndPublishesNothing()
+    {
+        var repo = SeedRepo("run-fence-refused");
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "checkout -q -b task/46");
+        File.WriteAllText(Path.Combine(repo, "task.txt"), "task work");
+        Commit(repo, "feat: task work");
+        RunGit(repo, "checkout -q develop");
+        var before = RunGit(repo, "rev-parse refs/heads/develop").Out.Trim();
+
+        var (git, log, settings) = BuildWithSettings(repo);
+        var queue = new IntegrationPushQueue();
+        var jobFolder = BeginRun(log, repo, jobId: "46");
+        var runner = new MergeIntoDevelopRunner(
+            git, log, NullLogger<MergeIntoDevelopRunner>.Instance, pushQueue: queue, projectSettings: settings);
+        var fenceCalls = 0;
+
+        var outcome = await runner.RunAsync(
+            "Fixture", "46", jobFolder, repo, "develop", CancellationToken.None,
+            publicationFence: _ =>
+            {
+                fenceCalls++;
+                return false;
+            });
+
+        Assert.Equal(1, fenceCalls);
+        Assert.Equal(MergeIntoIntegrationOutcome.Error, outcome.Outcome);
+        Assert.StartsWith(MergeIntoDevelopRunner.SupersededReviewGenerationError, outcome.Error);
+        Assert.Equal(before, RunGit(repo, "rev-parse refs/heads/develop").Out.Trim());
+        Assert.False(queue.Reader.TryRead(out _), "a refused continuation must not publish");
+    }
+
+    [Fact]
+    public async Task RunAsync_AdmittedPublicationFence_PublishesInsideTheFence()
+    {
+        var repo = SeedRepo("run-fence-admitted");
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "checkout -q -b task/47");
+        File.WriteAllText(Path.Combine(repo, "task.txt"), "task work");
+        Commit(repo, "feat: task work");
+        RunGit(repo, "checkout -q develop");
+
+        var (git, log, settings) = BuildWithSettings(repo);
+        var queue = new IntegrationPushQueue();
+        var jobFolder = BeginRun(log, repo, jobId: "47");
+        var runner = new MergeIntoDevelopRunner(
+            git, log, NullLogger<MergeIntoDevelopRunner>.Instance, pushQueue: queue, projectSettings: settings);
+        IntegrationPushRequest? queuedInsideFence = null;
+
+        var outcome = await runner.RunAsync(
+            "Fixture", "47", jobFolder, repo, "develop", CancellationToken.None,
+            publicationFence: apply =>
+            {
+                apply();
+                queuedInsideFence = queue.Reader.TryRead(out var inside) ? inside : null;
+                return true;
+            });
+
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
+        Assert.NotNull(queuedInsideFence);
+        Assert.Equal(outcome.MergedSha, queuedInsideFence!.ApprovedSha);
+        Assert.False(queue.Reader.TryRead(out _), "the push is enqueued exactly once");
+    }
+
     [Fact]
     public void Run_AlreadyMerged_EnqueuesTheTipAtReleaseTime()
     {

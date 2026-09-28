@@ -699,8 +699,10 @@ public static class V1ReviewPlaneEndpoints
                 return Results.Json(new Contract.ApiError("task-not-found", "Review task was not found in the monolith store."),
                     statusCode: StatusCodes.Status404NotFound);
             var preparedHash = RemoteReviewSettlementJournal.Hash(request);
-            var replay = currentReview.Reports.Any(report => string.Equals(
-                report.IdempotencyKey, request.IdempotencyKey, StringComparison.Ordinal));
+            // Only an accepted report owns a journal; a replayed rejected key is
+            // answered by the authority like any other unaccepted report.
+            var replay = currentReview.Reports.Any(report => report.AuthorityStatus == AttemptWriteStatus.Accepted
+                && string.Equals(report.IdempotencyKey, request.IdempotencyKey, StringComparison.Ordinal));
             if (replay)
             {
                 var replayJournal = RemoteReviewSettlementJournal.Read(preparedTask.FolderPath, attemptId);
@@ -746,30 +748,7 @@ public static class V1ReviewPlaneEndpoints
                     RecordedAtUtc = DateTimeOffset.UtcNow,
                 };
             }
-            try
-            {
-                if (!replay && !RemoteReviewSettlementJournal.Prepare(preparedTask.FolderPath, new RemoteReviewSettlementEntry
-                    {
-                        AttemptId = attemptId,
-                        TaskKey = currentReview.TaskKey,
-                        IdempotencyKey = request.IdempotencyKey,
-                        ReportSha256 = preparedHash,
-                        Report = request,
-                        Delivery = preparedDelivery,
-                        ReceivedAtUtc = DateTime.UtcNow,
-                    }))
-                    return Results.Conflict(new Contract.ApiError("review-settlement-repair-required",
-                        "The review settlement journal conflicts with this report or requires repair."));
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                logger.LogError(ex, "review-settlement-journal-write-failed attempt={AttemptId}", attemptId);
-                return Results.Json(new Contract.ApiError("review-settlement-repair-required",
-                    "The review settlement journal could not be written."),
-                    statusCode: StatusCodes.Status503ServiceUnavailable);
-            }
-
-            var settled = authority.SettleReview(new SettleReviewAttemptRequest(
+            var settleRequest = new SettleReviewAttemptRequest(
                 new AttemptWriteReference(
                     attemptId,
                     request.Fence,
@@ -778,7 +757,48 @@ public static class V1ReviewPlaneEndpoints
                 request.Workspace.ActualHead,
                 outcome,
                 request.FailureClassification,
-                request.Summary));
+                request.Summary);
+            AttemptWriteResult settled;
+            try
+            {
+                settled = replay
+                    ? authority.SettleReview(settleRequest)
+                    : RemoteReviewSettlementJournal.PrepareAndSettle(
+                        preparedTask.FolderPath,
+                        new RemoteReviewSettlementEntry
+                        {
+                            AttemptId = attemptId,
+                            TaskKey = currentReview.TaskKey,
+                            IdempotencyKey = request.IdempotencyKey,
+                            ReportSha256 = preparedHash,
+                            Report = request,
+                            Delivery = preparedDelivery,
+                            ReceivedAtUtc = DateTime.UtcNow,
+                        },
+                        () => authority.GetReview(attemptId)?.Reports
+                            .LastOrDefault(report => report.AuthorityStatus == AttemptWriteStatus.Accepted)
+                            ?.IdempotencyKey,
+                        () => authority.SettleReview(settleRequest));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                logger.LogError(ex, "review-settlement-journal-write-failed attempt={AttemptId}", attemptId);
+                return Results.Json(new Contract.ApiError("review-settlement-repair-required",
+                    "The review settlement journal could not be written."),
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+            // Only a journal bound to the accepted key may back the acknowledgement;
+            // an accepted report without it is a typed repair state, never a pass.
+            if (settled.Status == AttemptWriteStatus.Accepted
+                && RemoteReviewSettlementJournal.Read(preparedTask.FolderPath, attemptId).Entry?.IdempotencyKey
+                   != request.IdempotencyKey)
+            {
+                logger.LogError("review-settlement-repair-required attempt={AttemptId} reason=accepted-without-journal",
+                    attemptId);
+                return Results.Json(new Contract.ApiError("review-settlement-repair-required",
+                    "The accepted report has no matching settlement journal."),
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
             if (!settled.Accepted || settled.ReviewAttempt is null)
                 return AttemptError(settled);
 

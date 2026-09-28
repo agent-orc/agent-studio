@@ -1038,6 +1038,24 @@ public sealed class AttemptAuthorityService
         }
     }
 
+    /// <summary>
+    /// Applies a review continuation only while the review is its task's current
+    /// generation. Successor creation takes the same gate, so it is ordered
+    /// strictly before (the effect is refused) or after (the effect applied
+    /// while current) - never in between. <paramref name="apply"/> must be short
+    /// and must not call back into this service from another thread.
+    /// </summary>
+    public bool TryApplyForCurrentReview(string attemptId, Action apply)
+    {
+        lock (_gate)
+        {
+            var review = FindReview(attemptId);
+            if (review is null || !IsCurrentReview(review)) return false;
+            apply();
+            return true;
+        }
+    }
+
     public bool HasScheduledReviewInfrastructureRetry(string attemptId)
     {
         lock (_gate)
