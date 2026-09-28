@@ -88,6 +88,9 @@ public sealed class StaleProgressArchiver
 
     public const int DefaultStuckResumeWindowMinutes = 60;
     private const int SentinelTailLineWindow = 50;
+    // The sentinel sits in the last few lines; 256 KiB holds the 50-line
+    // window for any realistic line length without reading the whole log.
+    private const int SentinelTailByteWindow = 256 * 1024;
 
     /// <summary>Test seam: when set, replaces the runner-status lookup so unit
     /// tests can simulate an active job without standing up <see cref="TaskRunnerService"/>.</summary>
@@ -538,11 +541,11 @@ public sealed class StaleProgressArchiver
 
     private static List<string> ReadTailLines(string path, int maxLines)
     {
-        // Read the whole file - cli-output.log is small (KB to a few MB);
-        // a streaming tail would be over-engineering for boot-time use.
-        var all = File.ReadAllLines(path);
-        if (all.Length <= maxLines) return new List<string>(all);
-        return new List<string>(all[(all.Length - maxLines)..]);
+        // cli-output.log is capped at 10 MiB per file, so the sweep reads only
+        // the newest byte window instead of the whole log (AGT-2991).
+        var window = BoundedFileRead.ReadTailLines(path, SentinelTailByteWindow);
+        var start = Math.Max(0, window.Count - maxLines);
+        return window.Skip(start).ToList();
     }
 
     private async Task<StaleProgressDecision> RecoverViaTransitionAsync(

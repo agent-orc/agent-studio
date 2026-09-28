@@ -86,6 +86,33 @@ public sealed class StaleProgressArchiverTests : IDisposable
     }
 
     [Fact]
+    public async Task Sweep_LargeCliLogWithSentinelAtTheEnd_StillRecoversFromTheBoundedTail()
+    {
+        // AGT-2991: the sweep reads only the newest window of cli-output.log.
+        // A multi-MiB log must still yield the sentinel in its last lines.
+        WriteJob(TaskStates.Progress, "big-log-task");
+        var folder = Path.Combine(_watchPath, TaskStates.Progress, "big-log-task");
+        var logs = Directory.CreateDirectory(Path.Combine(folder, "logs")).FullName;
+        var logPath = Path.Combine(logs, "cli-output.log");
+        using (var writer = new StreamWriter(logPath))
+        {
+            var filler = new string('x', 200);
+            for (var i = 0; i < 12_000; i++) writer.WriteLine($"[12:00:00.000] [stdout] working line {i} {filler}");
+            writer.WriteLine("[12:30:00.000] [stdout] [[TASK_DONE]]");
+        }
+        Assert.True(new FileInfo(logPath).Length > 2 * 1024 * 1024);
+        SetMtimeOldEnough(logPath);
+        SetMtimeOldEnough(Path.Combine(folder, "task.json"));
+
+        var (archiver, _) = Build();
+        var decisions = await archiver.SweepAsync();
+
+        var d = Assert.Single(decisions);
+        Assert.Equal(StaleProgressDecisionKinds.RecoveredToReview, d.Kind);
+        Assert.Equal("DONE", d.SentinelKeyword);
+    }
+
+    [Fact]
     public async Task Sweep_StaleFolderWithJobJsonNoSentinel_IsRequeuedToReadyNotDeadLettered()
     {
         // ADR-0051 (failed-pickup elimination): a stale 3-progress folder that
