@@ -69,7 +69,14 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
         var review = _authority.GetTaskProjection(taskKey).CurrentReviewAttempt;
         if (review is null) return RemoteReviewSettlementReconcileStatus.NoWork;
         var accepted = review.Reports.LastOrDefault(report => report.AuthorityStatus == AttemptWriteStatus.Accepted);
-        if (accepted is null) return RemoteReviewSettlementReconcileStatus.PendingAuthority;
+        if (accepted is null)
+        {
+            // An unaccepted journal binds nothing. Once the attempt is terminal no
+            // report can accept it any more, so the orphan is released.
+            if (review.TerminalAt is null) return RemoteReviewSettlementReconcileStatus.PendingAuthority;
+            RemoteReviewSettlementJournal.Release(task.FolderPath, review.AttemptId);
+            return RemoteReviewSettlementReconcileStatus.NoWork;
+        }
 
         var read = RemoteReviewSettlementJournal.Read(task.FolderPath, review.AttemptId);
         if (read.Status != RemoteReviewSettlementReadStatus.Ready || read.Entry is null)
@@ -77,8 +84,7 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
             // Older reports can have fully projected evidence without this new
             // journal. An unfinished report cannot be reconstructed from a verdict.
             if (read.Status == RemoteReviewSettlementReadStatus.Missing
-                && RemoteDeliverySettlementStore.Read(task.FolderPath) is
-                    { JournalRequired: false } legacy
+                && RemoteDeliverySettlementStore.Read(task.FolderPath) is { JournalRequired: false } legacy
                 && legacy.ReviewAttemptId == review.AttemptId)
                 return RemoteReviewSettlementReconcileStatus.NoWork;
             return read.Status == RemoteReviewSettlementReadStatus.Missing
