@@ -159,6 +159,12 @@ public static class ReviewSubjectStore
             error = $"Review subject ResultSha does not match current RunAttempt '{current.AttemptId}'.";
             return false;
         }
+        if (current.ResultEnvelope?.ImmutableRemoteRef is { } expectedRef
+            && !string.Equals(subject.ImmutableResultRef, expectedRef, StringComparison.Ordinal))
+        {
+            error = $"Review subject result ref does not match current RunAttempt '{current.AttemptId}'.";
+            return false;
+        }
 
         error = null;
         return true;

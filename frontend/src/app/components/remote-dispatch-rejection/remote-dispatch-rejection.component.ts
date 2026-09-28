@@ -32,6 +32,6 @@ export class RemoteDispatchRejectionComponent {
     const value = this.rejection()?.rejectedAtUtc;
     if (!value) return null;
     const parsed = Date.parse(value);
-    return Number.isNaN(parsed) ? value : new Date(parsed).toLocaleString();
+    return Number.isNaN(parsed) ? value : new Date(parsed).toLocaleString('en-US');
   });
 }

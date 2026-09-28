@@ -16,7 +16,7 @@ export type CycleTimeSortKey =
 
 export type CycleTimeSortDirection = 'asc' | 'desc';
 
-const COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+const COLLATOR = new Intl.Collator('en-US', { numeric: true, sensitivity: 'base' });
 
 /** Sort state for the per-task drill-down table. Default: newest completion first. */
 export class CycleTimeTableState {

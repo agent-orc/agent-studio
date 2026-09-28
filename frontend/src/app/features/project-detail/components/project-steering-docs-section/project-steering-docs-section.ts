@@ -346,7 +346,7 @@ ${warnings || '_(no warnings at queue time)_'}
     try {
       const d = new Date(iso);
       if (Number.isNaN(d.getTime())) return iso;
-      return d.toLocaleString();
+      return d.toLocaleString('en-US');
     } catch {
       return iso;
     }
@@ -395,7 +395,7 @@ ${warnings || '_(no warnings at queue time)_'}
     if (days < 7) return `${days}d ago`;
     const weeks = Math.floor(days / 7);
     if (weeks < 5) return `${weeks}w ago`;
-    return new Date(iso).toLocaleDateString();
+    return new Date(iso).toLocaleDateString('en-US');
   }
 
   cliList(clis: readonly string[] | null | undefined): string {

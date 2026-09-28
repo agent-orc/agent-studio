@@ -317,7 +317,7 @@ export class GlobalSearchComponent {
   updatedLabel(item: GlobalSearchItem): string | null {
     if (!item.updatedAt) return null;
     const value = new Date(item.updatedAt);
-    return Number.isNaN(value.getTime()) ? item.updatedAt : value.toLocaleDateString();
+    return Number.isNaN(value.getTime()) ? item.updatedAt : value.toLocaleDateString('en-US');
   }
 
   private projectColor(name: string): string {

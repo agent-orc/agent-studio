@@ -46,7 +46,7 @@ export class CliConsoleComponent implements OnDestroy {
 
   formatTime(dateStr: string): string {
     const d = new Date(dateStr);
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   }
 
   readonly copied = signal(false);

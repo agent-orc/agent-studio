@@ -7,9 +7,10 @@ public interface ITagMaintenanceWorkspace
 {
     IReadOnlyList<string> Projects();
     TagMaintenanceSnapshot Capture(string project);
+    TagMaintenanceSnapshot CaptureForClassification(string project) => Capture(project);
     string CreateCard(string project, TagMaintenanceDecision decision);
     string Read(TagMaintenanceChange change);
-    bool Write(TagMaintenanceChange change);
+    bool Write(TagMaintenanceChange change, string? taggingStatus = null);
 }
 
 /// <summary>Uses the existing application writers; no maintenance-specific task or Dossier storage.</summary>
@@ -21,16 +22,22 @@ public sealed class TagMaintenanceWorkspace(TaskScannerService scanner, TaskMuta
     public IReadOnlyList<string> Projects() => scanner.GetWatchPaths().Select(p => p.Name)
         .Distinct(StringComparer.Ordinal).ToArray();
 
-    public TagMaintenanceSnapshot Capture(string project)
+    public TagMaintenanceSnapshot Capture(string project) => CaptureCore(project, includeOtherProjects: true);
+
+    public TagMaintenanceSnapshot CaptureForClassification(string project) =>
+        CaptureCore(project, includeOtherProjects: false);
+
+    private TagMaintenanceSnapshot CaptureCore(string project, bool includeOtherProjects)
     {
         if (!Projects().Contains(project)) throw new ArgumentException("Unknown project.");
         var items = new List<TagMaintenanceItem>();
-        foreach (var task in scanner.ScanAllJobsWithArchive())
+        foreach (var task in scanner.ScanAllJobsWithArchive().Where(task =>
+            includeOtherProjects || task.ProjectName == project))
             items.Add(new(task.ProjectName, "card", task.Id, task.Title, [.. task.Tags ?? []],
                 task.ProjectName == project ? scanner.ReadJobFile(task.Id, "prompt.md", task.WatchPath) ?? "" : "",
                 !task.Fixture && !task.Id.StartsWith("tag-maintenance-", StringComparison.Ordinal) && task.State != TaskStates.Archive && task.State != TaskStates.Completed));
         var areaIds = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var name in Projects())
+        foreach (var name in includeOtherProjects ? Projects() : [project])
         {
             areaIds.UnionWith(areas.List(name).Select(area => area.Id));
             var catalogue = dossiers.List(name, includeHistory: true)
@@ -38,7 +45,11 @@ public sealed class TagMaintenanceWorkspace(TaskScannerService scanner, TaskMuta
             var entryPaths = new HashSet<string>(StringComparer.Ordinal);
             foreach (var dossier in catalogue.Items)
             {
-                if (!dossier.Valid) throw new InvalidOperationException($"Invalid Dossier: {name}/{dossier.Id}.");
+                if (!dossier.Valid)
+                {
+                    if (includeOtherProjects) throw new InvalidOperationException($"Invalid Dossier: {name}/{dossier.Id}.");
+                    continue;
+                }
                 entryPaths.Add(dossier.EntryPath.StartsWith("docs/") ? dossier.EntryPath[5..] : dossier.EntryPath);
                 items.Add(new(name, "dossier", dossier.Id, dossier.Title, dossier.Tags,
                     name == project ? TagMaintenancePolicy.Encode(dossier.Decision) + "\n" +
@@ -57,7 +68,11 @@ public sealed class TagMaintenanceWorkspace(TaskScannerService scanner, TaskMuta
                     var file = docs.ReadWikiFile(name, path)
                         ?? throw new InvalidOperationException($"Wiki content unavailable: {name}/{path}.");
                     items.Add(new(name, "wiki", path, node.Title, ProjectDocsService.FrontmatterTags(file.Content),
-                        name == project ? file.Content : "", !path.StartsWith("archive/", StringComparison.Ordinal),
+                        name == project ? file.Content : "", !path.StartsWith("archive/", StringComparison.Ordinal)
+                            && !string.Equals(node.Classification?.Status, "archived", StringComparison.OrdinalIgnoreCase)
+                            && (path.EndsWith(".md", StringComparison.OrdinalIgnoreCase)
+                                || path.EndsWith(".html", StringComparison.OrdinalIgnoreCase)
+                                || path.EndsWith(".htm", StringComparison.OrdinalIgnoreCase)),
                         node.Classification?.Type == "adr" || path.Contains("/decisions/", StringComparison.Ordinal)));
                 }
                 foreach (var child in node.Children) Visit(child);
@@ -114,10 +129,14 @@ public sealed class TagMaintenanceWorkspace(TaskScannerService scanner, TaskMuta
         }
     }
 
-    public bool Write(TagMaintenanceChange change)
+    public bool Write(TagMaintenanceChange change, string? taggingStatus = null)
     {
+        if (taggingStatus is not (null or "tagged" or "tags-proposed"))
+            throw new ArgumentException("Unknown tagging status.");
+        if (taggingStatus != null && change.Kind is not ("card" or "dossier" or "wiki"))
+            throw new ArgumentException("Tagging status is only supported for classified items.");
         var current = Read(change);
-        if (current == change.After) return false;
+        if (current == change.After && taggingStatus == null) return false;
         if (current != change.Before) throw new InvalidOperationException($"Stale {change.Kind}/{change.Id}.");
         switch (change.Kind)
         {
@@ -150,18 +169,20 @@ public sealed class TagMaintenanceWorkspace(TaskScannerService scanner, TaskMuta
                 if (change.Kind == "card")
                 {
                     var watch = scanner.GetWatchPaths().Single(p => p.Name == change.Project);
-                    if (!tasks.SetJobTags(change.Id, ids, watch.Path)) throw new InvalidOperationException("Card tag write failed.");
+                    if (!tasks.SetJobTags(change.Id, ids, watch.Path, taggingStatus)) throw new InvalidOperationException("Card tag write failed.");
                 }
                 else if (change.Kind == "dossier")
                 {
-                    var result = dossierTags.Set(change.Project, change.Id, new() { Tags = ids.ToList() });
+                    var result = dossierTags.Set(change.Project, change.Id, new() { Tags = ids.ToList(), TaggingStatus = taggingStatus });
                     if (!result.Success) throw new InvalidOperationException(result.Error);
                     docs.InvalidateWikiContent(change.Project);
                 }
                 else
                 {
                     var file = docs.ReadWikiFile(change.Project, change.Id)!;
-                    var result = docs.WriteWikiFile(change.Project, change.Id, RewriteFrontmatter(file.Content, ids));
+                    var updated = RewriteFrontmatter(file.Content, ids);
+                    if (taggingStatus != null) updated = RewriteTaggingStatus(updated, taggingStatus);
+                    var result = docs.WriteWikiFile(change.Project, change.Id, updated);
                     if (!result.Success) throw new InvalidOperationException(result.Error);
                 }
                 break;
@@ -171,13 +192,49 @@ public sealed class TagMaintenanceWorkspace(TaskScannerService scanner, TaskMuta
 
     public static string RewriteFrontmatter(string content, string[] tags)
     {
+        if (Regex.IsMatch(content, @"<head(?:\s[^>]*)?>", RegexOptions.IgnoreCase))
+        {
+            var meta = "<meta name=\"agent-studio-tags\" content=\"" + string.Join(", ", tags) + "\">";
+            var pattern = "<meta\\s+name=[\"']agent-studio-tags[\"']\\s+content=[\"'][^\"']*[\"']\\s*/?>";
+            return Regex.IsMatch(content, pattern, RegexOptions.IgnoreCase)
+                ? Regex.Replace(content, pattern, meta, RegexOptions.IgnoreCase)
+                : Regex.Replace(content, @"<head(?:\s[^>]*)?>", match => match.Value + "\n  " + meta,
+                    RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
+        }
+        if (Regex.IsMatch(content, @"\A\s*(?:<!doctype\s+html|<html\b)", RegexOptions.IgnoreCase))
+            throw new InvalidOperationException("HTML article has no head for tag metadata.");
         var match = Regex.Match(content, @"\A---\r?\n(?<body>.*?)\r?\n---(?:\r?\n|$)", RegexOptions.Singleline);
-        if (!match.Success) throw new InvalidOperationException("Tagged article has no supported front matter.");
+        if (!match.Success) return "---\ntags: [" + string.Join(", ", tags) + "]\n---\n\n" + content;
         var body = match.Groups["body"].Value;
         var replaced = Regex.Replace(body, @"(?im)^tags:[^\r\n]*(?:\r?\n[ \t]*-[^\r\n]*)*",
             "tags: [" + string.Join(", ", tags) + "]");
         if (replaced == body && !Regex.IsMatch(body, @"(?im)^tags:"))
-            throw new InvalidOperationException("Article tag field disappeared.");
+            replaced = body + "\ntags: [" + string.Join(", ", tags) + "]";
+        return content[..match.Groups["body"].Index] + replaced
+            + content[(match.Groups["body"].Index + match.Groups["body"].Length)..];
+    }
+
+    public static string RewriteTaggingStatus(string content, string status)
+    {
+        if (status is not ("tagged" or "tags-proposed")) throw new ArgumentException("Unknown tagging status.");
+        if (Regex.IsMatch(content, @"<head(?:\s[^>]*)?>", RegexOptions.IgnoreCase))
+        {
+            var meta = "<meta name=\"agent-studio-tagging-status\" content=\"" + status + "\">";
+            var pattern = "<meta\\s+name=[\"']agent-studio-tagging-status[\"']\\s+content=[\"'][^\"']*[\"']\\s*/?>";
+            return Regex.IsMatch(content, pattern, RegexOptions.IgnoreCase)
+                ? Regex.Replace(content, pattern, meta, RegexOptions.IgnoreCase)
+                : Regex.Replace(content, @"<head(?:\s[^>]*)?>", match => match.Value + "\n  " + meta,
+                    RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
+        }
+        if (Regex.IsMatch(content, @"\A\s*(?:<!doctype\s+html|<html\b)", RegexOptions.IgnoreCase))
+            throw new InvalidOperationException("HTML article has no head for tag metadata.");
+        var match = Regex.Match(content, @"\A---\r?\n(?<body>.*?)\r?\n---(?:\r?\n|$)", RegexOptions.Singleline);
+        if (!match.Success) return "---\ntaggingStatus: " + status + "\n---\n\n" + content;
+        var body = match.Groups["body"].Value;
+        var line = "taggingStatus: " + status;
+        var replaced = Regex.IsMatch(body, @"(?im)^taggingStatus:")
+            ? Regex.Replace(body, @"(?im)^taggingStatus:[^\r\n]*", line)
+            : body + "\n" + line;
         return content[..match.Groups["body"].Index] + replaced
             + content[(match.Groups["body"].Index + match.Groups["body"].Length)..];
     }

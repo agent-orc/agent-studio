@@ -1,6 +1,6 @@
 # Review Domain Map
 
-Version: 2026-09-19
+Version: 2026-09-27
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
 
 Use this when a change touches ReviewSubject preparation, aspect prompts,
@@ -14,6 +14,34 @@ after a terminal ReviewInfra result and the missing-handoff repair: after
 completed immutable run, no canonical ReviewAttempt, and no durable park gets
 one idempotent replacement attempt. A scheduled ReviewInfra retry is canonical
 authority and is never treated as missing.
+
+## Versioned review-library steps
+
+`RemoteReviewPlanBuilder` resolves verification, gate, and semantic aspect
+commands on the server. New plans set `ReviewPlanDto.LibraryVersion = 1`. When
+the exact Result-SHA is known, both review stores seal each command and
+preparation command with `ReviewLibraryStepDto`: step id, version, SHA-256 digest,
+input subject SHA, required capabilities, command timeout, review slot, and the
+.NET build `maxcpucount:2` limit. The digest covers the command payload, step id,
+version, and subject SHA after resource normalization. A semantic aspect may
+rederive its effective timeout after the exact diff is appended, within the
+sealed 7,200-second ceiling. The command limit and .NET build limit sit inside
+the host's review-slot resource envelope. A plan with version 0 remains readable
+for older in-flight attempts; unknown versions are rejected.
+Deploy a version-one-capable review runner before issuing new version-one plans;
+older hosts can finish legacy attempts but cannot claim the new steps.
+
+Only a review registration advertising `review:library-step:v1` and all step
+requirements can claim a version-one subject. Requirements include the command's
+declared CLI/provider and detected .NET, Node, or Playwright toolchain. Coding and review registrations
+have separate identities and capacity. The runner checks the sealed plan before
+materializing the exact subject. Each command evidence row echoes the step
+envelope beside its actual SHA, timings, exit status, output hashes, and
+executor attribution. Both Task Server implementations reject a changed step
+digest in a fenced report. The existing report idempotency key, lease/fence,
+verdict citations, and cleanup endpoint remain authoritative. A new plan may
+be written only into a pending attempt or a new eligible attempt; a leased
+attempt keeps its plan through report retry and worker adoption.
 
 ## Review material contract
 

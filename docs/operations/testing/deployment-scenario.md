@@ -59,7 +59,12 @@ scripts/scenario.sh --target remote --level smoke --remote-url https://... --rem
   `studio-bff`, `orchestrator-engine`, and `agent-host-distributed` services from the development
   checkout with the `distributed` and `runner` profiles, applies
   `testsupport/scenario/docker-compose.scenario.yml`, and runs the same nine
-  typed steps as `inproc`. The override uses
+  typed steps as `inproc`. The product stack lets its one-shot `bootstrap`
+  container generate the principal tokens inside the `secrets` volume; the
+  override instead injects the harness's own tokens as Compose secrets from
+  `DISTRIBUTED_*_TOKEN` and points every service's token file at
+  `/run/secrets`, while the bootstrap still runs from the scenario Task
+  Server image so volume ownership matches the product. The override uses
   `testsupport/scenario/runner.Dockerfile`, which contains the fixed
   `scenario-coding-agent` instead of relying on an installed provider CLI.
   The run uses its own Compose project, bind-mounted fixture repository, ports,

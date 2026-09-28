@@ -276,7 +276,7 @@ export class CliModelsPanelComponent implements OnInit {
   }
 
   private shortDate(value: string): string {
-    return new Date(value).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    return new Date(value).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   }
 
   setEconomyMode(enabled: boolean): void {

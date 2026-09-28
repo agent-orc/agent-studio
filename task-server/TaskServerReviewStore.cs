@@ -137,7 +137,8 @@ public sealed partial class TaskServerStore
         RequireWritable();
         request = request with
         {
-            Plan = ReviewPlanResourcePolicy.Apply(request.Plan),
+            Plan = ReviewLibraryStepPolicy.Seal(
+                ReviewPlanResourcePolicy.Apply(request.Plan), request.ExpectedResultSha),
         };
         ValidateReviewSubjectRequest(request);
         ReviewSubjectDto? result = null;
@@ -498,6 +499,8 @@ public sealed partial class TaskServerStore
             requirements.Add(ReviewCapabilities.BaselineComparison);
         if (subject.Plan.Preparation is { Count: > 0 })
             requirements.Add(ReviewCapabilities.DependencyPreparation);
+        foreach (var capability in ReviewLibraryStepPolicy.RequiredCapabilities(subject.Plan))
+            requirements.Add(capability);
         if (subject.Plan.RequiredAspects.Any(aspect =>
                 aspect is "completion" or "requirements" or "code-quality" or "documentation" or "evidence"))
             requirements.Add(ReviewCapabilities.SemanticReview);
@@ -736,6 +739,12 @@ public sealed partial class TaskServerStore
             if (attempt.ExpiresAt <= UtcNow)
                 throw new TaskServerConflictException("review-lease-expired", "Review lease expired and its report is fenced off.");
             await EnsureReviewSubjectCurrentAsync(connection, transaction, subject, ct);
+            if (subject.Plan.Commands.Any(command => command.LibraryStep is not null)
+                && !ReviewLibraryStepPolicy.ValidReport(
+                    subject.Plan, request.Commands, request.Outcome))
+                throw new TaskServerConflictException(
+                    "review-step-digest-mismatch",
+                    "Review command evidence does not match the leased library step digest.");
             var classified = ClassifyReviewReport(subject, request, attempt);
             var received = UtcNow;
             var reportId = $"rrpt_{Guid.NewGuid():N}";
@@ -913,6 +922,8 @@ public sealed partial class TaskServerStore
             throw new ArgumentException("A source bundle review subject requires its SHA-256 content digest.");
         if (request.Plan.Commands.Count == 0 || request.Plan.RequiredAspects.Count == 0)
             throw new ArgumentException("Review plan commands and required aspects are required.");
+        if (!ReviewLibraryStepPolicy.ValidPlan(request.Plan, request.ExpectedResultSha))
+            throw new ArgumentException("Review library step digest or subject is invalid.");
         var commandIds = request.Plan.Commands.Select(command => command.StepId).ToHashSet(StringComparer.Ordinal);
         var preparationIds = (request.Plan.Preparation ?? [])
             .Select(command => command.StepId)
@@ -1767,6 +1778,8 @@ public sealed partial class TaskServerStore
 
     private static bool SupportsSubject(ReviewExecutorRow executor, ReviewSubjectDto subject)
     {
+        if (!ReviewLibraryStepPolicy.Supports(subject.Plan, executor.Capabilities))
+            return false;
         if (!string.IsNullOrWhiteSpace(subject.RepositoryUrl)
             && !executor.Capabilities.Contains(ReviewCapabilities.GitMaterialization))
             return false;

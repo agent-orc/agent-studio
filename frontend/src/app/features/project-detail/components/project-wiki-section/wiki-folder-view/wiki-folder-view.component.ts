@@ -252,7 +252,7 @@ export class WikiFolderViewComponent {
     const ms = then.getTime();
     if (Number.isNaN(ms)) return iso;
     const diff = Date.now() - ms;
-    if (diff < 0) return then.toLocaleDateString();
+    if (diff < 0) return then.toLocaleDateString('en-US');
     const min = Math.floor(diff / 60000);
     if (min < 1) return 'just now';
     if (min < 60) return `${min}m ago`;
@@ -260,12 +260,12 @@ export class WikiFolderViewComponent {
     if (hours < 24) return `${hours}h ago`;
     const days = Math.floor(hours / 24);
     if (days < 30) return `${days}d ago`;
-    return then.toLocaleDateString();
+    return then.toLocaleDateString('en-US');
   }
 
   absoluteTime(iso: string | null): string {
     if (!iso) return 'No timestamp available';
     const d = new Date(iso);
-    return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
+    return Number.isNaN(d.getTime()) ? iso : d.toLocaleString('en-US');
   }
 }

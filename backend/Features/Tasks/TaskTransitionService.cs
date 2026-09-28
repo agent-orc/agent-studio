@@ -298,6 +298,25 @@ public sealed class TaskTransitionService
             }
         }
 
+        // Hide a queued follow-up while the terminal move is in flight. The
+        // move can still be refused by the state machine, so do not record a
+        // completion receipt or delete the prompt until the lane write lands.
+        // A refused move restores the queued file; a landed move supersedes the
+        // stash, which remains non-replayable if history persistence fails.
+        var enteringTerminalState = targetState is TaskStates.Completed or TaskStates.Archive;
+        var hasPendingIntent = info.PendingIntent is not null
+            || _mutations.ReadStashedPendingIntent(info.FolderPath) is not null;
+        var stagedPendingIntent = false;
+        if (enteringTerminalState && info.PendingIntent is not null)
+        {
+            if (_mutations.ReadAndStashPendingIntent(info.FolderPath) is null)
+                return new MoveJobOutcome(
+                    MoveJobStatus.PendingIntentSupersedeFailed,
+                    "The queued follow-up could not be staged, so the terminal transition was not applied.",
+                    info.FolderPath);
+            stagedPendingIntent = true;
+        }
+
         ReleaseCliOutputResourcesBeforeMove(info);
         MoveJobOutcome MoveCore() => _states.MoveJob(
                 jobId,
@@ -314,6 +333,15 @@ public sealed class TaskTransitionService
                       && targetState is TaskStates.Completed or TaskStates.Archive
             ? _reviewAttemptLifecycle.ExecuteTerminalTransition(info, targetState, MoveCore)
             : MoveCore();
+        if (enteringTerminalState && stagedPendingIntent && outcome.Status != MoveJobStatus.Success)
+            _mutations.RollbackStashedPendingIntent(info.FolderPath);
+        var pendingIntentSupersedeFailed = enteringTerminalState
+            && hasPendingIntent
+            && outcome.Status == MoveJobStatus.Success
+            && !TrySupersedePendingIntent(
+                outcome.NewFolderPath ?? info.FolderPath,
+                resolution: "superseded-by-completion",
+                source: targetState == TaskStates.Archive ? "archive-transition" : "completion-transition");
         var operatorRequeue = outcome.Status == MoveJobStatus.Success
             && OperatorReviewRequeueService.IsOperatorRequeue(fromState, targetState, cause);
         var supersedeFailedDelivery = operatorRequeue && HasFailedIntegrationRound(
@@ -571,7 +599,12 @@ public sealed class TaskTransitionService
                 TriggerBranchReclaimAfterArchive(jobId, watchPath, projectName, info);
         }
 
-        return outcome;
+        return pendingIntentSupersedeFailed
+            ? new MoveJobOutcome(
+                MoveJobStatus.PendingIntentSupersedeFailed,
+                "The terminal transition landed, but the follow-up receipt could not be saved. Startup reconciliation will retry it.",
+                outcome.NewFolderPath ?? info.FolderPath)
+            : outcome;
     }
 
     /// <summary>
@@ -862,6 +895,199 @@ public sealed class TaskTransitionService
             _logger.LogWarning("result-document-backfill-failed task={Failure}", failure);
 
         return new ResultDocumentBackfillOutcome(candidates.Count, repaired, failures);
+    }
+
+    /// <summary>
+    /// One-off startup repair for follow-ups left canonical by the historical
+    /// remote claim path. Exact prompt-hash acknowledgement proves delivery.
+    /// Legacy rows require a coding run start plus its later terminal outcome;
+    /// unrelated or incomplete activity remains queued and is reported as
+    /// undecided. Terminal cards supersede any remainder.
+    /// </summary>
+    public PendingIntentReconciliationOutcome ReconcilePendingIntents()
+    {
+        var inspected = 0;
+        var delivered = 0;
+        var superseded = 0;
+        var failures = new List<string>();
+        var undecided = new List<string>();
+        foreach (var task in _scanner.ScanAllAutomationJobsWithArchive())
+        {
+            var intent = task.PendingIntent;
+            var stashedIntent = _mutations.ReadStashedPendingIntent(task.FolderPath);
+            if (intent is null && stashedIntent is null) continue;
+            inspected++;
+            var stashedForReconciliation = false;
+            try
+            {
+                if (task.State is TaskStates.Completed or TaskStates.Archive)
+                {
+                    if (TrySupersedePendingIntent(
+                            task.FolderPath,
+                            "superseded-by-completion",
+                            source: "startup-reconciliation"))
+                    {
+                        superseded++;
+                    }
+                    else
+                    {
+                        failures.Add($"{task.TaskKey}: pending-intent-supersede-failed");
+                    }
+                    continue;
+                }
+
+                // A stash can also remain after a confirmed local process start
+                // whose timeline acknowledgement failed. Resolve it only from a
+                // later coding run start carrying this exact prompt hash. A
+                // claim without a confirmed start remains recoverable by its
+                // lease owner and must not be consumed here.
+                if (intent is null)
+                {
+                    var startedRun = FindHashAcknowledgedRun(
+                        stashedIntent!,
+                        _sessions?.ReadSessionEvents(task.Id, task.WatchPath) ?? []);
+                    if (startedRun is null)
+                    {
+                        undecided.Add($"{task.TaskKey}: stashed intent awaits confirmed start or claim resolution");
+                        continue;
+                    }
+
+                    var startedRunId = startedRun.RunAttemptId
+                        ?? startedRun.CapturedSessionId
+                        ?? startedRun.InputSessionId
+                        ?? startedRun.Ts.ToString("O");
+                    var acknowledged = _mutations.AcknowledgeStashedPendingIntent(
+                        task.FolderPath,
+                        AgentStudio.TaskServer.Contracts.FollowUpPromptDigest.Compute(stashedIntent!.Prompt),
+                        startedRunId,
+                        source: "startup-reconciliation");
+                    if (acknowledged is PendingIntentAcknowledgeResult.Consumed
+                        or PendingIntentAcknowledgeResult.AlreadyResolved)
+                        delivered++;
+                    else
+                        failures.Add($"{task.TaskKey}: {acknowledged}");
+                    continue;
+                }
+
+                var consumingRun = FindConsumingRun(
+                    intent,
+                    _sessions?.ReadSessionEvents(task.Id, task.WatchPath) ?? []);
+                if (consumingRun is null)
+                {
+                    undecided.Add($"{task.TaskKey}: no acknowledged or terminal coding run proves delivery");
+                    continue;
+                }
+
+                var stashed = _mutations.ReadAndStashPendingIntent(task.FolderPath);
+                if (stashed is null) continue;
+                stashedForReconciliation = true;
+                var runId = consumingRun.RunAttemptId
+                    ?? consumingRun.CapturedSessionId
+                    ?? consumingRun.InputSessionId
+                    ?? consumingRun.Ts.ToString("O");
+                var result = _mutations.AcknowledgeStashedPendingIntent(
+                    task.FolderPath,
+                    AgentStudio.TaskServer.Contracts.FollowUpPromptDigest.Compute(stashed.Prompt),
+                    runId,
+                    source: "startup-reconciliation");
+                if (result is PendingIntentAcknowledgeResult.Consumed
+                    or PendingIntentAcknowledgeResult.AlreadyResolved)
+                {
+                    delivered++;
+                    stashedForReconciliation = false;
+                }
+                else
+                {
+                    _mutations.RollbackStashedPendingIntent(task.FolderPath);
+                    stashedForReconciliation = false;
+                    failures.Add($"{task.TaskKey}: {result}");
+                }
+            }
+            catch (Exception ex)
+            {
+                if (stashedForReconciliation)
+                    _mutations.RollbackStashedPendingIntent(task.FolderPath);
+                failures.Add($"{task.TaskKey}: {ex.Message}");
+            }
+        }
+
+        if (delivered > 0 || superseded > 0 || failures.Count > 0 || undecided.Count > 0)
+            _logger.LogInformation(
+                "pending-intent-reconciliation inspected={Inspected} delivered={Delivered} superseded={Superseded} undecided={Undecided} failures={Failures}",
+                inspected, delivered, superseded, undecided.Count, failures.Count);
+        foreach (var item in undecided)
+            _logger.LogInformation("pending-intent-reconciliation-undecided task={Task}", item);
+        return new PendingIntentReconciliationOutcome(inspected, delivered, superseded, undecided, failures);
+    }
+
+    private bool TrySupersedePendingIntent(
+        string jobFolder,
+        string resolution,
+        string source)
+    {
+        if (_mutations.SupersedePendingIntent(jobFolder, resolution, source: source))
+            return true;
+
+        _logger.LogWarning(
+            "pending-intent-supersede-retrying folder={Folder} source={Source}",
+            jobFolder,
+            source);
+        if (_mutations.SupersedePendingIntent(jobFolder, resolution, source: source))
+            return true;
+
+        _logger.LogError(
+            "pending-intent-supersede-failed folder={Folder} source={Source}",
+            jobFolder,
+            source);
+        return false;
+    }
+
+    internal static SessionEvent? FindConsumingRun(
+        PendingIntent intent,
+        IEnumerable<SessionEvent> events)
+    {
+        var savedAt = intent.SavedAt.ToUniversalTime();
+        var promptHash = AgentStudio.TaskServer.Contracts.FollowUpPromptDigest.Compute(intent.Prompt);
+        var starts = events
+            .Where(IsCodingRunStart)
+            .Where(evt => evt.Ts.ToUniversalTime() > savedAt)
+            .OrderBy(evt => evt.Ts)
+            .ToList();
+
+        var acknowledged = starts.FirstOrDefault(evt => string.Equals(
+            evt.StartedPromptSha256,
+            promptHash,
+            StringComparison.OrdinalIgnoreCase));
+        if (acknowledged is not null) return acknowledged;
+
+        return starts.FirstOrDefault(evt =>
+            string.IsNullOrWhiteSpace(evt.StartedPromptSha256)
+            && evt.FinishedAt is DateTime finishedAt
+            && finishedAt.ToUniversalTime() > evt.Ts.ToUniversalTime()
+            && (!string.IsNullOrWhiteSpace(evt.Result) || !string.IsNullOrWhiteSpace(evt.Status)));
+    }
+
+    private static SessionEvent? FindHashAcknowledgedRun(
+        PendingIntent intent,
+        IEnumerable<SessionEvent> events)
+    {
+        var savedAt = intent.SavedAt.ToUniversalTime();
+        var promptHash = AgentStudio.TaskServer.Contracts.FollowUpPromptDigest.Compute(intent.Prompt);
+        return events
+            .Where(IsCodingRunStart)
+            .Where(evt => evt.Ts.ToUniversalTime() > savedAt)
+            .OrderBy(evt => evt.Ts)
+            .FirstOrDefault(evt => string.Equals(
+                evt.StartedPromptSha256,
+                promptHash,
+                StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsCodingRunStart(SessionEvent evt)
+    {
+        if (evt.Kind is not ("start" or "continue" or "recovery")) return false;
+        return string.Equals(evt.Cli, "remote-runner", StringComparison.OrdinalIgnoreCase)
+               || CliTypes.IsValid(evt.Cli);
     }
 
     private bool TryEnsureResultDocument(
@@ -2162,4 +2388,11 @@ public sealed class TaskTransitionService
 public sealed record ResultDocumentBackfillOutcome(
     int Scanned,
     int Repaired,
+    IReadOnlyList<string> Failures);
+
+public sealed record PendingIntentReconciliationOutcome(
+    int Inspected,
+    int Delivered,
+    int Superseded,
+    IReadOnlyList<string> Undecided,
     IReadOnlyList<string> Failures);
