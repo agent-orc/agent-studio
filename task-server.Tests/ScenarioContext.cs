@@ -193,6 +193,17 @@ public sealed partial class ScenarioContext : IDisposable
 
     private async Task<string?> BootstrapPrincipalsAsync()
     {
+        // Both topologies issue the review executor its own principal exactly
+        // once; only the coding principal's origin differs.
+        var reviewCredential = await ReadAsync<IssuedPrincipalCredential>(
+            await _serverClient.PostAsJsonAsync(
+                "/api/v1/management/principals",
+                new CreatePrincipalRequest(
+                    $"runner:{ReviewExecutorId}",
+                    TaskServerPrincipalKinds.Runner,
+                    RunnerId: ReviewExecutorId)));
+        _reviewCredential = reviewCredential.Credential;
+
         if (IsCompose)
         {
             var principals = await _serverClient.GetFromJsonAsync<List<PrincipalDto>>(
@@ -203,15 +214,6 @@ public sealed partial class ScenarioContext : IDisposable
                 candidate => candidate.PrincipalId == $"runner:{CodingRunnerId}");
             Assert.Equal(TaskServerPrincipalKinds.Runner, principal.Kind);
             Assert.Equal(CodingRunnerId, principal.RunnerId);
-
-            var reviewExecutorCredential = await ReadAsync<IssuedPrincipalCredential>(
-                await _serverClient.PostAsJsonAsync(
-                    "/api/v1/management/principals",
-                    new CreatePrincipalRequest(
-                        $"runner:{ReviewExecutorId}",
-                        TaskServerPrincipalKinds.Runner,
-                        RunnerId: ReviewExecutorId)));
-            _reviewCredential = reviewExecutorCredential.Credential;
 
             _engineClient = ProtocolClient(_serverUrl, RequiredEnvironment("SCENARIO_ENGINE_TOKEN"));
             _disposables.Add(_engineClient);
@@ -226,11 +228,6 @@ public sealed partial class ScenarioContext : IDisposable
                 RunnerId: CodingRunnerId));
         var credential = await ReadAsync<IssuedPrincipalCredential>(response);
         _runnerCredential = credential.Credential;
-        var reviewCredential = await ReadAsync<IssuedPrincipalCredential>(
-            await _serverClient.PostAsJsonAsync("/api/v1/management/principals",
-                new CreatePrincipalRequest($"runner:{ReviewExecutorId}",
-                    TaskServerPrincipalKinds.Runner, RunnerId: ReviewExecutorId)));
-        _reviewCredential = reviewCredential.Credential;
         return $"issued separate coding and review credentials for {CodingRunnerId} and {ReviewExecutorId}";
     }
 

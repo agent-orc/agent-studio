@@ -118,23 +118,28 @@ x-web: &web
     start_period: 5s
   logging: *bounded-logs
 
+# Settings every runner role shares; each role adds its server, identity and
+# principal on top.
+x-runner-environment: &runner-environment
+  RUNNER_ALLOW_INSECURE_HTTP: "1"
+  RUNNER_GIT_REMOTE: ${RUNNER_GIT_REMOTE:-}
+  RUNNER_GIT_PUSH_REMOTE: ${RUNNER_GIT_PUSH_REMOTE:-}
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: credential.helper
+  GIT_CONFIG_VALUE_0: store --file=/home/runner/.git-credentials
+
 x-runner: &runner
   restart: unless-stopped
   env_file:
     - path: ./runner.env
       required: false
   environment:
+    <<: *runner-environment
     RUNNER_SERVER_URL: http://task-server:5071
     RUNNER_ID: distributed-runner
     RUNNER_NAME: distributed-runner
     RUNNER_ROLE: coding
-    RUNNER_ALLOW_INSECURE_HTTP: "1"
     RUNNER_AUTH_TOKEN_FILE: /run/agent-studio-secrets/runner_token
-    RUNNER_GIT_REMOTE: ${RUNNER_GIT_REMOTE:-}
-    RUNNER_GIT_PUSH_REMOTE: ${RUNNER_GIT_PUSH_REMOTE:-}
-    GIT_CONFIG_COUNT: "1"
-    GIT_CONFIG_KEY_0: credential.helper
-    GIT_CONFIG_VALUE_0: store --file=/home/runner/.git-credentials
   volumes:
     - runner-workspaces:/var/lib/agent-host
     - secrets:/run/agent-studio-secrets:ro
@@ -229,17 +234,12 @@ services:
     <<: *runner
     image: ghcr.io/agent-orc/agent-host:v${AGENT_STUDIO_VERSION:-0.9.1}
     environment:
+      <<: *runner-environment
       RUNNER_SERVER_URL: http://task-server:5071
       RUNNER_ID: distributed-review-runner
       RUNNER_NAME: distributed-review-runner
       RUNNER_ROLE: review
-      RUNNER_ALLOW_INSECURE_HTTP: "1"
       RUNNER_AUTH_TOKEN_FILE: /run/agent-studio-secrets/review_runner_token
-      RUNNER_GIT_REMOTE: ${RUNNER_GIT_REMOTE:-}
-      RUNNER_GIT_PUSH_REMOTE: ${RUNNER_GIT_PUSH_REMOTE:-}
-      GIT_CONFIG_COUNT: "1"
-      GIT_CONFIG_KEY_0: credential.helper
-      GIT_CONFIG_VALUE_0: store --file=/home/runner/.git-credentials
     depends_on:
       task-server: {condition: service_healthy}
 
@@ -354,17 +354,12 @@ services:
     <<: *runner
     build: {context: ., dockerfile: runner/Dockerfile, args: {VERSION: "${AGENT_STUDIO_VERSION:-0.0.0-dev}"}}
     environment:
+      <<: *runner-environment
       RUNNER_SERVER_URL: http://task-server-dev:5071
       RUNNER_ID: distributed-runner
       RUNNER_NAME: distributed-runner
       RUNNER_ROLE: coding
-      RUNNER_ALLOW_INSECURE_HTTP: "1"
       RUNNER_AUTH_TOKEN_FILE: /run/agent-studio-secrets/runner_token
-      RUNNER_GIT_REMOTE: ${RUNNER_GIT_REMOTE:-}
-      RUNNER_GIT_PUSH_REMOTE: ${RUNNER_GIT_PUSH_REMOTE:-}
-      GIT_CONFIG_COUNT: "1"
-      GIT_CONFIG_KEY_0: credential.helper
-      GIT_CONFIG_VALUE_0: store --file=/home/runner/.git-credentials
     depends_on:
       task-server-dev: {condition: service_healthy}
     profiles: [dev]
@@ -373,17 +368,12 @@ services:
     <<: *runner
     build: {context: ., dockerfile: runner/Dockerfile, args: {VERSION: "${AGENT_STUDIO_VERSION:-0.0.0-dev}"}}
     environment:
+      <<: *runner-environment
       RUNNER_SERVER_URL: http://task-server-dev:5071
       RUNNER_ID: distributed-review-runner
       RUNNER_NAME: distributed-review-runner
       RUNNER_ROLE: review
-      RUNNER_ALLOW_INSECURE_HTTP: "1"
       RUNNER_AUTH_TOKEN_FILE: /run/agent-studio-secrets/review_runner_token
-      RUNNER_GIT_REMOTE: ${RUNNER_GIT_REMOTE:-}
-      RUNNER_GIT_PUSH_REMOTE: ${RUNNER_GIT_PUSH_REMOTE:-}
-      GIT_CONFIG_COUNT: "1"
-      GIT_CONFIG_KEY_0: credential.helper
-      GIT_CONFIG_VALUE_0: store --file=/home/runner/.git-credentials
     depends_on:
       task-server-dev: {condition: service_healthy}
     profiles: [dev]
