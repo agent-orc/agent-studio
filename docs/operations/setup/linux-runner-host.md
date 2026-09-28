@@ -594,6 +594,8 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 | `RUNNER_IDLE_WATCHDOG_MINUTES` | `--idle-watchdog-minutes` | `5` | A daemon with no active slots exits after this long without starting a claim poll. The fatal journal line is followed by a service-manager restart. |
 | `RUNNER_CLAIM_MAX_LOAD_PER_CORE` | `--claim-max-load-per-core` | `1.5` | Load-per-core ceiling for new work. Coding uses the sustained gate below; Review checks it immediately before each single-slot claim. |
 | `RUNNER_LOAD_GATE_SUSTAINED_SECONDS` | none | `120` | Continuous high-load duration before Coding claim admission closes. Review admission does not use this delay. |
+| `RUNNER_DOCKER_DATA_ROOT` | none | `/var/lib/docker` | Filesystem the Review executor measures before a compose scenario step. Falls back to the review workspace when the path does not exist. See [Docker scenario image retention](#docker-scenario-image-retention). |
+| `RUNNER_COMPOSE_SCENARIO_MIN_FREE_PERCENT` | none | `10` | A compose scenario review step (`scripts/scenario.sh --target compose`, `scripts/compose-smoke-test.sh`) is refused as `ReviewInfra` / `ComposeScenarioDiskLow` when `RUNNER_DOCKER_DATA_ROOT` has less free space than this. `0` keeps the `review-compose-scenario-disk` log line and disables the refusal. |
 
 ### Sanctioned role configuration changes
 
@@ -1027,6 +1029,79 @@ journal lines to look for, and the reset commands are in
 Keep `PrivateTmp=false` on the runner units. Detached workers outlive a daemon
 restart and a namespace-scoped `/tmp` is unmounted underneath them on every
 restart (AGT-2750); the hygiene above is what bounds the shared root instead.
+
+### Docker scenario image retention
+
+Every `scripts/scenario.sh --target compose` run builds four images named
+`<project>-{task-server,studio-bff,orchestrator-engine,agent-host}:local`
+(about 2.6 GB), and `scripts/compose-smoke-test.sh` builds its `-dev` images.
+Before AGT-2993 nothing removed them: on 2026-09-28 agent-runner-01 carried
+257 images (159 GB) and 143 GB of BuildKit cache, the disk reached 95-96 %
+twice, and the operator pruned by hand.
+
+Three layers now bound it:
+
+1. **Per run.** Both scripts remove the images of their own Compose project
+   when they exit, after success, after a failure, and on `SIGTERM`/`SIGINT`
+   (`scripts/docker-scenario-images.sh`, keyed by the
+   `com.docker.compose.project` label). Published images are never touched.
+   `COMPOSE_SMOKE_KEEP_ON_FAIL=1` keeps the stack and its images for
+   debugging. A `SIGKILL` cannot run the cleanup; the next layer covers it.
+2. **Retention.** `scripts/docker-scenario-retention.sh` removes scenario and
+   smoke images that no container (running or stopped) uses and whose
+   creation and last tag are both older than 6 hours, then caps the BuildKit
+   cache at 40 GB (`docker builder prune --max-used-space`, or
+   `--keep-storage` on Docker clients before 28). Images are found by the
+   `io.agent-studio.disposable-image` label that the scenario overlay and the
+   smoke override write, whatever the project is called, plus the
+   `agent-studio-scenario-` and `agent-studio-smoke-` name prefixes for older
+   unlabelled images. `scripts/scenario.sh` runs it before every compose run
+   (`SCENARIO_DOCKER_RETENTION=0` skips it). A retention failure is logged and
+   the scenario continues.
+3. **Admission.** The Review executor logs
+   `review-compose-scenario-disk step=... freePercent=... decision=admit|refuse`
+   before a compose scenario step and refuses the step below 10 % free on the
+   Docker data root. The refusal is a `ReviewInfra` outcome typed
+   `ComposeScenarioDiskLow`, so the review is retried and no verdict is
+   recorded against the change (`RUNNER_COMPOSE_SCENARIO_MIN_FREE_PERCENT`,
+   `RUNNER_DOCKER_DATA_ROOT`).
+
+Install the daily timer on each runner host that runs compose scenarios, from
+the trusted operator checkout:
+
+```bash
+sudo install -m 0755 scripts/docker-scenario-retention.sh \
+  /usr/local/libexec/agent-docker-scenario-retention
+sudo install -m 0644 deploy/systemd/agent-docker-scenario-retention.service \
+  deploy/systemd/agent-docker-scenario-retention.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now agent-docker-scenario-retention.timer
+# Optional overrides, read by the unit:
+#   /etc/agent-runner/docker-retention.env
+#   DOCKER_SCENARIO_RETENTION_MAX_AGE_HOURS=6
+#   DOCKER_SCENARIO_BUILD_CACHE_KEEP_STORAGE=40GB
+```
+
+Check and run it by hand:
+
+```bash
+systemctl list-timers agent-docker-scenario-retention.timer
+journalctl -u agent-docker-scenario-retention.service -n 50
+scripts/docker-scenario-retention.sh --dry-run      # what it would remove
+docker system df                                     # images and build cache
+```
+
+Scenario runs from before the label, under a custom
+`COMPOSE_SCENARIO_PROJECT` such as `agt2739-verify`, are not matched by the
+default prefixes. Clear them once with an explicit prefix; the age and in-use
+filters still apply: `scripts/docker-scenario-retention.sh --dry-run --prefix agt`,
+then the same without `--dry-run`.
+
+**Disk alarm threshold.** Alert at 80 % used on the Docker data root
+(`df -P /var/lib/docker`) and treat 90 % used (10 % free) as critical: from
+there the Review executor refuses compose scenarios. At the alert, check that
+the timer ran and that `docker system df` shows no reclaimable scenario
+images, then look for other residue.
 
 ### Baseline verify result cache
 
