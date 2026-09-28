@@ -33,7 +33,7 @@ public sealed class BatchGatePublicationPolicyTests
             => BatchGatePublicationPolicy.Decide(manifest, assembly, run,
                 actualVerdict ?? verdict,
                 new Dictionary<string, BatchGateSubject> { [member.TaskKey] = current ?? member },
-                preTip, coordinator, refLease, true, false);
+                preTip, coordinator, refLease, true);
         Assert.Equal(BatchPublishDecision.FastForward, Decide());
         Assert.Equal(BatchPublishDecision.StaleBase, Decide(preTip: Candidate));
         Assert.Equal(BatchPublishDecision.LeaseLost, Decide(coordinator: false));
@@ -42,5 +42,9 @@ public sealed class BatchGatePublicationPolicyTests
             Decide(current: member with { DeliveryEpoch = 2 }));
         Assert.Equal(BatchPublishDecision.UntestedCandidate,
             Decide(actualVerdict: verdict with { TestedCandidateSha = Base }));
+        Assert.Equal(BatchPublishDecision.UntestedCandidate,
+            BatchGatePublicationPolicy.Decide(manifest, assembly, run, verdict,
+                new Dictionary<string, BatchGateSubject> { [member.TaskKey] = member },
+                Base, true, true, false));
     }
 }

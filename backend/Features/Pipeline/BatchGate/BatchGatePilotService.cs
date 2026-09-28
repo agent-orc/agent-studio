@@ -58,9 +58,40 @@ public sealed class BatchGatePilotService
         RunAttemptDto sourceRun, DateTimeOffset reviewedAtUtc)
     {
         var priorOwnership = BatchGateOwnershipStore.Read(task.FolderPath);
+        if (task.State == TaskStates.AutoReview
+            && priorOwnership?.ReviewAttemptId == review.AttemptId
+            && (priorOwnership.FallbackGateActive || priorOwnership.FallbackTestedSha is not null))
+            throw new InvalidOperationException("Per-task fallback is already in progress.");
         if (priorOwnership?.ReviewAttemptId == review.AttemptId
             && _store.ReadPending(review.AttemptId) is { } prior)
             return prior;
+        var candidate = BuildPending(task, review, sourceRun, reviewedAtUtc);
+        var project = _settings.Get(task.ProjectName);
+        var scope = Scope(candidate.Subject);
+        var reason = BatchGatePolicy.Exclusion(candidate.Subject with { EnqueueSequence = 1 },
+            scope, project.BatchGate);
+        if (reason is not null)
+            throw new InvalidDataException($"Batch admission failed: {reason}.");
+        // The card must fail closed before it becomes visible to the queue.
+        BatchGateOwnershipStore.Write(task.FolderPath,
+            new BatchGateOwnership(review.AttemptId, candidate.Subject));
+        var pending = _store.Enqueue(candidate);
+        BatchGateOwnershipStore.Write(task.FolderPath,
+            new BatchGateOwnership(review.AttemptId, pending.Subject));
+        return pending;
+    }
+
+    public async Task RunEmergencyFallbackAsync(TaskInfo task, ReviewAttemptDto review,
+        RunAttemptDto sourceRun, DateTimeOffset reviewedAtUtc, CancellationToken ct)
+    {
+        if (task.State != TaskStates.AutoReview) return;
+        var pending = BuildPending(task, review, sourceRun, reviewedAtUtc);
+        await RunPerTaskFallbackAsync(pending, ct, recordInStore: false).ConfigureAwait(false);
+    }
+
+    private BatchGatePendingRecord BuildPending(TaskInfo task, ReviewAttemptDto review,
+        RunAttemptDto sourceRun, DateTimeOffset reviewedAtUtc)
+    {
         var project = _settings.Get(task.ProjectName);
         if (review.Subject.Plan?.Commands.Any(command =>
                 AgentStudio.TaskServer.Contracts.ReviewCommandKinds.IsAgent(command.ExecutionKind)) != true)
@@ -92,22 +123,9 @@ public sealed class BatchGatePilotService
             reviewedAtUtc, 0);
         // The planner may have frozen a docs-only plan, but the immutable
         // result or current generation may have changed before settlement.
-        var scope = Scope(subject);
-        var reason = BatchGatePolicy.Exclusion(subject with { EnqueueSequence = 1 },
-            scope, project.BatchGate);
-        if (reason is not null)
-            throw new InvalidDataException($"Batch admission failed: {reason}.");
-        // The card must fail closed before it becomes visible to the queue.
-        // A crash between these writes leaves a blocking marker, not an
-        // unmarked review that can enter Human Review without gate evidence.
-        BatchGateOwnershipStore.Write(task.FolderPath,
-            new BatchGateOwnership(review.AttemptId, subject));
-        var pending = _store.Enqueue(new BatchGatePendingRecord(
+        return new BatchGatePendingRecord(
             review.AttemptId, subject, repo, task.WatchPath, task.FolderPath,
-            project.IntegrationStrategy, PipelineTypes.Resolve(task), DateTimeOffset.UtcNow));
-        BatchGateOwnershipStore.Write(task.FolderPath,
-            new BatchGateOwnership(review.AttemptId, pending.Subject));
-        return pending;
+            project.IntegrationStrategy, PipelineTypes.Resolve(task), DateTimeOffset.UtcNow);
     }
 
     public BatchGatePilotSnapshot Report(string project)
@@ -122,6 +140,8 @@ public sealed class BatchGatePilotService
             var task = _scanner.FindJob(pending.Subject.TaskKey, pending.WatchPath);
             if (task?.State is not (TaskStates.HumanReview or TaskStates.Completed)) continue;
             var projection = _authority.GetTaskProjection(task.Id);
+            if (projection.CurrentReviewAttempt?.AttemptId != pending.ReviewAttemptId)
+                continue;
             try
             {
                 var ownership = BatchGateOwnershipStore.Read(task.FolderPath);
@@ -162,6 +182,23 @@ public sealed class BatchGatePilotService
             RecoverInterrupted();
             await RecoverPublishedAsync(ct).ConfigureAwait(false);
             var waiting = _store.ListPending();
+            foreach (var item in waiting)
+            {
+                var task = _scanner.FindJob(item.Subject.TaskKey, item.WatchPath);
+                if (task?.State == TaskStates.Escalated
+                    && File.Exists(Path.Combine(TaskPaths.LogsDir(task.FolderPath),
+                        $"batch-fallback-{item.ReviewAttemptId}.json")))
+                {
+                    _store.ResolvePending(item.ReviewAttemptId, "per-task-gate-red");
+                    continue;
+                }
+                if (task?.State != TaskStates.HumanReview) continue;
+                var ownership = BatchGateOwnershipStore.Read(task.FolderPath);
+                if (ownership?.ReviewAttemptId == item.ReviewAttemptId
+                    && ownership.FallbackIntegrated)
+                    _store.ResolvePending(item.ReviewAttemptId, "per-task-gate");
+            }
+            waiting = _store.ListPending();
             foreach (var group in waiting.GroupBy(item =>
                          (item.Subject.Project, item.Subject.Repository,
                              item.Subject.IntegrationBranch, item.Subject.GateProfileDigest,
@@ -310,8 +347,7 @@ public sealed class BatchGatePilotService
                 }
                 if (!Refresh(pending).Subject.CurrentGeneration)
                 {
-                    _store.ResolvePending(pending.ReviewAttemptId,
-                        "superseded-after-publication");
+                    ResolveSuperseded(pending, "superseded-after-publication");
                     continue;
                 }
                 await ReleaseMemberAsync(manifest, run, pending, ct).ConfigureAwait(false);
@@ -507,8 +543,7 @@ public sealed class BatchGatePilotService
             ReturnToPending(manifest);
             foreach (var member in manifest.Members.Where(member =>
                          !Refresh(pending[member.TaskKey]).Subject.CurrentGeneration))
-                _store.ResolvePending(pending[member.TaskKey].ReviewAttemptId,
-                    "superseded");
+                ResolveSuperseded(pending[member.TaskKey], "superseded");
         }
     }
 
@@ -536,7 +571,7 @@ public sealed class BatchGatePilotService
             var decision = BatchGatePublicationPolicy.Decide(
                 manifest, assembly, run, verdict, current,
                 remoteTip ?? string.Empty, _leases.IsCurrent(lease), true,
-                _git.IsAncestor(repo, manifest.BaseSha, assembly.CandidateSha), false);
+                _git.IsAncestor(repo, manifest.BaseSha, assembly.CandidateSha));
             if (decision != BatchPublishDecision.FastForward)
             {
                 State(manifest, decision is BatchPublishDecision.StaleBase
@@ -552,8 +587,7 @@ public sealed class BatchGatePilotService
                     ReturnToPending(manifest);
                     foreach (var key in assembly.AdmittedKeys.Where(key =>
                                  !Refresh(pending[key]).Subject.CurrentGeneration))
-                        _store.ResolvePending(pending[key].ReviewAttemptId,
-                            "superseded");
+                        ResolveSuperseded(pending[key], "superseded");
                 }
                 return;
             }
@@ -790,8 +824,7 @@ public sealed class BatchGatePilotService
         var subject = refreshed.Subject;
         if (!subject.CurrentGeneration)
         {
-            _store.ResolvePending(pending.ReviewAttemptId,
-                "superseded-after-publication");
+            ResolveSuperseded(pending, "superseded-after-publication");
             return;
         }
         var replay = _store.ReadReplay(manifest.BatchId, subject.TaskKey);
@@ -854,12 +887,15 @@ public sealed class BatchGatePilotService
             throw new IOException("Batch integration bookkeeping could not be recorded.");
     }
 
-    private async Task RunPerTaskFallbackAsync(BatchGatePendingRecord pending, CancellationToken ct)
+    private async Task RunPerTaskFallbackAsync(BatchGatePendingRecord pending,
+        CancellationToken ct, bool recordInStore = true)
     {
         var refreshed = Refresh(pending);
         if (!refreshed.Subject.CurrentGeneration)
         {
-            _store.ResolvePending(pending.ReviewAttemptId, "superseded");
+            if (recordInStore) ResolveSuperseded(pending, "superseded");
+            else BatchGateOwnershipStore.ClearIfReviewAttempt(pending.JobFolderPath,
+                pending.ReviewAttemptId);
             return;
         }
         var task = _scanner.FindJob(pending.Subject.TaskKey, pending.WatchPath);
@@ -890,25 +926,28 @@ public sealed class BatchGatePilotService
                 JsonSerializer.Serialize(stream, gate);
                 stream.Flush(flushToDisk: true);
             }
-            _store.RecordExecution(new BatchGateExecutionFact(
-                pending.Subject.Project, null, null,
-                gate.TestedSha ?? pending.Subject.ResultSha,
-                gate.Verdict.ToString(), Environment.MachineName,
-                started, DateTimeOffset.UtcNow, gate.GateQueueWaitMs, 0, evidence));
+            if (recordInStore)
+                _store.RecordExecution(new BatchGateExecutionFact(
+                    pending.Subject.Project, null, null,
+                    gate.TestedSha ?? pending.Subject.ResultSha,
+                    gate.Verdict.ToString(), Environment.MachineName,
+                    started, DateTimeOffset.UtcNow, gate.GateQueueWaitMs, 0, evidence));
             if (gate.Verdict != BuildTestGateVerdict.Ok
                 || !string.Equals(gate.TestedSha, pending.Subject.ResultSha,
                     StringComparison.OrdinalIgnoreCase))
             {
-                var movedRed = await _transitions.MoveAsync(task.Id, TaskStates.Escalated,
-                    task.WatchPath, ct, cause: $"batch-fallback-red:{pending.ReviewAttemptId}",
-                    reason: gate.Reason,
-                    suppressProductExecution: true,
-                    expectedSourceState: TaskStates.AutoReview,
-                    transitionCause: LaneChangeCauses.Escalated,
-                    transitionDetail: gate.IsInfrastructureFailure
-                        ? "GateInfra" : "deterministic-suite-red").ConfigureAwait(false);
+                var movedRed = await _reviewJournal.EscalateAsync(task.Id,
+                    task.WatchPath, task.ProjectName,
+                    HumanReviewEscalationCategories.AutoReviewEscalation,
+                    gate.Reason ?? (gate.IsInfrastructureFailure
+                        ? "GateInfra" : "deterministic-suite-red"), ct).ConfigureAwait(false);
                 if (movedRed.Status == MoveJobStatus.Success)
-                    _store.ResolvePending(pending.ReviewAttemptId, "per-task-gate-red");
+                {
+                    BatchGateOwnershipStore.ClearIfReviewAttempt(
+                        movedRed.NewFolderPath ?? task.FolderPath, pending.ReviewAttemptId);
+                    if (recordInStore)
+                        _store.ResolvePending(pending.ReviewAttemptId, "per-task-gate-red");
+                }
                 return;
             }
             ownership = new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject,
@@ -931,7 +970,8 @@ public sealed class BatchGatePilotService
             transitionDetail: "per-task-gate-passed").ConfigureAwait(false);
         if (moved.Status == MoveJobStatus.Success)
         {
-            _store.ResolvePending(pending.ReviewAttemptId, "per-task-gate");
+            if (recordInStore)
+                _store.ResolvePending(pending.ReviewAttemptId, "per-task-gate");
             _reviewJournal.RecordRemoteReviewParkVerdict(task.ProjectName, task.Id,
                 moved.NewFolderPath ?? task.FolderPath, "Pass",
                 "Per-task fallback gate passed on the immutable result SHA.");
@@ -974,6 +1014,15 @@ public sealed class BatchGatePilotService
                     ?? subject.ResultSha,
             },
         };
+    }
+
+    private void ResolveSuperseded(BatchGatePendingRecord pending, string reason)
+    {
+        var task = _scanner.FindJob(pending.Subject.TaskKey, pending.WatchPath);
+        if (task is not null)
+            BatchGateOwnershipStore.ClearIfReviewAttempt(task.FolderPath,
+                pending.ReviewAttemptId);
+        _store.ResolvePending(pending.ReviewAttemptId, reason);
     }
 
     private void State(BatchGateManifest manifest, BatchPhase phase,

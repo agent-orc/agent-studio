@@ -3,7 +3,6 @@ namespace AgentStudio.Pipeline;
 public enum BatchPublishDecision
 {
     FastForward,
-    TestedMerge,
     StaleBase,
     Superseded,
     LeaseLost,
@@ -18,8 +17,7 @@ public static class BatchGatePublicationPolicy
         BatchGateRunRecord run, BatchGateRunVerdict verdict,
         IReadOnlyDictionary<string, BatchGateSubject> currentMembers,
         string currentIntegrationTip, bool coordinatorLeaseCurrent,
-        bool refMutationLeaseCurrent, bool candidateDescendsFromPreTip,
-        bool candidateIsPrebuiltMerge)
+        bool refMutationLeaseCurrent, bool candidateDescendsFromPreTip)
     {
         if (!coordinatorLeaseCurrent || !refMutationLeaseCurrent)
             return BatchPublishDecision.LeaseLost;
@@ -41,9 +39,7 @@ public static class BatchGatePublicationPolicy
         if (verdict.Outcome != "pass" || string.IsNullOrWhiteSpace(verdict.EvidencePath))
             return BatchPublishDecision.MissingEvidence;
         if (candidateDescendsFromPreTip) return BatchPublishDecision.FastForward;
-        return candidateIsPrebuiltMerge
-            ? BatchPublishDecision.TestedMerge
-            : BatchPublishDecision.UntestedCandidate;
+        return BatchPublishDecision.UntestedCandidate;
     }
 
     private static bool Current(BatchGateSubject frozen, BatchGateSubject current)
