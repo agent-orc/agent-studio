@@ -1546,6 +1546,70 @@ public sealed class RemoteReviewAuthorityTests
         Assert.Equal("BaselineEvidenceInvalid", report.FailureClassification);
     }
 
+    /// <summary>
+    /// AGT-2916 review finding (2026-09-27): the runner keeps the failed first
+    /// candidate run as candidate evidence when the clean repeat passes. The
+    /// Task Server must admit that shape, record the diagnosis, and not charge.
+    /// </summary>
+    [Fact]
+    public async Task Failed_candidate_run_cleared_by_the_clean_repeat_is_diagnosed_and_not_charged()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var plan = new ReviewPlanDto(
+            [new ReviewCommandDto(
+                "verify-2",
+                "build-tests",
+                "dotnet",
+                ["test"],
+                CompareToBaseline: true)],
+            ["build-tests"],
+            IntegrationRef: "refs/heads/develop");
+        await SeedReviewSubjectAsync(store, plan: plan);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var claim = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        var request = PassingReport(claim);
+        request = request with
+        {
+            Outcome = "ReviewInfra",
+            Commands = request.Commands.Select(command => command with
+            {
+                ExitCode = 1,
+                BaselineSha = new string('c', 40),
+                BaselineExitCode = 0,
+                NewFailures = [],
+                PreExistingFailures = [],
+                RetryPerformed = true,
+                Diagnosis = new DeliveryFailureDiagnosisResult(
+                    DeliveryFailureDiagnosis.FirstOccurrence, 0.5, ["clean-repeat=green"]),
+            }).Concat([request.Commands[0] with
+            {
+                ExitCode = 0,
+                Phase = "clean-repeat",
+                WorkspaceRole = "clean-repeat",
+            }]).ToArray(),
+            Verdicts =
+            [
+                new ReviewVerdictDto(
+                    "build-tests",
+                    "pass",
+                    DeliveryFailureDiagnosis.FirstOccurrence,
+                    "clean-repeat=green; confidence=0.50")
+            ],
+        };
+
+        var report = await store.ReportReviewAsync(
+            claim.Attempt!.AttemptId,
+            request,
+            "review-a",
+            default);
+
+        Assert.Equal("ReviewInfra", report.Outcome);
+        Assert.Equal(DeliveryFailureDiagnosis.FirstOccurrence, report.FailureClassification);
+    }
+
     [Fact]
     public async Task Baseline_evidence_treats_a_nonreproduced_review_flaky_failure_as_quarantine_not_product_failure()
     {

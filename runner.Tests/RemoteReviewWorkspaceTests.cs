@@ -1311,6 +1311,62 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.Equal(DeliveryFailureDiagnosis.Product, Assert.Single(evidence.Verdicts).Classification);
     }
 
+    /// <summary>
+    /// AGT-2916 review finding (2026-09-27): the clean repeat overwrote the
+    /// candidate execution, so a failure the repeat cleared was reported as a
+    /// candidate run with exit 0 and the clean workspace's output. The
+    /// candidate evidence must keep the first run; the repeat has its own.
+    /// </summary>
+    [Fact]
+    public async Task Clean_repeat_that_passes_keeps_the_failed_candidate_run_as_candidate_evidence()
+    {
+        const string failure = "Product.Tests.Sporadic.Fails_only_on_the_first_run";
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var marker = Path.Combine(_root, "first-candidate-run-seen");
+        var command = BaselineCommand(
+            "if grep -q subject product.txt; then " +
+            $"if test ! -f '{marker}'; then touch '{marker}'; " +
+            $"printf '  Failed {failure} [1 ms]\\n'; exit 1; fi; fi; exit 0");
+        var (workspace, subject) = Workspace(
+            "attempt-cleared",
+            subjectSha,
+            [command],
+            26042,
+            resultRef: "refs/heads/task/new-failure",
+            integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        var candidate = CandidateVerification(evidence);
+        var clean = Assert.Single(evidence.Commands, item =>
+            item is { Phase: "clean-repeat", WorkspaceRole: "clean-repeat" });
+        Assert.Equal(1, candidate.ExitCode);
+        Assert.Equal(0, clean.ExitCode);
+        Assert.True(candidate.RetryPerformed);
+        Assert.Equal(0, candidate.BaselineExitCode);
+        Assert.Contains(failure, ArtifactText(evidence.Artifacts, candidate.StdoutSha256), StringComparison.Ordinal);
+        Assert.NotEqual(candidate.StdoutSha256, clean.StdoutSha256);
+        Assert.DoesNotContain(evidence.Artifacts, artifact => artifact.Name.Contains(".initial.", StringComparison.Ordinal));
+        Assert.Equal(DeliveryFailureDiagnosis.FirstOccurrence, candidate.Diagnosis?.Classification);
+        Assert.False(candidate.Diagnosis!.ChargesCard);
+        Assert.Equal("ReviewInfra", evidence.Outcome);
+        Assert.Equal("pass", Assert.Single(evidence.Verdicts).Status);
+        Assert.Equal(
+            ReviewFailureOwner.Tolerated,
+            ReviewFailureAttributionPolicy.Attribute(command, candidate));
+
+        // Both authorities now see the failed candidate run and its diagnosis,
+        // and neither may charge the card for it.
+        var report = new ReviewReportRequest(
+            "review-executor", "review-instance", "lease-attempt-cleared", 1, "report-attempt-cleared",
+            evidence.Outcome, null, null, evidence.Workspace, workspace.EnvironmentEvidence(),
+            evidence.Commands, evidence.Artifacts, evidence.Verdicts);
+        var normalized = ReviewReportDiagnosisPolicy.Normalize(report, subject.Plan);
+        Assert.Equal("ReviewInfra", normalized.Outcome);
+        Assert.Equal(DeliveryFailureDiagnosis.FirstOccurrence, normalized.FailureClassification);
+    }
+
     [Fact]
     public void Missing_baseline_comparison_is_reported_as_infrastructure_with_command_context()
     {

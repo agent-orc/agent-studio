@@ -139,6 +139,50 @@ public sealed class DeliveryFailureDiagnosisTests
         Assert.Equal(DeliveryFailureDiagnosis.Product, normalized.FailureClassification);
     }
 
+    /// <summary>
+    /// AGT-2916 review finding (2026-09-27): the candidate evidence keeps the
+    /// failed first run when the clean repeat passes. The report policy must see
+    /// that failure, keep it off the card, and name its diagnosis.
+    /// </summary>
+    [Fact]
+    public void Failed_candidate_cleared_by_the_clean_repeat_is_diagnosed_but_never_charged()
+    {
+        var cleared = FailedCommand("cleared", DeliveryFailureDiagnosis.Intermittent, false);
+        var report = EmptyReport("ReviewInfra") with
+        {
+            Commands =
+            [
+                cleared,
+                cleared with { Phase = "clean-repeat", WorkspaceRole = "clean-repeat", ExitCode = 0,
+                    Diagnosis = null },
+            ],
+        };
+
+        var normalized = ReviewReportDiagnosisPolicy.Normalize(report, new ReviewPlanDto([], []));
+
+        Assert.Equal("ReviewInfra", normalized.Outcome);
+        Assert.Equal(DeliveryFailureDiagnosis.Intermittent, normalized.FailureClassification);
+    }
+
+    [Fact]
+    public void Product_diagnosis_on_a_run_the_clean_repeat_cleared_is_invalid_evidence()
+    {
+        var product = FailedCommand("product", DeliveryFailureDiagnosis.Product, true);
+        var report = EmptyReport("ProductFailure") with
+        {
+            Commands =
+            [
+                product,
+                product with { Phase = "clean-repeat", WorkspaceRole = "clean-repeat", ExitCode = 0 },
+            ],
+        };
+
+        var normalized = ReviewReportDiagnosisPolicy.Normalize(report, new ReviewPlanDto([], []));
+
+        Assert.Equal("ReviewInfra", normalized.Outcome);
+        Assert.Equal("DiagnosisEvidenceInvalid", normalized.FailureClassification);
+    }
+
     [Fact]
     public void Mixed_failure_with_missing_diagnosis_cannot_charge()
     {

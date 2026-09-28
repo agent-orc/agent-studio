@@ -479,10 +479,10 @@ public sealed class RemoteReviewWorkspace
                 }
 
                 BaselineComparison? comparison = null;
+                CommandExecution? cleanRepeat = null;
                 var retryPerformed = false;
                 if (!ReviewCommandKinds.IsAgent(command.ExecutionKind) && !execution.Process.Success)
                 {
-                    var firstProcess = execution.Process;
                     comparison = await CompareToBaselineAsync(
                         command,
                         execution.Process,
@@ -494,13 +494,11 @@ public sealed class RemoteReviewWorkspace
                     {
                         var reviewFlakyTests = ReviewFlakyTestIndex.Discover(RepositoryPath, _log);
                         retryPerformed = true;
-                        await AddArtifactsAsync(
-                            $"candidate.{SafeSegment(command.StepId)}.initial",
-                            execution.Process,
-                            artifacts,
-                            ct);
-                        execution = await RunCleanRepeatAsync(command, commands, artifacts, ct);
-                        if (MissingToolchain(execution.Process))
+                        // The clean repeat records its own clean-repeat evidence;
+                        // the candidate evidence below keeps the first run, so a
+                        // failure the repeat cleared stays visible to diagnosis.
+                        cleanRepeat = await RunCleanRepeatAsync(command, commands, artifacts, ct);
+                        if (MissingToolchain(cleanRepeat.Process))
                         {
                             commands.Add(await AddCommandEvidenceAsync(
                                 command.StepId,
@@ -527,12 +525,12 @@ public sealed class RemoteReviewWorkspace
                             throw await InfrastructureFailureAsync(
                                 "ToolUnavailable",
                                 $"Review retry '{command.StepId}' lost its declared toolchain; " +
-                                $"exit={execution.Process.ExitCode}; budget={BudgetSummary(command.TimeoutSeconds, execution, command.Model)}.",
+                                $"exit={cleanRepeat.Process.ExitCode}; budget={BudgetSummary(command.TimeoutSeconds, cleanRepeat, command.Model)}.",
                                 commands,
                                 artifacts,
                                 ct);
                         }
-                        if (StalledWithoutCpuProgress(execution))
+                        if (StalledWithoutCpuProgress(cleanRepeat))
                         {
                             commands.Add(await AddCommandEvidenceAsync(
                                 command.StepId,
@@ -562,12 +560,12 @@ public sealed class RemoteReviewWorkspace
                                     "Review retry",
                                     command.StepId,
                                     CommandLine(command),
-                                    execution),
+                                    cleanRepeat),
                                 commands,
                                 artifacts,
                                 ct);
                         }
-                        if (TmpMountTornDownDuringBuild(execution.Process))
+                        if (TmpMountTornDownDuringBuild(cleanRepeat.Process))
                         {
                             commands.Add(await AddCommandEvidenceAsync(
                                 command.StepId,
@@ -595,20 +593,20 @@ public sealed class RemoteReviewWorkspace
                                 ReviewInfraAttributionPolicy.TmpMountTornDownClassification,
                                 $"Review retry '{command.StepId}' failed with a torn-down-/tmp signature " +
                                 "(MSB1025, SocketException (99), or a NuGet mkdtemp ENOENT), not a product failure; " +
-                                $"exit={execution.Process.ExitCode}; budget={BudgetSummary(command.TimeoutSeconds, execution, command.Model)}.",
+                                $"exit={cleanRepeat.Process.ExitCode}; budget={BudgetSummary(command.TimeoutSeconds, cleanRepeat, command.Model)}.",
                                 commands,
                                 artifacts,
                                 ct);
                         }
                         comparison = comparison.Reclassify(
-                            SubjectFailures(command, execution.Process),
+                            SubjectFailures(command, cleanRepeat.Process),
                             reviewFlakyTests);
                     }
                     var requiredComparison = RequireBaselineComparison(comparison, command);
                     comparison = requiredComparison with
                     {
                         Diagnosis = await DiagnoseFailureAsync(
-                            command, requiredComparison, firstProcess, execution.Process, ct),
+                            command, requiredComparison, execution.Process, cleanRepeat?.Process, ct),
                     };
                     if (comparison.Diagnosis.Classification == DeliveryFailureDiagnosis.Environment
                         && candidateCache is not null)
@@ -1640,13 +1638,13 @@ public sealed class RemoteReviewWorkspace
         ReviewCommandDto command,
         BaselineComparison comparison,
         ProcessResult firstResult,
-        ProcessResult cleanResult,
+        ProcessResult? cleanResult,
         CancellationToken ct)
     {
         var initial = comparison.InitialFailures.Count > 0
             ? comparison.InitialFailures : comparison.PreExistingFailures;
         var fingerprint = ReviewFailureFingerprint(command.StepId, initial, firstResult);
-        var cleanFingerprint = cleanResult.Success
+        var cleanFingerprint = cleanResult is null || cleanResult.Success
             ? null : ReviewFailureFingerprint(command.StepId, SubjectFailures(command, cleanResult), cleanResult);
         var known = ReviewFlakyTestIndex.Discover(RepositoryPath, _log);
         var historyAvailable = false;
@@ -1672,7 +1670,7 @@ public sealed class RemoteReviewWorkspace
             comparison.BaselineExitCode == 0,
             comparison.BaselineFailures.Count > 0
                 ? ReviewFailureFingerprint(command.StepId, comparison.BaselineFailures, null) : null,
-            cleanResult.Success,
+            cleanResult?.Success,
             cleanFingerprint,
             otherCards,
             prior,
@@ -2077,26 +2075,6 @@ public sealed class RemoteReviewWorkspace
             {
                 await Task.Delay(100, ct);
             }
-        }
-    }
-
-    private async Task AddArtifactsAsync(
-        string name,
-        ProcessResult process,
-        ICollection<ReviewArtifactEvidenceDto> artifacts,
-        CancellationToken ct)
-    {
-        foreach (var (suffix, content) in new[]
-                 {
-                     ("stdout.log", process.StdOut),
-                     ("stderr.log", process.StdErr),
-                 })
-        {
-            artifacts.Add(await WriteArtifactAsync(
-                $"{name}.{suffix}",
-                content,
-                includeContent: true,
-                ct));
         }
     }
 

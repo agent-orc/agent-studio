@@ -327,7 +327,10 @@ order is mandatory even if an older frozen plan did not opt into baseline
 comparison. The Task Server requires baseline, clean-repeat, and diagnosis
 evidence before it accepts a product failure. Green baseline results can be
 reused from the baseline cache; red baselines are reported and never cached as
-green.
+green. The report keeps both runs apart: the `candidate` verification evidence
+is always the first, failed run with its own output, and the fresh clone's run
+is recorded separately under phase and workspace role `clean-repeat`. A failure
+the clean repeat cleared therefore stays visible to diagnosis and grading.
 
 | Evidence | Diagnosis | Card charge |
 |---|---|---|
@@ -347,7 +350,10 @@ frozen review state. An unavailable fingerprint store cannot establish a
 card-specific failure, so it cannot produce `product`.
 
 The older `ReviewFailureAttributionPolicy` still explains pre-AGT-2916
-reports, but does not authorize a new card charge. A red baseline now yields
+reports, but does not authorize a new card charge. For evidence that carries a
+diagnosis and a measured baseline it defers to the diagnosis: only `product`
+is owned by the delivery, a red baseline by the integration branch, anything
+else is tolerated. A red baseline now yields
 `ReviewInfra/environment` even if a failure name appears new against it. A
 semantic reviewer block needs a cited changed path and carries an explicit
 `product` diagnosis with confidence and citation; uncited blocks settle as
