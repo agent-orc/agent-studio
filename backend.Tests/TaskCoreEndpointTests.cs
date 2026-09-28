@@ -82,6 +82,49 @@ public sealed class TaskCoreEndpointTests : IDisposable
     }
 
     [Fact]
+    public async Task DetailResources_AreTypedConditionalAndGenerationBound()
+    {
+        Seed("AGT-core", TaskStates.Ready);
+        await using var factory = Factory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var project = factory.Services.GetRequiredService<ProjectRegistry>().FindByStorageLocation(Jobs)!;
+        var index = factory.Services.GetRequiredService<TaskIndexCache>();
+        index.ForceRefresh();
+        using var coreResponse = await client.GetAsync($"/api/tasks/AGT-core/core?project={project.Id}");
+        coreResponse.EnsureSuccessStatusCode();
+        using var core = JsonDocument.Parse(await coreResponse.Content.ReadAsStringAsync());
+        var generation = core.RootElement.GetProperty("coreVersion").GetInt64();
+        var scans = index.Misses;
+
+        var url = $"/api/tasks/AGT-core/details/documents?project={project.Id}&generation={generation}&name=prompt";
+        using var response = await client.GetAsync(url);
+        response.EnsureSuccessStatusCode();
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("documents", body.RootElement.GetProperty("resource").GetString());
+        Assert.Equal("ready", body.RootElement.GetProperty("state").GetString());
+        Assert.Equal("AGT-core", body.RootElement.GetProperty("id").GetString());
+        Assert.Equal(generation, body.RootElement.GetProperty("coreVersion").GetInt64());
+        Assert.Equal(900, body.RootElement.GetProperty("data").GetProperty("markdown")
+            .GetString()!.EnumerateRunes().Count());
+        Assert.False(body.RootElement.TryGetProperty("info", out _));
+        Assert.NotNull(response.Headers.ETag);
+
+        using var conditional = new HttpRequestMessage(HttpMethod.Get, url);
+        conditional.Headers.IfNoneMatch.Add(response.Headers.ETag!);
+        using var notModified = await client.SendAsync(conditional);
+        Assert.Equal(HttpStatusCode.NotModified, notModified.StatusCode);
+
+        using var stale = await client.GetAsync($"/api/tasks/AGT-core/details/usage?project={project.Id}&generation=0");
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+        using var history = await client.GetAsync($"/api/tasks/AGT-core/details/history?project={project.Id}&generation={generation}");
+        history.EnsureSuccessStatusCode();
+        using var git = await client.GetAsync($"/api/tasks/AGT-core/details/git?project={project.Id}&generation={generation}");
+        git.EnsureSuccessStatusCode();
+        Assert.Equal(scans, index.Misses);
+    }
+
+    [Fact]
     public async Task CoreRoute_UsesCacheOnly_WithThrowingGitRegistration()
     {
         Seed("AGT-core", TaskStates.Ready);

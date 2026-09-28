@@ -1,6 +1,6 @@
-<header class="task-load-head" data-testid="task-detail-head">
+<header class="task-load-head" data-testid="task-detail-head" [attr.aria-busy]="core() ? 'false' : 'true'">
   <button type="button" class="task-load-head__back" aria-label="Back to board" (click)="back.emit()">←</button>
-  <div class="task-load-head__identity">
+  <div class="task-load-head__identity" data-testid="task-core-identity">
     <span class="task-load-head__project">{{ info().projectName }}</span>
     <div class="task-load-head__title-row">
       <span class="task-load-head__key">{{ info().key || info().displayKey || info().id }}</span>
@@ -8,9 +8,78 @@
     </div>
   </div>
   <span class="task-load-head__lane">{{ laneLabel(info().state) }}</span>
+  @if (core() && pager.total() > 1) {
+    <nav class="task-load-head__pager" aria-label="Task pager">
+      <button type="button" data-testid="task-core-prev" [disabled]="!pager.canPrev()" (click)="prev.emit()">Previous</button>
+      <span>{{ pager.position() }} / {{ pager.total() }}</span>
+      <button type="button" data-testid="task-core-next" [disabled]="!pager.canNext()" (click)="next.emit()">Next</button>
+    </nav>
+  }
 </header>
 
-<div class="task-load-sections" data-testid="task-detail-load-sections">
+@if (core(); as task) {
+  <div class="task-core" data-testid="task-core" [attr.data-core-version]="task.coreVersion" aria-live="polite">
+    <section class="task-core__section" data-testid="task-core-state">
+      <h2>State and blockers</h2>
+      <p>{{ laneLabel(task.lane) }} · {{ task.taskType }} · {{ task.mode }}</p>
+      @if (task.archiveState) { <p>Archive: {{ task.archiveState }}</p> }
+      @if (task.released) { <p>Content released for dependents.</p> }
+      @if (task.pendingIntent) { <p>Pending action recorded.</p> }
+      @if (task.blocking.blockerDescription || task.blocking.needsInput) {
+        <p>{{ task.blocking.blockerDescription || task.blocking.needsInput }}</p>
+      } @else if (task.blocking.outcomeIssue) {
+        <p>{{ task.blocking.outcomeIssue.label }}: {{ task.blocking.outcomeIssue.summary }}</p>
+      } @else if (task.blocking.dependencyBlocked) {
+        <p>Waiting on dependencies.</p>
+      } @else {
+        <p>No blocking condition.</p>
+      }
+    </section>
+    <section class="task-core__section" data-testid="task-core-pins">
+      <h2>Pins</h2>
+      <p>Model: {{ task.pins.model || 'Project default' }}{{ task.pins.modelExplicit ? ' · pinned' : '' }}</p>
+      <p>Thinking: {{ task.pins.thinkingLevel || 'Project default' }}{{ task.pins.thinkingLevelExplicit ? ' · pinned' : '' }}</p>
+      <p>Client: {{ task.pins.cliType || 'Project default' }} · Order {{ task.order }}</p>
+    </section>
+    <section class="task-core__section" data-testid="task-core-execution">
+      <h2>Execution</h2>
+      <p>{{ task.runtime.executionStatus || 'No active execution' }} · {{ task.runtime.location }}</p>
+      @if (task.runtime.runnerName || task.runtime.hostname) {
+        <p>{{ task.runtime.runnerName || task.runtime.hostname }}</p>
+      }
+      @if (task.runtime.attemptId) { <p>Attempt {{ task.runtime.attemptId }}</p> }
+      @if (task.runtime.leaseId) { <p>Lease {{ task.runtime.leaseId }} · {{ task.runtime.leaseState }}</p> }
+      @if (task.runtime.heartbeatAt) { <p>Heartbeat {{ task.runtime.heartbeatAt }}</p> }
+      <p>Runtime {{ task.runtimeVersion }}</p>
+    </section>
+    <section class="task-core__section" data-testid="task-core-status">
+      <h2>Status summary</h2>
+      <pre>{{ task.statusSummary.text || 'No status summary yet.' }}</pre>
+    </section>
+    <section class="task-core__section" data-testid="task-core-prompt">
+      <h2>Prompt head</h2>
+      <pre>{{ task.prompt.text || 'No prompt yet.' }}</pre>
+      @if (task.prompt.cursor) { <p>More prompt content is available in Documents.</p> }
+    </section>
+    <section class="task-core__section" data-testid="task-core-timeline">
+      <h2>Recent events</h2>
+      @for (event of task.timeline.events; track event.sequence) {
+        <p>{{ event.summary }}</p>
+      } @empty { <p>No timeline events yet.</p> }
+    </section>
+    <section class="task-core__section" data-testid="task-core-resources">
+      <h2>More detail</h2>
+      @if (resources(); as states) {
+        <p>Documents: {{ states.documents.phase }}</p>
+        <p>Usage: {{ states.usage.phase }}@if (states.usage.reason) { · {{ reasonLabel(states.usage.reason) }} }</p>
+        <p>Git: {{ states.git.phase }}@if (states.git.reason) { · Git information unavailable: {{ reasonLabel(states.git.reason) }} }</p>
+        <p>Review: {{ states.review.phase }}</p>
+        <p>History: {{ states.history.phase }}</p>
+      }
+    </section>
+  </div>
+} @else {
+<div class="task-load-sections" data-testid="task-detail-load-sections" aria-live="polite">
   @for (section of sections; track section.id) {
     <section class="task-load-section"
              [attr.data-testid]="'task-detail-section-' + section.id"
@@ -45,3 +114,4 @@
     </section>
   }
 </div>
+}

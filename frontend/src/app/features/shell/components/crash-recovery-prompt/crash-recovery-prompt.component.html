@@ -1,3 +1,9 @@
+@if (reviewPending().length > 0 && !open()) {
+  <button type="button" class="crp__pending" data-testid="crash-recovery-open"
+          (click)="openReview()">
+    {{ reviewPending().length }} pending crash recovery {{ reviewPending().length === 1 ? 'item' : 'items' }} · Review
+  </button>
+}
 @if (open()) {
   <app-dialog
     eyebrow="Crash recovery"
@@ -5,7 +11,9 @@
     subtitle="The backend found uncommitted changes during startup. Nothing will be committed until you confirm it here."
     kind="primary"
     widthTier="lg"
-    [closable]="false"
+    [closable]="true"
+    (closeRequest)="closeReview()"
+    (backdropClick)="closeReview()"
     testid="crash-recovery-prompt">
     <div class="crp" data-testid="crash-recovery-list">
       <div class="crp__toolbar">

@@ -265,6 +265,8 @@ export class App implements OnInit, OnDestroy {
   private readonly lanePager = inject(LanePagerService);
   readonly selectedJob = this.jobSelection.selected;
   readonly detailPreview = this.jobSelection.detailPreview;
+  readonly selectedCore = this.jobSelection.selectedCore;
+  readonly detailResourceStates = this.jobSelection.resourceStates;
   readonly boardLoading = this.jobService.loading;
   readonly detailLoading = this.jobSelection.detailLoading;
   readonly detailLoadError = this.jobSelection.detailLoadError;
@@ -718,6 +720,8 @@ export class App implements OnInit, OnDestroy {
    */
   onShellTogglePane(pane: 'prompt' | 'protocol' | 'git'): void {
     this.jobDetailRef?.togglePane(pane);
+    if (pane === 'git' && this.jobDetailRef?.panesVisible().git)
+      this.jobSelection.loadResource('git');
   }
 
   onPickDeleteE2E(): void {
@@ -870,19 +874,22 @@ export class App implements OnInit, OnDestroy {
     // path would set selectedJob() but the new shell would show no tab.
     effect(() => {
       const selected = this.selectedJob();
+      const core = this.selectedCore();
+      const preview = this.detailPreview();
+      const visible = selected ?? (core && preview ? { info: preview } as TaskDetail : null);
       // Consume the pager/cursor retarget hint up-front (and unconditionally,
       // so a no-op step never leaks the flag into a later genuine open).
-      const retargetNav = this.laneNavRetarget
-        || (!!selected && this.jobSelection.consumeTaskTabReplacement(selected.info.taskKey));
-      this.laneNavRetarget = false;
+      const retargetNav = !!visible && (this.laneNavRetarget
+        || this.jobSelection.consumeTaskTabReplacement(visible.info.taskKey));
+      if (visible) this.laneNavRetarget = false;
       if (!this.featureFlags.vsCodeLayout()) return;
-      if (!selected) return;
+      if (!visible) return;
       untracked(() => {
-        this.mirrorSelectionToStudioTab(selected, retargetNav);
+        this.mirrorSelectionToStudioTab(visible, retargetNav);
         if (this.pendingStudioTaskReference) {
-          const publicReference = selected.info.key?.trim()
-            || selected.info.displayKey?.trim()
-            || selected.info.id;
+          const publicReference = visible.info.key?.trim()
+            || visible.info.displayKey?.trim()
+            || visible.info.id;
           if (publicReference.toLowerCase() === this.pendingStudioTaskReference.toLowerCase()) {
             this.pendingStudioTaskReference = null;
             this.studioRouteReady.set(true);
@@ -2136,6 +2143,9 @@ export class App implements OnInit, OnDestroy {
 
   onTaskDetailTabChange(tab: TaskDetailRouteTab): void {
     this.routeDetailTab.set(tab);
+    if (tab === 'evidence') this.jobSelection.loadResource('review', true);
+    if (tab === 'code-review') this.jobSelection.loadResource('review');
+    if (tab === 'timeline') this.jobSelection.loadResource('history');
   }
 
   onTaskInspectorTabChange(tab: TaskInspectorRouteTab): void {

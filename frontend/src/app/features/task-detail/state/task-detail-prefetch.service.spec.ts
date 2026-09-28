@@ -115,4 +115,21 @@ describe('TaskDetailPrefetchService', () => {
       .error(new ProgressEvent('error'));
     expect(service.take('job-f', '/wp')).toBeNull();
   });
+
+  it('prefetches only a bounded core and aborts obsolete pager lookahead', () => {
+    service.prefetchCore('job-a', 'PROJ-001');
+    service.prefetchCore('job-a', 'PROJ-001');
+    const first = http.expectOne(r => r.url.endsWith('/api/tasks/job-a/core'));
+    expect(first.request.params.get('project')).toBe('PROJ-001');
+    service.keepLookahead(new Set());
+    expect(first.cancelled).toBe(true);
+
+    service.prefetchCore('job-a', 'PROJ-001');
+    http.expectOne(r => r.url.endsWith('/api/tasks/job-a/core')).flush({
+      state: 'ready', id: 'job-a', projectId: 'PROJ-001', coreVersion: 4,
+    });
+    expect(service.takeCore('job-a', 'PROJ-001')?.coreVersion).toBe(4);
+    service.invalidate('job-a', '/wp');
+    expect(service.takeCore('job-a', 'PROJ-001')).toBeNull();
+  });
 });
