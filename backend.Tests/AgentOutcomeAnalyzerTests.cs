@@ -14,6 +14,36 @@ namespace AgentStudio.Tests;
 /// </summary>
 public class AgentOutcomeAnalyzerTests
 {
+    [Fact]
+    public void ClaudeUnrecognizedModelMarker_OutranksSuccessfulSentinelAndExitZero()
+    {
+        var lines = new List<CliOutputLine>
+        {
+            new()
+            {
+                Timestamp = DateTime.UtcNow,
+                Stream = "stderr",
+                Text = "[claude-code:unrecognized_model] {\"model\":\"claude-opus-5-5\",\"query_source\":\"sdk\"}",
+            },
+            new()
+            {
+                Timestamp = DateTime.UtcNow,
+                Stream = "agent",
+                Text = "ok [[TASK_DONE]]",
+            },
+        };
+
+        var outcome = AgentOutcomeAnalyzer.Analyze(
+            lines,
+            status: "completed",
+            durationSeconds: 2.0,
+            exitCode: 0);
+
+        Assert.Equal(AgentOutcomeKind.Unknown, outcome.Kind);
+        Assert.Equal(RunIssueKind.ModelInvalid, outcome.IssueKind);
+        Assert.False(outcome.MatchedSentinel);
+    }
+
     private static List<CliOutputLine> Lines(params string[] texts)
     {
         var ts = new DateTime(2026, 5, 2, 10, 0, 0, DateTimeKind.Utc);

@@ -72,8 +72,12 @@ internal static class CarWorkerExecution
         using var trace = CarEventTrace.Open(workerDirectory);
         using var logger = new CarWorkerLogger(Path.Combine(workerDirectory, "car.log"), append);
         var protocolNovelty = new CliProtocolNoveltyTracker(cliType);
-        var options = BuildCliOptions(spec, cliType);
+        using var signalRecorder = OperatingSystem.IsLinux()
+            ? new SignalRecordingCliSpawner()
+            : null;
+        var options = BuildCliOptions(spec, cliType) with { Spawner = signalRecorder };
         if (optionsCustomizer is not null) options = optionsCustomizer(options);
+        var recordsSignals = ReferenceEquals(options.Spawner, signalRecorder);
         var runner = new CliRunner(options, logger, new WorkerRunLogPathProvider(workerDirectory));
         var driver = runner.Get(cliType);
 
@@ -105,6 +109,9 @@ internal static class CarWorkerExecution
         var stderr = new BoundedOutputBuffer(256 * 1024);
         var finished = new TaskCompletionSource<CliRunInfo>(TaskCreationOptions.RunContinuationsAsynchronously);
         var processStarted = 0;
+        long observedTokens = 0;
+        long cumulativeBaseline = spec.TokenBaseline ?? -1;
+        var tokenCeilingHit = 0;
 
         void OnOutput(string id, CarOutputLine line)
         {
@@ -112,6 +119,24 @@ internal static class CarWorkerExecution
             if (line.Stream == "stdout") stdout.Append(line.Text);
             else if (line.Stream == "stderr") stderr.Append(line.Text);
             append(line.Stream, line.Text);
+            if (line.Stream == "stdout" && spec.TokenCeiling is { } ceiling
+                && MechanicalTokenUsage.TryRead(line.Text, out var tokens, out var cumulative))
+            {
+                long total;
+                if (cumulative)
+                {
+                    Interlocked.CompareExchange(ref cumulativeBaseline, tokens, -1);
+                    total = Math.Max(Interlocked.Read(ref observedTokens),
+                        tokens - Interlocked.Read(ref cumulativeBaseline));
+                    Interlocked.Exchange(ref observedTokens, total);
+                }
+                else total = Interlocked.Add(ref observedTokens, tokens);
+                if (total >= ceiling && Interlocked.Exchange(ref tokenCeilingHit, 1) == 0)
+                {
+                    append("system", $"[runner] resumed mechanical round reached token ceiling {ceiling}; stopping CLI");
+                    driver.Stop(runId, RunStopReason.Watchdog);
+                }
+            }
             if (line.Stream == "stdout"
                 && protocolNovelty.TryObserveFrame(line.Text, out var novelty))
                 append("system", novelty.ToMarker());
@@ -208,13 +233,21 @@ internal static class CarWorkerExecution
             {
                 // Byte parity with the legacy timeout result: classification input
                 // stays "Runner timeout" / exit 124, not a partial transcript.
-                return (new ProcessResult(124, string.Empty, "Runner timeout"), true, false);
+                return (new ProcessResult(124, string.Empty,
+                    Volatile.Read(ref tokenCeilingHit) != 0
+                        ? "Resumed mechanical token ceiling reached" : "Runner timeout"), true, false);
             }
 
             var info = await finished.Task;
             var exitCode = info.ExitCode ?? 125;
+            if (Volatile.Read(ref tokenCeilingHit) != 0)
+                return (new ProcessResult(124, stdout.ToString(), "Resumed mechanical token ceiling reached"), true, false);
             return (
-                new ProcessResult(exitCode, stdout.ToString(), stderr.ToString()),
+                new ProcessResult(
+                    exitCode,
+                    stdout.ToString(),
+                    stderr.ToString(),
+                    recordsSignals ? signalRecorder?.ReadRecordedSignal(exitCode) : null),
                 false,
                 LaunchFailed: Volatile.Read(ref processStarted) == 0 || info.ProcessId <= 0);
         }

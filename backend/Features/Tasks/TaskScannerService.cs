@@ -154,6 +154,34 @@ public class TaskScannerService : ITaskScanner
         _statsMetadataCache?.Invalidate();
     }
 
+    /// <summary>Publish one durable mutation to the cache-only core projection.</summary>
+    public void PublishCoreFromFolder(string folder, string watchPath, string projectName, string state)
+    {
+        if (_indexCache is null) return;
+        var entry = new WatchPathEntry { Name = projectName, Path = watchPath };
+        var updated = ScanJobFolder(folder, entry, state);
+        if (updated is not null) _indexCache.PublishCore(updated);
+        else _indexCache.RemoveCoreByFolder(folder);
+    }
+
+    public void RemoveCore(TaskInfo info) => _indexCache?.RemoveCore(info);
+
+    public void PublishCoreFromKnownFolder(string folder)
+    {
+        var known = _indexCache?.GetCoreByFolder(folder);
+        if (known is not null)
+            PublishCoreFromFolder(folder, known.WatchPath, known.ProjectName, known.State);
+    }
+
+    public void MoveCoreFromKnownFolder(string sourceFolder, string targetFolder,
+        string watchPath, string state)
+    {
+        var known = _indexCache?.GetCoreByFolder(sourceFolder);
+        _indexCache?.RemoveCoreByFolder(sourceFolder);
+        PublishCoreFromFolder(targetFolder, watchPath,
+            known?.ProjectName ?? Path.GetFileName(watchPath), state);
+    }
+
     private static string? ReadArchiveState(string jobDir)
     {
         var path = Path.Combine(jobDir, "archive-manifest.json");
@@ -599,8 +627,14 @@ public class TaskScannerService : ITaskScanner
                 return ApplyVolatileMarkers(live.Task, jobDir);
             }
 
-            var json = File.ReadAllText(jobJsonPath);
-            var raw = JsonSerializer.Deserialize<JsonElement>(json, TaskJsonFile.ReadOpts);
+            string json;
+            JsonElement raw;
+            using (TaskSwitchTrace.Span("task.json"))
+            {
+                json = File.ReadAllText(jobJsonPath);
+                TaskSwitchTrace.FileRead();
+                raw = JsonSerializer.Deserialize<JsonElement>(json, TaskJsonFile.ReadOpts);
+            }
 
             var folderId = Path.GetFileName(jobDir);
             var isFlatLayout = IsFlatLayoutJobDir(jobDir);
@@ -739,13 +773,15 @@ public class TaskScannerService : ITaskScanner
                 NeedsInput = ReadNeedsInput(jobDir, resolvedState),
                 TaskType = ReadTaskType(raw),
                 Tags = ReadTags(raw),
+                TaggingStatus = ReadTaggingStatus(raw),
                 References = ReadReferences(raw),
                 Released = raw.TryGetProperty("released", out var released)
                     && released.ValueKind == JsonValueKind.True,
                 RelatedWikiPages = ReadRelatedWikiPages(raw, entry),
                 Provenance = ReadProvenance(raw),
                 ExternalCompletion = ReadExternalCompletion(raw),
-                RemoteDispatchRejection = ReadRemoteDispatchRejection(raw)
+                RemoteDispatchRejection = ReadRemoteDispatchRejection(raw),
+                Decision = ReadDecision(raw)
             };
             // Re-stat first so a self-heal this scan performed itself (the
             // divergent-id repair above, the ownerClientId migration below) is
@@ -822,18 +858,7 @@ public class TaskScannerService : ITaskScanner
             liveSnapshot = ScanAllJobs();
         }
 
-        var matches = liveSnapshot.Where(j => MatchesTaskIdentity(j, jobId));
-        if (!string.IsNullOrWhiteSpace(watchPath))
-        {
-            // Path-aware, OS-correct project match. A raw OrdinalIgnoreCase
-            // string compare 404'd a card whose stored WatchPath spelled the
-            // same directory differently (separator/trailing-slash) and, on
-            // Linux, matched the WRONG project when two paths differed only in
-            // case. See WatchPathComparison (AGT-1940).
-            matches = matches.Where(j => WatchPathComparison.PathsEqual(j.WatchPath, watchPath));
-        }
-
-        var resolved = matches.ToList();
+        var resolved = FindMatches(liveSnapshot, jobId, watchPath);
         if (resolved.Count == 1) return resolved[0];
         if (resolved.Count > 1)
         {
@@ -852,11 +877,7 @@ public class TaskScannerService : ITaskScanner
             // fall back to raw archive enumeration here: that path parsed every
             // archived folder for each archived detail lookup,
             // bypassing the cache on V1 review and task-reference requests.
-            resolved = archivedSnapshot!
-                .Where(j => MatchesTaskIdentity(j, jobId))
-                .Where(j => string.IsNullOrWhiteSpace(watchPath)
-                            || WatchPathComparison.PathsEqual(j.WatchPath, watchPath))
-                .ToList();
+            resolved = FindMatches(archivedSnapshot!, jobId, watchPath);
             if (resolved.Count == 1) return resolved[0];
             if (resolved.Count > 1)
             {
@@ -866,6 +887,18 @@ public class TaskScannerService : ITaskScanner
         }
 
         return null;
+    }
+
+    internal static List<TaskInfo> FindMatches(IEnumerable<TaskInfo> snapshot, string jobId, string? watchPath)
+    {
+        using var lookupSpan = TaskSwitchTrace.Span("index.lookup");
+        // Materialize while the span is active: Where only builds a deferred query.
+        // Path-aware comparison is required for cards whose stored path uses a
+        // different separator or trailing slash, and for case-sensitive hosts.
+        var matches = snapshot.Where(j => MatchesTaskIdentity(j, jobId));
+        if (!string.IsNullOrWhiteSpace(watchPath))
+            matches = matches.Where(j => WatchPathComparison.PathsEqual(j.WatchPath, watchPath));
+        return matches.ToList();
     }
 
     private static bool MatchesTaskIdentity(TaskInfo info, string identity)
@@ -880,22 +913,22 @@ public class TaskScannerService : ITaskScanner
         if (info == null) return null;
 
         var dir = info.FolderPath;
-        var statusMd = ReadFileOrNull(Path.Combine(dir, "status.md"));
-        var generated = _fileGenerationIndex?.ReadForJob(dir)
-            ?? new Dictionary<string, FileGenerationMeta>(StringComparer.OrdinalIgnoreCase);
+        var statusMd = TaskSwitchTrace.Run("sidecar.status", () => ReadFileOrNull(Path.Combine(dir, "status.md")));
+        var generated = TaskSwitchTrace.Run("sidecar.other", () => _fileGenerationIndex?.ReadForJob(dir)
+            ?? new Dictionary<string, FileGenerationMeta>(StringComparer.OrdinalIgnoreCase));
         return new TaskDetail
         {
             Info = info,
-            PromptMarkdown = ReadFileOrNull(Path.Combine(dir, "prompt.md")),
-            EnrichmentReport = PromptEnrichmentService.ReadReport(dir),
-            PromptHistory = ReadPromptHistory(dir),
-            TitleHistory = TitleHistoryLog.Read(dir),
+            PromptMarkdown = TaskSwitchTrace.Run("sidecar.prompt", () => ReadFileOrNull(Path.Combine(dir, "prompt.md"))),
+            EnrichmentReport = TaskSwitchTrace.Run("sidecar.other", () => PromptEnrichmentService.ReadReport(dir)),
+            PromptHistory = TaskSwitchTrace.Run("sidecar.history", () => ReadPromptHistory(dir)),
+            TitleHistory = TaskSwitchTrace.Run("sidecar.history", () => TitleHistoryLog.Read(dir)),
             StatusMarkdown = statusMd,
             StatusGeneration = generated.GetValueOrDefault("status.md"),
-            ContextUsage = ReadContextUsage(dir),
-            Log = BuildLog(dir),
+            ContextUsage = TaskSwitchTrace.Run("sidecar.other", () => ReadContextUsage(dir)),
+            Log = TaskSwitchTrace.Run("sidecar.log", () => BuildLog(dir)),
             SummaryState = ResolveSummaryState(info.TaskKey, statusMd),
-            ReviewEvidence = ReviewEvidenceLog.ReadLatestPerId(dir, _logger)
+            ReviewEvidence = TaskSwitchTrace.Run("sidecar.evidence", () => ReviewEvidenceLog.ReadLatestPerId(dir, _logger))
         };
     }
 
@@ -1052,6 +1085,9 @@ public class TaskScannerService : ITaskScanner
             {
                 RepoRelativePath = publication.RepoRelativeEntrypoint,
                 Title = review.Descriptor.Title,
+                Decisions = AgentStudio.Pipeline.ConceptDecisionAssumptions.Read(
+                    Path.Combine(repositoryRoot, publication.RepoRelativeDirectory, "index.html"),
+                    Path.Combine(repositoryRoot, publication.RepoRelativeDirectory, "workbench.json")),
             },
             Items = review.Descriptor.ImplementationTasks,
             WatchPath = info.WatchPath,
@@ -1270,6 +1306,14 @@ public class TaskScannerService : ITaskScanner
         return list;
     }
 
+    private static string? ReadTaggingStatus(JsonElement raw)
+    {
+        if (!raw.TryGetProperty("taggingStatus", out var value) || value.ValueKind != JsonValueKind.String)
+            return null;
+        var status = value.GetString();
+        return status is "tagged" or "tags-proposed" ? status : null;
+    }
+
     /// <summary>
     /// Reads the F34 <c>"references"</c> object from <c>task.json</c>. Absent,
     /// null, or non-object yields an empty <see cref="TaskReferences"/>; a
@@ -1346,6 +1390,25 @@ public class TaskScannerService : ITaskScanner
         try
         {
             return JsonSerializer.Deserialize<ExternalCompletionInfo>(ext.GetRawText(), TaskJsonFile.ReadOpts);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// AGT-2795: reads the structured <c>decision</c> object off a decision card.
+    /// Returns null when absent or malformed so a corrupt block renders the card
+    /// inert rather than fatal.
+    /// </summary>
+    private static DecisionContent? ReadDecision(JsonElement raw)
+    {
+        if (!raw.TryGetProperty("decision", out var dec) || dec.ValueKind != JsonValueKind.Object)
+            return null;
+        try
+        {
+            return JsonSerializer.Deserialize<DecisionContent>(dec.GetRawText(), TaskJsonFile.ReadOpts);
         }
         catch
         {
@@ -1701,7 +1764,7 @@ public class TaskScannerService : ITaskScanner
             if (dash < 0 || dash >= name.Length - 1) continue;
             if (!int.TryParse(name[(dash + 1)..], out var index)) continue;
             string body;
-            try { body = File.ReadAllText(path); }
+            try { body = File.ReadAllText(path); TaskSwitchTrace.FileRead(); }
             catch { continue; }
             DateTime writtenAt;
             try { writtenAt = File.GetLastWriteTimeUtc(path); }
@@ -1820,8 +1883,14 @@ public class TaskScannerService : ITaskScanner
 
         try
         {
-            var json = File.ReadAllText(jobJsonPath);
-            var raw = JsonSerializer.Deserialize<JsonElement>(json, TaskJsonFile.ReadOpts);
+            string json;
+            JsonElement raw;
+            using (TaskSwitchTrace.Span("task.json"))
+            {
+                json = File.ReadAllText(jobJsonPath);
+                TaskSwitchTrace.FileRead();
+                raw = JsonSerializer.Deserialize<JsonElement>(json, TaskJsonFile.ReadOpts);
+            }
             if (!raw.TryGetProperty("contextUsage", out var contextUsage) || contextUsage.ValueKind != JsonValueKind.Object)
             {
                 return null;
@@ -1999,8 +2068,13 @@ public class TaskScannerService : ITaskScanner
         return string.Compare(keyA, keyB, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string? ReadFileOrNull(string path) =>
-        File.Exists(path) ? File.ReadAllText(path) : null;
+    private static string? ReadFileOrNull(string path)
+    {
+        if (!File.Exists(path)) return null;
+        var body = File.ReadAllText(path);
+        TaskSwitchTrace.FileRead();
+        return body;
+    }
 
     public (string? Path, string? ContentType) ResolveAttachment(string jobId, string fileName, string? watchPath = null)
         => ResolveJobBinaryFile(jobId, "attachments", fileName, watchPath);

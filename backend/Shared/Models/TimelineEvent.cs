@@ -153,6 +153,8 @@ public static class TimelineEventKinds
     public const string PostStepStarted = "post_step_started";
     /// <summary>A pipeline post-step finished.</summary>
     public const string PostStepFinished = "post_step_finished";
+    /// <summary>A gate reused an exact-SHA verdict; details name the original evidence and time.</summary>
+    public const string GateVerdictCacheHit = "gate_verdict_cache_hit";
     /// <summary>
     /// The orchestrator could not decide unattended and asked a human to
     /// take the wheel. The original card is escalated to
@@ -380,6 +382,12 @@ public static class TimelineEventKinds
     /// </summary>
     public const string IntegrationGateFlakyRerun = "integration_gate_flaky_rerun";
     /// <summary>
+    /// The integration gate's preparation found a cache-class failure,
+    /// quarantined the affected immutable entry, and spent its one clean retry.
+    /// This environment recovery is visible without becoming a review verdict.
+    /// </summary>
+    public const string IntegrationGatePreparationCacheRetried = "integration_gate_preparation_cache_retried";
+    /// <summary>
     /// AGT-2849: a pre-develop build gate that owned a merge on the integration
     /// branch never reached a verdict because its process disappeared. Startup
     /// recovery says what it did about it - rolled the branch back to the exact
@@ -479,12 +487,21 @@ public static class TimelineEventKinds
     /// </summary>
     public const string FollowUpPreserved = "follow_up_preserved";
     /// <summary>
-    /// AGT-2747: a run consumed a saved <c>pending-intent.json</c>. The consumed
-    /// copy is retained as <c>pending-intent.consumed.json</c> and
-    /// <see cref="TimelineEvent.RunId"/> names the run that took it, so an
-    /// operator can prove a queued steer actually reached an agent.
+    /// A worker started with the exact saved follow-up prompt. The replayable
+    /// stash is deleted and this receipt retains its hash, attribution, mode,
+    /// timestamp, and <see cref="TimelineEvent.RunId"/>.
     /// </summary>
     public const string FollowUpConsumed = "follow_up_consumed";
+    /// <summary>
+    /// A queued follow-up became impossible to deliver because the task entered
+    /// a terminal lane. Details retain its mode, author, timestamp, and the
+    /// resolution <c>superseded-by-completion</c>.
+    /// </summary>
+    public const string FollowUpSuperseded = "follow_up_superseded";
+
+    public const string DecisionRequested = "decision_requested";
+    public const string DecisionDecided = "decision_decided";
+    public const string DecisionReopened = "decision_reopened";
 
     /// <summary>
     /// AGT-2870: an operator asked a remotely executed run to stop. The request

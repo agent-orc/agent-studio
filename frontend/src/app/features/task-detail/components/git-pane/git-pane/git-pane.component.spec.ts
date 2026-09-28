@@ -505,7 +505,6 @@ describe('GitPaneComponent', () => {
     const splitter = root.querySelector('[data-testid="git-tree-splitter"]');
     expect(splitter).not.toBeNull();
     expect(splitter?.getAttribute('role')).toBe('separator');
-    expect(fixture.componentInstance.treeColWidth()).toBe(360);
     const splitBody = root.querySelector<HTMLElement>('.git-view__split-body');
     expect(splitBody?.style.getPropertyValue('--git-tree-width')).toBe('360px');
   });

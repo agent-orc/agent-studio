@@ -392,6 +392,8 @@ public sealed class VerifyCommandPlannerTests : IDisposable
         var lint = Assert.Single(plan.Commands.Where(command => command.Aspect == "lint"));
         Assert.Equal(ReviewBaselineModes.ExitStatus, lint.BaselineMode);
         Assert.Contains("npm run lint", string.Join(' ', lint.Arguments), StringComparison.Ordinal);
+        Assert.Equal("frontend", lint.WorkingSubdir);
+        Assert.DoesNotContain("cd --", string.Join(' ', lint.Arguments), StringComparison.Ordinal);
         Assert.All(
             plan.Commands.Where(command => command.Aspect == "build-tests"
                 && string.Join(' ', command.Arguments).Contains("test", StringComparison.Ordinal)),
@@ -1575,6 +1577,44 @@ public sealed class BuildTestGateClassificationTests
             "X [ERROR] Cannot find module './javascript-transformer-worker'\n" +
             "Require stack:\n" +
             "- C:\\gate\\node_modules\\@angular\\build\\src\\tools\\esbuild\\javascript-transformer.js");
+
+        var kind = BuildTestGateRunner.ClassifyFailure(evidence);
+
+        Assert.Equal(BuildTestGateFailureKind.Environment, kind);
+    }
+
+    [Fact]
+    public void CompletedDotNetBuild_MissingPackageInsideGatePreparationRun_IsEnvironment()
+    {
+        var evidence = Evidence(exitCode: 1, stderr:
+            @"C:\Program Files\dotnet\sdk\10.0.301\NuGet.targets(198,5): error : Could not find file " +
+            @"'C:\Users\runner\AppData\Local\Temp\agentstudio-preparation-cache\.runs\" +
+            @"9a82d10f\nuget\microsoft.extensions.configuration.binder\10.0.2\" +
+            "microsoft.extensions.configuration.binder.10.0.2.nupkg'.");
+
+        var kind = BuildTestGateRunner.ClassifyFailure(evidence);
+
+        Assert.Equal(BuildTestGateFailureKind.Environment, kind);
+    }
+
+    [Fact]
+    public void CompletedDotNetBuild_MissingPackageOutsideGatePreparationRun_StaysCode()
+    {
+        var evidence = Evidence(exitCode: 1, stderr:
+            @"C:\Program Files\dotnet\sdk\10.0.301\NuGet.targets(198,5): error : Could not find file " +
+            @"'D:\repository\packages\microsoft.extensions.configuration.binder.10.0.2.nupkg'.");
+
+        var kind = BuildTestGateRunner.ClassifyFailure(evidence);
+
+        Assert.Equal(BuildTestGateFailureKind.Code, kind);
+    }
+
+    [Fact]
+    public void CompletedDotNetRestore_Nu1101AgainstGatePreparationRun_IsEnvironment()
+    {
+        var evidence = Evidence(exitCode: 1, stderr:
+            @"error NU1101: Unable to find package Example.Package. No packages exist with this id in source(s): " +
+            @"C:\Users\runner\AppData\Local\Temp\agentstudio-preparation-cache\.runs\9a82d10f\nuget\feed");
 
         var kind = BuildTestGateRunner.ClassifyFailure(evidence);
 

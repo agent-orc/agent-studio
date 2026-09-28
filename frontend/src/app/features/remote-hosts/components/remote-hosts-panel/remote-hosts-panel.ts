@@ -68,6 +68,7 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   readonly error = this.service.error;
   readonly identityDiagnostics = this.service.identityDiagnostics;
   readonly providerRefusals = this.service.providerRefusals;
+  readonly interactiveUsage = this.service.interactiveUsage;
   readonly wizardOpen = signal(false);
   readonly purgeRetiredOpen = signal(false);
   readonly showRetired = signal(false);
@@ -92,6 +93,7 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   /** Ticking clock so relative heartbeat labels stay fresh without per-card timers. */
   readonly now = signal<number>(Date.now());
   private tickHandle: ReturnType<typeof setInterval> | null = null;
+  private usageHandle: ReturnType<typeof setInterval> | null = null;
 
   /** Header tallies reconcile to visible physical machines and role sub-rows. */
   readonly hostGroups = computed(() => groupPhysicalHosts(this.hosts(), this.showRetired()));
@@ -132,19 +134,20 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   ngOnInit(): void {
     this.tableState.hydrate();
     this.service.ensureLoaded();
+    this.service.refreshInteractiveUsage();
     this.reviewQueue.refresh();
     this.tickHandle = setInterval(() => this.now.set(Date.now()), 30_000);
+    this.usageHandle = setInterval(() => this.service.refreshInteractiveUsage(), 5_000);
   }
 
   ngOnDestroy(): void {
     if (this.tickHandle) clearInterval(this.tickHandle);
+    if (this.usageHandle) clearInterval(this.usageHandle);
   }
 
   reload(): void { this.service.reload(); }
   reconnect(id: string): void { this.service.reconnect(id); }
-  linkFailureMessage(host: RemoteHost): string {
-    return host.runnerLink?.lastError ?? 'The runner heartbeat is late and recovery is active.';
-  }
+  linkFailureMessage(host: RemoteHost): string { return host.runnerLink?.lastError ?? 'The runner heartbeat is late and recovery is active.'; }
 
   boardSlots(host: RemoteHost): number {
     const truth = this.boardRunningTruth();
@@ -182,13 +185,9 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
 
   toggleRetired(): void { this.showRetired.update(value => !value); }
 
-  roleSlots(group: PhysicalHostGroup): Readonly<Record<string, number>> {
-    return Object.fromEntries(group.roles.map(role => [role.id, this.boardSlots(role)]));
-  }
+  roleSlots(group: PhysicalHostGroup): Readonly<Record<string, number>> { return Object.fromEntries(group.roles.map(role => [role.id, this.boardSlots(role)])); }
 
-  groupSlots(group: PhysicalHostGroup): number {
-    return group.roles.reduce((total, role) => total + this.boardSlots(role), 0);
-  }
+  groupSlots(group: PhysicalHostGroup): number { return group.roles.reduce((total, role) => total + this.boardSlots(role), 0); }
 
   openWizard(): void { this.wizardOpen.set(true); }
   closeWizard(): void { this.wizardOpen.set(false); }

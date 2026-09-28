@@ -1,6 +1,6 @@
 # Runner Domain Map
 
-Version: 2026-09-19
+Version: 2026-09-26
 Status: System-of-record map for runner-side changes.
 
 Use this when a change touches task pickup, active execution, post-run outcome
@@ -34,13 +34,54 @@ state.
 
 ## Key Code
 
+### Claimable gate host and Task API
+
+`RUNNER_ROLE=gate` starts `RemoteGateDaemon` as a polling Agent Host service.
+Use a stable `RUNNER_ID`, a unique runner instance, the normal Task Server URL
+and runner credential with `tasks:read`, `runs:write`, `reviews:claim`, and
+`reviews:write` scopes, and a gate work directory separate from coding and
+review work. The host registers the `gate-executor` role and advertises fresh
+`gate-executor`, `gate:git` or `gate:source-bundle`, repository, and toolchain
+capabilities. Admission requires a free gate slot. The Engine switch
+`REMOTE_POST_BUILD_TEST_GATE_ENABLED=0` keeps the backend gate active by default;
+the operator enables it only for a bounded canary. An eligible replacement
+Agent Host is the only retry target. A spent budget becomes `GateInfra`.
+Deploy the updated Review Executor with the backend before issuing new review
+plans: verify commands now carry a typed working subdirectory, which older
+executors would ignore.
+
+The public `/api/v1/gates` Task API has these operations:
+
+| Route | Caller and purpose |
+| --- | --- |
+| `POST /subjects`, `POST /subjects/{subjectId}/cancel` | Engine creates an immutable source-run, gate-id, plan-hash subject or cancels it. |
+| `GET /subjects/{subjectId}`, `GET /review-sources/{reviewSubjectId}` | Read durable gate state and the declared source snapshot. |
+| `POST /claims` | Gate host claims eligible queued work with a fresh capability advertisement and free slot. |
+| `POST /attempts/{attemptId}/renew`, `/phase`, `/report`, `/containment` | Gate host renews its lease, records phase, submits the fenced result, and confirms cleanup after restart. |
+
+Gate mutations require the corresponding Task Server scopes. A runner principal's
+ID must match the claimed executor ID on every mutation. Each report carries
+the lease ID, fence, authority epoch, tested SHA and tree, dirty proof, command
+evidence, and cleanup status. Stale or conflicting reports are rejected. Host
+shutdown keeps an interrupted claim without reporting a tool failure. Host
+restart reads the persisted claim, reaps its owned process tree, removes its
+namespace, and confirms containment before it claims more work. The Task Server
+retains the subject, attempts, phases, and terminal classification across a
+restart; the Engine retains no attempt state. See the
+[Gates Dossier](../../operations/gates/index.html#sect4) for the contract and
+rollout decision.
+
 - `runner/ArtifactTransferPolicy.cs`, `runner/RemoteTaskRunner.cs`,
   `backend/Features/Diagnostics/ArtifactIngestionEndpoints.cs`, and
   `task-server/TaskServerEndpoints.cs`: post-delivery
   result evidence transport. Git result or salvage publication and fenced
   completion happen first. The server advertises its base64-safe request
-  budget plus project file and total caps; the runner selects bounded files,
-  excludes Playwright traces, videos, dependency trees, and build output,
+  budget. On the v1 plane, post-completion artifact ingest, event ingest, and
+  result finalization require the exact runner, instance, and lease id alongside
+  the fence; the server admits them only while that completed lease remains the
+  current authority. A completed lease needs no later release request.
+  The server also advertises project file and total caps; the runner selects
+  bounded files, excludes Playwright traces, videos, dependency trees, and build output,
   then uploads one manifest-bound file per request. Deterministic skips are
   written to `results/deliverables.md` before the manifest is created. A later
   HTTP 413/507 never rewrites a manifested file; it is recorded as the
@@ -64,11 +105,20 @@ state.
   identity. The connectivity capability's three-minute freshness deadline is
   the remote alarm because a broken route cannot deliver its own failure
   telemetry.
+- Provider-auth capability limits are accepted only from an explicit provider
+  refusal with a parseable reset. Signal-terminated runs and allowed quota
+  telemetry are excluded. Limited advertisements carry a scrubbed source run
+  and excerpt; expiry or a claim response's re-probe request refreshes the
+  provider status without restarting the daemon. A live same-provider run is
+  counter-evidence and makes the conflicting state claimable but degraded.
 - `backend/Features/Management/RunnerLinks/LinkSupervisor.cs`: Task Server-owned
   SSH reverse-link lifecycle, heartbeat subscription, functional route probe,
   remote listener cleanup, bounded retry ladder, silent child process and
   Windows kill-on-close job ownership. `GET /api/v1/management/links` is the
-  canonical resource for Execution Hosts and Ready-card wait reasons. The old
+  canonical resource for Execution Hosts and Ready-card wait reasons. A held
+  listener exposes `blockedBy: remote-listener-held` with PID and age, emits one
+  alarm, and uses the longest retry interval. Runner onboarding installs sshd
+  client liveness so abandoned sessions release their listener. The old
   assets under `deploy/windows/agent-runner-tunnel/` are an emergency path only.
 - `deploy/windows/agent-runner-tunnel/`: documented emergency rollback assets.
   They are never called by the product and must not run alongside an enabled
@@ -115,6 +165,14 @@ state.
   missing or unwritable report is an admission failure, while selector failure
   may use the authored prompt only after a `fallback-unenriched` report has been
   persisted.
+- `RemoteRunPrompt` receives server-composed concept and coding mode framing.
+  Both modes tell the agent to deliver before sight review, decision acceptance,
+  and operator approval. Promoted coding prompts list Dossier decisions and
+  identify recommendations as working assumptions unless a recorded operator
+  response chose another option. `NeedsInput` is reserved for a missing fact
+  that blocks delivery. The remote outcome guard turns approval-only
+  `NeedsInput` into `Done`, logs the reclassification, and adds a
+  `review-requested` reason so the card reaches review.
 - `backend/Features/Runner/RunTimelineEventFactory.cs`: canonical projection of
   run execution context and terminal run facts into timeline events. Execution
   context preserves model, thinking level, source origin, and exact source
@@ -183,10 +241,18 @@ state.
 - `backend/Features/Runner/RemoteChatWorkBroker.cs`,
   `backend/Features/Tasks/LeaseEndpoints.cs`, and
   `runner/RemoteProjectChatRunner.cs`: assignment-aware remote side-sheet chat
-  dispatch. The Runner claims and renews opaque chat work, prepares the
-  project's dedicated chat checkout from its normal git cache, starts Codex
-  there, and completes with the observed hostname, repository path, branch,
-  and HEAD revision.
+  dispatch. `runner/InteractiveChatAdmission.cs` polls chat claims independently
+  of coding slots and the coding load gate. Turns start on the assigned host
+  even when all coding slots are occupied. After 30 seconds of wall time or two
+  consecutive five-second samples above 30% of one CPU core, an active turn
+  borrows one coding admission slot while the threshold holds; a turn past the
+  wall-time budget holds the slot until it ends. Existing coding runs continue.
+  Each concurrent turn uses its own isolated checkout so a
+  new turn cannot reset another turn's files. The broker records queued,
+  started, and finished times and exposes queued reasons to the chat UI.
+  Five-second chat claim renewals report the CLI process CPU share. The broker
+  groups active and heavy turns, CPU, and completed token and priced cost
+  totals by host and project for Execution Hosts and the status-bar usage view.
 - Coding hosts advertise fresh `cli-execution:<cliType>` and
   `provider-auth:<cliType>` capabilities for every card CLI binary they can
   invoke. The primary `RUNNER_CLI_BIN` and the provider-specific
@@ -293,6 +359,21 @@ state.
   worktree teardown. An incomplete or absent acknowledgement retains the
   worktree. A genuine summary failure is allowed through so the marked
   `TaskTransitionService` scaffold remains the honest terminal backstop.
+  Integration recovery carries a compact mechanical delta on the claim. The
+  runner resumes one prior clean-context session only when task, provider,
+  host-bound clean home, repository, worktree, branch and delivery ref/SHA
+  agree with the task's durable continuation ledger. The ledger records each
+  fenced generation's input and captured session IDs, decision, typed reason,
+  token total and duration. A resumed round stops at 300 seconds or the
+  1,211,213-token observation threshold. Semantic conflicts and invalid
+  sessions return to Ready for a policy-qualified fresh claim. The original
+  task prompt is never resent on the resume path.
+  On the standalone Task Server plane, both direct claims and accepted host
+  permits carry a policy-qualified route with the mechanical delta. A resumed
+  fallback completes as typed `MechanicalFallback`, records its reason with the
+  fenced session entry, and returns the task to Ready. The next claim reads
+  that reason, qualifies its fresh route before execution, and carries the
+  recorded result ref and SHA as its continuation base when available.
 - `runner/ReviewStateStore.cs`, `runner/ReviewSlotReconciler.cs`,
   `runner/DurableReviewProcess.cs`, `runner/RemoteReviewDaemon.cs`, and
   `runner/RemoteReviewExecutor.cs`: durable
@@ -736,7 +817,12 @@ state.
   Tool failures and indeterminate non-zero exits retain last-good; rate limits
   use the limited state. Two consecutive explicit failures are required before
   sign-in is blocked, and a later positive probe clears that provider circuit
-  without a runner restart.
+  without a runner restart. Provider-limit evidence is suppressed only by an
+  independently recorded termination fact. The legacy process boundary records
+  Bash's child wait status before it returns a conventional high exit code;
+  CAR does not infer a signal from an exit number. A voluntary exit 137 remains
+  eligible evidence, while recorded SIGTERM, SIGKILL, operator stop, and host
+  shutdown facts are excluded.
 - Provider HTTP 400, 403, or 404 request refusals such as
   `unsupported_parameter` are typed `ProviderRejectedRequest`. They do not
   update provider-auth capability state. A salvaged coding run continues on
@@ -747,6 +833,17 @@ state.
   standalone Task Server carry the salvage ref and exact commit in the
   continuation claim, and the runner verifies that pair before preparing the
   sibling run's worktree.
+- The Claude Code `unrecognized_model` stderr marker is also a provider request
+  refusal, even when the process exits 0 after running Haiku. The shared
+  outcome adapter compares the requested model with Claude `modelUsage` keys
+  or Codex terminal result models, so a substituted model cannot be accepted
+  as a successful completion.
+- Mechanical continuation deltas on the standalone Task Server are stored with
+  the version-fenced Ready task update. Direct claims consume one pending delta;
+  host permit acceptance returns the same delta on idempotent replay. The
+  claimed run id stays in the durable store so a restart cannot offer that
+  instruction to a later generation. The runner still verifies session and
+  branch lineage before it uses the delta.
 - Account-level provider session, usage, and rate limits are CLI capability
   state, not task outcomes. The local runner records `claude: limited until
   <time>` in runner status, persists the current card in provider-scoped
@@ -1367,6 +1464,13 @@ detail header render it inline. Successful dispatch clears it, and a later lane
 generation cannot inherit it. Missing repository registration is also projected
 as a failed project preflight in Execution Hosts before a Runner polls.
 
+Model-pin admission runs before both local spawn and remote lease acquisition.
+Claude pins use the registry minimum against the installed CLI version already
+reported by health and capability probes. Codex pins use the live catalogue;
+remote Runners advertise that catalogue with their CLI capability. A rejected
+model pin uses the same durable Ready-card dispatch-rejection surface and does
+not consume pending intent, move the card, or create a run.
+
 The build-profile gate is evaluated inside the remote candidate loop, after a
 Ready card is known to be routed to that Runner. A closed gate records the
 stable `build-profile-gate` refusal on every affected current Ready generation
@@ -1462,12 +1566,37 @@ supervisor advisory naming the card and the reason. A run whose CLI already
 exited is skipped: the agent has seen the follow-up, and the trailing
 post-processing lane move must not resurrect it.
 
-**Consumption is provable.** When a run consumes a saved intent, the file is
-renamed to `pending-intent.consumed.json` and kept, and a `follow_up_consumed`
-row records the run id. Only the run that stashed an intent may roll it back on
-spawn failure, so a later unrelated failure cannot replay a follow-up an agent
-already acted on. The card detail shows an unconsumed intent as one quiet line,
-"Follow-up waits for the next run."
+**Consumption is provable.** Local pickup and remote claim atomically rename a
+saved intent to `pending-intent.consumed.json`. The stash stays replayable until
+the runner acknowledges the exact prompt hash after the worker starts. A
+matching acknowledgement deletes the stash and writes a `follow_up_consumed`
+timeline receipt with run id, mode, author, save time, and source. Spawn or
+claim failure, pre-start worker loss, and lease recovery restore the canonical
+file. A rejected worker-start hash or failed receipt returns a conflict without
+extending the lease; the same renewal delivery can retry after repair. Each
+claim also carries a follow-up claim id. The runner wraps that id and
+the exact follow-up text in one structural prompt block, so repeated composition
+deduplicates by claim identity rather than by text. It acknowledges delivery
+only when that complete block is present in the worker prompt. A new operator
+follow-up wins over an older stash. Entering Completed or
+Archive removes either form and records `follow_up_superseded` with state
+`superseded-by-completion`. The queued prompt is staged before the lane move,
+and a refused move restores it. After a successful move, supersession retries
+once. If both writes fail, the terminal move remains landed and the API returns
+the typed `pending-intent-supersede-failed` error (HTTP 500). The unresolved
+stash cannot replay, and startup reconciliation reports the failure and retries
+the receipt on the next pass. Startup reconciliation also converts history when
+a later coding-run start acknowledges the exact prompt hash.
+If the local process starts but its timeline receipt fails, pickup retries the
+receipt once and logs `pending-intent-acknowledgement-failed` if it still fails.
+The stash stays recoverable. Startup reconciliation uses the local session
+start's matching prompt hash to write the receipt and clear that stash; a stash
+without a confirmed start remains undecided.
+For legacy rows without a hash, it requires a later coding-run start and a
+terminal outcome from that same run. Review, lane, heartbeat, summary, and
+aborted-claim activity does not prove delivery; those intents remain queued and
+are reported as undecided. Board and detail badges render only the canonical
+queued form and never render in terminal lanes.
 
 **`started` is honest.** A run that had to change lanes is watched for
 `Runner:FollowUpStartWindowMs` (1200 ms; `0` disables). If a preserved

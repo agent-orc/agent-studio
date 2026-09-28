@@ -107,6 +107,34 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
     }
 
     [Fact]
+    public async Task AutoPickupUnsupportedPinnedModel_StaysReady_RecordsReason_AndDoesNotSpawn()
+    {
+        WriteJob(
+            TaskStates.Ready,
+            "job-unsupported-model",
+            model: "claude-opus-5-5",
+            modelExplicit: true);
+        var cli = new FailingCliService(installedVersion: "2.1.270 (Claude Code)");
+        var runner = BuildRunner(cli);
+        runner.SetMode("auto-continuous");
+
+        await runner.TickAsync(CancellationToken.None);
+
+        var readyFolder = Path.Combine(_watchPath, TaskStates.Ready, "job-unsupported-model");
+        Assert.False(cli.StartCalled, "model admission must reject before the CLI spawn boundary");
+        Assert.True(Directory.Exists(readyFolder));
+        Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.Progress, "job-unsupported-model")));
+        Assert.Equal(0, runner.GetStatus().OccupiedSlots);
+
+        using var taskJson = JsonDocument.Parse(File.ReadAllText(Path.Combine(readyFolder, "task.json")));
+        var rejection = taskJson.RootElement.GetProperty(RemoteDispatchRejectionStore.FieldName);
+        Assert.Equal(ModelPinAdmissionPolicy.RejectionCode, rejection.GetProperty("code").GetString());
+        Assert.Equal(
+            "model unsupported by installed CLI 2.1.270 (minimum 2.1.281)",
+            rejection.GetProperty("reason").GetString());
+    }
+
+    [Fact]
     public async Task ImmediateCliFinish_WaitsForDurableStartHandshakeBeforeFinalization()
     {
         WriteJob(TaskStates.Ready, "job-fast-finish");
@@ -153,6 +181,40 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         Assert.Equal(-1, recorded.ExitCode);
         Assert.Equal(0.01, recorded.DurationSeconds);
         Assert.NotNull(recorded.FinishedAt);
+    }
+
+    [Fact]
+    public async Task LocalConfirmedStart_ReportsFailedFollowUpAcknowledgement_AndKeepsRecoverableStash()
+    {
+        const string slug = "follow-up-ack-failure";
+        WriteJob(TaskStates.Ready, slug);
+        var readyFolder = Path.Combine(_watchPath, TaskStates.Ready, slug);
+        const string prompt = "Use the approved branch.";
+        File.WriteAllText(Path.Combine(readyFolder, "pending-intent.json"), JsonSerializer.Serialize(new PendingIntent
+        {
+            Prompt = prompt,
+            Mode = ContinueModes.Steer,
+            SavedAt = DateTime.UtcNow.AddMinutes(-1),
+            SavedReason = FollowUpQueueReasons.ProjectBusy,
+        }));
+        var timelinePath = TaskPaths.TimelineLog(readyFolder);
+        Directory.CreateDirectory(Path.GetDirectoryName(timelinePath)!);
+        Directory.CreateDirectory(timelinePath); // A directory at the file path makes both receipt attempts fail.
+
+        var logger = new CapturingLogger<ProjectRunner>();
+        var runner = BuildRunner(new ImmediateFinishCliService(finishImmediately: false), logger: logger);
+        runner.SetMode("auto-continuous");
+
+        await runner.TickAsync(CancellationToken.None);
+
+        var progressFolder = Path.Combine(_watchPath, TaskStates.Progress, slug);
+        Assert.True(File.Exists(Path.Combine(progressFolder, "pending-intent.consumed.json")));
+        Assert.False(File.Exists(Path.Combine(progressFolder, "pending-intent.json")));
+        Assert.Contains(logger.Entries, entry => entry.Any(item =>
+            item.Key == "{OriginalFormat}"
+            && item.Value?.ToString()?.Contains("pending-intent-acknowledgement-failed", StringComparison.Ordinal) == true));
+        var start = Assert.Single(File.ReadLines(TaskPaths.SessionEventsLog(progressFolder)));
+        Assert.Contains(AgentStudio.TaskServer.Contracts.FollowUpPromptDigest.Compute(prompt), start, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -224,7 +286,13 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         Assert.True(runner.ProviderClaimsAllowedForTest(CliTypes.Codex, DateTime.UtcNow));
     }
 
-    private void WriteJob(string state, string slug, int order = 1, string cliType = CliTypes.Claude)
+    private void WriteJob(
+        string state,
+        string slug,
+        int order = 1,
+        string cliType = CliTypes.Claude,
+        string? model = null,
+        bool modelExplicit = false)
     {
         var dir = Path.Combine(_watchPath, state, slug);
         Directory.CreateDirectory(dir);
@@ -232,7 +300,8 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         File.WriteAllText(
             Path.Combine(dir, "task.json"),
             $"{{\"id\":\"{slug}\",\"title\":\"{slug}\",\"state\":\"{state}\",\"order\":{order}," +
-            $"\"agent\":\"claude\",\"cliType\":\"{cliType}\",\"ownerClientId\":\"local-default\"}}");
+            $"\"agent\":\"claude\",\"cliType\":\"{cliType}\",\"model\":{JsonSerializer.Serialize(model)}," +
+            $"\"modelExplicit\":{modelExplicit.ToString().ToLowerInvariant()},\"ownerClientId\":\"local-default\"}}");
     }
 
     /// <summary>
@@ -263,6 +332,7 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
             set -eu
             mkdir -p "$NUGET_PACKAGES/xunit.analyzers/1.4.0"
             printf nupkg > "$NUGET_PACKAGES/xunit.analyzers/1.4.0/xunit.analyzers.nupkg"
+            printf metadata > "$NUGET_PACKAGES/xunit.analyzers/1.4.0/.nupkg.metadata"
             """);
         RunGit("add", "packages.lock.json", ".agent-studio");
         RunGit("commit", "-q", "-m", "chore: repository preparation contract");
@@ -310,7 +380,8 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         ICliExecutionService cli,
         string? executionEngine = null,
         ProviderLimitRegistry? providerLimits = null,
-        IReadOnlyList<IQuotaProbe>? quotaProbes = null)
+        IReadOnlyList<IQuotaProbe>? quotaProbes = null,
+        Microsoft.Extensions.Logging.ILogger<ProjectRunner>? logger = null)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -334,12 +405,14 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
         var states = new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance);
+        var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
         var mutations = new TaskMutationService(
             scanner,
             new ClientIdentityStore(config, NullLogger<ClientIdentityStore>.Instance),
             new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance),
             new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance),
-            NullLogger<TaskMutationService>.Instance);
+            NullLogger<TaskMutationService>.Instance,
+            timeline);
         var sessions = new TaskSessionLog(scanner, NullLogger<TaskSessionLog>.Instance);
         var prompts = new RuntimePromptService(config, NullLogger<RuntimePromptService>.Instance);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
@@ -378,10 +451,13 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
             BackendName = "test",
             BackendPort = 0
         };
+        var dispatchRejections = new RemoteDispatchRejectionStore(
+            NullLogger<RemoteDispatchRejectionStore>.Instance,
+            scanner);
 
         return new ProjectRunner(
             ProjectName, entry,
-            NullLogger<ProjectRunner>.Instance,
+            logger ?? NullLogger<ProjectRunner>.Instance,
             scanner, states, sessions, router,
             summary, prompts, transitions, chatLog, mutations,
             orchestratorLog, orchestratorRunner, orchestratorSessions,
@@ -389,7 +465,9 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
             bus: null,
             pickupLock: pickupLock,
             pickupLockOwner: pickupLockOwner,
-            providerLimits: providerLimits);
+            timeline: timeline,
+            providerLimits: providerLimits,
+            dispatchRejections: dispatchRejections);
     }
 
     private static async Task WaitUntilAsync(Func<bool> predicate)
@@ -403,10 +481,12 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
     private sealed class FailingCliService : ICliExecutionService
     {
         private readonly bool _throwOnStart;
+        private readonly string _installedVersion;
 
-        public FailingCliService(bool throwOnStart = false)
+        public FailingCliService(bool throwOnStart = false, string installedVersion = "test")
         {
             _throwOnStart = throwOnStart;
+            _installedVersion = installedVersion;
         }
 
         public string CliType => CliTypes.Claude;
@@ -426,7 +506,8 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
 
         public string GetCliPath() => "fake-claude";
         public bool IsAvailable() => true;
-        public (bool Available, string? Version, string Path) TestCliPath(string? path = null) => (true, "test", path ?? GetCliPath());
+        public (bool Available, string? Version, string Path) TestCliPath(string? path = null) =>
+            (true, _installedVersion, path ?? GetCliPath());
 
         public Task<(CliExecution? Execution, string? Error)> StartAsync(
             string jobId,
@@ -484,6 +565,8 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
 
     private sealed class ImmediateFinishCliService : ICliExecutionService
     {
+        private readonly bool _finishImmediately;
+        public ImmediateFinishCliService(bool finishImmediately = true) => _finishImmediately = finishImmediately;
         public string CliType => CliTypes.Claude;
         public TaskCompletionSource FinishRaised { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -522,6 +605,7 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
                 ThinkingLevel = thinkingLevel,
             };
             OnStarted?.Invoke(jobKey, started);
+            if (!_finishImmediately) return (started, null);
             OnFinished?.Invoke(jobKey, started with
             {
                 Status = RunStatuses.Stopped,

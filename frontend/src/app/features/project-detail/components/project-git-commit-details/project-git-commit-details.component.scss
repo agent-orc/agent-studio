@@ -1,0 +1,27 @@
+:host { display: block; min-width: 0; min-height: 0; overflow: hidden; }
+.details {
+  display: flex; flex-direction: column; height: 100%; min-width: 0; min-height: 0;
+  border: 1px solid var(--studio-border); border-radius: 6px; background: var(--studio-surface); color: var(--studio-fg);
+  &__header { display: flex; align-items: center; justify-content: space-between; gap: var(--studio-spacing-2); padding: var(--studio-spacing-2) var(--studio-spacing-3); border-bottom: 1px solid var(--studio-border); }
+  h2, h3, h4, p, dl, pre { margin: 0; }
+  h2 { font-size: 13px; } h3 { font-size: 14px; line-height: 1.4; } h4 { margin-bottom: var(--studio-spacing-2); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  button { border: 1px solid var(--studio-border); border-radius: 4px; background: transparent; color: inherit; cursor: pointer; }
+  button:focus-visible { outline: 2px solid var(--studio-focus-ring, var(--studio-accent)); outline-offset: 1px; }
+  &__header button, &__sha button { padding: var(--studio-spacing-1) var(--studio-spacing-2); font-size: 11px; }
+  &__scroll { display: flex; flex-direction: column; gap: var(--studio-spacing-3); min-height: 0; overflow: auto; padding: var(--studio-spacing-3); }
+  &__sha { display: flex; align-items: center; gap: var(--studio-spacing-2); min-width: 0; }
+  &__sha code { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 10px; }
+  &__body { overflow-wrap: anywhere; white-space: pre-wrap; color: var(--studio-fg-dim); font: 11px/1.5 var(--font-mono); }
+  dl { display: grid; gap: var(--studio-spacing-2); }
+  dl > div { display: grid; grid-template-columns: 6rem minmax(0, 1fr); gap: var(--studio-spacing-2); font-size: 11px; }
+  dt { color: var(--studio-fg-dim); } dd { margin: 0; overflow-wrap: anywhere; }
+  &__wrap { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-1); }
+  &__chip { max-width: 100%; overflow: hidden; padding: 0 var(--studio-spacing-1); border: 1px solid var(--studio-border); border-radius: 4px; text-overflow: ellipsis; white-space: nowrap; font: 10px/1.5 var(--font-mono); }
+  &__link { padding: var(--studio-spacing-1); color: var(--studio-accent); font-size: 11px; }
+  &__card { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--studio-spacing-1) var(--studio-spacing-2); align-items: center; font-size: 11px; }
+  &__card code { grid-column: 2; overflow-wrap: anywhere; color: var(--studio-fg-dim); font-size: 10px; }
+  &__file { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--studio-spacing-2); width: 100%; padding: var(--studio-spacing-1) var(--studio-spacing-2); text-align: left; font-size: 10px; }
+  &__file code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  &__file small { font-variant-numeric: tabular-nums; color: var(--studio-fg-dim); }
+  &__muted { color: var(--studio-fg-dim); font-size: 11px; }
+}

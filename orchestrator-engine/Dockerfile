@@ -1,6 +1,6 @@
 # Orchestrator engine (headless worker against the Task Server) - target-architecture component.
 # Build context is the repository root: docker build -f orchestrator-engine/Dockerfile .
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0.301 AS build
 ARG VERSION=0.0.0-dev
 ARG SHA=unknown
 WORKDIR /src

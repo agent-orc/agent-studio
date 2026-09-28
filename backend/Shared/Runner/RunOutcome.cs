@@ -13,6 +13,8 @@ public enum RunRejectReason
     None,
     TaskNotFound,
     CliUnavailable,
+    /// <summary>The card pins a model the installed CLI cannot execute.</summary>
+    ModelUnsupported,
     ProjectBusy,
     /// <summary>
     /// The CLI for this job is past its user-configured usage cap on at

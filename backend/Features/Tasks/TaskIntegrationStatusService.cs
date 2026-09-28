@@ -297,7 +297,7 @@ public sealed class TaskIntegrationStatusService
             return card.PrimaryKey is not null
                    && reaches.TryGetValue(card.PrimaryKey, out var primaryReach)
                 ? ClassifyWithRepo(job, primaryReach)
-                : ClassifyNotIntegrated(job, primaryBranch);
+                : UnavailableIfDelivered(ClassifyNotIntegrated(job, primaryBranch));
         }
 
         var repositoryEntries = new List<TaskRepositoryIntegrationStatus>(groups.Count);
@@ -307,10 +307,12 @@ public sealed class TaskIntegrationStatusService
         var currentTotal = 0;
         var superseded = new List<TaskRepositoryCommitMembership>();
         var integratedCommits = new List<TaskCommitInfo>();
+        var reachUnavailable = false;
         foreach (var group in groups)
         {
             var reach = group.Key is not null && reaches.TryGetValue(group.Key, out var found)
                 ? found : null;
+            reachUnavailable |= reach is null || !reach.IntegrationReachSucceeded;
             var commits = LegacyPathEvidence(group, reach);
             var memberships = DeliveryGenerationPolicy.Evaluate(
                 commits,
@@ -355,6 +357,11 @@ public sealed class TaskIntegrationStatusService
         var delivery = integratedCommits.OrderBy(commit => commit.DeliveryGeneration ?? 0)
             .ThenBy(commit => commit.At).LastOrDefault();
         var deliveryRef = DeliveryRefFor(job);
+        if (reachUnavailable)
+        {
+            return UnavailableIfDelivered(ClassifyNotIntegrated(
+                job, projectedBranch, deliveryRef, repositoryEntries));
+        }
         // A reconciled history can still carry the first run's result envelope.
         // Select a landed, current delivery ref when supersession proves it stale.
         if (superseded.Count > 0 && delivery is not null
@@ -595,6 +602,8 @@ public sealed class TaskIntegrationStatusService
     {
         var branchName = reach.IntegrationBranch;
         var deliveryRef = DeliveryRefFor(job);
+        if (!reach.IntegrationReachSucceeded)
+            return UnavailableIfDelivered(ClassifyNotIntegrated(job, branchName, deliveryRef));
 
         var reviewedResultSha = ReviewSubjectStore.Read(job.FolderPath)?.ResultSha;
         if (AttributedCommitRecords(job, includeSuperseded: true).Count == 0
@@ -606,6 +615,15 @@ public sealed class TaskIntegrationStatusService
         }
         return ClassifyNotIntegrated(job, branchName, deliveryRef);
     }
+
+    private static TaskIntegrationStatus UnavailableIfDelivered(TaskIntegrationStatus status)
+        => status.Status == IntegrationStatuses.NoBranch
+            ? status
+            : status with
+            {
+                ReachUnavailable = true,
+                Detail = "Git reach to the integration branch is unavailable. Re-check when the repository is reachable.",
+            };
 
     /// <summary>
     /// Splits a not-integrated card into conflict-skipped / pending / no-branch. A
@@ -627,6 +645,9 @@ public sealed class TaskIntegrationStatusService
         if (ReadIntegrationFailure(job) is { } failure)
         {
             var visibleReason = VisibleFailureReason(job, branchName, failure);
+            var failedStep = failure.Code == AcceptedIntegrationFailureCodes.IntegrationPushBlocked
+                ? ReadLatestPushStep(job) : ReadLatestMergeStep(job);
+            var evidenceExcerpt = ReadFailureEvidence(job.FolderPath, failedStep);
             // CAC-18: a gate environment failure (toolchain/bundler crash before
             // test discovery) is never a product failure. It must not read as a
             // conflict or a partial delivery - the card stays Pending with the
@@ -652,6 +673,8 @@ public sealed class TaskIntegrationStatusService
                         Code = failure.Code,
                         Label = failure.Label,
                         Reason = visibleReason,
+                        Stage = failedStep?.StepId,
+                        EvidenceExcerpt = evidenceExcerpt,
                         RebaseRecoveryAvailable = failure.RebaseRecoveryAvailable,
                     },
                 };
@@ -669,6 +692,8 @@ public sealed class TaskIntegrationStatusService
                     Code = failure.Code,
                     Label = failure.Label,
                     Reason = visibleReason,
+                    Stage = failedStep?.StepId,
+                    EvidenceExcerpt = evidenceExcerpt,
                     RebaseRecoveryAvailable = failure.RebaseRecoveryAvailable,
                     FailureClass = failure.FailureClass,
                     FailureSignature = failure.FailureSignature,
@@ -821,6 +846,26 @@ public sealed class TaskIntegrationStatusService
             pushStep.Reason,
             pushStep.VerdictSummary,
             pushStep.FailureCode);
+    }
+
+    private static string? ReadFailureEvidence(string folder, PipelineStepExecution? step)
+    {
+        if (step is null) return null;
+        if (string.IsNullOrWhiteSpace(step.EvidenceRef)) return step.VerdictSummary;
+        try
+        {
+            if (Path.IsPathRooted(step.EvidenceRef)) return step.VerdictSummary;
+            var root = Path.GetFullPath(folder) + Path.DirectorySeparatorChar;
+            var path = Path.GetFullPath(Path.Combine(folder, step.EvidenceRef));
+            if (!path.StartsWith(root, StringComparison.Ordinal) || !File.Exists(path))
+                return step.VerdictSummary;
+            using var stream = File.OpenRead(path);
+            var bytes = new byte[Math.Min(2048, (int)Math.Min(stream.Length, int.MaxValue))];
+            var count = stream.Read(bytes);
+            return System.Text.Encoding.UTF8.GetString(bytes, 0, count);
+        }
+        catch (IOException) { return step.VerdictSummary; }
+        catch (UnauthorizedAccessException) { return step.VerdictSummary; }
     }
 
     private static string VisibleFailureReason(
@@ -1042,6 +1087,8 @@ public sealed class TaskIntegrationStatusService
                     out publishedAncestors);
             }
 
+            var publishedHead = _git.GetRefShaFresh(
+                root, hasPublishedBranch ? "origin/" + integrationBranch : integrationBranch);
             return new RepoIntegration(
                 integrationBranch,
                 ancestors,
@@ -1049,7 +1096,8 @@ public sealed class TaskIntegrationStatusService
                 succeeded && releaseSucceeded && publishedSucceeded,
                 publishedAncestors,
                 hasPublishedBranch,
-                _git.GetRefShaFresh(root, hasPublishedBranch ? "origin/" + integrationBranch : integrationBranch));
+                publishedHead,
+                succeeded && publishedSucceeded && publishedHead is not null);
         });
     }
 
@@ -1087,7 +1135,8 @@ public sealed class TaskIntegrationStatusService
         bool Succeeded,
         HashSet<string> PublishedAncestors,
         bool HasPublishedBranch,
-        string? PublishedHead);
+        string? PublishedHead,
+        bool IntegrationReachSucceeded);
 
     private sealed record RepoBranchKey(string Root, string Branch);
 

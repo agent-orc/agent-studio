@@ -79,6 +79,22 @@ public class GitProcessTelemetryTests
     }
 
     [Fact]
+    public void DetailBoundary_CountsEachSpawnOnceAcrossMultipleNestedScopes()
+    {
+        using (GitProcessTelemetry.BeginRequest("tasks/detail", NullLogger.Instance, includeNested: true))
+        {
+            using (GitProcessTelemetry.BeginRequest("integration", NullLogger.Instance, includeNested: true))
+            using (GitProcessTelemetry.BeginRequest("repository", NullLogger.Instance))
+                GitProcessTelemetry.Record("merge-base", 7, 0);
+
+            var tally = GitProcessTelemetry.CurrentTally();
+            Assert.Equal(1, tally!.Value.Spawns);
+            Assert.Equal(7, tally.Value.GitMs);
+        }
+    }
+
+
+    [Fact]
     public async Task BeginRequest_CountsSpawnsRecordedFromParallelTasks()
     {
         using (GitProcessTelemetry.BeginRequest("test/parallel", NullLogger.Instance))

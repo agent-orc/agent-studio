@@ -118,6 +118,7 @@ public class ProjectRunner
     private readonly FailureInterventionService? _failureInterventions;
     private readonly IReadOnlyList<ProjectUrlRecord> _projectUrls;
     private readonly AgentStudio.Registry.IProjectUrlPortInspector? _projectUrlPortInspector;
+    private readonly RemoteDispatchRejectionStore? _dispatchRejections;
     private readonly CliRouter _router;
     private readonly SummaryGenerationService _summaryService;
     private readonly RuntimePromptService _prompts;
@@ -235,6 +236,9 @@ public class ProjectRunner
     // belt-and-braces (single-process unit tests).
     private readonly PickupLockFile? _pickupLock;
     private readonly PickupLockOwner? _pickupLockOwner;
+    private readonly LocalRunClaimAdapter? _localRunClaims;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _localAuthorityTaskKeys =
+        new(StringComparer.OrdinalIgnoreCase);
     private readonly IntegrationLeaseService? _integrationLeases;
     private string? _activePickupLockFolder;
     // Deferred mode: when SetMode(manual|paused) arrives while a job is
@@ -479,7 +483,9 @@ public class ProjectRunner
         AgentStudio.Pipeline.ModelMigrationCatalogRegistry? modelMigrationCatalog = null,
         FailureInterventionService? failureInterventions = null,
         IReadOnlyList<ProjectUrlRecord>? projectUrls = null,
-        AgentStudio.Registry.IProjectUrlPortInspector? projectUrlPortInspector = null)
+        AgentStudio.Registry.IProjectUrlPortInspector? projectUrlPortInspector = null,
+        RemoteDispatchRejectionStore? dispatchRejections = null,
+        LocalRunClaimAdapter? localRunClaims = null)
     {
         ProjectName = projectName;
         Entry = entry;
@@ -519,6 +525,7 @@ public class ProjectRunner
         _role = role;
         _pickupLock = pickupLock;
         _pickupLockOwner = pickupLockOwner;
+        _localRunClaims = localRunClaims;
         _integrationLeases = integrationLeases;
         _timeline = timeline;
         _pipelineLog = pipelineLog;
@@ -532,6 +539,7 @@ public class ProjectRunner
         _failureInterventions = failureInterventions;
         _projectUrls = projectUrls ?? [];
         _projectUrlPortInspector = projectUrlPortInspector;
+        _dispatchRejections = dispatchRejections;
         _postAbortReview = postAbortReview;
         _sessionInspector = sessionInspector;
 
@@ -1117,6 +1125,7 @@ public class ProjectRunner
             Summary = plan.Reason,
             Reasoning = QuotaAdmissionPlanner.DescribeLoadNumbers(plan),
             BetterCandidates = plan.BetterCandidates,
+            ModelFallback = plan.ModelFallback,
         });
 
         // The healthy "launch primary" decision stays off the task-facing
@@ -1147,6 +1156,9 @@ public class ProjectRunner
                 ["projectionWarning"] = warning?.Reason ?? string.Empty,
                 ["betterCandidates"] = QuotaAdmissionRecorder.SerializeCandidates(plan.BetterCandidates),
                 ["matrixUrl"] = plan.BetterCandidates?.MatrixUrl ?? string.Empty,
+                ["modelFallback"] = plan.ModelFallback is null
+                    ? string.Empty
+                    : System.Text.Json.JsonSerializer.Serialize(plan.ModelFallback),
             });
 
         // AGT-2055 req 3 ("+ Feed-Zeile") + req 7: every load-steering decision
@@ -1158,46 +1170,21 @@ public class ProjectRunner
     }
 
     /// <summary>
-    /// If a job is currently running on this project and its CLI has gone
-    /// past a configured cap, request a stop. Returns the cap evaluation that
-    /// triggered the stop (or "not blocked" when nothing was stopped) so the
-    /// caller can produce a single chat note instead of one per tick.
+    /// Observe a cap crossing for an active job without interrupting it.
+    /// Quota admission is a launch-boundary decision for later work.
     /// </summary>
     public CapEvaluation EnforceQuotaCapsOnActiveJob(RunStopReason reason = RunStopReason.UserStop)
     {
+        _ = reason;
         var jobId = _activeJobId;
         var cliType = _activeCliType;
         if (jobId == null || string.IsNullOrWhiteSpace(cliType)) return CapEvaluation.NotBlocked;
-        var active = _activeRuns.Single;
-        // A same-CLI fallback is explicitly allowed to run past the primary
-        // model's cap. Cross-CLI fallbacks remain guarded by their own quota.
-        if (active?.FallbackFromCliType != null &&
-            string.Equals(active.FallbackFromCliType, cliType, StringComparison.OrdinalIgnoreCase))
-            return CapEvaluation.NotBlocked;
         var ev = EvaluateQuotaCap(cliType);
         if (!ev.Blocked) return CapEvaluation.NotBlocked;
-
-        _logger.LogWarning(
-            "[taskboard] stopping active job {JobId} on {Project}: quota cap exceeded ({Reason})",
-            jobId, ProjectName, ev.DescribeReason());
-
-        PreserveUnconsumedFollowUp(jobId, "quota cap exceeded");
-
-        try
-        {
-            var info = _scanner.FindJob(jobId, Entry.Path);
-            if (info != null)
-            {
-                _router.Get(info.CliType).Stop(info.TaskKey, reason);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex,
-                "EnforceQuotaCapsOnActiveJob: stop failed for {JobId} on {Project}",
-                jobId, ProjectName);
-        }
-        return ev;
+        _logger.LogDebug(
+            "quota_cap_crossed_during_active_run jobId={JobId} project={Project} cli={Cli} action=allow-current-run reason={Reason}",
+            jobId, ProjectName, cliType, ev.DescribeReason());
+        return CapEvaluation.NotBlocked;
     }
 
     public ProjectRunnerStatus GetStatus()
@@ -1234,6 +1221,10 @@ public class ProjectRunner
             Mode = _mode,
             ActiveJobId = _activeJobId,
             ActiveExecution = activeExec,
+            ActiveRuns = _activeRuns.Snapshot().Where(run => run.HoldsExecutionSlot)
+                .Select(run => new ActiveRunStatus(run.JobId, run.CliType,
+                    run.CliType is null ? null : _router.Get(run.CliType).GetExecution(GetJobKey(run.JobId)),
+                    run.QuotaFallbackReason)).ToList(),
             QuotaFallbackModel = activeRun?.FallbackFromCliType == null ? null : activeExec?.Model,
             QuotaFallbackReason = activeRun?.QuotaFallbackReason,
             ProviderLimits = providerLimits,
@@ -1366,17 +1357,28 @@ public class ProjectRunner
         // conflicts with an active task, the loop may continue to the next
         // non-conflicting candidate and records that deviation in
         // _lastPickReason.
+        var rejectedThisTick = new HashSet<string>(StringComparer.Ordinal);
         while (_activeRuns.HasFreeSlot(slotMax))
         {
-            var nextJob = PickNextDisplayedCandidate(slotMax);
+            var nextJob = PickNextDisplayedCandidateExcluding(slotMax, rejectedThisTick);
             if (nextJob == null)
             {
-                if (_mode == "auto-single" && !HasProjectRunInFlightForAutoSingle())
+                if (_mode == "auto-single"
+                    && rejectedThisTick.Count == 0
+                    && !HasProjectRunInFlightForAutoSingle())
                     SetMode("manual", "auto-single revert: pickup queue empty");
                 break;
             }
 
-            await RunCliAsync(nextJob.Id, RunIntent.AutoPickup, followupPrompt: null, reissueAttempt: 0, mode: null, ct);
+            var outcome = await RunCliAsync(
+                nextJob.Id,
+                RunIntent.AutoPickup,
+                followupPrompt: null,
+                reissueAttempt: 0,
+                mode: null,
+                ct);
+            if (outcome.Rejection is not null)
+                rejectedThisTick.Add(nextJob.Id);
             var graceRunsRemaining = _projectSettings.ConsumeBuildProfileRevalidationGraceRun(ProjectName);
             if (graceRunsRemaining is not null)
             {
@@ -1411,6 +1413,11 @@ public class ProjectRunner
     }
 
     private TaskInfo? PickNextDisplayedCandidate(int slotMax)
+        => PickNextDisplayedCandidateExcluding(slotMax, new HashSet<string>(StringComparer.Ordinal));
+
+    private TaskInfo? PickNextDisplayedCandidateExcluding(
+        int slotMax,
+        IReadOnlySet<string> excludedJobIds)
     {
         RelocateStrayHumanDecisionCards();
         var skippedForConflict = new List<string>();
@@ -1419,6 +1426,7 @@ public class ProjectRunner
         {
             if (_mode is "manual" or "paused") return null;
             if (candidate.Info == null) continue;
+            if (excludedJobIds.Contains(candidate.Info.Id)) continue;
 
             // Never double-claim a folder already occupying a slot. This is not
             // a visible-order deviation; the card is already running.
@@ -2450,11 +2458,11 @@ public class ProjectRunner
         var claimedRunThisCall = false;
         var processStartConfirmed = false;
         string? acquiredPickupLockFolder = null;
+        var localAuthorityAcquired = false;
+        string? localAuthorityTaskKey = null;
         // Set only when THIS call stashed a saved follow-up. Every rollback is
-        // gated on it: pending-intent.consumed.json now survives a successful
-        // run as consumption evidence (AGT-2747), so an unrelated later failure
-        // must not move that stale copy back into pending-intent.json and replay
-        // a follow-up an agent already acted on.
+        // gated on it so an unrelated later failure cannot restore an intent
+        // owned by another pickup.
         PendingIntent? consumedIntent = null;
         try
         {
@@ -2519,6 +2527,33 @@ public class ProjectRunner
                     Message: admissionPlan.Reason));
             }
 
+            var cli = route == null ? GetCliFor(info) : _router.Get(route.CliType);
+            var modelAdmission = await EvaluateModelPinAdmissionAsync(
+                cli,
+                route?.Model ?? info.Model,
+                info.ModelExplicit && route?.IsFallback != true,
+                ct);
+            if (!modelAdmission.IsAllowed)
+            {
+                _dispatchRejections?.Record(
+                    info,
+                    _pickupLockOwner?.BackendName ?? "local",
+                    _pickupLockOwner?.Hostname ?? Environment.MachineName,
+                    modelAdmission.Code ?? ModelPinAdmissionPolicy.RejectionCode,
+                    modelAdmission.Reason);
+                _logger.LogWarning(
+                    "local-pickup-rejected-model project={Project} task={TaskKey} cli={Cli} model={Model} reason={Reason}",
+                    ProjectName,
+                    info.Key ?? info.TaskKey ?? info.Id,
+                    cli.CliType,
+                    route?.Model ?? info.Model,
+                    modelAdmission.Reason);
+                return RunOutcome.Reject(new RunRejection(
+                    RunRejectReason.ModelUnsupported,
+                    modelAdmission.Reason));
+            }
+            _dispatchRejections?.Clear(info);
+
             // Auto-pickup consumes a saved pending-intent if there is one,
             // turning what would have been a fresh-start run into a
             // UserContinue with the saved prompt + mode. This is the runtime
@@ -2539,8 +2574,6 @@ public class ProjectRunner
                     consumedIntent = stashed;
                 }
             }
-
-            var cli = route == null ? GetCliFor(info) : _router.Get(route.CliType);
             ClearQuotaWait(info);
             var initialState = info.State;
             var promptPath = Path.Combine(info.FolderPath, "prompt.md");
@@ -2699,6 +2732,29 @@ public class ProjectRunner
                 acquiredPickupLockFolder = jobFolder;
             }
 
+            if (_localRunClaims is not null)
+            {
+                localAuthorityTaskKey = !string.IsNullOrWhiteSpace(info.Key)
+                    ? info.Key : !string.IsNullOrWhiteSpace(info.TaskKey) ? info.TaskKey : info.Id;
+                var claim = _localRunClaims.TryAcquire(localAuthorityTaskKey, () =>
+                {
+                    try { _router.Get(info.CliType).Stop(GetJobKey(jobId), RunStopReason.Cancelled); }
+                    catch (Exception exception) { _logger.LogWarning(exception, "Could not stop task after authority loss: {JobId}", jobId); }
+                });
+                if (!claim.Granted)
+                {
+                    if (acquiredPickupLockFolder is not null)
+                        ReleasePickupLockIfHeld(acquiredPickupLockFolder);
+                    if (movedToProgressThisCall)
+                        RevertFailedStartFromProgress(jobId, info, intent);
+                    return RunOutcome.Reject(new RunRejection(
+                        RunRejectReason.ProjectBusy,
+                        $"Task authority is held by another runner: {claim.Message ?? claim.Outcome}"));
+                }
+                localAuthorityAcquired = true;
+                _localAuthorityTaskKeys[jobId] = localAuthorityTaskKey;
+            }
+
             var uiProjectSettings = AgentStudio.Pipeline.PipelineTypeSettings.ForTask(
                 _projectSettings.Get(ProjectName),
                 info);
@@ -2739,6 +2795,11 @@ public class ProjectRunner
             _activePickupLockFolder = null;
             if (!claimedRunThisCall)
             {
+                if (localAuthorityAcquired && localAuthorityTaskKey is not null)
+                {
+                    _localAuthorityTaskKeys.TryRemove(jobId, out _);
+                    _localRunClaims?.Release(localAuthorityTaskKey);
+                }
                 if (_pickupLock != null && _pickupLockOwner != null && acquiredPickupLockFolder != null)
                 {
                     var owner = _pickupLockOwner with { ProjectName = ProjectName, JobId = jobId };
@@ -2905,7 +2966,9 @@ public class ProjectRunner
                 if (_activeRuns.Get(jobId) is { } fallbackRun)
                 {
                     fallbackRun.FallbackFromCliType = info.CliType ?? CliTypes.Claude;
-                    fallbackRun.QuotaFallbackReason = route.Reason;
+                    fallbackRun.QuotaFallbackReason = admissionPlan.ModelFallback is { } receipt
+                        ? QuotaFallbackMarker.DescribeStatus(receipt)
+                        : route.Reason;
                 }
                 var fallbackNote = $"Fallback: {route.CliType}/{route.Model}; reason: quota ({route.Reason})";
                 _logger.LogWarning(
@@ -2923,8 +2986,11 @@ public class ProjectRunner
                         ["primaryModel"] = info.Model ?? string.Empty,
                         ["fallbackCli"] = route.CliType,
                         ["fallbackModel"] = route.Model ?? string.Empty,
-                        ["reason"] = "quota",
+                        ["reason"] = admissionPlan.ModelFallback?.Reason ?? "quota-cap",
                         ["quotaDetail"] = route.Reason ?? string.Empty,
+                        ["modelFallback"] = admissionPlan.ModelFallback is null
+                            ? string.Empty
+                            : System.Text.Json.JsonSerializer.Serialize(admissionPlan.ModelFallback),
                     });
             }
 
@@ -3281,6 +3347,9 @@ public class ProjectRunner
                     LeaseState = "local-process",
                     TrustReason = "Captured from the local pickup owner and worktree at confirmed CLI process start.",
                 },
+                StartedPromptSha256 = consumedIntent is null
+                    ? null
+                    : AgentStudio.TaskServer.Contracts.FollowUpPromptDigest.Compute(consumedIntent.Prompt),
                 InputSessionId = effSessionToResume,
                 CapturedSessionId = null,
                 Cwd = runWorkingDir,
@@ -3306,27 +3375,30 @@ public class ProjectRunner
                 });
 
             // Spawn succeeded, so the saved follow-up is now this run's prompt.
-            // The stash stays on disk as pending-intent.consumed.json: it is the
-            // operator's proof that a queued steer actually reached an agent,
-            // paired with a ledger row naming the run that took it (AGT-2747).
+            // Delete the replayable stash only after this confirmed start; the
+            // timeline receipt is the durable operator proof from here on.
             if (consumedIntent is not null)
             {
+                var consumedRunId = effSessionToResume ?? execution.StartedAt.ToString("O");
                 _logger.LogInformation(
                     "follow-up-consumed job={JobId} project={Project} mode={Mode} savedReason={SavedReason} run={RunId}",
-                    jobId, ProjectName, consumedIntent.Mode, consumedIntent.SavedReason, effSessionToResume ?? "<new-session>");
-                _timeline?.Append(
+                    jobId, ProjectName, consumedIntent.Mode, consumedIntent.SavedReason, consumedRunId);
+                var promptHash = AgentStudio.TaskServer.Contracts.FollowUpPromptDigest.Compute(consumedIntent.Prompt);
+                var acknowledgement = _mutations.AcknowledgeStashedPendingIntent(
                     info.FolderPath,
-                    TimelineEventKinds.FollowUpConsumed,
-                    TimelineActors.System,
-                    summary: $"Follow-up consumed by this run ({consumedIntent.Mode}).",
-                    runId: effSessionToResume,
-                    details: new()
-                    {
-                        ["mode"] = consumedIntent.Mode,
-                        ["savedReason"] = consumedIntent.SavedReason,
-                        ["savedAt"] = consumedIntent.SavedAt.ToString("O"),
-                        ["evidence"] = "pending-intent.consumed.json",
-                    });
+                    promptHash,
+                    consumedRunId,
+                    source: "local-process-start");
+                if (acknowledgement == PendingIntentAcknowledgeResult.HistoryWriteFailed)
+                    acknowledgement = _mutations.AcknowledgeStashedPendingIntent(
+                        info.FolderPath,
+                        promptHash,
+                        consumedRunId,
+                        source: "local-process-start-retry");
+                if (acknowledgement != PendingIntentAcknowledgeResult.Consumed)
+                    _logger.LogError(
+                        "pending-intent-acknowledgement-failed job={JobId} run={RunId} result={Result}; confirmed start retains the stash for startup reconciliation",
+                        jobId, consumedRunId, acknowledgement);
             }
             // Only a confirmed process start ends a visible no-slot wait. Early
             // admission/quota/spawn failures intentionally leave the wait visible.
@@ -3380,6 +3452,11 @@ public class ProjectRunner
                 var owner = _pickupLockOwner with { ProjectName = ProjectName, JobId = jobId };
                 _pickupLock.Release(acquiredPickupLockFolder, owner);
             }
+            if (localAuthorityAcquired && !claimedRunThisCall)
+            {
+                _localAuthorityTaskKeys.TryRemove(jobId, out _);
+                if (localAuthorityTaskKey is not null) _localRunClaims?.Release(localAuthorityTaskKey);
+            }
 
             if (admissionInfo != null)
             {
@@ -3405,6 +3482,44 @@ public class ProjectRunner
                 _activeRuns.Get(jobId)?.CompleteStartHandshake();
             _processing = false;
         }
+    }
+
+    private static async Task<ModelPinAdmissionDecision> EvaluateModelPinAdmissionAsync(
+        ICliExecutionService cli,
+        string? model,
+        bool explicitlyPinned,
+        CancellationToken ct)
+    {
+        if (!explicitlyPinned || string.IsNullOrWhiteSpace(model))
+            return ModelPinAdmissionDecision.Allowed;
+
+        var probe = cli.TestCliPath();
+        IReadOnlyCollection<string>? supportedModels = null;
+        if (string.Equals(cli.CliType, CliTypes.Codex, StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var catalog = await cli.GetModelCatalogAsync(forceRefresh: false, ct);
+                supportedModels = catalog.Models
+                    .Where(item => item.Available)
+                    .Select(item => item.Id)
+                    .ToArray();
+            }
+            catch (Exception ex)
+            {
+                // Discovery failures are already visible through the catalogue
+                // source. Fail open here and let post-run observation catch a
+                // provider substitution rather than falsely rejecting a pin.
+                SilentCatch.Note(ex, "ProjectRunner: model catalogue unavailable during pin admission");
+            }
+        }
+
+        return ModelPinAdmissionPolicy.Evaluate(
+            cli.CliType,
+            model,
+            explicitlyPinned,
+            probe.Version,
+            supportedModels);
     }
 
     private static RunPlan RebindPlanJobPaths(RunPlan plan, string promptPath, string jobFolder)
@@ -3818,9 +3933,9 @@ public class ProjectRunner
         // CORE agent run is usually claude, so omitting it here was the
         // "no token activity recorded" symptom. Any other CLI stays a clean
         // no-op until its adapter moves onto the shared parser.
-        var snapshot = cli.GetLastParsedTurnUsage(jobKey);
+        var snapshot = cli.GetLastParsedTurnUsages(jobKey);
         if (snapshot is null) return;
-        var (usage, observedAt, startedAt) = snapshot.Value;
+        var (usages, observedAt, startedAt) = snapshot.Value;
 
         var latency = new AgentMessageLatency(
             RequestedAt: startedAt,
@@ -3837,15 +3952,18 @@ public class ProjectRunner
         // every coding turn (AGT-2811); null stays "level unknown".
         var thinkingLevel = cli.GetExecution(jobKey)?.ThinkingLevel;
 
-        _ = _bus.EmitTokenUsageRichAsync(
-            ProjectName,
-            jobId,
-            runId,
-            participantId,
-            topic,
-            usage,
-            latency,
-            thinkingLevel: thinkingLevel);
+        foreach (var usage in usages)
+        {
+            _ = _bus.EmitTokenUsageRichAsync(
+                ProjectName,
+                jobId,
+                runId,
+                participantId,
+                topic,
+                usage,
+                latency,
+                thinkingLevel: thinkingLevel);
+        }
     }
 
     /// <summary>
@@ -5524,18 +5642,23 @@ public class ProjectRunner
         string jobKey,
         SessionUsage? footerUsage)
     {
-        var parsed = cli.GetLastParsedTurnUsage(jobKey);
+        var parsed = cli.GetLastParsedTurnUsages(jobKey);
         if (parsed is { } snapshot)
         {
-            var u = snapshot.Usage;
+            var rows = snapshot.Usages;
+            var observedModels = rows
+                .Select(row => row.Model)
+                .Where(model => !string.IsNullOrWhiteSpace(model))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
             return new CoreAgentUsage(
-                u.Model,
-                u.Input,
-                u.Output,
-                u.CacheRead,
-                u.CacheWrite,
+                observedModels.Length == 1 ? observedModels[0] : null,
+                rows.Sum(row => row.Input),
+                rows.Sum(row => row.Output),
+                rows.Sum(row => row.CacheRead),
+                rows.Sum(row => row.CacheWrite),
                 AgentCliFooterUsageSource,
-                u.InputIncludesCached);
+                rows.Any(row => row.InputIncludesCached));
         }
 
         return TryParseFooterUsage(footerUsage?.Tokens, model: null, AgentCliFooterUsageSource);
@@ -7170,6 +7293,8 @@ public class ProjectRunner
     private ActiveRun? ReleaseRun(string jobId, bool releasePickupLock = true)
     {
         var released = _activeRuns.Release(jobId);
+        if (released is not null && _localAuthorityTaskKeys.TryRemove(jobId, out var authorityTaskKey))
+            _localRunClaims?.Release(authorityTaskKey);
         if (releasePickupLock && released?.PickupLockFolder is { } folder)
             ReleasePickupLockIfHeld(folder);
         // The coding run held the preparation's per-run cache folder for as long
@@ -8510,11 +8635,23 @@ public class ProjectRunner
     /// </summary>
     private bool IsUnpickableEpic(TaskInfo job)
     {
-        if (!TaskKinds.IsEpic(job.Kind)) return false;
-        _logger.LogWarning(
-            "[taskboard] skipping epic card {Job} on {Project} in pickup lane {State}: epics are containers, not pickable work items",
-            job.Id, ProjectName, job.State);
-        return true;
+        if (TaskKinds.IsEpic(job.Kind))
+        {
+            _logger.LogWarning(
+                "[taskboard] skipping epic card {Job} on {Project} in pickup lane {State}: epics are containers, not pickable work items",
+                job.Id, ProjectName, job.State);
+            return true;
+        }
+        // AGT-2795: a decision card is a decision request the operator resolves;
+        // it is never code-executed and must never be auto-picked into a run.
+        if (TaskKinds.IsDecision(job.Kind))
+        {
+            _logger.LogWarning(
+                "[taskboard] skipping decision card {Job} on {Project} in pickup lane {State}: decision cards are decided, not executed",
+                job.Id, ProjectName, job.State);
+            return true;
+        }
+        return false;
     }
 
     private List<DisplayedPickupCandidate> ListPickupCandidatesInDisplayedOrder()

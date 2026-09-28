@@ -332,10 +332,12 @@ public record TaskInfo
     /// for each id come from the workspace-level <c>tags.json</c> registry
     /// served at <c>GET /api/tags</c>. Unknown ids (registry entries that
     /// were soft-deleted) render as a faint "ghost" chip on the card so the
-    /// user can clear the stale reference. Stored in <c>job.json</c> as
+    /// user can clear the stale reference. Stored in <c>task.json</c> as
     /// <c>"tags"</c>; absent or null on disk means an empty list.
     /// </summary>
     public List<string> Tags { get; init; } = [];
+    /// <summary>Auto-tag classification state from task.json: tagged or tags-proposed; unknown values read as null.</summary>
+    public string? TaggingStatus { get; init; }
 
     /// <summary>
     /// F34: structured cross-references to other tasks, keyed by F33 stable
@@ -367,6 +369,9 @@ public record TaskInfo
     /// <see cref="WaitsOnEvaluator"/>.
     /// </summary>
     public WaitsOnStatus? WaitsOn { get; init; }
+
+    /// <summary>Pending decision keys computed from dependsOn on each read.</summary>
+    public List<string> BlockedBy { get; init; } = [];
 
     /// <summary>
     /// Read-time decision-backlog impact for cards in <c>5-human-review</c>.
@@ -535,6 +540,17 @@ public record TaskInfo
     /// that structured reference carrier lands.
     /// </summary>
     public ConceptDossierSummary? ConceptDossier { get; init; }
+
+    /// <summary>
+    /// AGT-2795: structured content of a <see cref="TaskKinds.Decision"/> card -
+    /// the question, options, recommendation, decider, due date, blocked cards,
+    /// and the recorded choice/rationale once decided. Persisted as the
+    /// <c>"decision"</c> object in <c>task.json</c>; null on every other kind.
+    /// A decision card never enters a runner lane: it sits in preparation with
+    /// the decision badge until the decider chooses an option, then becomes a
+    /// durable record that unblocks its dependants.
+    /// </summary>
+    public DecisionContent? Decision { get; init; }
 }
 
 /// <summary>Compact current-step projection used by board and task detail.</summary>

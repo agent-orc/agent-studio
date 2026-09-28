@@ -35,6 +35,17 @@ This outcome is neither `CliCrash` nor provider authentication state. A
 published salvage may select a fresh attempt on a declared sibling model;
 without a safe sibling it selects human input instead of a same-model retry.
 
+Claude Code's `[claude-code:unrecognized_model]` stderr marker is the same
+outcome even when that CLI then substitutes another model, emits a successful
+result, and exits 0. Provider usage evidence is part of the immutable facts:
+Claude contributes every `modelUsage` key and Codex contributes the model on
+its terminal result frame. If an observed model differs from the effective
+pinned model, the decision carries `ModelMismatch { PinnedModel,
+ObservedModels }` and cannot become `SuccessfulCompletion`.
+The runner and backend use the same Claude alias table from
+`ExecutionModelIdentity`; canonical ids, registered aliases, and dated
+provider ids compare as one model.
+
 Review infrastructure recovery is constrained by an immutable
 `RepositoryIdentity + ResultSha|ArtifactDigest` subject and can only select
 `RetryReviewAttemptOnSameSubject`. It never invokes the coding model. Coding can

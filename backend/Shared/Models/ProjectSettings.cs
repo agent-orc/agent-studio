@@ -2,6 +2,8 @@ namespace AgentStudio.Shared;
 
 public record ProjectSettings
 {
+    /// <summary>Default-on creation classification. Stored here until project definition v2 accepts tagging.autoTag.</summary>
+    public bool AutoTag { get; init; } = true;
     /// <summary>
     /// Maximum raw bytes retained for one remote-run result artifact. The
     /// server further clamps this against its advertised request-body budget so
@@ -31,6 +33,9 @@ public record ProjectSettings
     /// Orphan working-tree commits still require operator confirmation.
     /// </summary>
     public bool CrashRecoveryEnabled { get; init; } = true;
+
+    /// <summary>Allow bounded automatic failure continuations for this project's integration and review gates.</summary>
+    public bool AutomaticFailureContinuationsEnabled { get; init; } = true;
 
     /// <summary>
     /// Controls when the platform pushes runner-owned commits. Default is
@@ -573,6 +578,8 @@ public record PipelineStepCondition
 /// </summary>
 public record PipelineStepSetting
 {
+    /// <summary>Built-in prompt-enrichment block ids explicitly adopted by this project.</summary>
+    public List<string>? EnrichmentBlockIds { get; init; }
     /// <summary>
     /// Optional bounded iteration count for steps that own an iterative loop.
     /// Today this is consumed by the UI-pipeline routing step. Null preserves
@@ -1096,19 +1103,27 @@ public static class TestExecutionLevels
 /// Per-project staged testing configuration. Commands in
 /// <see cref="ContinuousCommands"/> form the small fixed baseline and are
 /// reporting-only during a work-package run. The impacted suite is selected
-/// from the diff, explicit impact rules, Test Hub history, and optionally an
-/// LLM adviser. <see cref="LaneLevels"/> makes the policy lane-specific.
+/// from a maintained folder map. <see cref="LaneLevels"/> makes the policy
+/// lane-specific.
 /// </summary>
 public sealed record TestExecutionPolicy
 {
     public Dictionary<string, string>? LaneLevels { get; init; }
     public IReadOnlyList<string>? ContinuousCommands { get; init; }
     public IReadOnlyList<TestImpactRule>? ImpactRules { get; init; }
+    /// <summary>Maintained repository folder to test-project map for the build/test gate.</summary>
+    public IReadOnlyList<TestFolderMapping>? FolderToTestProjects { get; init; }
+    /// <summary>Roots whose immediate source folders must all have a mapping entry.</summary>
+    public IReadOnlyList<string>? MappedSourceRoots { get; init; }
     public string? TestHubHistoryPath { get; init; }
-    public bool LlmSelectionEnabled { get; init; }
-    public string? LlmCliType { get; init; }
-    public string? LlmModel { get; init; }
-    public string? LlmThinkingLevel { get; init; }
+}
+
+public sealed record TestFolderMapping
+{
+    public string Folder { get; init; } = "";
+    /// <summary>Shared module id for source and test folders belonging to one module.</summary>
+    public string? Module { get; init; }
+    public IReadOnlyList<string> TestProjects { get; init; } = [];
 }
 
 /// <summary>

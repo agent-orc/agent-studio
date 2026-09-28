@@ -1,3 +1,6 @@
+using AgentStudio.Runner;
+using AgentStudio.TaskServer.Contracts;
+
 namespace AgentStudio.Tasks;
 
 public sealed record TaskIntegrationRecoveryResult(
@@ -9,6 +12,13 @@ public sealed record TaskIntegrationRecoveryResult(
     string? ResultSha = null,
     string? IntegrationBranch = null,
     int? RetryNumber = null);
+
+internal sealed record RecoveryRouteSelection(
+    string Previous,
+    string Selected,
+    string Reason,
+    string PolicyVersion,
+    bool Pinned);
 
 /// <summary>
 /// Shared application boundary for operator-triggered and acceptance-rail
@@ -25,6 +35,7 @@ public sealed class TaskIntegrationRecoveryService
     private readonly TaskMutationService _mutations;
     private readonly TaskStateMachine _states;
     private readonly TimelineLog _timeline;
+    private readonly ModelRoutingPolicyRegistry _routing = new();
     private readonly ILogger<TaskIntegrationRecoveryService> _logger;
 
     public TaskIntegrationRecoveryService(
@@ -46,12 +57,23 @@ public sealed class TaskIntegrationRecoveryService
         TaskIntegrationStatus status,
         string failureCode,
         string source,
-        int? retryNumber = null)
+        int? retryNumber = null,
+        IntegrationBounceObligation? automaticObligation = null)
     {
         var subject = ReviewSubjectStore.Read(job.FolderPath);
         if (subject is null || string.IsNullOrWhiteSpace(subject.ResultRef))
         {
             return Failed("The accepted task has no fenced remote delivery ref to recover.");
+        }
+
+        IntegrationBounceObligation? operatorObligation = null;
+        if (source == OperatorSource)
+        {
+            var rounds = IntegrationRecoveryBudget.Count(_timeline.ReadAll(job.FolderPath), subject).Used;
+            operatorObligation = IntegrationBounceObligationStore.Ensure(job.FolderPath,
+                IntegrationBounceObligationStore.Project(job, subject, status,
+                    OperatorReviewRequeueService.ReadEpoch(job.FolderPath), rounds,
+                    "none", "operator", status.Failure?.Reason));
         }
 
         var integrationBranch = status.IntegrationBranch;
@@ -76,10 +98,13 @@ public sealed class TaskIntegrationRecoveryService
                 watchPath: job.WatchPath);
             if (intent is null)
                 return Failed("The integration recovery steer intent could not be persisted.");
-
-            if (!_mutations.AppendContinuationNote(job.Id, prompt, job.WatchPath))
-                return Failed("The integration recovery steer could not be appended to the task prompt.");
         }
+
+        var promptPath = Path.Combine(job.FolderPath, "prompt.md");
+        if ((!File.Exists(promptPath)
+             || !File.ReadAllText(promptPath).Contains(prompt, StringComparison.Ordinal))
+            && !_mutations.AppendContinuationNote(job.Id, prompt, job.WatchPath))
+            return Failed("The integration recovery steer could not be appended to the task prompt.");
 
         var current = _scanner.FindJob(job.Id, job.WatchPath);
         if (current is null)
@@ -94,6 +119,57 @@ public sealed class TaskIntegrationRecoveryService
                 "The recovery intent was persisted, but the superseded delivery history could not be marked.",
                 internalError: true);
         }
+
+        // The runner can claim a card as soon as it enters Ready. Persist the
+        // selected route and its receipt while this card is still in review.
+        RecoveryRouteSelection? route = null;
+        if (source == AcceptanceRailSource)
+        {
+            route = SelectRecoveryRoute(current);
+            // The obligation is the write-ahead receipt for the task route.
+            // Replay can encounter either the old route or the selected route.
+            if (automaticObligation is { PreviousRoute: not null, SelectedRoute: not null,
+                    RouteReason: not null, PolicyVersion: not null }
+                && (route.Previous == automaticObligation.PreviousRoute
+                    || route.Previous == automaticObligation.SelectedRoute)
+                && route.PolicyVersion == automaticObligation.PolicyVersion
+                && !route.Pinned
+                && RouteStillMeetsFloor(current, automaticObligation.SelectedRoute))
+                route = new RecoveryRouteSelection(
+                    automaticObligation.PreviousRoute,
+                    automaticObligation.SelectedRoute,
+                    automaticObligation.RouteReason,
+                    automaticObligation.PolicyVersion,
+                    automaticObligation.OperatorPinPresent);
+            if (automaticObligation is not null)
+                IntegrationBounceObligationStore.Update(current.FolderPath,
+                    automaticObligation with
+                    {
+                        PreviousRoute = route.Previous,
+                        SelectedRoute = route.Selected,
+                        RouteReason = route.Reason,
+                        PolicyVersion = route.PolicyVersion,
+                        OperatorPinPresent = route.Pinned,
+                    });
+            if (route.Selected != route.Previous
+                && !string.Equals(
+                    $"{current.Model ?? "default"}/{current.ThinkingLevel ?? "default"}",
+                    route.Selected, StringComparison.Ordinal))
+            {
+                var selectedLevel = route.Selected[(route.Selected.LastIndexOf('/') + 1)..];
+                if (!_mutations.SetRecoveryThinkingLevel(current.Id, selectedLevel, current.WatchPath))
+                    return Failed("The recovery route was recorded but could not be applied.", internalError: true);
+            }
+        }
+
+        var conflict = status.Failure?.ConflictReport;
+        SessionContinuationLedgerStore.SaveDelta(current.FolderPath, new MechanicalRoundDelta(
+            conflict?.IntegrationTipSha ?? string.Empty,
+            subject.ResultRef,
+            subject.ResultSha,
+            conflict?.ConflictedFiles ?? [],
+            prompt,
+            "Verify the updated delivery with the relevant focused checks, then run the required deterministic delivery gate."));
 
         var position = _states.PromoteToReadyTop(
             current.Id,
@@ -127,8 +203,18 @@ public sealed class TaskIntegrationRecoveryService
         if (retryNumber is not null)
             details["retryNumber"] = Invariant(retryNumber.Value);
         if (source == AcceptanceRailSource)
+        {
             details["attemptEpoch"] = Invariant(
                 OperatorReviewRequeueService.ReadEpoch(queued.FolderPath));
+            if (route is not null)
+            {
+                details["previousRoute"] = route.Previous;
+                details["selectedRoute"] = route.Selected;
+                details["routeReason"] = route.Reason;
+                details["policyVersion"] = route.PolicyVersion;
+                details["operatorPinPresent"] = route.Pinned.ToString().ToLowerInvariant();
+            }
+        }
 
         _timeline.Append(
             queued.FolderPath,
@@ -145,6 +231,19 @@ public sealed class TaskIntegrationRecoveryService
             retryNumber,
             position);
 
+        if (operatorObligation is not null)
+            IntegrationBounceObligationStore.Update(queued.FolderPath,
+                operatorObligation with
+                {
+                    State = "manual-queued",
+                    ClaimedAtUtc = DateTimeOffset.UtcNow,
+                    PreviousRoute = $"{job.Model ?? "default"}/{job.ThinkingLevel ?? "default"}",
+                    SelectedRoute = $"{job.Model ?? "default"}/{job.ThinkingLevel ?? "default"}",
+                    RouteReason = "operator recovery action",
+                    PolicyVersion = _routing.Policy.Version,
+                    OperatorPinPresent = job.ModelExplicit || job.ThinkingLevelExplicit,
+                });
+
         return new TaskIntegrationRecoveryResult(
             true,
             Position: position,
@@ -154,24 +253,54 @@ public sealed class TaskIntegrationRecoveryService
             RetryNumber: retryNumber);
     }
 
+    private RecoveryRouteSelection SelectRecoveryRoute(TaskInfo job)
+    {
+        var previous = $"{job.Model ?? "default"}/{job.ThinkingLevel ?? "default"}";
+        var pinned = job.ModelExplicit || job.ThinkingLevelExplicit;
+        var policyVersion = _routing.Policy.Version;
+        var prompt = File.Exists(Path.Combine(job.FolderPath, "prompt.md"))
+            ? File.ReadAllText(Path.Combine(job.FolderPath, "prompt.md"))
+            : string.Empty;
+        var floor = _routing.CorrectnessFloor(job.TaskType, job.Title, prompt);
+        if (pinned || string.IsNullOrWhiteSpace(job.Model))
+            return new(previous, previous, pinned ? "operator pin retained" : "no concrete model route", policyVersion, pinned);
+
+        var candidate = "low";
+        var lowTier = _routing.Policy.Tiers.Single(tier => tier.Id == "sonnet-low");
+        var knownLowRoute = string.Equals(job.Model, lowTier.Model, StringComparison.OrdinalIgnoreCase)
+            || lowTier.VendorOverrides.Values.Any(route => string.Equals(
+                job.Model, route.Model, StringComparison.OrdinalIgnoreCase));
+        if (!knownLowRoute)
+            return new(previous, previous, "model has no policy low route", policyVersion, false);
+        if (!_routing.RouteMeetsFloor(job.Model, candidate, floor))
+            return new(previous, previous, $"policy floor {floor?.Id ?? "none"} retained", policyVersion, false);
+        if (string.Equals(job.ThinkingLevel, candidate, StringComparison.OrdinalIgnoreCase))
+            return new(previous, previous, "already at safe thinking level", policyVersion, false);
+        return new(previous, $"{job.Model}/{candidate}", "mechanical recovery within policy floor", policyVersion, false);
+    }
+
+    private bool RouteStillMeetsFloor(TaskInfo job, string selectedRoute)
+    {
+        var separator = selectedRoute.LastIndexOf('/');
+        if (separator < 0 || string.IsNullOrWhiteSpace(job.Model) || !string.Equals(
+                selectedRoute[..separator], job.Model, StringComparison.OrdinalIgnoreCase))
+            return false;
+        var promptPath = Path.Combine(job.FolderPath, "prompt.md");
+        var prompt = File.Exists(promptPath) ? File.ReadAllText(promptPath) : string.Empty;
+        return _routing.RouteMeetsFloor(job.Model, selectedRoute[(separator + 1)..],
+            _routing.CorrectnessFloor(job.TaskType, job.Title, prompt));
+    }
+
     internal static string BuildPrompt(
         TaskInfo job,
         ReviewSubjectRecord subject,
         string integrationBranch,
         IntegrationConflictReport? conflictReport = null)
     {
-        var conflictedFiles = conflictReport?.ConflictedFiles.Count > 0
-            ? string.Join(", ", conflictReport.ConflictedFiles)
-            : "none recorded";
-        return "## STEER\n\n"
-            + $"Integration recovery for {job.Key ?? job.Id}. "
-            + $"Resume the existing delivery branch '{subject.ResultRef}' at the fenced result {subject.ResultSha}. "
-            + $"Fetch the latest 'origin/{integrationBranch}' and produce a delivery state that integrates cleanly. "
-            + $"Prefer merging 'origin/{integrationBranch}' into the existing delivery branch and resolving conflicts there over rewriting delivery history. "
-            + $"Conflicted files from the integration report: {conflictedFiles}. "
-            + "If rewriting is unavoidable, retain a one-to-one delivery commit mapping: do not squash, split, drop, or combine delivery commits. "
-            + "Do not redo the feature work. Run the relevant tests and finish with the normal task terminal sentinel. "
-            + "Do not move or push the integration branch ref; publish only the updated delivery branch for a new delivery gate and review round.";
+        return IntegrationContinuationPrompt.Build(
+            job.Key ?? job.Id, subject.ResultRef, subject.ResultSha,
+            integrationBranch, "merge-into-develop", "The reviewed delivery did not integrate.",
+            conflictReport);
     }
 
     private static TaskIntegrationRecoveryResult Failed(

@@ -436,6 +436,8 @@ builder.Services.AddSingleton<TestRunService>();
 // AGT-2717: canonical read-time merge of local + remote review attempts.
 builder.Services.AddSingleton<ReviewProjectionService>();
 builder.Services.AddSingleton<TaskTransitionService>();
+builder.Services.AddSingleton<DecisionCardService>();
+builder.Services.AddSingleton<DecisionRecordService>();
 builder.Services.AddSingleton<IBatchMoveItemExecutor, BatchMoveItemExecutor>();
 builder.Services.AddSingleton<BatchMoveJobCoordinator>();
 if (!publicDemoExecutionProfile)
@@ -570,6 +572,7 @@ builder.Services.AddSingleton<SystemKeepAwake>(sp =>
     return new SystemKeepAwake(request, enabled);
 });
 builder.Services.AddSingleton<TaskRunnerService>();
+builder.Services.AddSingleton<ITaskCoreRuntime, TaskCoreRuntime>();
 builder.Services.AddSingleton<CrashRecoveryService>();
 builder.Services.AddSingleton<StaleProgressArchiver>();
 // Run-Liveness Slice A: the phase-aware "no zombie survives 60s" monitor
@@ -656,6 +659,15 @@ builder.Services.AddSingleton<AgentStudio.Tags.ITagMaintenanceSynthesis, AgentSt
 builder.Services.AddSingleton<AgentStudio.Tags.ITagGoldenSetClassifier, AgentStudio.Tags.TagGoldenSetClassifier>();
 builder.Services.AddSingleton<AgentStudio.Tags.TagGoldenSetEvaluator>();
 builder.Services.AddSingleton<AgentStudio.Tags.TagMaintenanceService>();
+builder.Services.AddSingleton<AgentStudio.Tags.IAutoTagClassifier, AgentStudio.Tags.AutoTagClassifier>();
+builder.Services.AddSingleton<AgentStudio.Tags.AutoTaggingService>();
+builder.Services.AddSingleton<AgentStudio.Tags.AutoTagCreationWorker>();
+builder.Services.AddSingleton<AgentStudio.Tags.AutoTagBackfillQueue>();
+if (!builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
+{
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Tags.AutoTagCreationWorker>());
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Tags.AutoTagBackfillQueue>());
+}
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService<AgentStudio.Tags.TagMaintenanceWorker>();
 builder.Services.AddSingleton<ProjectObservationService>();
@@ -701,8 +713,6 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.IQualityStudioAnalysisCore,
     AgentStudio.Pipeline.QualityStudioAnalysisCoreAdapter>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IQualityAnalysisStepRunner,
     AgentStudio.Pipeline.QualityAnalysisStepRunner>();
-builder.Services.AddSingleton<AgentStudio.Pipeline.ITestSelectionAdvisor,
-    AgentStudio.Pipeline.LlmTestSelectionAdvisor>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IBuildTestGateRunner,
     AgentStudio.Pipeline.BuildTestGateRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PreMainTestGate>();
@@ -981,6 +991,7 @@ if (!builder.Environment.IsEnvironment("Test") && !underTestHost)
     builder.Services.AddHostedService<CliVersionMonitorHostedService>();
 builder.Services.AddSingleton<CliQuotaCapsService>();
 builder.Services.AddSingleton<CliQuotaWaitPolicyService>();
+builder.Services.AddSingleton<CliFallbackPreferenceService>();
 builder.Services.AddSingleton<AgentStudio.Cli.IModelEquivalenceCatalog, AgentStudio.Cli.ModelEquivalenceCatalog>();
 builder.Services.AddSingleton<CliQuotaFallbackService>();
 builder.Services.AddSingleton<AgentStudio.Cli.QuotaAdmissionService>();
@@ -1357,6 +1368,18 @@ catch (Exception ex)
     crashRecorder.Record("ResultDocumentBackfill", ex);
 }
 
+// Reconcile the historical remote-claim bug before runner pickup begins. The
+// mutation service converts proven-delivered or terminal intents into timeline
+// receipts and leaves genuinely newer queued follow-ups untouched.
+try
+{
+    app.Services.GetRequiredService<TaskTransitionService>().ReconcilePendingIntents();
+}
+catch (Exception ex)
+{
+    crashRecorder.Record("PendingIntentReconciliation", ex);
+}
+
 // ADR-0020: run the crash-recovery sweep BEFORE the first runner tick. Any
 // surviving completion-marker.json finishes its 3-progress -> 4-review move
 // here, and any orphan working-tree changes are queued for operator
@@ -1535,6 +1558,7 @@ var taskScanner = app.Services.GetRequiredService<TaskScannerService>();
 taskScanner.SetIndexCache(jobIndexCache);
 taskScanner.SetStatsMetadataCache(jobStatsMetadataCache);
 watcher.OnJobChanged += _ => jobIndexCache.Invalidate(TaskIndexCache.InvalidationSource.External);
+watcher.OnPathChanged += jobIndexCache.NotifyCoreFileChanged;
 watcher.OnJobChanged += _ => jobStatsMetadataCache.Invalidate();
 // AGT-2703: the board ETag needs the events the line above filters out. The
 // task index only cares about task.json semantics and folder structure, while

@@ -2665,6 +2665,59 @@
             automatic salvage path before the slot is released.
           </td>
         </tr>
+        <tr id="case-agt-2931-approval-only-needs-input">
+          <td>2026-09-25</td>
+          <td><code>AGT-2931</code><br><span class="small">approval-only NeedsInput</span></td>
+          <td>Nine concept and implementation runs on agent-runner-01 requested sight review, decision acceptance, or scope approval. Concept cards had delivered Dossiers; some implementation cards stopped before changing files. They reached <span class="lane">5e-escalated</span> and needed operator continuations.</td>
+          <td>Concept framing instructed agents to stop for post-delivery choices. Promoted cards omitted the Dossier option list, and remote outcome classification treated approval-only <code>NeedsInput</code> as a blocker.</td>
+          <td><span class="pill ok">fixed in dev</span> Concept and coding framing now places approvals after delivery; promoted prompts carry recommended or recorded options. The remote classifier logs and reclassifies approval-only <code>NeedsInput</code> as <code>Done</code> with <code>review-requested</code>, reaching <span class="lane">4-auto-review</span> before the concept sight-review step or normal review. Missing facts remain <code>NeedsInput</code>.</td>
+        </tr>
+        <tr id="case-agt-2873-operator-stop-false-provider-limit">
+          <td>2026-09-18</td>
+          <td><code>AGT-2873</code><br><span class="small">operator-terminated CLI falsely held Claude claims as rate-limited</span></td>
+          <td>
+            An operator stopped a duplicate Claude process for AGT-2870 with SIGTERM. Its retained output was classified
+            as provider-limit evidence, and the daemon advertised <code>provider-auth:claude=limited</code> for fourteen
+            minutes even though another Claude run on the same host was streaming normally. The card remained in
+            <span class="lane">2-ready</span> behind a capability-mismatch hold until the runner service was restarted.
+          </td>
+          <td>
+            Provider access classification ran without the process signal, accepted quota-warning text and limit phrases
+            without an explicit reset, and retained the verdict only in daemon memory. The advertisement omitted the
+            source run and evidence excerpt, and a retry did not request a fresh provider-auth probe.
+          </td>
+          <td>
+            <span class="pill ok">fixed in dev</span> Signal and operator stops contribute no provider-limit evidence;
+            allowed quota events remain authenticated; a limit requires an explicit refusal with a parseable reset.
+            The legacy worker records the child wait status before the conventional high exit code reaches .NET, while
+            the CAR path never infers a signal from an exit number alone. A voluntary exit 137 can therefore still carry
+            valid limit evidence, while recorded SIGTERM, SIGKILL, and runner stop facts suppress it.
+            Advertisements and transition logs carry the reset, scrubbed run ID, and bounded excerpt. Expired limits force
+            a probe, retry responses request the named provider-auth probe, and a concurrently active same-provider run
+            downgrades conflicting evidence to a claimable degraded state.
+          </td>
+        </tr>
+        <tr id="case-agt-2893-claude-unrecognized-model-substitution">
+          <td>2026-09-24</td>
+          <td><code>AGT-2893</code><br><span class="small">Claude accepted an unknown pin, substituted Haiku, and reported success</span></td>
+          <td>
+            Claude Code 2.1.270 received <code>claude-opus-5-5</code>, wrote
+            <code>[claude-code:unrecognized_model]</code> to stderr, executed the prompt on
+            <code>claude-haiku-4-5-20251001</code>, and exited 0. Studio trusted the success and terminal sentinel.
+          </td>
+          <td>
+            Pickup did not validate explicit pins against installed CLI capability. Claude usage parsing ignored
+            <code>modelUsage</code>, remote receipts replaced missing observation with <code>task.model</code>, and the
+            outcome adapter did not recognize the stderr marker or compare observed and pinned models.
+          </td>
+          <td>
+            <span class="pill ok">fixed in dev</span> local and remote admission reject unsupported explicit pins before
+            spawn or lease. Claude minimum CLI versions come from the model registry; Codex uses the live catalogue
+            advertised by the Runner. Post-run evidence records actual provider models, prices those models, marks
+            mismatches on receipts and cards, and classifies the Claude marker or a model mismatch as
+            <code>ProviderRejectedRequest</code> even when the CLI exits 0.
+          </td>
+        </tr>
       </tbody>
     </table>
 
@@ -2698,6 +2751,7 @@
     </ul>
 
     <h3>Session-resume preference</h3>
+    <p>Remote integration-recovery rounds use a separate, single-use continuation rule. A task ledger preserves session and usage evidence; the next claim carries only a compact rebase delta. Task, provider, clean-context, repository, worktree and delivery-lineage mismatches select a typed fresh run. The resumed worker is bounded at 1,211,213 observed tokens and 300 seconds. A semantic conflict or invalid session returns to Ready for a policy-qualified fresh claim without resetting the ordinary infrastructure retry budget.</p>
     <p>Each retry uses <code>RunIntent.UserContinue</code> + <code>ContinueModes.Continue</code> so it <strong>resumes the live
        session first</strong> (the <code>RunPlanner</code> resume path) and only falls back to recovery-from-job-folder when the
        session is genuinely gone. That fallback consumes one attempt; it does not reset the budget. The current defect is the

@@ -82,9 +82,10 @@
                       <span class="convo-turn__role">Agent</span>
                       <span class="convo-turn__time">{{ formatTime(item.turn.timestamp) }}</span>
                     </header>
-                    <cac-markdown class="convo-turn__body convo-turn__body--agent"
-                                  [source]="item.turn.text"
-                                  [dense]="true" />
+                    @if (item.turn.text) {
+                      <cac-markdown class="convo-turn__body convo-turn__body--agent" [source]="item.turn.text" [dense]="true" />
+                    }
+                    <app-runtime-sentinel-view [sentinels]="item.sentinels" />
                   }
                   @case ('system') {
                     <header class="convo-turn__head">
@@ -209,7 +210,7 @@
                        [class.trace-group--error]="group.status === 'error'"
                        [class.trace-group--user]="group.lines[0]?.stream === 'user'"
                        [attr.data-testid]="group.lines[0]?.stream === 'user' ? 'trace-group-user' : null">
-                <button class="trace-group__header" (click)="toggleGroup(group)">
+                <button class="trace-group__header" data-testid="activity-log-trace-group" (click)="toggleGroup(group)">
                   <span class="trace-group__chevron">{{ isExpanded(group) ? 'v' : '>' }}</span>
                   <span class="trace-group__kind">{{ kindLabel(group.kind) }}</span>
                   <span class="trace-group__title">{{ group.title }}</span>

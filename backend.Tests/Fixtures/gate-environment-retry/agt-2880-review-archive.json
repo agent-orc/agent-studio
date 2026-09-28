@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "archivedAt": "2026-09-25T08:00:00Z",
+  "runAttempts": [],
+  "reviewAttempts": [
+    {
+      "attemptId": "review_38d945dc04a04ea0bd1aa4cab34f6b20",
+      "taskKey": "AGT-2880",
+      "repositoryId": "repo_6c479639b4c0b4cfb76d23c71eec945592422408aa3adb12cb6019200a9474a8",
+      "sourceRunAttemptId": "run_56b3ac5413454ab687476769bbdb761c",
+      "subject": {
+        "subjectId": "subject_8cb00ec96aab8f2d84705917",
+        "repositoryId": "repo_6c479639b4c0b4cfb76d23c71eec945592422408aa3adb12cb6019200a9474a8",
+        "expectedResultSha": "3577cfa1452274c845fc36efd72ad9ffd7712bdb",
+        "sourceRunAttemptId": "run_56b3ac5413454ab687476769bbdb761c",
+        "taskRequirementsHash": "749f06d7bc68da2fbaee41bac6d14a900549be0080f3699f7325f62c93c43490",
+        "reviewPolicyHash": "0eb81f2ace56dc37457a3aa197cd60354b33dc770f352d112904fe87d65b0622",
+        "evidenceDigestInputs": ["artifact-set:9b88647d78d909c96925919740b110a6690d6fe3826da6ce968509dd93fd1b9c"],
+        "createdAt": "2026-09-25T07:10:33.7056713Z"
+      },
+      "state": 2,
+      "lastFence": 11,
+      "authorityEpoch": 1,
+      "createdAt": "2026-09-25T07:10:33.7056713Z",
+      "terminalAt": "2026-09-25T07:57:25.5005712Z",
+      "outcome": 3,
+      "testedResultSha": "3577cfa1452274c845fc36efd72ad9ffd7712bdb",
+      "terminalReason": "All applicable remote review aspects passed."
+    }
+  ]
+}

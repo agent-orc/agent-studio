@@ -59,6 +59,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Runtime prompt registry, review companions, call telemetry, and costs | [contracts/runtime-prompts.md](../system/contracts/runtime-prompts.md) |
 | Workspace repository lifecycle and backlog recovery | [operations/workspace-repository-lifecycle.md](../operations/workspace-repository-lifecycle.md) |
 | Temp and cache hygiene on a runner host: the suite temp root, the review executor's per-command purge, the bounded product-owned preparation cache, and how to reset each (AGT-2858) | [operations/temp-and-cache-hygiene.md](../operations/temp-and-cache-hygiene.md) |
+| Torn NuGet preparation cache: recognition, automatic eviction, and integration replay (AGT-2901) | [operations/common-problems/torn-preparation-cache/](../operations/common-problems/torn-preparation-cache/README.md) |
 | Integration worktree: where delivery merges run, why the developer checkout is never used, and how to clean the slot up (AGT-2832) | [operations/git/integration-worktree.md](../operations/git/integration-worktree.md) |
 | Interrupted integration gate: the in-flight gate record, restart rollback-or-resume, and why `integrated` requires the pushed remote branch (AGT-2849) | [operations/git/interrupted-integration-gate.md](../operations/git/interrupted-integration-gate.md) |
 | Branch lifecycle and automatic reclamation (AGT-2793) | [concepts/task-integration-and-merge-workflow.md#branch-cleanup-agt-2009-agt-2793](../concepts/task-integration-and-merge-workflow.md#branch-cleanup-agt-2009-agt-2793) |
@@ -74,8 +75,11 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | CLI | [domains/cli.md](../system/domains/cli.md) |
 | Model routing policy (model, thinking level, risk floors, benchmark evidence) | [domains/model-routing-policy.md](../system/domains/model-routing-policy.md) |
 | Model routing by assessed complexity: analysis and implementation plan as pipeline steps, Token Economy as the measuring authority for the (complexity class, model, level) pair table, reported-versus-achieved feedback (AGT-2815) | [decision dossier](../model-routing-by-complexity/index.html) |
+| Task switch performance: measured baseline, bounded core, progressive detail and Git snapshots (AGT-W64; source AGT-2910) | [decision Dossier](../task-switch-performance/index.html) |
 | Tokens | [domains/tokens.md](../system/domains/tokens.md) |
 | Areas and tags (classification vocabulary, glossaries, tag filters; AGT-2803) | [domains/areas-and-tags.md](../system/domains/areas-and-tags.md) |
+| Proposed tagging golden set: 60 cards, 20 Dossiers, item rationales and area glossaries (AGT-2804) | [quality/tagging-golden-set/index.html](../quality/tagging-golden-set/index.html) |
+| Operator decision on the proposed tagging golden set and glossaries (AGT-2804) | [operations/tagging-golden-set-approval/index.html](../operations/tagging-golden-set-approval/index.html) |
 | Remote execution outcome and recovery | [contracts/run-outcome.md](../system/contracts/run-outcome.md#remote-execution-outcome-adapter) |
 | Review Plane claim/report/replay contract (two-phase report hand-off, idempotent replay, stale-lease claim requeue; AGT-2762) | [contracts/review-plane.md](../system/contracts/review-plane.md) |
 | Remote infrastructure scenario result contract | [contracts/remote-run-result.md](../system/contracts/remote-run-result.md) |
@@ -171,6 +175,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Supported CLIs | [cli/supported-clis.md](../system/cli/supported-clis.md) |
 | CLI frame compatibility and capture corpus | [cli/frame-compatibility-matrix.md](../system/cli/frame-compatibility-matrix.md) |
 | Getting started (new install, step by step) | [operations/setup/getting-started.md](../operations/setup/getting-started.md) |
+| Docker one-box install and operations | [operations/setup/docker.md](../operations/setup/docker.md) |
 | Contributor source-build setup | [operations/setup/contributor-setup.md](../operations/setup/contributor-setup.md) |
 | Preparation, isolation, and orchestrator setup | [operations/setup/preparation-isolation-orchestrator.md](../operations/setup/preparation-isolation-orchestrator.md) |
 | Project definition v2 proposal (inactive; shared AGT/QS/Voice properties, quality applicability and rollout) | [plan](../operations/docker-ausfuehrungswelt-migration/project-definition-v2-plan.md) · [draft schema](../operations/docker-ausfuehrungswelt-migration/project-execution.v2.draft.schema.json) |
@@ -188,6 +193,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Remote three-unit Compose infrastructure harness | [operations/setup/remote-compose-test-harness.md](../operations/setup/remote-compose-test-harness.md) |
 | Private Hetzner Task Server with local Angular Studio (Phase A architecture, migration, security, and rollback) | [operations/remote-task-server-local-studio.md](../operations/remote-task-server-local-studio.md) |
 | Control plane on Docker (task-server-01): install, update, rollback, backup restore, firewall, WireGuard | [operations/setup/control-plane-docker.md](../operations/setup/control-plane-docker.md) |
+| Single-host Task Server rehearsal handoff: daily health, backup verification, update, rollback, and maintenance-window checklist | [operations/setup/single-host-task-server.md](../operations/setup/single-host-task-server.md) |
 | Windows Task Server fallback runbook (Phase B slice B4: install, warm standby, sub-15-minute switch drill both directions; AGT-2735) | [operations/setup/windows-fallback-runbook.md](../operations/setup/windows-fallback-runbook.md) |
 | Hosted Wiki publication (published revision, freshness SLO, credentials, atomic promotion, typed failures, rollback drill) | [operations/setup/hosted-wiki-publication.md](../operations/setup/hosted-wiki-publication.md) |
 | Common problems | [common-problems/README.md](../operations/common-problems/README.md) |
@@ -215,6 +221,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | MVP presentation capture runbook | [operations/setup/presentation-capture.md](../operations/setup/presentation-capture.md) |
 | MVP presentation storyboard and shot list | [product/mvp-presentation-storyboard.md](../concepts/mvp-presentation-storyboard.md) |
 | Quota snapshot events at run start/end (cap-forecast data collection) | [concepts/quota-snapshot-run-events.md](../concepts/quota-snapshot-run-events.md) |
+| Quota fallback operator help (caps, preference, catalogue routes, evidence) | [app/help/quota-fallback.md](../app/help/quota-fallback.md) |
 | Runtime prompt usage audit | [concepts/runtime-prompt-usage-audit.html](../concepts/runtime-prompt-usage-audit.html) |
 | Admin CLI onboarding | [concepts/admin-cli-onboarding.html](../concepts/admin-cli-onboarding.html) |
 | Orchestrator supervision loop | [concepts/orchestrator-supervision-loop.html](../concepts/orchestrator-supervision-loop.html) |

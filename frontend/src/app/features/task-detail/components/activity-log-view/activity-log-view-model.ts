@@ -6,6 +6,7 @@ import type {
   ParsedSteer,
   ToolBurstBin,
 } from '../activity-log.parser';
+import type { ParsedRuntimeSentinels } from '../runtime-sentinel.parser';
 
 export interface ToolChip {
   kind: ActivityLogKind;
@@ -16,6 +17,8 @@ export interface ToolChip {
 
 export interface RenderedTurn {
   turn: ConversationTurn;
+  /** Parsed readable markers; Trace still owns the untouched raw lines. */
+  sentinels: ParsedRuntimeSentinels;
   bodyHtml: SafeHtml | null;
   /**
    * For tool bursts: per-kind chips so the reader sees "Read ×12  Grep ×5"

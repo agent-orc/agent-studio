@@ -118,6 +118,7 @@ scenario_compose_json="$(
     SCENARIO_BUILD_SHA=scenario-contract \
     SCENARIO_TASK_SERVER_IMAGE=scenario-contract-task-server:local \
     SCENARIO_STUDIO_BFF_IMAGE=scenario-contract-studio-bff:local \
+    SCENARIO_ORCHESTRATOR_ENGINE_IMAGE=scenario-contract-engine:local \
     SCENARIO_AGENT_HOST_IMAGE=scenario-contract-agent-host:local \
     DISTRIBUTED_STUDIO_TOKEN=scenario-contract-studio-token \
     DISTRIBUTED_ENGINE_TOKEN=scenario-contract-engine-token \
@@ -142,6 +143,10 @@ const expected = {
     image: "scenario-contract-studio-bff:local",
     dockerfile: "studio-bff/Dockerfile",
   },
+  "orchestrator-engine": {
+    image: "scenario-contract-engine:local",
+    dockerfile: "orchestrator-engine/Dockerfile",
+  },
   "agent-host-distributed": {
     image: "scenario-contract-agent-host:local",
     dockerfile: "testsupport/scenario/runner.Dockerfile",
@@ -156,14 +161,60 @@ for (const [serviceName, contract] of Object.entries(expected)) {
     throw new Error(`${serviceName} does not build ${contract.dockerfile}`);
   }
 }
-for (const source of ["studio_token", "engine_token", "runner_token"]) {
-  const secret = config.services["task-server"].secrets
-    .find(candidate => candidate.source === source);
-  if (!secret || String(secret.uid) !== "10001" || String(secret.gid) !== "10001") {
-    throw new Error(`task-server/${source} is not readable by UID/GID 10001`);
+// The product stack generates its tokens in the bootstrap container; the
+// scenario injects known tokens as Compose secrets and every service must
+// read its token file from that mount, never from the bootstrap volume.
+const tokenFiles = {
+  "task-server": {
+    STUDIO_AUTH_TOKEN_FILE: "studio_token",
+    ENGINE_AUTH_TOKEN_FILE: "engine_token",
+    BOOTSTRAP_RUNNER_AUTH_TOKEN_FILE: "runner_token",
+  },
+  "studio-bff": { TaskServer__AuthTokenFile: "studio_token" },
+  "orchestrator-engine": { CLIENT_CREDENTIAL_FILE: "engine_token" },
+};
+for (const [serviceName, files] of Object.entries(tokenFiles)) {
+  const service = config.services[serviceName];
+  for (const [variable, source] of Object.entries(files)) {
+    const target = `/run/secrets/${source}`;
+    if (service.environment?.[variable] !== target) {
+      throw new Error(`${serviceName}/${variable} is ${service.environment?.[variable]}, expected ${target}`);
+    }
+    const secret = (service.secrets ?? []).find(candidate => candidate.source === source);
+    if (!secret || (secret.target ?? target) !== target) {
+      throw new Error(`${serviceName} does not mount the ${source} secret at ${target}`);
+    }
+    if (String(secret.uid) !== "10001" || String(secret.gid) !== "10001") {
+      throw new Error(`${serviceName}/${source} is not readable by UID/GID 10001`);
+    }
+    if (String(secret.mode) !== "0400") {
+      throw new Error(`${serviceName}/${source} mode is not 0400`);
+    }
   }
-  if (String(secret.mode) !== "0400") {
-    throw new Error(`task-server/${source} mode is not 0400`);
+}
+for (const source of ["studio_token", "engine_token", "runner_token"]) {
+  const variable = `DISTRIBUTED_${source.split("_")[0].toUpperCase()}_TOKEN`;
+  if (config.secrets?.[source]?.environment !== variable) {
+    throw new Error(`secret ${source} is not injected from ${variable}`);
+  }
+}
+// Nothing the scenario starts may come from a published image.
+for (const serviceName of ["bootstrap", "task-server", "studio-bff", "orchestrator-engine", "agent-host-distributed"]) {
+  const image = config.services[serviceName]?.image ?? "";
+  if (image === "" || image.startsWith("ghcr.io/")) {
+    throw new Error(`${serviceName} would run the published image ${image} in the scenario`);
+  }
+}
+if (config.services["bootstrap"].image !== config.services["task-server"].image) {
+  throw new Error("bootstrap does not run from the scenario task-server image");
+}
+// The harness reaches the Task Server and the Studio BFF directly on the
+// loopback interface; the product stack publishes only the Task Server port.
+for (const [serviceName, containerPort] of [["task-server", 5071], ["studio-bff", 5072]]) {
+  const published = (config.services[serviceName].ports ?? [])
+    .find(port => Number(port.target) === containerPort && port.host_ip === "127.0.0.1");
+  if (!published) {
+    throw new Error(`${serviceName} does not publish port ${containerPort} on 127.0.0.1 for the scenario harness`);
   }
 }
 if (config.services["task-server"].build.args.VERSION !== process.argv[2]

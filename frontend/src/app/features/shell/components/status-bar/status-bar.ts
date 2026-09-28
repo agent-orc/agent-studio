@@ -212,7 +212,7 @@ export class StatusBarComponent implements OnInit, OnDestroy {
     if (!repair) return '';
     const parsed = Date.parse(repair.occurredAt);
     const time = Number.isFinite(parsed)
-      ? new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' })
+      ? new Intl.DateTimeFormat('en-US', { hour: '2-digit', minute: '2-digit' })
         .format(new Date(parsed))
       : 'unknown time';
     if (repair.outcome === 'attempting') return `CLI repair started at ${time}`;

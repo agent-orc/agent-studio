@@ -37,5 +37,5 @@ export function formatCompactUsd(n: number): string {
 }
 
 function fixedGrouped(value: number, digits: number): string {
-  return value.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  return value.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits });
 }

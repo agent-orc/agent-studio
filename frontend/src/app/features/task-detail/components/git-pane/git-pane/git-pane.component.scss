@@ -496,7 +496,7 @@
   // Width is driven by the draggable splitter through the
   // `--git-tree-width` custom property (px, set on .git-view__split-body).
   // Under pressure both columns shrink toward proportional floors, matching
-  // clampTreeWidth(), so a persisted width cannot paint across the diff.
+  // the shared splitter directive, so a persisted width cannot cross the diff.
   flex: 0 1 var(--git-tree-width, 32%);
   min-width: min(200px, 39%);
   display: flex;
@@ -527,7 +527,7 @@
   cursor: col-resize;
 }
 .git-view--split .git-view__splitter:hover,
-.git-view--split .git-view__splitter--dragging {
+.git-view--split .git-view__splitter.is-resizing {
   background: var(--studio-accent);
 }
 .git-view--split .git-view__splitter:focus-visible {

@@ -9,6 +9,7 @@ import type {
   BranchSweepMode,
   BranchSweepReport,
 } from '../../../git';
+import { compactGitRef } from '../../../git/models/git-ref-label';
 import {
   BRANCH_SWEEP_BATCH_SIZE,
   EMPTY_BATCH_PROGRESS,
@@ -86,6 +87,7 @@ export class ProjectBranchSweepComponent {
   readonly selectedCount = computed(() => this.selected().size);
   readonly batchSize = BRANCH_SWEEP_BATCH_SIZE;
   readonly percent = computed(() => batchPercent(this.progress()));
+  readonly compactRef = compactGitRef;
 
   constructor() {
     effect(() => {

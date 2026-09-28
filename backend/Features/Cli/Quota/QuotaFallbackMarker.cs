@@ -20,6 +20,7 @@ public sealed record QuotaFallbackRecord
     [JsonPropertyName("model")] public string? Model { get; init; }
     [JsonPropertyName("thinkingLevel")] public string? ThinkingLevel { get; init; }
     [JsonPropertyName("reason")] public string? Reason { get; init; }
+    [JsonPropertyName("modelFallback")] public ModelFallbackInfo? ModelFallback { get; init; }
     [JsonPropertyName("activatedAt")] public DateTime ActivatedAt { get; init; } = DateTime.UtcNow;
 }
 
@@ -83,5 +84,26 @@ public static class QuotaFallbackMarker
     }
 
     public static QuotaFallbackStatus? ToStatus(QuotaFallbackRecord? marker)
-        => marker is null ? null : new QuotaFallbackStatus(marker.CliType, marker.Model, marker.Reason, marker.ActivatedAt);
+        => marker is null ? null : new QuotaFallbackStatus(
+            marker.CliType,
+            marker.Model,
+            marker.ModelFallback is null
+                ? marker.Reason
+                : DescribeStatus(marker.ModelFallback),
+            marker.ActivatedAt);
+
+    public static string DescribeStatus(ModelFallbackInfo fallback)
+        => $"ran on {fallback.To} instead of {fallback.From} ({DescribeWindow(fallback)})";
+
+    private static string DescribeWindow(ModelFallbackInfo fallback)
+        => fallback.UsedPct is { } used
+            ? $"{ProviderPrefix(fallback)}{(fallback.Window ?? "quota").ToLowerInvariant()} {used:0.#} %"
+            : fallback.Reason;
+
+    private static string ProviderPrefix(ModelFallbackInfo fallback)
+        => fallback.From.StartsWith("claude-", StringComparison.OrdinalIgnoreCase)
+            ? "Claude "
+            : fallback.From.StartsWith("gpt-", StringComparison.OrdinalIgnoreCase)
+                ? "Codex "
+                : string.Empty;
 }

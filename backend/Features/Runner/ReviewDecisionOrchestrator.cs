@@ -2768,7 +2768,15 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
         if (reaction.Disposition == AgentStudio.Review.CouncilReactionDisposition.Reissue)
         {
-            var followUp = AgentStudio.Review.CouncilReviewPolicy.BuildTargetedFollowUp(reaction);
+            var subject = ReviewSubjectStore.Read(current.FolderPath);
+            var followUp = IntegrationContinuationPrompt.Build(
+                current.Key ?? current.Id,
+                subject?.ResultRef,
+                subject?.ResultSha,
+                subject?.IntegrationBranch ?? "develop",
+                "code-review-council",
+                reaction.Summary,
+                evidence: AgentStudio.Review.CouncilReviewPolicy.BuildTargetedFollowUp(reaction));
             var moved = MoveReissueToReadyTop(current, entry, "code-review-council");
             if (moved is null) return true;
 
@@ -2856,7 +2864,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             gradeReport.Grade,
             gradeReport.Findings ?? Array.Empty<string>(),
             CountPriorReissues(workspace, entry.Name, current.Id),
-            ConfiguredMaxReissues(),
+            _projectSettings?.Get(current.ProjectName).AutomaticFailureContinuationsEnabled == false
+                ? 0 : Math.Min(1, ConfiguredMaxReissues()),
             current.Id,
             targetRunAttempt: (_pipelineLog?.Read(current.FolderPath)?.Attempt
                 ?? CountPriorReissues(workspace, entry.Name, current.Id) + 1) + 1,
@@ -3342,8 +3351,12 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     {
         var findingsBlock = string.Join("; ", gate.Findings.Take(SolutionQualityGate.MaxFindings));
         var priorReissues = CountPriorReissues(workspace, entry.Name, current.Id);
+        var automaticDisabled = _projectSettings?.Get(current.ProjectName).AutomaticFailureContinuationsEnabled == false;
+        if (automaticDisabled)
+            gate = gate with { Reason = "Automatic failure continuations are disabled for this project. " + gate.Reason };
 
-        if (gate.Action == SolutionQualityGate.SolutionQualityGateAction.Escalate)
+        if (gate.Action == SolutionQualityGate.SolutionQualityGateAction.Escalate
+            || automaticDisabled)
         {
             ConcernTagWriter.ReconcileConcernTags(current.FolderPath, report.ConcernTagIds, _logger);
 
@@ -3396,7 +3409,15 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             return;
         }
 
-        var followUp = SolutionQualityGate.BuildFollowUp(gate);
+        var reviewSubject = ReviewSubjectStore.Read(current.FolderPath);
+        var followUp = IntegrationContinuationPrompt.Build(
+            current.Key ?? current.Id,
+            reviewSubject?.ResultRef,
+            reviewSubject?.ResultSha,
+            reviewSubject?.IntegrationBranch ?? "develop",
+            "solution-quality-gate",
+            gate.Reason,
+            evidence: SolutionQualityGate.BuildFollowUp(gate));
         var moved = MoveReissueToReadyTop(current, entry, "solution-quality-gate");
         if (moved == null)
         {
@@ -3764,7 +3785,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var queueWaitTimeoutSeconds = _configuration.GetValue(
             $"PostSteps:{PipelineCatalogue.BuildTestGateStepId}:QueueWaitTimeoutSeconds",
             timeoutSeconds + infrastructureTimeoutSeconds);
-        var changedFiles = ResolveLatestRunChangedFiles(current, entry.Path);
+        var gateChanges = ResolveLatestRunChangedFileChanges(current, entry.Path);
+        var changedFiles = gateChanges?.Select(change => change.Path).ToArray();
 
         var request = new BuildTestGateRequest(
             repoPath,
@@ -3779,7 +3801,11 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             JobId = current.Id,
             Lane = current.State,
             TestExecution = settings?.TestExecution,
+            ChangedFileStatuses = gateChanges?.ToDictionary(change => change.Path,
+                change => change.Status, StringComparer.OrdinalIgnoreCase),
             JobFolderPath = current.FolderPath,
+            PipelineDefinitionVersion = _pipelineLog?.Read(current.FolderPath)?.PipelineVersion
+                ?? PipelineCatalogue.Standard.Version,
             InfrastructureTimeout = TimeSpan.FromSeconds(Math.Max(1, infrastructureTimeoutSeconds)),
             QueueWaitTimeout = TimeSpan.FromSeconds(Math.Max(1, queueWaitTimeoutSeconds)),
             OnMachineGateWaiting = () => _statusSnapshot.SetCurrentStep(
@@ -3881,18 +3907,36 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             BuildTestGateVerdict.NotApplicable => "not-applicable",
             _ => "skipped",
         };
-        RecordBuildTestGateStep(current.FolderPath, status, result.DurationMs, verdictToken, result.Reason);
+        RecordBuildTestGateStep(current.FolderPath, status,
+            result.DurationMs, verdictToken, result.Reason, result);
+        if (result.VerdictSource == GateVerdictSource.CacheHit)
+            EmitVerdictTimeline(current.FolderPath, TimelineEventKinds.GateVerdictCacheHit,
+                TimelineActors.System,
+                $"Cached build/test gate {verdictToken} for {result.TestedSha}; original run {result.GateCompletedAtUtc:O}",
+                new Dictionary<string, string>
+                {
+                    ["testedSha"] = result.TestedSha ?? "",
+                    ["profileDigest"] = result.GateProfileDigest ?? "",
+                    ["originalRunId"] = result.GateRunId ?? "",
+                    ["originalCompletedAtUtc"] = result.GateCompletedAtUtc?.ToString("O") ?? "",
+                    ["originalEvidencePath"] = result.OriginEvidencePath ?? "",
+                });
 
         _logger.LogInformation(
-            "ReviewDecisionOrchestrator: build-test gate {Verdict} for {Project}/{JobId} in {DurationMs}ms (backend={Backend} frontend={Frontend} changedFiles={ChangedFiles})",
-            result.Verdict, entry.Name, current.Id, result.DurationMs,
+            "ReviewDecisionOrchestrator: build-test gate {Verdict} source={Source} for {Project}/{JobId} execution_duration_ms={DurationMs} (backend={Backend} frontend={Frontend} changedFiles={ChangedFiles})",
+            result.Verdict, result.VerdictSource, entry.Name, current.Id,
+            result.VerdictSource == GateVerdictSource.CacheHit ? 0 : result.DurationMs,
             result.RanBackendBuild, result.RanFrontendBuild,
-            changedFiles?.Count.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unknown");
+            changedFiles?.Length.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unknown");
 
         return result;
     }
 
     private IReadOnlyList<string>? ResolveLatestRunChangedFiles(TaskInfo job, string? watchPath)
+        => ResolveLatestRunChangedFileChanges(job, watchPath)?.Select(change => change.Path).ToArray();
+
+    private IReadOnlyList<AgentStudio.Git.GitFileChange>? ResolveLatestRunChangedFileChanges(
+        TaskInfo job, string? watchPath)
     {
         if (_sessions == null || _git == null) return null;
         try
@@ -3902,11 +3946,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             var latest = SelectLastSuccessfulReviewRun(
                 RunTimelineBuilder.Build(events, lines, DateTime.UtcNow).Runs);
             if (latest == null) return null;
-            return _git.GetFilesChangedInShaRange(job.Id, watchPath, latest.HeadShaBefore, latest.HeadShaAfter)
-                .Select(f => f.Path)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            return _git.GetFilesChangedInShaRange(job.Id, watchPath,
+                latest.HeadShaBefore, latest.HeadShaAfter);
         }
         catch (Exception ex)
         {
@@ -3941,21 +3982,13 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         PipelineStepStatus status,
         long durationMs,
         string verdictToken,
-        string reason)
+        string reason,
+        BuildTestGateResult? result = null)
     {
         if (_pipelineLog == null) return;
         var now = DateTime.UtcNow;
-        _pipelineLog.RecordStep(jobFolderPath, new PipelineStepExecution
-        {
-            StepId = PipelineCatalogue.BuildTestGateStepId,
-            Kind = StepKind.Tool,
-            Status = status,
-            StartedAt = now - TimeSpan.FromMilliseconds(durationMs),
-            CompletedAt = now,
-            DurationMs = durationMs,
-            Verdict = verdictToken,
-            Reason = string.IsNullOrWhiteSpace(reason) ? null : reason,
-        });
+        _pipelineLog.RecordStep(jobFolderPath,
+            BuildTestGateStepProjection.Create(status, durationMs, verdictToken, reason, result, now));
     }
 
     private void WriteBuildTestGateLog(
@@ -3982,11 +4015,13 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 new JsonSerializerOptions { WriteIndented = true });
             var body = $"verdict={result.Verdict} exit={result.ExitCode?.ToString() ?? "n/a"} signal={result.TerminationSignal ?? "n/a"} durationMs={result.DurationMs}\n" +
                        $"gateId={result.GateId} failureKind={result.FailureKind} failureFingerprint={result.FailureFingerprint ?? "n/a"}\n" +
-                       $"gateRunId={result.GateRunId ?? "n/a"} startedAtUtc={result.GateStartedAtUtc?.ToString("O") ?? "n/a"} completedAtUtc={result.GateCompletedAtUtc?.ToString("O") ?? "n/a"}\n" +
+                       $"gateRunId={result.GateRunId ?? "n/a"} startedAtUtc={result.GateStartedAtUtc?.ToString("O") ?? "n/a"} completedAtUtc={result.GateCompletedAtUtc?.ToString("O") ?? "n/a"} verdictSource={result.VerdictSource}\n" +
+                       $"profileDigest={result.GateProfileDigest ?? "n/a"} pipelineDefinitionVersion={result.PipelineDefinitionVersion?.ToString() ?? "n/a"} toolchainIdentity={result.ToolchainIdentity ?? "n/a"} originalEvidencePath={result.OriginEvidencePath ?? "n/a"}\n" +
                        $"collision={result.GateCollisionDetected} queueWaitMs={result.GateQueueWaitMs}\n" +
                        $"repository={result.Repository ?? "n/a"} expectedSha={result.ExpectedSha ?? "n/a"} testedSha={result.TestedSha ?? "n/a"}\n" +
                        $"attemptChainId={result.AttemptChainId ?? "n/a"} executor={result.Executor ?? "n/a"} workspace={result.Workspace ?? "n/a"}\n" +
                        $"reason={result.Reason}\n" +
+                       $"testSelectionAuditDigest={result.TestSelectionAuditDigest ?? "n/a"}\n" +
                        $"backend={result.RanBackendBuild} frontend={result.RanFrontendBuild}\n" +
                        $"changedFiles={(changedFiles == null ? "unknown" : string.Join(", ", changedFiles.Take(50)))}\n" +
                        "--- dependency-cache-decision.json ---\n" +
@@ -5664,6 +5699,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
         var moved = MoveReissueToReadyTop(current, entry, BuildTestGateReopenCause);
         if (moved == null) return;
+        if (SessionContinuationLedgerStore.Latest(moved.FolderPath)?.MechanicalResumesUsed >= 1)
+            SessionContinuationLedgerStore.SaveFreshReason(
+                moved.FolderPath, "failed-deterministic-gate");
 
         if (councilReaction is not null)
         {

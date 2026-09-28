@@ -34,9 +34,9 @@ public sealed partial class ProcessStartGuardTests
         {
             ["backend/Features/Cli/Execution/BuiltInCliBehaviors.cs:137"] =
                 SharedCliHardeningAllowance(),
-            ["backend/Features/Cli/Execution/BuiltInCliBehaviors.cs:757"] =
+            ["backend/Features/Cli/Execution/BuiltInCliBehaviors.cs:759"] =
                 SharedCliHardeningAllowance(),
-            ["backend/Features/Cli/Execution/BuiltInCliBehaviors.cs:1256"] =
+            ["backend/Features/Cli/Execution/BuiltInCliBehaviors.cs:1288"] =
                 SharedCliHardeningAllowance(),
         };
 

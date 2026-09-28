@@ -28,6 +28,7 @@ public sealed class ProjectSettingsServiceTests : IDisposable
         var settings = svc.Get("new-project");
 
         Assert.True(settings.AutoCommit);
+        Assert.True(settings.AutomaticFailureContinuationsEnabled);
         Assert.Equal(AutoPushStrategies.AlwaysImmediate, settings.AutoPushStrategy);
     }
 
@@ -75,6 +76,16 @@ public sealed class ProjectSettingsServiceTests : IDisposable
 
         svc.SetAutoCommit("demo", true);
         Assert.True(svc.Get("demo").AutoCommit);
+    }
+
+    [Fact]
+    public void AutomaticFailureContinuationSetting_PersistsPerProject()
+    {
+        var svc = Build();
+        svc.SetAutomaticFailureContinuationsEnabled("demo", false);
+
+        Assert.False(Build().Get("demo").AutomaticFailureContinuationsEnabled);
+        Assert.True(Build().Get("other").AutomaticFailureContinuationsEnabled);
     }
 
     [Fact]
@@ -567,6 +578,23 @@ public sealed class ProjectSettingsServiceTests : IDisposable
     }
 
     [Fact]
+    public void PromptEnrichmentBlockDeclaration_PersistsForTheProject()
+    {
+        var svc = Build();
+        svc.SetPipelineStep("runbook", PipelineTypes.Task,
+            PipelineCatalogue.PromptEnrichmentStepId,
+            new PipelineStepSetting
+            {
+                EnrichmentBlockIds = ["task-state-api-first", "task-state-api-first"]
+            });
+
+        var reloaded = Build().Get("runbook");
+        Assert.Equal(["task-state-api-first"],
+            PipelineTypeSettings.ForType(reloaded, PipelineTypes.Task)!.PipelineSteps!
+                [PipelineCatalogue.PromptEnrichmentStepId].EnrichmentBlockIds);
+    }
+
+    [Fact]
     public void Get_MigratesLegacyFlatPipelineConfigToThreeCodingTypesOnly()
     {
         File.WriteAllText(StorePath(), """
@@ -663,6 +691,13 @@ public sealed class ProjectSettingsServiceTests : IDisposable
                 TestCommands = [" test-api ", ""],
                 Reason = " api ownership ",
             }],
+            MappedSourceRoots = [" src ", "src"],
+            FolderToTestProjects = [new TestFolderMapping
+            {
+                Folder = " src/api/ ",
+                Module = " api ",
+                TestProjects = [" tests/Api.Tests/Api.Tests.csproj ", ""],
+            }],
             TestHubHistoryPath = " .test-hub/history.jsonl ",
         });
 
@@ -677,6 +712,11 @@ public sealed class ProjectSettingsServiceTests : IDisposable
         Assert.Equal(["src/api"], rule.PathPrefixes);
         Assert.Equal(["test-api"], rule.TestCommands);
         Assert.Equal("api ownership", rule.Reason);
+        Assert.Equal(["src"], policy.MappedSourceRoots);
+        var mapping = Assert.Single(policy.FolderToTestProjects!);
+        Assert.Equal("src/api", mapping.Folder);
+        Assert.Equal("api", mapping.Module);
+        Assert.Equal(["tests/Api.Tests/Api.Tests.csproj"], mapping.TestProjects);
         Assert.Equal(".test-hub/history.jsonl", policy.TestHubHistoryPath);
     }
 

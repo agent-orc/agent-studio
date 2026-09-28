@@ -148,7 +148,7 @@ public sealed class ProviderRejectionContinuationService
         var fallbackInfo = new ModelFallbackInfo(
             fallback.FromModel,
             fallback.ToModel,
-            fallback.Reason,
+            "provider-rejection",
             fallback.CliType,
             thinkingLevel);
         if (_mutations.SavePendingIntent(

@@ -72,11 +72,19 @@ and `paused`.
   probe: `ssh agent-runner curl --max-time 5
   http://127.0.0.1:15031/healthz`.
 - A failed route probe or an exited child starts recovery. The supervisor stops
-  its child, uses the established non-sudo `ss` and `kill` sequence to free only
-  `127.0.0.1:15031`, waits for the listener to clear, and starts a replacement
-  with `ExitOnForwardFailure=yes`.
-- Retry delays follow the configured ladder. The first new heartbeat resets the
-  attempt counter and retry delay.
+  its child, runs a non-interactive `timeout 4s` inspection through SSH, and
+  checks `ss -H -ltnp "sport = :15031"`. It signals only an `sshd` process owned
+  by the SSH user and holding `127.0.0.1:15031`, then checks the listener again.
+  Both remote output streams go to the link log. A timeout names the cleanup
+  command in `lastError`.
+- If the listener remains held, the resource reports `blockedBy:
+  remote-listener-held`, `remoteListenerPid`, and `remoteListenerAgeSeconds`.
+  The operator feed receives one `link_remote_listener_held` alarm for that
+  incident. Retries continue at the longest configured delay until the port
+  clears. `transport: no-route` identifies a dropped local route in the
+  resource and error detail.
+- Retry delays otherwise follow the configured ladder. The first new heartbeat
+  resets the attempt counter and retry delay.
 - Laptop resume is handled as an ordinary late heartbeat. There is no separate
   resume hook or external watchdog.
 
@@ -84,11 +92,18 @@ At Task Server startup, a successful bounded functional route probe adopts one
 already-running matching route. This prevents a flap during migration from the
 Scheduled Task. The next failed probe moves ownership to a supervisor child.
 
+Runner onboarding installs `/etc/ssh/sshd_config.d/05-agent-runner-client-alive.conf`
+with `ClientAliveInterval 30` and `ClientAliveCountMax 3`, verifies the effective
+sshd settings, and reloads the SSH service. This server-side liveness policy
+reaps a dead client after roughly 90 seconds even when the workstation cannot
+reach the host to run cleanup. Re-run onboarding to restore the managed file.
+
 ## API and Studio operation
 
 `GET /api/v1/management/links` returns one entry per configured link with
 `state`, `since`, `lastHeartbeatAt`, `lastProbe`, `lastError`, `attempt`,
-`nextRetryAt`, and `childPid`. These authenticated mutations are appended to
+`nextRetryAt`, `childPid`, `blockedBy`, `remoteListenerPid`,
+`remoteListenerAgeSeconds`, and `transport`. These authenticated mutations are appended to
 `<TaskRepository>/.audit/runner-links.jsonl`:
 
 ```text

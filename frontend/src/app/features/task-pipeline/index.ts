@@ -28,6 +28,7 @@ export type {
   OnDemandPostStepAttempt,
   StepPromptEntry,
   StepPromptsResponse,
+  PipelineAspectEvidence,
 } from './models/task-pipeline.model';
 export type {
   PipelineHealthAlert,

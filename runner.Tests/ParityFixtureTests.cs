@@ -381,7 +381,7 @@ public sealed class ParityFixtureTests
             fixture.StdOut,
             fixture.StdErr,
             fixture.ExitCode,
-            SignalFromExitCode(fixture.ExitCode),
+            Signal: null,
             SessionState: sessionState,
             SessionId: provider.SessionId,
             DurableOutputState: fixture.DurableOutputState switch
@@ -393,10 +393,6 @@ public sealed class ParityFixtureTests
             },
             DurableOutputReference: fixture.DurableOutputState == "missing" ? null : WorktreePath);
     }
-
-    /// <summary>Mirrors <c>RemoteTaskRunner.SignalFromExitCode</c>.</summary>
-    private static int? SignalFromExitCode(int exitCode)
-        => !OperatingSystem.IsWindows() && exitCode is >= 129 and <= 255 ? exitCode - 128 : null;
 
     /// <summary>
     /// A recorded CLI transcript. The grammar is documented in

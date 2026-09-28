@@ -110,7 +110,8 @@ function inventoryFixture(overrides: Partial<GitProjectInventory> = {}): GitProj
   };
 }
 
-function setup() {
+function setup(hash = '') {
+  window.history.replaceState(null, '', hash || '/');
   const openTaskKey = vi.fn(() => true);
   TestBed.configureTestingModule({
     imports: [ProjectGitPanelComponent],
@@ -133,6 +134,127 @@ function setup() {
 }
 
 describe('ProjectGitPanelComponent', () => {
+  it('opens commit details once on Enter and closes them on a second Enter', () => {
+    const { fixture, http, root } = setup();
+    http.expectOne(request => request.url === '/api/git/inventory').flush(inventoryFixture());
+    fixture.detectChanges();
+
+    const summary = root.querySelector<HTMLButtonElement>('[data-testid="git-commit-summary"]')!;
+    summary.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    fixture.detectChanges();
+    http.expectOne(request => request.url === '/api/git/project-commit/files')
+      .flush({ sha: COMMIT_SHA, files: [] });
+    fixture.detectChanges();
+
+    expect(root.querySelector('[data-testid="git-commit-details"]')).not.toBeNull();
+    summary.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    fixture.detectChanges();
+    expect(root.querySelector('[data-testid="git-commit-details"]')).toBeNull();
+    http.verify();
+  });
+
+  it('selects a commit and opens details from its card chip', () => {
+    const { fixture, http, root, openTaskKey } = setup();
+    http.expectOne(request => request.url === '/api/git/inventory').flush(inventoryFixture());
+    fixture.detectChanges();
+
+    root.querySelector<HTMLButtonElement>('[data-kind="task"]')!.click();
+    fixture.detectChanges();
+    http.expectOne(request => request.url === '/api/git/project-commit/files')
+      .flush({ sha: COMMIT_SHA, files: [] });
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.selectedCommitSha()).toBe(COMMIT_SHA);
+    expect(root.querySelector('[data-testid="git-commit-details"]')).not.toBeNull();
+    expect(openTaskKey).not.toHaveBeenCalled();
+    http.verify();
+  });
+
+  it('selects a ref tip, opens details, and keeps the ref highlighted', () => {
+    const { fixture, http, root } = setup();
+    http.expectOne(request => request.url === '/api/git/inventory').flush(inventoryFixture());
+    fixture.detectChanges();
+
+    root.querySelector<HTMLButtonElement>('[data-testid="git-branch-row"][data-branch="main"]')!.click();
+    fixture.detectChanges();
+    http.expectOne(request => request.url === '/api/git/project-commit/files')
+      .flush({ sha: COMMIT_SHA, files: [] });
+    fixture.detectChanges();
+
+    expect(root.querySelector('[data-testid="git-branch-row"][data-branch="main"]')?.getAttribute('aria-current'))
+      .toBe('true');
+    expect(root.querySelector('[data-testid="git-commit-details"]')).not.toBeNull();
+    http.verify();
+  });
+
+  it('hydrates a deep-linked commit and scrolls its graph row into view', async () => {
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView });
+    const { fixture, http, root } = setup(`/#/projects/demo/git?commit=${COMMIT_SHA}`);
+    http.expectOne(request => request.url === '/api/git/inventory').flush(inventoryFixture());
+    fixture.detectChanges();
+    http.expectOne(request => request.url === '/api/git/project-commit/files')
+      .flush({ sha: COMMIT_SHA, files: [] });
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    expect(fixture.componentInstance.selectedCommitSha()).toBe(COMMIT_SHA);
+    expect(root.querySelector('[data-testid="git-commit-details"]')).not.toBeNull();
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+    http.verify();
+  });
+
+  it('closes commit details on Escape from the details region or graph', () => {
+    const { fixture, http, root } = setup();
+    http.expectOne(request => request.url === '/api/git/inventory').flush(inventoryFixture());
+    fixture.detectChanges();
+    root.querySelector<HTMLElement>('[data-testid="git-commit-row"]')!.click();
+    fixture.detectChanges();
+    http.expectOne(request => request.url === '/api/git/project-commit/files')
+      .flush({ sha: COMMIT_SHA, files: [] });
+    fixture.detectChanges();
+
+    const copy = root.querySelector<HTMLButtonElement>('[data-testid="git-copy-sha"]')!;
+    copy.focus();
+    copy.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    fixture.detectChanges();
+
+    expect(root.querySelector('[data-testid="git-commit-details"]')).toBeNull();
+    expect(fixture.componentInstance.selectedCommitSha()).toBeNull();
+
+    root.querySelector<HTMLElement>('[data-testid="git-commit-row"]')!.click();
+    fixture.detectChanges();
+    http.expectOne(request => request.url === '/api/git/project-commit/files')
+      .flush({ sha: COMMIT_SHA, files: [] });
+    fixture.detectChanges();
+    const summary = root.querySelector<HTMLButtonElement>('[data-testid="git-commit-summary"]')!;
+    summary.focus();
+    summary.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    fixture.detectChanges();
+    expect(root.querySelector('[data-testid="git-commit-details"]')).toBeNull();
+    http.verify();
+  });
+
+  it('opens commit details on selection and closes them on a second click', () => {
+    const { fixture, http, root } = setup();
+    http.expectOne(request => request.url === '/api/git/inventory').flush(inventoryFixture());
+    fixture.detectChanges();
+
+    const row = root.querySelector<HTMLElement>('[data-testid="git-commit-row"]')!;
+    row.click();
+    fixture.detectChanges();
+    http.expectOne(request => request.url === '/api/git/project-commit/files')
+      .flush({ sha: COMMIT_SHA, files: [{ status: 'M', path: 'src/thing.ts', added: 3, removed: 1 }] });
+    fixture.detectChanges();
+
+    expect(root.querySelector('[data-testid="git-commit-details"]')?.textContent).toContain(COMMIT_SHA);
+    expect(root.querySelector('[data-testid="git-commit-details"]')?.textContent).toContain('src/thing.ts');
+    row.click();
+    fixture.detectChanges();
+    expect(root.querySelector('[data-testid="git-commit-details"]')).toBeNull();
+    http.verify();
+  });
+
   it('renders active checkouts and semantic chips beside the enriched commit graph', () => {
     const { fixture, http, root, openTaskKey } = setup();
     http.expectOne(request => request.url === '/api/git/inventory').flush(inventoryFixture());
@@ -148,8 +270,9 @@ describe('ProjectGitPanelComponent', () => {
     const chips = [...commitRow.querySelectorAll<HTMLElement>('[data-tone]')]
       .map(chip => chip.textContent?.trim());
     expect(chips).toEqual(['Integrated · develop', 'Deployed · runner', 'AGT-1', 'In progress']);
-    commitRow.querySelector<HTMLButtonElement>('[data-kind="task"]')!.click();
-    expect(openTaskKey).toHaveBeenCalledWith('Demo::task-1');
+    expect(commitRow.querySelector<HTMLButtonElement>('[data-kind="task"]')?.getAttribute('aria-label'))
+      .toContain('Select commit attributed to card AGT-1');
+    expect(openTaskKey).not.toHaveBeenCalled();
     expect(root.querySelector('[data-testid="git-cleanup"]')).toBeNull();
     http.verify();
   });

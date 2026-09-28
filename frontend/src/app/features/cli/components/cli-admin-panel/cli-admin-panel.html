@@ -60,6 +60,7 @@
                     [class.cap-row__used--blocked]="row.usedPct !== null && row.usedPct >= row.pendingCapPct">
                 used
                 <strong>{{ formatPct(row.usedPct) }}</strong>
+                <small>{{ formatReset(row.resetAt) }}</small>
               </span>
             </div>
             <div class="cap-row__slider">

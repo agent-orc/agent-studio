@@ -52,8 +52,8 @@ export interface TaskTab { kind: 'task'; taskKey: string; scope?: TaskTabScope; 
  */
 export type WikiTabTarget =
   | { kind: 'overview' }
-  | { kind: 'page'; relPath: string }
-  | { kind: 'folder'; relPath: string };
+  | { kind: 'page'; relPath: string; title?: string }
+  | { kind: 'folder'; relPath: string; title?: string };
 
 /** Caller-owned intent for opening an editor target. */
 export type StudioTabReusePolicy = 'replace-current' | 'new';

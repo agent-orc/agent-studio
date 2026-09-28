@@ -82,6 +82,32 @@ public sealed class WorkbenchCatalogueTests : IDisposable
     }
 
     [Fact]
+    public void List_KeepsRecordOnlyOperatorChoicesCurrentAndPromotable()
+    {
+        WriteWorkbench("choices", "Choices", "decision-pending", "2026-09-25T12:56:00Z");
+        var path = Path.Combine(_root, "docs", "workbenches", "choices", "workbench.json");
+        var descriptor = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+        descriptor["decision"] = JsonNode.Parse("""
+          {
+            "outcome":"record-only", "action":"recorded", "state":"succeeded",
+            "operationId":"operator-20260925-choices",
+            "sourceFingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "preparedAt":"2026-09-25T12:56:00Z", "preparedBy":"Operator",
+            "confirmedAt":"2026-09-25T12:56:00Z", "confirmedBy":"Operator",
+            "decidedAt":"2026-09-25T12:56:00Z",
+            "responses":[{"decisionId":"choice","kind":"single","selectedOptionIds":["a"],"comment":"Chosen by operator."}]
+          }
+          """);
+        File.WriteAllText(path, descriptor.ToJsonString());
+
+        var item = Assert.Single(Service().List("Project")!.Items);
+
+        Assert.True(item.Valid, item.Error);
+        Assert.Equal("decision-pending", item.Status);
+        Assert.Null(item.Decision);
+    }
+
+    [Fact]
     public void List_RejectsMalformedRelevanceReview()
     {
         WriteWorkbench("reviewed", "Reviewed", "active", "2026-09-12T10:00:00Z");
@@ -134,6 +160,9 @@ public sealed class WorkbenchCatalogueTests : IDisposable
           </section>
           <section data-decision-id="invalid id" data-decision-kind="single">
             <span data-option-id="ignored">Ignored</span>
+          </section>
+          <section data-decision-id="settled" data-decision-kind="single" data-decision-status="decided" data-selected-option-id="a">
+            <span data-option-id="a">Settled</span>
           </section>
           """);
 

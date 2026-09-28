@@ -49,6 +49,8 @@ public static class TaskIntegrationRetryEndpoints
                     error = result.Reason,
                     status = "already-running",
                     code = result.Code,
+                    comparedDeliverySha = result.ComparedDeliverySha,
+                    latestAttempt = result.LatestAttempt,
                 }),
                 GateEnvironmentRetryStatus.NoPassedReview => Results.Conflict(new
                 {
@@ -56,6 +58,8 @@ public static class TaskIntegrationRetryEndpoints
                     status = "no-passed-review",
                     code = result.Code,
                     deliverySha = result.DeliverySha,
+                    comparedDeliverySha = result.ComparedDeliverySha,
+                    latestAttempt = result.LatestAttempt,
                 }),
                 _ => Results.Conflict(new
                 {
@@ -63,6 +67,8 @@ public static class TaskIntegrationRetryEndpoints
                     status = "not-applicable",
                     code = result.Code,
                     state = job.State,
+                    comparedDeliverySha = result.ComparedDeliverySha,
+                    latestAttempt = result.LatestAttempt,
                 }),
             };
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);

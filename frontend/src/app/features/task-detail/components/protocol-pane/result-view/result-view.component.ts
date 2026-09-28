@@ -49,6 +49,7 @@ export class ResultViewComponent {
   readonly openWiki = output<string>();
   readonly openTask = output<string>();
   readonly navigateMetric = output<string>();
+  readonly openDocument = output<string>();
   readonly copyRequested = output<void>();
   readonly moreActions = output<MouseEvent>();
 
@@ -75,4 +76,16 @@ export class ResultViewComponent {
     const lane = this.verdict().lane;
     return lane ? laneTone(lane) : null;
   });
+
+  readonly latestAspectVerdicts = computed(() =>
+    this.detail().info.reviewProjection?.attempts?.[0]?.aspects ?? []);
+
+  openResultReference(reference: { path: string; line: number | null }): void {
+    const fileName = reference.path.split('/').pop() ?? reference.path;
+    if (/^(?:aspect-[^/]+\.md|remote-review-(?:grade-)?[^/]+)$/i.test(fileName)) {
+      this.openDocument.emit(fileName);
+      return;
+    }
+    this.openSource.emit(reference);
+  }
 }

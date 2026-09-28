@@ -37,6 +37,7 @@
               [runOutcome]="runOutcome()"
               (agentConfigCommit)="agentConfigCommit.emit($event)"
               (referencesChanged)="referencesChanged.emit()"
+              (documentRequested)="openDocument($event)"
               (titleSaved)="titleSaved.emit()" />
           }
         }
@@ -86,6 +87,7 @@
                         [watchPath]="watchPath()"
                         [isRunning]="isRunning()"
                         [focusRequest]="docFocusRequest()"
+                        (documentRequested)="openDocument($event)"
                         (save)="save.emit($event)" />
 
         @if (history().length > 0) {

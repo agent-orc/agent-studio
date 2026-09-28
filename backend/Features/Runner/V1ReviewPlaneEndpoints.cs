@@ -398,7 +398,8 @@ public static class V1ReviewPlaneEndpoints
                 runnerId,
                 executor.HostId,
                 request.InstanceId,
-                request.RequestedTtlSeconds);
+                request.RequestedTtlSeconds,
+                executor.Capabilities);
             if (claimed.Status == AttemptWriteStatus.NotFound)
                 return Results.Ok(new Contract.ReviewClaimResponse(
                     "empty", Message: "No current immutable ReviewAttempt is queued."));
@@ -414,6 +415,15 @@ public static class V1ReviewPlaneEndpoints
                 remoteReviewPlans,
                 out var subjectTask,
                 out var baseline);
+            if (!Contract.ReviewLibraryStepPolicy.Supports(subject.Plan, executor.Capabilities))
+            {
+                if (!authority.DeferReviewClaim(review.AttemptId, runnerId, request.InstanceId))
+                    return Results.Conflict(new Contract.ApiError(
+                        "review-capability-defer-failed",
+                        "The claim could not be relinquished after capability admission failed."));
+                return Results.Ok(new Contract.ReviewClaimResponse(
+                    "empty", Message: "Review executor lacks a required library-step capability."));
+            }
             CorrectOutdatedIntegrationBranch(
                 subjectTask,
                 baseline,
@@ -421,17 +431,12 @@ public static class V1ReviewPlaneEndpoints
                 mutations,
                 timeline,
                 loggerFactory.CreateLogger(LoggerName));
-            // AGT-2751: resolve each agent-aspect command's cli/model against
-            // the CURRENT quota at hand-out time, not whatever was true when
-            // the plan was built or frozen. This is what lets an already-open
-            // ReviewAttempt (created before a provider hit its cap) pick up an
-            // equal-strength fallback on its next claim without an operator
-            // superseding it with a rebuilt plan. Only the returned DTO
-            // changes; review.Subject.Plan (and any cached copy) is untouched,
-            // so a retry after a rejected/expired claim re-resolves quota
-            // fresh instead of replaying a stale substitution.
+            // Legacy plans retain claim-time quota fallback. A versioned
+            // library plan is immutable after sealing; model changes require
+            // a pending replan or a new eligible attempt.
             string? quotaDeferredReason;
-            if (subjectTask is not null)
+            if (subjectTask is not null
+                && !subject.Plan.Commands.Any(command => command.LibraryStep is not null))
                 subject = ApplyQuotaFallbackToAspects(
                     subject,
                     subjectTask,
@@ -656,6 +661,15 @@ public static class V1ReviewPlaneEndpoints
                 return Results.Conflict(new Contract.ApiError(
                     "review-subject-mismatch",
                     "Review workspace does not identify the immutable ReviewSubject."));
+            }
+            if (currentReview.Subject.Plan is { } immutablePlan
+                && immutablePlan.Commands.Any(command => command.LibraryStep is not null)
+                && !Contract.ReviewLibraryStepPolicy.ValidReport(
+                    immutablePlan, request.Commands, request.Outcome))
+            {
+                return Results.Conflict(new Contract.ApiError(
+                    "review-step-digest-mismatch",
+                    "Review command evidence does not match the leased library step digest."));
             }
 
             if (Contract.ReviewToolchainFailurePolicy.IsUnavailable(
@@ -1333,22 +1347,22 @@ public static class V1ReviewPlaneEndpoints
         var integrationRef = baseline?.IntegrationRef;
         var taskSettings = task is null ? null : settings.Get(task.ProjectName);
         var plan = review.Subject.Plan
-                   ?? remoteReviewPlans.Build(
+                   ?? (remoteReviewPlans.Build(
                        task,
                        project?.RepositoryPath,
                        taskSettings,
-                       integrationRef);
-        // The plan is frozen with the subject, so a retry inherits whatever ref
-        // the first attempt was handed. AGT-2220 replayed a stale
-        // refs/heads/main through four attempts that way. Re-stamping the ref at
-        // hand-out time is what lets a corrected integration line reach the
-        // runner instead of the snapshot taken when the card was created.
+                       integrationRef) with { LibraryVersion = 0 });
+        // Legacy plans retain the AGT-2220 integration-ref correction at
+        // hand-out. Versioned library plans keep the ref sealed at creation;
+        // correcting it requires a pending replan or a new eligible attempt.
         if (integrationRef is not null
+            && !plan.Commands.Any(command => command.LibraryStep is not null)
             && !string.Equals(plan.IntegrationRef, integrationRef, StringComparison.Ordinal))
         {
             plan = plan with { IntegrationRef = integrationRef };
         }
-        plan = Contract.ReviewPlanResourcePolicy.Apply(plan);
+        if (plan.LibraryVersion == 0)
+            plan = Contract.ReviewPlanResourcePolicy.Apply(plan);
         return new Contract.ReviewSubjectDto(
             review.Subject.SubjectId,
             task?.Id ?? review.TaskKey,
@@ -1437,6 +1451,7 @@ public static class V1ReviewPlaneEndpoints
             Model = lastSwitch.Model,
             ThinkingLevel = lastSwitch.ThinkingLevel,
             Reason = lastSwitch.Reason,
+            ModelFallback = lastSwitch.ModelFallback,
         });
         recorder.EmitFallbackActivated(
             task,
@@ -1449,7 +1464,8 @@ public static class V1ReviewPlaneEndpoints
                 true,
                 lastSwitch.Reason,
                 CapEvaluation.NotBlocked),
-            source: "review-claim");
+            source: "review-claim",
+            modelFallback: lastSwitch.ModelFallback);
         return subject with { Plan = subject.Plan with { Commands = resolvedCommands } };
     }
 
@@ -1526,9 +1542,6 @@ public static class V1ReviewPlaneEndpoints
         var commands = verify.Commands
             .Select((command, index) =>
             {
-                var shellCommand = string.IsNullOrWhiteSpace(command.WorkingSubdir)
-                    ? command.Command
-                    : $"cd -- {ShellQuote(command.WorkingSubdir)} && {command.Command}";
                 // AGT-2446 root cause: the contract default of 1800s starved
                 // dotnet build/test on the review host once several attempts ran
                 // in parallel - the killed process surfaced as
@@ -1546,12 +1559,13 @@ public static class V1ReviewPlaneEndpoints
                     $"verify-{index + 1}",
                     command.Kind == VerifyCommandKind.Lint ? "lint" : "build-tests",
                     "sh",
-                    ["-lc", shellCommand],
+                    ["-lc", command.Command],
                     TimeoutSeconds: 7200,
                     CompareToBaseline: true,
                     BaselineMode: command.Kind == VerifyCommandKind.Test
                         ? Contract.ReviewBaselineModes.TestFailures
-                        : Contract.ReviewBaselineModes.ExitStatus);
+                        : Contract.ReviewBaselineModes.ExitStatus,
+                    WorkingSubdir: command.WorkingSubdir);
             })
             .ToList();
         if (commands.Count == 0)
@@ -1567,7 +1581,8 @@ public static class V1ReviewPlaneEndpoints
             IntegrationRef: integrationRef,
             Preparation: preparation,
             PreserveGlobs: profile?.PreserveGlobs,
-            BuildProfileFingerprint: BuildProfileValidationFingerprint.Create(profile));
+            BuildProfileFingerprint: BuildProfileValidationFingerprint.Create(profile),
+            LibraryVersion: Contract.ReviewLibraryStepPolicy.Version);
     }
 
     /// <summary>
@@ -1953,9 +1968,6 @@ public static class V1ReviewPlaneEndpoints
         => context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is not RunnerPrincipal principal
            || string.Equals(principal.RunnerId, runnerId, StringComparison.Ordinal);
 
-    private static string ShellQuote(string value)
-        => "'" + value.Replace("'", "'\"'\"'", StringComparison.Ordinal) + "'";
-
     private static string? ReviewArtifactTail(
         IReadOnlyList<Contract.ReviewArtifactEvidenceDto> artifacts,
         string? sha256)
@@ -2242,7 +2254,10 @@ public sealed class V1ReviewExecutorRegistry
                     capability.Signal,
                     capability.ExpiresAt,
                     capability.LimitedUntil,
-                    capability.CredentialModifiedAt);
+                    capability.CredentialModifiedAt,
+                    capability.EvidenceId,
+                    capability.EvidenceExcerpt,
+                    capability.SupportedModels);
             })
             .GroupBy(capability => capability.Key, StringComparer.Ordinal)
             .Select(group => group.Last())
@@ -2802,10 +2817,10 @@ public sealed class V1ReviewExecutorRegistry
                     return CodingCapabilityAdmission.Blocked(
                         required,
                         $"Required capability '{key}' is stale since {capability.FreshUntil:O}.");
-                if (!string.Equals(capability.AdvertisedStatus, "ready", StringComparison.Ordinal))
+                if (!Claimable(capability.AdvertisedStatus))
                     return CodingCapabilityAdmission.Blocked(
                         required,
-                        $"Required capability '{key}' is advertised as {capability.AdvertisedStatus}.");
+                        CapabilityMismatchMessage(key, capability));
             }
 
             if (_capabilityFailures.TryGetValue(runnerId, out var failures))
@@ -2825,6 +2840,34 @@ public sealed class V1ReviewExecutorRegistry
             }
         }
         return new CodingCapabilityAdmission(true, null, required);
+    }
+
+    /// <summary>
+    /// Returns the model-admission evidence advertised by the current coding
+    /// runner instance. A null model list means discovery was inconclusive and
+    /// callers must leave the post-run mismatch guard responsible for safety.
+    /// </summary>
+    public CliModelCapability? CliModelCapabilityFor(
+        string runnerId,
+        string? instanceId,
+        string cliType)
+    {
+        var key = Contract.CapabilityProtocol.CliExecution(cliType);
+        lock (_gate)
+        {
+            if (string.IsNullOrWhiteSpace(instanceId)
+                || !_registrations.TryGetValue(runnerId, out var registration)
+                || !string.Equals(registration.InstanceId, instanceId, StringComparison.Ordinal)
+                || !_capabilityStates.TryGetValue(runnerId, out var state)
+                || !string.Equals(state.InstanceId, instanceId, StringComparison.Ordinal))
+                return null;
+
+            var capability = state.Capabilities.FirstOrDefault(item =>
+                string.Equals(item.Key, key, StringComparison.Ordinal));
+            return capability is null
+                ? null
+                : new CliModelCapability(capability.Version, capability.SupportedModels);
+        }
     }
 
     /// <summary>
@@ -2874,8 +2917,27 @@ public sealed class V1ReviewExecutorRegistry
 
     private static bool IsPositiveProviderAuthRecovery(Contract.CapabilityHealthDto capability)
         => capability.Key.StartsWith("provider-auth:", StringComparison.Ordinal)
-           && string.Equals(capability.AdvertisedStatus, "ready", StringComparison.Ordinal)
+           && Claimable(capability.AdvertisedStatus)
            && capability.Signal is "ok" or "credentials-expiring";
+
+    private static bool Claimable(string status)
+        => string.Equals(status, "ready", StringComparison.Ordinal)
+           || string.Equals(status, "degraded", StringComparison.Ordinal);
+
+    private static string CapabilityMismatchMessage(
+        string key,
+        Contract.CapabilityHealthDto capability)
+    {
+        if (!string.Equals(capability.AdvertisedStatus, "limited", StringComparison.Ordinal))
+            return $"Required capability '{key}' is advertised as {capability.AdvertisedStatus}.";
+        var until = capability.LimitedUntil is { } reset
+            ? $" until {reset.ToUniversalTime():HH:mm} UTC"
+            : string.Empty;
+        var evidence = string.IsNullOrWhiteSpace(capability.EvidenceId)
+            ? string.Empty
+            : $" (evidence: run {capability.EvidenceId}, '{capability.EvidenceExcerpt ?? "no excerpt"}')";
+        return $"Required capability '{key}' is limited{until}{evidence}.";
+    }
 
     /// <summary>Caller must hold <see cref="_gate"/>.</summary>
     private void ClearCapabilityFailures(string runnerId)
@@ -2984,6 +3046,10 @@ public sealed class V1ReviewExecutorRegistry
             string message)
             => new(false, message, required);
     }
+
+    public sealed record CliModelCapability(
+        string? InstalledVersion,
+        IReadOnlyList<string>? SupportedModels);
 
     public sealed record ReviewExecutor(string HostId, IReadOnlySet<string> Capabilities);
 

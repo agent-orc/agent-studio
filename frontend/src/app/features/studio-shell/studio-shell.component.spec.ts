@@ -604,6 +604,24 @@ describe('StudioShellComponent hub tab label + icon', () => {
       .toBe('ASS · Settings');
   });
 
+  it('uses document metadata for the tab title and keeps the project as a prefix chip', () => {
+    const component = makeComponent();
+    const tab = {
+      kind: 'hub' as const,
+      projectName: 'Agent Software Studio',
+      section: 'wiki',
+      wikiTarget: {
+        kind: 'page' as const,
+        relPath: 'operations/pre-develop-gate-a-run-budget-overrun.md',
+        title: 'Pre-develop gate run budget overrun',
+      },
+    };
+
+    expect(component.tabPrefix(tab)).toBe('ASS');
+    expect(component.tabTitle(tab)).toBe('Pre-develop gate run budget overrun');
+    expect(component.tabTooltip(tab)).toContain('Pre-develop gate run budget overrun');
+  });
+
   it('uses Deck for the default rail when section is missing or unknown', () => {
     const component = makeComponent();
     expect(component.tabLabel({ kind: 'hub', projectName: 'Agent Software Studio' }))

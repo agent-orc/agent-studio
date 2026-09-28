@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Net.Http.Json;
+using System.Net;
 using System.Diagnostics;
 using AgentStudio.TestSupport;
 
@@ -133,6 +134,213 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         // The endpoint acceptance proves the fenced report reached the backend;
         // ArtifactIngestionEndpointsTests pins the exact board-fact wording and
         // typed outcome written by this route.
+    }
+
+    [Fact]
+    public async Task Remote_claim_stashes_follow_up_and_start_hash_consumes_it_into_run_history()
+    {
+        const string prompt = "Continue with the operator-approved recovery.";
+        SeedTask(TaskStates.Ready, TaskKey, "Remote follow-up", "Original prompt.");
+        var readyFolder = Path.Combine(_watchPath, TaskStates.Ready, TaskKey);
+        File.WriteAllText(
+            Path.Combine(readyFolder, "pending-intent.json"),
+            JsonSerializer.Serialize(new PendingIntent
+            {
+                Prompt = prompt,
+                Mode = ContinueModes.Steer,
+                SavedAt = DateTime.UtcNow.AddMinutes(-1),
+                SavedReason = FollowUpQueueReasons.RemoteExecution,
+                Author = "human:owner",
+            }));
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/example/follow-up.git");
+
+        var claim = await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+            RunnerId, ProjectName, "host", 1, "remote-runner"));
+
+        Assert.Equal(RClaimStatus.Claimed, claim.Status);
+        Assert.Equal(prompt, claim.RunSpec!.FollowUp!.Prompt);
+        Assert.Equal(claim.Lease!.AttemptId, claim.RunSpec.FollowUp.ClaimId);
+        var progressFolder = Path.Combine(_watchPath, TaskStates.Progress, TaskKey);
+        Assert.False(File.Exists(Path.Combine(progressFolder, "pending-intent.json")));
+        Assert.True(File.Exists(Path.Combine(progressFolder, "pending-intent.consumed.json")));
+
+        var renew = await client.RenewLeaseAsync(new RHeartbeat(
+            TaskKey,
+            claim.Lease!.LeaseId,
+            claim.Lease.FencingToken,
+            RunnerId,
+            AttemptId: claim.Lease.AttemptId,
+            AuthorityEpoch: claim.Lease.AuthorityEpoch,
+            IdempotencyKey: $"worker-start:{claim.Lease.AttemptId}",
+            StartedPromptSha256: claim.RunSpec.FollowUp.PromptSha256), CancellationToken.None);
+
+        Assert.True(renew.Granted, renew.Message);
+        Assert.False(File.Exists(Path.Combine(progressFolder, "pending-intent.consumed.json")));
+        var startedRun = Assert.Single(
+            factory.Services.GetRequiredService<TaskSessionLog>()
+                .ReadSessionEvents(TaskKey, _watchPath),
+            row => row.RunAttemptId == claim.Lease.AttemptId);
+        Assert.Equal(claim.RunSpec.FollowUp.PromptSha256, startedRun.StartedPromptSha256);
+        var timeline = factory.Services.GetRequiredService<TimelineLog>().ReadAll(progressFolder);
+        var delivered = Assert.Single(
+            timeline,
+            row => row.Kind == TimelineEventKinds.FollowUpConsumed);
+        Assert.Equal(claim.Lease.AttemptId, delivered.RunId);
+        Assert.Equal("steer", delivered.Details!["mode"]);
+        Assert.Equal("human:owner", delivered.Details["author"]);
+    }
+
+    [Fact]
+    public async Task Rejected_worker_start_hash_does_not_renew_backend_lease()
+    {
+        const string prompt = "Deliver the exact queued follow-up.";
+        SeedTask(TaskStates.Ready, TaskKey, "Rejected start hash", "Original prompt.");
+        var readyFolder = Path.Combine(_watchPath, TaskStates.Ready, TaskKey);
+        File.WriteAllText(Path.Combine(readyFolder, "pending-intent.json"),
+            JsonSerializer.Serialize(new PendingIntent
+            {
+                Prompt = prompt,
+                Mode = ContinueModes.Steer,
+                SavedAt = DateTime.UtcNow.AddMinutes(-1),
+                SavedReason = FollowUpQueueReasons.RemoteExecution,
+            }));
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/example/rejected-start.git");
+
+        var claim = await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+            RunnerId, ProjectName, "host", 1, "remote-runner"));
+        Assert.Equal(RClaimStatus.Claimed, claim.Status);
+        var lease = claim.Lease!;
+        var leases = factory.Services.GetRequiredService<RunLeaseService>();
+        var originalExpiry = leases.Peek(lease.TaskKey).Lease!.ExpiresAt;
+        var heartbeat = new RHeartbeat(
+            TaskKey, lease.LeaseId, lease.FencingToken, RunnerId,
+            RequestedTtlSeconds: 600,
+            AttemptId: lease.AttemptId,
+            AuthorityEpoch: lease.AuthorityEpoch,
+            IdempotencyKey: $"worker-start:{lease.AttemptId}",
+            StartedPromptSha256: new string('0', 64));
+
+        using var rejected = await http.PostAsJsonAsync(
+            "/api/runner/lease/renew", heartbeat, ApiJson);
+        Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
+        Assert.Equal(originalExpiry, leases.Peek(lease.TaskKey).Lease!.ExpiresAt);
+        var progressFolder = Path.Combine(_watchPath, TaskStates.Progress, TaskKey);
+        Assert.True(File.Exists(Path.Combine(progressFolder, "pending-intent.consumed.json")));
+
+        var timelinePath = TaskPaths.TimelineLog(progressFolder);
+        var originalTimeline = File.Exists(timelinePath) ? File.ReadAllText(timelinePath) : string.Empty;
+        if (File.Exists(timelinePath)) File.Delete(timelinePath);
+        Directory.CreateDirectory(timelinePath);
+        using (var unpersistable = await http.PostAsJsonAsync(
+                   "/api/runner/lease/renew", heartbeat with
+                   {
+                       StartedPromptSha256 = claim.RunSpec!.FollowUp!.PromptSha256,
+                   }, ApiJson))
+        {
+            Assert.Equal(HttpStatusCode.Conflict, unpersistable.StatusCode);
+        }
+        Assert.Equal(originalExpiry, leases.Peek(lease.TaskKey).Lease!.ExpiresAt);
+        Directory.Delete(timelinePath);
+        File.WriteAllText(timelinePath, originalTimeline);
+
+        var accepted = await client.RenewLeaseAsync(heartbeat with
+        {
+            StartedPromptSha256 = claim.RunSpec!.FollowUp!.PromptSha256,
+        }, CancellationToken.None);
+        Assert.True(accepted.Granted, accepted.Message);
+        Assert.True(leases.Peek(lease.TaskKey).Lease!.ExpiresAt > originalExpiry);
+        Assert.False(File.Exists(Path.Combine(progressFolder, "pending-intent.consumed.json")));
+    }
+
+    [Fact]
+    public async Task Remote_claim_transition_failure_rolls_follow_up_back_for_retry()
+    {
+        const string prompt = "Do not lose this failed claim prompt.";
+        SeedTask(TaskStates.Ready, TaskKey, "Failed remote claim", "Original prompt.");
+        var readyFolder = Path.Combine(_watchPath, TaskStates.Ready, TaskKey);
+        File.WriteAllText(
+            Path.Combine(readyFolder, "pending-intent.json"),
+            JsonSerializer.Serialize(new PendingIntent
+            {
+                Prompt = prompt,
+                Mode = ContinueModes.Continue,
+                SavedAt = DateTime.UtcNow,
+                SavedReason = FollowUpQueueReasons.RemoteExecution,
+            }));
+        // A non-directory target is the state machine's explicit, recoverable
+        // lane-transition refusal. It occurs after lease acquisition and intent
+        // reservation, which exercises the claim rollback boundary.
+        File.WriteAllText(Path.Combine(_watchPath, TaskStates.Progress, TaskKey), "blocked");
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/example/follow-up-rollback.git");
+
+        var claim = await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+            RunnerId, ProjectName, "host", 1, "remote-runner"));
+
+        Assert.Equal(RClaimStatus.Empty, claim.Status);
+        Assert.Contains("claim move refused", claim.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(File.Exists(Path.Combine(readyFolder, "pending-intent.json")));
+        Assert.False(File.Exists(Path.Combine(readyFolder, "pending-intent.consumed.json")));
+    }
+
+    [Fact]
+    public async Task Lost_remote_worker_before_start_restores_follow_up_for_the_next_claim()
+    {
+        const string prompt = "Retry after the lost worker.";
+        SeedTask(TaskStates.Ready, TaskKey, "Lost remote worker", "Original prompt.");
+        var readyFolder = Path.Combine(_watchPath, TaskStates.Ready, TaskKey);
+        File.WriteAllText(
+            Path.Combine(readyFolder, "pending-intent.json"),
+            JsonSerializer.Serialize(new PendingIntent
+            {
+                Prompt = prompt,
+                Mode = ContinueModes.Continue,
+                SavedAt = DateTime.UtcNow,
+                SavedReason = FollowUpQueueReasons.RemoteExecution,
+            }));
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/example/follow-up-retry.git");
+
+        var claim = await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+            RunnerId, ProjectName, "host", 1, "remote-runner"));
+        Assert.Equal(RClaimStatus.Claimed, claim.Status);
+        Assert.Equal(claim.Lease!.AttemptId, claim.RunSpec!.FollowUp!.ClaimId);
+
+        var release = await client.ReleaseLeaseAsync(new RRelease(
+            TaskKey,
+            claim.Lease.LeaseId,
+            claim.Lease.FencingToken,
+            RunnerId,
+            claim.Lease.AttemptId,
+            claim.Lease.AuthorityEpoch,
+            $"lost-before-start:{claim.Lease.AttemptId}"), CancellationToken.None);
+
+        Assert.Equal("Released", release.Outcome);
+        var task = factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(TaskKey, _watchPath);
+        Assert.NotNull(task);
+        Assert.Equal(prompt, task!.PendingIntent!.Prompt);
+        Assert.True(File.Exists(Path.Combine(task.FolderPath, "pending-intent.json")));
+        Assert.False(File.Exists(Path.Combine(task.FolderPath, "pending-intent.consumed.json")));
+
     }
 
     [Fact]
@@ -443,27 +651,11 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             $"/api/attempts/reviews/{completion.ReviewAttemptId}/settle",
             new SettleReviewAttemptRequest(reviewWrite, "61306343", ReviewTerminalOutcome.Pass), ct);
         Assert.Equal(System.Net.HttpStatusCode.Conflict, mismatchResponse.StatusCode);
-        var mismatch = await mismatchResponse.Content.ReadFromJsonAsync<AttemptWriteResult>(ApiJson, ct);
-        Assert.Equal(AttemptWriteStatus.SubjectMismatch, mismatch!.Status);
-        Assert.Equal("immutable-result-mismatch", mismatch.ReviewAttempt!.FailureClassification);
-        Assert.Equal(ReviewTerminalOutcome.InfrastructureFailure, mismatch.ReviewAttempt.Outcome);
-
-        var retryResponse = await http.PostAsJsonAsync(
-            "/api/attempts/reviews",
-            new CreateReviewAttemptRequest(
-                TaskKey,
-                mismatch.ReviewAttempt.RepositoryId,
-                mismatch.ReviewAttempt.Subject.ExpectedResultSha,
-                mismatch.ReviewAttempt.SourceRunAttemptId,
-                mismatch.ReviewAttempt.Subject.TaskRequirementsHash,
-                mismatch.ReviewAttempt.Subject.ReviewPolicyHash,
-                mismatch.ReviewAttempt.Subject.EvidenceDigestInputs,
-                "retry-review-same-subject",
-                mismatch.ReviewAttempt.AttemptId), ct);
-        retryResponse.EnsureSuccessStatusCode();
-        var retry = await retryResponse.Content.ReadFromJsonAsync<AttemptWriteResult>(ApiJson, ct);
-        Assert.NotEqual(mismatch.ReviewAttempt.AttemptId, retry!.ReviewAttempt!.AttemptId);
-        Assert.Equal(mismatch.ReviewAttempt.Subject.SubjectId, retry.ReviewAttempt.Subject.SubjectId);
+        using (var refused = JsonDocument.Parse(await mismatchResponse.Content.ReadAsStringAsync(ct)))
+            Assert.Equal("review-delivery-required", refused.RootElement.GetProperty("code").GetString());
+        var stillPending = await http.GetFromJsonAsync<AttemptAuthorityProjection>(
+            $"/api/attempts/tasks/{TaskKey}", ApiJson, ct);
+        Assert.Equal(AttemptLifecycleState.Leased, stillPending!.CurrentReviewAttempt!.State);
         var moved = Path.Combine(_watchPath, TaskStates.AutoReview, TaskKey);
         Assert.True(Directory.Exists(moved));
         Assert.Equal(
@@ -2141,6 +2333,57 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Null(factory.Services.GetRequiredService<RunLeaseService>().Peek("AGT-CLI-BLOCKED").Lease);
     }
 
+    [Fact]
+    public async Task Unsupported_pinned_Claude_model_leaves_card_ready_with_visible_rejection()
+    {
+        const string taskKey = "AGT-MODEL-UNSUPPORTED";
+        SeedTask(
+            TaskStates.Ready,
+            taskKey,
+            "Unsupported pinned model",
+            "Prompt.",
+            cliType: CliTypes.Claude,
+            model: "claude-opus-5-5");
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(
+            client,
+            http,
+            cliVersions: new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [CliTypes.Claude] = "2.1.270",
+            });
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/agent-orc/agent-studio.git");
+
+        var claim = await client.ClaimAsync(
+            new RClaim(
+                RunnerId,
+                ProjectName,
+                "hetzner-test",
+                4242,
+                "remote-runner",
+                IdempotencyKey: "unsupported-claude-pin"),
+            CancellationToken.None);
+
+        Assert.Equal(RClaimStatus.Empty, claim.Status);
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.Ready, taskKey)));
+        Assert.Null(factory.Services.GetRequiredService<RunLeaseService>().Peek(taskKey).Lease);
+
+        using var grouped = await http.GetAsync("/api/tasks/grouped");
+        grouped.EnsureSuccessStatusCode();
+        using var groupedJson = JsonDocument.Parse(await grouped.Content.ReadAsStringAsync());
+        var card = Assert.Single(
+            groupedJson.RootElement.GetProperty("ready").EnumerateArray(),
+            item => item.GetProperty("id").GetString() == taskKey);
+        var rejection = card.GetProperty("executionLocation").GetProperty("lastRejection");
+        Assert.Equal(ModelPinAdmissionPolicy.RejectionCode, rejection.GetProperty("code").GetString());
+        Assert.Equal(
+            "model unsupported by installed CLI 2.1.270 (minimum 2.1.281)",
+            rejection.GetProperty("reason").GetString());
+    }
+
     /// <summary>
     /// T0b (CAR migration plan §3 T0b / §7 AP3): the claim carries the card's
     /// execution specification, and the runner turns it into the CLI invocation.
@@ -2183,8 +2426,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Equal("claude", claim.RunSpec!.CliType);
         Assert.Equal("claude-opus-4-8", claim.RunSpec.Model);
         Assert.Equal("max", claim.RunSpec.ThinkingLevel);
-        Assert.Contains("## Prompt enrichment", claim.RunSpec.ModeFraming);
-        Assert.Contains("repo-instructions-source", claim.RunSpec.ModeFraming);
+        Assert.DoesNotContain("## Prompt enrichment", claim.RunSpec.ModeFraming);
+        Assert.DoesNotContain("repo-instructions-source", claim.RunSpec.ModeFraming);
         // Both modes resolve from live project settings, so they are always
         // stated; the runner transports them but does not yet build flags.
         Assert.False(string.IsNullOrWhiteSpace(claim.RunSpec.PermissionMode));
@@ -2216,7 +2459,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Equal("AGT-SPEC-CODEX", codexClaim.JobId);
         Assert.Equal("codex", codexClaim.RunSpec!.CliType);
         Assert.Equal("gpt-5.6-codex", codexClaim.RunSpec.Model);
-        Assert.Contains("## Prompt enrichment", codexClaim.RunSpec.ModeFraming);
+        Assert.DoesNotContain("## Prompt enrichment", codexClaim.RunSpec.ModeFraming);
         // Codex has no "max" rung; the server resolves the card's request against
         // the model's ladder rather than shipping an invalid selector.
         Assert.Equal("medium", codexClaim.RunSpec.ThinkingLevel);
@@ -3413,7 +3656,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         HttpClient http,
         CancellationToken ct = default,
         IReadOnlyDictionary<string, string>? cliStatuses = null,
-        DateTime? advertisedAt = null)
+        DateTime? advertisedAt = null,
+        IReadOnlyDictionary<string, string>? cliVersions = null)
     {
         var clientId = await client.RegisterAsync(ProjectName, "service", ct);
         var instanceId = $"{Environment.MachineName}:{Environment.ProcessId}";
@@ -3437,6 +3681,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                 ["codex"] = "ready",
             },
             advertisedAt,
+            cliVersions,
             ct);
         return clientId;
     }
@@ -3445,6 +3690,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         HttpClient http,
         IReadOnlyDictionary<string, string> cliStatuses,
         DateTime? advertisedAt = null,
+        IReadOnlyDictionary<string, string>? cliVersions = null,
         CancellationToken ct = default)
     {
         var capabilities = new List<Contract.AdvertisedCapabilityDto>
@@ -3461,7 +3707,10 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             capabilities.Add(new Contract.AdvertisedCapabilityDto(
                 Contract.CapabilityProtocol.CliExecution(cliType),
                 "cli-execution",
-                status));
+                status,
+                Version: cliVersions is not null && cliVersions.TryGetValue(cliType, out var version)
+                    ? version
+                    : null));
             capabilities.Add(new Contract.AdvertisedCapabilityDto(
                 Contract.CapabilityProtocol.ProviderAuthentication(cliType),
                 "provider-auth",

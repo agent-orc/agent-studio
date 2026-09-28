@@ -920,9 +920,10 @@ public sealed class MergeIntoDevelopRunner
                     ? "reset-to-pre-merge-tip"
                     : "FAILED: " + (reset.Error ?? "unknown"));
 
-        // CAC-18: a toolchain/bundler crash before test discovery is never a
-        // product failure. Roll back the unverified merge the same as any other
-        // gate failure, but classify it separately so the card is never marked
+        // CAC-18: a toolchain/bundler crash or torn executor-owned dependency
+        // cache before test discovery is never a product failure. Roll back the
+        // unverified merge the same as any other gate failure, but classify it
+        // separately so the card is never marked
         // a conflict and no rebase-recovery steer round is spent chasing a gate
         // environment problem the delivery cannot fix.
         var outcome = gate.FailureKind == BuildTestGateFailureKind.Environment
@@ -1747,6 +1748,9 @@ public sealed class MergeIntoDevelopRunner
             Reason = reason,
             FailureCode = failure?.Code,
             ConflictReport = result.ConflictReport,
+            GateVerdictSource = preMainResult?.VerdictSource ?? preDevelopResult?.VerdictSource,
+            GateOriginEvidencePath = preMainResult?.OriginEvidencePath ?? preDevelopResult?.OriginEvidencePath,
+            GateOriginCompletedAtUtc = preMainResult?.GateCompletedAtUtc ?? preDevelopResult?.GateCompletedAtUtc,
         });
     }
 

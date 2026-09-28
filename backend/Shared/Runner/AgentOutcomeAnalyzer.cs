@@ -277,6 +277,26 @@ public static class AgentOutcomeAnalyzer
         var rawText = JoinRawText(lines);
         var lineCount = lines.Count;
 
+        // Claude Code versions that do not recognize a requested model can
+        // emit this marker, silently substitute Haiku, return a successful
+        // result, and exit 0. The provider marker must outrank an agent
+        // sentinel because the sentinel came from a model the card did not
+        // authorize. Pre-spawn admission normally prevents this path; this is
+        // the post-run race/version-drift guard.
+        if (rawText.Contains("[claude-code:unrecognized_model]", StringComparison.OrdinalIgnoreCase))
+        {
+            return new AgentOutcome(
+                Kind: AgentOutcomeKind.Unknown,
+                Summary: "The installed Claude CLI does not recognize the pinned model and may have substituted another model. Upgrade the CLI or change the card's model.",
+                MatchedSentinel: false,
+                SentinelKeyword: null,
+                Reason: "Claude CLI reported an unrecognized pinned model",
+                AgentTextChars: agentText.Length,
+                OutputLineCount: lineCount,
+                DurationSeconds: durationSeconds)
+            { IssueKind = RunIssueKind.ModelInvalid };
+        }
+
         // 1) Hard sentinels - authoritative. Walk from the end so a final
         //    sentinel beats earlier transient ones.
         var sentinel = FindLastSentinel(agentText);

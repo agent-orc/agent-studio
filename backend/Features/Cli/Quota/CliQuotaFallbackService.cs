@@ -64,7 +64,8 @@ public sealed class CliQuotaFallbackService
         string? requestedCliType,
         string? requestedModel,
         string? requestedThinkingLevel,
-        Func<string?, CapEvaluation> evaluateQuota)
+        Func<string?, CapEvaluation> evaluateQuota,
+        bool preferFallback = false)
     {
         var cli = Clean(requestedCliType)?.ToLowerInvariant() ?? CliTypes.Claude;
         EnsureLoaded();
@@ -74,12 +75,13 @@ public sealed class CliQuotaFallbackService
         var primaryModel = Clean(requestedModel) ?? profile?.PrimaryModel;
         var primaryThinking = Clean(requestedThinkingLevel) ?? profile?.PrimaryThinkingLevel;
         var cap = evaluateQuota(cli);
-        if (!cap.Blocked)
+        if (!cap.Blocked && !preferFallback)
             return new(cli, primaryModel, primaryThinking, false, null, cap);
 
         var effective = EffectiveFallback(cli, profile, primaryModel, primaryThinking);
         if (effective is null)
-            return new(cli, primaryModel, primaryThinking, false, cap.DescribeReason(), cap);
+            return new(cli, primaryModel, primaryThinking, false,
+                preferFallback ? "operator prefers fallback, but no comparable route is available" : cap.DescribeReason(), cap);
 
         var (fallbackCli, fallbackModel, fallbackThinking) = effective.Value;
         var fallbackCap = string.Equals(fallbackCli, cli, StringComparison.OrdinalIgnoreCase)
@@ -89,7 +91,17 @@ public sealed class CliQuotaFallbackService
             return new(cli, primaryModel, primaryThinking, false,
                 $"primary {cap.DescribeReason()}; fallback {fallbackCap.DescribeReason()}", cap);
 
-        return new(fallbackCli, fallbackModel, fallbackThinking, true, cap.DescribeReason(), cap);
+        var isOverride = profile is not null && !string.IsNullOrWhiteSpace(profile.FallbackModel);
+        return new(
+            fallbackCli,
+            fallbackModel,
+            fallbackThinking,
+            true,
+            preferFallback ? "operator preference" : cap.DescribeReason(),
+            cap,
+            preferFallback ? "operator-preference" : "quota-cap",
+            isOverride ? "override" : "catalogue",
+            isOverride ? null : _equivalence?.Version);
     }
 
     /// <summary>
@@ -108,8 +120,8 @@ public sealed class CliQuotaFallbackService
 
         var otherFamily = OtherFamily(cli);
         if (otherFamily is null || _equivalence is null) return null;
-        var equivalent = _equivalence.TryGetEquivalent(cli, primaryModel, primaryThinking, otherFamily);
-        return equivalent is null ? null : (otherFamily, equivalent.Value.Model, equivalent.Value.ThinkingLevel);
+        var equivalent = _equivalence.TryGetRoute(cli, primaryModel, primaryThinking, otherFamily);
+        return equivalent is null ? null : (otherFamily, equivalent.ToModel, equivalent.ToThinkingLevel);
     }
 
     /// <summary>
@@ -143,14 +155,15 @@ public sealed class CliQuotaFallbackService
         var otherFamily = OtherFamily(cli);
         var equivalent = otherFamily is null || _equivalence is null
             ? null
-            : _equivalence.TryGetEquivalent(cli, profile?.PrimaryModel, profile?.PrimaryThinkingLevel, otherFamily);
+            : _equivalence.TryGetRoute(cli, profile?.PrimaryModel, profile?.PrimaryThinkingLevel, otherFamily);
         if (equivalent is null) return profile ?? new CliModelRouteProfile { CliType = cli };
         return (profile ?? new CliModelRouteProfile { CliType = cli }) with
         {
             FallbackCliType = otherFamily,
-            FallbackModel = equivalent.Value.Model,
-            FallbackThinkingLevel = equivalent.Value.ThinkingLevel,
+            FallbackModel = equivalent.ToModel,
+            FallbackThinkingLevel = equivalent.ToThinkingLevel,
             IsFallbackDerived = true,
+            CatalogueVersion = equivalent.CatalogueVersion,
         };
     }
 
@@ -212,6 +225,7 @@ public sealed record CliModelRouteProfile
     /// written to <c>cli-model-routing.json</c>.
     /// </summary>
     public bool IsFallbackDerived { get; init; }
+    public string? CatalogueVersion { get; init; }
 }
 
 public sealed record CliRouteDecision(
@@ -220,4 +234,7 @@ public sealed record CliRouteDecision(
     string? ThinkingLevel,
     bool IsFallback,
     string? Reason,
-    CapEvaluation PrimaryCap);
+    CapEvaluation PrimaryCap,
+    string? FallbackReason = null,
+    string? FallbackSource = null,
+    string? CatalogueVersion = null);

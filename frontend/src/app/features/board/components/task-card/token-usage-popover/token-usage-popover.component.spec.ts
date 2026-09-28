@@ -79,6 +79,37 @@ describe('TaskTokenUsagePopoverComponent', () => {
     TestBed.inject(HttpTestingController).verify();
   });
 
+  it('shows the observed model and mismatch flag instead of the pinned model', async () => {
+    const job = makeJob({
+      tokenSummary: {
+        calls: 2,
+        inputTokens: 20,
+        outputTokens: 4,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        totalTokens: 24,
+        estimatedApiCostUsd: 0.001,
+        allModelsPriced: true,
+        lastModel: 'Claude Haiku 4.5',
+        lastUpdate: '2026-09-24T09:30:00Z',
+        hasModelMismatch: true,
+        entries: [
+          { ts: '2026-09-24T09:00:00Z', model: 'claude-haiku-4-5', displayModel: 'Claude Haiku 4.5', pinnedModel: 'claude-opus-5-5', modelMismatch: true, inputTokens: 10, outputTokens: 2, cacheReadTokens: 0, cacheCreationTokens: 0, estimatedApiCostUsd: 0.0005, modelPriced: true },
+          { ts: '2026-09-24T09:30:00Z', model: 'claude-haiku-4-5', displayModel: 'Claude Haiku 4.5', pinnedModel: 'claude-opus-5-5', modelMismatch: true, inputTokens: 10, outputTokens: 2, cacheReadTokens: 0, cacheCreationTokens: 0, estimatedApiCostUsd: 0.0005, modelPriced: true },
+        ],
+      },
+    });
+
+    const fixture = await render(job);
+    expect(fixture.nativeElement.querySelector('[data-testid="token-row-model"]').textContent)
+      .toContain('Claude Haiku 4.5');
+    expect(fixture.nativeElement.querySelector('[data-testid="token-model-mismatch"]')).not.toBeNull();
+    expect(fixture.nativeElement.querySelector('[data-testid="token-run-model-mismatch"]').textContent)
+      .toContain('pinned claude-opus-5-5');
+
+    TestBed.inject(HttpTestingController).verify();
+  });
+
   it('fetches the by-type breakdown only once ensureTypeBreakdownLoaded is called', async () => {
     const job = makeJob({
       tokenSummary: {

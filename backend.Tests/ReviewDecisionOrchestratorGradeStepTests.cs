@@ -80,7 +80,7 @@ public class ReviewDecisionOrchestratorGradeStepTests : IDisposable
         // 1. The grade step ran on the strong model and demonstrably NOT on the
         //    bounded aspect model: aspects stay economical, the grade uses the flagship.
         Assert.Equal(ModelMetadataRegistry.DefaultForCli(CliTypes.Codex), gradeModel);
-        Assert.Equal(ModelIds.Gpt54Mini, aspectModel);
+        Assert.Equal(ModelIds.Gpt56Luna, aspectModel);
         Assert.NotEqual(aspectModel, gradeModel);
 
         // 2. The pipeline records a post-code-review-grade row with the parsed grade.

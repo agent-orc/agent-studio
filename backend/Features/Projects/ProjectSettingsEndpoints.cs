@@ -4,6 +4,7 @@ namespace AgentStudio.Projects;
 
 using AgentStudio.Git;
 using AgentStudio.Pipeline;
+using AgentStudio.Runner;
 using AgentStudio.Registry;
 using AgentStudio.Security;
 using AgentStudio.ExecutionPreparation;
@@ -83,6 +84,7 @@ public static class ProjectSettingsEndpoints
                     definitionSha256 = (string?)null,
                     valid = false,
                     issues = new[] { new ProjectDefinitionIssue(ProjectPreparationPaths.Definition, "repository-unavailable", "Project repository path is unavailable.") },
+                    preparationWarnings = Array.Empty<object>(),
                     lastManifest = (ProjectPreparationManifest?)null,
                     @override = settings.Get(projectName).ExecutionDefinitionOverride,
                     source = "subject-commit",
@@ -105,12 +107,32 @@ public static class ProjectSettingsEndpoints
             {
                 SilentCatch.Note(ex, "ProjectSettingsEndpoints: last preparation manifest");
             }
+            var preparationWarnings = (manifest?.Caches ?? [])
+                .Where(cache => cache.UnusedRunCount >= AgentStudio.TaskServer.Contracts.ProjectPreparationExecutor.UnusedCacheWarningThreshold)
+                .Select(cache =>
+                {
+                    var variable = CacheVariable(cache.Block);
+                    var redirected = PrepareScriptRedirects(repositoryPath, variable);
+                    return new
+                    {
+                        code = "cache-block-unused",
+                        block = cache.Block,
+                        consecutiveRuns = cache.UnusedRunCount,
+                        message = $"The {cache.Block} block of {projectName} is bound but unused for "
+                                  + $"{cache.UnusedRunCount} consecutive preparations; the prepare script "
+                                  + (redirected
+                                      ? $"redirects or unsets {variable}."
+                                      : $"does not populate {variable}. Check whether it redirects the cache folder."),
+                    };
+                })
+                .ToArray();
             return Results.Ok(new
             {
                 repositoryDefinition = File.Exists(definitionPath) ? File.ReadAllText(definitionPath) : null,
                 definitionSha256 = read.DefinitionSha256,
                 valid = read.IsValid,
                 issues = read.Issues,
+                preparationWarnings,
                 lastManifest = manifest,
                 @override = settings.Get(projectName).ExecutionDefinitionOverride,
                 source = "subject-commit",
@@ -178,6 +200,7 @@ public static class ProjectSettingsEndpoints
                 kv => new
                 {
                     autoCommit = kv.Value.AutoCommit,
+                    autoTag = kv.Value.AutoTag,
                     crashRecoveryEnabled = kv.Value.CrashRecoveryEnabled,
                     autoPushStrategy = AutoPushStrategies.Normalize(kv.Value.AutoPushStrategy),
                     runnerMode = kv.Value.RunnerMode,
@@ -434,14 +457,15 @@ public static class ProjectSettingsEndpoints
             if (!PipelineTypes.IsValid(req.PipelineType))
                 return Results.BadRequest(new { error = $"Unknown pipeline type '{req.PipelineType}'" });
             var pipelineType = PipelineTypes.Normalize(req.PipelineType);
+            var stepId = ResolveKnownPipelineStepId(req.StepId, pipelineType);
 
             // Reject step ids the catalogue does not know so a typo fails loud
             // instead of writing dead config that never reaches a real step. The
             // abort-review step lives off the linear AllSteps list but is a valid
             // configurable target, so accept it explicitly.
-            if (!IsKnownPipelineStep(req.StepId, pipelineType))
+            if (stepId is null)
                 return Results.BadRequest(new { error = $"Unknown pipeline step '{req.StepId}'" });
-            if (PipelineStepConfigResolver.IsRepositoryOwnedAnalysisStep(req.StepId))
+            if (PipelineStepConfigResolver.IsRepositoryOwnedAnalysisStep(stepId))
                 return Results.BadRequest(new
                 {
                     error = $"Analysis step '{req.StepId}' is configured only by .quality/agent-studio.json in the project repository.",
@@ -452,6 +476,12 @@ public static class ProjectSettingsEndpoints
 
             if (req.MaxIterations is < UiIterationGate.MinimumIterations or > UiIterationGate.MaximumIterations)
                 return Results.BadRequest(new { error = $"maxIterations must be between {UiIterationGate.MinimumIterations} and {UiIterationGate.MaximumIterations}" });
+            if (req.EnrichmentBlockIds is { Count: > 16 }
+                || req.EnrichmentBlockIds?.Any(id => string.IsNullOrWhiteSpace(id)
+                    || id.Length > 100 || !IntakeRunner.IsBuiltInConstraintId(id.Trim())) == true
+                || (req.EnrichmentBlockIds?.Count > 0
+                    && !string.Equals(stepId, PipelineCatalogue.PromptEnrichmentStepId, StringComparison.OrdinalIgnoreCase)))
+                return Results.BadRequest(new { error = "enrichmentBlockIds must contain known block ids and is supported only for the prompt-enrichment step (at most 16 ids)" });
 
             // Validate any run condition: the token must be known and
             // value-bearing tokens need a value. An "always" / blank condition
@@ -469,7 +499,7 @@ public static class ProjectSettingsEndpoints
             }
 
             var existing = PipelineTypeSettings.ForType(settings.Get(projectName), pipelineType)?.PipelineSteps?
-                .GetValueOrDefault(req.StepId);
+                .GetValueOrDefault(stepId);
             var normalizedPrompt = string.IsNullOrWhiteSpace(req.Prompt)
                 ? null
                 : req.Prompt.Trim();
@@ -488,7 +518,7 @@ public static class ProjectSettingsEndpoints
                 }
                 else
                 {
-                    var promptName = PromptPipelineBindings.ForStep(req.StepId);
+                    var promptName = PromptPipelineBindings.ForStep(stepId);
                     promptBaseDefaultContent = promptName is null
                         ? null
                         : prompts.TryReadDefault(promptName);
@@ -498,10 +528,11 @@ public static class ProjectSettingsEndpoints
                 }
             }
 
-            settings.SetPipelineStep(projectName, pipelineType, req.StepId, new PipelineStepSetting
+            settings.SetPipelineStep(projectName, pipelineType, stepId, new PipelineStepSetting
             {
                 Enabled = req.Enabled,
                 EconomyModel = req.EconomyModel,
+                EnrichmentBlockIds = req.EnrichmentBlockIds,
                 MaxIterations = req.MaxIterations,
                 Mode = req.Mode,
                 CliType = req.CliType,
@@ -515,7 +546,7 @@ public static class ProjectSettingsEndpoints
             ReplanQueuedReviewAttempts(projectName, settings, projects, git, remoteReviewPlans, reviewLifecycle);
             return Results.Ok(new
             {
-                stepId = req.StepId,
+                stepId,
                 pipelineType,
                 pipelineSteps = PipelineTypeSettings.ForType(settings.Get(projectName), pipelineType)?.PipelineSteps
                     ?? new Dictionary<string, PipelineStepSetting>(),
@@ -602,6 +633,23 @@ public static class ProjectSettingsEndpoints
             var normalized = AutoPushStrategies.Normalize(req.Strategy);
             settings.SetAutoPushStrategy(projectName, normalized);
             return Results.Ok(settings.Get(projectName));
+        });
+
+        app.MapPut("/api/projects/{projectName}/automatic-failure-continuations", (
+            string projectName, SetCrashRecoveryRequest req, ProjectSettingsService settings, TaskScannerService scanner) =>
+        {
+            var known = scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            settings.SetAutomaticFailureContinuationsEnabled(projectName, req.Enabled);
+            return Results.Ok(settings.Get(projectName));
+        });
+
+        app.MapPut("/api/projects/{projectName}/auto-tag", (string projectName, SetAutoCommitRequest req, ProjectSettingsService settings, TaskScannerService scanner) =>
+        {
+            if (!scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            settings.SetAutoTag(projectName, req.Enabled);
+            return Results.Ok(new { autoTag = settings.Get(projectName).AutoTag });
         });
 
         // Flag-gated local CLI execution engine. The effective value resolves
@@ -978,6 +1026,24 @@ public static class ProjectSettingsEndpoints
             return Results.Ok(new { cleared = true });
         });
 
+        app.MapGet("/api/projects/{projectName}/gate-result-cache", (
+            string projectName, TaskScannerService scanner) =>
+        {
+            if (!scanner.GetWatchPaths().Any(entry =>
+                    string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            return Results.Ok(new GateResultCache().Report(projectName));
+        });
+        app.MapDelete("/api/projects/{projectName}/gate-result-cache", async (
+            string projectName, TaskScannerService scanner, CancellationToken ct) =>
+        {
+            if (!scanner.GetWatchPaths().Any(entry =>
+                    string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            await new GateResultCache().InvalidateAsync(projectName, ct);
+            return Results.Ok(new { invalidated = true });
+        });
+
         // DELETE clears the build profile entirely, reverting the project to the
         // legacy "no onboarding gate" behaviour.
         app.MapDelete("/api/projects/{projectName}/build-profile", (
@@ -1215,19 +1281,77 @@ public static class ProjectSettingsEndpoints
                 RemoteProjectRepositoryResolver.ReadRepositoryDefaultBranch(project)).IntegrationRef;
             return remoteReviewPlans.Build(task, repositoryPath, taskSettings, integrationRef);
         });
+
     }
 
     private static bool IsKnownPipelineStep(string? stepId, string pipelineType = PipelineTypes.Task)
     {
         if (string.IsNullOrWhiteSpace(stepId)) return false;
+        return KnownPipelineSteps(pipelineType)
+            .Any(step => string.Equals(step.Id, stepId, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string? ResolveKnownPipelineStepId(string stepId, string pipelineType)
+    {
+        var known = KnownPipelineSteps(pipelineType).ToArray();
+        var full = known.FirstOrDefault(step =>
+            string.Equals(step.Id, stepId.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (full is not null) return full.Id;
+
+        // A bare suffix is accepted only when it names exactly one step in
+        // this pipeline type. Persist the catalogue id so runtime lookups work.
+        var matches = known.Where(step =>
+        {
+            var separator = step.Id.IndexOf('-');
+            return separator >= 0 && string.Equals(
+                step.Id[(separator + 1)..], stepId.Trim(), StringComparison.OrdinalIgnoreCase);
+        }).Select(step => step.Id).Distinct(StringComparer.OrdinalIgnoreCase).Take(2).ToArray();
+        return matches.Length == 1 ? matches[0] : null;
+    }
+
+    private static IEnumerable<PipelineStep> KnownPipelineSteps(string pipelineType)
+    {
         var pipelines = PipelineTypes.Normalize(pipelineType) == PipelineTypes.Planning
             ? new[] { PipelineCatalogue.ReadOnly }
             : PipelineCatalogue.All.Where(candidate =>
                 !string.Equals(candidate.Id, PipelineCatalogue.ReadOnlyPipelineId, StringComparison.OrdinalIgnoreCase)
                 && !string.Equals(candidate.Id, PipelineCatalogue.ConceptPipelineId, StringComparison.OrdinalIgnoreCase));
-        return pipelines.SelectMany(p => p.AllSteps)
-                .Any(s => string.Equals(s.Id, stepId, StringComparison.OrdinalIgnoreCase))
-            || string.Equals(PipelineCatalogue.AbortReviewStep.Id, stepId, StringComparison.OrdinalIgnoreCase);
+        return pipelines.SelectMany(p => p.AllSteps).Append(PipelineCatalogue.AbortReviewStep);
+    }
+
+    private static string CacheVariable(string block) => block switch
+    {
+        "nuget" => "NUGET_PACKAGES",
+        "playwright" => "PLAYWRIGHT_BROWSERS_PATH",
+        _ => "NPM_CONFIG_CACHE",
+    };
+
+    /// <summary>
+    /// Adds actionable evidence to the unused-block warning without knowing a
+    /// project by name. It recognizes the portable and PowerShell ways a prepare
+    /// script commonly discards the product-owned binding.
+    /// </summary>
+    private static bool PrepareScriptRedirects(string repositoryPath, string variable)
+    {
+        foreach (var relative in new[] { ProjectPreparationPaths.Script, ProjectPreparationPaths.Script + ".ps1" })
+        {
+            var path = Path.Combine(repositoryPath, relative.Replace('/', Path.DirectorySeparatorChar));
+            if (!File.Exists(path)) continue;
+            try
+            {
+                var script = File.ReadAllText(path);
+                if (script.Contains($"unset {variable}", StringComparison.OrdinalIgnoreCase)
+                    || script.Contains($"Remove-Item Env:{variable}", StringComparison.OrdinalIgnoreCase)
+                    || script.Contains($"$env:{variable} = $null", StringComparison.OrdinalIgnoreCase)
+                    || script.Contains($"$env:{variable}=$null", StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                SilentCatch.Note(ex, "ProjectSettingsEndpoints: prepare redirect check");
+            }
+        }
+        return false;
     }
 }
 

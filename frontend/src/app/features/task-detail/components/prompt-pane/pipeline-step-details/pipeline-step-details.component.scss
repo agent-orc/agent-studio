@@ -33,6 +33,31 @@
     gap: var(--studio-spacing-3);
   }
 
+  &__links,
+  &__attempt {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--studio-spacing-2);
+
+    button {
+      padding: var(--studio-spacing-1) var(--studio-spacing-2);
+      border: 1px solid var(--studio-border);
+      border-radius: var(--studio-radius-sm);
+      background: var(--studio-bg-elevated);
+      color: var(--studio-fg);
+      font: inherit;
+      cursor: pointer;
+    }
+  }
+
+  &__attempt span {
+    margin-right: auto;
+    color: var(--studio-fg-muted);
+    font-family: var(--font-mono);
+    font-size: 11px;
+  }
+
   &__section {
     display: grid;
     gap: var(--studio-spacing-2);

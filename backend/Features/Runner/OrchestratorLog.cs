@@ -151,6 +151,9 @@ public record OrchestratorLogEntry
     /// </summary>
     public BetterCandidateNote? BetterCandidates { get; init; }
 
+    /// <summary>Structured route receipt when quota or a provider refusal changed the model.</summary>
+    public ModelFallbackInfo? ModelFallback { get; init; }
+
     /// <summary>
     /// Future hook (Phase F): user override on this entry. Today always
     /// null; the data shape is forward-compatible.
@@ -179,6 +182,7 @@ public static class OrchestratorLogKinds
 
 public static class OrchestratorLogTopics
 {
+    public const string DecisionCard = "decision-card";
     public const string PipelineHealth = "pipeline-health";
     public const string FailureIntervention = "failure-intervention";
     public const string TaskQueued = "task-queued";

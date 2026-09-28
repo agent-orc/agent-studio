@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-09-11
+Version: 2026-09-19
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -27,7 +27,62 @@ pipeline view.
   records the serialized-argument failure mode and the validation and resource
   caps required before parallel work starts.
 
+## Exact-SHA gate verdict cache
+
+`BuildTestGateRunner` reuses a deterministic terminal verdict only for an exact
+tested tree SHA and the same gate-profile digest. The digest includes the build
+profile, resolved verify commands and selection inputs, gate mode, pipeline
+definition version, and executor toolchain identity. A changed input is a miss.
+The local fallback identity includes the effective `dotnet --version` result
+from each command directory, as well as the `node` and `npm` versions when
+installed. Version probing fails closed for cache use: a failed probe runs the
+gate without reusing or recording a verdict.
+The lookup runs after exact-SHA materialization and before project preparation,
+so a hit skips preparation and the verify suite. A command-selection adviser
+defers lookup until the resolved plan is known.
+The cache never substitutes a result for a missing or unverified SHA, an
+infrastructure failure, or a skipped gate. It is independent of the preparation
+dependency cache and the Remote Review baseline-result cache.
+
+`GateResultCache` stores the original run's evidence and completion time under
+local application data. It retains at most 128 entries per project for 30 days,
+with a 2 MB limit per entry. The runner serializes requests for one project, so
+concurrent requests for the same key cannot both execute. `GateVerdictSource`
+marks `Executed` and `CacheHit` separately in the result and pipeline step;
+`gate_verdict_cache_hit` carries the original run ID, time, SHA, digest and
+evidence path in the task timeline. A cached step records zero execution time.
+
+Operators can read `GET /api/projects/{projectName}/gate-result-cache` for the
+same-SHA re-test rate: repeated SHA executions divided by executions in the
+latest 4,096 execution window. Cache hits are counted separately. `DELETE` on
+the same endpoint invalidates that project's verdicts and measurement window.
+These metrics measure local exact-subject gate requests; they do not estimate
+batch green rate or answer the staging-lane decision in the
+[Gates Dossier](../../operations/gates/index.html#sect5).
+
 ## Key Code
+
+The creation-time `auto-tag` step (AGT-2804) is separate from the card's coding
+run pipeline. `AutoTagCreationWorker` detects newly created active cards,
+Dossiers, and wiki articles in each project; `AutoTaggingService` classifies
+them against the project's closed registry and area glossaries, writes tags
+only at confidence 0.8 or higher, and stores lower-confidence suggestions as
+`tags-proposed`. Existing non-archived items use
+`POST /api/projects/{project}/auto-tag/backfill-jobs?apply=false` for a queued
+dry run and `apply=true` for writes. `GET .../backfill-jobs/{id}` exposes the
+job status; interrupted jobs resume after restart, and `GET .../report`
+returns the last report. A direct `POST .../backfill` also returns the report
+synchronously for a bounded inspection. Reports include area counts,
+low-confidence items, and tier precision and recall against the proposed
+golden set. The step writes project activity-feed lines for applied tags and
+proposals on all three item kinds, plus card timeline lines. The per-project
+workspace setting `AutoTag` is true by default; the
+`PUT /api/projects/{project}/auto-tag` endpoint changes it. The active v1
+project definition has no `tagging.autoTag` key. Apply batches retain a durable
+pending record until item writes, timeline, state, activity, and report are
+complete. Apply retries and enabled creation sweeps recover that record without
+reclassification, including already tagged items; dry runs do not mutate it.
+See [auto-tag apply recovery](areas-and-tags.md#auto-tag-apply-recovery).
 
 - [Model Routing Policy](./model-routing-policy.md) is the canonical model and
   thinking-level selection policy, including weighted criteria, correctness
@@ -41,8 +96,18 @@ pipeline view.
   card, selects curated versioned project/style/delegation blocks, appends at
   most two optional blocks within a 1,500-token budget, and persists
   `enrichment-report.json` before dispatch. Failure to persist the report blocks
-  dispatch. The step is default-on and can be disabled through the normal
-  per-project `PipelineSteps` convention.
+  dispatch. Built-in Agent Studio blocks apply only to Agent Studio; every
+  cited source must exist in the target repository before a block is selected.
+  Projects without their own style-guide catalogue get only their own root
+  instructions, when present. A project can explicitly adopt built-in block
+  ids through the `pre-prompt-enrichment` pipeline step's
+  `enrichmentBlockIds` setting when those block sources exist in its repository.
+  Explicitly adopted blocks are considered even when task-area detection does
+  not match their usual trigger; the normal optional-block budget still applies.
+  The report records `rejected-source-missing`
+  with the missing path, and each appended block records its project,
+  repository, and source verification mode. The step is default-on and can be
+  disabled through the normal per-project `PipelineSteps` convention.
 - `backend/Features/Pipeline/PipelineStepEconomyAdvisor.cs`: opt-in automated
   recommendation layer for cheap pipeline work. It passes only live-discovered
   Spark candidates to `IModelEconomyAdvisor`, preserves explicit step pins, and
@@ -159,6 +224,27 @@ steer the pipeline in this policy version.
   rewrite in-flight work. The code-owned default definition is version zero;
   the first project override becomes version one. Successful cleanup of a
   canonical Remote Review report creates the decision run transactionally.
+- `contracts/TaskServer.Contracts/GateContracts.cs`,
+  `task-server/TaskServerGateStore.cs`, `runner/RemoteGateDaemon.cs`, and
+  `orchestrator-engine/OrchestrationStageHandlers.cs`: the dedicated claimable
+  gate pilot. The Task Server persists the immutable result subject, one live
+  attempt, a fenced lease, phase events, cleanup and the report. The Agent Host
+  gate role materializes the declared ref or digest-pinned bundle in the Review
+  workspace namespace and executes only the frozen plan. The Engine dispatches
+  the post-build-test plan through the public Task API when
+  `REMOTE_POST_BUILD_TEST_GATE_ENABLED=1`; the switch defaults off, leaving the
+  existing backend gate active. Review plans carry each verify command's working
+  subdirectory as a typed field. The Review Executor resolves it inside the
+  candidate and baseline workspaces, and the gate dispatcher preserves it for
+  the Gate Executor's exact-subject run. A lost lease waits for
+  positive host cleanup attestation before a higher-fence retry and otherwise
+  ends as GateInfra.
+  `GET /api/v1/projects/{projectId}/tasks/{taskIdentity}/gates` exposes the
+  Studio read model from Task Server facts. Host snapshots and Studio client
+  summaries derive `activeGateCount` from claimed, materializing, running,
+  reporting, and cleaning Task Server attempts. The registered-host canary and
+  throughput comparison remain the operator's rollout gate; bridge teardown
+  is a separate card.
 - `backend/Features/TestRuns/`: the separate project test-run lifecycle. These
   runs belong to commits rather than cards and expose planned order, scope,
   host, state, result, duration, and derived card attachments through
@@ -243,6 +329,7 @@ steer the pipeline in this policy version.
   pipeline history. `operatorOverride: true` is the explicit,
   target-Completed-only exception; no-branch task metadata is exempt without an
   override.
+
   `DeliveryRefResolver` chooses the immutable result ref first, then an
   attributed commit branch, then `runner/<runner>/<task-key>`, with
   `task/<slug>` only as the legacy local fallback. Remote delivery is fetched
@@ -436,15 +523,28 @@ steer the pipeline in this policy version.
   types. Planning deliberately starts from its lightweight defaults.
 - `backend/Features/Pipeline/TestSelectionPlanner.cs`: staged test planning from
   the lane policy, changed files, project/component ownership, explicit impact
-  rules, and Test Hub history. It produces the immutable selection audit used
-  by the gate log.
-- `backend/Features/Pipeline/LlmTestSelectionAdvisor.cs`: optional constrained
-  adviser. It can add only stable candidate ids from the deterministic safe
-  inventory and cannot emit an executable command.
+  rules, and Test Hub history for legacy direct callers.
+- `backend/Features/Pipeline/DeterministicTestScope.cs`: the build/test gate's
+  folder-to-test-project selector. Configure `testExecution.folderToTestProjects`
+  in project settings beside `pipelineSteps`; each row names a repository
+  `folder`, a shared `module` id for related source and test folders, and one
+  or more `testProjects` (`.csproj` paths or package folders). When `module` is
+  omitted, the folder itself is the module id.
+  Set `mappedSourceRoots` to the source roots whose immediate child directories
+  must be covered. The project pipeline owner updates the map in the same
+  change that adds or moves a source folder or test project and runs
+  `AssertMapCurrent` in the repository's validation. It throws with every
+  uncovered source directory. The gate also runs the full suite and returns a
+  red code verdict for a stale configured map. A missing map, an unmapped changed path, an
+  unavailable mapped test project, or a change spanning mapped modules runs
+  the declared full suite. A newly added test file (`A` in the Git diff) runs
+  with its whole mapped project. The gate audit records the diff, statuses,
+  selected commands, fallback reasons, and SHA-256 `digest`; the verdict also
+  carries `testSelectionAuditDigest` for the future gate subject.
+  Model-based test selection is rejected by the Gates Dossier section 5.
 - `backend/Features/Pipeline/PreMainTestGate.cs`: fail-closed release boundary
   that forces the full test level before a configured merge can advance
-  `main`, irrespective of lane settings, diff input, history, or adviser
-  output.
+  `main`, irrespective of lane settings, diff input, or history.
 - `backend/Features/Pipeline/PreDevelopBuildGate.cs` and
   `FrontendWorkPackagePlanner.cs`: exact-merge develop boundary. Non-frontend
   deliveries retain the build-only level. A merge result that touches
@@ -452,8 +552,7 @@ steer the pipeline in this policy version.
   touched source folder plus the fixed app, studio-shell, and task-detail
   barrel collision probes. Broad frontend suite commands stay outside the
   candidate inventory and configured continuous set, so impact rules, history,
-  or the optional adviser cannot silently turn this boundary into the promotion
-  full suite.
+  cannot silently turn this boundary into the promotion full suite.
 - `backend/Services/Pipeline/PipelineStepConditionEvaluator.cs`: per-step
   condition evaluation.
 - `backend/Services/Pipeline/ProjectPipelineOrder.cs`: project-level step order
@@ -516,13 +615,62 @@ steer the pipeline in this policy version.
   skipping blank / unparseable lines.
 - `backend/Features/Tasks/TaskPipelineEndpoints.cs`: API surface for task
   pipeline data, including `GET /{jobId}/step-prompts`, the read-model the
-  Overview "Prompt" affordance parses from `.metadata/prompts.jsonl`.
+  Overview "Prompt" affordance parses from `.metadata/prompts.jsonl`. The main
+  pipeline response also exposes latest-first aspect evidence links for the
+  canonical report, attempt stdout, and Remote Review grade.
 - `backend/Features/Tasks/TaskLiveStatusProjection.cs`: board and detail
   read-model for the current pipeline step, recorded CLI/model provenance,
   enabled upcoming steps, current runner/review queue position, and latest
   activity time. It reads the current execution root only.
 - `frontend/src/app/features/task-pipeline/` and the task-detail Overview:
   pipeline presentation.
+
+### Failure continuation on the same card
+
+`POST /api/tasks/{jobId}/failure/continue` reads the current integration
+projection, review subject, and latest failed pipeline step. It builds an
+`extend` follow-up on the existing card, with the failed stage, reason, delivery
+ref and SHA, integration branch tip, the three conflict stages and files when
+recorded, and the step's verdict summary. It passes no model, CLI, or thinking
+override, so the card's pins remain authoritative. The normal continuation
+admission queues a review-lane card in Ready, and the task timeline receives an
+`integration_recovery_queued` event with the source, failed stage, and evidence
+reference. The prompt is retained as `prompt-N.md` in the card history and asks
+the new delivery report to cite the failure evidence it resolved.
+An integrated delivery is refused before pipeline history is considered.
+For a pending delivery, only a step completed after the current review subject
+may supply failure context; an older failed step cannot revive a prior delivery.
+
+`IntegrationContinuationPrompt.Build` is the shared prompt text for this
+operator action, the automatic remote conflict or attribution agent round, the
+existing operator rebase recovery, the council review finding round, and the
+solution-quality review concern reissue. The mechanical gate-environment retry
+first reuses the unchanged delivery and its passed review. When that retry
+budget parks the delivery, it uses the same builder to queue one automatic
+agent continuation for that delivery; a later repeat of the same delivery parks
+with the card action. A new delivery receives its own one-round budget. The
+existing automatic budgets remain in their respective
+policies (`IntegrationRecoveryBudget`, solution-quality reissue policy, and
+`GateEnvironmentRetryPolicy`), with `GateEnvironmentContinuationPolicy` limiting
+the parked gate continuation to one. The council review finding round is capped
+at one automatic reissue before it parks for operator review.
+
+`ProjectSettings.AutomaticFailureContinuationsEnabled` controls automatic
+integration and review continuations and the automatic gate-environment retry
+sweep for each project. The Settings page exposes it; the operator action on a
+parked card remains available when it is off. Existing projects default to on,
+and each automatic mechanism still applies its own durable round budget.
+
+The task-detail delivery panel presents the exact failed stage and recorded
+files or bounded gate evidence excerpt, plus the continuation as its primary
+action. A containment answer of
+`unknown`, or an integration projection with `reachUnavailable=true`, presents
+a re-check action. The projection keeps `pending` for wire compatibility but
+marks the failed Git reach explicitly; the completion contract interprets it
+as unknown, so acceptance does not claim the delivery is absent. Human
+acceptance still only moves an already integrated card; a 409 for an
+unintegrated delivery returns to this panel instead of opening the generic
+move-error dialog.
 
 ## Invariants
 
@@ -542,13 +690,21 @@ steer the pipeline in this policy version.
   Overview. `Not run` is reserved for a step the current attempt genuinely
   never reached. Remote token totals, historical list-price estimates, and call
   counts come from the same token ledger as the Task tab.
+- A successfully executed semantic aspect is a passed pipeline step even when
+  its verdict is `concerns` or `block`; the verdict carries the review result.
+  Remote projection writes the same status, verdict, summary, and evidence
+  reference as local execution. At read time, a legacy failed remote aspect is
+  repaired to passed-with-concerns when its grade row records `concerns`.
+  Overview rows show the verdict and summary for every completed aspect and
+  link the report, raw attempt log, and grade without requiring file-name
+  knowledge.
 - Test execution has three stable levels: `continuous` runs the configured
-  fixed baseline, `work-package` adds tests selected from the current diff and
-  Test Hub history, and `full` runs every declared test command. Project
+  fixed baseline, `work-package` runs the projects selected by the maintained
+  folder map, and `full` runs every declared test command. Project
   settings map task lanes to levels. Auto Review defaults to `work-package`
-  when no mapping exists; an unavailable diff falls back to `full`. A configured
-  continuous baseline also runs for documentation-only diffs, and an explicitly
-  required `full` level can never be bypassed by the no-code-diff optimization.
+  when no lane mapping exists; an unavailable diff or missing folder map falls
+  back to `full`. A configured continuous baseline keeps its separate lane
+  contract. Documentation changes with no folder mapping also trigger full.
 - The pre-develop gate derives changed files from the exact merge commit and
   its first parent. A missing diff fails closed and rolls back a merge created
   by that attempt. Any code path forces a blocking `work-package` level even
@@ -558,39 +714,31 @@ steer the pipeline in this policy version.
   `task-detail.spec.ts`). Generated .NET work-package commands preserve an
   explicit test filter or default to `Category!=MachineBound`, keeping
   machine- and Windows-bound process/timing families out of develop admission.
-  Only the pre-main promotion boundary may force `full`.
+  The configured folder map can also force `full` when coverage is uncertain.
 - The pre-develop level matrix (`PreDevelopBuildGate.ResolveTestLevel`), by what
   the exact merge diff touches:
 
   | Merge diff | Level | Test commands the merge result runs |
   |---|---|---|
-  | Managed sources only (`.cs`, `.csproj`, `.props`, `.targets`, `.sln`, `.slnx`, `.razor`, `.cshtml`, `.resx`) | `work-package` | The impacted .NET test projects, narrowed to the touched test classes where the diff allows it. No frontend suite. |
-  | `frontend/` only | `work-package` | The Angular include slice (touched folders plus the collision set) and the declared lints. No .NET test project. |
-  | Both | `work-package` | Both of the above. |
+  | Managed sources only (`.cs`, `.csproj`, `.props`, `.targets`, `.sln`, `.slnx`, `.razor`, `.cshtml`, `.resx`) | `work-package` | Whole mapped .NET test projects, or the full suite if coverage is uncertain. |
+  | `frontend/` only | `work-package` | Whole mapped frontend test project, or the full suite if coverage is uncertain, plus declared lints. |
+  | Both | `work-package` | Full suite when the diff spans mapped modules. |
   | Neither (docs, scripts, workflow files) | `build-only` | None; the declared test inventory is listed under `OmittedTestCommands`. |
 
   Before AGT-2854 only `frontend/` reached `work-package`, so a backend-only
   delivery merged on compile evidence alone while the auto-review gate that was
   supposed to cover it runs on Linux. AGT-2853 landed a Windows-only red test
   that way, and the next two Windows gates paid for it.
-- The .NET work package narrows an impacted test project to test classes only
-  when the diff allows it, and says so in the audit. A diff confined to a test
-  project whose changed files declare test classes exclusively yields
-  `dotnet test <project> --filter "(<base>)&(FullyQualifiedName~ClassA|...)"`;
-  the selected names are listed in `TestSelection.SelectedTestClasses` and the
-  reason that produced them sits on the candidate. The slice widens to the
-  changed files' directories when such a directory holds at most 20 files, and
-  records the skip when it holds more (a flat test-project root carries no
-  folder signal). Anything else keeps the whole test project: a changed
-  production file, because no convention maps a production type to its covering
-  test classes, and a changed test file that also declares a non-test top-level
-  type, because that type can carry tests in other files.
+- The configured .NET work package runs whole mapped test projects, retaining
+  the declared filter or the `Category!=MachineBound` default. A newly added
+  test file runs with that whole project. Legacy direct planner callers may
+  still derive class slices, but the build/test gate does not use them.
 - The build/test step reason always states the effective level, selected count,
   whether the full suite ran, and how many full-suite commands were omitted.
   The task Overview exposes that reason from the passed status icon as well, so
   a green work-package subset cannot be mistaken for a full-suite pass.
-  Its `post-steps/build-test-gate-*.log` contains the exact diff input, history
-  rows, candidate inventory, chosen ids/commands, selector/model, and reasons.
+  Its `post-steps/build-test-gate-*.log` contains the exact diff input, chosen
+  commands, selector, fallback reasons, and selection audit digest.
   `FullSuiteRan` is execution evidence, not a planning claim: it becomes true
   only after every selected full-suite test command was attempted.
 - A red test step earns exactly one targeted re-run before it blocks a merge
@@ -624,6 +772,17 @@ steer the pipeline in this policy version.
   restore never wrote to (NETSDK1064, TE-52). The folder is released when the
   gate finishes or the run's slot is freed; an unreleased folder is reclaimed by
   age after 24 hours.
+- Empty preparation blocks remain misses and are never published. Lookup and
+  publication share one validity rule for non-empty entries: manifest and
+  content exist, identity matches, recorded size equals content size, and NuGet
+  packages have extraction metadata for every package version. A successful
+  preparation records `published` only after the entry is installed; lock timeout
+  and publication validation failures retain distinct states. Lookup atomically
+  quarantines an incomplete entry under a per-entry lock, logs
+  `evicted-incomplete`, and continues as a miss. A cache-class preparation failure
+  stays `Environment` and receives one clean integration-gate retry; the receipt
+  and card timeline say what happened. Three consecutive successful runs with an
+  unused binding add a definition warning to the project's Execution status.
 - Immutable Remote Review plans carry that same preparation command, lockfile
   scopes, and preserve globs to the Review Executor. Preparation runs before
   verification in both the candidate and any materialized baseline workspace.
@@ -654,9 +813,16 @@ steer the pipeline in this policy version.
   always `Code`: only an unambiguous toolchain-startup signature qualifies, so
   a genuine product failure that happens to mention the same tool stays
   `Code`. `BuildTestGateResult.IsInfrastructureFailure` is true for it.
+  The same narrow exemption applies when NuGet reports a missing `.nupkg`, or a
+  cache-only `NU1101`, whose path is inside the gate-owned
+  `agentstudio-preparation-cache/.runs/<run>/nuget/` directory. The gate records
+  `Environment`, evicts the published NuGet block with reason
+  `gate-environment-failure`, and leaves an identical NuGet error outside that
+  directory classified as `Code`.
   A failed repository preparation discards its private cache staging area and
-  cannot publish an immutable entry. Recovery and cache eviction policy belong
-  to the orchestrator healing stage rather than to the gate.
+  cannot publish an immutable entry. The preparation boundary and gate own the
+  bounded cache eviction described above; the orchestrator healing stage owns
+  the integration retry policy.
 - A pre-develop/pre-main gate classified `Environment` still rolls the
   integration branch back to its exact pre-merge tip like any other red gate,
   but `MergeIntoDevelopRunner` reports it as the distinct
@@ -753,9 +919,6 @@ steer the pipeline in this policy version.
   attempt ends visibly as `ReviewInfra / ExecutorRestarted` with the failed
   proof, completed-command count and duration, and retry reason. Replaying the
   fixed report key with another terminal payload is rejected.
-- Model advice is additive and allowlisted. Deterministic diff/history choices
-  cannot be removed, unknown candidate ids are ignored, and raw model output is
-  never interpreted as a shell command.
 - Any operation that can advance `main` must call `PreMainTestGate` first and
   proceed only on an `Ok` result with `FullSuiteRequired` and `FullSuiteRan` set.
   `PreMainTestGate` converts a nominally green runner result without that
@@ -790,7 +953,8 @@ steer the pipeline in this policy version.
   describe selector work only, which is zero in the deterministic
   implementation. Appended prompt tokens are attributed in
   `enrichment-report.json` and remain part of CORE input, so pipeline cost
-  totals do not count them twice.
+  totals do not count them twice. Shared runner prompts do not name Agent
+  Studio policy files for tasks in other repositories.
 - Cheap-model routing is explicit and reversible. `PipelineStepSetting` owns the
   `(cliType, model, thinkingLevel)` override per project and step; absent fields
   preserve the current runtime default. Aspect reviews and abort review honor
@@ -1067,7 +1231,7 @@ operator changes cause the step to fail before its writer runs.
   model is quality-first: it defaults to the
   live-discovered Codex flagship with the top supported reasoning level
   (`CodeReviewStep:DefaultModel`, CLI `CodeReviewStep:DefaultCli`), while the four
-  bounded aspect reviews use Codex's gpt-mini family (`gpt-5.4-mini` today,
+  bounded aspect reviews use Codex's gpt-mini compatibility family (`gpt-5.6-luna`,
   resolved through `ModelFamilyResolver` rather than a pinned literal - see
   [model-routing-policy.md](model-routing-policy.md#model-families-and-migrations))
   at `high`. Opt out per deployment
@@ -1169,10 +1333,17 @@ operator changes cause the step to fail before its writer runs.
   open-ended all-recommendations entry. The concept pipeline deliberately does not run
   build, test, code aspects, or integration.
   A complete Dossier moves to `5-human-review` with a durable
-  `concept-sight-review` marker. `DONE` and `NEEDS_INPUT` both count as
-  successful delivery at this gate. Sight-review acceptance completes the
-  source card; `POST /api/tasks/{id}/promote-concept` additionally creates the
-  selected coding cards from the published document.
+  `concept-sight-review` marker. The agent delivers with `DONE` even when
+  recommendations await sight review, decision acceptance, or operator approval;
+  those are later pipeline actions. `NEEDS_INPUT` is for a missing fact that
+  prevents delivery, such as credentials, an absent file, or scope with no
+  defensible recommendation. An approval-only `NEEDS_INPUT` is reclassified as
+  `Done` with a `review-requested` note and continues to review. Requests that
+  also report missing facts or no delivered work remain `NeedsInput`. Sight-review
+  acceptance completes the source card; `POST /api/tasks/{id}/promote-concept`
+  additionally creates selected coding cards from the published document. Each
+  promoted prompt lists the Dossier's recommended options as working assumptions;
+  choices recorded in its `decision.responses` block override those defaults.
 - A `Deferred` step is fully implemented but is not executed by the ordinary
   local post-bracket. It is distinct from a `Stub`: a stub has no implementation
   and renders "planned", while a deferred step renders "pending" until a named
@@ -1196,7 +1367,7 @@ operator changes cause the step to fail before its writer runs.
   intent, supersedes the current delivery generation, moves the card to the
   front of Ready, and writes `Automatically started a new agent round to
   preserve unambiguous delivery SHA attribution.` to the timeline. This loop is
-  limited to two automatic rounds per fenced delivery chain. Re-reviewing one
+  limited to one automatic round per fenced delivery chain. Re-reviewing one
   delivery shares the budget across review epochs; a newly published delivery
   starts a fresh budget. Repetition reaches Human Review with the failed step
   and conflicted files visible. Every
@@ -1297,9 +1468,9 @@ broken. An operator had to requeue every one by hand.
   own `requeued-infrastructure` timeline receipts so the rail and the card
   projection agree on the retry number.
 - **Integration recovery round.** `RemoteIntegrationContinuationPolicy.Decide`
-  (`backend/Features/Pipeline/IntegrationAgentRoundService.cs`) opens at most two
-  automatic steer rounds per fenced delivery chain when the merge-first
-  integrator returns `AgentRoundRequired`, then leaves a repeat for Human Review.
+  (`backend/Features/Pipeline/IntegrationAgentRoundService.cs`) opens at most one
+  automatic steer round per fenced delivery chain when the merge-first
+  integrator returns `AgentRoundRequired` or `Conflict`, then leaves a repeat for Human Review.
   The round saves a `steer` pending intent, retains the ambiguous delivery as
   superseded history, queues the card at the front of Ready, and states itself as
   `integration_recovery_queued` with `automatic=true` and the persisted

@@ -138,7 +138,7 @@
       }
       @if (git.isAggregate() || git.commitDetail()?.commit) {
         @if (git.commitFiles().length) {
-          <div class="git-view__split-body" [style.--git-tree-width.px]="treeColWidth()">
+          <div class="git-view__split-body">
             <div class="git-view__tree-col" data-testid="git-tree-col">
               <app-git-file-tree
                 [files]="git.commitFiles()"
@@ -148,17 +148,15 @@
             </div>
 
             <div class="git-view__splitter"
+                 appResizableSplitter
+                 splitterStorageKey="taskboard.gitPane.treeWidth"
+                 splitterCssProperty="--git-tree-width"
+                 [splitterDefaultSize]="300"
+                 [splitterMinSize]="200"
+                 [splitterMinOppositeSize]="320"
                  data-testid="git-tree-splitter"
-                 role="separator"
-                 aria-orientation="vertical"
                  aria-label="Resize file tree column"
-                 tabindex="0"
-                 [class.git-view__splitter--dragging]="treeResizing()"
-                 (pointerdown)="startTreeResize($event)"
-                 (pointermove)="onTreeResizeMove($event)"
-                 (pointerup)="endTreeResize($event)"
-                 (pointercancel)="endTreeResize($event)"
-                 (keydown)="onTreeResizeKey($event)"></div>
+                 ></div>
 
             @if (git.selectedDiffPath()) {
               <ng-container [ngTemplateOutlet]="diffPanel" />
@@ -204,7 +202,7 @@
         @if (g.files.length === 0) {
           <div class="git-view__empty">Working tree clean.</div>
         } @else {
-          <div class="git-view__split-body" [style.--git-tree-width.px]="treeColWidth()">
+          <div class="git-view__split-body">
             <div class="git-view__tree-col" data-testid="git-tree-col">
               <app-git-file-tree
                 [files]="g.files"
@@ -214,17 +212,15 @@
             </div>
 
             <div class="git-view__splitter"
+                 appResizableSplitter
+                 splitterStorageKey="taskboard.gitPane.treeWidth"
+                 splitterCssProperty="--git-tree-width"
+                 [splitterDefaultSize]="300"
+                 [splitterMinSize]="200"
+                 [splitterMinOppositeSize]="320"
                  data-testid="git-tree-splitter"
-                 role="separator"
-                 aria-orientation="vertical"
                  aria-label="Resize file tree column"
-                 tabindex="0"
-                 [class.git-view__splitter--dragging]="treeResizing()"
-                 (pointerdown)="startTreeResize($event)"
-                 (pointermove)="onTreeResizeMove($event)"
-                 (pointerup)="endTreeResize($event)"
-                 (pointercancel)="endTreeResize($event)"
-                 (keydown)="onTreeResizeKey($event)"></div>
+                 ></div>
 
             @if (git.selectedDiffPath()) {
               <ng-container [ngTemplateOutlet]="diffPanel" />

@@ -1,0 +1,3 @@
+## Delivery and approval
+
+Sight review, decision acceptance, and operator approval are pipeline lanes after delivery. Finish the requested work and report `[[TASK_DONE]]`; do not stop the run to ask for those approvals. For a promoted implementation card, use each Dossier recommendation as the working decision unless its recorded operator decision selects another option. An older card or Dossier instruction to wait for an operator answer to a recommended decision is superseded by this rule. Record which option you implemented. Reserve `[[TASK_NEEDS_INPUT:<short missing fact>]]` for a fact you cannot obtain, such as credentials, an absent required file, or ambiguous scope with no defensible recommendation.

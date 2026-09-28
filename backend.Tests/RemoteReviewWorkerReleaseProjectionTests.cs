@@ -76,6 +76,99 @@ public sealed class RemoteReviewWorkerReleaseProjectionTests : IDisposable
             item => item.Kind == TimelineEventKinds.ReviewGradedBySupersededRelease);
     }
 
+    [Fact]
+    public async Task Remote_concern_projects_the_same_passed_status_and_verdict_as_local_execution()
+    {
+        var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
+        var task = Job();
+        var started = new DateTime(2026, 9, 18, 8, 10, 0, DateTimeKind.Utc);
+        var report = Report(null) with
+        {
+            Commands =
+            [
+                new Contract.ReviewCommandEvidenceDto(
+                    "aspect-code-quality", "code-quality", "codex", [], new string('a', 40),
+                    new string('a', 40), new string('b', 40), started, started.AddMinutes(1), 0, null,
+                    new string('c', 64), new string('d', 64),
+                    ExecutionKind: Contract.ReviewCommandKinds.AgentAspect,
+                    AttemptId: "review-attempt-1", Model: "gpt-5.6-sol", InputTokens: 100,
+                    OutputTokens: 20),
+            ],
+            Verdicts =
+            [
+                new Contract.ReviewVerdictDto(
+                    "code-quality", "concerns", "RemoteAspectVerdict",
+                    "Clean diff with one dead no-op assertion.", "spec and diff", "none"),
+            ],
+        };
+        var pipeline = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["Workspace:Root"] = _root }).Build();
+        var projector = new RemotePipelineReviewEvidenceProjector(
+            pipeline,
+            timeline,
+            new FileGenerationIndex(NullLogger<FileGenerationIndex>.Instance),
+            new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, configuration));
+
+        await projector.ProjectAsync(
+            task, Attempt(), report, "remote-review-grade-review-attempt-1.md",
+            started.AddMinutes(2), CancellationToken.None);
+
+        var step = Assert.Single(
+            pipeline.Read(task.FolderPath)!.Steps,
+            candidate => candidate.StepId == "aspect-code-quality");
+        Assert.Equal(PipelineStepStatus.Passed, step.Status);
+        Assert.Equal("concerns", step.Verdict);
+        Assert.Equal("Clean diff with one dead no-op assertion.", step.VerdictSummary);
+        Assert.Equal("aspect-code-quality.md", step.EvidenceRef);
+    }
+
+    [Fact]
+    public async Task Remote_aspect_command_failure_remains_a_failed_step_with_its_block_verdict()
+    {
+        var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
+        var task = Job();
+        var started = new DateTime(2026, 9, 18, 9, 10, 0, DateTimeKind.Utc);
+        var report = Report(null) with
+        {
+            Commands =
+            [
+                new Contract.ReviewCommandEvidenceDto(
+                    "aspect-code-quality", "code-quality", "codex", [], new string('a', 40),
+                    new string('a', 40), new string('b', 40), started, started.AddMinutes(1), 17, null,
+                    new string('c', 64), new string('d', 64),
+                    ExecutionKind: Contract.ReviewCommandKinds.AgentAspect,
+                    AttemptId: "review-attempt-1", Model: "gpt-5.6-sol"),
+            ],
+            Verdicts =
+            [
+                new Contract.ReviewVerdictDto(
+                    "code-quality", "block", "CommandFailed",
+                    "Review command 'aspect-code-quality' exited 17.",
+                    "command:aspect-code-quality", "successful execution of aspect-code-quality"),
+            ],
+        };
+        var pipeline = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["Workspace:Root"] = _root }).Build();
+        var projector = new RemotePipelineReviewEvidenceProjector(
+            pipeline,
+            timeline,
+            new FileGenerationIndex(NullLogger<FileGenerationIndex>.Instance),
+            new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, configuration));
+
+        await projector.ProjectAsync(
+            task, Attempt(), report, "remote-review-grade-review-attempt-1.md",
+            started.AddMinutes(2), CancellationToken.None);
+
+        var step = Assert.Single(
+            pipeline.Read(task.FolderPath)!.Steps,
+            candidate => candidate.StepId == "aspect-code-quality");
+        Assert.Equal(PipelineStepStatus.Failed, step.Status);
+        Assert.Equal("block", step.Verdict);
+        Assert.Equal("Review command 'aspect-code-quality' exited 17.", step.VerdictSummary);
+    }
+
     private async Task ProjectAsync(
         TimelineLog timeline,
         TaskInfo task,

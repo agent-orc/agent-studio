@@ -27,9 +27,14 @@ public sealed partial class TaskServerStore
     // counts for the 24-hour execution-host projection.
     // 19 persists host CLI update state, target drift age, and deduplicated
     // per-host model minimum alerts.
+    // 20 keeps a single-use mechanical continuation delta on each task and
+    // binds its claim to the fenced run for replay and restart safety.
     // The migration block is idempotent; the number guards downgrades from
     // binaries that do not know this state.
-    public const int CurrentSchemaVersion = 19;
+    // 21 adds versioned engine steering receipts.
+    // 22 adds transactional queued-follow-up claim, start acknowledgement,
+    // rollback, and terminal supersession state.
+    public const int CurrentSchemaVersion = 22;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -526,6 +531,8 @@ public sealed partial class TaskServerStore
     public async Task<TaskDto?> UpdateTaskAsync(string projectId, string taskIdentity, UpdateTaskRequest request, string actorId, CancellationToken ct)
     {
         RequireWritable();
+        if (request.MechanicalDelta is not null && request.State != "2-ready")
+            throw new ArgumentException("A mechanical continuation delta requires a Ready transition.");
         TaskDto? updated = null;
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
@@ -551,8 +558,19 @@ public sealed partial class TaskServerStore
                 """, ct, transaction,
                 ("$title", updated.Title), ("$body", updated.Body), ("$state", updated.State),
                 ("$version", updated.Version), ("$updated", Iso(now)), ("$id", updated.TaskId), ("$expected", request.ExpectedVersion));
+            if (request.MechanicalDelta is not null)
+                await ExecuteAsync(connection, """
+                    DELETE FROM task_mechanical_deltas
+                     WHERE task_id = $task AND claimed_run_id IS NULL;
+                    INSERT INTO task_mechanical_deltas(task_id, delta_json, claimed_run_id)
+                    VALUES ($task, $delta, NULL);
+                    """, ct, transaction,
+                    ("$task", updated.TaskId),
+                    ("$delta", JsonSerializer.Serialize(request.MechanicalDelta)));
             if (updated.State is "6-completed" or "7-archive")
             {
+                await SupersedePendingFollowUpAsync(
+                    connection, transaction, updated.TaskId, actorId, ct);
                 await SupersedeUnclaimableReviewAttemptsAsync(
                     connection,
                     transaction,
@@ -1298,7 +1316,10 @@ public sealed partial class TaskServerStore
                     "empty",
                     Message: capabilityAdmission.Message,
                     ReconciliationActions: reconciliationActions,
-                    RuntimeCapacity: runtimeCapacity);
+                    RuntimeCapacity: runtimeCapacity,
+                    ReprobeCapabilities: capabilityAdmission.Required
+                        .Where(key => key.StartsWith("provider-auth:", StringComparison.Ordinal))
+                        .ToArray());
                 return;
             }
             if (request.AvailableSlots <= 0)
@@ -1365,6 +1386,21 @@ public sealed partial class TaskServerStore
 
             var providerContinuation = await ReadProviderFallbackForClaimAsync(
                 connection, transaction, task, ct);
+            var mechanicalDelta = await ReadUnclaimedMechanicalDeltaAsync(connection, transaction, task.TaskId, ct);
+            SessionContinuationLedgerEntry? previousSession = null;
+            var priorSessionJson = Convert.ToString(await ScalarAsync(connection, """
+                SELECT payload_json FROM events
+                 WHERE task_id = $task AND kind = 'session.continuation'
+                 ORDER BY rowid DESC LIMIT 1;
+                """, ct, transaction, ("$task", task.TaskId)), CultureInfo.InvariantCulture);
+            if (!string.IsNullOrWhiteSpace(priorSessionJson))
+            {
+                try { previousSession = JsonSerializer.Deserialize<SessionContinuationLedgerEntry>(priorSessionJson); }
+                catch (JsonException) { /* Corrupt evidence never authorizes a resume. */ }
+            }
+            var mechanicalFreshRoute = await ReadMechanicalFreshRouteAsync(
+                connection, transaction, task.TaskId, mechanicalDelta, previousSession, ct);
+            var mechanicalBase = MechanicalFallbackBase(previousSession);
 
             var fence = Convert.ToInt64(await ScalarAsync(connection,
                 "SELECT last_fence FROM fence_counters WHERE task_id = $task;", ct, transaction, ("$task", task.TaskId))
@@ -1378,6 +1414,10 @@ public sealed partial class TaskServerStore
             var leaseId = $"lse_{Guid.NewGuid():N}";
             var now = UtcNow;
             var expires = now.AddSeconds(NormalizeTtl(request.RequestedTtlSeconds));
+            var followUp = await ReadPendingFollowUpAsync(
+                connection, transaction, task.TaskId, ct);
+            if (followUp is not null)
+                followUp = followUp with { ClaimId = runId };
             await ExecuteAsync(connection, """
                 INSERT INTO runs(
                     id, task_id, status, runner_id, fence, created_at, started_at,
@@ -1387,12 +1427,17 @@ public sealed partial class TaskServerStore
                     $requiredCapabilities, $canaryCapabilities);
                 INSERT INTO leases(task_id, lease_id, run_id, runner_id, instance_id, fence, acquired_at, expires_at, status)
                 VALUES ($task, $lease, $run, $runner, $instance, $fence, $now, $expires, 'active');
+                UPDATE pending_follow_ups
+                   SET state = 'stashed', run_id = $run
+                 WHERE task_id = $task AND state = 'queued';
                 UPDATE tasks SET state = '3-progress', version = version + 1, updated_at = $now WHERE id = $task;
                 """, ct, transaction,
                 ("$run", runId), ("$task", task.TaskId), ("$runner", request.RunnerId), ("$instance", request.InstanceId),
                 ("$fence", fence), ("$lease", leaseId), ("$now", Iso(now)), ("$expires", Iso(expires)),
                 ("$requiredCapabilities", JsonSerializer.Serialize(capabilityAdmission.Required)),
                 ("$canaryCapabilities", JsonSerializer.Serialize(capabilityAdmission.Canaries)));
+            if (mechanicalDelta is not null)
+                await ClaimMechanicalDeltaAsync(connection, transaction, task.TaskId, runId, ct);
             await ReserveCanariesAsync(
                 connection,
                 transaction,
@@ -1423,8 +1468,12 @@ public sealed partial class TaskServerStore
                 CanaryCapabilities: capabilityAdmission.Canaries,
                 RuntimeCapacity: runtimeCapacity,
                 ModelFallback: providerContinuation?.Fallback,
-                ContinuationBaseRef: providerContinuation?.BaseRef,
-                ContinuationBaseSha: providerContinuation?.BaseSha);
+                ContinuationBaseRef: mechanicalBase.Ref ?? providerContinuation?.BaseRef,
+                ContinuationBaseSha: mechanicalBase.Sha ?? providerContinuation?.BaseSha,
+                PreviousSession: previousSession,
+                MechanicalDelta: mechanicalDelta,
+                MechanicalFreshRoute: mechanicalFreshRoute,
+                FollowUp: followUp);
         }, ct);
         return response!;
     }
@@ -1452,6 +1501,62 @@ public sealed partial class TaskServerStore
             {
                 throw new TaskServerConflictException("lease-expired-process-unknown", "Lease expired. Positive containment proof is required before recovery.");
             }
+            if (!string.IsNullOrWhiteSpace(request.StartedPromptSha256))
+            {
+                FollowUpDeliveryDto? reservedFollowUp = null;
+                string? followUpRunId = null;
+                await using (var command = Command(connection, """
+                    SELECT prompt, mode, prompt_sha256, saved_at, saved_reason, author, run_id
+                      FROM pending_follow_ups
+                     WHERE task_id = $task AND state = 'stashed';
+                    """, transaction, ("$task", lease.TaskId)))
+                await using (var reader = await command.ExecuteReaderAsync(ct))
+                {
+                    if (await reader.ReadAsync(ct))
+                    {
+                        reservedFollowUp = new FollowUpDeliveryDto(
+                            reader.GetString(0),
+                            reader.GetString(1),
+                            reader.GetString(2),
+                            Parse(reader.GetString(3)),
+                            reader.GetString(4),
+                            reader.IsDBNull(5) ? null : reader.GetString(5));
+                        followUpRunId = reader.IsDBNull(6) ? null : reader.GetString(6);
+                    }
+                }
+                if (reservedFollowUp is not null
+                    && (!string.Equals(reservedFollowUp.PromptSha256, request.StartedPromptSha256, StringComparison.OrdinalIgnoreCase)
+                        || !string.Equals(followUpRunId, runId, StringComparison.Ordinal)))
+                {
+                    throw new TaskServerConflictException(
+                        "follow-up-prompt-mismatch",
+                        "The worker-start prompt hash does not match the follow-up reserved by this run.");
+                }
+                if (reservedFollowUp is not null)
+                {
+                    await ExecuteAsync(connection,
+                        "DELETE FROM pending_follow_ups WHERE task_id = $task AND run_id = $run;",
+                        ct, transaction, ("$task", lease.TaskId), ("$run", runId));
+                    await AuditAsync(
+                        connection,
+                        transaction,
+                        actorId,
+                        "follow-up.delivered",
+                        "run",
+                        runId,
+                        JsonSerializer.Serialize(new
+                        {
+                            taskId = lease.TaskId,
+                            reservedFollowUp.Mode,
+                            reservedFollowUp.Author,
+                            reservedFollowUp.SavedAt,
+                            reservedFollowUp.SavedReason,
+                            reservedFollowUp.PromptSha256,
+                            state = "delivered",
+                        }),
+                        ct);
+                }
+            }
             var expires = UtcNow.AddSeconds(NormalizeTtl(request.RequestedTtlSeconds));
             await ExecuteAsync(connection, "UPDATE leases SET expires_at = $expires WHERE run_id = $run;", ct, transaction,
                 ("$expires", Iso(expires)), ("$run", runId));
@@ -1476,6 +1581,11 @@ public sealed partial class TaskServerStore
             var lease = await ReadLeaseAsync(connection, transaction, runId, ct)
                 ?? throw new KeyNotFoundException("Run lease was not found.");
             ValidateLeaseReference(lease, request.RunnerId, request.InstanceId, request.LeaseId, request.Fence);
+            if (string.Equals(lease.Status, "completed", StringComparison.Ordinal))
+            {
+                released = lease;
+                return;
+            }
             if (!string.Equals(lease.Status, "active", StringComparison.Ordinal))
                 throw new TaskServerConflictException("lease-not-active", $"Lease status is '{lease.Status}'.");
             await ExecuteAsync(connection, """
@@ -1483,6 +1593,9 @@ public sealed partial class TaskServerStore
                 UPDATE runs SET status = $outcome, finished_at = $now WHERE id = $run;
                 UPDATE tasks SET state = '2-ready', version = version + 1, updated_at = $now
                  WHERE id = $task AND state = '3-progress';
+                UPDATE pending_follow_ups
+                   SET state = 'queued', run_id = NULL
+                 WHERE task_id = $task AND state = 'stashed' AND run_id = $run;
                 UPDATE work_permits SET status = 'released'
                  WHERE run_id = $run AND status = 'accepted';
                 """, ct, transaction, ("$run", runId), ("$outcome", request.Outcome),
@@ -1669,14 +1782,31 @@ public sealed partial class TaskServerStore
     public async Task<RunDto> CompleteRunAsync(string runId, CompleteRunRequest request, string actorId, CancellationToken ct)
     {
         RequireWritable();
+        if (request.SessionContinuation is { } session
+            && !string.Equals(session.AttemptId, runId, StringComparison.Ordinal))
+            throw new TaskServerConflictException(
+                "session-attempt-mismatch", "Session evidence does not match the fenced run.");
+        var mechanicalFallback = string.Equals(
+            request.Outcome, ExecutionOutcomeKind.MechanicalFallback.ToString(),
+            StringComparison.OrdinalIgnoreCase);
+        if (mechanicalFallback
+            && (request.OutcomeDecision?.Outcome != ExecutionOutcomeKind.MechanicalFallback
+                || request.SessionContinuation is not
+                { MechanicalRound: true, MechanicalResumesUsed: > 0, FallbackReason: { Length: > 0 } }))
+            throw new TaskServerConflictException(
+                "mechanical-fallback-evidence-required",
+                "A resumed mechanical fallback requires typed outcome and fenced fallback evidence.");
         if (request.NeedsInputMessage is not null
             && Encoding.UTF8.GetByteCount(request.NeedsInputMessage) > 16 * 1024)
             throw new ArgumentException("NeedsInputMessage exceeds the 16 KiB completion-envelope limit.");
         var gateItems = NormalizeGateItems(request.GateItems);
         var needsInput = !string.IsNullOrWhiteSpace(request.NeedsInputMessage);
         var providerRejected = request.OutcomeDecision?.Outcome == ExecutionOutcomeKind.ProviderRejectedRequest;
-        var nextState = needsInput || providerRejected ? "5-human-review" : "4-auto-review";
+        var nextState = mechanicalFallback ? "2-ready"
+            : needsInput || providerRejected ? "5-human-review" : "4-auto-review";
         var effectiveSummary = request.Summary;
+        if (mechanicalFallback)
+            effectiveSummary = $"Resumed mechanical round requires a policy-qualified fresh attempt ({request.SessionContinuation!.FallbackReason}).";
         ProviderRejectionRecoveryPlan? providerRecovery = null;
         RunDto? completed = null;
         await InWriteTransactionAsync(async (connection, transaction) =>
@@ -1854,6 +1984,10 @@ public sealed partial class TaskServerStore
                 ("$repositoryUrl", resultHandoff?.Envelope.RepositoryUrl),
                 ("$resultRef", resultHandoff?.Envelope.ImmutableRemoteRef),
                 ("$bundleSha", resultHandoff?.Envelope.SourceBundleDigest));
+            if (request.SessionContinuation is { } completedSession)
+                await AppendLifecycleEventAsync(
+                    connection, transaction, runId, lease.TaskId, request.Fence,
+                    "session.continuation", completedSession, ct);
             await ResolveCanarySuccessAsync(
                 connection,
                 transaction,
@@ -1887,6 +2021,7 @@ public sealed partial class TaskServerStore
                     modelFallback = providerRecovery?.Fallback is { } lifecycleFallback
                         ? new { from = lifecycleFallback.From, to = lifecycleFallback.To, lifecycleFallback.Reason, lifecycleFallback.CardPinned }
                         : null,
+                    mechanicalFallbackReason = mechanicalFallback ? request.SessionContinuation!.FallbackReason : null,
                 },
                 ct);
             await AppendLifecycleEventAsync(
@@ -1918,6 +2053,7 @@ public sealed partial class TaskServerStore
                     classifierVersion = request.OutcomeDecision?.ClassifierVersion,
                     recoveryAction = request.OutcomeDecision?.RecoveryAction.ToString(),
                     modelFallback = providerRecovery?.Fallback,
+                    mechanicalFallbackReason = mechanicalFallback ? request.SessionContinuation!.FallbackReason : null,
                 }), ct);
             completed = new RunDto(
                 runId,
@@ -2266,6 +2402,9 @@ public sealed partial class TaskServerStore
                 UPDATE leases SET status = 'fenced' WHERE run_id = $run;
                 UPDATE runs SET status = 'interrupted', finished_at = $now WHERE id = $run;
                 UPDATE tasks SET state = $state, version = version + 1, updated_at = $now WHERE id = $task;
+                UPDATE pending_follow_ups
+                   SET state = 'queued', run_id = NULL
+                 WHERE task_id = $task AND state = 'stashed' AND run_id = $run;
                 UPDATE work_permits SET status = 'fenced'
                  WHERE run_id = $run AND status = 'accepted';
                 """, ct, transaction, ("$run", runId), ("$now", Iso(UtcNow)), ("$state", targetState), ("$task", lease.TaskId));
@@ -3187,6 +3326,9 @@ public sealed partial class TaskServerStore
                 credential_expires_at TEXT,
                 limited_until TEXT,
                 credential_modified_at TEXT,
+                evidence_id TEXT,
+                evidence_excerpt TEXT,
+                supported_models_json TEXT,
                 advertised_at TEXT NOT NULL,
                 fresh_until TEXT NOT NULL,
                 generation INTEGER NOT NULL,
@@ -3230,10 +3372,35 @@ public sealed partial class TaskServerStore
                 started_at TEXT,
                 finished_at TEXT
             );
+            CREATE TABLE IF NOT EXISTS pending_follow_ups(
+                task_id TEXT PRIMARY KEY REFERENCES tasks(id),
+                state TEXT NOT NULL,
+                prompt TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                prompt_sha256 TEXT NOT NULL,
+                saved_at TEXT NOT NULL,
+                saved_reason TEXT NOT NULL,
+                author TEXT,
+                run_id TEXT REFERENCES runs(id)
+            );
             CREATE TABLE IF NOT EXISTS fence_counters(
                 task_id TEXT PRIMARY KEY REFERENCES tasks(id),
                 last_fence INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS steering_actions(
+                command_id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL REFERENCES projects(id),
+                task_id TEXT NOT NULL REFERENCES tasks(id),
+                action TEXT NOT NULL,
+                expected_task_version INTEGER NOT NULL,
+                expected_generation INTEGER NOT NULL,
+                result_task_version INTEGER NOT NULL,
+                result_state TEXT NOT NULL,
+                actor TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                accepted_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ix_steering_actions_task ON steering_actions(task_id, accepted_at);
             CREATE TABLE IF NOT EXISTS leases(
                 task_id TEXT NOT NULL REFERENCES tasks(id),
                 lease_id TEXT PRIMARY KEY,
@@ -3257,6 +3424,14 @@ public sealed partial class TaskServerStore
                 occurred_at TEXT NOT NULL,
                 sequence INTEGER
             );
+            CREATE TABLE IF NOT EXISTS task_mechanical_deltas(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                delta_json TEXT NOT NULL,
+                claimed_run_id TEXT UNIQUE
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS ix_task_mechanical_deltas_pending
+                ON task_mechanical_deltas(task_id) WHERE claimed_run_id IS NULL;
             CREATE TABLE IF NOT EXISTS artifacts(
                 id TEXT PRIMARY KEY,
                 run_id TEXT NOT NULL,
@@ -3619,6 +3794,9 @@ public sealed partial class TaskServerStore
         await EnsureColumnAsync(connection, "runner_capabilities", "credential_expires_at", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "limited_until", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "credential_modified_at", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "evidence_id", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "evidence_excerpt", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "supported_models_json", "TEXT", ct);
         await EnsureColumnAsync(connection, "orchestration_runs", "task_version", "INTEGER NOT NULL DEFAULT 0", ct);
         await ExecuteAsync(connection, """
             INSERT INTO runtime_capacity_settings(
@@ -3655,6 +3833,7 @@ public sealed partial class TaskServerStore
             ON CONFLICT(version) DO NOTHING;
             """, ct, ("$version", CurrentSchemaVersion), ("$now", Iso(UtcNow)));
         await ApplyReviewMigrationAsync(connection, ct);
+        await ApplyGateMigrationAsync(connection, ct);
         // Studio route-ownership P1 "task detail and hosts" bundle
         // (docs/studio-route-ownership/index.html): each group below owns a
         // disjoint set of new tables and touches no other group's schema.
@@ -3930,7 +4109,8 @@ public sealed partial class TaskServerStore
     }
 
     private static bool RequiresResultEnvelope(string outcome)
-        => outcome.Trim().ToLowerInvariant() is "success" or "done" or "noop" or "no-op";
+        => outcome.Trim().ToLowerInvariant() is "success" or "done" or "noop" or "no-op"
+            or "successfulcompletion";
 
     private static void ValidateImmutableSource(
         string runId,

@@ -88,6 +88,7 @@ public class TaskRunnerService : BackgroundService
     private readonly ILoadThrottleGate? _loadThrottle;
     private readonly AgentStudio.Clients.ClientIdentityStore? _clients;
     private readonly StartupExecutionAdmission? _executionAdmission;
+    private readonly RemoteDispatchRejectionStore? _dispatchRejections;
     private readonly AgentStudio.Pipeline.FailureInterventionService? _failureInterventions;
     private readonly AgentStudio.Registry.IProjectUrlPortInspector? _projectUrlPortInspector;
     private readonly ConcurrentDictionary<string, ProjectRunner> _runners = new();
@@ -162,7 +163,8 @@ public class TaskRunnerService : BackgroundService
         ProviderLimitRegistry? providerLimits = null,
         QuotaAdmissionService? quotaAdmission = null,
         AgentStudio.Pipeline.FailureInterventionService? failureInterventions = null,
-        AgentStudio.Registry.IProjectUrlPortInspector? projectUrlPortInspector = null)
+        AgentStudio.Registry.IProjectUrlPortInspector? projectUrlPortInspector = null,
+        RemoteDispatchRejectionStore? dispatchRejections = null)
     {
         _config = config;
         _logger = logger;
@@ -216,6 +218,7 @@ public class TaskRunnerService : BackgroundService
         _executionAdmission = executionAdmission;
         _failureInterventions = failureInterventions;
         _projectUrlPortInspector = projectUrlPortInspector;
+        _dispatchRejections = dispatchRejections;
 
         Role = RunnerRoles.ResolveFromConfig(_config);
         BackendName = ResolveBackendName(_config);
@@ -374,6 +377,8 @@ public class TaskRunnerService : BackgroundService
                 role: Role,
                 pickupLock: _pickupLock,
                 pickupLockOwner: BuildPickupLockOwner(entry.Name),
+                localRunClaims: _runLeases is not null && _runnerIdentity is not null
+                    ? new LocalRunClaimAdapter(_runLeases, _runnerIdentity, _logger) : null,
                 integrationLeases: _integrationLeases,
                 timeline: _timeline,
                 pipelineLog: _pipelineLog,
@@ -395,7 +400,8 @@ public class TaskRunnerService : BackgroundService
                 quotaAdmission: _quotaAdmission,
                 failureInterventions: _failureInterventions,
                 projectUrls: registryProject?.Urls,
-                projectUrlPortInspector: _projectUrlPortInspector);
+                projectUrlPortInspector: _projectUrlPortInspector,
+                dispatchRejections: _dispatchRejections);
             runner.ConfigureWatchdog(LoadWatchdogConfig(_config), PhaseBudgetTable.FromConfig(_config));
             runner.ConfigureCircuitBreaker(RunnerCircuitBreakerOptions.FromConfig(_config));
             _stuckLoopBudget = LoadStuckLoopBudget(_config);
@@ -686,7 +692,7 @@ public class TaskRunnerService : BackgroundService
     /// continuation they asked for instead of a 400 - at the cost of conversation
     /// memory that wasn't already on disk.
     /// </summary>
-    public async Task<ContinueJobResponse> ContinueJobAsync(string jobId, string followupPrompt, string? watchPath = null, string? modelOverride = null, string? cliTypeOverride = null, string? thinkingLevelOverride = null, string? mode = null, string? modeOverride = null, CancellationToken ct = default)
+    public async Task<ContinueJobResponse> ContinueJobAsync(string jobId, string followupPrompt, string? watchPath = null, string? modelOverride = null, string? cliTypeOverride = null, string? thinkingLevelOverride = null, string? mode = null, string? modeOverride = null, string? author = null, CancellationToken ct = default)
     {
         _executionAdmission?.Demand(ExecutionAdmissionPath.Continue);
         var info = _scanner.FindJob(jobId, watchPath);
@@ -736,14 +742,14 @@ public class TaskRunnerService : BackgroundService
         await RecordUserFollowUpAsync(info, jobId, followupPrompt, normalizedMode, watchPath, ct);
 
         if (admission.Action == FollowUpAdmissionAction.Queue)
-            return QueueFollowUp(info, jobId, watchPath, normalizedMode, followupPrompt, admission);
+            return QueueFollowUp(info, jobId, watchPath, normalizedMode, followupPrompt, admission, author);
 
         var cli = _router.Get(info.CliType);
         if (!cli.IsAvailable()) throw new TaskOperationException($"{cli.CliType} CLI is not installed or not on PATH", 400);
 
         var startedFrom = info.State;
         var outcome = await runner.ContinueJobAsync(jobId, followupPrompt, normalizedMode, ct);
-        var response = ShapeOutcome(outcome, info, jobId, watchPath, normalizedMode, followupPrompt);
+        var response = ShapeOutcome(outcome, info, jobId, watchPath, normalizedMode, followupPrompt, author);
         return await ConfirmStartedRunAsync(response, info, jobId, watchPath, startedFrom, ct);
     }
 
@@ -803,7 +809,8 @@ public class TaskRunnerService : BackgroundService
         string jobId,
         string? watchPath,
         string mode,
-        string prompt)
+        string prompt,
+        string? author = null)
     {
         if (outcome.Execution != null)
         {
@@ -822,7 +829,8 @@ public class TaskRunnerService : BackgroundService
                 jobId, mode, prompt,
                 reason: FollowUpQueueReasons.ProjectBusy,
                 activeJobId: rej.BusyJobId,
-                watchPath: watchPath);
+                watchPath: watchPath,
+                author: author);
 
             var fromState = info.State;
             // A user follow-up queued behind the busy project: the lane change is
@@ -913,7 +921,8 @@ public class TaskRunnerService : BackgroundService
         string? watchPath,
         string mode,
         string prompt,
-        FollowUpAdmissionDecision decision)
+        FollowUpAdmissionDecision decision,
+        string? author = null)
     {
         var reason = decision.QueueReason ?? FollowUpQueueReasons.LaneNotRunnable;
         var hasPrompt = !string.IsNullOrWhiteSpace(prompt);
@@ -923,7 +932,8 @@ public class TaskRunnerService : BackgroundService
                 jobId, mode, prompt,
                 reason: reason,
                 activeJobId: null,
-                watchPath: watchPath);
+                watchPath: watchPath,
+                author: author);
         }
 
         var fromState = info.State;
@@ -1585,6 +1595,8 @@ public class TaskRunnerService : BackgroundService
             role: Role,
             pickupLock: _pickupLock,
             pickupLockOwner: BuildPickupLockOwner(entry.Name),
+            localRunClaims: _runLeases is not null && _runnerIdentity is not null
+                ? new LocalRunClaimAdapter(_runLeases, _runnerIdentity, _logger) : null,
             integrationLeases: _integrationLeases,
             timeline: _timeline,
             pipelineLog: _pipelineLog,
@@ -1604,7 +1616,8 @@ public class TaskRunnerService : BackgroundService
             quotaAdmission: _quotaAdmission,
             failureInterventions: _failureInterventions,
             projectUrls: registryProject?.Urls,
-            projectUrlPortInspector: _projectUrlPortInspector);
+            projectUrlPortInspector: _projectUrlPortInspector,
+            dispatchRejections: _dispatchRejections);
         runner.ConfigureWatchdog(LoadWatchdogConfig(_config), PhaseBudgetTable.FromConfig(_config));
         runner.ConfigureCircuitBreaker(RunnerCircuitBreakerOptions.FromConfig(_config));
         runner.ConfigureStuckLoopBudget(LoadStuckLoopBudget(_config));

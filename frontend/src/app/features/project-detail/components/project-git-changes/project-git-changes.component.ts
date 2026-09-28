@@ -20,6 +20,7 @@ export class ProjectGitChangesComponent {
 
   readonly projectName = input.required<string>();
   readonly commit = input.required<GitGraphCommit>();
+  readonly initialPath = input<string | null>(null);
   readonly closed = output<void>();
 
   readonly files = signal<GitFileChange[]>([]);
@@ -90,7 +91,8 @@ export class ProjectGitChangesComponent {
         const files = response.files ?? [];
         this.files.set(files);
         this.filesState.set('loaded');
-        const first = files[0]?.path ?? null;
+        const requested = this.initialPath();
+        const first = files.some(file => file.path === requested) ? requested : files[0]?.path ?? null;
         this.selectedPath.set(first);
         if (first) this.loadDiff(project, sha, first);
       },

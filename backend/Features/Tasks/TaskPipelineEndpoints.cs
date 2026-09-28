@@ -71,6 +71,7 @@ public static class TaskPipelineEndpoints
             var execution = AspectConcernReader.Enrich(record, info.FolderPath);
 
             var resultFiles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var aspectEvidence = new Dictionary<string, object[]>(StringComparer.OrdinalIgnoreCase);
             foreach (var step in pipeline.AllSteps)
             {
                 var relativePath = step.Kind switch
@@ -81,6 +82,41 @@ public static class TaskPipelineEndpoints
                 };
                 if (relativePath is not null && File.Exists(Path.Combine(info.FolderPath, relativePath)))
                     resultFiles[step.Id] = relativePath;
+                if (step.Kind == StepKind.Aspect)
+                {
+                    var attempts = new[] { execution }
+                        .Concat(execution?.PreviousAttempts ?? [])
+                        .Where(item => item is not null)
+                        .Select(item => item!.Steps.FirstOrDefault(candidate =>
+                            string.Equals(candidate.StepId, step.Id, StringComparison.OrdinalIgnoreCase)))
+                        .Where(item => item is not null && !string.IsNullOrWhiteSpace(item.ExecutionAttemptId))
+                        .Select(item => item!)
+                        .DistinctBy(item => item.ExecutionAttemptId, StringComparer.OrdinalIgnoreCase)
+                        .Select(item =>
+                        {
+                            var attemptId = item.ExecutionAttemptId!;
+                            var safeAttempt = new string(attemptId.Select(ch =>
+                                char.IsLetterOrDigit(ch) || ch is '-' or '_' ? ch : '_').ToArray());
+                            var rawPrefix = $"remote-review-{safeAttempt}-";
+                            var normalizedStep = step.Id;
+                            var rawLog = Directory.EnumerateFiles(info.FolderPath, rawPrefix + "*")
+                                .Select(Path.GetFileName)
+                                .FirstOrDefault(file => file is not null
+                                    && file.Contains(normalizedStep, StringComparison.OrdinalIgnoreCase)
+                                    && file.Contains("stdout", StringComparison.OrdinalIgnoreCase));
+                            var grade = $"remote-review-grade-{safeAttempt}.md";
+                            return (object)new
+                            {
+                                attemptId,
+                                reportFile = File.Exists(Path.Combine(info.FolderPath, $"{step.Id}.md"))
+                                    ? $"{step.Id}.md" : null,
+                                rawLogFile = rawLog,
+                                reviewGradeFile = File.Exists(Path.Combine(info.FolderPath, grade)) ? grade : null,
+                            };
+                        })
+                        .ToArray();
+                    if (attempts.Length > 0) aspectEvidence[step.Id] = attempts;
+                }
             }
             var config = pipeline.AllSteps.ToDictionary(
                 step => step.Id,
@@ -122,6 +158,7 @@ public static class TaskPipelineEndpoints
                 tokensByModel,
                 config,
                 resultFiles,
+                aspectEvidence,
                 onDemand = new
                 {
                     plannedStepIds = onDemand.ReadPlan(info.FolderPath),

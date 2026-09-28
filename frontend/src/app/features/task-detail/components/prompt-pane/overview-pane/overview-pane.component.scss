@@ -12,8 +12,11 @@
   --ov-pipeline-status-col: 16px;
   --ov-expander-col: 16px;
   --ov-pipeline-kind-col: 26px;
-  --ov-pipeline-name-col: minmax(0, 2fr);
-  --ov-pipeline-meta-col: minmax(0, 1fr);
+  // Aspect conclusions and evidence actions need more room than the step name.
+  // Both tracks can contract to zero; the complete name and summary remain in
+  // their tooltips when the split detail pane is narrow.
+  --ov-pipeline-name-col: minmax(0, 1fr);
+  --ov-pipeline-meta-col: minmax(0, 2fr);
   --ov-pipeline-time-col: 96px;
   --ov-pipeline-tokens-col: 56px;
   --ov-pipeline-cost-col: 11rem;
@@ -722,7 +725,7 @@
     display: flex;
     align-items: center;
     gap: var(--studio-spacing-1);
-    overflow: hidden;
+    overflow: visible;
     white-space: nowrap;
   }
 
@@ -916,8 +919,8 @@
     --ov-pl-grid-cols:
       var(--ov-expander-col)
       var(--ov-pipeline-kind-col)
-      minmax(0, 3fr)
       minmax(0, 2fr)
+      minmax(0, 3fr)
       var(--ov-pipeline-time-col);
   }
 

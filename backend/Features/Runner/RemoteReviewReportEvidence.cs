@@ -108,7 +108,7 @@ internal static class RemoteReviewReportEvidence
             foreach (var verdict in request.Verdicts)
             {
                 text.AppendLine(
-                    $"| {Cell(verdict.Aspect)} | {Cell(verdict.Status)} | {Cell(verdict.Classification)} | " +
+                    $"| [{Cell(verdict.Aspect)}](aspect-{SafeFilePart(verdict.Aspect)}.md) | {Cell(verdict.Status)} | {Cell(verdict.Classification)} | " +
                     $"{Cell(verdict.EvidenceChecked ?? "not reported")} | {Cell(verdict.Missing ?? "not reported")} | " +
                     $"{Cell(verdict.Summary)} |");
             }

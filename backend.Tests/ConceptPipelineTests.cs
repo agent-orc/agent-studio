@@ -237,6 +237,12 @@ public sealed class ConceptPipelineTests : IDisposable
             JsonSerializer.Serialize(
                 descriptor,
                 new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
+        File.AppendAllText(Path.Combine(workbenchDirectory, "index.html"), """
+            <div data-decision-id="delivery-mode" data-decision-kind="single" data-decision-label="Delivery mode">
+              <label data-option-id="queued" data-option-label="A: queued (recommended)"><input checked></label>
+              <label data-option-id="direct" data-option-label="B: direct"><input></label>
+            </div>
+            """);
         Assert.True(ConceptWorkbenchStore.Write(source.FolderPath, new ConceptWorkbenchRecord
         {
             RepoRelativeDirectory = "docs/delivery-flow",
@@ -270,7 +276,44 @@ public sealed class ConceptPipelineTests : IDisposable
             Assert.Contains(
                 "docs/delivery-flow/index.html",
                 File.ReadAllText(Path.Combine(created.FolderPath, "prompt.md")));
+            Assert.Contains("Delivery mode [delivery-mode]: A: queued (recommended) [queued] (recommended working assumption)",
+                File.ReadAllText(Path.Combine(created.FolderPath, "prompt.md")));
         }
+    }
+
+    [Fact]
+    public void Promotion_RecordedOperatorDecision_OverridesRecommendation()
+    {
+        Directory.CreateDirectory(_root);
+        var html = Path.Combine(_root, "index.html");
+        var descriptor = Path.Combine(_root, "workbench.json");
+        File.WriteAllText(html, """
+            <div data-decision-id="delivery-mode" data-decision-kind="single" data-decision-label="Delivery mode">
+              <label data-option-id="queued" data-option-label="A: queued (recommended)"><input checked></label>
+              <label data-option-id="direct" data-option-label="B: direct"><input></label>
+            </div>
+            """);
+        File.WriteAllText(descriptor, """{"decision":{"responses":[{"decisionId":"delivery-mode","selectedOptionIds":["direct"]}]}}""");
+
+        var decisions = ConceptDecisionAssumptions.Read(html, descriptor);
+        Assert.Equal(2, decisions.Count);
+        Assert.False(decisions[0].IsWorkingAssumption);
+        Assert.Equal("direct", decisions[1].OptionId);
+        Assert.True(decisions[1].OperatorSelected);
+        Assert.True(decisions[1].IsWorkingAssumption);
+        var prompt = ConceptPromotionService.BuildPrompt(
+            new ConceptSourceDocument
+            {
+                RepoRelativePath = "docs/delivery-flow/index.html",
+                Decisions = decisions,
+            },
+            new ConceptImplementationTask
+            {
+                Title = "Implement delivery",
+                PromptMarkdown = "Build the selected delivery path.",
+            });
+        Assert.Contains("[direct] (operator-selected working assumption)", prompt);
+        Assert.Contains("[queued] (alternative)", prompt);
     }
 
     [Fact]

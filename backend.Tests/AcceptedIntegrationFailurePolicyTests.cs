@@ -164,4 +164,20 @@ public sealed class AcceptedIntegrationFailurePolicyTests
         Assert.Equal(RunFailureClass.Unknown, failure.FailureClass);
         Assert.Equal(RunFailureSignatures.Unclassified, failure.FailureSignature);
     }
+
+    [Fact]
+    public void Classify_TornGateNugetCache_IsInfrastructureWithAStableSignature()
+    {
+        var failure = AcceptedIntegrationFailurePolicy.Classify(
+            PipelineStepStatus.Failed,
+            "gate-environment-failure",
+            @"NuGet.targets(198,5): error : Could not find file " +
+            @"'C:\Temp\agentstudio-preparation-cache\.runs\run-1\nuget\example\1.0\example.1.0.nupkg'.",
+            verdictSummary: null);
+
+        Assert.NotNull(failure);
+        Assert.Equal(AcceptedIntegrationFailureCodes.GateEnvironmentFailure, failure.Code);
+        Assert.Equal(RunFailureClass.Infrastructure, failure.FailureClass);
+        Assert.Equal(RunFailureSignatures.GatePreparationCacheTorn, failure.FailureSignature);
+    }
 }

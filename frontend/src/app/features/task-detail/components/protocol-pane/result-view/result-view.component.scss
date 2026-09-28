@@ -302,3 +302,42 @@
   .result__metric--link,
   .result__action { transition-duration: 0s; }
 }
+.result__aspect-table {
+  display: grid;
+  gap: var(--studio-spacing-1);
+  margin: var(--studio-spacing-3) 0;
+
+  h4 { margin: 0 0 var(--studio-spacing-1); }
+}
+
+.result__aspect-row {
+  display: grid;
+  grid-template-columns: auto minmax(100px, 0.6fr) minmax(140px, 1fr) auto;
+  align-items: center;
+  gap: var(--studio-spacing-2);
+  width: 100%;
+  padding: var(--studio-spacing-2) var(--studio-spacing-3);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius-sm);
+  background: var(--studio-bg-subtle);
+  color: var(--studio-fg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.result__aspect-status {
+  padding: 1px var(--studio-spacing-2);
+  border-radius: 999px;
+  background: var(--studio-bg-elevated);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.result__aspect-name { font-weight: 650; }
+.result__aspect-summary {
+  overflow: hidden;
+  color: var(--studio-fg-dim);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

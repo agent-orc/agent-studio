@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "application": "Agent Studio",
+  "tag": "v0.9.1",
+  "version": "0.9.1",
+  "commit": "09e189092396700adf0cbafbb38e6ad5b89a818d",
+  "dirty": false,
+  "builtAt": "2026-09-25T09:08:17.049+00:00",
+  "deployedAt": "2026-09-25T09:08:17.049+00:00",
+  "integrity": "sha256-bffc8d5fc4c2f8371d1221ddf7f0fb393260f68eb45159423534ae8dac991fc4",
+  "codingAgentRunner": {
+    "name": "CodingAgentRunner",
+    "version": "0.7.0",
+    "tag": "v0.7.0",
+    "commit": "f6208811c9023e57c78bccd9e795433db6e5675d",
+    "integrity": "sha512-nhbP51J5HjhRnd8wuJDKn+B1RqgQHTbSaiXXCGS4nGHjgf+9PaxElGp4q3qiMsAth9MasrzaMNGUO5oqSlaJog=="
+  },
+  "codingAgentChat": {
+    "name": "coding-agent-chat",
+    "version": "0.4.1",
+    "tag": "v0.4.1",
+    "commit": "384ad6913d369d9b17636726816b77f5b57d2085",
+    "integrity": "sha512-RTqLmtZK1+XNo7m/w+GIFYxRI8qkaVM7im3Fxl99Z7XoMCG9NRWLTa/T8WuwVcLX7dhkaJcKIagsZpVC3KDQ4w=="
+  },
+  "legacy": false
+}

@@ -19,7 +19,7 @@ public sealed class BuildTestGatePreparationBindingTests : IDisposable
         Path.GetTempPath(), "gate-preparation-binding-" + Guid.NewGuid().ToString("N"));
 
     private string Repository => Path.Combine(_root, "repo");
-    private string CacheRoot => Path.Combine(_root, "product-cache");
+    private string CacheRoot => Path.Combine(_root, "agentstudio-preparation-cache");
     private string ObservedBindings => Path.Combine(Repository, "observed-bindings.txt");
 
     public BuildTestGatePreparationBindingTests()
@@ -68,6 +68,75 @@ public sealed class BuildTestGatePreparationBindingTests : IDisposable
             "The gate owns the per-run cache folders only until its last verify command.");
         foreach (var cache in result.PreparationManifest!.Caches)
             Assert.True(File.Exists(Path.Combine(cache.EntryPath, "manifest.json")));
+    }
+
+    [Fact]
+    public async Task Cache_failure_quarantines_entries_and_the_gate_retries_once()
+    {
+        Assert.Equal(BuildTestGateVerdict.Ok, (await RunGateAsync()).Verdict);
+        Write(".agent-studio/prepare", """
+            #!/bin/sh
+            set -eu
+            if [ ! -f cache-retry-attempted ]; then
+              touch cache-retry-attempted
+              printf 'EINTEGRITY cached package mismatch\n' >&2
+              exit 1
+            fi
+            mkdir -p "$NUGET_PACKAGES/xunit.analyzers/1.4.0"
+            printf nupkg > "$NUGET_PACKAGES/xunit.analyzers/1.4.0/xunit.analyzers.nupkg"
+            printf metadata > "$NUGET_PACKAGES/xunit.analyzers/1.4.0/.nupkg.metadata"
+            mkdir -p "$NPM_CONFIG_CACHE/_cacache"
+            printf cache > "$NPM_CONFIG_CACHE/_cacache/marker"
+            """);
+
+        var result = await RunGateAsync();
+
+        Assert.Equal(BuildTestGateVerdict.Ok, result.Verdict);
+        Assert.Equal(BuildTestGateFailureKind.None, result.FailureKind);
+        Assert.True(result.PreparationCacheRetryPerformed);
+        Assert.Contains("integration gate retried once", result.Reason);
+        Assert.All(result.PreparationManifest!.Caches, cache => Assert.Equal("published", cache.State));
+    }
+
+    [Fact]
+    public async Task Persistent_cache_failure_is_environment_and_spends_only_one_retry()
+    {
+        Write(".agent-studio/prepare", """
+            #!/bin/sh
+            set -eu
+            printf 'attempt\n' >> cache-attempts.txt
+            printf 'EINTEGRITY cached package mismatch\n' >&2
+            exit 1
+            """);
+
+        var result = await RunGateAsync();
+
+        Assert.Equal(BuildTestGateVerdict.Fail, result.Verdict);
+        Assert.Equal(BuildTestGateFailureKind.Environment, result.FailureKind);
+        Assert.True(result.PreparationCacheRetryPerformed);
+        Assert.Equal(2, File.ReadAllLines(Path.Combine(Repository, "cache-attempts.txt")).Length);
+    }
+
+    [Fact]
+    public async Task Torn_nuget_run_failure_is_environmental_and_evicts_the_published_block()
+    {
+        var seeded = await RunGateAsync();
+        var nuget = Assert.Single(seeded.PreparationManifest!.Caches, item => item.Block == "nuget");
+        Assert.True(Directory.Exists(nuget.EntryPath));
+        Write(".agent-studio/verify-build", """
+            #!/bin/sh
+            set -eu
+            printf "NuGet.targets(198,5): error : Could not find file '%s/example.package/1.0.0/example.package.1.0.0.nupkg'.\n" "$NUGET_PACKAGES" >&2
+            exit 1
+            """);
+
+        var failed = await RunGateAsync();
+
+        Assert.Equal(BuildTestGateVerdict.Fail, failed.Verdict);
+        Assert.Equal(BuildTestGateFailureKind.Environment, failed.FailureKind);
+        Assert.False(Directory.Exists(nuget.EntryPath));
+        Assert.Contains("block=nuget", failed.Output, StringComparison.Ordinal);
+        Assert.Contains("state=evicted reason=gate-environment-failure", failed.Output, StringComparison.Ordinal);
     }
 
     private async Task<BuildTestGateResult> RunGateAsync()
@@ -126,6 +195,7 @@ public sealed class BuildTestGatePreparationBindingTests : IDisposable
             set -eu
             mkdir -p "$NUGET_PACKAGES/xunit.analyzers/1.4.0"
             printf nupkg > "$NUGET_PACKAGES/xunit.analyzers/1.4.0/xunit.analyzers.nupkg"
+            printf metadata > "$NUGET_PACKAGES/xunit.analyzers/1.4.0/.nupkg.metadata"
             mkdir -p "$NPM_CONFIG_CACHE/_cacache"
             printf cache > "$NPM_CONFIG_CACHE/_cacache/marker"
             """);

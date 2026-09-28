@@ -86,43 +86,70 @@
   }
 
   &__workspace {
-    display: grid;
-    grid-template-columns: minmax(260px, 28%) minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr);
-    gap: var(--studio-spacing-2);
+    display: flex;
     min-height: 0;
+    min-width: 0;
     flex: 1 1 auto;
+    overflow: hidden;
+    --git-tree-width: 300px;
+    --git-inspector-width: 360px;
   }
 
-  // The sweep sits under the graph as its own flat block: it is repository
-  // maintenance, not part of the read-only ref/commit workspace above it.
-  &__sweep {
-    flex: 0 0 auto;
-    max-height: 45%;
-    overflow-y: auto;
-  }
-
-  &__workspace--with-changes {
-    grid-template-rows: minmax(240px, 55%) minmax(220px, 45%);
+  &__left {
+    display: flex;
+    flex: 0 1 var(--git-tree-width);
+    flex-direction: column;
+    gap: var(--studio-spacing-2);
+    min-width: min(220px, 39%);
+    min-height: 0;
+    overflow: hidden;
   }
 
   &__tree {
     min-width: 0;
     min-height: 0;
-    grid-row: 1 / -1;
+    flex: 1 1 auto;
+    overflow: hidden;
+  }
+
+  &__sweep { flex: 0 1 45%; min-width: 0; min-height: 42px; overflow: auto; }
+
+  &__splitter {
+    position: relative;
+    z-index: 2;
+    width: 1px;
+    flex: 0 0 1px;
+    margin: 0 var(--studio-spacing-1);
+    background: var(--studio-border);
+    cursor: col-resize;
+    touch-action: none;
+  }
+
+  &__splitter::before { content: ''; position: absolute; inset: 0 calc(var(--studio-spacing-2) * -1); }
+  &__splitter:hover, &__splitter:focus-visible, &__splitter.is-resizing { background: var(--studio-accent); }
+  &__splitter:focus-visible { outline: 2px solid var(--studio-focus-ring, var(--studio-accent)); outline-offset: 1px; }
+
+  &__inspector {
+    flex: 0 1 var(--git-inspector-width);
+    min-width: min(280px, 39%);
+    min-height: 0;
+    overflow: hidden;
   }
 
   &__history {
     position: relative;
-    align-self: start;
+    display: flex;
+    flex: 1 1 420px;
     min-width: 0;
     min-height: 0;
-    max-height: 100%;
+    overflow: hidden;
   }
 
   &__history > app-project-git-history {
     display: block;
-    max-height: 100%;
+    flex: 1 1 auto;
+    height: 100%;
+    min-height: 0;
   }
 
   &__history-error {
@@ -136,11 +163,6 @@
     background: var(--studio-surface);
     color: var(--severity-high);
     font-size: 11px;
-  }
-
-  &__changes {
-    min-width: 0;
-    min-height: 0;
   }
 
   &__message,
@@ -189,14 +211,13 @@ button:focus-visible {
 }
 
 @media (max-width: 900px) {
-  .git__workspace,
-  .git__workspace--with-changes {
+  .git__workspace {
+    display: grid;
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(180px, auto) minmax(320px, 1fr) minmax(240px, auto);
+    grid-template-rows: minmax(220px, auto) minmax(320px, 1fr) minmax(260px, auto);
     overflow: auto;
   }
 
-  .git__tree {
-    grid-row: auto;
-  }
+  .git__left, .git__inspector { min-width: 0; }
+  .git__splitter { display: none; }
 }

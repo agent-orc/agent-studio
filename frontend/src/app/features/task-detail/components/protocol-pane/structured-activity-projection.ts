@@ -7,6 +7,11 @@ import type {
   ToolFamily,
 } from 'coding-agent-chat/core';
 import type { CliOutputLine } from '../../../../models/task.model';
+import {
+  aspectSentinelExplanation,
+  parseRuntimeSentinels,
+  terminalSentinelLabel,
+} from '../runtime-sentinel.parser';
 
 /**
  * Codex text-mode emits explicit record headers on stderr. These are protocol
@@ -30,8 +35,6 @@ const MARKUP_FILE_EXTENSION = /\.(?:html?|xhtml|xml|svg)(?:[?#].*)?$/i;
 const CODEX_BANNER = /^OpenAI Codex\b/;
 const RUNNER_LINE = /^\[runner\]\s*(?<body>.*)$/i;
 const RUNNER_DELIVERY = /^\[runner-log-delivery:[^\]]+\]$/i;
-const TERMINAL_SENTINEL =
-  /\[\[TASK_(?<kind>DONE|NOOP|BLOCKED|NEEDS_INPUT)(?::(?<detail>[^\]]*))?\]\]/gi;
 const TOOL_RESULT = /^\s*(?<status>succeeded|failed)\s+in\s+.+:$/i;
 
 type TranscriptMode = 'outside' | 'metadata' | 'agent' | 'user' | 'tool';
@@ -132,11 +135,49 @@ export function projectStructuredActivityContent(
       continue;
     }
 
-    projectionLines.push(line);
+    const sentinelProjection = sentinelEvents(line.text, line.timestamp, index, source);
+    if (sentinelProjection) {
+      events.push(...sentinelProjection.events);
+      if (sentinelProjection.text) projectionLines.push({ ...line, text: sentinelProjection.text });
+    } else {
+      projectionLines.push(line);
+    }
   }
 
   finishBlock();
   return { projectionLines, events };
+}
+
+function sentinelEvents(
+  text: string,
+  timestamp: string,
+  index: number,
+  source: string,
+): { text: string; events: SystemStatusEvent[] } | null {
+  const parsed = parseRuntimeSentinels(text);
+  if (parsed.aspects.length === 0 && parsed.terminals.length === 0) return null;
+  const range = { source, start: index + 1, end: index + 1 };
+  const events: SystemStatusEvent[] = parsed.aspects.map((aspect, ordinal) => ({
+    id: `${source}:aspect:${index + 1}:${ordinal}`,
+    kind: 'system.status',
+    timestamp,
+    rawRange: range,
+    category: 'aspect-verdict',
+    severity: aspect.status === 'block' ? 'error' : aspect.status === 'concerns' ? 'warn' : 'info',
+    label: aspect.status === 'pass' ? 'Passed' : aspect.status === 'concerns' ? 'Passed with concerns' : 'Blocked',
+    explanation: aspectSentinelExplanation(aspect),
+  }));
+  parsed.terminals.forEach((terminal, ordinal) => events.push({
+    id: `${source}:terminal:${index + 1}:${ordinal}`,
+    kind: 'system.status',
+    timestamp,
+    rawRange: range,
+    category: 'result',
+    severity: terminal.kind === 'blocked' || terminal.kind === 'needs-input' ? 'warn' : 'info',
+    label: terminalSentinelLabel(terminal),
+    explanation: terminal.detail,
+  }));
+  return { text: parsed.text, events };
 }
 
 function runnerEvent(
@@ -242,14 +283,8 @@ function agentEvents(block: TranscriptBlock, source: string): ConversationEvent[
   const content = trimBlankEdges(block.lines);
   if (content.length === 0) return [];
   const rawBody = content.map(({ line }) => line.text).join('\n').trim();
-  let terminalKind: string | null = null;
-  let terminalDetail = '';
-  const body = rawBody.replace(TERMINAL_SENTINEL, (...args: unknown[]) => {
-    const groups = args.at(-1) as { kind?: string; detail?: string } | undefined;
-    terminalKind = groups?.kind?.toUpperCase() ?? null;
-    terminalDetail = groups?.detail?.trim() ?? '';
-    return '';
-  }).replace(/\n{3,}/g, '\n\n').trim();
+  const parsed = parseRuntimeSentinels(rawBody);
+  const body = parsed.text;
   const end = content.at(-1)?.index ?? block.start;
   const range = { source, start: block.start + 1, end: end + 1 };
   const events: ConversationEvent[] = [];
@@ -264,29 +299,34 @@ function agentEvents(block: TranscriptBlock, source: string): ConversationEvent[
       body,
     });
   }
-  if (terminalKind) {
+  for (const [index, aspect] of parsed.aspects.entries()) {
+    const label = aspect.status === 'pass'
+      ? 'Passed'
+      : aspect.status === 'concerns' ? 'Passed with concerns' : 'Blocked';
     events.push({
-      id: `${source}:structured-result:${block.start + 1}`,
+      id: `${source}:structured-aspect:${block.start + 1}:${index}`,
+      kind: 'system.status',
+      timestamp: content.at(-1)?.line.timestamp ?? content[0].line.timestamp,
+      rawRange: range,
+      category: 'aspect-verdict',
+      severity: aspect.status === 'block' ? 'error' : aspect.status === 'concerns' ? 'warn' : 'info',
+      label,
+      explanation: aspectSentinelExplanation(aspect),
+    });
+  }
+  for (const [index, terminal] of parsed.terminals.entries()) {
+    events.push({
+      id: `${source}:structured-result:${block.start + 1}:${index}`,
       kind: 'system.status',
       timestamp: content.at(-1)?.line.timestamp ?? content[0].line.timestamp,
       rawRange: range,
       category: 'result',
-      severity: terminalKind === 'BLOCKED' || terminalKind === 'NEEDS_INPUT' ? 'warn' : 'info',
-      label: terminalLabel(terminalKind),
-      explanation: terminalDetail,
+      severity: terminal.kind === 'blocked' || terminal.kind === 'needs-input' ? 'warn' : 'info',
+      label: terminalSentinelLabel(terminal),
+      explanation: terminal.detail,
     });
   }
   return events;
-}
-
-function terminalLabel(kind: string): string {
-  switch (kind) {
-    case 'DONE': return 'Task complete';
-    case 'NOOP': return 'No action needed';
-    case 'BLOCKED': return 'Task blocked';
-    case 'NEEDS_INPUT': return 'Input needed';
-    default: return 'Task finished';
-  }
 }
 
 /**

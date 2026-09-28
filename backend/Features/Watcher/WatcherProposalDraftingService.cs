@@ -202,7 +202,7 @@ public sealed class WatcherProposalDraftingService
     {
         Models =
         [
-            new CliModelInfo { Id = ModelIds.Gpt54Mini, Label = "GPT-5.4 Mini", Available = true, ThinkingLevels = ["low", "medium", "high"], DefaultThinkingLevel = "high" },
+            new CliModelInfo { Id = ModelIds.Gpt56Luna, Label = "GPT-5.6 Luna", Available = true, ThinkingLevels = ["minimal", "low", "medium", "high", "xhigh"], DefaultThinkingLevel = "medium" },
             new CliModelInfo { Id = "gpt-5.6-terra", Label = "GPT-5.6 Terra", Available = true, ThinkingLevels = ["low", "medium", "high", "xhigh"], DefaultThinkingLevel = "medium" },
             new CliModelInfo { Id = ModelIds.Gpt56Sol, Label = "GPT-5.6 Sol", Available = true, ThinkingLevels = ["low", "medium", "high", "xhigh", "max"], DefaultThinkingLevel = "medium" },
         ],

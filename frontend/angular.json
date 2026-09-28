@@ -119,7 +119,8 @@
             "buildTarget": "frontend:build:development",
             "tsConfig": "tsconfig.spec.json",
             "runner": "vitest",
-            "runnerConfig": "vitest.config.ts"
+            "runnerConfig": "vitest.config.ts",
+            "setupFiles": ["src/test-locale.ts", "src/test-lazy-imports.ts"]
           }
         }
       }

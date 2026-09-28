@@ -116,15 +116,17 @@ public sealed class CliQuotaFallbackServiceTests : IDisposable
     {
         var service = NewServiceWithCatalog();
 
-        var decision = service.Resolve(CliTypes.Codex, ModelIds.Gpt56Sol, "high", cli =>
-            cli == CliTypes.Codex
-                ? new CapEvaluation(true, CliTypes.Codex, "Weekly", 95, 100)
+        var decision = service.Resolve(CliTypes.Claude, ModelIds.ClaudeOpus5, "high", cli =>
+            cli == CliTypes.Claude
+                ? new CapEvaluation(true, CliTypes.Claude, "Weekly", 95, 100)
                 : CapEvaluation.NotBlocked);
 
         Assert.True(decision.IsFallback);
-        Assert.Equal(CliTypes.Claude, decision.CliType);
-        Assert.Equal(ModelIds.ClaudeOpus5, decision.Model);
+        Assert.Equal(CliTypes.Codex, decision.CliType);
+        Assert.Equal(ModelIds.Gpt56Sol, decision.Model);
         Assert.Equal("high", decision.ThinkingLevel);
+        Assert.Equal("catalogue", decision.FallbackSource);
+        Assert.Equal(new ModelEquivalenceCatalog().Version, decision.CatalogueVersion);
     }
 
     [Fact]
@@ -146,6 +148,8 @@ public sealed class CliQuotaFallbackServiceTests : IDisposable
 
         Assert.True(decision.IsFallback);
         Assert.Equal("operator-chosen-model", decision.Model);
+        Assert.Equal("override", decision.FallbackSource);
+        Assert.Null(decision.CatalogueVersion);
     }
 
     [Fact]
@@ -153,11 +157,11 @@ public sealed class CliQuotaFallbackServiceTests : IDisposable
     {
         var service = NewServiceWithCatalog();
 
-        var effective = service.GetEffectiveProfile(CliTypes.Codex);
+        var effective = service.GetEffectiveProfile(CliTypes.Claude);
 
         Assert.True(effective.IsFallbackDerived);
-        Assert.Equal(CliTypes.Claude, effective.FallbackCliType);
-        Assert.Equal(ModelIds.ClaudeOpus5, effective.FallbackModel);
+        Assert.Equal(CliTypes.Codex, effective.FallbackCliType);
+        Assert.Equal(ModelIds.Gpt56Sol, effective.FallbackModel);
     }
 
     [Fact]

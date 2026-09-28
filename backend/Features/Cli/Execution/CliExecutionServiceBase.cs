@@ -924,6 +924,13 @@ public partial class GenericCliExecutionService : ICliExecutionService
         return (info.LastParsedUsage, info.LastParsedUsageAt.Value, info.Execution.StartedAt);
     }
 
+    public (IReadOnlyList<ParsedTurnUsage> Usages, DateTime ObservedAt, DateTime StartedAt)? GetLastParsedTurnUsages(string jobKey)
+    {
+        if (!_processes.TryGetValue(jobKey, out var info)) return null;
+        if (info.LastParsedUsages is not { Count: > 0 } usages || info.LastParsedUsageAt == null) return null;
+        return (usages, info.LastParsedUsageAt.Value, info.Execution.StartedAt);
+    }
+
     /// <summary>
     /// Claude: latest <c>rate_limit_event</c> snapshot parsed from the
     /// stream-json output, or null. Read-only over the run's tracking entry;
@@ -2138,6 +2145,9 @@ public partial class GenericCliExecutionService : ICliExecutionService
         /// coding agent's own per-turn spend.
         /// </summary>
         public ParsedTurnUsage? LastParsedUsage { get; set; }
+
+        /// <summary>Every model-attributed row from the latest provider usage frame.</summary>
+        public IReadOnlyList<ParsedTurnUsage>? LastParsedUsages { get; set; }
 
         /// <summary>UTC timestamp the most recent <see cref="LastParsedUsage"/> frame was observed.</summary>
         public DateTime? LastParsedUsageAt { get; set; }

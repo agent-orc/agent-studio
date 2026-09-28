@@ -8,6 +8,7 @@ import {
   type GitTreeGroup,
   type GitWorktreeEntry,
 } from '../../../git';
+import { compactGitRef } from '../../../git/models/git-ref-label';
 
 @Component({
   selector: 'app-project-git-tree',
@@ -25,6 +26,7 @@ export class ProjectGitTreeComponent {
   readonly branchSelected = output<GitBranchEntry>();
   readonly worktreeSelected = output<GitWorktreeEntry>();
   readonly activeSelected = output<GitActiveCheckout>();
+  readonly compactRef = compactGitRef;
 
   categoryLabel(branch: GitBranchEntry): string {
     return branchCategoryLabel(branch.category);

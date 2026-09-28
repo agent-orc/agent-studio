@@ -20,6 +20,45 @@ public sealed class ProjectRegistryApiCollection
 [Collection(ProjectRegistryApiCollection.Name)]
 public sealed class ProjectBasicsEndpointsTests
 {
+    [Theory]
+    [InlineData("prompt-enrichment")]
+    [InlineData(PipelineCatalogue.PromptEnrichmentStepId)]
+    public async Task PutPipelineStep_AcceptsEnrichmentBlocksForBareAndFullStepIds(string requestedStepId)
+    {
+        var taskRepository = TempPath("pipeline-enrichment-step");
+        Directory.CreateDirectory(taskRepository);
+        try
+        {
+            await using var factory = BuildFactory(taskRepository);
+            using var client = factory.CreateClient();
+            client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+            var project = await CreateProject(client, "Enrichment Step Project", "ESP");
+
+            var response = await client.PutAsJsonAsync(
+                $"/api/projects/{Uri.EscapeDataString(project.DisplayName)}/pipeline-step",
+                new SetPipelineStepRequest
+                {
+                    StepId = requestedStepId,
+                    EnrichmentBlockIds = ["task-state-api-first"],
+                });
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Equal(PipelineCatalogue.PromptEnrichmentStepId,
+                body.RootElement.GetProperty("stepId").GetString());
+            var steps = PipelineTypeSettings.ForType(
+                factory.Services.GetRequiredService<ProjectSettingsService>().Get(project.DisplayName),
+                PipelineTypes.Task)!.PipelineSteps!;
+            Assert.Equal(["task-state-api-first"],
+                steps[PipelineCatalogue.PromptEnrichmentStepId].EnrichmentBlockIds);
+            Assert.DoesNotContain("prompt-enrichment", steps.Keys);
+        }
+        finally
+        {
+            DeleteBestEffort(taskRepository);
+        }
+    }
+
     [Fact]
     public async Task PutProject_UpdatesAndPersistsAllOnboardingBasics_WithoutMovingTaskStorage()
     {

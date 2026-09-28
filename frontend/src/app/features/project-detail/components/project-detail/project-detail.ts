@@ -24,6 +24,7 @@ import { ProjectCliEnvironmentSectionComponent } from '../project-cli-environmen
 interface ProjectSettingsRow {
   autoCommit: boolean;
   crashRecoveryEnabled: boolean;
+  automaticFailureContinuationsEnabled: boolean;
   autoPushStrategy: AutoPushStrategy;
   runnerMode: string | null;
   orchestratorModel: string | null;
@@ -112,6 +113,7 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
 
   autoCommitDraft = false;
   crashRecoveryDraft = true;
+  automaticFailureContinuationsDraft = true;
   autoPushStrategyDraft: AutoPushStrategy = 'always-immediate';
   integrationGateReuseDraft: IntegrationGateReuseChoice = 'inherit';
   orchModelDraft = '';
@@ -297,7 +299,7 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
       count++;
     }
     if (count === 0) return `${entries.length} entries; no orchestrator LLM calls yet.`;
-    return `${entries.length} entries; ${count} orchestrator LLM call${count === 1 ? '' : 's'}: ↑${input.toLocaleString()} / ↓${output.toLocaleString()} tokens.`;
+    return `${entries.length} entries; ${count} orchestrator LLM call${count === 1 ? '' : 's'}: ↑${input.toLocaleString('en-US')} / ↓${output.toLocaleString('en-US')} tokens.`;
   });
 
   private pollTimer: VisibleIntervalHandle | null = null;
@@ -331,6 +333,7 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
         const row = {
           autoCommit: snap.settings.autoCommit,
           crashRecoveryEnabled: snap.settings.crashRecoveryEnabled,
+          automaticFailureContinuationsEnabled: snap.settings.automaticFailureContinuationsEnabled ?? true,
           autoPushStrategy: snap.settings.autoPushStrategy,
           runnerMode: snap.settings.runnerMode,
           orchestratorModel: snap.settings.orchestratorModel,
@@ -341,6 +344,8 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
         this.settings.set(row);
         if (this.autoCommitDraft !== row.autoCommit) this.autoCommitDraft = row.autoCommit;
         if (this.crashRecoveryDraft !== row.crashRecoveryEnabled) this.crashRecoveryDraft = row.crashRecoveryEnabled;
+        if (this.automaticFailureContinuationsDraft !== row.automaticFailureContinuationsEnabled)
+          this.automaticFailureContinuationsDraft = row.automaticFailureContinuationsEnabled;
         if (this.autoPushStrategyDraft !== row.autoPushStrategy) this.autoPushStrategyDraft = row.autoPushStrategy;
         const wantedReuse: IntegrationGateReuseChoice =
           row.integrationGateReviewReuse === null
@@ -418,6 +423,14 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
     this.jobService.setProjectCrashRecovery(this.projectName(), this.crashRecoveryDraft).subscribe({
       next: () => this.refreshAll(true),
       error: () => this.refreshAll(true)
+    });
+  }
+
+  onAutomaticFailureContinuationsChange(): void {
+    this.jobService.setProjectAutomaticFailureContinuations(
+      this.projectName(), this.automaticFailureContinuationsDraft).subscribe({
+      next: () => this.refreshAll(true),
+      error: () => this.refreshAll(true),
     });
   }
 
@@ -559,7 +572,7 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
     try {
       const d = new Date(iso);
       if (Number.isNaN(d.getTime())) return iso;
-      return d.toLocaleString();
+      return d.toLocaleString('en-US');
     } catch {
       return iso;
     }

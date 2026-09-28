@@ -213,12 +213,17 @@ public sealed record QuotaWaitStatus(
     string Reason,
     string Scope = "quota");
 
+/// <summary>One occupied project execution slot, including parallel runs.</summary>
+public sealed record ActiveRunStatus(string JobId, string? CliType, CliExecution? Execution,
+    string? FallbackReason);
+
 public record ProjectRunnerStatus
 {
     public string ProjectName { get; init; } = "";
     public string Mode { get; init; } = "manual";
     public string? ActiveJobId { get; init; }
     public CliExecution? ActiveExecution { get; init; }
+    public IReadOnlyList<ActiveRunStatus> ActiveRuns { get; init; } = [];
     /// <summary>Effective fallback model while an active run is quota-routed.</summary>
     public string? QuotaFallbackModel { get; init; }
     /// <summary>Quota window/cap explanation for the active fallback.</summary>

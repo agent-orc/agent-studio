@@ -99,7 +99,10 @@ public sealed class RemoteTaskRunner
         // server sends it with the claim, so the worktree below starts on the
         // rescued work instead of on the integration branch.
         string? continuationBaseRef = null,
-        string? continuationBaseSha = null)
+        string? continuationBaseSha = null,
+        AgentStudio.TaskServer.Contracts.SessionContinuationLedgerEntry? previousSession = null,
+        AgentStudio.TaskServer.Contracts.MechanicalRoundDelta? mechanicalDelta = null,
+        string? freshRunReason = null)
     {
         var isProjectClone = !string.IsNullOrWhiteSpace(projectId);
         if (isProjectClone && string.IsNullOrWhiteSpace(repositoryUrl))
@@ -128,6 +131,12 @@ public sealed class RemoteTaskRunner
         var slot = _state.Create(
             taskKey, lease, workspace.RepoPath, runId, leaseInstanceId,
             projectId, repositoryUrl, defaultBranch, taskKind, runSpec);
+        slot = _state.Save(slot with
+        {
+            PreviousSession = previousSession,
+            MechanicalDelta = mechanicalDelta,
+            FreshRunReason = freshRunReason,
+        });
         return await RunPersistedAsync(
             slot,
             workspace,
@@ -357,6 +366,14 @@ public sealed class RemoteTaskRunner
     public async Task<bool> ReleaseSettledAsync(PersistedRunnerSlot slot, string reason)
     {
         _log($"releasing settled persisted attempt task={slot.TaskKey} attempt={slot.AttemptId}: {reason}");
+        if (_client.UsesDurableTaskServer)
+        {
+            // Outbox recovery has already delivered the fenced completion.
+            // A completed v1 lease has nothing left for the runner to release.
+            _client.ForgetCompletedLease(slot.TaskKey, slot.Lease.LeaseId);
+            _state.Delete(slot);
+            return true;
+        }
         if (await ReleaseWithRetryAsync(slot.Lease, "runner-finalization-settled"))
         {
             _state.Delete(slot);
@@ -405,6 +422,20 @@ public sealed class RemoteTaskRunner
             _log,
             inventory: _inventory,
             authority: authority);
+        if (reattach
+            && slot.ProcessId is > 0
+            && slot.RunSpec?.FollowUp is { } reattachedFollowUp
+            && DurableAgentProcess.StartedWithClaimedFollowUp(
+                slot.WorkerDirectory,
+                reattachedFollowUp))
+        {
+            // The daemon may have stopped after the worker was launched but
+            // before its start acknowledgement reached the Task Server. The
+            // detached worker spec contains the exact prompt handed to the
+            // still-running process. Repeat the idempotent hash only when that
+            // prompt contains this claim's complete identity-marked block.
+            heartbeat.ConfirmWorkerStartedWithPrompt(reattachedFollowUp.PromptSha256);
+        }
         using var heartbeatShutdown = CancellationTokenSource.CreateLinkedTokenSource(
             shutdown,
             daemonShutdown);
@@ -472,7 +503,8 @@ public sealed class RemoteTaskRunner
                     shipper,
                     outbox,
                     stopRun.Token,
-                    daemonShutdown)
+                    daemonShutdown,
+                    operatorStopRequested: () => heartbeat.StopRequest is not null)
                 : await ExecuteAsync(
                     slot,
                     workspace,
@@ -482,10 +514,23 @@ public sealed class RemoteTaskRunner
                     stopRun,
                     shutdown,
                     daemonShutdown,
-                    epicPlanning);
+                    epicPlanning,
+                    heartbeat);
             outcome = execution.Outcome;
             outcomeDecision = execution.Decision;
             outputLines = execution.OutputLines;
+            var resumedMechanical = _state.LoadAll().FirstOrDefault(candidate =>
+                string.Equals(candidate.AttemptId, slot.AttemptId, StringComparison.Ordinal))?.InputSessionId is not null;
+            var mechanicalFallbackReason = MechanicalRoundFallbackPolicy.Reason(
+                resumedMechanical, outcome.Kind, outcomeDecision.Outcome,
+                outcomeDecision.RawFacts.StdErr);
+            if (mechanicalFallbackReason is not null)
+            {
+                outcome = new RunOutcome(RunOutcomeKind.MechanicalFallback,
+                    $"The resumed mechanical round requires a policy-qualified fresh attempt ({mechanicalFallbackReason}).");
+                outcomeDecision = MechanicalRoundFallbackPolicy.AsTypedDecision(
+                    outcomeDecision, mechanicalFallbackReason);
+            }
             await shipper.FlushAsync(stopRun.Token);
             NeedsInputArtifactWriter.Write(
                 ResultsDir(taskKey),
@@ -592,6 +637,12 @@ public sealed class RemoteTaskRunner
                 securedTeardown = teardown;
             }
             outcomeDecision = WithDurableOutput(outcomeDecision, teardown);
+            var currentSlot = _state.LoadAll().FirstOrDefault(candidate =>
+                string.Equals(candidate.AttemptId, slot.AttemptId, StringComparison.Ordinal)) ?? slot;
+            var continuationEntry = epicPlanning ? null : SessionContinuationEvidence.Build(
+                currentSlot, workspace, teardown, _options.Hostname,
+                AgentCliProcess.Resolve(_options, currentSlot.RunSpec).CliType) with
+                { FallbackReason = mechanicalFallbackReason };
             if (finalizationRetries > 0)
             {
                 // Delivery evidence: the card must say that this completion is
@@ -628,7 +679,8 @@ public sealed class RemoteTaskRunner
                     teardown,
                     workspace.BaseSha,
                     envelopeDigest,
-                    _options.Hostname);
+                    _options.Hostname,
+                    continuationEntry);
                 if (durableCompletion.GateItems is { Count: > 0 })
                 {
                     _log(
@@ -664,7 +716,8 @@ public sealed class RemoteTaskRunner
                     artifactManifest?.Digest,
                     outputLines,
                     sourceMutated,
-                    shutdown);
+                    shutdown,
+                    continuationEntry);
             }
             handedBack = true;
             _log(
@@ -1000,10 +1053,12 @@ public sealed class RemoteTaskRunner
         PersistedRunnerSlot slot, GitWorkspace workspace, LogShipper shipper,
         DurableRunOutbox? outbox, ArtifactTransferLimitsResponse artifactLimits,
         CancellationTokenSource stopRun,
-        CancellationToken shutdown, CancellationToken daemonShutdown, bool epicPlanning)
+        CancellationToken shutdown, CancellationToken daemonShutdown, bool epicPlanning,
+        LeaseHeartbeat heartbeat)
     {
         var taskKey = slot.TaskKey;
         var lease = slot.Lease;
+        Func<bool> operatorStopRequested = () => heartbeat.StopRequest is not null;
         var resultsDir = ResultsDir(taskKey);
         if (Directory.Exists(resultsDir)) Directory.Delete(resultsDir, recursive: true);
         Directory.CreateDirectory(resultsDir);
@@ -1087,6 +1142,7 @@ public sealed class RemoteTaskRunner
 
         var runSpec = slot.RunSpec;
         string prompt;
+        FollowUpDeliveryDto? acknowledgedFollowUp = null;
         if (epicPlanning)
         {
             var planning = await _client.GetEpicPlanningPromptAsync(new RemoteEpicPlanningPromptRequest(
@@ -1111,14 +1167,18 @@ public sealed class RemoteTaskRunner
         {
             var taskPrompt = await _client.ReadTaskFileAsync(taskKey, "prompt.md", shutdown)
                              ?? throw new InvalidOperationException($"Task '{taskKey}' has no prompt.md to run.");
+            var followUpApplication = RemoteRunPrompt.ApplyClaimedFollowUp(taskPrompt, runSpec?.FollowUp);
+            acknowledgedFollowUp = followUpApplication.AcknowledgedFollowUp;
             prompt = RemoteRunPrompt.Build(
-                taskPrompt,
+                followUpApplication.Prompt,
                 runSpec?.ModeFraming,
                 ResultsDir(taskKey),
                 artifactLimits);
-            shipper.Add("system", string.IsNullOrWhiteSpace(runSpec?.ModeFraming)
-                ? "[runner] results-dir context + remote-completion-protocol appended to task prompt"
-                : "[runner] server-composed mode framing + results-dir context + remote-completion-protocol appended to task prompt");
+            shipper.Add("system", acknowledgedFollowUp is null
+                ? string.IsNullOrWhiteSpace(runSpec?.ModeFraming)
+                    ? "[runner] results-dir context + remote-completion-protocol appended to task prompt"
+                    : "[runner] server-composed mode framing + results-dir context + remote-completion-protocol appended to task prompt"
+                : $"[runner] claimed follow-up claim={acknowledgedFollowUp.ClaimId ?? "legacy"} mode={acknowledgedFollowUp.Mode} hash={acknowledgedFollowUp.PromptSha256} delivered as this run's prompt");
         }
 
         // T0b proof line: which CLI, model and reasoning level this run actually
@@ -1127,6 +1187,45 @@ public sealed class RemoteTaskRunner
         // evidence is filtered on, so it is written to the journal as well as to
         // the task's shipped log.
         var invocation = AgentCliProcess.Resolve(_options, runSpec);
+        if (!string.IsNullOrWhiteSpace(slot.FreshRunReason))
+        {
+            slot = _state.Save(slot with
+            {
+                ResumeDecision = "fresh-run",
+                ResumeRejectionReason = slot.FreshRunReason,
+            });
+            shipper.Add("system", $"[runner] mechanical-continuation decision=fresh-run reason={slot.FreshRunReason}");
+        }
+        else if (slot.MechanicalDelta is not null)
+        {
+            var continuation = _options.ExecEngine == RunnerOptions.ExecEngineCar
+                ? await MechanicalSessionContinuation.DecideAsync(
+                    slot, workspace, invocation.CliType,
+                    CodingAgentRunner.Model.CliContextModes.Normalize(runSpec?.ContextMode),
+                    _options.Hostname, shutdown)
+                : (SessionId: (string?)null, Reason: (string?)"unsupported-engine", DeltaPrompt: (string?)null);
+            if (continuation.SessionId is not null)
+            {
+                prompt = continuation.DeltaPrompt!;
+                slot = _state.Save(slot with
+                {
+                    InputSessionId = continuation.SessionId,
+                    ResumeDecision = "resumed-mechanical",
+                    ResumeRejectionReason = null,
+                });
+            }
+            else
+            {
+                slot = _state.Save(slot with
+                {
+                    ResumeDecision = "fresh-run",
+                    ResumeRejectionReason = continuation.Reason ?? "resume-precondition-failed",
+                });
+            }
+            shipper.Add("system",
+                $"[runner] mechanical-continuation decision={slot.ResumeDecision} reason={slot.ResumeRejectionReason ?? "none"} " +
+                $"inputSession={slot.InputSessionId ?? "none"}");
+        }
         var specLine =
             $"[runner] spec cli={invocation.CliType} model={invocation.Model ?? "<cli-default>"} " +
             $"thinking={invocation.ThinkingLevel ?? "<cli-default>"} " +
@@ -1167,7 +1266,11 @@ public sealed class RemoteTaskRunner
                 _options, slot.WorkerDirectory, workspace.RepoPath, prompt, resultsDir,
                 runSpec: runSpec,
                 runId: slot.AttemptId,
+                resumeSessionId: slot.InputSessionId,
                 cleanContextKey: taskKey,
+                tokenCeiling: slot.InputSessionId is null ? null : MechanicalSessionResumePolicy.TokenCeiling,
+                timeoutSeconds: slot.InputSessionId is null ? null : MechanicalSessionResumePolicy.DurationCeilingSeconds,
+                tokenBaseline: slot.InputSessionId is null ? null : slot.PreviousSession?.TotalTokens,
                 // The agent runs this repository's own build, test and lint
                 // commands. Without the preparation's cache binding its first
                 // `--no-restore` build resolves against a package folder the
@@ -1187,6 +1290,34 @@ public sealed class RemoteTaskRunner
             Phase = "running",
         });
         _inventory.AttachProcess(slot.RunId ?? slot.AttemptId, process.ProcessId);
+        if (acknowledgedFollowUp is { } followUp)
+        {
+            heartbeat.ConfirmWorkerStartedWithPrompt(followUp.PromptSha256);
+            try
+            {
+                var acknowledged = await _client.RenewLeaseAsync(
+                    new RunLeaseHeartbeatRequest(
+                        taskKey,
+                        lease.LeaseId,
+                        lease.FencingToken,
+                        _options.RunnerId,
+                        _options.TtlSeconds,
+                        lease.AttemptId,
+                        lease.AuthorityEpoch,
+                        $"worker-start:{slot.AttemptId}:{followUp.PromptSha256}",
+                        _inventory.Snapshot(),
+                        followUp.PromptSha256),
+                    shutdown);
+                if (!acknowledged.Granted)
+                    throw new InvalidOperationException(
+                        $"Task Server refused the worker-start prompt acknowledgement: {acknowledged.Outcome} {acknowledged.Message}");
+            }
+            catch
+            {
+                process.Kill();
+                throw;
+            }
+        }
         _log($"detached worker started task={taskKey} pid={process.ProcessId} attempt={slot.AttemptId}");
         var executed = await AwaitDetachedAsync(
             slot,
@@ -1194,7 +1325,8 @@ public sealed class RemoteTaskRunner
             shipper,
             outbox,
             stopRun.Token,
-            daemonShutdown);
+            daemonShutdown,
+            operatorStopRequested: operatorStopRequested);
         // Only a terminal result proves that no command of this run will read the
         // per-run cache folders again. A daemon shutdown leaves the detached
         // worker running, so its folder stays and is reclaimed by age instead:
@@ -1210,9 +1342,13 @@ public sealed class RemoteTaskRunner
         DurableRunOutbox? outbox,
         CancellationToken stopRun,
         CancellationToken daemonShutdown = default,
-        int sameSessionResumeAttempts = 0)
+        int sameSessionResumeAttempts = 0,
+        Func<bool>? operatorStopRequested = null)
     {
         var process = DurableAgentProcess.Attach(slot);
+        var activeInvocation = AgentCliProcess.Resolve(_options, slot.RunSpec);
+        ProviderAuthProbe.Shared.RecordRunStarted(activeInvocation.FileName);
+        var providerRunRecorded = true;
         var sequence = slot.LastOutputSequence;
         using var waitStop = CancellationTokenSource.CreateLinkedTokenSource(
             stopRun,
@@ -1244,18 +1380,32 @@ public sealed class RemoteTaskRunner
                         FinalizationStage = FinalizationRetryPolicy.ResultReadyStage,
                         LastOutputSequence = sequence,
                     });
+                    ProviderAuthProbe.Shared.RecordRunCompleted(activeInvocation.FileName);
+                    providerRunRecorded = false;
                     ReportWorkerEnvelope(slot, shipper);
-                    var processResult = new ProcessResult(result.ExitCode, result.StdOut, result.StdErr);
+                    var processResult = ProcessResultFrom(result);
                     var invocation = AgentCliProcess.Resolve(_options, slot.RunSpec);
+                    var classified = result.TimedOut
+                        ? ClassifyTimedOutResult(slot.Lease, workspace, result, sameSessionResumeAttempts)
+                        : ClassifyProcessResult(
+                            slot.Lease,
+                            workspace,
+                            processResult,
+                            result.LaunchFailed,
+                            sameSessionResumeAttempts,
+                            invocation);
                     var providerAccess = ProviderAccessClassifier.Classify(
                         processResult.ExitCode,
                         processResult.StdOut,
                         processResult.StdErr);
-                    var providerAuth = providerAccess.Kind == ProviderAccessEvidenceKind.RequestRejected
-                        ? null
-                        : ProviderAuthProbe.Shared.RecordProcessResult(
-                            invocation.FileName,
-                            processResult);
+                    var providerAuth = RecordProviderProcessResult(
+                        ProviderAuthProbe.Shared,
+                        invocation.FileName,
+                        processResult,
+                        classified.Decision.RawFacts,
+                        evidenceId: slot.RunId ?? slot.AttemptId,
+                        stopDirectiveRecorded: operatorStopRequested?.Invoke() == true,
+                        daemonShutdownRecorded: daemonShutdown.IsCancellationRequested);
                     if (providerAccess.Kind == ProviderAccessEvidenceKind.AuthenticationFailure)
                     {
                         var provider = invocation.CliType;
@@ -1282,7 +1432,8 @@ public sealed class RemoteTaskRunner
                             "system",
                             $"[runner] capability-failure capability={CapabilityProtocol.ProviderAuthentication(provider)} classification=ProviderUnauthorized");
                     }
-                    else if (providerAccess.Kind == ProviderAccessEvidenceKind.RateLimited)
+                    else if (providerAccess.Kind == ProviderAccessEvidenceKind.RateLimited
+                             && providerAuth.Status == ProviderAuthProbe.Limited)
                     {
                         shipper.Add(
                             "system",
@@ -1304,16 +1455,8 @@ public sealed class RemoteTaskRunner
                             "system",
                             $"[runner] provider rejected model request provider={invocation.CliType}; provider-auth capability unchanged");
                     }
-                    var classified = result.TimedOut
-                        ? ClassifyTimedOutResult(slot.Lease, workspace, result, sameSessionResumeAttempts)
-                        : ClassifyProcessResult(
-                            slot.Lease,
-                            workspace,
-                            processResult,
-                            result.LaunchFailed,
-                            sameSessionResumeAttempts,
-                            invocation);
                     if (classified.Decision.RecoveryAction == ExecutionRecoveryAction.ResumeSameSession
+                        && slot.InputSessionId is null
                         && sameSessionResumeAttempts < ExecutionOutcomeAdapter.MaxSameSessionResumeAttempts)
                     {
                         var sessionId = classified.Decision.RawFacts.SessionId!;
@@ -1373,7 +1516,8 @@ public sealed class RemoteTaskRunner
                             outbox,
                             stopRun,
                             daemonShutdown,
-                            sameSessionResumeAttempts + 1);
+                            sameSessionResumeAttempts + 1,
+                            operatorStopRequested);
                     }
 
                     shipper.Add(
@@ -1411,6 +1555,11 @@ public sealed class RemoteTaskRunner
                 _log,
                 CancellationToken.None);
             throw;
+        }
+        finally
+        {
+            if (providerRunRecorded)
+                ProviderAuthProbe.Shared.RecordRunCompleted(activeInvocation.FileName);
         }
     }
 
@@ -1541,25 +1690,26 @@ public sealed class RemoteTaskRunner
             : string.IsNullOrWhiteSpace(provider.SessionId)
                 ? ExecutionSessionState.Unsupported
                 : ExecutionSessionState.Active;
-        var factsAfterExit = Facts(
+        var factsAfterExit = BuildProcessFacts(
             lease,
             workspace,
+            result,
             ProviderTerminalEvent: provider.TerminalEvent,
             FinalAssistantOutput: provider.FinalAssistantOutput,
-            StdOut: result.StdOut,
-            StdErr: result.StdErr,
-            ExitCode: result.ExitCode,
-            Signal: SignalFromExitCode(result.ExitCode),
             LaunchFailed: launchFailed,
             SessionState: sessionState,
             SessionId: provider.SessionId,
             SameSessionResumeAttempts: sameSessionResumeAttempts,
             EffectiveCliType: invocation?.CliType,
             EffectiveModel: invocation?.Model,
-            EffectiveThinkingLevel: invocation?.ThinkingLevel);
+            EffectiveThinkingLevel: invocation?.ThinkingLevel,
+            ObservedModels: provider.ObservedModels);
         var typed = ExecutionOutcomeAdapter.Classify(factsAfterExit);
         var sentinelOutcome = SentinelScanner.Scan(result.StdOut);
-        var outcome = BuildRunOutcome(typed, provider, sentinelOutcome, result.StdErr);
+        var rawOutcome = BuildRunOutcome(typed, provider, sentinelOutcome, result.StdErr);
+        var outcome = ApprovalOnlyNeedsInputPolicy.Classify(rawOutcome);
+        if (rawOutcome.Kind == RunOutcomeKind.NeedsInput && outcome.Kind == RunOutcomeKind.Done)
+            _log($"[runner] review-requested: reclassified approval-only NeedsInput as Done for {lease.TaskKey}");
         return new RemoteExecutionResult(
             outcome,
             result.StdOut.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries),
@@ -1696,7 +1846,7 @@ public sealed class RemoteTaskRunner
 
         try
         {
-            await _client.UploadArtifactsAsync(new ArtifactIngestRequest(
+            var finalization = await _client.UploadArtifactsAsync(new ArtifactIngestRequest(
                 taskKey,
                 [],
                 RunnerId: lease.RunnerId,
@@ -1707,6 +1857,7 @@ public sealed class RemoteTaskRunner
                 AuthorityEpoch: lease.AuthorityEpoch,
                 IdempotencyKey: $"artifact-finalize:{lease.AttemptId}:{plan.Manifest.Digest}",
                 FinalizeResult: true), CancellationToken.None);
+            _log($"artifact result-document finalization task={taskKey} ResultDocumentStatus={finalization?.ResultDocumentStatus ?? "missing"}");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -1908,7 +2059,8 @@ public sealed class RemoteTaskRunner
         IReadOnlyList<string> outputLines,
         bool sourceMutated,
         CancellationToken ct,
-        IReadOnlyList<string>? gateItems = null)
+        IReadOnlyList<string>? gateItems = null,
+        SessionContinuationLedgerEntry? sessionContinuation = null)
     {
         var (envelopeBaseSha, envelopeResultRef, envelopeManifestDigest) =
             BuildEnvelopeCompletionFields(teardown, baseSha, artifactManifestDigest);
@@ -1939,7 +2091,8 @@ public sealed class RemoteTaskRunner
             ArtifactManifestDigest: envelopeManifestDigest,
             IntegrationBranch: integrationBranch,
             NeedsInputMessage: outcome.NeedsInputMessage,
-            GateItems: gateItems), ct);
+            GateItems: gateItems,
+            SessionContinuation: sessionContinuation), ct);
         _log($"remote-runner-completion recorded: outcome {resp?.Outcome}, state {resp?.TargetState}, result-envelope {(envelopeResultRef is null ? "absent" : "attached")}");
     }
 
@@ -1955,7 +2108,8 @@ public sealed class RemoteTaskRunner
         string? artifactManifestDigest,
         IReadOnlyList<string> outputLines,
         bool sourceMutated,
-        CancellationToken ct)
+        CancellationToken ct,
+        SessionContinuationLedgerEntry? sessionContinuation = null)
     {
         // AGT-2820: a run that delivered without a terminal sentinel used to be
         // reconciled into 5-human-review as "Completed out-of-band", where the
@@ -1990,7 +2144,8 @@ public sealed class RemoteTaskRunner
             outputLines,
             sourceMutated,
             ct,
-            incident is null ? null : [incident.GateItem]);
+            incident is null ? null : [incident.GateItem],
+            sessionContinuation);
     }
 
     /// <summary>
@@ -2020,7 +2175,8 @@ public sealed class RemoteTaskRunner
         WorktreeTeardownResult teardown,
         string? baseSha,
         string? envelopeDigest,
-        string host)
+        string host,
+        SessionContinuationLedgerEntry? sessionContinuation = null)
     {
         var incident = MissingSentinelIncidentFor(
             outcome, outcomeDecision, teardown, baseSha, host);
@@ -2032,7 +2188,8 @@ public sealed class RemoteTaskRunner
             outcome.NeedsInputMessage,
             teardown.Branch,
             teardown.CommitSha,
-            incident is null ? null : [incident.GateItem]);
+            incident is null ? null : [incident.GateItem],
+            sessionContinuation);
     }
 
     /// <summary>
@@ -2285,10 +2442,62 @@ public sealed class RemoteTaskRunner
         });
     }
 
-    private static int? SignalFromExitCode(int exitCode)
-        => !OperatingSystem.IsWindows() && exitCode is >= 129 and <= 255
-            ? exitCode - 128
-            : null;
+    /// <summary>
+    /// Applies a completed run to the host-wide provider status without losing
+    /// the termination facts already recorded by outcome classification. A
+    /// provider-looking message from an operator stop, host shutdown, or
+    /// signal-terminated process is run evidence, not provider-limit evidence.
+    /// </summary>
+    internal static ProviderAuthStatus RecordProviderProcessResult(
+        ProviderAuthProbe providerAuth,
+        string cliBinary,
+        ProcessResult result,
+        ExecutionRawFacts facts,
+        string? evidenceId = null,
+        bool stopDirectiveRecorded = false,
+        bool daemonShutdownRecorded = false)
+        => providerAuth.RecordProcessResult(
+            cliBinary,
+            result,
+            evidenceId,
+            operatorStopped: facts.OperatorCancelled || stopDirectiveRecorded,
+            signal: facts.Signal,
+            hostShutdown: facts.HostShutdown || daemonShutdownRecorded);
+
+    internal static ProcessResult ProcessResultFrom(DetachedJobResult result)
+        => new(result.ExitCode, result.StdOut, result.StdErr, result.Signal);
+
+    internal static ExecutionRawFacts BuildProcessFacts(
+        RunLeaseInfoDto lease,
+        GitWorkspace workspace,
+        ProcessResult result,
+        string? ProviderTerminalEvent = null,
+        string? FinalAssistantOutput = null,
+        bool LaunchFailed = false,
+        ExecutionSessionState SessionState = ExecutionSessionState.Unsupported,
+        string? SessionId = null,
+        int SameSessionResumeAttempts = 0,
+        string? EffectiveCliType = null,
+        string? EffectiveModel = null,
+        string? EffectiveThinkingLevel = null,
+        IReadOnlyList<string>? ObservedModels = null)
+        => Facts(
+            lease,
+            workspace,
+            ProviderTerminalEvent,
+            FinalAssistantOutput,
+            result.StdOut,
+            result.StdErr,
+            result.ExitCode,
+            result.Signal,
+            LaunchFailed: LaunchFailed,
+            SessionState: SessionState,
+            SessionId: SessionId,
+            SameSessionResumeAttempts: SameSessionResumeAttempts,
+            EffectiveCliType: EffectiveCliType,
+            EffectiveModel: EffectiveModel,
+            EffectiveThinkingLevel: EffectiveThinkingLevel,
+            ObservedModels: ObservedModels);
 
     private static ExecutionRawFacts Facts(
         RunLeaseInfoDto lease,
@@ -2312,7 +2521,8 @@ public sealed class RemoteTaskRunner
         int FreshSalvageAttempts = 0,
         string? EffectiveCliType = null,
         string? EffectiveModel = null,
-        string? EffectiveThinkingLevel = null)
+        string? EffectiveThinkingLevel = null,
+        IReadOnlyList<string>? ObservedModels = null)
         => new(
             lease.AttemptId ?? lease.LeaseId,
             ExecutionAttemptKind.Coding,
@@ -2338,7 +2548,8 @@ public sealed class RemoteTaskRunner
             ReviewSubject: null,
             EffectiveCliType,
             EffectiveModel,
-            EffectiveThinkingLevel);
+            EffectiveThinkingLevel,
+            ObservedModels);
 
     internal static async Task<T> RetryEnvironmentPreparationAsync<T>(
         Func<CancellationToken, Task<T>> prepare,

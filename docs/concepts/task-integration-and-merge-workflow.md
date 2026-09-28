@@ -96,7 +96,12 @@ If all three stages fail, the merge step persists one structured conflict report
   the usage and delivery, for example
   `automatic recovery budget used: 2/2 for delivery 5cd6b1d4bc07`. Concept and report-only cards
   remain in Human Review. The rail emits one action event per mutation plus a
-  structured sweep summary and a last-run/lane-depth read endpoint.
+  structured sweep summary and a last-run/lane-depth read endpoint. A durable
+  bounce obligation records each eligible conflict before action, including its
+  reviewed attempt, evidence fingerprint, route and idempotency key. The first
+  automatic round in an operator review epoch may proceed; further rounds in
+  that epoch remain for the operator. Global and per-project bounce switches
+  retain deferred obligations, and shadow mode projects them without mutation.
 - Gate environment retry: a merge gate that dies before test discovery is a
   broken gate host, not a verdict on the delivery.
   `GateEnvironmentRetryService` replays the integration alone on a bounded
@@ -170,7 +175,20 @@ The one contention allowance and slow-test evidence are documented in
   `acceptance-integration-in-flight`, `outside-retry-lanes`, `no-code-delivery`,
   `gate-environment-retry-disabled`). Replaying past an in-flight acceptance
   integration in particular would race a second merge into the integration
-  branch against the acceptance transaction that already owns it.
+  branch against the acceptance transaction that already owns it. Every `409`
+  refusal includes `comparedDeliverySha`, the full SHA read from the card's
+  review subject (or `null` if no comparison ran), and `latestAttempt`: the latest
+  review found for that exact SHA, with `id`, `outcome`, and `terminalAt`, or
+  `null` if none was found. Review history is checked only after the card has
+  a gate environment failure eligible for a retry; other refusals carry a
+  `null` attempt because review history was not consulted. The review lookup
+  reads archived attempts as well as live attempts, matching
+  `GET /api/attempts/tasks/{id}`. A failed history
+  read appears in `error` as `Review lookup failed: <exception>` and is logged
+  at Warning level, so a lookup defect can be distinguished from a missing
+  review. The lookup uses the card's stable `key` (for example `AGT-2880`),
+  which is also the attempt authority key; the scanner's path-qualified
+  `taskKey` is only an internal card identity.
 - **One replay per card.** A sweep rung and the operator action take the same
   in-flight guard before reading anything. During a replay the merge is already
   in the integration branch and its gate has not run yet, so deciding from the

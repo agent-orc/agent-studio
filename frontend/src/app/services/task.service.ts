@@ -797,6 +797,15 @@ export class TaskService {
     );
   }
 
+  /** Ask the orchestrator to extend the same card with its recorded failure evidence. */
+  continueFromFailure(jobId: string, watchPath?: string) {
+    return this.http.post<{ status: string; stage: string; taskKey: string }>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/failure/continue`,
+      {},
+      this.withWatchPath(watchPath),
+    );
+  }
+
   /**
    * ASS-1727 — page the terminal Archive lane. The board `grouped.archive`
    * is intentionally empty (the cache-backed board scan excludes the archive
@@ -2346,6 +2355,13 @@ export class TaskService {
     );
   }
 
+  setProjectAutomaticFailureContinuations(projectName: string, enabled: boolean) {
+    return this.http.put(
+      `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/automatic-failure-continuations`,
+      { enabled },
+    );
+  }
+
   /**
    * AGT-2839: project override for integration-gate review reuse. `null` clears
    * the override and falls back to the safe default (on where Remote Review
@@ -2609,6 +2625,19 @@ export class TaskService {
     return this.http.get<OrchestratorChatResponse>(
       `${this.baseUrl}/runner/${orchestratorContextChatSegment(contextKey)}/orchestrator-chat`,
     );
+  }
+
+  getRemoteChatWorkStatus(projectName: string, contextKey: string) {
+    return this.http.get<{
+      state: 'queued' | 'running';
+      runnerId: string;
+      hostName: string | null;
+      queuedAt: string;
+      startedAt: string | null;
+      reason: string | null;
+    } | null>(`${this.baseUrl}/runner/project-chat/status`, {
+      params: { projectName, contextKey },
+    });
   }
 
   /**

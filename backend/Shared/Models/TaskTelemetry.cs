@@ -34,6 +34,8 @@ public record TaskTokenSummary
     public DateTime? LastUpdate { get; init; }
     /// <summary>Per-call rows for the popover, oldest first.</summary>
     public List<TaskTokenCall> Entries { get; init; } = [];
+    /// <summary>True when any persisted call ran on a model other than its pin.</summary>
+    public bool HasModelMismatch { get; init; }
 }
 
 /// <summary>
@@ -69,6 +71,10 @@ public record TaskTokenCall
     public decimal EstimatedApiCostUsd { get; init; }
     /// <summary>Whether the price catalog resolved the model at <see cref="Ts"/>.</summary>
     public bool ModelPriced { get; init; }
+    /// <summary>The model requested by the card for this run.</summary>
+    public string? PinnedModel { get; init; }
+    /// <summary>True when <see cref="Model"/> differs from <see cref="PinnedModel"/>.</summary>
+    public bool ModelMismatch { get; init; }
 }
 
 /// <summary>
@@ -98,6 +104,12 @@ public record SessionEvent
     /// session log a second authority.
     /// </summary>
     public string? RunAttemptId { get; init; }
+    /// <summary>
+    /// SHA-256 of the claimed follow-up prompt that the worker actually started
+    /// with. Null means the run did not carry a queued follow-up or predates
+    /// prompt acknowledgement.
+    /// </summary>
+    public string? StartedPromptSha256 { get; init; }
     /// <summary>Terminal instant copied from the settled attempt or local CLI execution.</summary>
     public DateTime? FinishedAt { get; init; }
     /// <summary>Canonical terminal outcome, for example done, failed, noop, or superseded.</summary>

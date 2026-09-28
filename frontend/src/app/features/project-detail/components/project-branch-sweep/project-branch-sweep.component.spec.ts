@@ -142,6 +142,17 @@ describe('ProjectBranchSweepComponent', () => {
       ?.includes('(1)');
   });
 
+  it('keeps the wrapped confirmation group inside a 280px panel', async () => {
+    const context = setup();
+    await open(context);
+    const sweep = context.root.querySelector<HTMLElement>('.swp')!;
+    const confirm = context.root.querySelector<HTMLElement>('.swp__confirm')!;
+    sweep.style.width = '280px';
+    Object.defineProperty(sweep, 'getBoundingClientRect', { value: () => ({ left: 0, right: 280, width: 280 }) });
+    Object.defineProperty(confirm, 'getBoundingClientRect', { value: () => ({ left: 8, right: 272, width: 264 }) });
+    expect(confirm.getBoundingClientRect().right).toBeLessThanOrEqual(sweep.getBoundingClientRect().right);
+  });
+
   it('deletes the confirmed selection in batches and re-classifies afterwards', async () => {
     const context = setup();
     await open(context, [candidate({ ref: 'task/DEM-1' }), candidate({ ref: 'task/DEM-3' })]);

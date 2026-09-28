@@ -176,7 +176,7 @@ remediation instead of waiting on a runner request.
 The controller is intentionally repeatable after a host wipe:
 
 1. Verify SSH key access, passwordless sudo, .NET 10, and Task Server health
-   from the host.
+   from the host. Install the sshd client-liveness drop-in described below.
 2. Install or update the `CodingAgentRunner` NuGet global tool and require
    version `0.5.0` or newer, then install the Codex and Claude CLIs.
 3. Before the visible setup task starts, provision provider authentication from
@@ -201,6 +201,17 @@ The controller is intentionally repeatable after a host wipe:
 5. Prove `systemctl is-enabled`, `systemctl is-active`, agent-host health, the
    variable name in `/proc/<MainPID>/environ`, a fresh provider-auth probe, and
    an authenticated claim or empty-queue response before setup completes.
+
+### SSH session liveness for tunnel hosts
+
+Onboarding writes `/etc/ssh/sshd_config.d/05-agent-runner-client-alive.conf`
+with `ClientAliveInterval 30` and `ClientAliveCountMax 3`, checks the effective
+configuration with `sshd -T`, and reloads sshd. The server then closes an
+abandoned SSH session within roughly 90 seconds, releasing its reverse-port
+listener. The Task Server's [link supervisor](./remote-runner-persistent-connection.md#health-and-recovery)
+also runs a bounded, same-user listener inspection and cleanup on reconnect.
+If the listener remains held, Execution Hosts reports its PID and age and the
+supervisor retries at the longest configured interval.
 
 The NuGet package must be published with package type `DotnetTool` and expose
 the `agent-host` command. A library-only `CodingAgentRunner` package cannot be
@@ -559,7 +570,7 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 | `RUNNER_BRANCH` | `--branch` | (base branch) | Branch to check out for the run. |
 | `RUNNER_BASE_BRANCH` | `--base-branch` | `main` | Fallback when the task branch is absent on origin. |
 | `RUNNER_WORKDIR` | `--workdir` | `$TMPDIR/agent-runner-work` | Where the repo checkout and `results/` live. |
-| `RUNNER_ROLE` | `--role` | `coding` | `coding` or the separately registered `review` service. |
+| `RUNNER_ROLE` | `--role` | `coding` | `coding`, the separately registered `review` service, or the separately registered `gate` service. The gate role uses its own runner identity, credential, state directory, and disposable `RUNNER_REVIEW_WORKDIR`; see the [claimable gate contract](../../system/domains/runner.md#claimable-gate-host-and-task-api). |
 | `RUNNER_REVIEW_WORKDIR` | `--review-workdir` | `$TMPDIR/agent-review-work` | Disposable review-only workspace, cache, temp, and evidence root. Must differ from `RUNNER_WORKDIR`. Settled attempt workspaces are removed after report acceptance; inactive attempt remnants older than 72 hours are swept hourly. The reusable `.baseline-cache` is preserved; see [Baseline verify result cache](#baseline-verify-result-cache). |
 | `RUNNER_REVIEW_CREDENTIAL_ENV` | `--review-credential-env` | (none) | Comma-separated read-only credential variable names admitted into the cleared review environment. |
 | `RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS` | `--review-no-cpu-progress-seconds` | `900` | Floor for the hang watchdog on review commands. A command's whole process tree must burn at least one percent of one core within the *effective* window; otherwise the tree is killed and the attempt is reported as `ReviewInfra/NoCpuProgress`. The effective window is `max(this value, 50%` of that command's own budget`)` (AGT-2851), so a legitimately quiet suite with a large budget is not killed for sitting near 0% CPU during a real test wait. `0` disables the watchdog outright, ignoring the budget-derived floor. Linux only: the tree's CPU time is read from `/proc`. See [Review parallelism and build-server isolation](#review-parallelism-and-build-server-isolation). |

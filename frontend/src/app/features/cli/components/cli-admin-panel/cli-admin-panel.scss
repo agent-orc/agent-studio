@@ -2,7 +2,6 @@
 .cli-admin {
   padding: 16px 18px 24px;
   color: var(--studio-fg);
-  max-width: 920px;
 }
 .cli-admin__header {
   display: flex; align-items: flex-start; gap: 14px;
@@ -135,6 +134,7 @@
 .cap-row__head { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; }
 .cap-row__label { color: var(--studio-fg); font-weight: 500; }
 .cap-row__used { color: var(--studio-fg-dim); font-family: var(--font-mono, monospace); }
+.cap-row__used small { display: block; margin-top: var(--studio-spacing-1); font-size: 9px; font-variant-numeric: tabular-nums; }
 .cap-row__used strong { color: var(--studio-fg-strong); font-weight: 600; }
 .cap-row__used--blocked strong { color: var(--studio-accent-6-strong); }
 .cap-row__slider {

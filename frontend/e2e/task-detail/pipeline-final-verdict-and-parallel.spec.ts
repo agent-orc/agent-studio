@@ -24,6 +24,7 @@ function makeDetail(state: string) {
   return {
     info: {
       id: JOB_ID,
+      key: 'AGT-2794',
       taskKey: `${WATCH_PATH}::${JOB_ID}`,
       title: 'Final verdict fixture',
       state,
@@ -112,9 +113,15 @@ function pipelineAcceptedFinalVerdict() {
       steps: [
         execStep('pre-loop-guard', 'pre', 'passed'),
         execStep('core-agent-run', 'core', 'passed'),
-        execStep('aspect-requirement-fit', 'aspect', 'passed', { verdict: 'pass' }),
-        execStep('aspect-code-quality', 'aspect', 'passed', { verdict: 'pass' }),
-        execStep('aspect-tests-and-evidence', 'aspect', 'passed', { verdict: 'pass' }),
+        execStep('aspect-requirement-fit', 'aspect', 'passed', {
+          verdict: 'pass', verdictSummary: 'All acceptance criteria are covered by the implementation.',
+        }),
+        execStep('aspect-code-quality', 'aspect', 'passed', {
+          verdict: 'concerns', verdictSummary: 'Clean, well-structured diff with one dead no-op assertion in a new spec file.',
+        }),
+        execStep('aspect-tests-and-evidence', 'aspect', 'passed', {
+          verdict: 'pass', verdictSummary: 'Focused component and projection tests passed.',
+        }),
         execStep('post-lint-scss', 'tool', 'passed'),
         execStep('post-regression-radar', 'drift', 'passed', { verdict: 'clean' }),
         execStep('post-orchestrator-decision', 'orchestrator', 'passed', {
@@ -126,11 +133,31 @@ function pipelineAcceptedFinalVerdict() {
     },
     cost: { steps: [], totalTokens: 0, totalCostUsd: 0, anyModelUnknown: false },
     config: {},
-    resultFiles: { 'aspect-requirement-fit': 'aspect-requirement-fit.md' },
+    resultFiles: {
+      'aspect-requirement-fit': 'aspect-requirement-fit.md',
+      'aspect-code-quality': 'aspect-code-quality.md',
+      'aspect-tests-and-evidence': 'aspect-tests-and-evidence.md',
+    },
+    aspectEvidence: {
+      'aspect-code-quality': [
+        {
+          attemptId: 'review_latest',
+          reportFile: 'aspect-code-quality.md',
+          rawLogFile: 'remote-review-review_latest-candidate_aspect_code_quality_stdout_log',
+          reviewGradeFile: 'remote-review-grade-review_latest.md',
+        },
+        {
+          attemptId: 'review_earlier',
+          reportFile: 'aspect-code-quality.md',
+          rawLogFile: 'remote-review-review_earlier-candidate_aspect_code_quality_stdout_log',
+          reviewGradeFile: 'remote-review-grade-review_earlier.md',
+        },
+      ],
+    },
   };
 }
 
-async function installRoutes(page: Page, state: string, pipelineBody: () => unknown) {
+async function installRoutes(page: Page, state: string, pipelineBody: () => unknown, outputLines: unknown[] = []) {
   const idEsc = JOB_ID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const detail = makeDetail(state);
 
@@ -153,7 +180,7 @@ async function installRoutes(page: Page, state: string, pipelineBody: () => unkn
       contentType: 'application/json',
       body: JSON.stringify({
         preparation: [], orchestratorPrep: [], ready: [],
-        progress: [], failedPickup: [], autoReview: [], humanReview: [],
+        progress: [], failedPickup: [], autoReview: [detail.info], humanReview: [],
         completed: [], archive: [],
       }),
     }),
@@ -224,7 +251,7 @@ async function installRoutes(page: Page, state: string, pipelineBody: () => unkn
   );
 
   await page.route(new RegExp(`/api/tasks/${idEsc}/output(\\?|$)`), (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(outputLines) }),
   );
   await page.route(new RegExp(`/api/tasks/${idEsc}/runs(\\?|$)`), (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ runs: [] }) }),
@@ -315,6 +342,8 @@ test.describe('Pipeline: parallel aspects + orchestrator final verdict', () => {
           'taskboard.panesVisible',
           JSON.stringify({ prompt: true, protocol: false, git: false }),
         );
+        localStorage.setItem('atp.studio.openProjectChatOnEntry.v1', '0');
+        sessionStorage.setItem('atp.studio.orchestratorOpen.v1', '0');
       } catch {
         /* private mode */
       }
@@ -358,7 +387,7 @@ test.describe('Pipeline: parallel aspects + orchestrator final verdict', () => {
     if (RESULTS_DIR) {
       await pipeline.scrollIntoViewIfNeeded();
       await page.screenshot({
-        path: path.join(RESULTS_DIR, 'pipeline-parallel-aspects-and-final-verdict.png'),
+        path: path.join(RESULTS_DIR, 'pipeline-parallel-aspects-and-final-verdict--mocked.png'),
         fullPage: true,
       });
     }
@@ -386,7 +415,7 @@ test.describe('Pipeline: parallel aspects + orchestrator final verdict', () => {
 
     if (RESULTS_DIR) {
       await detailsDialog.screenshot({
-        path: path.join(RESULTS_DIR, 'pipeline-result-popover-open.png'),
+        path: path.join(RESULTS_DIR, 'pipeline-result-popover-open--mocked.png'),
       });
     }
   });
@@ -437,9 +466,110 @@ test.describe('Pipeline: parallel aspects + orchestrator final verdict', () => {
     if (RESULTS_DIR) {
       await pipeline.scrollIntoViewIfNeeded();
       await page.screenshot({
-        path: path.join(RESULTS_DIR, 'pipeline-fixed-stage-gutter-alignment.png'),
+        path: path.join(RESULTS_DIR, 'pipeline-fixed-stage-gutter-alignment--mocked.png'),
         fullPage: true,
       });
+    }
+  });
+
+  test('captures aspect, sentinel, and tab-strip evidence at desktop widths', async ({ page }) => {
+    test.setTimeout(120_000);
+    test.skip(!RESULTS_DIR, 'JOB_RESULTS_DIR is required for review evidence');
+    let legacyProjection = true;
+    const marker = '[[ASPECT_VERDICT: status=concerns; summary=Clean diff with one dead no-op assertion; evidence_checked=overview-pane.component.spec.ts; missing=none]] [[TASK_DONE]]';
+    const current = pipelineAcceptedFinalVerdict();
+    const pipelineBody = () => {
+      if (!legacyProjection) return current;
+      const legacy = structuredClone(current);
+      const codeQuality = legacy.execution.steps.find(item => item.stepId === 'aspect-code-quality')!;
+      codeQuality.status = 'failed';
+      delete codeQuality.verdict;
+      delete codeQuality.verdictSummary;
+      codeQuality.reason = 'Clean, well-structured diff with one dead no-op assertion in a new spec file.';
+      delete legacy.aspectEvidence;
+      return legacy;
+    };
+    await installRoutes(page, '4-auto-review', pipelineBody, [{
+      timestamp: '2026-09-18T12:00:00Z', stream: 'stdout', text: marker,
+    }]);
+    await page.addInitScript(({ watchPath, jobId }) => {
+      localStorage.setItem('taskboard.panesVisible', JSON.stringify({ prompt: true, protocol: true, git: false }));
+      localStorage.setItem('atp.studio.openProjectChatOnEntry.v1', '0');
+      sessionStorage.setItem('atp.studio.orchestratorOpen.v1', '0');
+      const taskKey = `${watchPath}::${jobId}`;
+      localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
+        v: 1,
+        tabs: [
+          { kind: 'task', taskKey },
+          { kind: 'board', projectName: 'fixture' },
+          {
+            kind: 'hub', projectName: 'fixture', section: 'wiki',
+            wikiTarget: {
+              kind: 'page', relPath: 'operations/pre-develop-gate-a-run-budget-overrun.md',
+              title: 'Pre-develop gate run budget overrun',
+            },
+          },
+        ],
+        activeKey: `task:${taskKey}`,
+      }));
+    }, { watchPath: WATCH_PATH, jobId: JOB_ID });
+
+    for (const width of [1280, 1920]) {
+      await page.setViewportSize({ width, height: 1080 });
+      legacyProjection = true;
+      await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+      await dismissErrorDialog(page);
+      await expandAllPipelineSections(page);
+      const pipeline = page.getByTestId('overview-pipeline');
+      await expect(pipeline).toBeVisible();
+      await pipeline.screenshot({ path: path.join(RESULTS_DIR, `pipeline-before-${width}--mocked.png`) });
+
+      const refreshedPipeline = page.waitForResponse(response =>
+        response.url().includes(`/api/tasks/${JOB_ID}/pipeline`) && response.ok());
+      legacyProjection = false;
+      await refreshedPipeline;
+      await expandAllPipelineSections(page);
+      await expect(page.locator('[data-step-id="aspect-code-quality"]')).toContainText('concerns');
+      await page.getByTestId('overview-pipeline').screenshot({
+        path: path.join(RESULTS_DIR, `pipeline-after-${width}--mocked.png`),
+      });
+
+      const tabbar = page.getByTestId('studio-tabbar');
+      const legacyTabStyle = await page.addStyleTag({ content: `
+        .studio-tab { flex: 1 1 0 !important; min-width: 0 !important; }
+        .studio-tab__prefix { padding: 0 !important; border: 0 !important; background: transparent !important; }
+        .studio-tab--active { box-shadow: none !important; border-top: 1px solid var(--studio-accent) !important; }
+      ` });
+      const documentTabTitle = page.getByTestId(/studio-tab-hub:fixture/).locator('.studio-tab__title');
+      await documentTabTitle
+        .evaluate(element => { element.textContent = 'pre-develop-gate-a-run-budget-overrun-b...'; });
+      await tabbar.screenshot({ path: path.join(RESULTS_DIR, `tab-strip-before-${width}--mocked.png`) });
+      await legacyTabStyle.evaluate(element => element.remove());
+      await documentTabTitle.evaluate(element => { element.textContent = 'Pre-develop gate run budget overrun'; });
+      await page.getByTestId('studio-tabbar').screenshot({
+        path: path.join(RESULTS_DIR, `tab-strip-after-${width}--mocked.png`),
+      });
+
+      await page.getByTestId('inspector-tab-activity').click();
+      await page.getByTestId('protocol-maximize-log').click();
+      const overlay = page.getByTestId('log-overlay');
+      await expect(overlay).toBeVisible();
+      await overlay.evaluate((root, rawMarker) => {
+        root.querySelectorAll<HTMLElement>('app-runtime-sentinel-view').forEach(item => { item.style.display = 'none'; });
+        const legacy = document.createElement('pre');
+        legacy.dataset['testid'] = 'legacy-raw-sentinel';
+        legacy.textContent = rawMarker;
+        root.querySelector('.convo-turn--agent')?.append(legacy);
+      }, marker);
+      await expect(overlay.getByTestId('legacy-raw-sentinel')).toContainText('[[ASPECT_VERDICT:');
+      await overlay.screenshot({ path: path.join(RESULTS_DIR, `log-before-${width}--mocked.png`) });
+      await overlay.evaluate(root => {
+        root.querySelector('[data-testid="legacy-raw-sentinel"]')?.remove();
+        root.querySelectorAll<HTMLElement>('app-runtime-sentinel-view').forEach(item => { item.style.display = ''; });
+      });
+      await expect(overlay.getByTestId('activity-aspect-verdict')).toContainText('Clean diff');
+      await overlay.screenshot({ path: path.join(RESULTS_DIR, `log-after-${width}--mocked.png`) });
+      await overlay.getByTestId('log-overlay-close').click();
     }
   });
 });

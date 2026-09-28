@@ -1,9 +1,10 @@
-import { ChangeDetectionStrategy, Component, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, input, output, signal } from '@angular/core';
 import { DialogComponent } from '../../../../../components/dialog/dialog.component';
 import { StudioIconComponent } from '../../../../../components/studio-icon/studio-icon.component';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { PipelineStepResultComponent, type PipelineStepResultHeader } from '../pipeline-step-result/pipeline-step-result.component';
 import { TaskPromptPopoverComponent } from '../task-prompt-popover/task-prompt-popover.component';
+import type { PipelineAspectEvidence } from '../../../../task-pipeline';
 
 @Component({
   selector: 'app-pipeline-step-details',
@@ -24,6 +25,8 @@ export class PipelineStepDetailsComponent {
   readonly resultHeader = input<PipelineStepResultHeader | null>(null);
   readonly concernTitle = input<string | null>(null);
   readonly concernBody = input<string | null>(null);
+  readonly aspectEvidence = input<PipelineAspectEvidence[]>([]);
+  readonly documentRequested = output<string>();
 
   readonly open = signal(false);
 

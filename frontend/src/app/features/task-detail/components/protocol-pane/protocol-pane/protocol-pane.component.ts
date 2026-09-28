@@ -507,6 +507,10 @@ export class ProtocolPaneComponent implements OnDestroy {
     if (metricId === 'artifacts') this.layout.openPromptTab('description');
   }
 
+  openAspectDocument(fileName: string): void {
+    this.layout.openPromptTab('description', undefined, fileName);
+  }
+
   /**
    * Status.md body with the `# Status` header (Result + Duration) lifted out
    * so it does not duplicate what the verdict pill already shows. Used for
@@ -985,7 +989,7 @@ export class ProtocolPaneComponent implements OnDestroy {
   private formatActivityTime(dateStr: string): string {
     const d = new Date(dateStr);
     if (Number.isNaN(d.getTime())) return dateStr;
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   }
 
   // --- Protocol context menu (F54) ---

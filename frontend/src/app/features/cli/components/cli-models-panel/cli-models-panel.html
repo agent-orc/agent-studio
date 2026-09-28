@@ -38,6 +38,44 @@
       </label>
     </section>
   }
+  @if (catalogueVersion(); as version) {
+    <section class="cli-models__fallback-catalogue" data-testid="quota-fallback-routes">
+      <header class="cli-models__fallback-head">
+        <div>
+          <span class="cli-models__policy-title">Quota fallback routes</span>
+          <span class="cli-models__policy-detail">Comparable models from {{ version }}. Overrides take precedence.</span>
+        </div>
+      </header>
+      <div class="cli-models__table-wrap">
+        <table class="cli-models__fallback-table">
+          <thead>
+            <tr><th>Model</th><th>Fallback model</th><th>Source</th><th>Price per MTok</th></tr>
+          </thead>
+          <tbody>
+            @for (route of fallbackRoutes(); track fallbackRouteKey(route)) {
+              <tr>
+                <td><strong>{{ routeLabel(route.fromModel, route.fromThinkingLevel) }}</strong><small>{{ route.fromCliType }}</small></td>
+                <td><strong>{{ routeLabel(route.toModel, route.toThinkingLevel) }}</strong><small>{{ route.reroutable ? route.toCliType : 'wait policy' }}</small></td>
+                <td><span class="cli-models__source">{{ routeSource(route) }}</span></td>
+                <td class="cli-models__price">
+                  <span>{{ price(route.fromInputPerMTok, route.fromOutputPerMTok) }}</span>
+                  <span>{{ price(route.toInputPerMTok, route.toOutputPerMTok) }}</span>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      @if (callersCannotReroute().length) {
+        <div class="cli-models__fixed-callers" data-testid="quota-non-reroutable-callers">
+          <strong>Cannot be rerouted</strong>
+          @for (item of callersCannotReroute(); track item.caller) {
+            <span><code>{{ item.caller }}</code>: {{ item.reason }}</span>
+          }
+        </div>
+      }
+    </section>
+  }
   @for (g of groups(); track g.cliType) {
     <article class="cli-models__row"
              [class.cli-models__row--open]="isExpanded(g.cliType)"
@@ -49,7 +87,7 @@
                 [attr.aria-expanded]="isExpanded(g.cliType)"
                 [attr.data-testid]="'cli-models-toggle-' + g.cliType"
                 (click)="toggle(g.cliType)">
-          <span class="cli-models__caret" aria-hidden="true">{{ isExpanded(g.cliType) ? '▾' : '▸' }}</span>
+          <app-disclosure-marker [open]="isExpanded(g.cliType)" [size]="10" />
           <span class="cli-models__icon" aria-hidden="true">{{ g.icon }}</span>
           <span class="cli-models__name">{{ g.label }}</span>
           <span class="cli-models__count">{{ g.models.length }} model{{ g.models.length === 1 ? '' : 's' }}</span>
@@ -60,6 +98,14 @@
                   [class.cli-models__summary-fallback--none]="!hasFallback(g.cliType)">{{ fallbackSummary(g.cliType) }}</span>
           </span>
         </button>
+        <label class="cli-models__prefer" [attr.data-state]="fallbackStates()[g.cliType]?.state ?? 'normal'">
+          <input type="checkbox"
+                 [attr.data-testid]="'prefer-fallback-' + g.cliType"
+                 [checked]="fallbackStates()[g.cliType]?.state === 'fallback-preferred'"
+                 [disabled]="preferenceSaving() !== null || !hasFallback(g.cliType)"
+                 (change)="setPreferFallback(g.cliType, $any($event.target).checked)" />
+          <span>{{ fallbackStateLabel(g.cliType) }}</span>
+        </label>
         <app-model-migration-badge [model]="primaryModel(g.cliType)" [pending]="savingCli() === g.cliType"
           testId="cli-models-migration" (apply)="setPrimary(g.cliType, $event)" />
         <button class="cli-models__refresh"

@@ -1,0 +1,61 @@
+{
+  "asOf": "2026-09-25",
+  "repositoryRevision": "50b767f014386fc0b4c00d1bb9db8c554be72d0f",
+  "provenance": "Task API POST /api/tasks/reference-status and read-only AGT-2736/AGT-2738/AGT-2905 authored prompts; captured during AGT-2906. Lane is a point-in-time observation, not delivery proof.",
+  "cards": [
+    {
+      "key": "AGT-2729",
+      "title": "Container images as release artifacts: every service published and pinned, compose runs from images",
+      "lane": "7-archive",
+      "inDevelop": true
+    },
+    {
+      "key": "AGT-2736",
+      "title": "Agent Studio Docker-deployable: one compose file runs the complete product from published images",
+      "lane": "2-ready",
+      "inDevelop": false
+    },
+    {
+      "key": "AGT-2737",
+      "title": "Rehearsal and production cutover to the remote Task Server, with rollback drill and detached-Studio proof",
+      "lane": "5e-escalated",
+      "inDevelop": false
+    },
+    {
+      "key": "AGT-2738",
+      "title": "Installer: one executable for Windows and Linux that installs Agent Studio on Docker or as native services",
+      "lane": "2-ready",
+      "inDevelop": false
+    },
+    {
+      "key": "AGT-2739",
+      "title": "Deployment regression scenario: one reduced, deterministic end-to-end run that every deployment card and every release must pass",
+      "lane": "7-archive",
+      "inDevelop": true
+    },
+    {
+      "key": "AGT-2763",
+      "title": "LinkSupervisor: the Task Server owns the SSH reverse tunnel to agent-runner-01, silently",
+      "lane": "7-archive",
+      "inDevelop": true
+    },
+    {
+      "key": "AGT-2764",
+      "title": "Link migration: adopt the running forward, seven-day soak, retire AgentRunner-TunnelKeeper",
+      "lane": "5e-escalated",
+      "inDevelop": false
+    },
+    {
+      "key": "AGT-2905",
+      "title": "Concept: the Task Server as the bus between the orchestrator engine and the runner and review daemons (make AGT-W49 explicit; many runner-host agents, no separate workstation agent, quality as pipeline steps)",
+      "lane": "3-progress",
+      "inDevelop": false
+    },
+    {
+      "key": "AGT-2906",
+      "title": "Concept: the deployment story from one box to many runners, as the operator's and administrator's journey (workstation = one-box Docker special case)",
+      "lane": "3-progress",
+      "inDevelop": false
+    }
+  ]
+}

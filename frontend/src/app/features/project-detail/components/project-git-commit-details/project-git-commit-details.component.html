@@ -1,0 +1,62 @@
+<aside class="details" data-testid="git-commit-details" tabindex="-1">
+  <header class="details__header">
+    <h2>Commit details</h2>
+    <button type="button" (click)="closed.emit()" aria-label="Close commit details">Close</button>
+  </header>
+  <div class="details__scroll">
+    <div class="details__sha">
+      <code>{{ commit().sha }}</code>
+      <button type="button" (click)="copySha()" data-testid="git-copy-sha">{{ copied() ? 'Copied' : 'Copy' }}</button>
+    </div>
+    <h3>{{ commit().subject }}</h3>
+    @if (commit().body) { <pre class="details__body">{{ commit().body }}</pre> }
+
+    <dl>
+      <div><dt>Author</dt><dd>{{ commit().author }} · {{ when(commit().authorDateUtc) }}</dd></div>
+      <div><dt>Committer</dt><dd>{{ commit().committer || commit().author }} · {{ when(commit().committerDateUtc || commit().authorDateUtc) }}</dd></div>
+      <div><dt>Integration</dt><dd>
+        @if (commit().presence; as presence) {
+          {{ presence.inIntegration ? 'Integrated' : 'Not integrated' }} · {{ presence.integrationBranch }}
+        } @else { Not recorded }
+      </dd></div>
+    </dl>
+
+    <section>
+      <h4>Parents</h4>
+      <div class="details__wrap">
+        @for (parent of commit().parentShas; track parent) {
+          <button type="button" class="details__link mono" (click)="parentSelected.emit(parent)">{{ parent.slice(0, 12) }}</button>
+        } @empty { <span class="details__muted">Root commit</span> }
+      </div>
+    </section>
+
+    <section>
+      <h4>Refs and tags</h4>
+      <div class="details__wrap">
+        @for (ref of commit().refs; track ref.kind + ':' + ref.name) { <span class="details__chip" [title]="ref.name">{{ ref.name }}</span> }
+        @empty { <span class="details__muted">No visible refs</span> }
+      </div>
+    </section>
+
+    <section>
+      <h4>Attributed cards</h4>
+      @for (task of commit().tasks; track task.taskKey) {
+        <div class="details__card">
+          <button type="button" class="details__link" (click)="openTask(task)">{{ task.key }}</button>
+          <span>{{ task.title }}</span>
+          @if (task.runId) { <code title="Run id">{{ task.runId }}</code> }
+        </div>
+      } @empty { <span class="details__muted">No attributed card</span> }
+    </section>
+
+    <section>
+      <h4>Changed files <span class="details__muted">+{{ commit().added }} −{{ commit().removed }}</span></h4>
+      @if (loading()) { <p class="details__muted">Loading changed files...</p> }
+      @for (file of files(); track file.path) {
+        <button type="button" class="details__file" (click)="fileSelected.emit(file.path)">
+          <span>{{ file.status }}</span><code>{{ file.path }}</code><small>+{{ file.added }} −{{ file.removed }}</small>
+        </button>
+      } @empty { @if (!loading()) { <p class="details__muted">No changed files recorded.</p> } }
+    </section>
+  </div>
+</aside>

@@ -12,6 +12,40 @@ export interface CliModelRouteProfile {
   /** True when the fallback fields came from the equivalence catalogue
    *  (AGT-2751) rather than an explicit operator save via `setModelRoute`. */
   isFallbackDerived?: boolean;
+  catalogueVersion?: string | null;
+}
+
+export interface CliModelFallbackRoute {
+  fromCliType: string;
+  fromModel: string;
+  fromThinkingLevel: string | null;
+  toCliType: string;
+  toModel: string;
+  toThinkingLevel: string | null;
+  source: 'catalogue' | 'override';
+  catalogueVersion: string | null;
+  fromInputPerMTok: number | null;
+  fromOutputPerMTok: number | null;
+  toInputPerMTok: number | null;
+  toOutputPerMTok: number | null;
+  capabilityClass: string;
+  reroutable: boolean;
+}
+
+export interface CliFallbackState {
+  cliType: string;
+  state: 'normal' | 'fallback-preferred' | 'fallback-active';
+  activeSince: string | null;
+  preferenceExpiresAt: string | null;
+  windows: { label: string; usedPct: number | null; capPct: number; resetAt: string | null }[];
+}
+
+export interface CliModelRoutesResponse {
+  profiles: Record<string, CliModelRouteProfile>;
+  routes: CliModelFallbackRoute[];
+  catalogueVersion: string;
+  states: Record<string, CliFallbackState>;
+  callersCannotReroute: { caller: string; cliType: string; reason: string }[];
 }
 
 export interface CliQuotaWaitPolicy {
@@ -98,9 +132,8 @@ export class QuotaApiService {
   }
 
   /**
-   * Update one cap. The runner blocks pickup and stops in-flight runs
-   * when usage crosses these caps so the user keeps a buffer for
-   * ad-hoc work outside the orchestrator.
+   * Update one cap. The runner applies it to later admissions; in-flight work
+   * is never interrupted by a cap crossing.
    */
   setQuotaCap(cliType: string, windowLabel: string, capPct: number) {
     return this.http.put<{
@@ -134,8 +167,14 @@ export class QuotaApiService {
   }
 
   getModelRoutes() {
-    return this.http.get<{ profiles: Record<string, CliModelRouteProfile> }>(
+    return this.http.get<CliModelRoutesResponse>(
       `${this.baseUrl}/cli/quota/model-routes`,
+    );
+  }
+
+  setFallbackPreference(cliType: string, preferFallback: boolean) {
+    return this.http.put<{ cliType: string; active: boolean; enabledAt: string | null; expiresAt: string | null }>(
+      `${this.baseUrl}/cli/quota/fallback-preference`, { cliType, preferFallback },
     );
   }
 

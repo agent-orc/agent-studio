@@ -114,15 +114,33 @@ public sealed class ConceptPromotionService
     private static string ReasonFor(string sourcePath, int index)
         => $"{ReasonPrefix}{sourcePath}:{index}";
 
-    private static string BuildPrompt(
+    internal static string BuildPrompt(
         ConceptSourceDocument source,
         ConceptImplementationTask item)
-        => $"""
+    {
+        var decisions = source.Decisions.Count == 0
+            ? "The Dossier has no machine-readable decision options. Follow its written recommendations."
+            : string.Join("\n", source.Decisions.Select(decision =>
+                $"- {decision.Label} [{decision.Id}]: {decision.OptionLabel} [{decision.OptionId}] " +
+                (decision.OperatorSelected ? "(operator-selected working assumption)"
+                    : decision.IsWorkingAssumption ? "(recommended working assumption)" : "(alternative)")));
+        return $"""
            Implement the approved concept described in `{source.RepoRelativePath}`.
 
            The concept document is the source of truth. Preserve its stated
            constraints, recommendation, evidence, and open-decision outcomes.
 
+           Dossier decisions for this implementation:
+           {decisions}
+
+           Implement each recommended working assumption unless the operator recorded
+           another choice in the Dossier's decision block. Record the choices implemented.
+           Any Dossier or item instruction to wait for an operator answer to a
+           recommended decision is superseded by this working-assumption rule.
+           Sight review and operator acceptance follow delivery in the pipeline; do not
+           stop this run to request those approvals.
+
            {item.PromptMarkdown.Trim()}
            """;
+    }
 }
