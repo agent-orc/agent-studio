@@ -1,0 +1,10 @@
+<div class="resource-status" aria-live="polite" data-testid="task-resource-status">
+  @for (problem of problems(); track problem.name) {
+    <p class="resource-status__line" [attr.data-resource]="problem.name">
+      {{ problem.title }}: {{ problem.reason }}
+      <button type="button" class="resource-status__retry"
+              [attr.data-testid]="'task-resource-retry-' + problem.name"
+              (click)="retry(problem.name)">{{ problem.retry }}</button>
+    </p>
+  }
+</div>
