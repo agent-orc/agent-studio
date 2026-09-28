@@ -40,6 +40,5 @@ This concept-Dossier operation writes both AGT-2906 `status.md` and
 `results/deliverables.md`. Read both back using
 `GET /api/tasks/AGT-2906/files/status.md?project=PROJ-002` and
 `GET /api/tasks/AGT-2906/files/results/deliverables.md?project=PROJ-002`.
-The AGT-2951 collected delivery and status reports include the same request and
-a runnable Node.js follow-up. This operation is an operator follow-up, not a
+The AGT-2951 delivery report repeats this request. This operation is an operator follow-up, not a
 completed API update. Do not create a second Dossier or assign a new key.
