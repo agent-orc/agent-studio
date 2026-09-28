@@ -43,28 +43,40 @@ public sealed class BatchGateLeaseService
 
     public BatchCoordinatorLease? Renew(BatchCoordinatorLease lease)
     {
-        using var guard = Guard(lease.Scope);
-        var current = Read(lease.Scope);
-        if (!Matches(current, lease) || current!.ExpiresAtUtc <= _now()) return null;
-        var renewed = current with { ExpiresAtUtc = _now() + Ttl };
-        Write(lease.Scope, renewed);
-        return renewed;
+        try
+        {
+            using var guard = Guard(lease.Scope);
+            var current = Read(lease.Scope);
+            if (!Matches(current, lease) || current!.ExpiresAtUtc <= _now()) return null;
+            var renewed = current with { ExpiresAtUtc = _now() + Ttl };
+            Write(lease.Scope, renewed);
+            return renewed;
+        }
+        catch (IOException) { return null; }
     }
 
     public bool IsCurrent(BatchCoordinatorLease lease)
     {
-        using var guard = Guard(lease.Scope);
-        var current = Read(lease.Scope);
-        return Matches(current, lease) && current!.ExpiresAtUtc > _now();
+        try
+        {
+            using var guard = Guard(lease.Scope);
+            var current = Read(lease.Scope);
+            return Matches(current, lease) && current!.ExpiresAtUtc > _now();
+        }
+        catch (IOException) { return false; }
     }
 
     public bool Release(BatchCoordinatorLease lease)
     {
-        using var guard = Guard(lease.Scope);
-        var current = Read(lease.Scope);
-        if (!Matches(current, lease)) return false;
-        Write(lease.Scope, current! with { ExpiresAtUtc = _now() });
-        return true;
+        try
+        {
+            using var guard = Guard(lease.Scope);
+            var current = Read(lease.Scope);
+            if (!Matches(current, lease)) return false;
+            Write(lease.Scope, current! with { ExpiresAtUtc = _now() });
+            return true;
+        }
+        catch (IOException) { return false; }
     }
 
     private FileStream Guard(BatchGateScope scope)
