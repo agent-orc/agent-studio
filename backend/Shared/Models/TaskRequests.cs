@@ -167,6 +167,7 @@ public enum MoveJobStatus
     TargetFolderExists,
     DirectoryLocked,
     Failure,
+    PendingIntentSupersedeFailed,
     SourceStateMismatch,
     IntegrationFailed
 }
