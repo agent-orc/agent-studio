@@ -52,8 +52,12 @@ the Control Plane archive contains the site template.
 On the Control Plane machine:
 
 ```sh
-sudo ./agent-studio-setup --mode control-plane
+sudo ./agent-studio-setup --mode control-plane --target native
 ```
+
+`--target native` installs the systemd services described here; `systemd` is
+accepted as the same target. Without `--target`, control-plane mode uses the
+Docker Compose control plane ([control-plane-docker.md](./control-plane-docker.md)).
 
 The guide asks for:
 

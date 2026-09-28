@@ -1,3 +1,5 @@
 using AgentStudio.Setup;
 
-return await SetupApplication.RunAsync(args);
+return ProductSetup.IsProductCommand(args)
+    ? await ProductSetup.RunAsync(args)
+    : await SetupApplication.RunAsync(args);

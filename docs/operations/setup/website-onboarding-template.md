@@ -24,6 +24,6 @@ health, and prints the browser URL. The UI listens on loopback by default.
 For remote Linux deployments, use `--mode control-plane` on the Task Server
 machine and `--mode agent-host` on each runner machine. See the
 [install guide](./install.md) for platform requirements, offline bundles,
-unattended answers, update, rollback, and removal. Native full Studio on
-Windows remains a separate delivery item; the existing Windows fallback
-profile is for recovery and does not contain the complete local product.
+unattended answers, update, rollback, and removal. Hosts without Docker use
+`--target native`; on Windows this installs the Task Server, Engine, and
+Studio connector as services.

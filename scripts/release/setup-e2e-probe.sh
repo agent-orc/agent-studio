@@ -185,6 +185,7 @@ export AGENT_SETUP_SYSTEMD_ROOT="$systemd_root"
 umask 077
 "$setup_binary" \
   --mode control-plane \
+  --target native \
   --release-version "$version" \
   --release-dir "$release_root" \
   --listen-url "$base_url" \

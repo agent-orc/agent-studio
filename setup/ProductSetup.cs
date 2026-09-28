@@ -17,28 +17,14 @@ internal static class ProductSetup
         string? InstallDirectory = null,
         int? UiPort = null,
         string? ServerUrl = null,
-        string? JoinTokenFile = null);
+        string? JoinTokenFile = null,
+        string? TokenFile = null);
 
-    private sealed record InstalledState(string Mode, string Target, string Version,
-        string? PreviousVersion, int UiPort);
+    internal sealed record InstalledState(string Mode, string Target, string Version,
+        string? PreviousVersion, int UiPort, string? ServerUrl = null);
 
-    internal static bool IsProductCommand(string[] args)
-    {
-        if (args.Length == 0 || args[0] is "update" or "rollback" or "uninstall"
-            || args.Contains("--unattended") || args.Contains("--answer-file")
-            || args.Contains("--uninstall") || args.Contains("--purge")
-            || args.Contains("--offline") || args.Contains("--help")
-            || args.Contains("-h") || args.Contains("--version"))
-            return true;
-        if (args.Contains("--join") || args.Contains("--join-token-file")) return false;
-        for (var index = 0; index < args.Length - 1; index++)
-        {
-            if (args[index] == "--mode" && args[index + 1] is
-                ("demo" or "single" or "single-machine" or "control-plane" or "agent-host"))
-                return false;
-        }
-        return true;
-    }
+    /// <summary>Everything except the legacy-only demo and single modes is a product command.</summary>
+    internal static bool IsProductCommand(string[] args) => !ProductCommand.IsLegacyOnly(args);
 
     public static async Task<int> RunAsync(string[] args)
     {
@@ -60,28 +46,10 @@ internal static class ProductSetup
 
     private static async Task<int> ExecuteAsync(string[] args)
     {
-        var command = args.FirstOrDefault() is "update" or "rollback" or "uninstall"
-            ? args[0] : "install";
-        var values = new Dictionary<string, string>(StringComparer.Ordinal);
-        var flags = new HashSet<string>(StringComparer.Ordinal);
-        for (var index = command == "install" ? 0 : 1; index < args.Length; index++)
-        {
-            var option = args[index];
-            if (option is "--unattended" or "--purge" or "--dry-run" or "--uninstall"
-                or "--offline"
-                or "--help" or "-h" or "--version")
-            {
-                flags.Add(option);
-                continue;
-            }
-            if (option is not ("--mode" or "--target" or "--answer-file" or
-                "--release-version" or "--release-dir" or "--install-dir" or
-                "--ui-port" or "--server-url" or "--join-token-file"))
-                throw new ArgumentException($"Unknown option: {option}");
-            if (++index == args.Length || args[index].StartsWith("--", StringComparison.Ordinal))
-                throw new ArgumentException($"{option} requires a value.");
-            values[option] = args[index];
-        }
+        var parsed = ProductCommand.Parse(args);
+        var command = parsed.Verb;
+        var values = parsed.Values;
+        var flags = parsed.Flags;
         if (flags.Contains("--help") || flags.Contains("-h"))
         {
             PrintHelp();
@@ -92,66 +60,58 @@ internal static class ProductSetup
             Console.WriteLine($"agent-studio-setup {ReleaseArtifacts.CurrentVersion()}");
             return 0;
         }
-        if (flags.Contains("--uninstall")) command = "uninstall";
-        if (flags.Contains("--purge") && command != "uninstall")
-            throw new ArgumentException("--purge requires uninstall or --uninstall.");
         var answers = values.TryGetValue("--answer-file", out var answerFile)
             ? JsonSerializer.Deserialize<Answers>(await File.ReadAllTextAsync(answerFile),
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
               ?? throw new InvalidDataException("Answer file is empty.")
             : new Answers();
-        var unattended = flags.Contains("--unattended");
+        var unattended = parsed.Unattended;
         var prompter = new ConsolePrompter(unattended);
-        var mode = Get("--mode", answers.Mode)
-            ?? (Get("--join-token-file", answers.JoinTokenFile) is null ? "studio" : "agent-host");
-        var target = Get("--target", answers.Target)
-            ?? (mode == "agent-host" ? "native" : "docker");
-        if (mode != "studio")
-        {
-            if (mode is not ("control-plane" or "agent-host"))
-                throw new PlatformNotSupportedException(
-                    $"Mode '{mode}' is not available in this release.");
-            if (command != "install")
-                throw new ArgumentException($"{command} is supported for the Studio Docker installation only.");
-            if (target == "docker" && mode == "agent-host")
-                throw new PlatformNotSupportedException(
-                    "Docker agent-host setup is not available in this release. Use --target native on Linux.");
-            var legacy = new List<string> { "--mode", mode };
-            if (mode == "control-plane")
-                legacy.AddRange(["--target", target == "native" ? "systemd" : "docker"]);
-            foreach (var (newOption, oldOption, answer) in new[]
-            {
-                ("--release-version", "--release-version", answers.ReleaseVersion),
-                ("--release-dir", "--release-dir", answers.ReleaseDirectory),
-                ("--server-url", "--server-url", answers.ServerUrl),
-                ("--join-token-file", "--join-token-file", answers.JoinTokenFile),
-            })
-            {
-                if (Get(newOption, answer) is { } value)
-                    legacy.AddRange([oldOption, value]);
-            }
-            if (unattended) legacy.Add("--non-interactive");
-            if (flags.Contains("--dry-run")) legacy.Add("--dry-run");
-            return await SetupApplication.RunAsync(legacy.ToArray());
-        }
-        if (target is not ("docker" or "native"))
-            throw new ArgumentException("--target must be docker or native.");
-        if (target == "native")
-            throw new PlatformNotSupportedException(
-                "The native full Studio profile is not available in this release. " +
-                "Use the Docker target; the existing Linux remote setup and Windows fallback tools remain available.");
-        var root = Path.GetFullPath(Get("--install-dir", answers.InstallDirectory)
-            ?? DefaultInstallRoot());
-        var statePath = Path.Combine(root, "install-state.json");
-        var state = File.Exists(statePath)
-            ? JsonSerializer.Deserialize<InstalledState>(await File.ReadAllTextAsync(statePath))
+
+        // update, rollback, and uninstall act on the recorded installation
+        // unless the operator names a profile explicitly.
+        var explicitMode = Get("--mode", answers.Mode);
+        var explicitTarget = Get("--target", answers.Target);
+        var installDirectory = Get("--install-dir", answers.InstallDirectory);
+        var located = command != "install" && explicitMode is null && explicitTarget is null
+            ? await LocateInstallationAsync(installDirectory)
             : null;
+        var mode = located?.State.Mode ?? ProductCommand.NormalizeMode(explicitMode,
+            Get("--join-token-file", answers.JoinTokenFile) is not null);
+        var target = located?.State.Target ?? ProductCommand.NormalizeTarget(explicitTarget, mode);
+        var forwarded = new List<(string, string)>();
+        foreach (var (option, answer) in new[]
+        {
+            ("--release-version", answers.ReleaseVersion),
+            ("--release-dir", answers.ReleaseDirectory),
+            ("--server-url", answers.ServerUrl),
+            ("--join-token-file", answers.JoinTokenFile),
+        })
+        {
+            if (Get(option, answer) is { } value) forwarded.Add((option, value));
+        }
+        var plan = ProductPlanner.Plan(parsed, mode, target, OperatingSystem.IsWindows(), forwarded);
+        if (plan.Profile == ProductProfile.Delegated)
+            return await SetupApplication.RunAsync(plan.DelegatedArguments.ToArray());
+
+        var root = located?.Root ?? Path.GetFullPath(installDirectory ?? DefaultInstallRoot(plan.Profile));
+        var statePath = Path.Combine(root, "install-state.json");
+        var state = located?.State ?? await ReadStateAsync(statePath);
         if (command == "install" && state is not null)
             throw new InvalidOperationException(
-                $"Studio is already installed at {root}. Use update or uninstall.");
+                $"Agent Studio ({state.Mode}, {state.Target}) is already installed at {root}. Use update or uninstall.");
         if (command != "install" && state is null)
-            throw new InvalidOperationException($"No Studio installation found at {root}.");
+            throw new InvalidOperationException($"No Agent Studio installation found at {root}.");
+        if (state is not null && (state.Mode != plan.Mode || state.Target != plan.Target))
+            throw new InvalidOperationException(
+                $"The installation at {root} is --mode {state.Mode} --target {state.Target}.");
         var process = new ProcessRunner(flags.Contains("--dry-run"));
+        if (plan.Profile != ProductProfile.StudioDocker)
+            return await RunWindowsServicesAsync(parsed, plan, root, statePath, state, process, prompter,
+                Get("--release-version", answers.ReleaseVersion),
+                Get("--release-dir", answers.ReleaseDirectory),
+                Get("--server-url", answers.ServerUrl),
+                Get("--token-file", answers.TokenFile));
         await CheckDockerAsync();
 
         if (command == "uninstall")
@@ -256,7 +216,11 @@ internal static class ProductSetup
         if (command == "install" && !unattended && !flags.Contains("--dry-run") &&
             prompter.Confirm("Open Studio in your browser", true))
         {
-            try { Process.Start(new ProcessStartInfo(browserUrl) { UseShellExecute = true }); }
+            try
+            {
+                // Shell execution ignores CreateNoWindow; it is set for the repository-wide guard.
+                Process.Start(new ProcessStartInfo(browserUrl) { UseShellExecute = true, CreateNoWindow = true });
+            }
             catch (Exception error)
             {
                 Console.WriteLine($"Could not open the browser: {error.Message}");
@@ -300,11 +264,135 @@ internal static class ProductSetup
         await process.RequireAsync("docker", args);
     }
 
-    private static string DefaultInstallRoot()
-        => OperatingSystem.IsWindows()
-            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentStudio")
-            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                ".local", "share", "agent-studio");
+    private static async Task<int> RunWindowsServicesAsync(ProductCommand parsed, ProductPlan plan,
+        string root, string statePath, InstalledState? state, ProcessRunner process, ConsolePrompter prompter,
+        string? releaseVersion, string? releaseDirectory, string? serverUrl, string? tokenFile)
+    {
+        var command = parsed.Verb;
+        var dryRun = parsed.DryRun;
+        if (!dryRun) WindowsServiceSetup.RequireAdministrator();
+        var layout = WindowsServiceLayout.ForHost(root);
+        var services = new WindowsServiceSetup(process, layout, dryRun);
+        var profile = plan.Profile;
+
+        if (command == "uninstall")
+        {
+            var purge = parsed.Has("--purge");
+            await services.UninstallAsync(profile, purge);
+            if (!dryRun)
+            {
+                File.Delete(statePath);
+                if (purge && Directory.Exists(root) && !Directory.EnumerateFileSystemEntries(root).Any())
+                    Directory.Delete(root);
+            }
+            Console.WriteLine(purge
+                ? "The services, configuration, credentials, and task data were removed."
+                : $"The services were removed. Configuration remains in {layout.ConfigRoot}" +
+                  (profile == ProductProfile.StudioWindowsServices ? $" and task data in {layout.DataDirectory}." : "."));
+            return 0;
+        }
+
+        string? upstream = null;
+        if (profile == ProductProfile.ConnectorWindows && command == "install")
+        {
+            upstream = serverUrl ?? prompter.Ask("Remote Task Server URL (https://...)", null);
+            ValidateUpstream(upstream);
+            tokenFile ??= prompter.Ask("File containing the Studio token for the remote Task Server", null);
+            tokenFile = Path.GetFullPath(tokenFile);
+            if (!dryRun && !File.Exists(tokenFile))
+                throw new FileNotFoundException($"Token file not found: {tokenFile}", tokenFile);
+        }
+        else if (serverUrl is not null || tokenFile is not null)
+        {
+            throw new ArgumentException("--server-url and --token-file apply to a connector installation only.");
+        }
+
+        var version = command == "rollback"
+            ? state!.PreviousVersion ?? throw new InvalidOperationException("No previous release is available.")
+            : SetupOptions.NormalizeVersion(releaseVersion) ?? ReleaseArtifacts.CurrentVersion();
+        if (command == "update" && version == state!.Version)
+            throw new InvalidOperationException("This version is already installed.");
+        if (parsed.Has("--offline") && releaseDirectory is null && command != "rollback")
+            throw new ArgumentException("--offline requires --release-dir with the verified Windows package.");
+
+        if (command == "rollback")
+        {
+            // The D6 installer keeps every staged release; the previous one is
+            // re-activated from its own scripts without a download.
+            var previous = layout.ReleaseDirectory(version);
+            if (!dryRun && !Directory.Exists(previous))
+                throw new InvalidOperationException($"Previous release is missing: {previous}");
+            await services.ApplyAsync(profile, previous, null, null);
+        }
+        else
+        {
+            await using var artifacts = new ReleaseArtifacts(version, releaseDirectory);
+            var package = dryRun
+                ? Path.Combine(Path.GetTempPath(), $"agent-orchestrator-{version}-win-x64")
+                : await artifacts.ExtractWindowsPackageAsync(default);
+            try
+            {
+                await services.ApplyAsync(profile, package, upstream, tokenFile);
+            }
+            catch when (state is not null && !dryRun)
+            {
+                try { await services.ApplyAsync(profile, layout.ReleaseDirectory(state.Version), null, null); }
+                catch (Exception recoveryError)
+                {
+                    Console.Error.WriteLine($"Previous release recovery failed: {recoveryError.Message}");
+                }
+                throw;
+            }
+        }
+
+        if (!dryRun)
+        {
+            Directory.CreateDirectory(root);
+            await WritePrivateFileAsync(statePath, JsonSerializer.Serialize(new InstalledState(
+                plan.Mode, plan.Target, version,
+                command == "install" ? null : state!.Version, 0,
+                upstream ?? state?.ServerUrl)));
+        }
+        services.PrintSummary(profile, upstream ?? state?.ServerUrl);
+        return 0;
+    }
+
+    internal static void ValidateUpstream(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            || !(uri.Scheme == Uri.UriSchemeHttps || (uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback)))
+            throw new ArgumentException(
+                "--server-url must be an https URL, or http on a loopback address.");
+    }
+
+    private static async Task<InstalledState?> ReadStateAsync(string statePath)
+        => File.Exists(statePath)
+            ? JsonSerializer.Deserialize<InstalledState>(await File.ReadAllTextAsync(statePath))
+            : null;
+
+    private static async Task<(string Root, InstalledState State)?> LocateInstallationAsync(string? installDirectory)
+    {
+        var candidates = installDirectory is not null
+            ? [Path.GetFullPath(installDirectory)]
+            : new[] { ProductProfile.StudioDocker, ProductProfile.StudioWindowsServices }
+                .Select(DefaultInstallRoot).Distinct().ToArray();
+        foreach (var candidate in candidates)
+        {
+            if (await ReadStateAsync(Path.Combine(candidate, "install-state.json")) is { } state)
+                return (candidate, state);
+        }
+        throw new InvalidOperationException(
+            $"No Agent Studio installation found at {string.Join(" or ", candidates)}.");
+    }
+
+    // The Docker path runs as the user; the Windows services are machine-wide.
+    private static string DefaultInstallRoot(ProductProfile profile)
+        => !OperatingSystem.IsWindows()
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                ".local", "share", "agent-studio")
+            : profile == ProductProfile.StudioDocker
+                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentStudio")
+                : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "AgentStudio");
 
     private static async Task WritePrivateFileAsync(string path, string content)
     {
@@ -313,7 +401,7 @@ internal static class ProductSetup
             File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
     }
 
-    private static void CopyDirectory(string source, string destination)
+    internal static void CopyDirectory(string source, string destination)
     {
         Directory.CreateDirectory(destination);
         foreach (var file in Directory.GetFiles(source))
@@ -328,26 +416,39 @@ internal static class ProductSetup
             agent-studio-setup - Agent Studio installer
 
             Usage:
-              agent-studio-setup [--mode studio] [--target docker]
+              agent-studio-setup [--mode studio] [--target docker|native]
+              agent-studio-setup --mode connector --server-url URL --token-file PATH
+              agent-studio-setup --mode control-plane [--target docker|native] --server-url URL
+              agent-studio-setup --mode agent-host --join-token-file PATH
               agent-studio-setup --unattended --answer-file answers.json
               agent-studio-setup update [--release-version X.Y.Z]
               agent-studio-setup rollback
               agent-studio-setup uninstall [--purge]
 
+            Modes:
+              studio          Full product on this machine (default). Docker by default;
+                              native installs Windows services (administrator) or, on
+                              Linux, the systemd single-machine profile (root).
+              connector       Windows: local Studio connector for a remote Task Server.
+              control-plane   Linux: remote Task Server and Engine (Docker by default).
+              agent-host      Linux: runner that joins a Task Server with a join token.
+
             Options:
               --release-version X.Y.Z   Pinned release (defaults to this verified setup release)
-              --release-dir PATH        Offline release directory with SHA256SUMS and Compose archive
+              --release-dir PATH        Offline release directory with SHA256SUMS and archives
               --offline                 Use locally loaded images without a registry pull
-              --install-dir PATH        Installation state and versioned Compose bundles
-              --ui-port NUMBER         Loopback browser port (default 4011)
-              --answer-file PATH       JSON answers for unattended installation
-              --unattended            Use defaults without prompts
-              --dry-run               Check prerequisites and print Compose operations
+              --install-dir PATH        Installation state (and Compose bundles for Docker)
+              --ui-port NUMBER          Loopback browser port for Docker (default 4011)
+              --server-url URL          Task Server URL (connector, control-plane)
+              --token-file PATH         Studio token file for the remote Task Server (connector)
+              --answer-file PATH        JSON answers for unattended installation
+              --unattended              Use defaults without prompts
+              --dry-run                 Check prerequisites and print planned operations
 
             The Docker path runs without elevation. Docker Desktop on Windows and
             macOS may require a paid subscription for larger companies; Docker
-            Engine on Linux does not. The native remote profiles remain available
-            through the legacy --mode control-plane and --mode agent-host commands.
+            Engine on Linux does not. Use --target native on hosts without Docker.
+            Uninstall keeps data unless --purge is given.
             """);
     }
 }

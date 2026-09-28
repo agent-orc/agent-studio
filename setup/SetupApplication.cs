@@ -12,8 +12,6 @@ internal static class SetupApplication
     {
         try
         {
-            if (ProductSetup.IsProductCommand(args))
-                return await ProductSetup.RunAsync(args);
             var options = SetupOptions.Parse(args);
             if (options.ShowHelp)
             {

@@ -59,6 +59,12 @@ internal sealed class ReleaseArtifacts(
             $"agent-studio-compose-{Version}",
             cancellationToken);
 
+    public async Task<string> ExtractWindowsPackageAsync(CancellationToken cancellationToken)
+        => await DownloadVerifyExtractAsync(
+            $"agent-orchestrator-{Version}-win-x64.zip",
+            $"agent-orchestrator-{Version}-win-x64",
+            cancellationToken);
+
     private async Task<string> DownloadVerifyExtractAsync(
         string archiveName,
         string expectedDirectory,
@@ -82,9 +88,16 @@ internal sealed class ReleaseArtifacts(
         Console.WriteLine($"  [ok] Verified {archiveName}");
         var extractionRoot = Path.Combine(_temporaryRoot, $"extract-{Guid.NewGuid():N}");
         Directory.CreateDirectory(extractionRoot);
-        await using (var archive = File.OpenRead(archivePath))
-        await using (var gzip = new GZipStream(archive, CompressionMode.Decompress))
-            TarFile.ExtractToDirectory(gzip, extractionRoot, overwriteFiles: false);
+        if (archiveName.EndsWith(".zip", StringComparison.Ordinal))
+        {
+            ZipFile.ExtractToDirectory(archivePath, extractionRoot, overwriteFiles: false);
+        }
+        else
+        {
+            await using var archive = File.OpenRead(archivePath);
+            await using var gzip = new GZipStream(archive, CompressionMode.Decompress);
+            await TarFile.ExtractToDirectoryAsync(gzip, extractionRoot, overwriteFiles: false, cancellationToken);
+        }
         var result = Path.Combine(extractionRoot, expectedDirectory);
         if (!Directory.Exists(result))
             throw new InvalidDataException(

@@ -1,7 +1,8 @@
 # Install Agent Studio
 
 The `agent-studio-setup` release executable installs the pinned one-box Docker
-stack. The Linux binary and Windows `.exe` are single-file, self-contained
+stack by default, or native services with `--target native` on hosts without
+Docker. The Linux binary and Windows `.exe` are single-file, self-contained
 applications. Download the newest published release from the
 [Agent Studio releases page](https://github.com/agent-orc/agent-studio/releases/latest).
 The executable's release version is the default image tag. It verifies the
@@ -46,7 +47,8 @@ has the [documented route-coverage limit](./docker-compose-connector-gap.md).
 
 ## Unattended install, offline bundle, update, and removal
 
-An answer file can provide the mode, target, release, and port:
+An answer file can provide the mode, target, release, port, and connector
+values (`serverUrl`, `tokenFile`):
 
 ```json
 {
@@ -71,16 +73,79 @@ update attempts to restart the installed version. Run
 `agent-studio-setup uninstall` to stop and remove containers while retaining
 the data volumes; add `--purge` to remove the volumes and installer files.
 
-## Native and remote topologies
+## Native installation without Docker
 
-The full local Studio native profile is not yet wired into this executable.
-`--target native` reports this clearly. The current Linux native control
-plane and agent-host flows remain available with `--mode control-plane` and
-`--mode agent-host`; see [multi-machine setup](./multi-machine.md). The
-[Windows fallback profile](./windows-fallback-runbook.md) installs the D6
-Task Server, Engine, and connector as scheduled tasks for recovery. It does
-not provide a full one-machine Studio or runner. A Windows connector that
-points a local UI to a remote Task Server requires the separate D4b profile.
+`--target native` installs services instead of containers. It is the path for
+hosts without Docker, or where the Docker Desktop subscription does not fit.
+
+On Windows, run the executable from an elevated terminal (or choose
+**Run as administrator**). Only this path needs elevation:
+
+```powershell
+.\agent-studio-setup.exe --target native
+```
+
+It verifies `agent-orchestrator-<version>-win-x64.zip` against `SHA256SUMS`.
+It then installs the [Windows fallback](./windows-fallback-runbook.md) (D6)
+services as start-up scheduled tasks, using the primary-profile settings:
+
+| Service | Scheduled task | Endpoint |
+| --- | --- | --- |
+| Task Server (mode Normal) | `AgentOrchestrator-TaskServer` | `http://127.0.0.1:5071/readyz` |
+| Orchestrator Engine | `AgentOrchestrator-Engine` | none |
+| Studio connector | `AgentOrchestrator-StudioConnector` | `http://127.0.0.1:5031/healthz` |
+
+Where the installer writes:
+- Binaries go to `C:\AgentOrchestrator\release-<version>`, with a `current`
+  junction pointing at the active release.
+- Configuration and generated credentials go to `C:\ProgramData\AgentOrchestrator`.
+  Credential files are readable only by the installing account (the tasks run
+  as that account), SYSTEM, and Administrators.
+- Installer state and task data go to `C:\ProgramData\AgentStudio`.
+
+The installer waits for both endpoints before it reports success.
+
+`update`, `rollback`, and `uninstall` work the same way as for Docker. An update
+stops the tasks, activates the new release, and keeps configuration and data.
+Rollback re-activates the previous staged release. `uninstall` removes the tasks
+and binaries but keeps configuration and task data; `--purge` removes those too.
+
+The win-x64 release does not yet contain the Studio web UI host or a runner.
+The native Windows profile therefore provides the Task Server, Engine, and
+connector APIs. The browser UI with a runner on a single Windows machine
+requires the Docker path.
+
+On Linux, `sudo ./agent-studio-setup --target native` runs the systemd
+single-machine profile. It installs the Task Server, Engine, an agent host, and
+the static Studio files. Update and roll it back with `update.sh` and
+`rollback.sh` in `/opt/agent-orchestrator/current`; see
+[multi-machine setup](./multi-machine.md).
+
+## Connector and remote topologies
+
+A Windows device can connect to a remote Task Server without running one
+locally. From an elevated terminal:
+
+```powershell
+.\agent-studio-setup.exe --mode connector --server-url https://tasks.example.com --token-file .\studio.token
+```
+
+This installs only the Studio connector task on `http://127.0.0.1:5031`. The
+token is copied to `C:\ProgramData\AgentOrchestrator` with restricted access.
+The upstream must use HTTPS, or HTTP on a loopback address.
+[switch-upstream.ps1](./windows-fallback-runbook.md) keeps working against the
+configuration it writes. The backend connector profile with a pinned upstream
+certificate ([D4b](./docker-compose-connector-gap.md)) is a separate profile.
+
+For a remote Linux topology:
+- `--mode control-plane` installs the Task Server and Engine with Docker
+  Compose ([control-plane-docker.md](./control-plane-docker.md)). Add
+  `--target native` (or `systemd`) for the systemd services.
+- `--mode agent-host --join-token-file <path>` (or `--join`) joins a runner.
+
+These remote modes accept the Linux options described in
+[multi-machine setup](./multi-machine.md). Every mode translates `native` and
+`systemd` the same way, with or without `--unattended` or `--answer-file`.
 
 ## Installer screens
 

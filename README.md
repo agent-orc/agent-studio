@@ -41,12 +41,13 @@ chmod +x agent-studio-setup
 ./agent-studio-setup
 ```
 
-Docker Engine on Linux or Docker Desktop with WSL2 on Windows is required.
+The default path needs Docker Engine on Linux or Docker Desktop with WSL2 on
+Windows; `--target native` installs services instead on hosts without Docker.
 The installer uses the version of the downloaded release, verifies its Compose
 bundle, starts the full one-box stack, and opens the browser. Windows users
 download `agent-studio-setup.exe` and verify it against `SHA256SUMS`.
 See the [install guide](./docs/operations/setup/install.md) for Windows commands,
-unattended answers, update, rollback, uninstall, and remote topologies.
+the native and connector profiles, unattended answers, update, rollback, uninstall, and remote topologies.
 
 ## Testing
 
