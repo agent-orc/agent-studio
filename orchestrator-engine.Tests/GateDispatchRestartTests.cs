@@ -53,6 +53,44 @@ public sealed class GateDispatchRestartTests
         Assert.Equal(stageReadyAt.AddMinutes(15), requests[0].DispatchDeadline);
     }
 
+    /// <summary>
+    /// AGT-2981: a Compose-render step routes the gate to a host that
+    /// advertises the compose-render requirement; the scripts also need node.
+    /// </summary>
+    [Fact]
+    public async Task A_compose_render_step_requires_a_gate_host_that_can_render_compose()
+    {
+        var source = new ReviewSubjectDto("review-1", "task-1", "source-run-1",
+            "repo-1", "https://example.invalid/repo.git", new string('a', 40),
+            "refs/agent-studio/results/source-run-1", null, null, null, "policy-v1",
+            new ReviewPlanDto(
+                [
+                    new ReviewCommandDto("verify-1", "build-tests", "sh", ["-lc", "dotnet test"]),
+                    new ReviewCommandDto("compose-render-1", "build-tests", "sh",
+                        ["-lc", "bash scripts/scenario.test.sh"]),
+                ],
+                ["build-tests"]), DateTime.UtcNow);
+        var requests = new List<CreateGateSubjectRequest>();
+        var options = new EngineOptions
+        {
+            ServerUrl = "http://task-server",
+            ClientId = "engine-test",
+            RemotePostBuildTestEnabled = true,
+            PollSeconds = 1,
+        };
+        var run = new OrchestrationRunDto("run-1", "project-1", "task-1", 7,
+            "leased", OrchestrationStage.GateDispatch,
+            """{"reviewSubjectId":"review-1","gates":[]}""", 0,
+            DateTime.UtcNow.AddHours(-2), DateTime.UtcNow, null, []);
+
+        using var client = Client(new GateApiHandler(source, requests));
+        await new GateDispatchLoop(client, options).ExecuteAsync(run, default);
+
+        var required = Assert.Single(requests).Plan.RequiredCapabilities;
+        Assert.Contains(CapabilityProtocol.ComposeRender, required);
+        Assert.Contains(CapabilityProtocol.Node, required);
+    }
+
     private static EngineTaskServerClient Client(HttpMessageHandler handler)
         => new(new HttpClient(handler, disposeHandler: false)
         {
