@@ -236,6 +236,7 @@
       <li><strong>Prefer session-resume.</strong> On retry, prefer resuming the same run over a from-scratch rebuild, so good
           partial work is not thrown away.</li>
     </ol>
+    <p>For a sleeping runner host, resume is admitted only by a fresh fenced Task Server confirmation. The persisted stop-before deadline also gates result replay; a wake after that deadline stops the worker generation before another offline retry. A restarted Windows workstation kills the proven expired worker tree by persisted PID and start time. This is a synthetic sleep contract, not an observed incident. See the <a href="../operations/setup/workstation-runner-host.md">workstation runner-host runbook</a>.</p>
 
     <h3>The four-terminal model</h3>
     <p>Every post-run path ends in exactly one of four owned terminals. Two transient states feed them:</p>
