@@ -21,6 +21,15 @@ for relative in "${dockerfiles[@]}"; do
     grep -q '^HEALTHCHECK ' "$dockerfile"
 done
 
+# Repository-root build contexts must never carry local secrets into images.
+for pattern in '**/*.env' '**/*.token' '**/.git-credentials' '**/git-credentials'
+do
+    grep -Fxq -- "$pattern" "$repo_root/.dockerignore" || {
+        echo ".dockerignore does not exclude $pattern from build contexts" >&2
+        exit 1
+    }
+done
+
 grep -F 'ARG CODEX_CLI_VERSION=0.154.0' "$repo_root/runner/Dockerfile" > /dev/null
 grep -F 'ARG CLAUDE_CLI_VERSION=2.1.269' "$repo_root/runner/Dockerfile" > /dev/null
 grep -F '"@openai/codex@${CODEX_CLI_VERSION}"' "$repo_root/runner/Dockerfile" > /dev/null
@@ -72,6 +81,7 @@ compose_json="$(
         -f "$repo_root/docker-compose.yml" \
         --profile dev \
         --profile ops \
+        --profile edge \
         config --format json
 )"
 
@@ -131,6 +141,33 @@ for (const service of ["orchestrator-api", "orchestrator-api-dev"]) {
     throw new Error(`${service} must not retain a compatibility task store`);
 }
 ' "$compose_json"
+
+# The operator-facing profile table must name exactly the services each
+# non-dev profile starts, so the documented install contract cannot drift.
+node -e '
+const fs = require("fs");
+const services = JSON.parse(process.argv[1]).services;
+const doc = fs.readFileSync(process.argv[2], "utf8");
+const header = "| Profile | Services | Purpose |";
+const rows = doc.slice(doc.indexOf(header)).split("\n").slice(2);
+const documented = new Map();
+for (const row of rows) {
+  if (!row.startsWith("|")) break;
+  const [profile, cell] = row.split("|").slice(1, 3).map(part => part.trim());
+  if (profile === "`dev`") continue;
+  documented.set(profile.replace(/`/g, ""), new Set([...cell.matchAll(/`([^`]+)`/g)].map(match => match[1])));
+}
+const actual = new Map();
+for (const [name, service] of Object.entries(services)) {
+  const profile = service.profiles?.[0] ?? "(none)";
+  if (profile === "dev") continue;
+  if (!actual.has(profile)) actual.set(profile, new Set());
+  actual.get(profile).add(name);
+}
+const render = map => JSON.stringify([...map].map(([key, names]) => [key, [...names].sort()]).sort());
+if (render(documented) !== render(actual))
+  throw new Error(`task-server.md profile table ${render(documented)} does not match docker-compose.yml ${render(actual)}`);
+' "$compose_json" "$repo_root/docs/operations/setup/task-server.md"
 
 grep -F '@distributed path /api/v1 /api/v1/*' "$repo_root/deploy/compose/Caddyfile" >/dev/null
 grep -F 'reverse_proxy {$STUDIO_BFF_UPSTREAM:studio-bff:5072}' "$repo_root/deploy/compose/Caddyfile" >/dev/null
