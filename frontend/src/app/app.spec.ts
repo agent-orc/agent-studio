@@ -6,7 +6,8 @@ import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { App } from './app';
 import { TaskService } from './services/task.service';
-import type { TaskDetail, TaskInfo } from './models/task.model';
+import type { RegistryWorkspaceListItem, TaskDetail, TaskInfo } from './models/task.model';
+import { ProjectLookupService } from './services/project-lookup.service';
 import { studioTabKey } from './features/studio-shell';
 import { TaskSelectionService, TriageController } from './features/task-detail/runtime';
 import { ensureBrowserStorage } from '../testing/browser-storage';
@@ -461,6 +462,12 @@ describe('App browser-history lane reconciliation', () => {
       projectName: 'Project A',
     } as TaskInfo;
 
+    // A multi-project registry where no short code owns the `AGT` prefix:
+    // the restore must let the backend resolve the public key.
+    TestBed.inject(ProjectLookupService).setWorkspaces(([{ projects: [
+      { id: 'PROJ-A', displayName: 'Project A', shortCode: 'PA', storageLocation: 'C:/watch' },
+      { id: 'PROJ-B', displayName: 'Project B', shortCode: 'PB', storageLocation: 'C:/other' },
+    ] }]) as unknown as RegistryWorkspaceListItem[]);
     selection.triageLaneState = '5-human-review';
     history.replaceState({
       studioTaskPager: {

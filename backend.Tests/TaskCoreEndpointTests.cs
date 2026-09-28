@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text;
@@ -94,7 +95,9 @@ public sealed class TaskCoreEndpointTests : IDisposable
         using var coreResponse = await client.GetAsync($"/api/tasks/AGT-core/core?project={project.Id}");
         coreResponse.EnsureSuccessStatusCode();
         using var core = JsonDocument.Parse(await coreResponse.Content.ReadAsStringAsync());
-        var generation = core.RootElement.GetProperty("coreVersion").GetInt64();
+        // The 64-bit generation is a string so JavaScript clients echo it exactly.
+        Assert.Equal(JsonValueKind.String, core.RootElement.GetProperty("coreVersion").ValueKind);
+        var generation = long.Parse(core.RootElement.GetProperty("coreVersion").GetString()!, CultureInfo.InvariantCulture);
         var scans = index.Misses;
 
         var url = $"/api/tasks/AGT-core/details/documents?project={project.Id}&generation={generation}&name=prompt";
@@ -104,7 +107,7 @@ public sealed class TaskCoreEndpointTests : IDisposable
         Assert.Equal("documents", body.RootElement.GetProperty("resource").GetString());
         Assert.Equal("ready", body.RootElement.GetProperty("state").GetString());
         Assert.Equal("AGT-core", body.RootElement.GetProperty("id").GetString());
-        Assert.Equal(generation, body.RootElement.GetProperty("coreVersion").GetInt64());
+        Assert.Equal(generation.ToString(CultureInfo.InvariantCulture), body.RootElement.GetProperty("coreVersion").GetString());
         Assert.Equal(900, body.RootElement.GetProperty("data").GetProperty("markdown")
             .GetString()!.EnumerateRunes().Count());
         Assert.False(body.RootElement.TryGetProperty("info", out _));

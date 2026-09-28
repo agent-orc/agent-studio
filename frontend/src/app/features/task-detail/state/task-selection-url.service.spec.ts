@@ -9,6 +9,8 @@ import { TaskService } from '../../../services/task.service';
 import { ProjectLookupService } from '../../../services/project-lookup.service';
 import { TaskSelectionService } from './task-selection.service';
 import { LanePagerService } from './lane-pager.service';
+import { TaskDetailPrefetchService } from './task-detail-prefetch.service';
+import type { TaskCore } from '../../../models/task-core.model';
 
 describe('TaskSelectionService · stable task URLs', () => {
   let selection: TaskSelectionService;
@@ -34,7 +36,7 @@ describe('TaskSelectionService · stable task URLs', () => {
     taskKey: task.taskKey, key: task.key, title: task.title,
     kind: 'task', taskType: 'chore', lane: task.state, archiveState: null,
     enteredLaneAt: '2026-09-28T00:00:00Z', order: task.order, mode: 'coding',
-    released: false, pendingIntent: false, coreVersion: 1,
+    released: false, pendingIntent: false, coreVersion: '1',
     pins: { model: null, modelExplicit: false, thinkingLevel: null,
       thinkingLevelExplicit: false, cliType: null, contextMode: null,
       useOwnSession: null, allowWebAccess: false, noBranchExpected: false },
@@ -63,6 +65,16 @@ describe('TaskSelectionService · stable task URLs', () => {
     tasks = TestBed.inject(TaskService);
     projects = TestBed.inject(ProjectLookupService);
     http = TestBed.inject(HttpTestingController);
+  });
+
+  const registry = (...entries: { id: string; shortCode: string | null; storageLocation: string }[]) =>
+    projects.setWorkspaces(([{ projects: entries.map(entry => ({ ...entry,
+      displayName: entry.id })) }]) as unknown as RegistryWorkspaceListItem[]);
+  const afterPaint = () => new Promise(resolve => setTimeout(resolve, 40));
+  const documentReply = (task: TaskInfo, name: string, coreVersion = '1') => ({
+    id: task.id, taskKey: task.taskKey, projectId: 'Agent Studio', attemptId: null,
+    coreVersion, resource: 'documents', version: 'v1', computedAt: null, state: 'ready',
+    data: { name, markdown: `${name} markdown`, summaryState: null }, reason: null,
   });
 
   afterEach(() => {
@@ -320,5 +332,175 @@ describe('TaskSelectionService · stable task URLs', () => {
     expect(selection.selectedCore()?.id).toBe(info.id);
     expect(selection.resourceStates().usage.phase).toBe('error');
     expect(selection.resourceStates().git.phase).toBe('idle');
+  });
+
+  describe('server-side resolution fallbacks', () => {
+    it('lets the backend resolve a public URL whose prefix matches no project of a multi-project workspace', () => {
+      registry({ id: 'PROJ-001', shortCode: 'ONE', storageLocation: 'C:\\one' },
+        { id: 'PROJ-002', shortCode: 'TWO', storageLocation: 'C:\\two' });
+      history.replaceState(null, '', '/#/tasks/AGT-2124');
+
+      selection.restoreFromUrl(true);
+
+      http.expectNone(req => req.url.endsWith('/core'));
+      http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2124')).flush(detail);
+      expect(selection.selected()?.info.key).toBe('AGT-2124');
+      expect(selection.selectedCore()).toBeNull();
+      expect(selection.detailPreview()).toBeNull();
+      expect(selection.detailLoadError()).toBeNull();
+      expect(selection.consumeTaskTabReplacement(info.taskKey)).toBe(true);
+    });
+
+    it('falls back to the backend when the inferred sole project does not own the task', () => {
+      registry({ id: 'PROJ-001', shortCode: null, storageLocation: 'C:\\one' });
+      history.replaceState(null, '', '/#/tasks/human-readable-slug');
+
+      selection.restoreFromUrl();
+
+      http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug/core'))
+        .flush({ state: 'missing' }, { status: 404, statusText: 'Not Found' });
+      http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug')).flush(detail);
+      expect(selection.selected()?.info.id).toBe(info.id);
+      expect(selection.detailLoadError()).toBeNull();
+    });
+
+    it('bounds the registry wait of a cold public URL and then resolves on the server', async () => {
+      vi.useFakeTimers();
+      try {
+        history.replaceState(null, '', '/#/tasks/AGT-2124');
+        selection.restoreFromUrl();
+        http.expectNone(req => req.url.includes('/api/tasks/AGT-2124'));
+
+        await vi.advanceTimersByTimeAsync(3_000);
+
+        http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2124')).flush(detail);
+        expect(selection.selected()?.info.key).toBe('AGT-2124');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('resolves an unplaceable pager entry by its route key instead of failing the step', () => {
+      registry({ id: 'PROJ-001', shortCode: 'ONE', storageLocation: 'C:\\one' },
+        { id: 'PROJ-002', shortCode: 'TWO', storageLocation: 'C:\\two' });
+      const nextInfo = { ...info, id: 'next-task', key: 'AGT-2125',
+        taskKey: 'C:\\private\\project::next-task' } as TaskInfo;
+      TestBed.inject(LanePagerService).capture(info.state, [info, nextInfo], info.taskKey);
+
+      expect(selection.pagerStep(1)).toBe(true);
+
+      http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2125')).flush({ info: nextInfo } as TaskDetail);
+      expect(selection.selected()?.info.id).toBe('next-task');
+      expect(selection.detailLoadError()).toBeNull();
+      expect(selection.triageLaneState).toBe(info.state);
+    });
+
+    it('resolves an unplaceable post-mutation advance on the server', () => {
+      registry({ id: 'PROJ-001', shortCode: 'ONE', storageLocation: 'C:\\one' },
+        { id: 'PROJ-002', shortCode: 'TWO', storageLocation: 'C:\\two' });
+      const nextInfo = { ...info, id: 'next-task', key: 'AGT-2125',
+        taskKey: 'C:\\private\\project::next-task' } as TaskInfo;
+      TestBed.inject(LanePagerService).capture(info.state, [info, nextInfo], info.taskKey);
+      selection.selected.set(detail);
+
+      expect(selection.advanceAfterMutation(info.taskKey)).toBe(true);
+
+      http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2125')).flush({ info: nextInfo } as TaskDetail);
+      expect(selection.selected()?.info.id).toBe('next-task');
+      expect(selection.consumeTaskTabReplacement(nextInfo.taskKey)).toBe(true);
+    });
+  });
+
+  it('drops late A and B replies that reach the handlers after A, B, A navigation', () => {
+    // Abort is the first defence; this proves the identity guard holds even
+    // when a transport delivers replies for superseded requests anyway.
+    vi.spyOn(selection as unknown as { cancelRequests: () => void }, 'cancelRequests')
+      .mockImplementation(() => undefined);
+    const other = { ...info, id: 'other-task', key: 'AGT-2125',
+      taskKey: 'C:\\private\\project::other-task', title: 'Other task' } as TaskInfo;
+    selection.openDetail(info);
+    const firstA = http.expectOne(req => req.url.endsWith('/human-readable-slug/core'));
+    selection.openDetail(other);
+    const requestB = http.expectOne(req => req.url.endsWith('/other-task/core'));
+    selection.openDetail(info);
+    const finalA = http.expectOne(req => req.url.endsWith('/human-readable-slug/core'));
+
+    requestB.flush(coreFor(other, 'Agent Studio'));
+    expect(selection.selectedCore()).toBeNull();
+    expect(selection.detailPreview()?.id).toBe(info.id);
+
+    finalA.flush(coreFor(info, 'Agent Studio'));
+    firstA.flush({ ...coreFor(info, 'Agent Studio'), coreVersion: '9', title: 'Late first A' });
+
+    expect(selection.selectedCore()).toMatchObject({ taskKey: info.taskKey, coreVersion: '1' });
+    expect(selection.detailPreview()?.title).toBe(info.title);
+    expect(location.hash).toBe('#/tasks/AGT-2124');
+  });
+
+  it('echoes a 64-bit core generation beyond the JavaScript safe range verbatim', async () => {
+    // Regression: a numeric generation rounded to 7457569699994893000 and every
+    // resource read answered 409 against the real backend.
+    const generation = '7457569699994892853';
+    selection.openDetail(info);
+    http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+      .flush({ ...coreFor(info, 'Agent Studio'), coreVersion: generation });
+    await afterPaint();
+    const documents = http.match(req => req.url.endsWith('/details/documents'));
+    expect(documents.map(request => request.request.params.get('generation'))).toEqual([generation, generation]);
+    for (const request of documents)
+      request.flush(documentReply(info, request.request.params.get('name')!, generation));
+    expect(selection.resourceStates().documents.phase).toBe('ready');
+    expect(selection.selected()?.promptMarkdown).toBe('prompt markdown');
+    await afterPaint();
+    http.expectOne(req => req.url.endsWith('/details/usage'))
+      .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
+  });
+
+  it('marks an enrichment reply for another core generation stale instead of applying it', async () => {
+    selection.openDetail(info);
+    http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+      .flush(coreFor(info, 'Agent Studio'));
+    await afterPaint();
+    const [prompt, status] = http.match(req => req.url.endsWith('/details/documents'));
+    prompt.flush(documentReply(info, 'prompt', '2'));
+    status.flush(documentReply(info, 'status', '2'));
+
+    expect(selection.resourceStates().documents).toEqual({ phase: 'stale', reason: 'core-generation-changed' });
+    expect(selection.selected()?.promptMarkdown ?? null).toBeNull();
+    await afterPaint();
+    http.expectOne(req => req.url.endsWith('/details/usage'))
+      .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
+  });
+
+  it('refreshes a revalidated core in place instead of flipping the rich pane back to the core view', async () => {
+    const prefetch = TestBed.inject(TaskDetailPrefetchService);
+    prefetch.storeCore(coreFor(info, 'Agent Studio') as unknown as TaskCore, 'Agent Studio');
+
+    selection.openDetail(info);
+    const revalidation = http.expectOne(req => req.url.endsWith('/human-readable-slug/core'));
+    expect(selection.selectedCore()?.coreVersion).toBe('1');
+    await afterPaint();
+    for (const request of http.match(req => req.url.endsWith('/details/documents')))
+      request.flush(documentReply(info, request.request.params.get('name')!));
+    expect(selection.detailPreview()).toBeNull();
+    expect(selection.selected()?.promptMarkdown).toBe('prompt markdown');
+    await afterPaint();
+    const staleUsage = http.expectOne(req => req.url.endsWith('/details/usage'));
+
+    revalidation.flush({ ...coreFor(info, 'Agent Studio'), coreVersion: '2', title: 'Renamed task' });
+
+    expect(staleUsage.cancelled).toBe(true);
+    expect(selection.detailPreview()).toBeNull();
+    expect(selection.selected()?.info.title).toBe('Renamed task');
+    expect(selection.selectedCore()?.coreVersion).toBe('2');
+    await afterPaint();
+    const reload = http.match(req => req.url.endsWith('/details/documents'));
+    expect(reload.map(request => request.request.params.get('generation'))).toEqual(['2', '2']);
+    for (const request of reload) request.flush(documentReply(info, request.request.params.get('name')!, '2'));
+    expect(selection.detailPreview()).toBeNull();
+    expect(selection.selected()?.promptMarkdown).toBe('prompt markdown');
+    await afterPaint();
+    http.expectOne(req => req.url.endsWith('/details/usage'))
+      .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
   });
 });
