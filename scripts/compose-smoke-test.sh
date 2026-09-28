@@ -3,6 +3,8 @@
 # COMPOSE_SMOKE_MODE=images to exercise published release images.
 set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/docker-scenario-images.sh
+. "$repo_root/scripts/docker-scenario-images.sh"
 repository_version="$(tr -d '\r\n' < "$repo_root/VERSION")"
 if [ -n "${AGENT_STUDIO_VERSION:-}" ] && [ "$AGENT_STUDIO_VERSION" != "$repository_version" ]; then
     echo "AGENT_STUDIO_VERSION $AGENT_STUDIO_VERSION does not match VERSION $repository_version" >&2
@@ -35,7 +37,9 @@ else
 fi
 finish() {
     status=$?
-    trap - EXIT HUP INT TERM
+    trap - EXIT
+    # A second signal must not abort the cleanup that frees the run's images.
+    trap '' HUP INT TERM
     if [ "$status" -ne 0 ]; then
         "${compose[@]}" "${profiles[@]}" ps || true
         "${compose[@]}" "${profiles[@]}" logs --no-color --tail 100 || true
@@ -50,6 +54,10 @@ finish() {
             "$image_id" -R "$(id -u):$(id -g)" /fixtures >/dev/null 2>&1 || true
     fi
     "${compose[@]}" "${profiles[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
+    # Dev mode built this run's images; images mode only pulled published ones.
+    if [ "$mode" = dev ]; then
+        docker_scenario_remove_project_images "$project"
+    fi
     rm -rf "$fixture"
     exit "$status"
 }
@@ -92,9 +100,17 @@ printf '[[TASK_DONE]]\n'
 FAKE
 chmod +x "$fixture/fake-cli.sh"
 chmod -R a+rwX "$fixture"
+# Label every dev build as disposable so scripts/docker-scenario-retention.sh
+# can clear what a killed run could not remove itself.
+disposable_label='      labels:
+        io.agent-studio.disposable-image: compose-smoke'
+runner_build_labels=""
+if [ "$mode" = dev ]; then
+    runner_build_labels=$'\n    build:\n'"$disposable_label"
+fi
 cat > "$override" <<OVERRIDE
 services:
-  agent-host-distributed${suffix}:
+  agent-host-distributed${suffix}:${runner_build_labels}
     volumes:
       - $fixture:/fixtures
       - secrets:/run/agent-studio-secrets:ro
@@ -113,6 +129,11 @@ services:
       RUNNER_MAX_PARALLELISM: "1"
       RUNNER_POLL_SECONDS: "1"
 OVERRIDE
+if [ "$mode" = dev ]; then
+    for built in task-server credential-manager bootstrap orchestrator-engine studio-bff orchestrator-api web; do
+        printf '  %s-dev:\n    build:\n%s\n' "$built" "$disposable_label"
+    done >> "$override"
+fi
 # The override is only for the disposable fake CLI. The normal compose file
 # remains the deployment contract.
 "${compose[@]}" "${profiles[@]}" config --quiet

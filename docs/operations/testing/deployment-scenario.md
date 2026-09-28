@@ -99,7 +99,12 @@ scripts/scenario.sh --target remote --level smoke --remote-url https://... --rem
   `testsupport/scenario/runner.Dockerfile`, which contains the fixed
   `scenario-coding-agent` instead of relying on an installed provider CLI.
   The run uses its own Compose project, bind-mounted fixture repository, ports,
-  volumes, and credentials, then removes them on exit. Host-port discovery is
+  volumes, credentials, and images, then removes them on exit, also after a
+  failure or `SIGTERM` (AGT-2993). Before it builds, it runs
+  `scripts/docker-scenario-retention.sh`, which clears scenario and smoke
+  images older than six hours that no container uses and caps the BuildKit
+  cache at 40 GB; see
+  [Docker scenario image retention](../setup/linux-runner-host.md#docker-scenario-image-retention). Host-port discovery is
   deadline-bounded: the runner polls the Compose assignment for up to 30
   seconds, fails immediately if a service exits, and never substitutes an
   arbitrary startup sleep. On any Compose failure it captures service status

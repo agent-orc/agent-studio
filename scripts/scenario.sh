@@ -7,6 +7,8 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/docker-scenario-images.sh
+. "$repo_root/scripts/docker-scenario-images.sh"
 
 usage() {
     cat <<'EOF'
@@ -42,6 +44,12 @@ Options:
   --remote-url URL      Base URL for --target remote.
   --remote-token TOKEN  Bearer token for --target remote.
   -h, --help            Show this help.
+
+Docker residue (--target compose): every run removes the images it built when
+it exits (also on failure and SIGTERM), and runs
+scripts/docker-scenario-retention.sh first to clear images older runs left
+behind and cap the BuildKit cache. SCENARIO_DOCKER_RETENTION=0 skips that
+retention pass.
 EOF
 }
 
@@ -121,6 +129,10 @@ compose_full_cleanup() {
             --file "$scenario_compose_file" --file "$scenario_compose_override" \
             --profile distributed --profile runner \
             down --volumes --remove-orphans >/dev/null 2>&1 || true
+        docker_scenario_remove_project_images "$scenario_compose_project" \
+            "${SCENARIO_TASK_SERVER_IMAGE:-}" "${SCENARIO_STUDIO_BFF_IMAGE:-}" \
+            "${SCENARIO_ORCHESTRATOR_ENGINE_IMAGE:-}" "${SCENARIO_AGENT_HOST_IMAGE:-}"
+        scenario_compose_project=""
     fi
     case "$scenario_compose_host_dir" in
         "${TMPDIR:-/tmp}/agent-studio-scenario."*)
@@ -178,6 +190,8 @@ EOF
 compose_full_on_exit() {
     local status=$?
     trap - EXIT
+    # A second signal must not abort the cleanup that frees the run's images.
+    trap '' HUP INT TERM
     if [ "$status" -ne 0 ]; then
         compose_full_diagnostics
     fi
@@ -333,12 +347,25 @@ run_compose_full() {
         compose_full_diagnostics
     fi
 
-    trap - EXIT HUP INT TERM
+    trap - EXIT
+    trap '' HUP INT TERM
     compose_full_cleanup
+    trap - HUP INT TERM
     return "$status"
 }
 
+run_compose_retention() {
+    if [ "${SCENARIO_DOCKER_RETENTION:-1}" = "0" ]; then
+        return
+    fi
+    # Residue from runs that were killed before their own cleanup. A failed
+    # retention pass is reported but never fails the scenario itself.
+    "$repo_root/scripts/docker-scenario-retention.sh" \
+        || echo "scenario: warning: docker-scenario-retention.sh failed; continuing" >&2
+}
+
 run_compose() {
+    run_compose_retention
     if [ "$level" = "full" ]; then
         run_compose_full
         return
