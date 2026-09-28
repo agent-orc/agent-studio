@@ -83,9 +83,14 @@ public sealed class RemoteReviewAuthorityTests
                 [ReviewCapabilities.ReviewExecutor, ReviewCapabilities.GitMaterialization,
                     ReviewCapabilities.SemanticReview]),
             "legacy-review", default);
-        Assert.Equal("empty", (await store.ClaimReviewAsync(
+        var legacy = await store.ClaimReviewAsync(
             new ReviewClaimRequest("legacy-review", "instance-legacy"),
-            "legacy-review", default)).Status);
+            "legacy-review", default);
+        Assert.Equal("empty", legacy.Status);
+        // AGT-2987: the skipped subject is named with the keys it needs.
+        Assert.Equal(ReviewClaimEmptyReasons.UnclaimablePlanRequirements, legacy.Reason);
+        Assert.Contains(ReviewCapabilities.LibraryStepV1, legacy.MissingCapabilities!);
+        Assert.Single(legacy.UnclaimableAttempts!);
         await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
         await RegisterReviewerAsync(store, "review-b", "instance-b", "host-b");
 
