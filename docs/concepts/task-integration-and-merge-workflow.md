@@ -468,6 +468,12 @@ step of the git doctrine runbook:
   positive, which is the one direction that cannot lose information. Everything
   else is reported and left alone; the pass never rewrites history it cannot
   prove.
+- The `{id}` segment accepts the project id, display name, or watch path; `*`
+  sweeps every project. An id that resolves to no project returns 404 and
+  sweeps nothing, so a typo can never widen a repair to every project.
+- Zero-file lifecycle markers are not deliveries. Their containment never
+  counts as a contained delivery, never proposes a missing record or a
+  placeholder repair, and is never written into a reconciled record.
 
 Reported classes and findings (`DeliveryClaimSweepPolicy`, pure, matrix-tested):
 
