@@ -40,7 +40,7 @@ CAR -> Studio output mirror -> marker renderer -> SignalR -> Activity Log
     -> Studio session, quota, usage, ledger, sentinel and reaper policy
 ```
 
-[`GenericCliExecutionService`](../../../../backend/Features/Cli/Execution/CliExecutionServiceBase.cs) is the shared Studio host adapter. It always creates a typed CAR request. Engine rollout settings and the raw-spawn rollback were removed in AGT-2373.
+[`GenericCliExecutionService`](../../../../backend/Features/Cli/Execution/CliExecutionServiceBase.cs) is the shared Studio host adapter. It always creates a typed CAR request. Engine rollout settings and the raw-spawn rollback were removed in AGT-2373. Antigravity keeps the persisted CLI type `gemini`, which the adapter maps to CAR's `antigravity` (`agentapi`) descriptor; CAR's deprecated `gemini` descriptor is never used for card runs (ADR-0076).
 
 ## Session model invariants
 
@@ -66,7 +66,7 @@ The [April 23, 2026 Anthropic Claude Code postmortem](https://www.anthropic.com/
 
 For this project, the invariant is: **a successful resume is not proof of a successful continuation.** A continuation is healthy only if the agent acts on the latest user follow-up, reconciles with the job folder, and produces useful new evidence or a clear blocker. Pin that behavior in `RunPlanner`, `RunOutcomePolicy`, and session-event tests before touching per-CLI drivers.
 
-Claude and Codex are the reference paths for stale-session work. Antigravity inherits the general recovery contract through its legacy adapter.
+Claude and Codex are the reference paths for stale-session work. Antigravity inherits the general recovery contract through the same CAR host adapter.
 
 ## Marker-line vocabulary
 
@@ -126,7 +126,7 @@ The CLI frame catalogues diverge enough that a shared base switch would be a lea
 3. Capture session or usage data from either the raw hook or the rendered-line hook, never both.
 4. Add a `<Cli>OutputRendererTests.cs` fixture for each frame type and encoding edge case.
 
-> Antigravity's legacy `agentapi` behavior still carries an inline renderer. Moving it to `ICliOutputRenderer` is independent of whether its process protocol can move to CAR.
+> Antigravity's `agentapi` behavior still carries an inline renderer. Moving it to `ICliOutputRenderer` is independent of its CAR process launch.
 
 ## Output stream conventions
 

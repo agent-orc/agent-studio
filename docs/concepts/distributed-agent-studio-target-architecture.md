@@ -413,7 +413,7 @@ Codex invocation path.
 That boundary is now implemented in both deployables with the exact NuGet pin
 `CodingAgentRunner [0.7.0]`. The backend and Runner project files are the two
 consumers of that one package version; an architecture test rejects drift. See
-[ADR-0075](../system/architecture/decisions/adr-archive.md#adr-0075---studio-uses-codingagentrunner-as-its-only-card-run-cli-execution-layer-2026-09-24).
+[ADR-0076](../system/architecture/decisions/adr-archive.md#adr-0076---studio-uses-codingagentrunner-as-its-only-card-run-cli-execution-layer-2026-09-24).
 
 Each deployable publishes its own version and compatibility range. Contract
 tests pin supported combinations. Release order is additive first: Task Server

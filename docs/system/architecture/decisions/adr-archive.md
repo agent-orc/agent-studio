@@ -262,11 +262,11 @@ The investigation also surfaced a parallel question from the user: "is this a WS
 **Reasoning style.** Test what can be tested deterministically, run the live probes opt-in, write down what is unproven so the next reader does not over-trust the fix. The five live probes triangulate observable shapes (`.exe` direct, `.CMD` shim, production code path with realistic prompt, sequential kill+restart). The two deterministic probes pin the runner's stream/stop chain shape using a fake CLI we fully control. Together they catch ~80% of plausible regressions; the missing 20% (live ASP.NET hosting interaction, concurrent-process contention) is what the open caveat is for.
 
 **Implementation pointers.** The original Studio-owned spawn helpers and their
-live/fake CLI tests were removed by ADR-0075 after CAR parity was established.
+live/fake CLI tests were removed by ADR-0076 after CAR parity was established.
 The retained operator guidance is
 [`docs/system/cli/skills/cli-claude.md`](../../cli/skills/cli-claude.md).
 
-**Status.** Superseded for card-run process ownership by ADR-0075. The historical
+**Status.** Superseded for card-run process ownership by ADR-0076. The historical
 diagnosis remains useful, but CAR now owns the affected spawn mechanics.
 
 ---
@@ -1797,7 +1797,23 @@ The standalone Linux Runner owns one clean checkout per project and executor. It
 
 ---
 
-## ADR-0075 - Studio uses CodingAgentRunner as its only card-run CLI execution layer (2026-09-24)
+## ADR-0075 - One-box Compose uses distributed authority and persistent product-managed credentials (2026-09-26)
+
+**Decision.** The root Compose file is the one-box Studio deployment: Task Server owns the store and principal authority, Orchestrator Engine runs the flow, Studio BFF serves browser `/api/v1` requests, the compatibility Studio API serves remaining dev-seat routes, and one Agent Host registers as a Runner. A one-shot bootstrap creates separate Studio, Engine, and Runner credentials in a persistent named volume. A product credential-manager command rotates each principal through the Task Server management API, replaces its protected file, and recreates the consumer. Option C accepts the current `/api/v1` route coverage limit until the operations topology work assigns the remaining routes.
+
+**Context.** The local Connector rejects LAN and Docker origins by a decided security boundary. Extending the BFF to all Connector routes would preempt the pending Operations Server topology. The operator selected option C for AGT-2736 and required first-run and rotation workflows without manual secret copying. Source-built Compose is the verified checkout path; published images receive their own release smoke and upgrade checks.
+
+**Non-goals.** This deployment does not relax the Connector's origin checks, make the Task Server publicly reachable, or claim Connector-equivalent route coverage. Docker Compose does not own Task Server principal state. Deleting the secrets volume is not a rotation method because it can strand principals in the retained store.
+
+**Reasoning style.** Keep durable authority in the Task Server, and let the deployment own only the file distribution needed by its processes. Credential creation is idempotent, and rotation uses the same principal API as other management clients. Browser routing must exercise the BFF that carries the distributed Studio principal.
+
+**Implementation pointers.** [docker-compose.yml](../../../../docker-compose.yml), [Caddyfile](../../../../deploy/compose/Caddyfile), [bootstrap](../../../../scripts/compose-secret-bootstrap.sh), [rotation command](../../../../scripts/compose-rotate.sh), [rotation worker](../../../../scripts/compose-rotate-credentials.sh), [smoke](../../../../scripts/compose-smoke-test.sh), and [Docker operations](../../../operations/setup/docker.md).
+
+**Status.** Accepted.
+
+---
+
+## ADR-0076 - Studio uses CodingAgentRunner as its only card-run CLI execution layer (2026-09-24)
 
 **Decision.** Every coding-agent card run in Agent Studio and the standalone
 Agent Runner is expressed as a typed `CliRunRequest` and executed by a
@@ -1840,6 +1856,17 @@ Studio-owned card-run argv builders are gone. Provider-specific executable
 paths remain host configuration, while CAR derives all invocation flags from
 typed input.
 
+Antigravity follows the same rule; there is no non-CAR Antigravity path.
+Studio keeps `gemini` as the persisted CLI type of Antigravity, while CAR 0.7.0
+registers `agentapi` as its `antigravity` descriptor and reserves `gemini` for
+the deprecated Gemini CLI. The local host adapter therefore maps the persisted
+type to CAR's `antigravity` descriptor and hands it the configured `agentapi`
+path. CAR launches `agentapi new-conversation [--model=<tier>] <prompt>` or
+`agentapi send-message <conversation id> <prompt>`, adds no permission flags,
+and decodes stdout with the same `GeminiEventAdapter` Studio used before, so
+the launch, permission, and stream contracts are unchanged. CAR's `gemini`
+descriptor is never selected for a card run.
+
 Bounded non-card utilities remain host-owned and are not alternate card-run
 layers: installation and authentication probes, Git and SSH commands, deploy
 helpers, and short one-shot inference used for summaries or classification.
@@ -1856,21 +1883,5 @@ Provider selection without argv construction:
 [`CliSelection.cs`](../../../../runner/CliSelection.cs). Mirrored ratchet:
 [`backend guard`](../../../../backend.Tests/Architecture/CliInvocationCentralizationGuardTests.cs)
 and [`Runner guard`](../../../../runner.Tests/CliInvocationCentralizationGuardTests.cs).
-
-**Status.** Accepted.
-
----
-
-## ADR-0076 - One-box Compose uses distributed authority and persistent product-managed credentials (2026-09-26)
-
-**Decision.** The root Compose file is the one-box Studio deployment: Task Server owns the store and principal authority, Orchestrator Engine runs the flow, Studio BFF serves browser `/api/v1` requests, the compatibility Studio API serves remaining dev-seat routes, and one Agent Host registers as a Runner. A one-shot bootstrap creates separate Studio, Engine, and Runner credentials in a persistent named volume. A product credential-manager command rotates each principal through the Task Server management API, replaces its protected file, and recreates the consumer. Option C accepts the current `/api/v1` route coverage limit until the operations topology work assigns the remaining routes.
-
-**Context.** The local Connector rejects LAN and Docker origins by a decided security boundary. Extending the BFF to all Connector routes would preempt the pending Operations Server topology. The operator selected option C for AGT-2736 and required first-run and rotation workflows without manual secret copying. Source-built Compose is the verified checkout path; published images receive their own release smoke and upgrade checks.
-
-**Non-goals.** This deployment does not relax the Connector's origin checks, make the Task Server publicly reachable, or claim Connector-equivalent route coverage. Docker Compose does not own Task Server principal state. Deleting the secrets volume is not a rotation method because it can strand principals in the retained store.
-
-**Reasoning style.** Keep durable authority in the Task Server, and let the deployment own only the file distribution needed by its processes. Credential creation is idempotent, and rotation uses the same principal API as other management clients. Browser routing must exercise the BFF that carries the distributed Studio principal.
-
-**Implementation pointers.** [docker-compose.yml](../../../../docker-compose.yml), [Caddyfile](../../../../deploy/compose/Caddyfile), [bootstrap](../../../../scripts/compose-secret-bootstrap.sh), [rotation command](../../../../scripts/compose-rotate.sh), [rotation worker](../../../../scripts/compose-rotate-credentials.sh), [smoke](../../../../scripts/compose-smoke-test.sh), and [Docker operations](../../../operations/setup/docker.md).
 
 **Status.** Accepted.

@@ -75,7 +75,7 @@ If the CLI has no usable session concept, `IsCompatibleSessionName` returns `fal
 
 The frontend's model dropdown reads `/api/cli/{cliType}/models`. No CLI-specific UI code is needed if the JSON shape (`CliModelCatalog`) is honoured.
 
-**Selected model.** Studio first qualifies the chosen model against its live catalog. Claude and Codex then pass the qualified model and thinking level to CAR, which applies its common normalization and descriptor flags. The legacy Antigravity adapter maps the model to its `agentapi` vocabulary.
+**Selected model.** Studio first qualifies the chosen model against its live catalog. Studio then passes the qualified model and thinking level to CAR, which applies its common normalization and descriptor flags. For Antigravity, CAR maps the model to the `agentapi` tiers `flash`, `pro`, and `flash_lite`.
 
 ### 2.4 Quota probe
 
@@ -134,7 +134,7 @@ differences live in the
 
 ### 2.6 Cancellation
 
-**Contract.** A running job must be cancellable from the UI. CAR owns the Claude and Codex process lifecycle and tree kill. Studio records the stop reason, retains Windows task job-object cleanup, and maps the terminal result. The legacy adapter retains the equivalent cancellation behavior for rollback and Antigravity.
+**Contract.** A running job must be cancellable from the UI. CAR owns the process lifecycle and tree kill for Claude, Codex, and Antigravity. Studio records the stop reason, retains Windows task job-object cleanup, and maps the terminal result.
 
 **CLI-specific cleanup.** If the CLI leaves orphaned PTY children, modal pickers, or background helpers, the driver is responsible for cleaning them up. Quota probes additionally send `<Esc><Esc>` before tearing down to close any open modal pickers — keep doing this for new CLIs.
 
@@ -306,18 +306,18 @@ The old Studio-local `WindowsHandleScrubSpawner` no longer exists. CAR owns npm-
 | Aspect | Status |
 |--------|--------|
 | Execution engine | CAR 0.7.0 only |
-| Process lifecycle | CAR Antigravity descriptor through `ICliDriver` |
-| Session model | UUID conversation id captured from `agentapi` JSON; resume with `send-message` |
-| Model selection | Static `flash`, `pro`, and `flash_lite` mapping |
+| Process lifecycle | CAR `antigravity` descriptor through `ICliDriver`: `agentapi new-conversation [--model=<tier>] <prompt>` |
+| Session model | UUID conversation id captured from `agentapi` JSON; CAR resumes with `agentapi send-message <uuid> <prompt>` |
+| Model selection | Static `flash`, `pro`, and `flash_lite` mapping in the CAR descriptor |
 | Quota probe | No local numeric surface; reports that quota is managed by the IDE session |
-| Logging | `agentapi` JSON rendered to the shared marker-line vocabulary; typed compatibility events use the existing adapter |
+| Logging | `agentapi` JSON rendered to the shared marker-line vocabulary; CAR decodes typed events with `GeminiEventAdapter` |
 | Cancellation | CAR process-tree stop plus Studio terminal classification |
 | Availability | `agentapi --version`, accepting its usage response when that flag is not implemented |
 | Context mode | Shared only |
 
 **Quirks.**
 - The public CLI type is still `gemini`; changing the persisted value is a separate compatibility migration.
-- CAR 0.7.0 has an Antigravity descriptor, but it assumes a different stream and permission contract than Studio's current `agentapi` integration. T2 does not silently switch protocols.
+- CAR 0.7.0 registers `agentapi` as its `antigravity` descriptor and keeps `gemini` for the deprecated Gemini CLI. [`BackendCarExecution.CarCliTypeFor`](../../../backend/Features/Cli/Execution/BackendCarExecution.cs) maps the persisted `gemini` type to `antigravity` and passes the configured `agentapi` path, so a card run never reaches CAR's Gemini descriptor. The descriptor builds the same argv, adds no permission flags, and decodes stdout with the same `GeminiEventAdapter` as the removed Studio adapter. [`AntigravityCarLaunchTests`](../../../backend.Tests/AntigravityCarLaunchTests.cs) pins the executable, argv, and model tiers. See ADR-0076.
 - `agentapi` exposes no documented config-home override, so Studio reports shared context honestly.
 - A future CAR migration requires recorded protocol fixtures for conversation creation, continuation, permission behavior, output framing, session capture, stop, and quota reporting.
 
