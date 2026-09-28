@@ -42,7 +42,7 @@ public sealed class DurableLeaseAuthorityTests
     public async Task Granted_renewal_delivers_the_fenced_stop_without_losing_authority()
     {
         using var temp = new TempDirectory();
-        var now = new DateTime(2026, 9, 27, 8, 0, 0, DateTimeKind.Utc);
+        var now = DateTime.UtcNow;
         var options = Options(temp.Path);
         var lease = Lease(now, now.AddMinutes(5)) with { AttemptId = "attempt-stop", AuthorityEpoch = 3 };
         var directive = new RunStopDirectiveDto(lease.TaskKey, "followup", now,
