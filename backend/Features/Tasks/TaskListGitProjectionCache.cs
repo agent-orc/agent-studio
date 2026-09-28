@@ -32,19 +32,28 @@ namespace AgentStudio.Tasks;
 public sealed class TaskListGitProjectionCache
 {
     private readonly Func<string, (bool Exists, string? Hash)> _sidecarStamp;
-    private readonly ConcurrentDictionary<string, RepoEntry> _entries =
-        new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, long> _subjectVersions =
-        new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, (bool Exists, string? Hash)> _sidecarStamps =
-        new(StringComparer.OrdinalIgnoreCase);
+    // Repository, task-folder and sidecar paths share one OS-aware rule, so
+    // case-distinct directories on Linux never share a snapshot or generation.
+    private readonly StringComparer _pathComparer;
+    private readonly ConcurrentDictionary<string, RepoEntry> _entries;
+    private readonly ConcurrentDictionary<string, long> _subjectVersions;
+    private readonly ConcurrentDictionary<string, (bool Exists, string? Hash)> _sidecarStamps;
 
     private long _generation;
 
     public TaskListGitProjectionCache() : this(SidecarStamp) { }
 
-    internal TaskListGitProjectionCache(Func<string, (bool Exists, string? Hash)> sidecarStamp)
-        => _sidecarStamp = sidecarStamp;
+    internal TaskListGitProjectionCache(Func<string, (bool Exists, string? Hash)> sidecarStamp,
+        StringComparer? pathComparer = null)
+    {
+        _sidecarStamp = sidecarStamp;
+        _pathComparer = pathComparer ?? FileSystemPathComparer.Instance;
+        _entries = new(_pathComparer);
+        _subjectVersions = new(_pathComparer);
+        _sidecarStamps = new(_pathComparer);
+    }
+
+    internal TaskListGitProjectionCache(StringComparer pathComparer) : this(SidecarStamp, pathComparer) { }
 
     /// <summary>
     /// Monotonic version of the merged snapshot store. Every indexer write -
@@ -71,7 +80,7 @@ public sealed class TaskListGitProjectionCache
         if (tasks.Count == 0) return TaskListGitProjection.Empty;
 
         var repoGroups = tasks
-            .GroupBy(task => NormalizePath(task.WatchPath), StringComparer.OrdinalIgnoreCase)
+            .GroupBy(task => NormalizePath(task.WatchPath), _pathComparer)
             .ToArray();
 
         if (repoGroups.Length == 1)
@@ -162,7 +171,7 @@ public sealed class TaskListGitProjectionCache
         DateTimeOffset? oldest = null;
         var stale = false;
         var any = false;
-        foreach (var key in tasks.Select(t => NormalizePath(t.WatchPath)).Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (var key in tasks.Select(t => NormalizePath(t.WatchPath)).Distinct(_pathComparer))
         {
             any = true;
             if (!_entries.TryGetValue(key, out var entry) || entry.GitStateAt is null)

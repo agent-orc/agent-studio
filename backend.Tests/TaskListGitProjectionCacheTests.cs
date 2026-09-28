@@ -263,6 +263,77 @@ public sealed class TaskListGitProjectionCacheTests
     }
 
     [Fact]
+    public void CaseDistinctRepositoryPaths_OrdinalComparer_KeepSeparateSnapshotsAndSubjectGenerations()
+    {
+        var (taskA, taskB) = CaseDistinctTasks();
+        (bool Exists, string? Hash) stamp = (true, "first");
+        var cache = new TaskListGitProjectionCache(_ => stamp, StringComparer.Ordinal);
+        var subjectA = ReviewSubjectStore.PathFor(taskA.FolderPath);
+        var subjectB = ReviewSubjectStore.PathFor(taskB.FolderPath);
+        cache.SeedTaskInput(subjectA);
+        cache.SeedTaskInput(subjectB);
+        SetCaseDistinctSnapshots(cache, taskA, taskB);
+
+        Assert.Equal("task/a", cache.ReadTask(taskA).Data?.Merge?.Branch);
+        Assert.Equal("task/b", cache.ReadTask(taskB).Data?.Merge?.Branch);
+        var merged = cache.ReadCacheOnly([taskA, taskB]);
+        Assert.Equal("task/a", merged.Merge[taskA.TaskKey].Branch);
+        Assert.Equal("task/b", merged.Merge[taskB.TaskKey].Branch);
+        Assert.False(cache.ReadFreshness([taskA, taskB]).Stale);
+
+        stamp = (true, "second");
+        Assert.True(cache.MarkTaskInputChanged(subjectA));
+        Assert.Equal(1, cache.SubjectVersion(taskA.FolderPath));
+        Assert.Equal(0, cache.SubjectVersion(taskB.FolderPath));
+        Assert.Equal("stale", cache.ReadTask(taskA).State);
+        Assert.Equal("ready", cache.ReadTask(taskB).State);
+        // B keeps its own sidecar stamp, so its change is detected separately.
+        Assert.True(cache.MarkTaskInputChanged(subjectB));
+        Assert.Equal(1, cache.SubjectVersion(taskB.FolderPath));
+    }
+
+    [Fact]
+    public void CaseDistinctRepositoryPaths_CaseInsensitiveComparer_ShareSnapshotsAndSubjectGenerations()
+    {
+        var (taskA, taskB) = CaseDistinctTasks();
+        (bool Exists, string? Hash) stamp = (true, "first");
+        var cache = new TaskListGitProjectionCache(_ => stamp, StringComparer.OrdinalIgnoreCase);
+        var subjectA = ReviewSubjectStore.PathFor(taskA.FolderPath);
+        var subjectB = ReviewSubjectStore.PathFor(taskB.FolderPath);
+        cache.SeedTaskInput(subjectA);
+        cache.SeedTaskInput(subjectB);
+        SetCaseDistinctSnapshots(cache, taskA, taskB);
+
+        // One repository entry: B's snapshot replaced A's.
+        Assert.Null(cache.ReadTask(taskA).Data);
+        Assert.Equal("task/b", cache.ReadTask(taskB).Data?.Merge?.Branch);
+        var merged = cache.ReadCacheOnly([taskA, taskB]);
+        Assert.False(merged.Merge.ContainsKey(taskA.TaskKey));
+        Assert.Equal("task/b", merged.Merge[taskB.TaskKey].Branch);
+
+        stamp = (true, "second");
+        Assert.True(cache.MarkTaskInputChanged(subjectA));
+        Assert.Equal(1, cache.SubjectVersion(taskA.FolderPath));
+        Assert.Equal(1, cache.SubjectVersion(taskB.FolderPath));
+        Assert.Equal("stale", cache.ReadTask(taskB).State);
+        // The shared sidecar stamp already holds "second".
+        Assert.False(cache.MarkTaskInputChanged(subjectB));
+    }
+
+    [Fact]
+    public void DefaultPathComparer_IsTheSharedFileSystemComparer()
+    {
+        var expected = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        Assert.Same(expected, FileSystemPathComparer.Instance);
+        var (taskA, taskB) = CaseDistinctTasks();
+        var cache = new TaskListGitProjectionCache();
+        SetCaseDistinctSnapshots(cache, taskA, taskB);
+        var separate = FileSystemPathComparer.Instance == StringComparer.Ordinal;
+        Assert.Equal(separate ? "task/a" : null, cache.ReadTask(taskA).Data?.Merge?.Branch);
+    }
+
+    [Fact]
     public async Task BuildProjectionAsync_StartsAllLookupsBeforeWaitingForCompletion()
     {
         var task = Job("task-1", "watch-a");
@@ -306,6 +377,28 @@ public sealed class TaskListGitProjectionCacheTests
         Assert.Empty(projection.Publish);
         Assert.Empty(projection.TestRuns);
         Assert.Empty(projection.ReviewProjection);
+    }
+
+    private static (TaskInfo A, TaskInfo B) CaseDistinctTasks()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "case-" + Guid.NewGuid().ToString("N"));
+        var repoA = Path.Combine(root, "repo");
+        var repoB = Path.Combine(root, "REPO");
+        return (
+            Job("task-1", repoA) with { FolderPath = Path.Combine(repoA, "tasks", "task-1") },
+            Job("task-1", repoB) with { FolderPath = Path.Combine(repoB, "tasks", "task-1") });
+    }
+
+    private static void SetCaseDistinctSnapshots(TaskListGitProjectionCache cache, TaskInfo taskA, TaskInfo taskB)
+    {
+        foreach (var (task, branch) in new[] { (taskA, "task/a"), (taskB, "task/b") })
+        {
+            cache.SetSnapshot(task.WatchPath, ProjectionFor(task, branch) with
+            {
+                Signatures = new Dictionary<string, string> { [task.TaskKey] = TaskGitSignature.For(task) },
+                SubjectVersions = new Dictionary<string, long> { [task.TaskKey] = 0 },
+            }, DateTimeOffset.UtcNow);
+        }
     }
 
     private static TaskListGitProjection ProjectionFor(TaskInfo task, string branch)
