@@ -117,10 +117,10 @@ public static class TaskRunnerEndpoints
             var mode = ContinueModes.Normalize(req.Mode);
             try
             {
-                var clientId = context.Request.Headers["X-Client-Id"].FirstOrDefault();
-                var resp = await runner.ContinueJobAsync(
-                    jobId, req.Prompt, watchPath, req.Model, req.CliType, req.ThinkingLevel,
-                    mode, req.ModeOverride, TimelineActors.Human(clientId ?? string.Empty), ct);
+                var caller = context.User.Identity?.Name
+                    ?? context.Request.Headers["X-Client-Id"].FirstOrDefault()
+                    ?? "local-default";
+                var resp = await runner.ContinueJobAsync(jobId, req.Prompt, watchPath, req.Model, req.CliType, req.ThinkingLevel, mode, req.ModeOverride, author: TimelineActors.Human(caller), ct: ct, reason: req.Reason, triggeredBy: caller);
                 return resp.Status == "queued"
                     ? Results.Accepted(value: resp)
                     : Results.Ok(resp);

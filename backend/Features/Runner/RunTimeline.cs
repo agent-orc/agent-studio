@@ -24,6 +24,10 @@ public sealed record RunRecord
     public int Index { get; init; }
     /// <summary><c>start</c> | <c>continue</c> | <c>recovery</c> | <c>restart</c>.</summary>
     public string Intent { get; init; } = "";
+    public string? Trigger { get; init; }
+    public string? TriggeredBy { get; init; }
+    public string? TriggerReason { get; init; }
+    public string? TriggerSource { get; init; }
     public DateTime StartedAt { get; init; }
     public DateTime? EndedAt { get; init; }
     /// <summary><c>running</c>, <c>completed</c>, or a typed terminal result status such as <c>failed</c>, <c>blocked</c>, or <c>superseded</c>.</summary>
@@ -711,6 +715,10 @@ public static class RunTimelineBuilder
             {
                 Index = idx + 1,
                 Intent = evt.Kind ?? "",
+                Trigger = evt.Trigger,
+                TriggeredBy = evt.TriggeredBy,
+                TriggerReason = evt.TriggerReason,
+                TriggerSource = evt.TriggerSource,
                 StartedAt = evt.Ts,
                 EndedAt = endedAt,
                 Status = status,
