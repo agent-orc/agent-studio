@@ -272,10 +272,32 @@ public sealed class RemoteTaskRunner
     {
         try
         {
+            await ResultOwnershipRepair.EnsureOwnedAsync(
+                taskKey, ResultsDir(taskKey), _log, CancellationToken.None);
             return await PrepareResultsAsync(
                 taskKey, attemptId, limits, outbox, CancellationToken.None);
         }
+        catch (UnauthorizedAccessException ex) when (
+            !ex.Message.StartsWith("Result ownership repair failed:", StringComparison.Ordinal))
+        {
+            try
+            {
+                await ResultOwnershipRepair.RepairOrThrowAsync(
+                    taskKey, ResultsDir(taskKey), _log, CancellationToken.None);
+                return await PrepareResultsAsync(
+                    taskKey, attemptId, limits, outbox, CancellationToken.None);
+            }
+            catch (Exception retryError) when (retryError is not OperationCanceledException)
+            {
+                return FailurePlan(retryError);
+            }
+        }
         catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return FailurePlan(ex);
+        }
+
+        ArtifactTransferPlan FailurePlan(Exception ex)
         {
             var issue = new ArtifactTransferIssue(
                 "results/",
@@ -479,6 +501,8 @@ public sealed class RemoteTaskRunner
         var handedBack = false;
         var teardownAttempted = false;
         var releaseOnly = false;
+        string? infrastructureFailureCode = null;
+        string? infrastructureFailureDetail = null;
         var daemonHandedOff = false;
         var lostWorker = LostWorkerHandoff.None;
         // AGT-2869: a finalization that could not reach a restarting Task
@@ -757,45 +781,96 @@ public sealed class RemoteTaskRunner
         {
             outcome = new RunOutcome(RunOutcomeKind.EnvironmentFailure, ex.Message);
             shipper.Add("system", $"[runner] remote-claim-environment-failed: {ex.Message}");
-            await shipper.FlushAsync(CancellationToken.None);
+            if (_client.UsesDurableTaskServer && !heartbeat.LeaseLost)
+            {
+                // The durable Task Server spends the per-card budget on a typed
+                // release. Its completion path has no prelaunch failure budget.
+                releaseOnly = true;
+                handedBack = true;
+                infrastructureFailureCode = "runner-environment-preparation-failed";
+                infrastructureFailureDetail = $"{ex.Message}; worktree={workspace.RepoPath}; host={_options.Hostname}";
+                return 1;
+            }
             if (!heartbeat.LeaseLost)
             {
-                teardownAttempted = true;
-                var failedTeardown = WorktreeTeardownResult.NoWork;
-                if (Directory.Exists(workspace.RepoPath))
+                try
                 {
-                    if (epicPlanning)
-                        sourceMutated = await workspace.TeardownReadOnlyAsync(CancellationToken.None);
-                    else
-                        failedTeardown = await workspace.TeardownAsync(
-                            outcome.Kind.ToString(),
-                            lease.AttemptId,
-                            CancellationToken.None);
+                    await shipper.FlushAsync(CancellationToken.None);
+                    teardownAttempted = true;
+                    var failedTeardown = WorktreeTeardownResult.NoWork;
+                    if (Directory.Exists(workspace.RepoPath))
+                    {
+                        if (epicPlanning)
+                            sourceMutated = await workspace.TeardownReadOnlyAsync(CancellationToken.None);
+                        else
+                            failedTeardown = await workspace.TeardownAsync(
+                                outcome.Kind.ToString(),
+                                lease.AttemptId,
+                                CancellationToken.None);
+                    }
+                    outcomeDecision = WithDurableOutput(outcomeDecision, failedTeardown);
+                    await _client.CompleteHostPostProcessingAsync(
+                        taskKey,
+                        evidenceHash: null,
+                        CancellationToken.None);
+                    await CompleteAsync(
+                        taskKey,
+                        lease,
+                        outcome,
+                        outcomeDecision,
+                        failedTeardown,
+                        workspace.RepositoryUrl,
+                        baseSha: null,
+                        workspace.IntegrationBranchRef,
+                        artifactManifestDigest: null,
+                        outputLines,
+                        sourceMutated: false,
+                        CancellationToken.None);
+                    handedBack = true;
                 }
-                outcomeDecision = WithDurableOutput(outcomeDecision, failedTeardown);
-                await _client.CompleteHostPostProcessingAsync(
-                    taskKey,
-                    evidenceHash: null,
-                    CancellationToken.None);
-                await CompleteAsync(
-                    taskKey,
-                    lease,
-                    outcome,
-                    outcomeDecision,
-                    failedTeardown,
-                    workspace.RepositoryUrl,
-                    baseSha: null,
-                    workspace.IntegrationBranchRef,
-                    artifactManifestDigest: null,
-                    outputLines,
-                    sourceMutated: false,
-                    CancellationToken.None);
-                handedBack = true;
+                catch (Exception cleanupError) when (cleanupError is not OperationCanceledException)
+                {
+                    releaseOnly = true;
+                    handedBack = true;
+                    infrastructureFailureCode = "runner-environment-preparation-failed";
+                    infrastructureFailureDetail = $"{ex.Message}; salvage: {OneLine(cleanupError.Message)}; " +
+                        $"worktree={workspace.RepoPath}; host={_options.Hostname}";
+                    _log($"remote-claim-cleanup-failed task={taskKey} {infrastructureFailureDetail}");
+                }
             }
+            return 1;
+        }
+        catch (RunnerResultsPreparationException ex)
+        {
+            releaseOnly = true;
+            handedBack = true;
+            infrastructureFailureCode = "runner-results-handling-failed";
+            infrastructureFailureDetail = $"{OneLine(ex.Message)}; host={_options.Hostname}";
+            _log($"remote-results-preparation-failed task={taskKey} {infrastructureFailureDetail}");
             return 1;
         }
         catch (WorktreeSalvageException ex)
         {
+            var latestSlot = _state.LoadAll().FirstOrDefault(item =>
+                                 string.Equals(item.AttemptId, slot.AttemptId, StringComparison.Ordinal))
+                             ?? slot;
+            if (!heartbeat.LeaseLost && ShouldReleasePrelaunchSalvageFailure(
+                    _client.UsesDurableTaskServer, reattach,
+                    latestSlot.Phase, latestSlot.ProcessId, latestSlot.ProcessStartedAtUtc))
+            {
+                // Preparation tried to salvage a checkout before any agent
+                // process started. There is no result to recover from the
+                // outbox, so release the lease with the same bounded budget as
+                // other infrastructure failures.
+                releaseOnly = true;
+                handedBack = true;
+                teardownAttempted = true;
+                (infrastructureFailureCode, infrastructureFailureDetail) =
+                    PrelaunchSalvageRelease(ex, _options.Hostname);
+                _log($"remote-prelaunch-salvage-failed task={taskKey} " +
+                    $"branch={ex.Branch} {infrastructureFailureDetail}");
+                return 1;
+            }
             if (outbox is not null)
             {
                 outbox.RecordHandoffState("transfer-recovery");
@@ -1052,16 +1127,34 @@ public sealed class RemoteTaskRunner
                 var released = releaseOnly
                     ? await ReleaseWithRetryAsync(
                         lease,
-                        lostWorker.HasSalvage
+                        infrastructureFailureCode ?? (lostWorker.HasSalvage
                             ? LostWorkerRecoveryPolicy.ReleaseOutcome
-                            : "runner-process-missing",
-                        lostWorker)
+                            : "runner-process-missing"),
+                        lostWorker,
+                        infrastructureFailureDetail)
                     : await ReleaseAsync(lease, CancellationToken.None);
                 if (released)
+                {
+                    if (infrastructureFailureCode is not null)
+                        outbox?.RecordHandoffState("abandoned-prelaunch");
                     _state.Delete(slot);
+                }
             }
         }
     }
+
+    internal static bool ShouldReleasePrelaunchSalvageFailure(
+        bool usesDurableTaskServer, bool reattach, string phase,
+        int? processId, DateTime? processStartedAtUtc)
+        => usesDurableTaskServer && !reattach
+            && string.Equals(phase, "claimed", StringComparison.Ordinal)
+            && processId is null && processStartedAtUtc is null;
+
+    internal static (string Outcome, string Detail) PrelaunchSalvageRelease(
+        WorktreeSalvageException exception, string host)
+        => ("runner-salvage-failed",
+            $"{OneLine(exception.InnerException?.Message ?? exception.Message)}; " +
+            $"worktree={exception.WorktreePath}; host={host}");
 
     private async Task<RemoteExecutionResult> ExecuteAsync(
         PersistedRunnerSlot slot, GitWorkspace workspace, LogShipper shipper,
@@ -1074,8 +1167,27 @@ public sealed class RemoteTaskRunner
         var lease = slot.Lease;
         Func<bool> operatorStopRequested = () => heartbeat.StopRequest is not null;
         var resultsDir = ResultsDir(taskKey);
-        if (Directory.Exists(resultsDir)) Directory.Delete(resultsDir, recursive: true);
-        Directory.CreateDirectory(resultsDir);
+        if (Directory.Exists(resultsDir))
+        {
+            try { Directory.Delete(resultsDir, recursive: true); }
+            catch (UnauthorizedAccessException)
+            {
+                try
+                {
+                    await ResultOwnershipRepair.RepairOrThrowAsync(taskKey, resultsDir, _log, shutdown);
+                    Directory.Delete(resultsDir, recursive: true);
+                }
+                catch (UnauthorizedAccessException ex)
+                {
+                    throw new RunnerResultsPreparationException(ex.Message, ex);
+                }
+            }
+        }
+        try { Directory.CreateDirectory(resultsDir); }
+        catch (UnauthorizedAccessException ex)
+        {
+            throw new RunnerResultsPreparationException(ex.Message, ex);
+        }
         Func<CancellationToken, Task<string>> prepare = epicPlanning
             ? workspace.PrepareReadOnlyAsync
             : workspace.PrepareAsync;
@@ -2454,7 +2566,8 @@ public sealed class RemoteTaskRunner
         RunLeaseInfoDto lease,
         CancellationToken ct,
         string outcome = "runner-process-missing",
-        LostWorkerHandoff? handoff = null)
+        LostWorkerHandoff? handoff = null,
+        string? detail = null)
     {
         try
         {
@@ -2465,7 +2578,7 @@ public sealed class RemoteTaskRunner
                 outcome,
                 handoff?.SalvageBranch,
                 handoff?.SalvageCommitSha,
-                handoff?.Detail), ct);
+                detail ?? handoff?.Detail), ct);
             _log($"lease released: {resp.Outcome}");
             return string.Equals(resp.Outcome, "Released", StringComparison.OrdinalIgnoreCase)
                    || string.Equals(resp.Outcome, "NotHeld", StringComparison.OrdinalIgnoreCase)
@@ -2483,14 +2596,15 @@ public sealed class RemoteTaskRunner
     private async Task<bool> ReleaseWithRetryAsync(
         RunLeaseInfoDto lease,
         string outcome,
-        LostWorkerHandoff? handoff = null)
+        LostWorkerHandoff? handoff = null,
+        string? detail = null)
     {
         const int maximumAttempts = 3;
         for (var attempt = 1; attempt <= maximumAttempts; attempt++)
         {
             using var requestDeadline = new CancellationTokenSource(
                 TimeSpan.FromSeconds(_options.ServerRequestTimeoutSeconds));
-            if (await ReleaseAsync(lease, requestDeadline.Token, outcome, handoff))
+            if (await ReleaseAsync(lease, requestDeadline.Token, outcome, handoff, detail))
                 return true;
             if (attempt == maximumAttempts)
                 break;
@@ -2738,6 +2852,12 @@ internal sealed class RemoteEnvironmentPreparationException : Exception
     }
 
     public int Attempts { get; }
+}
+
+internal sealed class RunnerResultsPreparationException : Exception
+{
+    public RunnerResultsPreparationException(string message, Exception innerException)
+        : base(message, innerException) { }
 }
 
 internal sealed record RemoteExecutionResult(
