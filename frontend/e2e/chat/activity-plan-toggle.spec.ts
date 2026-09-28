@@ -102,10 +102,10 @@ async function installRoutes(page: Page, planPresent: boolean): Promise<void> {
   // The feature under test uses SignalR as its primary plan refresh path. A
   // route-mocked browser has no hub server, so exercise the documented polling
   // fallback without letting proxy negotiation surface an unrelated dialog.
-  await page.route('**/hubs/jobs/**', route => route.abort('connectionrefused'));
+  await page.route('**/hubs/v1/studio/**', route => route.abort('connectionrefused'));
   await page.route('**/api/**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
-  await page.route('**/api/auth/status', route =>
+  await page.route('**/api/v1/studio/auth/status', route =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -117,7 +117,7 @@ async function installRoutes(page: Page, planPresent: boolean): Promise<void> {
       contentType: 'application/json',
       body: JSON.stringify({ projectName: 'fixture', items: [] }),
     }));
-  await page.route('**/api/tasks/grouped**', (route) =>
+  await page.route('**/api/v1/studio/board**', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -148,7 +148,7 @@ async function installRoutes(page: Page, planPresent: boolean): Promise<void> {
       contentType: 'application/json',
       body: JSON.stringify({ snapshots: [], ttlSeconds: 600 }),
     }));
-  await page.route('**/api/runner/status**', (route) =>
+  await page.route('**/api/v1/studio/runner/status**', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -174,7 +174,7 @@ async function installRoutes(page: Page, planPresent: boolean): Promise<void> {
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ events: [], sessionChain: [] }) }));
   await page.route(`**/api/tasks/${esc}/claude-session**`, (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: 'null' }));
-  await page.route(`**/api/tasks/${esc}?**`, (route) =>
+  await page.route(`**/api/v1/projects/*/tasks/${esc}?**`, (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(detail()) }));
 }
 

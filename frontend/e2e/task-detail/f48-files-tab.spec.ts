@@ -41,7 +41,7 @@ test.beforeEach(async ({ page, devBackend }) => {
   // Referencing it here makes this spec self-contained without a persistent
   // dev backend or ad-hoc process control.
   void devBackend;
-  await page.route('**/api/auth/status', route => route.fulfill({
+  await page.route('**/api/v1/studio/auth/status', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({
@@ -240,7 +240,7 @@ test.describe('Task detail Docs tab - multi-document display', () => {
       };
       const statusMarkdown =
         '# Status\n\n- Result: Success\n- Case: Bugfix\n\n## Overview\n- Problem: Dense operator result.\n- Solution: Navigable document view.\n';
-      await page.route(new RegExp(`/api/tasks/${job.id}(?:\\?.*)?$`), async route => {
+      await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${job.id}(?:\\?.*)?$`), async route => {
         const response = await route.fetch();
         const detail = await response.json();
         detail.info.tags = [...(detail.info.tags ?? []), 'code-review:grade-c'];

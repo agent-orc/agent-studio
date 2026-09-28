@@ -203,10 +203,10 @@ async function stubBackgroundApis(page: Page) {
   // registered later. Playwright glob `?` matches a single char, which
   // is exactly the kind of pattern that does eclipse them.
   await page.route(/\/api\/(?:jobs|tasks)(\?.*)?$/, json(buildPagerTasks()));
-  await page.route('**/api/tasks/grouped*', json(emptyGrouped()));
-  await page.route('**/api/tasks/grouped*', json(emptyGrouped()));
+  await page.route('**/api/v1/studio/board*', json(emptyGrouped()));
+  await page.route('**/api/v1/studio/board*', json(emptyGrouped()));
   await page.route('**/api/watch-paths', json([{ name: 'agent-taskboard', path: TASK_WATCH_PATH }]));
-  await page.route('**/api/runner/status', json({ projects: {} }));
+  await page.route('**/api/v1/studio/runner/status', json({ projects: {} }));
   await page.route('**/api/runner/token-summary-aggregate*', json({
     projects: 0, orchestratorEntries: 0, orchestratorLlmCalls: 0,
     totalInputTokens: 0, totalOutputTokens: 0, totalCacheReadTokens: 0, totalCacheCreationTokens: 0,
@@ -276,7 +276,7 @@ async function stubJobDetailForTask(page: Page) {
   for (const info of buildPagerTasks()) {
     // The bare detail endpoint. Use a regex anchored to the task id so it
     // does not eclipse the /screenshots subpath route registered above.
-    const detailRe = new RegExp(`/api/(?:jobs|tasks)/${escapeForRegex(info.id)}(\\?.*)?$`);
+    const detailRe = new RegExp(`/api/v1/projects/[^/]+/tasks/${escapeForRegex(info.id)}(\\?.*)?$`);
     await page.route(detailRe, async (route) => {
       await route.fulfill({
         status: 200,

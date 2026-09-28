@@ -82,8 +82,8 @@ async function installRoutes(page: Page): Promise<void> {
 
   await page.route('**/api/**', json([]));
   await page.route(/\/api\/(?:jobs|tasks)(\?.*)?$/, json([taskInfo()]));
-  await page.route('**/api/tasks/grouped**', json(grouped()));
-  await page.route('**/api/tasks/grouped**', json(grouped()));
+  await page.route('**/api/v1/studio/board**', json(grouped()));
+  await page.route('**/api/v1/studio/board**', json(grouped()));
   await page.route('**/api/watch-paths**', json([
     { name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH },
   ]));
@@ -95,7 +95,7 @@ async function installRoutes(page: Page): Promise<void> {
     updateStableEnabled: false,
     deleteE2EJobsEnabled: false,
   }));
-  await page.route(/\/api\/runner\/status(\?|$)/, json({
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, json({
     projects: {
       [PROJECT]: {
         projectName: PROJECT,

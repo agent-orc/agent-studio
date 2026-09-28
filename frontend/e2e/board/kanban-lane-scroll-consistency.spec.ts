@@ -113,11 +113,11 @@ async function installBoardMocks(page: Page): Promise<void> {
     await page.route(re, async (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(allJobs) }));
   }
-  for (const re of [/\/api\/tasks\/grouped/, /\/api\/tasks\/grouped/]) {
+  for (const re of [/\/api\/v1\/studio\/board/, /\/api\/v1\/studio\/board/]) {
     await page.route(re, async (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(grouped) }));
   }
-  await page.route('**/api/runner/status', async (route) => {
+  await page.route('**/api/v1/studio/runner/status', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',

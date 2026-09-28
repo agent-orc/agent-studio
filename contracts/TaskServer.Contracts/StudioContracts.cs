@@ -88,6 +88,22 @@ public sealed record StudioOrchestratorChatMessageRequest(
     string? Model = null,
     string? ThinkingLevel = null);
 
+/// <summary>
+/// One operator prompt queued onto a workbench orchestrator context (the
+/// Studio "discuss this workbench decision" turn). The Task Server records
+/// it as a user turn on that context; execution stays with the engine that
+/// drains the context, exactly as for a project chat message.
+/// </summary>
+public sealed record StudioOrchestratorTurnRequest(
+    string Prompt,
+    string? CliType = null,
+    string? Model = null,
+    string? ThinkingLevel = null);
+
+public sealed record StudioOrchestratorTurnResponse(
+    string ContextKey,
+    OrchestratorContextTurnDto Turn);
+
 public sealed record OrchestratorChatResponse(
     string Project,
     OrchestratorContextTurnDto Turn,

@@ -87,7 +87,7 @@ async function installRoutes(
       .catch(() => undefined);
   });
 
-  await page.route('**/api/tasks/grouped**', (route) =>
+  await page.route('**/api/v1/studio/board**', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -116,7 +116,7 @@ async function installRoutes(
     }),
   );
 
-  await page.route(/\/api\/runner\/status(\?|$)/, (route) =>
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',

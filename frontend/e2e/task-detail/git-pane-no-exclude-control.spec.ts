@@ -96,7 +96,7 @@ async function installRoutes(page: Page) {
   await page.route('**/api/**', (route) => {
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }).catch(() => {});
   });
-  await page.route('**/api/tasks/grouped**', (route) =>
+  await page.route('**/api/v1/studio/board**', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -126,7 +126,7 @@ async function installRoutes(page: Page) {
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
   await page.route('**/api/git/summary**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
-  await page.route(/\/api\/runner\/status(\?|$)/, (route) =>
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -171,7 +171,7 @@ async function installRoutes(page: Page) {
         body: JSON.stringify({ diff: `diff --git a/${c.files[0]} b/${c.files[0]}\n+++ b/${c.files[0]}\n+${c.shortSha} change` }),
       }));
   }
-  await page.route(new RegExp(`/api/tasks/${idEsc}(\\?|$)`), (route) =>
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${idEsc}(\\?|$)`), (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(detail) }));
 }
 

@@ -21,15 +21,16 @@ namespace AgentStudio.Tests;
 public sealed class ConnectorProfileTests
 {
     [Fact]
-    public void Inventory_is_the_approved_99_local_and_309_proxy_surface()
+    public void Inventory_is_the_approved_106_local_and_318_proxy_surface()
     {
         var inventory = ConnectorRouteInventory.Load();
 
         Assert.Equal(ConnectorRouteInventory.ExpectedInventorySha256, inventory.SourceChecksum);
-        Assert.Equal(408, inventory.Operations.Count);
-        Assert.Equal(99, inventory.DevSeatOperations.Count);
-        Assert.Equal(309, inventory.TaskServerOperations.Count);
-        Assert.Equal(1, inventory.TaskServerOperations.Count(operation => operation.Method == "WS"));
+        Assert.Equal(424, inventory.Operations.Count);
+        Assert.Equal(106, inventory.DevSeatOperations.Count);
+        Assert.Equal(318, inventory.TaskServerOperations.Count);
+        var hub = Assert.Single(inventory.TaskServerOperations, operation => operation.Method == "WS");
+        Assert.Equal("/hubs/v1/studio", hub.Path);
     }
 
     [Fact]
@@ -54,8 +55,8 @@ public sealed class ConnectorProfileTests
 
         Assert.All(endpoints, endpoint => Assert.NotEmpty(
             endpoint.Metadata.GetOrderedMetadata<ConnectorClassifiedEndpointMetadata>()));
-        Assert.Equal(408, metadata.Length);
-        Assert.Equal(99, endpoints
+        Assert.Equal(424, metadata.Length);
+        Assert.Equal(106, endpoints
             .SelectMany(endpoint => endpoint.Metadata.GetOrderedMetadata<ConnectorClassifiedEndpointMetadata>())
             .Where(item => item.Classification == ConnectorRouteInventory.DevSeatClassification)
             .Select(item => new ConnectorRouteKey(item.Method, ConnectorRouteKey.NormalizePath(item.Path)))
@@ -88,14 +89,14 @@ public sealed class ConnectorProfileTests
         using var session = await SessionAsync(client);
         var csrf = ReadCookie(session, ConnectorSessionStore.CsrfCookieName);
 
-        using (var missingCsrf = new HttpRequestMessage(HttpMethod.Post, "/api/projects"))
+        using (var missingCsrf = new HttpRequestMessage(HttpMethod.Post, "/api/v1/projects"))
         {
             missingCsrf.Headers.Add("Origin", ConnectorOptions.DefaultStudioOrigin);
             missingCsrf.Content = JsonContent.Create(new { displayName = "test" });
             Assert.Equal(HttpStatusCode.Forbidden, (await client.SendAsync(missingCsrf)).StatusCode);
         }
 
-        using var accepted = new HttpRequestMessage(HttpMethod.Post, "/api/projects");
+        using var accepted = new HttpRequestMessage(HttpMethod.Post, "/api/v1/projects");
         accepted.Headers.Add("Origin", ConnectorOptions.DefaultStudioOrigin);
         accepted.Headers.Add(ConnectorSessionStore.CsrfHeaderName, csrf);
         accepted.Content = JsonContent.Create(new { displayName = "test" });
@@ -110,7 +111,7 @@ public sealed class ConnectorProfileTests
         using var session = await SessionAsync(connector.Client);
         var csrf = ReadCookie(session, ConnectorSessionStore.CsrfCookieName);
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/projects");
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/projects");
         request.Headers.Add("Origin", ConnectorOptions.DefaultStudioOrigin);
         request.Headers.Add(ConnectorSessionStore.CsrfHeaderName, csrf);
         request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "browser-token");
@@ -132,18 +133,16 @@ public sealed class ConnectorProfileTests
     [Fact]
     public async Task Core_attach_task_lifecycle_routes_forward_with_the_unscoped_project_token()
     {
-        // /api/tasks/{taskId}/move carries only a task id: the frontend does
-        // not yet send a project id or "project" query for this core-attach
-        // mutation. The connector has no task-to-project lookup of its own
-        // (it is a mechanical path translator, not a Task Server client), so
-        // it must forward using the reserved unscoped-project token rather
-        // than failing the request.
+        // The Studio sends a task-only lifecycle mutation on its versioned
+        // route with the reserved unscoped-project token (AGT-2983); the
+        // connector forwards that path to the Task Server unchanged.
         var transport = new RecordingTransport();
         await using var connector = ConnectorUnderTest.Boot(transport);
         using var session = await SessionAsync(connector.Client);
         var csrf = ReadCookie(session, ConnectorSessionStore.CsrfCookieName);
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/tasks/tsk_core-attach-demo/move");
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post, $"/api/v1/projects/{ConnectorProxy.UnscopedProjectToken}/tasks/tsk_core-attach-demo/move");
         request.Headers.Add("Origin", ConnectorOptions.DefaultStudioOrigin);
         request.Headers.Add(ConnectorSessionStore.CsrfHeaderName, csrf);
         request.Content = JsonContent.Create(new { targetState = "2-ready" });
@@ -153,6 +152,29 @@ public sealed class ConnectorProfileTests
         Assert.Equal(
             $"/api/v1/projects/{ConnectorProxy.UnscopedProjectToken}/tasks/tsk_core-attach-demo/move",
             observed.Path);
+    }
+
+    [Theory]
+    [InlineData("GET", "/api/v1/studio/board")]
+    [InlineData("GET", "/api/v1/studio/auth/status")]
+    [InlineData("GET", "/api/v1/projects/Agent%20Studio/tasks/AGT-1")]
+    [InlineData("POST", "/api/v1/studio/orchestrator/sessions/workbench:PROJ/wb-1/turns")]
+    [InlineData("POST", "/hubs/v1/studio/negotiate")]
+    public async Task Versioned_core_attach_paths_forward_to_the_task_server_unchanged(string method, string path)
+    {
+        var transport = new RecordingTransport();
+        await using var connector = ConnectorUnderTest.Boot(transport);
+        using var session = await SessionAsync(connector.Client);
+        var csrf = ReadCookie(session, ConnectorSessionStore.CsrfCookieName);
+
+        using var request = new HttpRequestMessage(new HttpMethod(method), path);
+        request.Headers.Add("Origin", ConnectorOptions.DefaultStudioOrigin);
+        request.Headers.Add(ConnectorSessionStore.CsrfHeaderName, csrf);
+        if (method == "POST") request.Content = JsonContent.Create(new { prompt = "test" });
+
+        Assert.Equal(HttpStatusCode.OK, (await connector.Client.SendAsync(request)).StatusCode);
+        var observed = Assert.Single(transport.ProxiedRequests);
+        Assert.Equal(new Uri("http://host" + path).AbsolutePath, observed.Path);
     }
 
     [Fact]

@@ -79,7 +79,7 @@ test.describe('Async archive all', () => {
     let legacyMoveRequestCount = 0;
     let batchRequestCount = 0;
     page.on('request', (request) => {
-      if (request.method() === 'POST' && /\/api\/tasks\/[^/]+\/move/.test(request.url())) {
+      if (request.method() === 'POST' && /\/api\/v1\/projects\/[^/]+\/tasks\/[^/]+\/move/.test(request.url())) {
         legacyMoveRequestCount += 1;
       }
       if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/tasks/batch-move') {

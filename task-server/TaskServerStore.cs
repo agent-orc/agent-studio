@@ -46,6 +46,19 @@ public sealed partial class TaskServerStore
     /// </summary>
     public const string UnscopedProjectToken = "-";
 
+    /// <summary>
+    /// Resolves the task routes' <c>{projectId}</c> segment to a project id.
+    /// Studio addresses a project by name, the same identity the orchestrator
+    /// chat and context routes accept through <c>RequireProjectAsync</c>; an
+    /// exact id match still wins over a name match.
+    /// </summary>
+    private const string ProjectIdentityToIdSql = """
+        (SELECT id FROM projects
+          WHERE id = $project OR name = $project COLLATE NOCASE
+          ORDER BY CASE WHEN id = $project THEN 0 ELSE 1 END
+          LIMIT 1)
+        """;
+
     private const string TimestampFormat = "O";
     private readonly TaskServerOptions _options;
     private readonly TimeProvider _clock;
@@ -350,10 +363,10 @@ public sealed partial class TaskServerStore
                 FROM tasks
                WHERE id = $identity;
               """
-            : """
+            : $$"""
               SELECT id, project_id, task_key, title, state, version, created_at, updated_at, body, archive_state, archived_at
                 FROM tasks
-               WHERE project_id = $project AND (id = $identity OR task_key = upper($identity));
+               WHERE project_id = {{ProjectIdentityToIdSql}} AND (id = $identity OR task_key = upper($identity));
               """;
         await using var command = Command(connection, sql, ("$project", projectId), ("$identity", taskIdentity));
         await using var reader = await command.ExecuteReaderAsync(ct);
@@ -4458,9 +4471,9 @@ public sealed partial class TaskServerStore
               SELECT id, project_id, task_key, title, state, version, created_at, updated_at, body, archive_state, archived_at
                 FROM tasks WHERE id = $identity;
               """
-            : """
+            : $$"""
               SELECT id, project_id, task_key, title, state, version, created_at, updated_at, body, archive_state, archived_at
-                FROM tasks WHERE project_id = $project AND (id = $identity OR task_key = upper($identity));
+                FROM tasks WHERE project_id = {{ProjectIdentityToIdSql}} AND (id = $identity OR task_key = upper($identity));
               """;
         await using var command = Command(connection, sql, transaction, ("$project", projectId), ("$identity", identity));
         await using var reader = await command.ExecuteReaderAsync(ct);

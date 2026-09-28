@@ -106,7 +106,7 @@ async function installRoutes(
     if (url.includes('/api/orchestrator/global')) {
       return json(route, { session: null });
     }
-    if (url.includes('/api/tasks/grouped')) {
+    if (url.includes('/api/v1/studio/board')) {
       return json(route, {
         backlog: [],
         preparation: [],
@@ -127,7 +127,7 @@ async function installRoutes(
     if (url.includes('/api/watch-paths')) {
       return json(route, [{ name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH }]);
     }
-    if (url.includes('/api/runner/status')) return json(route, { projects: {} });
+    if (url.includes('/api/v1/studio/runner/status')) return json(route, { projects: {} });
     if (url.includes('/api/environment')) return json(route, { isDev: false, devTools: {} });
     if (url.includes('/api/clients') || url.includes('/api/tags') || url.includes('/api/git/summary')) {
       return json(route, []);
@@ -135,7 +135,7 @@ async function installRoutes(
     return json(route, []);
   });
 
-  await page.route('**/api/auth/status', route => json(route, {
+  await page.route('**/api/v1/studio/auth/status', route => json(route, {
     profile: 'local',
     bootstrapRequired: false,
     authenticated: true,

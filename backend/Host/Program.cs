@@ -1122,6 +1122,9 @@ var includeExceptionDetails = SecurityProfiles.IsLocal(app.Configuration)
     && app.Configuration.GetValue<bool>("ErrorHandling:IncludeExceptionDetails");
 
 app.UseForwardedHeaders();
+// Before routing, so the versioned core-attach paths Angular calls reach the
+// same legacy handlers, guards, and security checks as before (AGT-2983).
+app.UseStudioV1LegacyRouteAlias();
 app.UseRouting();
 if (networkedSecurityProfile || publicDemoExecutionProfile) app.UseHsts();
 app.UseRateLimiter();

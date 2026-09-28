@@ -89,7 +89,7 @@ async function fulfillJson(route: Route, body: unknown, status = 200): Promise<v
 }
 
 async function mockBootApis(page: Page, currentProject: () => ProjectFixture): Promise<void> {
-  await page.route('**/api/auth/status', (route) => fulfillJson(route, {
+  await page.route('**/api/v1/studio/auth/status', (route) => fulfillJson(route, {
     profile: 'local',
     bootstrapRequired: false,
     authenticated: true,
@@ -101,11 +101,11 @@ async function mockBootApis(page: Page, currentProject: () => ProjectFixture): P
     path: currentProject().repositoryPath,
     rootPath: currentProject().rootPath,
   }]));
-  await page.route('**/api/workspaces**', (route) => {
+  await page.route('**/api/v1/workspaces**', (route) => {
     if (route.request().method() !== 'GET') return route.continue();
     return fulfillJson(route, registryWith(currentProject()));
   });
-  await page.route('**/api/projects', (route) => {
+  await page.route('**/api/v1/projects', (route) => {
     if (route.request().method() !== 'GET') return route.continue();
     return fulfillJson(route, [currentProject()]);
   });
@@ -138,11 +138,11 @@ async function mockBootApis(page: Page, currentProject: () => ProjectFixture): P
   await page.route('**/api/projects/*/cli-context-modes', (route) => fulfillJson(route, {
     resolved: {}, overrides: {}, available: ['clean', 'shared'],
   }));
-  await page.route('**/api/tasks/grouped**', (route) => fulfillJson(route, {
+  await page.route('**/api/v1/studio/board**', (route) => fulfillJson(route, {
     preparation: [], ready: [], progress: [], review: [], completed: [], archive: [],
   }));
   await page.route('**/api/tasks', (route) => fulfillJson(route, []));
-  await page.route('**/api/runner/status**', (route) => fulfillJson(route, { projects: {} }));
+  await page.route('**/api/v1/studio/runner/status**', (route) => fulfillJson(route, { projects: {} }));
   await page.route('**/api/runner/queue-starvation', (route) => fulfillJson(route, {
     active: false,
     waitingTaskCount: 0,
@@ -324,7 +324,7 @@ test.describe('project onboarding and editable project basics', () => {
 
   test('POST sends project basics and runner but never chooses task-store placement', async ({ page }) => {
     let submitted: Record<string, unknown> | null = null;
-    await page.route('**/api/projects', async (route) => {
+    await page.route('**/api/v1/projects', async (route) => {
       if (route.request().method() !== 'POST') return route.continue();
       submitted = route.request().postDataJSON() as Record<string, unknown>;
       await fulfillJson(route, {

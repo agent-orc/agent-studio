@@ -105,21 +105,21 @@ function provenanceView(landedState: 'on-branch-only' | 'merged-to-develop' | 'r
 
 async function installBaseRoutes(page: Page): Promise<void> {
   await page.route('**/api/**', (route) => json(route, []));
-  await page.route('**/hubs/jobs/negotiate**', (route) => json(route, {
+  await page.route('**/hubs/v1/studio/negotiate**', (route) => json(route, {
     connectionId: 'mock-jobs-connection', connectionToken: 'mock-jobs-connection',
     negotiateVersion: 1,
     availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text'] }],
   }));
-  await page.routeWebSocket('**/hubs/jobs**', (socket) => {
+  await page.routeWebSocket('**/hubs/v1/studio**', (socket) => {
     socket.onMessage((message) => {
       if (String(message).includes('"protocol"')) socket.send('{}\x1e');
     });
   });
-  await page.route('**/api/auth/status', (route) => json(route, {
+  await page.route('**/api/v1/studio/auth/status', (route) => json(route, {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
   await page.route('**/api/tasks', (route) => json(route, []));
-  await page.route('**/api/tasks/grouped**', (route) => json(route, {
+  await page.route('**/api/v1/studio/board**', (route) => json(route, {
     backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
     failedPickup: [], codeNotComplete: [], autoReview: [], humanReview: [],
     escalated: [], completed: [], archive: [],
@@ -143,7 +143,7 @@ async function installBaseRoutes(page: Page): Promise<void> {
   await page.route(/\/api\/tasks\/[^/]+\/runs(\?|$)/, (route) => json(route, {
     runCount: 0, runs: [], promptEntries: [], runnerEvents: [],
   }));
-  await page.route(/\/api\/runner\/status(\?|$)/, (route) => json(route, {
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, (route) => json(route, {
     projects: { [PROJECT]: { projectName: PROJECT, mode: 'manual', activeJobId: null, activeExecution: null, queuedJobIds: [] } },
   }));
 }
@@ -160,7 +160,7 @@ async function installJobRoutes(
   const idEsc = JOB_ID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   await page.route(new RegExp(`/api/tasks/${idEsc}/provenance(\\?|$)`), (route) =>
     json(route, provenanceView(opts.landedState, opts.viewMerge ?? opts.detailMerge)));
-  await page.route(new RegExp(`/api/tasks/${idEsc}(\\?|$)`), (route) => json(route, detail(opts.detailMerge, opts.hasDeliverable ?? true)));
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${idEsc}(\\?|$)`), (route) => json(route, detail(opts.detailMerge, opts.hasDeliverable ?? true)));
 }
 
 async function saveEvidence(page: Page, fileName: string): Promise<void> {
@@ -186,12 +186,12 @@ test.describe('Human Review acceptance primary is landed-state aware', () => {
         failure: null,
       };
       const card = { ...detail(null).info, integration: pending };
-      await page.route('**/api/tasks/grouped**', (route) => json(route, {
+      await page.route('**/api/v1/studio/board**', (route) => json(route, {
         backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
         failedPickup: [], codeNotComplete: [], autoReview: [], humanReview: [card],
         escalated: [], completed: [], archive: [],
       }));
-      await page.route(new RegExp(`/api/tasks/${JOB_ID}(\\?|$)`), (route) =>
+      await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${JOB_ID}(\\?|$)`), (route) =>
         json(route, { ...detail(null), info: card }));
       await page.route(`**/api/tasks/${JOB_ID}/delivery-claim**`, (route) => json(route, {
         taskKey: `${WATCH_PATH}::${JOB_ID}`, jobId: JOB_ID, lane: '5-human-review',
@@ -200,7 +200,7 @@ test.describe('Human Review acceptance primary is landed-state aware', () => {
         commits: [], detail: 'Delivery ref is not integrated into develop.',
       }));
       let queued = false;
-      await page.route(`**/api/tasks/${JOB_ID}/move**`, (route) => route.fulfill({
+      await page.route(`**/api/v1/projects/*/tasks/${JOB_ID}/move**`, (route) => route.fulfill({
         status: 409, contentType: 'application/json',
         body: JSON.stringify({ code: 'integration-dead-end', error: 'Acceptance does not integrate deliveries. Delivery is pending on develop.' }),
       }));
@@ -310,7 +310,7 @@ test.describe('Human Review acceptance primary is landed-state aware', () => {
       await provenanceGate;
       await json(route, provenanceView('merged-to-develop', { mergeCommit: MERGE_SHA }));
     });
-    await page.route(new RegExp(`/api/tasks/${idEsc}(\\?|$)`), (route) => json(route, detail(null)));
+    await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${idEsc}(\\?|$)`), (route) => json(route, detail(null)));
 
     await openJob(page);
 

@@ -174,7 +174,7 @@ test.describe('Completed lane primary is "Archive & Next"', () => {
       mkdirSync(evidenceDir, { recursive: true });
       await confirm.screenshot({ path: join(evidenceDir, 'archive-guard-after-warning.png') });
       const movePromise = page.waitForResponse(
-        r => r.url().includes(`/api/tasks/${encodeURIComponent(tasks[0].id)}/move`),
+        r => r.url().includes(`/api/v1/projects/-/tasks/${encodeURIComponent(tasks[0].id)}/move`),
         { timeout: 10_000 },
       );
       await page.getByTestId('confirm-dialog-confirm').click();

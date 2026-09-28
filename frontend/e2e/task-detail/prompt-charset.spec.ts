@@ -100,12 +100,12 @@ async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/**', json([]));
 
   await page.route(/\/api\/(?:jobs|tasks)(\?.*)?$/, json([taskInfo()]));
-  await page.route('**/api/tasks/grouped**', json(grouped()));
-  await page.route('**/api/tasks/grouped**', json(grouped()));
+  await page.route('**/api/v1/studio/board**', json(grouped()));
+  await page.route('**/api/v1/studio/board**', json(grouped()));
   await page.route('**/api/watch-paths**', json([
     { name: 'charset-project', path: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH },
   ]));
-  await page.route(/\/api\/runner\/status(\?|$)/, json({ projects: {} }));
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, json({ projects: {} }));
   await page.route('**/api/environment**', json({
     isDev: false,
     devTools: { updateStableEnabled: false, deleteE2EJobsEnabled: false },
@@ -120,7 +120,7 @@ async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/git/summary**', json([]));
   await page.route(/\/api\/git\/hygiene(\?|$)/, json({ isRepo: false, error: null }));
 
-  await page.route(new RegExp(`/api/(?:jobs|tasks)/${JOB_ID}(\\?.*)?$`), json(detail()));
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${JOB_ID}(\\?.*)?$`), json(detail()));
   await page.route(new RegExp(`/api/(?:jobs|tasks)/${JOB_ID}/artifacts(\\?.*)?$`), json({
     jobId: JOB_ID,
     files: [
