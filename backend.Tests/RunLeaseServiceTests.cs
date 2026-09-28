@@ -12,6 +12,43 @@ namespace AgentStudio.Tests;
 public sealed class RunLeaseServiceTests
 {
     [Fact]
+    public void RejectedWorkerStartReceiptDoesNotExtendLeaseOrConsumeRenewalKey()
+    {
+        var now = new DateTime(2026, 9, 27, 12, 0, 0, DateTimeKind.Utc);
+        var service = NewService(() => now);
+        var acquired = service.TryAcquire(Acquire("AGT-1", "runner-a", ttlSeconds: 30));
+        var heartbeat = Heartbeat(acquired.Lease!) with
+        {
+            AttemptId = acquired.Lease!.AttemptId,
+            AuthorityEpoch = acquired.Lease.AuthorityEpoch,
+            IdempotencyKey = "worker-start",
+            RequestedTtlSeconds = 120,
+        };
+        var initialExpiry = acquired.Lease.ExpiresAt;
+        now = now.AddSeconds(5);
+        var receiptCalls = 0;
+
+        var rejected = service.Renew(heartbeat, () =>
+        {
+            receiptCalls++;
+            return "Prompt receipt could not be saved.";
+        });
+
+        Assert.False(rejected.Granted);
+        Assert.Equal(initialExpiry, service.Peek("AGT-1").Lease!.ExpiresAt);
+        Assert.Equal(1, receiptCalls);
+
+        var retried = service.Renew(heartbeat, () =>
+        {
+            receiptCalls++;
+            return null;
+        });
+        Assert.True(retried.Granted);
+        Assert.Equal(2, receiptCalls);
+        Assert.True(retried.Lease!.ExpiresAt > initialExpiry);
+    }
+
+    [Fact]
     public void Local_adapter_and_remote_claim_cannot_hold_the_same_task()
     {
         var leases = NewService();

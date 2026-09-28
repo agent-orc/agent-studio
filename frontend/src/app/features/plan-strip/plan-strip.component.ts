@@ -180,7 +180,7 @@ export class PlanStripComponent {
 
   subActionTooltip(sub: TaskPlanSubAction): string {
     const when = new Date(sub.ts);
-    const time = Number.isNaN(when.getTime()) ? sub.ts : when.toLocaleTimeString();
+    const time = Number.isNaN(when.getTime()) ? sub.ts : when.toLocaleTimeString('en-US');
     return `${sub.label ?? sub.tool}\n${time}`;
   }
 }

@@ -86,6 +86,7 @@ internal static class RunnerCapabilityProbe
             list.Add(Capability(ReviewCapabilities.SourceBundleMaterialization, "review", null, "artifact"));
             list.Add(Capability(ReviewCapabilities.BaselineComparison, "review", null, "merge-base"));
             list.Add(Capability(ReviewCapabilities.DependencyPreparation, "review", null, "build-profile"));
+            list.Add(Capability(ReviewCapabilities.LibraryStepV1, "review", "1", "review-library"));
         }
         else
         {
@@ -144,6 +145,7 @@ internal static class RunnerCapabilityProbe
             ReviewCapabilities.SemanticReview,
             ReviewCapabilities.BaselineComparison,
             ReviewCapabilities.DependencyPreparation,
+            ReviewCapabilities.LibraryStepV1,
         }
         .Concat(options.RequiredCapabilities)
         .Distinct(StringComparer.Ordinal)

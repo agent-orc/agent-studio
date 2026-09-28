@@ -108,7 +108,7 @@ public static class TaskRunnerEndpoints
             });
         });
 
-        group.MapPost("/{jobId}/continue", async (string jobId, string? project, string? watchPath, ContinueJobRequest req, TaskRunnerService runner, AgentStudio.Registry.ProjectRegistry projects, CancellationToken ct) =>
+        group.MapPost("/{jobId}/continue", async (string jobId, string? project, string? watchPath, ContinueJobRequest req, TaskRunnerService runner, AgentStudio.Registry.ProjectRegistry projects, HttpContext context, CancellationToken ct) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             if (string.IsNullOrWhiteSpace(req?.Prompt))
@@ -117,7 +117,10 @@ public static class TaskRunnerEndpoints
             var mode = ContinueModes.Normalize(req.Mode);
             try
             {
-                var resp = await runner.ContinueJobAsync(jobId, req.Prompt, watchPath, req.Model, req.CliType, req.ThinkingLevel, mode, req.ModeOverride, ct);
+                var clientId = context.Request.Headers["X-Client-Id"].FirstOrDefault();
+                var resp = await runner.ContinueJobAsync(
+                    jobId, req.Prompt, watchPath, req.Model, req.CliType, req.ThinkingLevel,
+                    mode, req.ModeOverride, TimelineActors.Human(clientId ?? string.Empty), ct);
                 return resp.Status == "queued"
                     ? Results.Accepted(value: resp)
                     : Results.Ok(resp);

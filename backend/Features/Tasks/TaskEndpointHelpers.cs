@@ -86,6 +86,13 @@ internal static class TaskEndpointHelpers
             error = outcome.Message,
             code = "integration-dead-end",
         }),
+        MoveJobStatus.PendingIntentSupersedeFailed => Results.Json(
+            new
+            {
+                error = "pending-intent-supersede-failed",
+                message = outcome.Message,
+            },
+            statusCode: StatusCodes.Status500InternalServerError),
         MoveJobStatus.DirectoryLocked => Results.Json(
             new { error = outcome.Message ?? "Task folder is temporarily locked by another process. Retry after the active process releases its file handles." },
             statusCode: StatusCodes.Status423Locked),
@@ -569,5 +576,8 @@ internal static class TaskEndpointHelpers
         IReadOnlyDictionary<string, string>? verdictsByJobKey,
         IReadOnlyDictionary<string, WaitsOnStatus>? waitsOnByJobKey,
         IReadOnlyDictionary<string, TransitiveWaitersStatus>? transitiveWaitersByJobKey)
-        => detail with { Info = WithRuntime(detail.Info, router, runners, tokensByJobId, verdictsByJobKey, waitsOnByJobKey, transitiveWaitersByJobKey) };
+    {
+        using var trace = TaskSwitchTrace.Span("runtime");
+        return detail with { Info = WithRuntime(detail.Info, router, runners, tokensByJobId, verdictsByJobKey, waitsOnByJobKey, transitiveWaitersByJobKey) };
+    }
 }

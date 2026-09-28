@@ -25,6 +25,7 @@ export const TaskState = {
 
 /** Union of the canonical lane-key string literals. */
 export type TaskStateKey = (typeof TaskState)[keyof typeof TaskState];
+export const isTerminalTaskState = (state: string): boolean => state === TaskState.Completed || state === TaskState.Archive;
 
 /** All canonical lane keys, in board order. */
 export const ALL_TASK_STATES: readonly TaskStateKey[] = Object.values(TaskState);
@@ -635,6 +636,8 @@ export interface TaskInfo {
    * that were soft-deleted from the registry) render as a faint ghost chip.
    */
   tags?: string[];
+  /** Auto-tag outcome. A proposal needs operator review before its tags are attached. */
+  taggingStatus?: 'tagged' | 'tags-proposed' | null;
   /**
    * F34 cross-references to other tasks by F33 stable key. Always present
    * (backend surfaces an empty instance when absent on disk). Drives the
@@ -1005,6 +1008,7 @@ export interface PendingIntent {
   prompt: string;
   savedAt: string;
   savedReason: string;
+  author?: string | null;
   savedAgainstActiveJobId: string | null;
 }
 

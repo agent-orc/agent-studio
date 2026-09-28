@@ -361,11 +361,10 @@ Delivered and verifiable in code:
 
 Open, and deliberately not documented as behaviour:
 
-- The deterministic backend rule that would own the first routine
-  `conflict-skipped` bounce for every reviewed card. Today that broad loop is
-  session-owned and stops when the orchestrator session stops.
-- Thinking-level and route selection for a recovery round, and the
-  strong-guardian escalation tier for repeated or semantic conflicts.
+- A strong-guardian escalation tier for repeated or semantic conflicts. The
+  first reviewed `conflict-skipped` round is owned by the acceptance rail with
+  a durable bounce obligation and one automatic round per operator review epoch.
+  A model routing policy floor guards any cheaper recovery thinking level.
 - [Batch Gate](batch-gate.md) assembly, which would change the publication unit
   and move stale-base reconstruction into a coordinator.
 

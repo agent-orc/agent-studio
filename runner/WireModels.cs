@@ -75,7 +75,8 @@ public sealed record RunLeaseHeartbeatRequest(
     string? AttemptId = null,
     long? AuthorityEpoch = null,
     string? IdempotencyKey = null,
-    RunnerProcessInventory? Inventory = null);
+    RunnerProcessInventory? Inventory = null,
+    string? StartedPromptSha256 = null);
 
 /// <summary>
 /// Runner -> Server: drop the lease when the run ends (/api/runner/lease/release).
@@ -261,7 +262,8 @@ public sealed record RunSpecDto(
     string? ContextMode = null,
     // Server-composed mode framing and prompt enrichment. Keeping both in one
     // field gives daemon claims and persisted slots one deterministic seam.
-    string? ModeFraming = null);
+    string? ModeFraming = null,
+    AgentStudio.TaskServer.Contracts.FollowUpDeliveryDto? FollowUp = null);
 
 public sealed record RunnerClaimResponse(
     RunnerClaimStatus Status,

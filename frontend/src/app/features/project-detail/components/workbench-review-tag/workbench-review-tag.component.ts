@@ -28,7 +28,7 @@ export class WorkbenchReviewTagComponent {
     return [
       `Verdict: ${review.verdict.replaceAll('-', ' ')}`,
       `Review due: ${this.reviewDue() ? 'Yes' : 'No'}`,
-      `Reviewed at: ${new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(review.reviewedAt))}`,
+      `Reviewed at: ${new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(review.reviewedAt))}`,
       `Review age: ${reviewAge(review.reviewedAt, this.now())}`,
       `Reviewed by: ${review.reviewedBy}`,
       `Superseded by: ${review.supersededBy.length ? '' : 'None'}`,
@@ -46,5 +46,5 @@ export class WorkbenchReviewTagComponent {
 function reviewAge(value: string, now: number): string {
   const days = Math.max(0, Math.floor((now - Date.parse(value)) / 86_400_000));
   if (days === 0) return 'today';
-  return new Intl.RelativeTimeFormat(undefined, { numeric: 'always' }).format(-days, 'day');
+  return new Intl.RelativeTimeFormat('en-US', { numeric: 'always' }).format(-days, 'day');
 }

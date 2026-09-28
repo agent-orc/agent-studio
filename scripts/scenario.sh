@@ -183,7 +183,7 @@ wait_for_compose_port() {
             port "$service" "$container_port" 2>&1)" && [ -n "$binding" ]; then
             local host_port="${binding##*:}"
             case "$host_port" in
-                ''|*[!0-9]*)
+                ''|*[!0-9]*|0)
                     last_error="unexpected port binding: $binding"
                     ;;
                 *)

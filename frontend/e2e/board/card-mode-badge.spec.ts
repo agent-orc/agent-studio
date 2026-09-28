@@ -46,10 +46,10 @@ function makeTask(id: string, title: string, order: number, mode: string | undef
 
 // Titles are crafted so none is a substring of another - Playwright `hasText`
 // does substring matching.
-const PLANNING_TASK = makeTask('mode-A-planning', 'Mode badge planning alpha', 1, 'planning');
-const RESEARCH_TASK = makeTask('mode-B-research', 'Mode badge research bravo', 2, 'research');
+const PLANNING_TASK = { ...makeTask('mode-A-planning', 'Mode badge planning alpha', 1, 'planning'), taggingStatus: 'tags-proposed' };
+const RESEARCH_TASK = { ...makeTask('mode-B-research', 'Mode badge research bravo', 2, 'research'), taggingStatus: 'tagged' };
 const CONCEPT_TASK = makeTask('mode-C-concept', 'Mode badge concept charlie', 3, 'concept');
-const CODING_TASK = makeTask('mode-D-coding', 'Mode badge coding delta', 4, 'coding');
+const CODING_TASK = { ...makeTask('mode-D-coding', 'Mode badge coding delta', 4, 'coding'), taggingStatus: 'future-status' };
 
 const GROUPED_PAYLOAD = {
   backlog: [],
@@ -74,6 +74,11 @@ async function installRoutes(page: Page) {
     }
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }).catch(() => undefined);
   });
+
+  await page.route('**/api/tasks/archive**', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ items: [], total: 0, offset: 0, limit: 50 }),
+  }));
 
   await page.route('**/api/tasks/grouped**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(GROUPED_PAYLOAD) }));
@@ -156,6 +161,22 @@ function cardByTitle(page: Page, title: string) {
 }
 
 test.describe('Card mode badge (planning / research / concept recognizable on the board)', () => {
+  test('auto-tag markers distinguish a proposal from applied tags in both themes', async ({ page }) => {
+    await gotoBoard(page);
+    const proposal = cardByTitle(page, PLANNING_TASK.title).getByTestId('task-card-tagging-status');
+    const tagged = cardByTitle(page, RESEARCH_TASK.title).getByTestId('task-card-tagging-status');
+    await expect(proposal).toHaveText('Tags proposed');
+    await expect(tagged).toHaveText('Auto-tagged');
+    await expect(cardByTitle(page, CODING_TASK.title).getByTestId('task-card-tagging-status')).toHaveCount(0);
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await expect(proposal).toBeVisible();
+      await expect(tagged).toBeVisible();
+      await expect(page.getByTestId('error-dialog')).toHaveCount(0);
+      const path = `${process.env.JOB_RESULTS_DIR ?? 'test-results'}/auto-tag-card-${theme}--mocked.png`;
+      await cardByTitle(page, PLANNING_TASK.title).screenshot({ path });
+    }
+  });
   test('planning card shows a planning mode pill that names the mode', async ({ page }) => {
     await gotoBoard(page);
 
@@ -222,13 +243,13 @@ test.describe('Card mode badge (planning / research / concept recognizable on th
       await expect(cardByTitle(page, CODING_TASK.title).getByTestId('task-card-mode')).toHaveCount(0);
 
       const buf = await page.screenshot({ fullPage: false });
-      await testInfo.attach(`card-mode-badge-${theme}.png`, { body: buf, contentType: 'image/png' });
+      await testInfo.attach(`card-mode-badge-${theme}--mocked.png`, { body: buf, contentType: 'image/png' });
       const resultsDir = process.env.JOB_RESULTS_DIR;
       if (resultsDir) {
-        await page.screenshot({ path: `${resultsDir}/card-mode-badge-${theme}.png`, fullPage: false });
+        await page.screenshot({ path: `${resultsDir}/card-mode-badge-${theme}--mocked.png`, fullPage: false });
       }
       // Local scratch copy for inline review (test-results/ is gitignored).
-      await page.screenshot({ path: `test-results/card-mode-badge-${theme}.png`, fullPage: false });
+      await page.screenshot({ path: `test-results/card-mode-badge-${theme}--mocked.png`, fullPage: false });
     });
   }
 });
