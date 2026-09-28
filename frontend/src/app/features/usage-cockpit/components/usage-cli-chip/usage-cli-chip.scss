@@ -1,0 +1,72 @@
+@use '../usage-chip' as chip;
+
+:host {
+  display: inline-flex;
+}
+
+.usage-cli-chip {
+  @include chip.chip;
+}
+
+.usage-cli-chip__body {
+  @include chip.body;
+}
+
+.usage-cli-chip__name {
+  @include chip.label;
+}
+
+.usage-cli-chip__window {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--studio-spacing-1);
+}
+
+.usage-cli-chip__tag {
+  @include chip.tag;
+}
+
+.usage-cli-chip__value {
+  @include chip.value;
+}
+
+.usage-cli-chip__value--muted {
+  @include chip.value-muted;
+}
+
+.usage-cli-chip__placeholder {
+  @include chip.placeholder;
+}
+
+.usage-cli-chip__mark {
+  @include chip.mark;
+}
+
+.usage-cli-chip--warning {
+  @include chip.alarm-warning;
+
+  .usage-cli-chip__mark--alarm {
+    @include chip.alarm-mark(var(--studio-warn));
+  }
+}
+
+.usage-cli-chip--limited {
+  @include chip.alarm-limited;
+
+  .usage-cli-chip__mark--alarm {
+    @include chip.alarm-mark(var(--studio-error));
+  }
+}
+
+.usage-cli-chip__alarm {
+  @include chip.alarm-word;
+}
+
+// Nonnumeric mark for alarms on providers whose chip is hidden.
+.usage-cli-chip__hidden {
+  @include chip.alarm-mark(var(--studio-warn));
+
+  &[data-severity='limited'] {
+    color: var(--studio-error);
+  }
+}

@@ -1,0 +1,45 @@
+@use '../usage-chip' as chip;
+
+:host {
+  display: inline-flex;
+}
+
+.usage-cost-chip {
+  @include chip.chip;
+}
+
+.usage-cost-chip__body {
+  @include chip.body;
+}
+
+.usage-cost-chip__label {
+  @include chip.label;
+}
+
+.usage-cost-chip__unit {
+  @include chip.tag;
+}
+
+.usage-cost-chip__value {
+  @include chip.value;
+}
+
+.usage-cost-chip__value--muted {
+  @include chip.value-muted;
+}
+
+.usage-cost-chip__placeholder {
+  @include chip.placeholder;
+}
+
+.usage-cost-chip__mark {
+  @include chip.mark;
+}
+
+.usage-cost-chip--warning {
+  @include chip.alarm-warning;
+
+  .usage-cost-chip__mark--alarm {
+    @include chip.alarm-mark(var(--studio-warn));
+  }
+}

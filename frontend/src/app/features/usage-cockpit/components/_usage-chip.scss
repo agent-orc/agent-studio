@@ -1,0 +1,124 @@
+// Shared geometry for the header usage chips (HUC-S2,
+// docs/header-usage-cockpit/index.html "Visual language").
+// One flat surface, one radius, one height and one baseline for every chip
+// in both themes. No gradient, shadow, nested pill, provider tile, progress
+// bar or left accent. State is carried by wording in the accessible name, a
+// shape mark and muted values, never by colour alone.
+
+@mixin chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  min-height: var(--studio-row-min-h-interactive-compact);
+  margin: 0;
+  padding-block: 0;
+  padding-inline: var(--studio-spacing-3);
+  border: 1px solid var(--studio-border-strong);
+  border-radius: var(--studio-action-radius-sm);
+  background: var(--studio-bg-surface);
+  color: var(--studio-text-secondary);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
+
+  &:hover {
+    background: color-mix(in srgb, var(--studio-text-primary) 6%, var(--studio-bg-surface));
+  }
+
+  &[aria-expanded='true'] {
+    background: var(--studio-bg-selected);
+  }
+
+  // The strong accent pigment keeps the ring at 3:1 or more against the
+  // title bar in both themes; the base accent measures 2.8:1 in light.
+  &:focus-visible {
+    outline: 2px solid var(--studio-accent-strong);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    transition-duration: 0s;
+  }
+}
+
+// Labels and values share one text baseline inside the vertically centred chip.
+@mixin body {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--studio-spacing-2);
+}
+
+@mixin label {
+  color: var(--studio-text-secondary);
+}
+
+@mixin tag {
+  color: var(--studio-text-muted);
+  font-size: 12px;
+}
+
+@mixin value {
+  color: var(--studio-text-primary);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+// Last-known or missing values stay readable but quiet.
+@mixin value-muted {
+  color: var(--studio-text-muted);
+}
+
+// Fixed-width, static loading placeholder. Never a 0 and never animated.
+@mixin placeholder {
+  display: inline-block;
+  width: 4ch;
+  height: 0.75em;
+  border-radius: 2px;
+  background: var(--studio-border-strong);
+}
+
+@mixin mark {
+  display: inline-flex;
+  align-self: center;
+  color: var(--studio-text-muted);
+}
+
+// ------------------------------------------------------------------ alarms
+// HUC-S5 alarm treatments. A whole-surface semantic tint always travels with
+// text or a shape (the `Limited` word, the warning mark), never colour alone.
+// The pigments are the central --studio-warn / --studio-error tokens, so both
+// themes follow the theme blocks. Ordinary headroom keeps the neutral chip.
+
+@mixin alarm($pigment) {
+  border-color: color-mix(in srgb, $pigment 55%, var(--studio-border-strong));
+  background: color-mix(in srgb, $pigment 14%, var(--studio-bg-surface));
+
+  &:hover {
+    background: color-mix(in srgb, $pigment 22%, var(--studio-bg-surface));
+  }
+}
+
+@mixin alarm-warning {
+  @include alarm(var(--studio-warn));
+}
+
+@mixin alarm-limited {
+  @include alarm(var(--studio-error));
+}
+
+// Visible alarm word (`Limited`) on the full chip.
+@mixin alarm-word {
+  color: var(--studio-text-primary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+@mixin alarm-mark($pigment) {
+  display: inline-flex;
+  align-self: center;
+  color: $pigment;
+}
