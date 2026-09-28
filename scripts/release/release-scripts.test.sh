@@ -259,6 +259,7 @@ fi
 [ ! -e "$test_root/incomplete-etc/server.env" ]
 
 bash "$repo_root/scripts/release/promote-develop-to-main.test.sh"
+bash "$repo_root/scripts/release/release-gate-window.test.sh"
 bash "$repo_root/scripts/release/generate-build-manifest.test.sh"
 bash "$repo_root/scripts/release/locked-restore.test.sh"
 bash "$repo_root/scripts/release/stable-release-chain.test.sh"

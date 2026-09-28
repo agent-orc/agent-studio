@@ -639,6 +639,10 @@ and retries the old configuration. Every accepted change writes an
 variable, old value, new value, unit, PID, and result. The sudoers policy
 independently enumerates both roles and every integer from 1 through 6. It does
 not permit another variable, unit, path, or argument shape.
+The only other grant, `AGENT_RELEASE_GATE_WINDOW`, lets the develop to main
+promotion train lower and restore the runtime `CPUQuota` of the two runner
+units while its gate runs; see the
+[gate capacity window](../develop-main-promotion.md#gate-capacity-window).
 
 Set Review to four slots and prove the effective process value without reading
 any credential file:
