@@ -171,6 +171,25 @@ public sealed class TaskIntegrationRecoveryService
             prompt,
             "Verify the updated delivery with the relevant focused checks, then run the required deterministic delivery gate."));
 
+        // The operator receipt is written while the card is still in review:
+        // once it enters Ready a runner may claim it and move the folder.
+        if (operatorObligation is not null)
+        {
+            IntegrationBounceObligationStore.Update(current.FolderPath, operatorObligation with
+            {
+                State = "manual-queued",
+                ClaimedAtUtc = DateTimeOffset.UtcNow,
+                PreviousRoute = $"{job.Model ?? "default"}/{job.ThinkingLevel ?? "default"}",
+                SelectedRoute = $"{job.Model ?? "default"}/{job.ThinkingLevel ?? "default"}",
+                RouteReason = "operator recovery action",
+                PolicyVersion = _routing.Policy.Version,
+                OperatorPinPresent = job.ModelExplicit || job.ThinkingLevelExplicit,
+            });
+        }
+
+        var attemptEpoch = source == AcceptanceRailSource
+            ? OperatorReviewRequeueService.ReadEpoch(current.FolderPath)
+            : (int?)null;
         var position = _states.PromoteToReadyTop(
             current.Id,
             current.WatchPath,
@@ -180,13 +199,20 @@ public sealed class TaskIntegrationRecoveryService
                 ? failureCode
                 : $"{failureCode}:retry-{retryNumber.Value}",
             expectedSourceState: job.State);
-        var queued = _scanner.FindJob(current.Id, current.WatchPath);
-        if (position <= 0 || queued is null || queued.State != TaskStates.Ready)
+        if (position <= 0)
         {
+            if (operatorObligation is not null
+                && _scanner.FindJob(current.Id, current.WatchPath) is { } unmoved)
+                IntegrationBounceObligationStore.Update(unmoved.FolderPath, operatorObligation);
             return Failed(
                 "The recovery prompt was persisted, but the task could not be queued in Ready.");
         }
 
+        // A positive position is the state machine's confirmation that the
+        // card entered Ready. A runner may already have claimed it, so the
+        // card is located in whichever lane it is now, never required to
+        // still be in Ready.
+        var queued = _scanner.FindJob(current.Id, current.WatchPath);
         var details = new Dictionary<string, string>
         {
             ["automatic"] = (source == AcceptanceRailSource).ToString().ToLowerInvariant(),
@@ -202,10 +228,9 @@ public sealed class TaskIntegrationRecoveryService
         };
         if (retryNumber is not null)
             details["retryNumber"] = Invariant(retryNumber.Value);
-        if (source == AcceptanceRailSource)
+        if (attemptEpoch is not null)
         {
-            details["attemptEpoch"] = Invariant(
-                OperatorReviewRequeueService.ReadEpoch(queued.FolderPath));
+            details["attemptEpoch"] = Invariant(attemptEpoch.Value);
             if (route is not null)
             {
                 details["previousRoute"] = route.Previous;
@@ -216,33 +241,31 @@ public sealed class TaskIntegrationRecoveryService
             }
         }
 
-        _timeline.Append(
-            queued.FolderPath,
-            TimelineEventKinds.IntegrationRecoveryQueued,
-            TimelineActors.System,
-            $"Integration recovery queued: reconcile {subject.ResultRef} with {integrationBranch}.",
-            payloadRef: "prompt.md",
-            details: details);
+        if (queued is not null)
+        {
+            _timeline.Append(
+                queued.FolderPath,
+                TimelineEventKinds.IntegrationRecoveryQueued,
+                TimelineActors.System,
+                $"Integration recovery queued: reconcile {subject.ResultRef} with {integrationBranch}.",
+                payloadRef: "prompt.md",
+                details: details);
+        }
+        else
+        {
+            _logger.LogWarning(
+                "integration-recovery-queued-unlocated project={Project} job={JobId}: the card left Ready before the queued event could be recorded",
+                current.ProjectName,
+                current.Id);
+        }
         _logger.LogInformation(
-            "integration-recovery-queued source={Source} project={Project} job={JobId} retry={RetryNumber} position={Position}",
+            "integration-recovery-queued source={Source} project={Project} job={JobId} retry={RetryNumber} position={Position} lane={Lane}",
             source,
-            queued.ProjectName,
-            queued.Id,
+            current.ProjectName,
+            current.Id,
             retryNumber,
-            position);
-
-        if (operatorObligation is not null)
-            IntegrationBounceObligationStore.Update(queued.FolderPath,
-                operatorObligation with
-                {
-                    State = "manual-queued",
-                    ClaimedAtUtc = DateTimeOffset.UtcNow,
-                    PreviousRoute = $"{job.Model ?? "default"}/{job.ThinkingLevel ?? "default"}",
-                    SelectedRoute = $"{job.Model ?? "default"}/{job.ThinkingLevel ?? "default"}",
-                    RouteReason = "operator recovery action",
-                    PolicyVersion = _routing.Policy.Version,
-                    OperatorPinPresent = job.ModelExplicit || job.ThinkingLevelExplicit,
-                });
+            position,
+            queued?.State);
 
         return new TaskIntegrationRecoveryResult(
             true,
