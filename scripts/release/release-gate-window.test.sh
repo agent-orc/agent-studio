@@ -8,7 +8,15 @@ set -Eeuo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 helper="$repo_root/scripts/release/release-gate-window.sh"
 test_root=$(mktemp -d 2>/dev/null || mktemp -d -t release-gate-window-tests)
-trap '[[ -n ${KEEP_TEST_ROOT:-} ]] || rm -rf -- "$test_root"' EXIT HUP INT TERM
+cleanup() {
+  # A failing signal scenario can leave gate processes behind; never leak them.
+  local pids
+  pids=$(cat "$test_root"/*/gate-tree.pids 2>/dev/null || true)
+  # shellcheck disable=SC2086 # one pid per word.
+  [[ -z "$pids" ]] || { pkill -KILL -P "${pids//$'\n'/,}" 2>/dev/null; kill -KILL $pids 2>/dev/null; } || true
+  [[ -n ${KEEP_TEST_ROOT:-} ]] || rm -rf -- "$test_root"
+}
+trap cleanup EXIT HUP INT TERM
 
 fail() {
   printf 'release-gate-window test failed: %s\n' "$*" >&2
@@ -73,6 +81,14 @@ case "$1" in
     unit=$3 assignment=$4
     [[ "$assignment" == CPUQuota=* ]] || exit 64
     printf '%s %s\n' "$unit" "$assignment" >> "$state/calls.log"
+    # A restore while any recorded gate process is still alive is a contract
+    # violation: the quotas must only come back once the gate tree is gone.
+    if [[ -f "$state/gate-tree.pids" && -f "$state/gate-window-applied" ]]; then
+      while read -r pid; do
+        ! kill -0 "$pid" 2>/dev/null || printf '%s\n' "$pid" >> "$state/alive-at-restore.log"
+      done < "$state/gate-tree.pids"
+    fi
+    touch "$state/gate-window-applied"
     if [[ -f "$state/fail-$unit" ]]; then
       exit 1
     fi
@@ -171,27 +187,95 @@ record_has "$state" 'gate-exit=9'
 record_has "$state" 'quotas-restored=restored'
 printf '%s\n' 'gate window failure path passed'
 
-# Signal: TERM to the helper stops the gate and still restores the quotas.
-state=$(new_state signal)
-exec_helper "$state" bash -c 'touch "$1/gate-started"; exec sleep 60' _ "$state" \
-  > "$state/out.log" 2>&1 &
+# Signal: the gate is a shell with non-exec descendants, like the real full
+# gate: a background worker, a background shell that ignores SIGTERM, and a
+# foreground child the gate shell waits for. A signal to the helper must stop
+# the whole tree (SIGKILL after the grace period for the TERM-ignoring one)
+# before the quotas are restored.
+cat > "$test_root/tree-gate.sh" <<'EOF'
+#!/usr/bin/env bash
+state=$1
+printf '%s\n' "$$" >> "$state/gate-tree.pids"
+sleep 300 &
+printf '%s\n' "$!" >> "$state/gate-tree.pids"
+bash -c 'trap "" TERM; printf "%s\n" "$$" >> "$1/gate-tree.pids"; while :; do sleep 0.1; done' _ "$state" &
+bash -c 'printf "%s\n" "$$" >> "$1/gate-tree.pids"; sleep 300; :' _ "$state" &
+# Foreground, non-exec child: this shell keeps running while it waits.
+bash -c 'printf "%s\n" "$$" >> "$1/gate-tree.pids"; touch "$1/gate-started"; sleep 300; :' _ "$state"
+printf '%s\n' 'gate shell continued after its child' >> "$state/gate-continued.log"
+EOF
+chmod +x "$test_root/tree-gate.sh"
+
+gate_tree_alive() {
+  local pid alive=
+  while read -r pid; do
+    ! kill -0 "$pid" 2>/dev/null || alive+="$pid "
+  done < "$1/gate-tree.pids"
+  printf '%s' "$alive"
+}
+
+signal_scenario() {
+  local signal=$1 expected_rc=$2
+  local state helper_pid rc
+  state=$(new_state "signal-$signal")
+  RELEASE_GATE_STOP_GRACE_SECONDS=1 exec_helper "$state" "$test_root/tree-gate.sh" "$state" \
+    > "$state/out.log" 2>&1 &
+  helper_pid=$!
+  for _ in $(seq 1 100); do
+    [[ -f "$state/gate-started" ]] && break
+    sleep 0.1
+  done
+  [[ -f "$state/gate-started" ]] || fail "$signal scenario gate never started"
+  expect_eq "$(wc -l < "$state/gate-tree.pids" | tr -d ' ')" 5 "$signal scenario gate tree size"
+  expect_eq "$(cat "$state/agent-runner-review.service.quota")" 5s "window active before SIG$signal"
+  kill "-$signal" "$helper_pid"
+  set +e
+  wait "$helper_pid"
+  rc=$?
+  set -e
+  expect_eq "$rc" "$expected_rc" "SIG$signal exit code"
+  expect_eq "$(gate_tree_alive "$state")" '' "SIG$signal leaves no gate process alive"
+  [[ ! -s "$state/alive-at-restore.log" ]] \
+    || fail "SIG$signal restored quotas while gate pids were alive: $(tr '\n' ' ' < "$state/alive-at-restore.log")"
+  [[ ! -e "$state/gate-continued.log" ]] || fail "SIG$signal let the gate shell continue"
+  grep -q 'outlived SIGTERM by 1s; sending SIGKILL' "$state/out.log" \
+    || fail "SIG$signal did not escalate to SIGKILL for the TERM-ignoring descendant: $(cat "$state/out.log")"
+  assert_restored "$state"
+  record_has "$state" "gate-exit=signal-$signal"
+  record_has "$state" 'quotas-restored=restored'
+}
+signal_scenario TERM 143
+signal_scenario INT 130
+signal_scenario HUP 129
+printf '%s\n' 'gate window signal path passed'
+
+# Broken output: the train pipes the helper into tee, and an interactive INT
+# kills tee first. The helper's own log writes must not turn into a SIGPIPE
+# death that skips the stop and the restore.
+state=$(new_state signal-broken-pipe)
+mkfifo "$state/output.fifo"
+cat "$state/output.fifo" > "$state/out.log" &
+reader_pid=$!
+RELEASE_GATE_STOP_GRACE_SECONDS=1 exec_helper "$state" "$test_root/tree-gate.sh" "$state" \
+  > "$state/output.fifo" 2>&1 &
 helper_pid=$!
 for _ in $(seq 1 100); do
   [[ -f "$state/gate-started" ]] && break
   sleep 0.1
 done
-[[ -f "$state/gate-started" ]] || fail 'signal scenario gate never started'
-expect_eq "$(cat "$state/agent-runner-review.service.quota")" 5s 'window active before the signal'
-kill -TERM "$helper_pid"
+[[ -f "$state/gate-started" ]] || fail 'broken-pipe scenario gate never started'
+{ kill -KILL "$reader_pid"; wait "$reader_pid"; } 2>/dev/null || true
+kill -INT "$helper_pid"
 set +e
 wait "$helper_pid"
 rc=$?
 set -e
-expect_eq "$rc" 143 'TERM exit code'
+expect_eq "$rc" 130 'INT exit code with a dead output reader'
+expect_eq "$(gate_tree_alive "$state")" '' 'broken pipe leaves no gate process alive'
 assert_restored "$state"
-record_has "$state" 'gate-exit=signal-TERM'
+record_has "$state" 'gate-exit=signal-INT'
 record_has "$state" 'quotas-restored=restored'
-printf '%s\n' 'gate window signal path passed'
+printf '%s\n' 'gate window signal path with a dead output reader passed'
 
 # Hot host: the helper waits a bounded time for the window, then proceeds.
 state=$(new_state hot)
