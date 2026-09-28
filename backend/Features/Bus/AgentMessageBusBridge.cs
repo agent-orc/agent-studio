@@ -715,7 +715,14 @@ public sealed class AgentMessageBusBridge
             Model: usage.Model,
             Dollars: null,
             ThinkingLevel: usage.ThinkingLevel,
-            InputIncludesCached: usage.InputIncludesCached);
+            InputIncludesCached: usage.InputIncludesCached,
+            UsageNormalization: usage.UsageNormalization,
+            PinnedModel: usage.PinnedModel,
+            ModelMismatch: usage.ModelMismatch,
+            CliType: usage.CliType,
+            // Producers on another host (remote chat turns) set Host; every
+            // other caller runs in-process on the workstation (AGT-2986).
+            Host: string.IsNullOrWhiteSpace(usage.Host) ? TokenUsageHost.Local : usage.Host);
 
         var msg = NewMessage(
             participantId: participantId,
@@ -748,6 +755,7 @@ public sealed class AgentMessageBusBridge
         AgentMessageLatency? latency = null,
         string? correlationId = null,
         string? thinkingLevel = null,
+        string? cliType = null,
         CancellationToken ct = default)
     {
         if (usage == null) return Task.CompletedTask;
@@ -756,7 +764,14 @@ public sealed class AgentMessageBusBridge
         // level is the caller's knowledge (the resolved execution / step
         // config). Recording it here makes model+level the call's identity in
         // the ledger instead of a later guess (AGT-2811).
-        var tokens = usage.ToBusTokens() with { ThinkingLevel = thinkingLevel };
+        // The rich path is the workstation runner's own emit, so the host is
+        // local; remote runs reach the ledger through task receipts (AGT-2986).
+        var tokens = usage.ToBusTokens() with
+        {
+            ThinkingLevel = thinkingLevel,
+            CliType = string.IsNullOrWhiteSpace(cliType) ? null : cliType.Trim().ToLowerInvariant(),
+            Host = TokenUsageHost.Local,
+        };
         var pct = usage.ContextWindow?.TotalSize is { } total and > 0
             ? $" ctx={usage.ContextUsed * 100 / total}%"
             : string.Empty;

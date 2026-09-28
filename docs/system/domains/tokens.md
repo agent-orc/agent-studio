@@ -6,9 +6,11 @@
 > is the knowledge-collection point for this area. This document is the
 > system-of-record plan and migration record.
 
-> **Status (2026-09-13):** Project and task-card surfaces read a deduplicated
-> union of the historical token bus and durable `task.json.tokenSummary`
-> receipts. The bus remains the historical source, while task receipts are the
+> **Status (2026-09-28):** Project, task-card, and workspace timeline surfaces
+> read a deduplicated union of the historical token bus and durable
+> `task.json.tokenSummary` receipts; remote review attempts and orchestrator
+> chat turns write into that ledger too (see
+> [One usage ledger](#one-usage-ledger-agt-2986)). The bus remains the historical source, while task receipts are the
 > current source for remote runner calls. Project summary, heatmap, and pipeline
 > cost responses include the newest successfully read usage timestamp and
 > report partial or unavailable sources instead of presenting an unexplained
@@ -27,6 +29,55 @@
 > The workspace timeline also emits separate project and UTC-week usage lines
 > for token calls whose latest route-admission boundary carried a better Token
 > Economy benchmark candidate.
+
+## One usage ledger (AGT-2986)
+
+Until 2026-09-28 the workspace timeline (`GET /api/workspace/tokens/timeline`,
+also read by the status-bar usage panels) folded only bus rows. Remote runner
+usage lives in durable task receipts, so a week of remote work rendered as an
+empty cockpit while every card carried a `tokenSummary`. The usage ledger is
+now one merged projection that every token surface reads:
+`BusBackedProjectTokenUsageReader.LoadSnapshot` unions bus history with task
+receipts and deduplicates overlap by (task, timestamp, token dimensions).
+
+| Execution path | Writer | Ledger rows |
+|---|---|---|
+| Local coding turn | `ProjectRunner.MirrorAgentTurnUsageToBus` | Project bus, `agent:<cli>`, host `local`, CLI, level |
+| Local orchestrator boot/steer/decision | `ProjectRunner` | Project bus, `orchestrator:<project>`, host `local` |
+| Remote coding completion | `RemoteTokenReceiptService` | Task receipt, `agent:remote-runner:<attempt>`, host = runner id, CLI and level from the attempt's session event |
+| Remote review attempt | `RemotePipelineReviewEvidenceProjector` | Task receipt, `support:remote-review:<attempt>`, host = lease host, CLI from the command executable, level |
+| Orchestrator chat turn (remote, fallback, local) | `OrchestratorChatService.RecordChatUsage` | Project bus, `orchestrator:<project>`, topic `orchestrator-chat`, host = runner id or `local`, CLI, level |
+
+Each writer replaces its own participant's rows, so a replayed completion or
+report never counts twice. Every row keeps normalized uncached `input` and
+`cacheRead` separately (see the next section); no reader subtracts cache reads
+again. Rows written before host attribution resolve to `local` (bus) or
+`remote-unrecorded` (remote receipts) through `TokenUsageHost.Resolve`.
+
+The project pipeline-cost view treats a receipt as authoritative for a task only
+when it carries the coding run (`agent:*`). A locally run task with only remote
+review rows keeps its `pipeline-execution.json` record, which already contains
+those aspect steps.
+
+The timeline response adds `models[]` (one row per project, model id, and
+host, with CLI types, tokens, and dollars), `projects[].hosts`, and
+`freshness`. Model rows, host shares, cells, and project rows all reconcile to
+the same totals. The `#/workspace/tokens` page renders the host column and the
+"By model and executing host" table.
+
+### Model ids and labels
+
+Ledger rows store the observed model id. `TokenModelDisplay.StoredId` folds
+only a historical display label (AGT-2740) or a pure spelling variant (dot
+versus dash, dated snapshot suffix) to the registry id. Registry aliases that
+name another generation are routing equivalences, not identities:
+`claude-opus-5-5` satisfies a `claude-opus-5` pin (AGT-2893), but it is stored
+as `claude-opus-5-5` and never rendered as "Claude Opus 5". Labels are resolved
+when a response is built (`TokenModelDisplay.Label`); an id the registry does
+not know renders as the id. `TaskTokenSummary.LastModelId` holds the id behind
+the `LastModel` label. Receipts persisted before this change stored the folded
+id and keep it. Pricing is unchanged: whether `claude-opus-5-5` and `gpt-6-sol`
+are priced depends on the TokenEconomy catalog version (0.3.5 via AGT-2892).
 
 ## Provider input and cache semantics
 
@@ -206,7 +257,7 @@ receipt writer at remote completion:
 |---|---------|-------------|-------|----------|-------------|
 | 1 | `AdHocUsageService` (read path) over `AdHocUsageRecorder` | `backend/Features/AdHoc/AdHocUsageService.cs`, `AdHocUsageRecorder.cs` | `adhoc-usage.jsonl` (workspace-wide) | Per-source / per-day / per-model rollup of one-shot Haiku calls | `GET /api/adhoc/usage` — ad-hoc usage chart in the status-bar modal |
 | 2 | `ProjectTokenUsageService` | `backend/Features/Runner/ProjectTokenUsageService.cs` | Historical token bus + durable task token receipts | Lifetime/24h summary with Job/Supporting/Orchestrator split; per-day × per-job heatmap; expensive-jobs top-N; per-job drill-down with deltas | `GET /api/projects/{project}/token-usage/*`: Project-Detail Token-Usage panel |
-| 3 | `WorkspaceTokensTimelineService` | `backend/Features/Runner/WorkspaceTokensTimelineService.cs` | `orchestrator.jsonl` for *every* watched project | (project × time-bucket) cells with priced dollars | `GET /api/workspace/tokens` — `#/workspace/tokens` stacked timeline |
+| 3 | `WorkspaceTokensTimelineService` | `backend/Features/Runner/WorkspaceTokensTimelineService.cs` | Merged usage ledger (bus history + task receipts) for *every* watched project since AGT-2986 | (project × time-bucket) cells with priced dollars, per (project, model, host) rows, host shares | `GET /api/workspace/tokens/timeline`: `#/workspace/tokens` stacked timeline and status-bar usage panels |
 | 4 | `TokenSummaryService` + `TokenSummary` | `backend/Features/Runner/TokenSummary.cs` | Historical token bus + durable task token receipts for canonical project/card reads | Per-project lifetime totals + per-model split + estimated dollars; aggregate across all projects | Project-card last-usage, status-bar usage modal, `TaskEndpointHelpers.WithRuntime` per-job rollups |
 | 5 | `BusAggregationCache` (the canonical one) | `backend/Features/Bus/BusAggregationCache.cs` | `logs/bus/*.jsonl` via `AgentMessageBusStore` | `byModel` / `byParticipant` / `byDay` totals plus context-window and latency awareness | `GET /api/bus/{project}/token-aggregate` |
 
@@ -415,6 +466,9 @@ split. CLI pages are extendable by adding another page key and model mapping.
 | `backend/Features/AdHoc/AdHocUsageService.cs` | Legacy aggregator; only the parity fixture still calls it directly |
 | `backend/Features/Runner/ProjectTokenUsageService.cs` | Pure-function fold reused by `BusBackedProjectTokenUsageReader` |
 | `backend/Features/Runner/WorkspaceTokensTimelineService.cs` | Pure-function bucketer reused by `BusBackedWorkspaceTimelineReader` |
+| `backend/Features/Tokens/BusBackedWorkspaceTimelineReader.cs` | Workspace timeline over the merged ledger (`BuildFromLedger`); bus-only `BuildFromStore` kept for parity fixtures |
+| `backend/Features/Tokens/TokenModelDisplay.cs` | Stored model id and render-time label resolution |
+| `backend/Features/Tokens/TokenUsageHost.cs` | Executing-host attribution for ledger rows |
 | `backend/Features/Runner/TokenSummary.cs` | Pure-function summarizer reused by canonical readers |
 | `backend/Features/Tokens/BusTokenEntryConverter.cs` | Adapter from bus `kind=token-usage` messages to the shared fold shape |
 | `backend/Features/Tokens/BusBackedProjectTokenUsageReader.cs` | Hybrid read path for project, lifetime, aggregate, and task-card surfaces |

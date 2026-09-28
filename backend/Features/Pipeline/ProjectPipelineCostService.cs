@@ -63,12 +63,20 @@ public sealed class ProjectPipelineCostService
         var receiptRead = _receipts.Read(watchPath);
         if (receiptRead.SourceAvailable) sources.Add("task-token-receipts");
         if (!string.IsNullOrWhiteSpace(receiptRead.Warning)) warnings.Add(receiptRead.Warning!);
+        // A receipt is authoritative for a task only when it carries the
+        // coding run. A remote review attempt also writes receipt rows
+        // (AGT-2986); on a locally run task those rows duplicate the aspect
+        // steps already in pipeline-execution.json, so that task keeps its
+        // pipeline record and its review-only receipt rows are skipped.
         var receiptJobIds = receiptRead.Entries
-            .Where(entry => !string.IsNullOrWhiteSpace(entry.JobId))
+            .Where(entry => !string.IsNullOrWhiteSpace(entry.JobId)
+                            && TokenModelDisplay.IsAgentParticipant(entry.ParticipantId))
             .Select(entry => entry.JobId!)
             .ToHashSet(StringComparer.Ordinal);
 
-        records.AddRange(BuildReceiptRecords(projectName, receiptRead.Entries));
+        records.AddRange(BuildReceiptRecords(
+            projectName,
+            receiptRead.Entries.Where(entry => entry.JobId is not null && receiptJobIds.Contains(entry.JobId)).ToList()));
         if (!string.IsNullOrWhiteSpace(watchPath))
         {
             foreach (var task in _scanner.ScanAllAutomationJobsWithArchive())

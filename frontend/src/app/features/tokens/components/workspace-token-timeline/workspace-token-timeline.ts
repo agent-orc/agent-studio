@@ -13,6 +13,7 @@ import type { TokenTimeline, TokenTimelineCell } from '../../../../features/toke
 import { TokensApiService } from '../../../../features/tokens';
 import { formatCompactTokens, formatCompactUsd } from '../../token-number-format.util';
 import { BetterCandidateUsageReportComponent } from '../better-candidate-usage-report/better-candidate-usage-report.component';
+import { WorkspaceTokenModelTableComponent } from '../workspace-token-model-table/workspace-token-model-table.component';
 
 const STORAGE_DISABLED_KEY = 'workspaceTokens.disabledProjects';
 const STORAGE_WINDOW_KEY = 'workspaceTokens.windowHours';
@@ -56,7 +57,7 @@ interface BucketSegment {
 @Component({
   selector: 'app-workspace-token-timeline',
   standalone: true,
-  imports: [BetterCandidateUsageReportComponent],
+  imports: [BetterCandidateUsageReportComponent, WorkspaceTokenModelTableComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './workspace-token-timeline.html',
   styleUrl: './workspace-token-timeline.scss'

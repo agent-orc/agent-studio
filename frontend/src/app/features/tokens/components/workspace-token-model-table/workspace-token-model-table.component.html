@@ -1,0 +1,89 @@
+@if (visibleProjects().length > 0) {
+  <p class="wtm__cap wtm__cap--block">Executing hosts per project</p>
+  <ul class="wtm__hosts" data-testid="wtt-hosts">
+    @for (p of visibleProjects(); track p.project) {
+      <li class="wtm__hosts-row" [attr.data-testid]="'wtt-hosts-' + p.project">
+        <span class="wtm__dot" [style.background]="colorFor()(p.project)"></span>
+        <span class="wtm__hosts-project">{{ p.project }}</span>
+        @for (h of p.hosts ?? []; track h.host) {
+          <span class="wtm__host">
+            <span class="wtm__host-name">{{ h.host }}</span>
+            <span class="wtm__host-num">{{ formatTokens(h.total) }}</span>
+          </span>
+        }
+      </li>
+    }
+  </ul>
+}
+
+@if (visibleModels().length > 0) {
+  <table class="wtm__tab" data-testid="wtt-models-table">
+    <caption class="wtm__cap">By model and executing host</caption>
+    <thead>
+      <tr>
+        <th>Project</th>
+        <th>Model</th>
+        <th>Host</th>
+        <th>CLI</th>
+        <th class="wtm__num">Calls</th>
+        <th class="wtm__num">Total</th>
+        <th class="wtm__num">$ theoretical</th>
+      </tr>
+    </thead>
+    <tbody>
+      @for (m of visibleModels(); track modelKey(m)) {
+        <tr [attr.data-testid]="'wtt-model-row-' + modelKey(m)">
+          <td>
+            <span class="wtm__dot" [style.background]="colorFor()(m.project)"></span>
+            {{ m.project }}
+          </td>
+          <td [attr.title]="m.model" data-testid="wtt-model-label">{{ m.modelLabel }}</td>
+          <td data-testid="wtt-model-host">{{ m.host }}</td>
+          <td>
+            @if (m.cliTypes.length > 0) {
+              {{ m.cliTypes.join(', ') }}
+            } @else {
+              <span class="wtm__na">unknown</span>
+            }
+          </td>
+          <td class="wtm__num">{{ m.calls }}</td>
+          <td class="wtm__num wtm__num--strong">{{ formatTokens(m.total) }}</td>
+          <td class="wtm__num">
+            @if (m.dollars !== null) {
+              {{ formatUsd(m.dollars) }}
+              @if (!m.allModelsPriced) {
+                <span class="wtm__partial">(partial)</span>
+              }
+            } @else {
+              <span class="wtm__na">n/a</span>
+            }
+          </td>
+        </tr>
+      }
+    </tbody>
+    <tfoot>
+      <tr class="wtm__foot" data-testid="wtt-models-total">
+        <td>Total</td>
+        <td></td>
+        <td></td>
+        <td></td>
+        <td class="wtm__num">{{ totals().calls }}</td>
+        <td class="wtm__num wtm__num--strong">{{ formatTokens(totals().total) }}</td>
+        <td class="wtm__num">
+          @if (totals().dollars !== null) {
+            {{ formatUsd(totals().dollars!) }}
+            @if (!totals().allPriced) {
+              <span class="wtm__partial">(partial)</span>
+            }
+          } @else {
+            <span class="wtm__na">n/a</span>
+          }
+        </td>
+      </tr>
+    </tfoot>
+  </table>
+}
+
+@if (warning(); as w) {
+  <p class="wtm__warn" data-testid="wtt-ledger-warning">{{ w }}</p>
+}

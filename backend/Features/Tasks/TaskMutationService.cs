@@ -459,7 +459,26 @@ public class TaskMutationService
         string runAttemptId,
         TaskTokenSummary attemptSummary)
     {
-        if (!Directory.Exists(folderPath) || string.IsNullOrWhiteSpace(runAttemptId)) return false;
+        if (string.IsNullOrWhiteSpace(runAttemptId)) return false;
+        return SetTokenReceiptEntriesOnFolder(
+            folderPath,
+            $"{TokenUsageHost.RemoteRunnerParticipantPrefix}{runAttemptId}",
+            attemptSummary.Entries ?? []);
+    }
+
+    /// <summary>
+    /// Replace every receipt row owned by <paramref name="participantId"/> in
+    /// <c>task.json.tokenSummary</c> with <paramref name="entries"/> and
+    /// rebuild the totals. One participant id per attempt keeps completion
+    /// replay idempotent while other attempts, review rows, and coding rows
+    /// stay untouched (AGT-2986).
+    /// </summary>
+    public bool SetTokenReceiptEntriesOnFolder(
+        string folderPath,
+        string participantId,
+        IReadOnlyList<TaskTokenCall> entries)
+    {
+        if (!Directory.Exists(folderPath) || string.IsNullOrWhiteSpace(participantId)) return false;
         try
         {
             TaskTokenSummary? persisted = null;
@@ -473,38 +492,39 @@ public class TaskMutationService
                 }
             }
 
-            var participant = $"agent:remote-runner:{runAttemptId}";
-            var entries = (persisted?.Entries ?? [])
-                .Where(entry => !string.Equals(entry.ParticipantId, participant, StringComparison.Ordinal))
-                .Concat((attemptSummary.Entries ?? []).Select(entry => entry with
+            var merged = (persisted?.Entries ?? [])
+                .Where(entry => !string.Equals(entry.ParticipantId, participantId, StringComparison.Ordinal))
+                .Concat(entries.Select(entry => entry with
                 {
-                    ParticipantId = participant,
+                    ParticipantId = participantId,
                 }))
                 .OrderBy(entry => entry.Ts)
                 .ToList();
-            if (entries.Count == 0) return false;
+            if (merged.Count == 0) return false;
 
+            var lastAgentEntry = merged
+                .Where(entry => TokenModelDisplay.IsAgentParticipant(entry.ParticipantId)
+                                && !string.IsNullOrWhiteSpace(entry.Model))
+                .OrderBy(entry => entry.Ts)
+                .LastOrDefault();
             var summary = new TaskTokenSummary
             {
-                Calls = entries.Count,
-                InputTokens = entries.Sum(entry => entry.InputTokens),
-                OutputTokens = entries.Sum(entry => entry.OutputTokens),
-                CacheReadTokens = entries.Sum(entry => entry.CacheReadTokens),
-                CacheCreationTokens = entries.Sum(entry => entry.CacheCreationTokens),
-                TotalTokens = entries.Sum(entry => entry.InputTokens + entry.OutputTokens
+                Calls = merged.Count,
+                InputTokens = merged.Sum(entry => entry.InputTokens),
+                OutputTokens = merged.Sum(entry => entry.OutputTokens),
+                CacheReadTokens = merged.Sum(entry => entry.CacheReadTokens),
+                CacheCreationTokens = merged.Sum(entry => entry.CacheCreationTokens),
+                TotalTokens = merged.Sum(entry => entry.InputTokens + entry.OutputTokens
                     + entry.CacheReadTokens + entry.CacheCreationTokens),
-                EstimatedApiCostUsd = entries.Sum(entry => entry.EstimatedApiCostUsd),
-                AllModelsPriced = entries.All(entry => entry.ModelPriced),
-                LastModel = entries
-                    .Where(entry => TokenModelDisplay.IsAgentParticipant(entry.ParticipantId)
-                                    && !string.IsNullOrWhiteSpace(entry.Model))
-                    .OrderBy(entry => entry.Ts)
-                    .LastOrDefault() is { } lastAgentEntry
-                        ? lastAgentEntry.DisplayModel ?? lastAgentEntry.Model
-                        : null,
-                LastUpdate = entries.Max(entry => entry.Ts),
-                Entries = entries,
-                HasModelMismatch = entries.Any(entry => entry.ModelMismatch),
+                EstimatedApiCostUsd = merged.Sum(entry => entry.EstimatedApiCostUsd),
+                AllModelsPriced = merged.All(entry => entry.ModelPriced),
+                LastModelId = lastAgentEntry?.Model,
+                LastModel = lastAgentEntry is null
+                    ? null
+                    : TokenModelDisplay.Label(lastAgentEntry.Model) ?? lastAgentEntry.Model,
+                LastUpdate = merged.Max(entry => entry.Ts),
+                Entries = merged,
+                HasModelMismatch = merged.Any(entry => entry.ModelMismatch),
             };
             TaskJsonFile.UpdateFieldOrThrow(folderPath, "tokenSummary", summary);
             return Updated(folderPath);
