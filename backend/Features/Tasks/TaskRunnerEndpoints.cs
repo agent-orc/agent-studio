@@ -51,6 +51,7 @@ public static class TaskRunnerEndpoints
             string? project,
             string? watchPath,
             string? reason,
+            string? commandId,
             TaskRunnerService runner,
             TaskScannerService scanner,
             RunLeaseService leases,
@@ -73,6 +74,18 @@ public static class TaskRunnerEndpoints
             };
             var info = scanner.FindJob(jobId, watchPath);
             if (info is null) return Results.NotFound();
+            if (commandId?.Trim().Length > 128)
+                return Results.BadRequest(new { error = "Stop command id is too long." });
+
+            if (!string.IsNullOrWhiteSpace(commandId) && stops.GetReceipt(commandId.Trim()) is { } replay)
+            {
+                if (!string.Equals(replay.TaskKey, info.TaskKey, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(replay.Reason, RemoteRunStopReasons.From(parsed), StringComparison.Ordinal))
+                    return Results.Conflict(new { error = "Stop command id is bound to different input." });
+                if (replay.TerminalAtUtc is null)
+                    replay = stops.ReconcileWithLease(replay, leases.Peek(info.TaskKey));
+                return Results.Accepted(value: StopReceipt(replay));
+            }
 
             var dispatch = RemoteRunStopPolicy.Decide(new RunStopFacts(
                 runner.StopJob(jobId, watchPath, parsed),
@@ -81,11 +94,26 @@ public static class TaskRunnerEndpoints
                 return dispatch == RunStopDispatch.StoppedLocally ? Results.Ok() : Results.NotFound();
 
             var lease = leases.Peek(info.TaskKey).Lease;
-            var request = stops.Record(
-                info.TaskKey,
-                RemoteRunStopReasons.From(parsed),
-                lease?.AttemptId,
-                lease?.RunnerName ?? lease?.RunnerId);
+            if (lease is null || string.IsNullOrWhiteSpace(lease.AttemptId)) return Results.Conflict(new { error = "No current remote attempt holds this task." });
+            RemoteRunStopRequest request;
+            try
+            {
+                request = stops.Record(
+                    info.TaskKey,
+                    RemoteRunStopReasons.From(parsed),
+                    lease.AttemptId,
+                    lease.RunnerName ?? lease.RunnerId,
+                    lease.FencingToken,
+                    commandId,
+                    lease.RunnerId);
+                request = stops.ReconcileWithLease(request, leases.Peek(info.TaskKey));
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Conflict(new { error = ex.Message });
+            }
+            if (request.TerminalAtUtc is not null)
+                return Results.Conflict(StopReceipt(request));
             timeline.Append(
                 info.FolderPath,
                 TimelineEventKinds.RemoteStopRequested,
@@ -97,15 +125,25 @@ public static class TaskRunnerEndpoints
                     ["reason"] = request.Reason,
                     ["runnerId"] = lease?.RunnerId ?? string.Empty,
                 });
-            return Results.Accepted(value: new
-            {
-                status = "stop-requested",
-                taskKey = info.TaskKey,
-                reason = request.Reason,
-                runnerId = lease?.RunnerId,
-                attemptId = lease?.AttemptId,
-                message = "The owning runner stops the attempt on its next lease renewal.",
-            });
+            return Results.Accepted(value: StopReceipt(request));
+        });
+
+        group.MapGet("/{jobId}/stop/{commandId}", (
+            string jobId,
+            string commandId,
+            string? project,
+            string? watchPath,
+            TaskScannerService scanner,
+            RemoteRunStopRequestStore stops,
+            AgentStudio.Registry.ProjectRegistry projects) =>
+        {
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            var info = scanner.FindJob(jobId, watchPath);
+            if (info is null) return Results.NotFound();
+            var receipt = stops.GetReceipt(commandId);
+            return receipt is not null && string.Equals(receipt.TaskKey, info.TaskKey, StringComparison.OrdinalIgnoreCase)
+                ? Results.Ok(receipt)
+                : Results.NotFound();
         });
 
         group.MapPost("/{jobId}/continue", async (string jobId, string? project, string? watchPath, ContinueJobRequest req, TaskRunnerService runner, AgentStudio.Registry.ProjectRegistry projects, HttpContext context, CancellationToken ct) =>
@@ -117,10 +155,10 @@ public static class TaskRunnerEndpoints
             var mode = ContinueModes.Normalize(req.Mode);
             try
             {
-                var clientId = context.Request.Headers["X-Client-Id"].FirstOrDefault();
-                var resp = await runner.ContinueJobAsync(
-                    jobId, req.Prompt, watchPath, req.Model, req.CliType, req.ThinkingLevel,
-                    mode, req.ModeOverride, TimelineActors.Human(clientId ?? string.Empty), ct);
+                var caller = context.User.Identity?.Name
+                    ?? context.Request.Headers["X-Client-Id"].FirstOrDefault()
+                    ?? "local-default";
+                var resp = await runner.ContinueJobAsync(jobId, req.Prompt, watchPath, req.Model, req.CliType, req.ThinkingLevel, mode, req.ModeOverride, author: TimelineActors.Human(caller), ct: ct, reason: req.Reason, triggeredBy: caller);
                 return resp.Status == "queued"
                     ? Results.Accepted(value: resp)
                     : Results.Ok(resp);
@@ -446,4 +484,24 @@ public static class TaskRunnerEndpoints
                 : Results.BadRequest(new { error = error ?? "Cannot refresh context usage" });
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
     }
+
+    private static object StopReceipt(RemoteRunStopRequest request) => new
+    {
+        status = request.TerminalAtUtc is null ? "stop-requested" : "stop-terminal",
+        taskKey = request.TaskKey,
+        reason = request.Reason,
+        commandId = request.CommandId,
+        state = request.State,
+        requestedAtUtc = request.RequestedAtUtc,
+        observedAtUtc = request.ObservedAtUtc,
+        terminalAtUtc = request.TerminalAtUtc,
+        terminalReason = request.TerminalReason,
+        expiresAtUtc = request.ExpiresAtUtc,
+        runnerId = request.RunnerId,
+        attemptId = request.AttemptId,
+        fencingToken = request.FencingToken,
+        message = request.TerminalAtUtc is null
+            ? "The owning runner stops the attempt on its next lease renewal."
+            : "This stop command is terminal and will not be delivered again.",
+    };
 }

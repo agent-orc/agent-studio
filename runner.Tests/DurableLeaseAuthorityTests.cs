@@ -39,6 +39,31 @@ public sealed class DurableLeaseAuthorityTests
     }
 
     [Fact]
+    public async Task Granted_renewal_delivers_the_fenced_stop_without_losing_authority()
+    {
+        using var temp = new TempDirectory();
+        var now = new DateTime(2026, 9, 27, 8, 0, 0, DateTimeKind.Utc);
+        var options = Options(temp.Path);
+        var lease = Lease(now, now.AddMinutes(5)) with { AttemptId = "attempt-stop", AuthorityEpoch = 3 };
+        var directive = new RunStopDirectiveDto(lease.TaskKey, "followup", now,
+            lease.AttemptId, "operator", "stop-command", lease.FencingToken);
+        using var http = new HttpClient(new StopRenewalHandler(lease, directive))
+        {
+            BaseAddress = new Uri("http://localhost"),
+        };
+        using var client = new TaskServerClient(http, options.RunnerId);
+        using var stop = new CancellationTokenSource();
+        var heartbeat = new LeaseHeartbeat(client, options, lease, _ => { }, utcNow: () => now);
+
+        await heartbeat.RunAsync(stop, CancellationToken.None);
+
+        Assert.True(stop.IsCancellationRequested);
+        Assert.False(heartbeat.LeaseLost);
+        Assert.Equal("stop-command", heartbeat.StopRequest?.CommandId);
+        Assert.Equal(lease.FencingToken, heartbeat.StopRequest?.FencingToken);
+    }
+
+    [Fact]
     public async Task Controlled_time_keeps_the_generation_alive_for_ten_minutes_and_stops_before_expiry()
     {
         using var temp = new TempDirectory();
@@ -80,6 +105,69 @@ public sealed class DurableLeaseAuthorityTests
         Assert.True(heartbeat.LeaseLost);
         Assert.Equal("rejected", authority.Snapshot.State);
         Assert.Contains("deadline exhausted", authority.Snapshot.Detail);
+    }
+
+    [Fact]
+    public async Task Resume_after_workstation_sleep_stops_before_another_renewal_or_replay()
+    {
+        using var temp = new TempDirectory();
+        var now = new DateTime(2026, 9, 27, 8, 0, 0, DateTimeKind.Utc);
+        var options = Options(temp.Path);
+        var lease = Lease(now, now.AddMinutes(15));
+        var authority = DurableLeaseAuthority.Open(
+            temp.Path, lease.ExpiresAt, TimeSpan.FromMinutes(1), true, () => now);
+        var offline = new OfflineHandler();
+        using var http = new HttpClient(offline) { BaseAddress = new Uri("http://localhost") };
+        using var client = new TaskServerClient(http, options.RunnerId);
+        using var stop = new CancellationTokenSource();
+        var heartbeat = new LeaseHeartbeat(
+            client, options, lease, _ => { },
+            (_, _) =>
+            {
+                now = now.AddMinutes(20);
+                return Task.CompletedTask;
+            },
+            authority: authority,
+            utcNow: () => now);
+
+        await heartbeat.RunAsync(stop, CancellationToken.None);
+
+        Assert.Equal(1, offline.Calls);
+        Assert.True(heartbeat.LeaseLost);
+        Assert.False(authority.ReplayAllowed);
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => authority.WaitForConfirmedAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Delayed_renewal_cannot_restore_authority_after_the_previous_stop_before_deadline()
+    {
+        using var temp = new TempDirectory();
+        var now = new DateTime(2026, 9, 27, 8, 0, 0, DateTimeKind.Utc);
+        var options = Options(temp.Path);
+        var lease = Lease(now, now.AddMinutes(15));
+        var renewed = lease with { ExpiresAt = now.AddMinutes(30) };
+        var authority = DurableLeaseAuthority.Open(
+            temp.Path, lease.ExpiresAt, TimeSpan.FromMinutes(1), true, () => now);
+        var stopBefore = authority.StopBeforeUtc;
+        var handler = new CapturingRenewHandler(renewed, () => now = stopBefore);
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
+        using var client = new TaskServerClient(http, options.RunnerId);
+        using var stop = new CancellationTokenSource();
+        var heartbeat = new LeaseHeartbeat(
+            client, options, lease, _ => { },
+            authority: authority,
+            utcNow: () => now);
+
+        await heartbeat.RunAsync(stop, CancellationToken.None);
+
+        Assert.NotNull(handler.Request);
+        Assert.True(stop.IsCancellationRequested);
+        Assert.True(heartbeat.LeaseLost);
+        Assert.Equal("rejected", authority.Snapshot.State);
+        Assert.Equal(lease.ExpiresAt, authority.Snapshot.LeaseExpiresAtUtc);
+        Assert.Equal(stopBefore, authority.StopBeforeUtc);
+        Assert.False(authority.ReplayAllowed);
     }
 
     [Fact]
@@ -222,7 +310,8 @@ public sealed class DurableLeaseAuthorityTests
             {
                 stop.Cancel();
                 return Task.CompletedTask;
-            });
+            },
+            utcNow: () => now);
 
         await heartbeat.RunAsync(stop, CancellationToken.None);
 
@@ -303,13 +392,20 @@ public sealed class DurableLeaseAuthorityTests
 
     private sealed class OfflineHandler : HttpMessageHandler
     {
+        public int Calls { get; private set; }
+
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
-            => throw new HttpRequestException("Task Server partitioned");
+        {
+            Calls++;
+            throw new HttpRequestException("Task Server partitioned");
+        }
     }
 
-    private sealed class CapturingRenewHandler(RunLeaseInfoDto lease) : HttpMessageHandler
+    private sealed class CapturingRenewHandler(
+        RunLeaseInfoDto lease,
+        Action? beforeResponse = null) : HttpMessageHandler
     {
         public RunLeaseHeartbeatRequest? Request { get; private set; }
 
@@ -320,6 +416,7 @@ public sealed class DurableLeaseAuthorityTests
             Request = JsonSerializer.Deserialize<RunLeaseHeartbeatRequest>(
                 await request.Content!.ReadAsStringAsync(cancellationToken),
                 new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            beforeResponse?.Invoke();
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(
@@ -327,6 +424,23 @@ public sealed class DurableLeaseAuthorityTests
                     Encoding.UTF8,
                     "application/json"),
             };
+        }
+    }
+
+    private sealed class StopRenewalHandler(
+        RunLeaseInfoDto lease,
+        RunStopDirectiveDto directive) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var payload = JsonSerializer.Serialize(new RunLeaseResponse(
+                "Renewed", true, lease, StopRequest: directive));
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(payload, Encoding.UTF8, "application/json"),
+            });
         }
     }
 

@@ -21,8 +21,8 @@
       <p class="park__question" data-testid="parked-blocker-question">{{ v.question }}</p>
     } @else {
       <p class="park__question park__question--missing" data-testid="parked-blocker-question-missing">
-        The parking run stated no question, only the identifier below. Open the linked document or the
-        run log to find out what it was waiting for.
+        The parking run stated no question, only the identifier below. Expand the session context to see
+        what it was waiting for.
       </p>
     }
     @if (v.questionId) {
@@ -52,15 +52,15 @@
 
     <dl class="park__facts">
       <div class="park__fact">
-        <dt>Clears when</dt>
+        <dt data-testid="parked-blocker-fact-label">Clears when</dt>
         <dd data-testid="parked-blocker-condition">{{ v.condition }}</dd>
       </div>
       <div class="park__fact">
-        <dt>Recall verdict</dt>
+        <dt data-testid="parked-blocker-fact-label">Recall verdict</dt>
         <dd data-testid="parked-blocker-evaluation">{{ evaluationLine() }}</dd>
       </div>
       <div class="park__fact">
-        <dt>Park reason</dt>
+        <dt data-testid="parked-blocker-fact-label">Park reason</dt>
         <dd data-testid="parked-blocker-reason">{{ reasonLine() }}</dd>
       </div>
     </dl>
@@ -93,6 +93,73 @@
           <li>{{ item }}</li>
         }
       </ul>
+    </div>
+
+    <div class="park__session">
+      <button
+        type="button"
+        class="park__session-toggle"
+        data-testid="parked-session-toggle"
+        [attr.aria-expanded]="sessionExpanded()"
+        aria-controls="parked-session-context"
+        (click)="toggleSession()">
+        <app-disclosure-marker [open]="sessionExpanded()" [size]="10" />
+        {{ sessionExpanded() ? 'Hide session context' : 'Show session context' }}
+      </button>
+
+      @if (sessionExpanded()) {
+        <div id="parked-session-context" class="park__session-body" data-testid="parked-session-context">
+          @if (sessionLoading()) {
+            <p class="park__session-state" data-testid="parked-session-loading">Loading session context…</p>
+          } @else if (sessionError(); as error) {
+            <p class="park__session-state" data-testid="parked-session-error">{{ error }}</p>
+          } @else if (sessionRun(); as run) {
+            <dl class="park__run-facts" data-testid="parked-session-model">
+              <div><dt>CLI</dt><dd>{{ actualCli() || 'not recorded' }}</dd></div>
+              <div><dt>Model</dt><dd>{{ run.model || 'not recorded' }}</dd></div>
+              <div><dt>Thinking</dt><dd>{{ run.thinkingLevel || 'not recorded' }}</dd></div>
+              @for (row of pinnedDifferences(); track row.label) {
+                <div><dt>{{ row.label }}</dt><dd>{{ row.value }}</dd></div>
+              }
+            </dl>
+
+            <section class="park__prompt" aria-labelledby="parked-session-prompt-heading">
+              <h3 id="parked-session-prompt-heading">Prompt sent for this run</h3>
+              @if (sessionPrompt(); as prompt) {
+                <pre data-testid="parked-session-prompt">{{ prompt }}</pre>
+              } @else {
+                <p class="park__session-state" data-testid="parked-session-prompt-empty">Prompt not recorded for this run.</p>
+              }
+            </section>
+
+            <section class="park__transcript" aria-labelledby="parked-session-transcript-heading">
+              <h3 id="parked-session-transcript-heading">Chat transcript</h3>
+              @if (earlierLineCount() > 0) {
+                <button type="button" class="park__earlier" data-testid="parked-session-show-earlier" (click)="showEarlier()">
+                  Show earlier
+                </button>
+              }
+              @if (visibleTranscriptLines().length > 0) {
+                <app-activity-log-view
+                  data-testid="parked-session-transcript"
+                  variant="embedded"
+                  [showToolbar]="false"
+                  [toolsVisible]="true"
+                  [lines]="visibleTranscriptLines()"
+                  bodyMaxHeight="360px" />
+              } @else {
+                <p class="park__session-state" data-testid="parked-session-transcript-empty">No chat transcript was recorded for this run.</p>
+              }
+            </section>
+          } @else {
+            <p class="park__session-state" data-testid="parked-session-empty">No parking run was recorded for this card.</p>
+          }
+
+          @if (fullRunLogHref(); as href) {
+            <a class="park__full-log" data-testid="parked-session-full-log" [href]="href" target="_blank" rel="noopener">Open full run log</a>
+          }
+        </div>
+      }
     </div>
   </section>
 }

@@ -8,6 +8,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import { ExecutionLocationBadgeComponent } from '../../../../../components/execution-location-badge/execution-location-badge.component';
 import { RunExecutionContextComponent } from './run-execution-context/run-execution-context.component';
 import { ReviewAttemptHistoryComponent } from './review-attempt-history/review-attempt-history.component';
+import { runTriggerLabel, runTriggerReportHref } from './run-trigger-presentation.util';
 /**
  * Run timeline panel rendered above the activity log in the protocol
  * pane. Each card represents one CLI invocation between user inputs
@@ -171,13 +172,19 @@ export class RunTimelineComponent {
   }
 
   transitionLabel(current: RunRecord, next: RunRecord): string {
-    if (next.intent === 'reissue') return `Run #${current.index} re-opened into #${next.index} as auto-review reissue`;
-    const trigger = next.userFollowup ? 'user follow-up' : this.intentLabel(next.intent);
-    return `Run #${current.index} re-opened into #${next.index} via ${trigger}`;
+    return `Run #${current.index} re-opened into #${next.index} via ${this.triggerLabel(next)}`;
   }
 
   isReissueRun(r: RunRecord): boolean {
-    return r.intent === 'reissue';
+    return r.trigger === 'review-finding' || r.trigger === 'review-concern' || r.intent === 'reissue';
+  }
+
+  triggerLabel(run: RunRecord): string {
+    return runTriggerLabel(run);
+  }
+
+  triggerReportHref(run: RunRecord): string | null {
+    return runTriggerReportHref(run, this.job());
   }
 
   promptTokenLabel(entry: RunPromptEntry | null): string {

@@ -484,6 +484,7 @@ public class TaskServerClientHealthTests
                     "expiresAt": "{{now.AddMinutes(2):o}}",
                     "status": "active"
                   },
+                  "requiredCapabilities": ["toolchain:msbuild", "platform:windows"],
                   "mechanicalDelta": {
                     "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                     "deliveryRef": "refs/heads/result",
@@ -509,6 +510,7 @@ public class TaskServerClientHealthTests
             RunnerName = "runner-v1",
             Hostname = "host-v1",
             BackendName = "test",
+            IsWorkstation = true,
             GitRemote = "/tmp/fallback-origin.git",
             WorkDir = "/tmp/runner-v1",
             BaseBranch = "main",
@@ -545,6 +547,7 @@ public class TaskServerClientHealthTests
         Assert.Equal("main", claim.DefaultBranch);
         Assert.Equal("run-v1", claim.RunId);
         Assert.Equal("lease-v1", claim.Lease!.LeaseId);
+        Assert.Equal(["toolchain:msbuild", "platform:windows"], claim.RequiredCapabilities);
         Assert.Equal("gpt-5.6-terra", claim.RunSpec?.Model);
         Assert.Equal("medium", claim.RunSpec?.ThinkingLevel);
         Assert.Equal("clean", claim.RunSpec?.ContextMode);
