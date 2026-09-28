@@ -1,6 +1,7 @@
 # Keep the product bootstrap and credential volume. The harness reads the
 # generated tokens through Compose exec; it never supplies a second token set.
 # Bootstrap runs from the same source-built image as the scenario Task Server.
+# Every built image carries a disposable label for age-based retention.
 services:
   bootstrap:
     image: "${SCENARIO_TASK_SERVER_IMAGE:?set SCENARIO_TASK_SERVER_IMAGE}"
@@ -12,6 +13,8 @@ services:
       args:
         VERSION: ${SCENARIO_BUILD_VERSION:?set SCENARIO_BUILD_VERSION}
         SHA: ${SCENARIO_BUILD_SHA:?set SCENARIO_BUILD_SHA}
+      labels:
+        io.agent-studio.disposable-image: scenario
     environment:
       BOOTSTRAP_RUNNER_ID: scenario-coding-runner
       TaskServer__MinimumLeaseSeconds: "5"
@@ -25,6 +28,8 @@ services:
       args:
         VERSION: ${SCENARIO_BUILD_VERSION:?set SCENARIO_BUILD_VERSION}
         SHA: ${SCENARIO_BUILD_SHA:?set SCENARIO_BUILD_SHA}
+      labels:
+        io.agent-studio.disposable-image: scenario
 
   studio-bff:
     image: "${SCENARIO_STUDIO_BFF_IMAGE:?set SCENARIO_STUDIO_BFF_IMAGE}"
@@ -34,6 +39,8 @@ services:
       args:
         VERSION: ${SCENARIO_BUILD_VERSION:?set SCENARIO_BUILD_VERSION}
         SHA: ${SCENARIO_BUILD_SHA:?set SCENARIO_BUILD_SHA}
+      labels:
+        io.agent-studio.disposable-image: scenario
 
   agent-host-distributed:
     image: "${SCENARIO_AGENT_HOST_IMAGE:?set SCENARIO_AGENT_HOST_IMAGE}"
@@ -41,6 +48,8 @@ services:
     build:
       context: .
       dockerfile: testsupport/scenario/runner.Dockerfile
+      labels:
+        io.agent-studio.disposable-image: scenario
     environment:
       HOME: /scenario/home
       DOTNET_CLI_HOME: /scenario/home

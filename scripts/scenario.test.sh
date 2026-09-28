@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Focused shell contract tests for Compose startup behavior in scenario.sh.
+# Focused shell contract tests for Compose startup behavior in scenario.sh and
+# for the Docker images it leaves behind (AGT-2993).
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -14,6 +15,11 @@ cat >"$fake_bin/dotnet" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 if [ "${1:-}" = "test" ]; then
+    if [ -n "${FAKE_DOTNET_TEST_BLOCK:-}" ]; then
+        # Stand-in for a long scenario run that the caller terminates.
+        : >"$FAKE_DOTNET_TEST_BLOCK"
+        sleep 60
+    fi
     printf '%s\n' "${SCENARIO_TARGET_URL:-}" >"$FAKE_DOCKER_STATE/target-url"
     printf '%s\n' "${SCENARIO_STUDIO_BFF_URL:-}" >"$FAKE_DOCKER_STATE/bff-url"
     printf '%s:%s\n' "${SCENARIO_UID:-}" "${SCENARIO_GID:-}" >"$FAKE_DOCKER_STATE/uid-gid"
@@ -33,11 +39,22 @@ if [ "${1:-}" = "inspect" ]; then
     exit 0
 fi
 
+# Image, container and builder commands go to the stateful image store, so the
+# test can see which images a run left behind.
+case "${1:-}" in
+    image|ps|container|builder) exec "$FAKE_DOCKER_IMAGE_STORE" "$@" ;;
+esac
+
 [ "${1:-}" = "compose" ] || exit 2
 shift
+project=""
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --project-name|--file|--profile)
+        --project-name)
+            project="$2"
+            shift 2
+            ;;
+        --file|--profile)
             shift 2
             ;;
         *)
@@ -49,7 +66,15 @@ done
 command="${1:-}"
 [ "$#" -eq 0 ] || shift
 case "$command" in
-    config|build|up|down)
+    build)
+        for ref in "$SCENARIO_TASK_SERVER_IMAGE" "$SCENARIO_STUDIO_BFF_IMAGE" \
+            "$SCENARIO_ORCHESTRATOR_ENGINE_IMAGE" "$SCENARIO_AGENT_HOST_IMAGE"; do
+            "$FAKE_DOCKER_IMAGE_STORE" _add "$ref" "sha256:$ref" \
+                "com.docker.compose.project=$project,io.agent-studio.disposable-image=scenario" \
+                "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        done
+        ;;
+    config|up|down)
         exit 0
         ;;
     exec)
@@ -171,6 +196,11 @@ for (const [serviceName, contract] of Object.entries(expected)) {
   if (service?.build?.dockerfile !== contract.dockerfile) {
     throw new Error(`${serviceName} does not build ${contract.dockerfile}`);
   }
+  // AGT-2993: the retention helper finds scenario images by this label under
+  // any project name.
+  if (service.build.labels?.["io.agent-studio.disposable-image"] !== "scenario") {
+    throw new Error(`${serviceName} image is not labelled io.agent-studio.disposable-image=scenario`);
+  }
 }
 const tokenFiles = {
   "task-server": {
@@ -218,6 +248,17 @@ if (config.services["task-server"].build.args.VERSION !== process.argv[2]
 }
 ' "$scenario_compose_json" "$scenario_version"
 
+export FAKE_DOCKER_IMAGE_STORE="$repo_root/scripts/fixtures/fake-docker-image-store.sh"
+scenario_images() { cut -f1 "$fake_state/images" | grep -F -- "$1-" || true; }
+
+# Residue of an older, killed run: the retention pass at the start of the next
+# run removes it; a published image stays.
+FAKE_DOCKER_STATE="$fake_state" "$FAKE_DOCKER_IMAGE_STORE" _add \
+    agent-studio-scenario-999-task-server:local sha256:killed-run \
+    io.agent-studio.disposable-image=scenario 2026-01-01T00:00:00Z
+FAKE_DOCKER_STATE="$fake_state" "$FAKE_DOCKER_IMAGE_STORE" _add \
+    ghcr.io/agent-orc/agent-task-server:v0.9.1 sha256:published "" 2026-01-01T00:00:00Z
+
 success_report="$test_root/success-report"
 PATH="$fake_bin:$PATH" \
 FAKE_DOCKER_STATE="$fake_state" \
@@ -233,6 +274,13 @@ SCENARIO_COMPOSE_PORT_TIMEOUT_SECONDS=3 \
 [ "$(cat "$fake_state/uid-gid")" = "$(id -u):$(id -g)" ]
 [ ! -e "$(cat "$fake_state/host-dir")" ]
 [ ! -e "$success_report/scenario-compose-full.compose.log" ]
+grep -F 'compose --project-name scenario-contract-success' "$fake_state/calls" | grep -F ' build ' >/dev/null
+[ -z "$(scenario_images scenario-contract-success)" ] \
+    || { printf 'Images left after a passed run:\n%s\n' "$(scenario_images scenario-contract-success)" >&2; exit 1; }
+[ -z "$(scenario_images agent-studio-scenario-999)" ] \
+    || { printf 'Retention did not clear the killed run residue.\n' >&2; exit 1; }
+grep -Fx 'builder prune --force --max-used-space 40GB' "$fake_state/calls" >/dev/null
+grep -F 'ghcr.io/agent-orc/agent-task-server:v0.9.1' "$fake_state/images" >/dev/null
 
 rm -f -- "$fake_state/port-task-server" "$fake_state/port-studio-bff"
 failure_report="$test_root/failure-report"
@@ -252,5 +300,36 @@ grep -F 'scenario fake Compose logs' "$failure_report/scenario-compose-full.comp
 grep -F 'failures="1"' "$failure_report/scenario-compose-full.junit.xml"
 grep -F 'scenario-compose-full.compose.log' "$failure_report/scenario-compose-full.md"
 grep -F 'compose --project-name scenario-contract-failure' "$fake_state/calls"
+[ -z "$(scenario_images scenario-contract-failure)" ] \
+    || { printf 'Images left after a failed run:\n%s\n' "$(scenario_images scenario-contract-failure)" >&2; exit 1; }
+
+# SIGTERM while the scenario runs: the trap still tears the stack down and
+# removes the run's images. setsid gives the run its own process group, the way
+# a supervisor stops the whole tree.
+rm -f -- "$fake_state/port-task-server" "$fake_state/port-studio-bff"
+term_report="$test_root/term-report"
+term_marker="$test_root/dotnet-test-started"
+PATH="$fake_bin:$PATH" \
+FAKE_DOCKER_STATE="$fake_state" \
+FAKE_DOCKER_MODE=retry \
+FAKE_DOTNET_TEST_BLOCK="$term_marker" \
+COMPOSE_SCENARIO_PROJECT=scenario-contract-term \
+SCENARIO_COMPOSE_PORT_TIMEOUT_SECONDS=3 \
+    setsid "$repo_root/scripts/scenario.sh" \
+    --target compose --level full --report-dir "$term_report" &
+term_pid=$!
+for _ in $(seq 1 100); do
+    [ ! -e "$term_marker" ] || break
+    sleep 0.1
+done
+[ -e "$term_marker" ] || { printf 'The terminated run never reached dotnet test.\n' >&2; exit 1; }
+[ -n "$(scenario_images scenario-contract-term)" ]
+kill -TERM -- "-$term_pid"
+term_status=0
+wait "$term_pid" || term_status=$?
+[ "$term_status" -eq 130 ] || { printf 'SIGTERM run exited %s, expected 130.\n' "$term_status" >&2; exit 1; }
+[ -z "$(scenario_images scenario-contract-term)" ] \
+    || { printf 'Images left after SIGTERM:\n%s\n' "$(scenario_images scenario-contract-term)" >&2; exit 1; }
+grep -F 'compose --project-name scenario-contract-term' "$fake_state/calls" | grep -F ' down ' >/dev/null
 
 printf 'Scenario Compose startup contract tests passed.\n'

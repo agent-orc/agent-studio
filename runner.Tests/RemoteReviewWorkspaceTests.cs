@@ -1493,6 +1493,74 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     /// <summary>
+    /// AGT-2993: a compose scenario on an almost full runner disk is refused as
+    /// a typed infrastructure outcome before it builds anything, with the
+    /// measured free space in the journal.
+    /// </summary>
+    [Fact]
+    public async Task A_compose_scenario_below_the_free_disk_floor_is_refused_before_it_starts()
+    {
+        var sha = await SeedOriginAsync();
+        var marker = Path.Combine(_root, "compose-scenario-started");
+        var command = new ReviewCommandDto(
+            "verify-scenario",
+            "scenario",
+            PosixShell.RequirePath(),
+            ["-c", $"touch '{marker}' # scripts/scenario.sh --target compose --level full"]);
+        var journal = new List<string>();
+        // Every real disk has less than 100 % free, so this floor always refuses.
+        var (workspace, _) = Workspace(
+            "attempt-scenario-disk-low",
+            sha,
+            [command],
+            26990,
+            composeScenarioMinFreePercent: 100,
+            log: line => { lock (journal) journal.Add(line); });
+        await workspace.PrepareAsync(null!, default);
+
+        var exception = await Assert.ThrowsAsync<ReviewInfrastructureException>(
+            () => workspace.ExecutePlanAsync(default));
+
+        Assert.Equal(ComposeScenarioDiskAdmission.DiskLowClassification, exception.Classification);
+        Assert.Equal("ReviewInfra", exception.Evidence?.Outcome);
+        Assert.Contains("below the 100 % floor", exception.Message, StringComparison.Ordinal);
+        Assert.False(File.Exists(marker));
+        Assert.Contains(journal, line =>
+            line.StartsWith("review-compose-scenario-disk step=verify-scenario ", StringComparison.Ordinal)
+            && line.Contains("minFreePercent=100 decision=refuse", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_compose_scenario_above_the_floor_runs_and_logs_the_free_disk()
+    {
+        var sha = await SeedOriginAsync();
+        var marker = Path.Combine(_root, "compose-scenario-admitted");
+        var command = new ReviewCommandDto(
+            "verify-scenario",
+            "scenario",
+            PosixShell.RequirePath(),
+            ["-c", $"touch '{marker}' # scripts/scenario.sh --target compose --level full"]);
+        var journal = new List<string>();
+        var (workspace, _) = Workspace(
+            "attempt-scenario-disk-ok",
+            sha,
+            [command],
+            26995,
+            composeScenarioMinFreePercent: 0,
+            log: line => { lock (journal) journal.Add(line); });
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal("Pass", evidence.Outcome);
+        Assert.True(File.Exists(marker));
+        Assert.Contains(journal, line =>
+            line.StartsWith("review-compose-scenario-disk step=verify-scenario ", StringComparison.Ordinal)
+            && line.Contains("decision=admit", StringComparison.Ordinal)
+            && !line.Contains("freeBytes=unknown", StringComparison.Ordinal));
+    }
+
+    /// <summary>
     /// AGT-2820: four concurrent reviews sat on the same <c>dotnet test</c> at
     /// 0.0% CPU with nothing written for ten minutes and a host load average of
     /// 0.47. Each would have held its review slot for the full two-hour command
@@ -1798,7 +1866,9 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         IReadOnlyList<string>? preserveGlobs = null,
         string? codexCliBin = null,
         int commandSilenceWatchdogSeconds = 600,
-        int reviewNoCpuProgressSeconds = 900)
+        int reviewNoCpuProgressSeconds = 900,
+        int composeScenarioMinFreePercent = ComposeScenarioDiskAdmission.DefaultMinFreePercent,
+        Action<string>? log = null)
     {
         var repositoryId = TaskServerClient.RepositoryIdentity(_origin)!;
         var subject = new ReviewSubjectDto(
@@ -1851,8 +1921,9 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             HeartbeatSeconds = 30,
             CommandSilenceWatchdogSeconds = commandSilenceWatchdogSeconds,
             ReviewNoCpuProgressSeconds = reviewNoCpuProgressSeconds,
+            ComposeScenarioMinFreePercent = composeScenarioMinFreePercent,
         };
-        return (new RemoteReviewWorkspace(options, subject, lease, _ => { },
+        return (new RemoteReviewWorkspace(options, subject, lease, log ?? (_ => { }),
             _ => Task.FromResult<FailureFingerprintHistoryDto?>(null)), subject);
     }
 
