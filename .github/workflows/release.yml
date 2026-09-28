@@ -212,6 +212,8 @@ jobs:
             [agent-orchestrator-engine]=orchestrator-engine/Dockerfile
             [agent-studio-bff]=studio-bff/Dockerfile
             [agent-host]=runner/Dockerfile
+            [agent-operations-server]=operations-server/Dockerfile
+            [agent-operations-agent]=operations-agent/Dockerfile
           )
           printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           for name in "${!dockerfiles[@]}"; do
