@@ -633,6 +633,46 @@ public sealed class CapabilityAdmissionTests
             newer with { AdvertisedAt = observed.AddSeconds(-1) }, "runner-v2", default));
     }
 
+    [Fact]
+    public async Task Delayed_observation_cannot_advance_generation_over_newer_credential_metadata()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(Start);
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var key = CapabilityProtocol.ProviderAuthentication("claude");
+        await RegisterAndAdvertiseAsync(store, clock, "runner-v2", "instance-v2", "host-v2",
+            CapabilityProtocol.CodingExecutor, key);
+        var newerAt = clock.GetUtcNow().UtcDateTime.AddMinutes(1);
+        var newer = new CapabilityAdvertisementRequest("runner-v2", "instance-v2", 2,
+            newerAt, 180, 2, [new AdvertisedCapabilityDto(key, "provider-auth",
+                CredentialGeneration: "generation-b", CredentialObservedAt: newerAt,
+                ExpiryProvenance: "unknown", EffectiveSource: "environment-file")]);
+        await store.AdvertiseCapabilitiesAsync(newer, "runner-v2", default);
+
+        var delayedAt = newerAt.AddSeconds(-30);
+        var delayedAdvertisement = newer with
+        {
+            AdvertisedAt = delayedAt,
+            Generation = 3,
+            Capabilities = [new AdvertisedCapabilityDto(key, "provider-auth",
+                CredentialGeneration: "generation-a", CredentialObservedAt: delayedAt,
+                ExpiryProvenance: "unknown", EffectiveSource: "native-cli-store")],
+        };
+        await Assert.ThrowsAsync<TaskServerConflictException>(() =>
+            store.AdvertiseCapabilitiesAsync(delayedAdvertisement, "runner-v2", default));
+
+        var delayedCredential = delayedAdvertisement with { AdvertisedAt = newerAt.AddSeconds(10) };
+        await Assert.ThrowsAsync<TaskServerConflictException>(() =>
+            store.AdvertiseCapabilitiesAsync(delayedCredential, "runner-v2", default));
+
+        var capability = Assert.Single((await store.ListRunnerCapabilitySnapshotsAsync(default))
+            .Single(item => item.RunnerId == "runner-v2").Capabilities, item => item.Key == key);
+        Assert.Equal(newerAt, capability.AdvertisedAt);
+        Assert.Equal("generation-b", capability.CredentialGeneration);
+        Assert.Equal("environment-file", capability.EffectiveSource);
+    }
+
     private static async Task<ProjectDto> SeedTasksAsync(TaskServerStore store, int count)
     {
         var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest("Workspace"), "test", default);

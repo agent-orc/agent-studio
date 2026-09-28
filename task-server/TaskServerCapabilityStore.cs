@@ -52,16 +52,16 @@ public sealed partial class TaskServerStore
                 throw new TaskServerConflictException(
                     "stale-capability-advertisement",
                     $"Capability generation {request.Generation} is older than {currentGeneration}.");
+            // Observation time fences independently of the generation: a
+            // delayed advertisement must not advance the generation over newer
+            // metadata.
             var advertisedAt = request.AdvertisedAt.ToUniversalTime();
-            if (request.Generation == currentGeneration)
-            {
-                var latestAt = await ScalarAsync(connection,
-                    "SELECT MAX(advertised_at) FROM runner_capabilities WHERE runner_id = $runner;",
-                    ct, transaction, ("$runner", request.RunnerId));
-                if (latestAt is string prior && advertisedAt < Parse(prior))
-                    throw new TaskServerConflictException("stale-capability-advertisement",
-                        "A newer observation exists for this capability generation.");
-            }
+            var latestAt = await ScalarAsync(connection,
+                "SELECT MAX(advertised_at) FROM runner_capabilities WHERE runner_id = $runner;",
+                ct, transaction, ("$runner", request.RunnerId));
+            if (latestAt is string prior && advertisedAt < Parse(prior))
+                throw new TaskServerConflictException("stale-capability-advertisement",
+                    "A newer capability observation already exists for this runner.");
             if (advertisedAt > UtcNow.AddMinutes(2))
                 throw new ArgumentException("Capability advertisement time is too far in the future.");
             var freshUntil = advertisedAt.AddSeconds(request.FreshForSeconds);
@@ -72,6 +72,15 @@ public sealed partial class TaskServerStore
                 var key = NormalizeCapability(capability.Key);
                 if (key.Length == 0 || string.IsNullOrWhiteSpace(capability.Category))
                     throw new ArgumentException("Capability key and category are required.");
+                if (capability.CredentialObservedAt is { } credentialObserved &&
+                    await ScalarAsync(connection, """
+                        SELECT credential_observed_at FROM runner_capabilities
+                         WHERE runner_id = $runner AND capability_key = $key;
+                        """, ct, transaction, ("$runner", request.RunnerId), ("$key", key))
+                        is string priorObserved &&
+                    credentialObserved.ToUniversalTime() < Parse(priorObserved))
+                    throw new TaskServerConflictException("stale-capability-advertisement",
+                        $"A newer credential observation already exists for {key}.");
                 var advertisedStatus = capability.Status.Trim().ToLowerInvariant();
                 var tracksProbeHistory = key.StartsWith("provider-auth:", StringComparison.Ordinal);
                 var positiveRecovery = tracksProbeHistory

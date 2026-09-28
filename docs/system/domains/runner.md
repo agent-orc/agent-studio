@@ -788,8 +788,10 @@ rollout decision.
   expiry provenance, access-token expiry and safe evidence references. A native
   refreshable login's access-token expiry is never its session expiry. The
   daemon environment selects auth before native-file metadata is considered;
-  a shadowed file is reported separately. Task Server rejects older generation
-  or observation time so a delayed positive report cannot replace newer data.
+  a shadowed file is reported separately. Task Server rejects an older
+  generation, an older advertisement time even when the generation advances,
+  and an older per-capability credential observation time, so a delayed
+  positive report cannot replace newer data.
 - The monolith V1 Review compatibility mount accepts the Review service's
   `PUT /api/v1/runners/{runner-id}/capabilities` startup and refresh requests
   with the same advertisement and snapshot contracts as the standalone Task
