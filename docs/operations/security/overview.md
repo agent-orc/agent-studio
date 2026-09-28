@@ -68,14 +68,19 @@ that is already allowed to edit that project's checkout.
   down browser polling and SignalR before returning to the login gate.
 - Roles are intentionally small: owner manages identities and all projects,
   operator reads and mutates allowed projects, and viewer is read-only.
-  A non-empty project membership list restricts project routes. An empty list
-  means all projects in this single organization. Workspace task lists,
+  Operator and viewer are scoped roles. Their project membership list
+  restricts project routes; an empty list grants no project, and only the
+  explicit `*` entry grants every project in this single organization. The
+  route or addressed task decides the project; a `?project=` query value may
+  only narrow that decision and never replaces it. Workspace task lists,
   Runner status and feed data, registry data, and global search results are
   filtered to the same allowed-project set. Body-addressed task-set mutations
   (reorder, batch-move) carry their targets in the request body, so their
   handlers enforce membership on every affected task; a single-task route whose
   project cannot be resolved is denied rather than allowed, so an unresolved
-  project never becomes an authorization bypass.
+  project never becomes an authorization bypass. SignalR connections and
+  subscriptions honour the forced password change and join only the groups
+  of allowed projects.
 - Owners mint short-lived one-time Runner enrollment codes. Enrollment reveals
   one service credential once. The server stores only credential hashes.
   Credentials carry explicit scopes, optional expiry, last-use time, and

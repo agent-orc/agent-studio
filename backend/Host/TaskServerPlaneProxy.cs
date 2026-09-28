@@ -66,11 +66,13 @@ public static class TaskServerPlaneProxy
             app.MapMethods(
                 "/api/v1/{**path}",
                 ["GET", "HEAD", "OPTIONS"],
-                ForwardAsync);
+                ForwardAsync)
+                .WithMetadata(TaskServerPlaneProxyEndpoint.Instance);
             var unsafeProxy = app.MapMethods(
                 "/api/v1/{**path}",
                 ["POST", "PUT", "PATCH", "DELETE"],
-                ForwardAsync);
+                ForwardAsync)
+                .WithMetadata(TaskServerPlaneProxyEndpoint.Instance);
             unsafeProxy.Add(endpoint =>
             {
                 endpoint.Metadata.Add(new ExecutionRouteMetadata(ExecutionAdmissionPath.PostStep));
@@ -84,7 +86,8 @@ public static class TaskServerPlaneProxy
         app.MapMethods(
             "/api/v1/{**path}",
             ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-            ForwardAsync);
+            ForwardAsync)
+            .WithMetadata(TaskServerPlaneProxyEndpoint.Instance);
         return true;
     }
 
@@ -180,4 +183,16 @@ public static class TaskServerPlaneProxy
         }
         return string.IsNullOrWhiteSpace(direct) ? null : direct;
     }
+}
+
+/// <summary>
+/// Endpoint metadata marking a route that forwards to the standalone Task
+/// Server. The networked access middleware leaves bearer authentication to the
+/// upstream only when routing selected an endpoint carrying this marker.
+/// </summary>
+public sealed class TaskServerPlaneProxyEndpoint
+{
+    public static readonly TaskServerPlaneProxyEndpoint Instance = new();
+
+    private TaskServerPlaneProxyEndpoint() { }
 }
