@@ -82,13 +82,19 @@ public sealed class AttemptAuthorityService
 
     /// <summary>
     /// UTC time a ReviewAttempt was most recently claimed by an executor.
-    /// In-memory only (not persisted, reset on restart), the canonical-review
-    /// counterpart of <see cref="AutoReviewPostProcessingQueue.LastStartedAt"/>:
-    /// the stagnation watchdog uses it to tell "still draining" from "stuck"
-    /// on a fleet where cards leave the combined queue through a fenced claim
-    /// rather than the legacy post-processing worker.
+    /// In-memory only (not persisted, reset on restart);
+    /// <see cref="ReadReviewClaimActivity"/> combines it with persisted lease
+    /// acquisitions so the review-claim stagnation clock survives a restart.
     /// </summary>
     private DateTime? _lastReviewClaimAtUtc;
+
+    /// <summary>
+    /// The value <see cref="_lastReviewClaimAtUtc"/> held before the most
+    /// recent claim. <see cref="DeferReviewClaim"/> restores it, because a
+    /// claim the server relinquished before delivery is not drain progress
+    /// (AGT-2987).
+    /// </summary>
+    private DateTime? _previousReviewClaimAtUtc;
 
     public AttemptAuthorityService(
         IConfiguration configuration,
@@ -682,6 +688,7 @@ public sealed class AttemptAuthorityService
             SetReviewLeaseIsolation(review, fence);
             review.CurrentClaimDeliveryKey = deliveryKey;
             review.IdempotencyKeys.Add(deliveryKey);
+            _previousReviewClaimAtUtc = _lastReviewClaimAtUtc;
             _lastReviewClaimAtUtc = now;
             PersistLocked();
             return new AttemptWriteResult(AttemptWriteStatus.Accepted, review.AttemptId, ReviewAttempt: ToDto(review));
@@ -896,6 +903,70 @@ public sealed class AttemptAuthorityService
     }
 
     /// <summary>
+    /// AGT-2987: the claimable queue <see cref="ClaimNextReview"/> would have
+    /// offered, restricted to attempts whose sealed plan requires capabilities
+    /// the executor did not register. The claim endpoint turns a non-empty
+    /// answer into the typed <c>unclaimable-plan-requirements</c> reason
+    /// instead of a silent "nothing queued".
+    /// </summary>
+    public IReadOnlyList<AgentStudio.TaskServer.Contracts.ReviewUnclaimableAttemptDto> ListUnclaimableReviews(
+        IReadOnlySet<string> capabilities)
+    {
+        lock (_gate)
+        {
+            var now = _utcNow();
+            return _state.ReviewAttempts
+                .Where(review => IsCurrentReview(review) && !Terminal(review.State))
+                .Where(review => review.Lease is null || review.Lease.ExpiresAt <= now)
+                .Where(review => !IsUnmaterializableWithinGrace(review, now))
+                .Where(review => review.Subject.Plan is not null)
+                .Select(review => (Review: review, Missing: AgentStudio.TaskServer.Contracts.ReviewLibraryStepPolicy
+                    .MissingCapabilities(review.Subject.Plan!, capabilities)))
+                .Where(item => item.Missing.Count > 0)
+                .OrderBy(item => item.Review.CreatedAt)
+                .Select(item => new AgentStudio.TaskServer.Contracts.ReviewUnclaimableAttemptDto(
+                    item.Review.AttemptId,
+                    item.Review.TaskKey,
+                    item.Review.CreatedAt,
+                    item.Missing))
+                .ToArray();
+        }
+    }
+
+    /// <summary>
+    /// AGT-2987: the facts the review-claim stagnation policy needs. The last
+    /// claim is the later of the in-memory claim time and every persisted lease
+    /// acquisition, so a backend restart does not restart the stagnation clock.
+    /// </summary>
+    public ReviewClaimActivity ReadReviewClaimActivity()
+    {
+        lock (_gate)
+        {
+            var pending = _state.ReviewAttempts
+                .Where(IsCurrentReview)
+                .Where(review => review.State == AttemptLifecycleState.Pending)
+                .OrderBy(review => review.CreatedAt)
+                .ToArray();
+            DateTime? persistedClaim = _state.ReviewAttempts
+                .Where(review => review.Lease is not null)
+                .Select(review => (DateTime?)review.Lease!.AcquiredAt)
+                .Max();
+            var lastClaim = _lastReviewClaimAtUtc is null
+                ? persistedClaim
+                : persistedClaim is null || _lastReviewClaimAtUtc > persistedClaim
+                    ? _lastReviewClaimAtUtc
+                    : persistedClaim;
+            var oldest = pending.FirstOrDefault();
+            return new ReviewClaimActivity(
+                pending.Length,
+                oldest?.AttemptId,
+                oldest?.TaskKey,
+                oldest?.CreatedAt,
+                lastClaim);
+        }
+    }
+
+    /// <summary>
     /// Terminalizes a ReviewAttempt whose lease expired before a report was
     /// delivered, and mints an immediate successor attempt for the same
     /// immutable subject so the claim queue does not stall behind it. The
@@ -961,6 +1032,8 @@ public sealed class AttemptAuthorityService
 
             if (!Blank(review.CurrentClaimDeliveryKey))
                 review.IdempotencyKeys.Remove(review.CurrentClaimDeliveryKey!);
+            if (_lastReviewClaimAtUtc == review.Lease.AcquiredAt)
+                _lastReviewClaimAtUtc = _previousReviewClaimAtUtc;
             review.CurrentClaimDeliveryKey = null;
             review.Lease = null;
             review.State = AttemptLifecycleState.Pending;

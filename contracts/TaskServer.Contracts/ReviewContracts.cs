@@ -176,6 +176,12 @@ public sealed record ReviewClaimRequest(
     int AvailableSlots = 1,
     IReadOnlyList<string>? RequiredCapabilities = null);
 
+/// <summary>
+/// An empty review claim always carries <see cref="Reason"/> (AGT-2987). When
+/// pending attempts exist that this executor cannot claim, the reason is
+/// <see cref="ReviewClaimEmptyReasons.UnclaimablePlanRequirements"/> and the
+/// missing capability keys are named, so an empty answer can never be silent.
+/// </summary>
 public sealed record ReviewClaimResponse(
     string Status,
     ReviewAttemptDto? Attempt = null,
@@ -183,7 +189,70 @@ public sealed record ReviewClaimResponse(
     ReviewLeaseDto? Lease = null,
     string? Message = null,
     IReadOnlyList<string>? RequiredCapabilities = null,
-    IReadOnlyList<string>? CanaryCapabilities = null);
+    IReadOnlyList<string>? CanaryCapabilities = null,
+    string? Reason = null,
+    IReadOnlyList<string>? MissingCapabilities = null,
+    IReadOnlyList<ReviewUnclaimableAttemptDto>? UnclaimableAttempts = null);
+
+/// <summary>Typed cause of an empty review claim (AGT-2987).</summary>
+public static class ReviewClaimEmptyReasons
+{
+    public const string QueueEmpty = "queue-empty";
+    public const string NoAvailableSlot = "no-available-slot";
+    public const string ExecutorPaused = "executor-paused";
+    public const string QuotaDeferred = "quota-deferred";
+    public const string CapabilityAdmission = "capability-admission";
+    public const string UnclaimablePlanRequirements = "unclaimable-plan-requirements";
+}
+
+/// <summary>A pending attempt the claiming executor cannot take, and the keys it lacks.</summary>
+public sealed record ReviewUnclaimableAttemptDto(
+    string AttemptId,
+    string TaskKey,
+    DateTime CreatedAt,
+    IReadOnlyList<string> MissingCapabilities);
+
+/// <summary>
+/// Builds the empty claim answer both Task Server implementations return, so
+/// the unclaimable case reads the same on either side of the wire.
+/// </summary>
+public static class ReviewClaimEmptyResponses
+{
+    /// <summary>Upper bound of attempts named in one response; the count stays exact in the message.</summary>
+    public const int MaxNamedAttempts = 20;
+
+    public static ReviewClaimResponse Empty(string reason, string message)
+        => new("empty", Message: message, Reason: reason);
+
+    /// <summary>
+    /// The unclaimable answer when <paramref name="unclaimable"/> is not empty;
+    /// otherwise the fallback reason and message.
+    /// </summary>
+    public static ReviewClaimResponse ForQueue(
+        IReadOnlyList<ReviewUnclaimableAttemptDto> unclaimable,
+        string fallbackReason,
+        string fallbackMessage)
+    {
+        if (unclaimable.Count == 0) return Empty(fallbackReason, fallbackMessage);
+        var ordered = unclaimable
+            .OrderBy(item => item.CreatedAt)
+            .ThenBy(item => item.AttemptId, StringComparer.Ordinal)
+            .ToArray();
+        var missing = ordered
+            .SelectMany(item => item.MissingCapabilities)
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        var oldest = ordered[0];
+        return new ReviewClaimResponse(
+            "empty",
+            Message: $"{ordered.Length} pending ReviewAttempt(s) require capabilities this review executor did not "
+                     + $"register: {string.Join(", ", missing)}. Oldest: {oldest.AttemptId} ({oldest.TaskKey}).",
+            Reason: ReviewClaimEmptyReasons.UnclaimablePlanRequirements,
+            MissingCapabilities: missing,
+            UnclaimableAttempts: ordered.Take(MaxNamedAttempts).ToArray());
+    }
+}
 
 public sealed record ReviewLeaseRenewRequest(
     string ExecutorId,
