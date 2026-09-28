@@ -127,6 +127,9 @@ export interface TaskCompletionClaim {
   actor?: string | null;
   /** Delivery commit that proved containment; present only for `integrated-delivery`. */
   commitSha?: string | null;
+  resultSha?: string | null;
+  deliveryEpoch?: string | null;
+  targetRefFingerprint?: string | null;
   /** Integration branch the containment answer was computed against. */
   integrationBranch?: string | null;
   /** Repository-relative Dossier path for a code-free deliverable. */
@@ -518,6 +521,7 @@ export interface TaskInfo {
   mode?: TaskMode;
   /** Explicit declaration that this card expects no delivery branch. */
   noBranchExpected?: boolean;
+  requiresIntegration?: boolean | null;
   /** Whether the agent may use the web during this task. Mirrors backend `AllowWebAccess`. */
   allowWebAccess?: boolean;
   useOwnSession: boolean | null;
@@ -1450,6 +1454,7 @@ export interface CreateTaskRequest {
   mode?: TaskMode;
   /** Explicitly declare that this task expects no delivery branch. */
   noBranchExpected?: boolean;
+  requiresIntegration?: boolean | null;
   /** Web access. When omitted, defaults by mode (research = on, else off). */
   allowWebAccess?: boolean;
   /** Ownership-routing input. The backend resolves and validates the destination. */

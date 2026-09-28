@@ -7,7 +7,8 @@ internal static class DeliveryGenerationPolicy
         IReadOnlyList<TaskCommitInfo> commits,
         Func<string, bool> isAncestor,
         Func<string, bool> isReleased,
-        Func<string, bool> isContentIntegrated)
+        Func<string, bool> isContentIntegrated,
+        Func<string, bool>? isMappedToPublishedIntegration = null)
     {
         var currentGeneration = commits.Select(commit => commit.DeliveryGeneration ?? 0).DefaultIfEmpty().Max();
         return commits.Select((commit, index) =>
@@ -21,6 +22,10 @@ internal static class DeliveryGenerationPolicy
                 rule = CommitIntegrationRules.Superseded;
                 replacement = commit.SupersededBySha
                     ?? commits.LastOrDefault(candidate => candidate.DeliveryGeneration == currentGeneration)?.Sha;
+            }
+            else if (!ancestor && isMappedToPublishedIntegration?.Invoke(commit.Sha) == true)
+            {
+                rule = CommitIntegrationRules.IntegratedByContent;
             }
             else if (!ancestor && commit.DeliveryGeneration is null)
             {

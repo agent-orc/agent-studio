@@ -1159,7 +1159,7 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
     }
 
     [Fact]
-    public async Task PushIntegrationBranch_Success_AcceptsAnIntegratedHumanReviewCard_AndClearsItsParkedBlocker()
+    public async Task PushIntegrationBranch_Success_HoldsCardForHumanAcceptance_ThenClearsItsParkedBlocker()
     {
         // AGT-2838: the acceptance rail otherwise only notices a green
         // integration on its next periodic tick (AcceptanceRail:IntervalSeconds,
@@ -1269,7 +1269,10 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         var result = await runner.PushIntegrationBranchAsync("Fixture", "41", folder, repo, "develop");
         Assert.True(result.Success, result.Error);
 
-        await WaitUntilIndexed(() => scanner.FindJob("41", watchPath)?.State == TaskStates.Completed);
+        Assert.Equal(TaskStates.HumanReview, scanner.FindJob("41", watchPath)?.State);
+        var accepted = await transitions.MoveAsync("41", TaskStates.Completed, watchPath,
+            cause: TimelineActors.Human("owner"), reason: "Reviewed integrated delivery.");
+        Assert.Equal(MoveJobStatus.Success, accepted.Status);
 
         var moved = scanner.FindJob("41", watchPath)!;
         Assert.Equal(TaskStates.Completed, moved.State);
