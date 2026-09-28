@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using AgentStudio.Diagnostics;
 using AgentStudio.Pipeline;
 using Contract = AgentStudio.TaskServer.Contracts;
 
@@ -79,17 +80,55 @@ public static class RemoteReviewSettlementJournal
         }
     }
 
-    public static bool Prepare(string folder, RemoteReviewSettlementEntry entry)
+    /// <summary>
+    /// Journals the payload, settles the authority and releases the journal when
+    /// the authority refuses it, as one step per journal gate. A rejected or
+    /// interrupted request therefore never binds the attempt to its payload:
+    /// only an accepted report owns the journal.
+    /// </summary>
+    public static AttemptWriteResult PrepareAndSettle(
+        string folder,
+        RemoteReviewSettlementEntry entry,
+        Func<string?> acceptedIdempotencyKey,
+        Func<AttemptWriteResult> settle)
     {
         lock (Gate)
         {
+            var accepted = acceptedIdempotencyKey();
+            // An accepted report owns the journal. A different key cannot settle
+            // this attempt any more, so the authority answers it untouched.
+            if (accepted is not null && accepted != entry.IdempotencyKey) return settle();
             var existing = Read(folder, entry.AttemptId);
-            if (existing.Status == RemoteReviewSettlementReadStatus.Repair) return false;
-            if (existing.Entry is { } prior)
-                return prior.IdempotencyKey == entry.IdempotencyKey && prior.ReportSha256 == entry.ReportSha256;
-            Write(folder, entry with { DeliverySha256 = HashDelivery(entry.Delivery) });
-            return true;
+            var owned = existing.Entry is { } prior
+                        && prior.IdempotencyKey == entry.IdempotencyKey
+                        && prior.ReportSha256 == entry.ReportSha256;
+            if (!owned)
+            {
+                // Nothing was acknowledged for an unaccepted or unreadable journal:
+                // it is the orphan of a rejected or interrupted request.
+                if (accepted is not null) return settle();
+                Write(folder, entry);
+            }
+            var settled = settle();
+            if (settled.Status is not (AttemptWriteStatus.Accepted or AttemptWriteStatus.Duplicate))
+            {
+                // A journal left behind here stays an unaccepted orphan: the next
+                // report replaces it and the reconciler releases it.
+                try { Release(folder, entry.AttemptId); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    SilentCatch.Note(ex, "RemoteReviewSettlementJournal: orphan journal release is best-effort");
+                }
+            }
+            return settled;
         }
+    }
+
+    /// <summary>Deletes the journal of an attempt whose authority accepted no report.</summary>
+    public static void Release(string folder, string attemptId)
+    {
+        var path = PathFor(folder, attemptId);
+        if (File.Exists(path)) File.Delete(path);
     }
 
     public static void Write(string folder, RemoteReviewSettlementEntry entry)
@@ -99,7 +138,8 @@ public static class RemoteReviewSettlementJournal
         var temporary = path + ".tmp-" + Guid.NewGuid().ToString("N");
         try
         {
-            File.WriteAllText(temporary, JsonSerializer.Serialize(entry, Json));
+            File.WriteAllText(temporary, JsonSerializer.Serialize(
+                entry with { DeliverySha256 = HashDelivery(entry.Delivery) }, Json));
             File.Move(temporary, path, overwrite: true);
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
