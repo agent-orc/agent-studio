@@ -58,7 +58,11 @@ unit supplies the role cgroup policy described in
 Do not point the review root at `RUNNER_WORKDIR`.
 
 The Review Executor advertises Git/source-bundle, semantic, and vision
-capabilities. Each claimed ReviewAttempt receives a fresh workspace, cache,
+capabilities, and registers the `toolchain:dotnet`, `toolchain:node`, and
+`toolchain:playwright` keys for every tool its probe finds on the unit's
+`PATH`. Review plans require them; see the
+[review lane runbook](../review-lane-runbook.md) for the typed empty-claim
+reason and the review-claim stall alarm. Each claimed ReviewAttempt receives a fresh workspace, cache,
 temporary directory, eight-port block, Compose namespace, database namespace,
 and fenced cleanup lifecycle. Child processes start from a cleared environment.
 Only names in `RUNNER_REVIEW_CREDENTIAL_ENV` are admitted to cleared review
@@ -81,7 +85,11 @@ account, credential file, cgroup quota, and `RUNNER_REVIEW_WORKDIR`. Do not poin
 the review root at `RUNNER_WORKDIR`.
 
 The Review Executor advertises Git/source-bundle, semantic, and vision
-capabilities. Each claimed ReviewAttempt receives a fresh workspace, cache,
+capabilities, and registers the `toolchain:dotnet`, `toolchain:node`, and
+`toolchain:playwright` keys for every tool its probe finds on the unit's
+`PATH`. Review plans require them; see the
+[review lane runbook](../review-lane-runbook.md) for the typed empty-claim
+reason and the review-claim stall alarm. Each claimed ReviewAttempt receives a fresh workspace, cache,
 temporary directory, eight-port block, Compose namespace, database namespace,
 and fenced cleanup lifecycle. Child processes start from a cleared environment.
 Only names in `RUNNER_REVIEW_CREDENTIAL_ENV` are admitted to cleared review
