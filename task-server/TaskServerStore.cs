@@ -3271,6 +3271,7 @@ public sealed partial class TaskServerStore
                 error_detail TEXT,
                 attachments_json TEXT,
                 receipt_json TEXT,
+                metadata_json TEXT,
                 payload_sha256 TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS runners(
@@ -3798,6 +3799,7 @@ public sealed partial class TaskServerStore
         await EnsureColumnAsync(connection, "runner_capabilities", "evidence_excerpt", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "supported_models_json", "TEXT", ct);
         await EnsureColumnAsync(connection, "orchestration_runs", "task_version", "INTEGER NOT NULL DEFAULT 0", ct);
+        await EnsureColumnAsync(connection, "orchestrator_context_turns", "metadata_json", "TEXT", ct);
         await ExecuteAsync(connection, """
             INSERT INTO runtime_capacity_settings(
                 host_id, max_parallelism, target_load_percent, ramp_strategy,

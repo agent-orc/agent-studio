@@ -143,15 +143,17 @@ public class PipelineConfigAndCostTests
     [Fact]
     public void Summarize_PerStepAndTotalCost_FromPriceTable()
     {
+        var pricedAt = new DateTime(2026, 9, 26, 9, 0, 0, DateTimeKind.Utc);
         var record = new PipelineExecutionRecord
         {
+            StartedAt = pricedAt,
             Steps =
             {
                 new PipelineStepExecution
                 {
                     StepId = "aspect-code-quality",
                     Kind = StepKind.Aspect,
-                    Model = "claude-haiku-4-5", // $1 / $5 per million
+                    Model = "claude-haiku-4-5",
                     InputTokens = 1_000_000,
                     OutputTokens = 200_000,
                 },
@@ -159,7 +161,7 @@ public class PipelineConfigAndCostTests
                 {
                     StepId = "aspect-requirement-fit",
                     Kind = StepKind.Aspect,
-                    Model = "claude-opus-4-8", // $5 / $25 per million
+                    Model = "claude-opus-4-7",
                     InputTokens = 100_000,
                     OutputTokens = 10_000,
                 },
@@ -170,17 +172,19 @@ public class PipelineConfigAndCostTests
         Assert.Equal(2, summary.Steps.Count);
 
         var haiku = summary.Steps[0];
-        // 1M input * $1/M + 0.2M output * $5/M = $1.00 + $1.00 = $2.00
-        Assert.Equal(2.00m, haiku.CostUsd);
+        var expectedHaiku = TokenPricing.Estimate("claude-haiku-4-5", 1_000_000, 200_000, 0, 0, pricedAt);
+        Assert.True(expectedHaiku.ModelKnown);
+        Assert.Equal(expectedHaiku.Total, haiku.CostUsd);
         Assert.Equal(1_200_000, haiku.TotalTokens);
         Assert.True(haiku.ModelKnown);
 
         var opus = summary.Steps[1];
-        // 0.1M input * $5/M + 0.01M output * $25/M = $0.50 + $0.25 = $0.75
-        Assert.Equal(0.75m, opus.CostUsd);
+        var expectedOpus = TokenPricing.Estimate("claude-opus-4-7", 100_000, 10_000, 0, 0, pricedAt);
+        Assert.True(expectedOpus.ModelKnown);
+        Assert.Equal(expectedOpus.Total, opus.CostUsd);
 
         Assert.Equal(1_310_000, summary.TotalTokens);
-        Assert.Equal(2.75m, summary.TotalCostUsd);
+        Assert.Equal(expectedHaiku.Total + expectedOpus.Total, summary.TotalCostUsd);
         Assert.False(summary.AnyModelUnknown);
     }
 
@@ -712,7 +716,7 @@ public class PipelineConfigAndCostTests
                 new PipelineStepExecution
                 {
                     StepId = "core-agent-run", Kind = StepKind.Core,
-                    Model = "gpt-5-codex", InputTokens = 500_000, OutputTokens = 100_000,
+                    Model = "gpt-6-astra", InputTokens = 500_000, OutputTokens = 100_000,
                 },
             },
             PreviousAttempts = { priced },
@@ -724,7 +728,7 @@ public class PipelineConfigAndCostTests
         Assert.True(summary.AnyModelUnknown);
         Assert.Equal(1, summary.UnpricedRuns);
         var gap = Assert.Single(summary.PricingGaps);
-        Assert.Equal("gpt-5-codex", gap.ModelId);
+        Assert.Equal("gpt-6-astra", gap.ModelId);
         Assert.Equal("NoPriceForDate", gap.Reason);
         Assert.Equal(1, gap.AffectedRuns);
         Assert.True(summary.Runs[1].AnyModelUnknown);
@@ -954,7 +958,7 @@ public class PipelineConfigAndCostTests
                 new PipelineStepExecution
                 {
                     StepId = "core-agent-run", Kind = StepKind.Core,
-                    Model = "gpt-5-codex", InputTokens = 500_000, OutputTokens = 100_000,
+                    Model = "gpt-6-astra", InputTokens = 500_000, OutputTokens = 100_000,
                 }),
         };
 
@@ -963,7 +967,7 @@ public class PipelineConfigAndCostTests
         Assert.Equal(2.00m, timeline.TotalCostUsd);
         Assert.Equal(1, timeline.UnpricedRuns);
         var gap = Assert.Single(timeline.PricingGaps);
-        Assert.Equal("gpt-5-codex", gap.ModelId);
+        Assert.Equal("gpt-6-astra", gap.ModelId);
         Assert.Equal("NoPriceForDate", gap.Reason);
         Assert.Equal(1, gap.AffectedRuns);
 

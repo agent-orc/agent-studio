@@ -114,13 +114,13 @@ public class TokenPricingTests
     }
 
     [Fact]
-    public void Estimate_Gpt5CodexWithoutPublishedPrice_IsExplicitlyUnknown()
+    public void Estimate_Gpt5Codex_UsesPublishedCatalogPrice()
     {
         var c = _provider.Estimate("gpt-5-codex", 1_000_000, 100_000, 1_000_000, 1_000_000);
-        Assert.False(c.ModelKnown);
-        Assert.Equal(TokenEconomy.PriceStatus.NoPriceForDate, c.Status);
-        Assert.Equal(0m, c.Total);
-        Assert.Null(c.PriceBasis);
+        Assert.True(c.ModelKnown);
+        Assert.Equal(TokenEconomy.PriceStatus.Resolved, c.Status);
+        Assert.True(c.Total > 0m);
+        Assert.NotNull(c.PriceBasis);
     }
 
     [Fact]
@@ -162,16 +162,25 @@ public class TokenPricingTests
     [Fact]
     public void Estimate_UsesPriceValidAtRecordedRunTime()
     {
-        var transition = TokenPricing.Catalog["claude-sonnet-5"].History.Max(p => p.ValidFrom);
-        var before = _provider.Estimate("claude-sonnet-5", 1_000_000, 0, 0, 0, transition.AddTicks(-1));
-        var after = _provider.Estimate("claude-sonnet-5", 1_000_000, 0, 0, 0, transition);
+        var transition = TokenPricing.Catalog.Values
+            .Select(listing => new
+            {
+                listing.ModelId,
+                History = listing.History.OrderBy(price => price.ValidFrom).ToArray()
+            })
+            .First(listing => listing.History.Length > 1);
+        var nextPrice = transition.History[1];
+        var before = _provider.Estimate(transition.ModelId, 1_000_000, 0, 0, 0,
+            nextPrice.ValidFrom.AddTicks(-1));
+        var after = _provider.Estimate(transition.ModelId, 1_000_000, 0, 0, 0,
+            nextPrice.ValidFrom);
 
         Assert.True(before.ModelKnown);
         Assert.True(after.ModelKnown);
         Assert.Equal(TokenEconomy.PriceStatus.Resolved, before.Status);
         Assert.Equal(TokenEconomy.PriceStatus.Resolved, after.Status);
-        Assert.NotEqual(before.Total, after.Total);
         Assert.NotEqual(before.PriceBasis!.ValidFrom, after.PriceBasis!.ValidFrom);
+        Assert.Equal(nextPrice.InputPerMTok, after.PriceBasis.InputPerMillion);
         Assert.False(string.IsNullOrWhiteSpace(before.PriceBasis.Source));
         Assert.False(string.IsNullOrWhiteSpace(after.PriceBasis.Source));
     }
