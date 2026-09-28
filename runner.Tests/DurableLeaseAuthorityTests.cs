@@ -53,7 +53,8 @@ public sealed class DurableLeaseAuthorityTests
         };
         using var client = new TaskServerClient(http, options.RunnerId);
         using var stop = new CancellationTokenSource();
-        var heartbeat = new LeaseHeartbeat(client, options, lease, _ => { });
+        // Pin the clock to the lease window; the real clock has moved past it.
+        var heartbeat = new LeaseHeartbeat(client, options, lease, _ => { }, utcNow: () => now);
 
         await heartbeat.RunAsync(stop, CancellationToken.None);
 
