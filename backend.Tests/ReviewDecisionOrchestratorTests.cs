@@ -1875,6 +1875,46 @@ public class ReviewDecisionOrchestratorTests : IDisposable
             o.PerformerCliType == null);
     }
 
+    [Theory]
+    [InlineData("Infra crash recovery loses pending state")]
+    [InlineData("The product returns no parseable verdict when input is valid")]
+    public async Task TaskDone_ProductBlockWithInfrastructureWords_ReissuesForCoding(string summary)
+    {
+        SeedReviewJobWithDone("product-block");
+        var orchestrator = BuildOrchestratorWithAspects(aspect => aspect == "code-quality"
+            ? $"[[ASPECT_VERDICT: status=block; summary={summary}]]\n[[TASK_DONE]]"
+            : "[[ASPECT_VERDICT: status=pass; summary=ok]]\n[[TASK_DONE]]");
+
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+
+        var folder = Path.Combine(_watchPath, TaskStates.Ready, "product-block");
+        Assert.True(Directory.Exists(folder));
+        Assert.Equal(ReviewDecisionKind.Reissue, ReadOnlyDecisionRecord().Kind);
+        Assert.Contains(summary, File.ReadAllText(Path.Combine(folder, "orchestrator-follow-up.md")));
+        Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.Escalated, "product-block")));
+    }
+
+    [Fact]
+    public async Task TaskDone_ExplicitUnparseableMarker_EscalatesWithoutCodingRound()
+    {
+        SeedReviewJobWithDone("unparseable-review");
+        var calls = 0;
+        var orchestrator = BuildOrchestratorWithAspects(aspect =>
+        {
+            if (aspect != "code-quality") return "[[ASPECT_VERDICT: status=pass; summary=ok]]\n[[TASK_DONE]]";
+            calls++;
+            return "Reviewer unavailable.";
+        });
+
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+
+        Assert.Equal(2, calls);
+        Assert.Equal(ReviewDecisionKind.Escalate, ReadOnlyDecisionRecord().Kind);
+        var folder = Path.Combine(_watchPath, TaskStates.Escalated, "unparseable-review");
+        Assert.Contains("review:unparseable", File.ReadAllText(Path.Combine(folder, "aspect-code-quality.md")));
+        Assert.False(File.Exists(Path.Combine(folder, "orchestrator-follow-up.md")));
+    }
+
     [Fact]
     public async Task TaskDone_AspectVerdictInfraCrash_EscalatesEnvironmental_WithoutBudgetBurn()
     {

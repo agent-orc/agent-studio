@@ -70,6 +70,15 @@ public sealed record ReviewPreparationCommandDto(
     IReadOnlyList<ReviewDependencyScopeDto>? DependencyScopes = null,
     ReviewLibraryStepDto? LibraryStep = null);
 
+public sealed record ScopedReviewPlanDto(
+    bool Enabled,
+    string FromAttemptId,
+    string PreviousResultSha,
+    string PreviousIntegrationTipSha,
+    int MaximumDeltaFiles,
+    IReadOnlyList<string> FindingAspects,
+    IReadOnlyList<ReviewVerdictDto> PreviousVerdicts);
+
 public sealed record ReviewCommandDto(
     string StepId,
     string Aspect,
@@ -96,7 +105,10 @@ public sealed record ReviewPlanDto(
     IReadOnlyList<ReviewPreparationCommandDto>? Preparation = null,
     IReadOnlyList<string>? PreserveGlobs = null,
     string? BuildProfileFingerprint = null,
-    int LibraryVersion = 0);
+    int LibraryVersion = 0,
+    string? CarriedOverFrom = null,
+    IReadOnlyList<ReviewVerdictDto>? CarriedVerdicts = null,
+    ScopedReviewPlanDto? ScopedReview = null);
 
 public sealed record CreateReviewSubjectRequest(
     string TaskId,
@@ -396,7 +408,8 @@ public sealed record ReviewVerdictDto(
     string Summary,
     string? EvidenceChecked = null,
     string? Missing = null,
-    DeliveryFailureDiagnosisResult? Diagnosis = null);
+    DeliveryFailureDiagnosisResult? Diagnosis = null,
+    string? CarriedOverFrom = null);
 
 /// <summary>
 /// Enforces the citation contract for semantic review blocks. A model may

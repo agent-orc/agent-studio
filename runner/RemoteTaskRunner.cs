@@ -102,7 +102,8 @@ public sealed class RemoteTaskRunner
         string? continuationBaseSha = null,
         AgentStudio.TaskServer.Contracts.SessionContinuationLedgerEntry? previousSession = null,
         AgentStudio.TaskServer.Contracts.MechanicalRoundDelta? mechanicalDelta = null,
-        string? freshRunReason = null)
+        string? freshRunReason = null,
+        IReadOnlyList<string>? requiredCapabilities = null)
     {
         var isProjectClone = !string.IsNullOrWhiteSpace(projectId);
         if (isProjectClone && string.IsNullOrWhiteSpace(repositoryUrl))
@@ -111,6 +112,13 @@ public sealed class RemoteTaskRunner
                 $"remote-runner-project-not-remote-capable projectId={projectId ?? "unknown"} " +
                 $"task={taskKey} reason=repository-url-not-configured");
             await ReleaseAsync(lease, CancellationToken.None);
+            return 2;
+        }
+        if (!WorkstationProfile.TryAdmitClaim(
+                _options, repositoryUrl, requiredCapabilities, out var workstationReason))
+        {
+            _log($"workstation claim rejected before execution task={taskKey} reason={workstationReason}");
+            await ReleaseWithRetryAsync(lease, "workstation-admission-rejected");
             return 2;
         }
 
@@ -1746,11 +1754,13 @@ public sealed class RemoteTaskRunner
     {
         var resultsDir = ResultsDir(taskKey);
         var observed = ObserveResultFiles(resultsDir);
+        var previewIssues = FilterPreviewArtifacts(observed);
         var (selected, skipped) = ArtifactTransferPolicy.Select(resultsDir, observed, limits);
-        if (skipped.Count > 0)
+        if (skipped.Count > 0 || previewIssues.Count > 0)
         {
-            UpdateDeliverablesArtifactPolicy(resultsDir, skipped, limits);
+            UpdateDeliverablesArtifactPolicy(resultsDir, skipped.Concat(previewIssues).ToArray(), limits);
             observed = ObserveResultFiles(resultsDir);
+            previewIssues = FilterPreviewArtifacts(observed);
             (selected, skipped) = ArtifactTransferPolicy.Select(resultsDir, observed, limits);
         }
 
@@ -1770,7 +1780,30 @@ public sealed class RemoteTaskRunner
             _log(
                 $"durably journaled artifact manifest files={manifest.Count} skipped={skipped.Count}");
         }
-        return new ArtifactTransferPlan(limits, prepared, skipped, artifactManifest);
+        return new ArtifactTransferPlan(limits, prepared, skipped.Concat(previewIssues).ToArray(), artifactManifest);
+    }
+
+    private List<ArtifactTransferIssue> FilterPreviewArtifacts(
+        List<(string FullPath, string RelativePath, long SizeBytes)> observed)
+    {
+        var issues = new List<ArtifactTransferIssue>();
+        foreach (var file in observed.Where(file => string.Equals(
+                     file.RelativePath, "preview-url.json", StringComparison.OrdinalIgnoreCase)).ToArray())
+        {
+            var valid = file.SizeBytes <= 4096
+                        && (File.GetAttributes(file.FullPath) & FileAttributes.ReparsePoint) == 0
+                        && WorkstationProfile.TryValidatePreviewArtifact(
+                            File.ReadAllBytes(file.FullPath),
+                            _options.WorkstationPreview,
+                            DateTimeOffset.UtcNow,
+                            out _);
+            if (valid) continue;
+            observed.Remove(file);
+            issues.Add(new ArtifactTransferIssue(
+                "results/preview-url.json", file.SizeBytes,
+                "preview URL is outside the declared origin, reachability, or lifetime"));
+        }
+        return issues;
     }
 
     private async Task TransferResultsSafeAsync(

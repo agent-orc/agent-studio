@@ -2,7 +2,8 @@
 
   <!--
     Standalone agent host (RM-5, Runner-Split C). A single self-contained
-    console process that runs on a Linux host and consumes the local Studio's
+    console process that runs on Linux or a Windows workstation and consumes the
+    Task Server's
     Task-Server API only (REST + lease/heartbeat + log/artifact upload). It owns
     no task state: code arrives via git origin, results leave via the upload +
     external-completion endpoints. See docs/operations/setup/linux-runner-host.md.
