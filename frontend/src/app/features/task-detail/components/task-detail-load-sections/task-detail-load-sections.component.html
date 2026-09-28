@@ -18,7 +18,7 @@
 </header>
 
 @if (core(); as task) {
-  <div class="task-core" data-testid="task-core" [attr.data-core-version]="task.coreVersion" aria-live="polite">
+  <div class="task-core" data-testid="task-core" [attr.data-core-id]="task.id" [attr.data-core-version]="task.coreVersion" aria-live="polite">
     <section class="task-core__section" data-testid="task-core-state">
       <h2>State and blockers</h2>
       <p>{{ laneLabel(task.lane) }} · {{ task.taskType }} · {{ task.mode }}</p>

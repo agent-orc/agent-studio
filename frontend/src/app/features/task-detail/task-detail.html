@@ -1,26 +1,5 @@
 <div class="detail">
-  <div class="detail__resource-status" aria-live="polite" data-testid="task-resource-status">
-    @if (resourceStates().documents.phase === 'unavailable' || resourceStates().documents.phase === 'error' || resourceStates().documents.phase === 'stale') {
-      <p>Documents unavailable: {{ resourceReasonLabel(resourceStates().documents.reason) }}
-        <button type="button" (click)="retryDocuments()">Retry documents</button></p>
-    }
-    @if (resourceStates().git.phase === 'unavailable' || resourceStates().git.phase === 'error' || resourceStates().git.phase === 'stale') {
-      <p>Git information unavailable: {{ resourceReasonLabel(resourceStates().git.reason) }}
-        <button type="button" (click)="retryResource('git')">Retry Git</button></p>
-    }
-    @if (resourceStates().usage.phase === 'unavailable' || resourceStates().usage.phase === 'error' || resourceStates().usage.phase === 'stale') {
-      <p>Usage information unavailable: {{ resourceReasonLabel(resourceStates().usage.reason) }}
-        <button type="button" (click)="retryResource('usage')">Retry usage</button></p>
-    }
-    @if (resourceStates().review.phase === 'unavailable' || resourceStates().review.phase === 'error' || resourceStates().review.phase === 'stale') {
-      <p>Review information unavailable: {{ resourceReasonLabel(resourceStates().review.reason) }}
-        <button type="button" (click)="retryResource('review')">Retry review</button></p>
-    }
-    @if (resourceStates().history.phase === 'unavailable' || resourceStates().history.phase === 'error' || resourceStates().history.phase === 'stale') {
-      <p>History unavailable: {{ resourceReasonLabel(resourceStates().history.reason) }}
-        <button type="button" (click)="retryResource('history')">Retry history</button></p>
-    }
-  </div>
+  <app-task-resource-status />
   <app-detail-header
     #detailHeader
     [info]="detail().info"

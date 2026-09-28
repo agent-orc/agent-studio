@@ -1,7 +1,7 @@
 import { Injectable, signal, inject } from '@angular/core';
 import { HttpClient, HttpErrorResponse, HttpHeaders, HttpParams } from '@angular/common/http';
 import { catchError, finalize, map } from 'rxjs';
-import type { TaskCore, TaskResource, ResourceName } from '../features/task-detail';
+import type { TaskCore, TaskResource, ResourceName } from '../models/task-core.model';
 import type {
   ArchivedTasksResponse,
   BatchMoveItemInput,
@@ -712,7 +712,7 @@ export class TaskService {
     });
   }
 
-  getDetailResource<T>(jobId: string, project: string, coreVersion: number,
+  getDetailResource<T>(jobId: string, project: string, coreVersion: string,
     resource: ResourceName, name?: 'prompt' | 'status', evidence = false) {
     let params = new HttpParams().set('project', project).set('generation', coreVersion);
     if (name) params = params.set('name', name);

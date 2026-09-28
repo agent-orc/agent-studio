@@ -54,7 +54,7 @@ function core() {
     title: 'Heavy task with many runs and artifacts', kind: 'task',
     taskType: 'chore', lane: '5-human-review', archiveState: null,
     enteredLaneAt: '2026-08-11T10:00:00Z', order: 1, mode: 'coding',
-    released: false, pendingIntent: false, coreVersion: 7,
+    released: false, pendingIntent: false, coreVersion: '7',
     pins: { model: 'gpt-5.2-codex', modelExplicit: true,
       thinkingLevel: null, thinkingLevelExplicit: false, cliType: 'codex',
       contextMode: null, useOwnSession: null, allowWebAccess: false,
@@ -80,7 +80,7 @@ function core() {
 
 function resource(name: string, data: unknown) {
   return { id: TASK_ID, taskKey: TASK_KEY, projectId: 'fixture', attemptId: 'attempt-1',
-    coreVersion: 7, resource: name, version: 'v1', computedAt: '2026-08-11T10:00:00Z',
+    coreVersion: '7', resource: name, version: 'v1', computedAt: '2026-08-11T10:00:00Z',
     state: 'ready', data, reason: null };
 }
 
@@ -329,7 +329,39 @@ test('opens a public task URL before any board response arrives', async ({ page 
   } finally {
     releaseBoard();
     releaseDocuments();
+    // Gated handlers may still be settling; do not let them hold teardown.
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
   }
+});
+
+test('resolves a public task URL on the server when no project owns its key prefix', async ({ page }) => {
+  await mockApplication(page);
+  const project = (id: string, shortCode: string, storage: string) => ({
+    sourceType: 'local-folder', id, displayName: id, shortCode, workspaceId: 'workspace',
+    color: null, cliDefault: 'codex', modelDefault: null, sortOrder: 0,
+    storageLocation: storage, repositoryPath: storage, rootPath: storage,
+    repositoryUrl: null, urls: [], archived: false, createdAt: '2026-08-11T08:00:00Z',
+  });
+  await page.route('**/api/workspaces**', route => json(route, [{
+    id: 'workspace', displayName: 'Workspace', sortOrder: 0, isDefault: true,
+    color: null, createdAt: '2026-08-11T08:00:00Z',
+    projects: [project('fixture', 'FIX', WATCH_PATH), project('other', 'OTH', 'C:/fixtures/other')],
+  }]));
+  let coreRequests = 0;
+  await page.route('**/api/tasks/*/core**', route => { coreRequests++; return json(route, core()); });
+  await page.route('**/api/tasks/AGT-2577', route => json(route, {
+    info: task(), promptMarkdown: '# Heavy task\n\nResolved by the server.', promptHistory: [],
+    titleHistory: [], statusMarkdown: 'Ready for review.', contextUsage: null, log: [],
+    summaryState: null, reviewEvidence: [],
+  }));
+
+  await page.goto('/#/tasks/AGT-2577');
+  await dismissDevErrorDialog(page);
+
+  await expect(page.getByTestId('studio-task')).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Heavy task with many runs and artifacts/ }).first()).toBeVisible();
+  await expect(page.locator('app-detail-load-error')).toHaveCount(0);
+  expect(coreRequests).toBe(0);
 });
 
 test('measures thirty cached-core browser switches without waiting for documents', async ({ page }) => {
@@ -423,6 +455,13 @@ test('keeps the task head and gives every failed section a retry', async ({ page
       ? json(route, { title: 'Temporary failure' }, 503)
       : json(route, core());
   });
+  // Hold documents so the retried core stays on screen long enough to assert.
+  let releaseDocuments!: () => void;
+  const documentGate = new Promise<void>(resolve => { releaseDocuments = resolve; });
+  await page.route(`**/api/tasks/${TASK_ID}/details/documents**`, async route => {
+    await documentGate;
+    await json(route, { error: 'released' }, 503);
+  });
 
   await page.goto('/');
   await dismissDevErrorDialog(page);
@@ -446,4 +485,6 @@ test('keeps the task head and gives every failed section a retry', async ({ page
   await page.getByTestId('task-detail-section-retry-activity').click();
   await expect(page.getByTestId('task-core')).toBeVisible();
   expect(attempt).toBe(2);
+  releaseDocuments();
+  await expect(page.getByTestId('task-resource-retry-documents')).toBeVisible();
 });

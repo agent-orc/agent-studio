@@ -1,5 +1,6 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { TaskDetailLoadSectionsComponent } from './task-detail-load-sections.component';
+import { TaskDetailLoadSectionsComponent, corePainted } from './task-detail-load-sections.component';
+import type { TaskCore } from '../../../../models/task-core.model';
 
 describe('TaskDetailLoadSectionsComponent', () => {
   let fixture: ComponentFixture<TaskDetailLoadSectionsComponent>;
@@ -29,7 +30,7 @@ describe('TaskDetailLoadSectionsComponent', () => {
     fixture.componentRef.setInput('core', {
       state: 'ready', projectId: 'fixture', id: 'task', taskKey: 'watch::task',
       key: 'AGT-2577', title: 'Heavy task', lane: '5-human-review',
-      taskType: 'chore', mode: 'coding', order: 2, coreVersion: 7,
+      taskType: 'chore', mode: 'coding', order: 2, coreVersion: '7',
       blocking: { dependencyBlocked: false },
       pins: { model: 'pinned-model', modelExplicit: true, thinkingLevel: null,
         thinkingLevelExplicit: false, cliType: 'codex' },
@@ -48,6 +49,33 @@ describe('TaskDetailLoadSectionsComponent', () => {
       .toContain('Status head');
     expect(root.querySelector('[data-testid="task-core"]')?.textContent)
       .toContain('Prompt head');
+  });
+
+  it('accepts core readiness only for the painted generation with every section filled', () => {
+    const core = {
+      state: 'ready', projectId: 'fixture', id: 'task', taskKey: 'watch::task',
+      key: 'AGT-2577', title: 'Heavy task', lane: '5-human-review',
+      taskType: 'chore', mode: 'coding', order: 2, coreVersion: '7',
+      blocking: { dependencyBlocked: false },
+      pins: { model: null, modelExplicit: false, thinkingLevel: null,
+        thinkingLevelExplicit: false, cliType: null },
+      runtime: { executionStatus: null, location: 'none', attemptId: null, heartbeatAt: null },
+      statusSummary: { text: null }, prompt: { text: null, cursor: null },
+      timeline: { events: [] },
+    } as unknown as TaskCore;
+    fixture.componentRef.setInput('core', core);
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+
+    // Explicit empty states count as painted content.
+    expect(corePainted(root, core)).toBe(true);
+    expect(root.querySelector('[data-testid="task-core-timeline"]')?.textContent).toContain('No timeline events yet.');
+    // A DOM that still shows another generation or task is not ready.
+    expect(corePainted(root, { ...core, coreVersion: '8' })).toBe(false);
+    expect(corePainted(root, { ...core, id: 'other' })).toBe(false);
+    // A section reduced to its heading is not painted.
+    root.querySelector('[data-testid="task-core-prompt"] pre')?.remove();
+    expect(corePainted(root, core)).toBe(false);
   });
 
   it('keeps each section visible with a retry action after failure', () => {

@@ -1,4 +1,4 @@
-import { DestroyRef, Injectable, computed, effect, inject, signal } from '@angular/core';
+import { DestroyRef, Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
 import { Observable, Subscription, timeout } from 'rxjs';
 import { TaskDetail, TaskInfo, TaskState } from '../../../models/task.model';
 import { TaskService } from '../../../services/task.service';
@@ -17,8 +17,8 @@ import {
 } from './task-url';
 import { ProjectLookupService } from '../../../services/project-lookup.service';
 import type { TaskCore, TaskDocumentData, TaskResource, ResourceName,
-  TaskUsageData, TaskReviewData, TaskHistoryData, TaskGitData, ResourcePhase } from './task-core.model';
-import { emptyDetail } from './task-core.model';
+  TaskUsageData, TaskReviewData, TaskHistoryData, TaskGitData } from '../../../models/task-core.model';
+import { emptyDetail, idleResources, type ResourcePhase, type ResourceStates } from './task-core.model';
 
 export interface TaskDetailLoadError {
   taskLabel: string;
@@ -26,6 +26,26 @@ export interface TaskDetailLoadError {
 }
 
 const TASK_PAGER_HISTORY_STATE = 'studioTaskPager';
+
+interface CoreOpenOptions {
+  /** Reuse the current task tab once the core is accepted. */
+  replaceTab?: boolean;
+  /** Runs once, when the first core of this open is painted. */
+  onAccepted?: (core: TaskCore) => void;
+  /** Takes over a 404 when the project was inferred rather than known. */
+  onNotFound?: () => void;
+}
+
+function httpStatus(error: unknown): number {
+  return typeof error === 'object' && error !== null && 'status' in error
+    ? Number((error as { status: unknown }).status) : 0;
+}
+
+/** Run `work` after the browser had one frame to paint the current state. */
+function afterNextPaint(work: () => void): void {
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => setTimeout(work, 0));
+  else setTimeout(work, 0);
+}
 
 interface TaskBrowserHistoryState {
   [TASK_PAGER_HISTORY_STATE]?: LanePagerSnapshot | null;
@@ -63,6 +83,9 @@ export class TaskSelectionService {
   /** How many slots ahead of the current pager index to warm. */
   private static readonly PREFETCH_LOOKAHEAD = 2;
   private static readonly DETAIL_TIMEOUT_MS = 15_000;
+  private static readonly WARMING_RETRY_MS = 600;
+  /** Longest wait for the project registry before a public URL is resolved server-side. */
+  private static readonly REGISTRY_WAIT_MS = 3_000;
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -70,6 +93,10 @@ export class TaskSelectionService {
       window.addEventListener('popstate', onPopState);
       this.destroyRef.onDestroy(() => window.removeEventListener('popstate', onPopState));
     }
+    this.destroyRef.onDestroy(() => {
+      this.openDetailToken++;
+      this.cancelRequests();
+    });
 
     // Ensure the lane-pager snapshot covers the currently selected job.
     // `openDetail` captures synchronously on the board-click path, so this
@@ -108,10 +135,11 @@ export class TaskSelectionService {
       this.lastEnsuredJobKey = taskKey;
     });
 
-    // Detail prefetch: warm the next 1..PREFETCH_LOOKAHEAD entries in the
-    // current pager snapshot whenever it changes. This is what makes the
+    // Core prefetch: warm the bounded core of the next 1..PREFETCH_LOOKAHEAD
+    // entries in the current pager snapshot whenever it changes, and abort
+    // lookahead requests that fell out of the window. This is what makes the
     // accept -> next-task navigation feel instant: by the time the user
-    // clicks Mark-as-Done, the next peer's TaskDetail is already cached.
+    // clicks Mark-as-Done, the next peer's core is already cached.
     effect(() => {
       const snap = this.pager.snapshot();
       if (!snap) return;
@@ -128,15 +156,16 @@ export class TaskSelectionService {
       this.prefetch.keepLookahead(keep);
     });
 
+    // A public URL opened before the project registry arrived resumes on
+    // the core path as soon as it lands (see `awaitRegistry`).
     effect(() => {
-      const projects = this.projectLookup.allProjects();
-      const pending = this.pendingCoreReference;
-      if (!pending || projects.length === 0) return;
-      queueMicrotask(() => {
-        if (this.pendingCoreReference !== pending) return;
-        this.pendingCoreReference = null;
-        if (taskReferenceFromUrl(new URL(window.location.href)) === pending)
-          this.restoreFromUrl();
+      if (!this.projectLookup.loaded()) return;
+      untracked(() => {
+        const wait = this.registryWait;
+        if (!wait) return;
+        clearTimeout(wait.timer);
+        this.registryWait = null;
+        if (wait.token === this.openDetailToken) wait.resume();
       });
     });
   }
@@ -144,7 +173,7 @@ export class TaskSelectionService {
   private lastEnsuredJobKey: string | null = null;
   private pendingTaskTabReplacement: string | null = null;
   private browserHistoryTaskKey: string | null = null;
-  private pendingCoreReference: string | null = null;
+  private registryWait: { token: number; resume: () => void; timer: ReturnType<typeof setTimeout> } | null = null;
 
   /**
    * Set to `true` when the user starts a triage decision (accept etc.)
@@ -183,15 +212,10 @@ export class TaskSelectionService {
   /** Cheap board snapshot used to paint the task route before detail I/O. */
   readonly detailPreview = signal<TaskInfo | null>(null);
   readonly selectedCore = signal<TaskCore | null>(null);
-  readonly resourceStates = signal<Record<ResourceName, { phase: ResourcePhase; reason: string | null }>>({
-    git: { phase: 'idle', reason: null }, usage: { phase: 'idle', reason: null },
-    review: { phase: 'idle', reason: null }, documents: { phase: 'idle', reason: null },
-    history: { phase: 'idle', reason: null },
-  });
+  readonly resourceStates = signal<ResourceStates>(idleResources());
   private activeRequests: Subscription[] = [];
   private activeProject: string | null = null;
   private activeAttempt: string | null = null;
-  private activeCoreVersion: number | null = null;
 
   /** Monotonic event consumed by the studio shell when Back returns to a non-task URL. */
   readonly browserRouteCleared = signal(0);
@@ -323,8 +347,6 @@ export class TaskSelectionService {
 
   /** Select a detail already fetched by another shell surface. */
   selectResolvedDetail(detail: TaskDetail, mode: TaskUrlHistoryMode = 'push'): void {
-    this.cancelRequests();
-    this.selectedCore.set(null);
     this.browserHistoryTaskKey = null;
     this.syncTaskUrl(detail.info, mode);
     const token = ++this.openDetailToken;
@@ -332,30 +354,36 @@ export class TaskSelectionService {
     this.setSelectedFromAdvance(detail, token);
   }
 
-  private getDetailFor(info: TaskInfo) {
-    const project = this.projectLookup.getProjectDisplay(
-      info.projectName,
-      info.watchPath,
-    );
-    const handle = project.id ?? project.shortCode ?? project.displayName;
-    return this.withDetailTimeout(this.jobService.getDetail(info.id, undefined, handle));
-  }
-
   private projectFor(info: TaskInfo): string {
     const project = this.projectLookup.getProjectDisplay(info.projectName, info.watchPath);
     return project.id ?? project.shortCode ?? project.displayName;
   }
 
+  /** Abort every request of the current selection, including a registry wait. */
   private cancelRequests(): void {
     for (const request of this.activeRequests) request.unsubscribe();
     this.activeRequests = [];
+    if (this.registryWait) clearTimeout(this.registryWait.timer);
+    this.registryWait = null;
   }
 
-  private revokeSelection(error: unknown, id: string, watchPath: string): boolean {
-    const status = typeof error === 'object' && error !== null && 'status' in error
-      ? Number((error as { status: unknown }).status) : 0;
+  /**
+   * True while `core` is still the painted generation of the selection
+   * that `token` opened. Every reply is checked against this before it may
+   * touch selection state, so late replies for a superseded task, project,
+   * attempt or core generation are dropped.
+   */
+  private isCurrent(token: number, core: TaskCore): boolean {
+    const current = this.selectedCore();
+    return token === this.openDetailToken && !!current && current.id === core.id
+      && current.coreVersion === core.coreVersion
+      && current.runtime.attemptId === core.runtime.attemptId;
+  }
+
+  private revokeSelection(error: unknown, id: string): boolean {
+    const status = httpStatus(error);
     if (status !== 403 && status !== 404) return false;
-    this.prefetch.invalidate(id, watchPath);
+    this.prefetch.invalidate(id);
     this.cancelRequests();
     this.selectedCore.set(null);
     this.detailPreview.set(null);
@@ -390,47 +418,55 @@ export class TaskSelectionService {
     };
   }
 
-  private startCore(info: TaskInfo, project: string, token: number,
-    retry: () => void, replaceTab = false, onAccepted?: (core: TaskCore) => void): void {
+  /**
+   * Core-first open: paint the bounded core (cached when the pager warmed
+   * it), revalidate it against the server, and only then start enrichment.
+   * `onNotFound` lets callers whose project was inferred rather than known
+   * hand a 404 to server-side resolution instead of failing the open.
+   */
+  private startCore(info: TaskInfo, project: string, token: number, retry: () => void,
+    opts: CoreOpenOptions = {}): void {
     this.cancelRequests();
     this.selectedCore.set(null);
     this.selected.set(null);
     this.detailPreview.set(info);
     this.detailLoading.set(true);
     this.activeProject = project;
-    this.activeCoreVersion = null;
     this.activeAttempt = null;
-    this.resourceStates.set({
-      git: { phase: 'idle', reason: null }, usage: { phase: 'idle', reason: null },
-      review: { phase: 'idle', reason: null }, documents: { phase: 'idle', reason: null },
-      history: { phase: 'idle', reason: null },
-    });
+    this.resourceStates.set(idleResources());
     const accept = (core: TaskCore) => {
       if (token !== this.openDetailToken || core.state === 'warming') return;
       if (core.id !== info.id && core.key !== info.id) return;
       if (info.taskKey && core.taskKey !== info.taskKey) return;
       this.prefetch.storeCore(core, project);
+      const previous = this.selectedCore();
+      const generationChanged = !previous || previous.coreVersion !== core.coreVersion
+        || previous.runtime.attemptId !== core.runtime.attemptId;
+      // A revalidated generation invalidates every enrichment reply still in
+      // flight for the painted one; the core request itself is finishing.
+      if (previous && generationChanged) this.cancelRequests();
       this.activeProject = core.projectId;
-      this.activeCoreVersion = core.coreVersion;
       this.activeAttempt = core.runtime.attemptId;
-      this.detailPreview.set(this.coreInfo(core, info));
       this.selectedCore.set(core);
       this.detailLoading.set(false);
       this.clearDetailLoadFailure();
-      if (replaceTab) this.pendingTaskTabReplacement = core.taskKey;
-      onAccepted?.(core);
-      this.markNextTaskRendered();
-      perfMark('job-select-rendered');
-      perfMeasure('job-select-to-rendered', 'job-select-click', 'job-select-rendered');
-      // The bounded text and five timeline events must have a paint opportunity
-      // before any document or usage request begins.
-      const afterPaint = () => {
-        if (token === this.openDetailToken && this.selectedCore()?.coreVersion === core.coreVersion)
-          this.loadInitialDocuments(token);
-      };
-      if (typeof requestAnimationFrame === 'function')
-        requestAnimationFrame(() => setTimeout(afterPaint, 0));
-      else setTimeout(afterPaint, 0);
+      const rich = this.selected();
+      // Revalidating a task whose rich pane already painted refreshes its
+      // facts in place instead of flipping the view back to the core.
+      if (rich) this.selected.set({ ...rich, info: this.coreInfo(core, rich.info) });
+      else this.detailPreview.set(this.coreInfo(core, this.detailPreview() ?? info));
+      if (!previous) {
+        if (opts.replaceTab) this.pendingTaskTabReplacement = core.taskKey;
+        opts.onAccepted?.(core);
+        this.markNextTaskRendered();
+        perfMark('job-select-rendered');
+        perfMeasure('job-select-to-rendered', 'job-select-click', 'job-select-rendered');
+      }
+      if (!generationChanged) return;
+      this.resourceStates.set(idleResources());
+      // The bounded text and five timeline events must have a paint
+      // opportunity before any document or usage request begins.
+      afterNextPaint(() => { if (this.isCurrent(token, core)) this.loadInitialDocuments(token); });
     };
     const cached = this.prefetch.takeCore(info.id, project);
     if (cached) accept(cached);
@@ -441,16 +477,21 @@ export class TaskSelectionService {
         if (token !== this.openDetailToken) return;
         if (core.state === 'warming') {
           this.detailLoading.set(true);
-          setTimeout(() => { if (token === this.openDetailToken) this.startCore(info, project, token, retry, replaceTab, onAccepted); }, 600);
+          setTimeout(() => {
+            if (token === this.openDetailToken) this.startCore(info, project, token, retry, opts);
+          }, TaskSelectionService.WARMING_RETRY_MS);
           return;
         }
         if (!cached || cached.coreVersion !== core.coreVersion || cached.runtimeVersion !== core.runtimeVersion)
           accept(core);
       },
       error: error => {
-        if (token !== this.openDetailToken) return;
-        if (this.revokeSelection(error, info.id, info.watchPath)) return;
-        if (cached) return;
+        if (token !== this.openDetailToken || cached) return;
+        if (opts.onNotFound && httpStatus(error) === 404) {
+          opts.onNotFound();
+          return;
+        }
+        if (this.revokeSelection(error, info.id)) return;
         this.detailLoading.set(false);
         this.failDetailLoad(error, info.key || info.id, retry);
       },
@@ -477,7 +518,7 @@ export class TaskSelectionService {
     const docs: Partial<Record<'prompt' | 'status', TaskDocumentData>> = {};
     let pending = 2;
     const finish = () => {
-      if (--pending !== 0 || token !== this.openDetailToken || this.selectedCore() !== core) return;
+      if (--pending !== 0 || !this.isCurrent(token, core)) return;
       const previous = this.selected();
       const info = this.detailPreview() ?? previous?.info;
       if (!info) return;
@@ -490,7 +531,7 @@ export class TaskSelectionService {
       if (this.resourceStates().documents.phase === 'loading')
         this.setResourceState('documents', 'ready', null);
       // Usage is requested only after the rich view has a paint opportunity.
-      requestAnimationFrame(() => setTimeout(() => this.loadResource('usage'), 0));
+      afterNextPaint(() => { if (this.isCurrent(token, core)) this.loadResource('usage'); });
     };
     for (const name of ['prompt', 'status'] as const) {
       const request = this.jobService.getDetailResource<TaskDocumentData>(core.id, project,
@@ -498,7 +539,7 @@ export class TaskSelectionService {
           timeout({ first: TaskSelectionService.DETAIL_TIMEOUT_MS }),
         ).subscribe({
         next: reply => {
-          if (token === this.openDetailToken) {
+          if (this.isCurrent(token, core)) {
             if (!this.resourceMatches(reply, core))
               this.setResourceState('documents', 'stale', 'core-generation-changed');
             else if (reply.state === 'ready') docs[name] = reply.data;
@@ -507,8 +548,7 @@ export class TaskSelectionService {
           finish();
         },
         error: error => {
-          if (token === this.openDetailToken && !this.revokeSelection(error, core.id,
-            this.detailPreview()?.watchPath ?? ''))
+          if (this.isCurrent(token, core) && !this.revokeSelection(error, core.id))
             this.setResourceState('documents', 'error', 'Document request failed');
           finish();
         },
@@ -517,6 +557,11 @@ export class TaskSelectionService {
     }
   }
 
+  /**
+   * Load one enrichment resource for the painted core. Callers own the
+   * trigger: usage after the rich paint, Git when its pane is visible, and
+   * history / review evidence on explicit expansion.
+   */
   loadResource(name: Exclude<ResourceName, 'documents'>, evidence = false): void {
     const core = this.selectedCore();
     const project = this.activeProject;
@@ -528,7 +573,7 @@ export class TaskSelectionService {
         timeout({ first: TaskSelectionService.DETAIL_TIMEOUT_MS }),
       ).subscribe({
       next: reply => {
-        if (token !== this.openDetailToken) return;
+        if (!this.isCurrent(token, core)) return;
         if (!this.resourceMatches(reply, core)) {
           this.setResourceState(name, 'stale', 'core-generation-changed');
           return;
@@ -567,13 +612,10 @@ export class TaskSelectionService {
         }
       },
       error: error => {
-        if (token === this.openDetailToken && !this.revokeSelection(error, core.id,
-          this.selected()?.info.watchPath ?? this.detailPreview()?.watchPath ?? '')) {
-          const status = typeof error === 'object' && error !== null && 'status' in error
-            ? Number((error as { status: unknown }).status) : 0;
-          this.setResourceState(name, status === 409 ? 'stale' : 'error',
-            status === 409 ? 'core-generation-changed' : `${name} request failed`);
-        }
+        if (!this.isCurrent(token, core) || this.revokeSelection(error, core.id)) return;
+        const stale = httpStatus(error) === 409;
+        this.setResourceState(name, stale ? 'stale' : 'error',
+          stale ? 'core-generation-changed' : `${name} request failed`);
       },
     });
     this.activeRequests.push(request);
@@ -581,6 +623,50 @@ export class TaskSelectionService {
 
   retryDocuments(): void {
     if (this.selectedCore()) this.loadInitialDocuments(this.openDetailToken);
+  }
+
+  /**
+   * Paint a full detail resolved through the legacy route (server-side
+   * reference resolution, triage fallbacks). No core is active afterwards,
+   * so no enrichment request can attach itself to this selection.
+   */
+  private showFullDetail(detail: TaskDetail): void {
+    this.selectedCore.set(null);
+    this.resourceStates.set(idleResources());
+    this.detailPreview.set(null);
+    this.detailLoading.set(false);
+    this.clearDetailLoadFailure();
+    this.selected.set(detail);
+    this.markNextTaskRendered();
+  }
+
+  /**
+   * Server-side resolution for a pager entry whose project the registry
+   * cannot place (registry not loaded, storage moved, foreign workspace).
+   * The route key or id goes to the backend, which resolves the task.
+   */
+  private resolvePagerEntryOnServer(entry: LanePagerEntry, token: number, retry: () => void): void {
+    this.cancelRequests();
+    this.selectedCore.set(null);
+    this.detailLoading.set(true);
+    const request = this.withDetailTimeout(this.jobService.getDetail(entry.routeKey || entry.id)).subscribe({
+      next: detail => {
+        if (token !== this.openDetailToken) return;
+        if (!entry.routeKey) this.syncTaskUrl(detail.info, 'push');
+        // Re-anchor the triage lane to the snapshot's lane so the
+        // external-advance effect in the shell doesn't fire on the
+        // brand-new selection.
+        this.triageLaneState = this.pager.snapshot()?.lane ?? detail.info.state;
+        this.pendingTaskTabReplacement = detail.info.taskKey;
+        this.showFullDetail(detail);
+      },
+      error: error => {
+        if (token !== this.openDetailToken) return;
+        this.detailLoading.set(false);
+        this.failDetailLoad(error, entry.routeKey || entry.id, retry);
+      },
+    });
+    this.activeRequests.push(request);
   }
 
   private withDetailTimeout(request: Observable<TaskDetail>): Observable<TaskDetail> {
@@ -641,7 +727,6 @@ export class TaskSelectionService {
    */
   openDetail(job: TaskInfo, opts: { keepPagerSnapshot?: boolean } = {}): void {
     this.browserHistoryTaskKey = null;
-    this.pendingCoreReference = null;
     // Step 1 of the perf-baseline contract: job-select click span. The
     // accept-to-next-task pipeline owns its own marks via markAcceptClick;
     // this one covers ad-hoc board clicks where no accept-click preceded.
@@ -708,18 +793,26 @@ export class TaskSelectionService {
     this.browserHistoryTaskKey = null;
     this.prepareDetailLoad(() => this.loadPagerEntry(entry));
     if (entry.routeKey) writeTaskUrl(entry.routeKey, 'push', this.taskHistoryState());
-    const token = ++this.openDetailToken;
+    this.openPagerEntry(entry, ++this.openDetailToken, () => this.loadPagerEntry(entry));
+  }
+
+  /**
+   * Shared by pager steps and post-mutation advances. A registry-placed
+   * entry opens core-first; anything else keeps the server-side resolution
+   * by route key or id instead of failing the step.
+   */
+  private openPagerEntry(entry: LanePagerEntry, token: number, retry: () => void): void {
     const live = this.jobService.jobs().find(task => task.taskKey === entry.taskKey);
     const project = live ? this.projectFor(live) : this.projectHandleForStorageReference(entry.watchPath);
     if (!project) {
-      this.failDetailLoad(null, entry.routeKey || entry.id, () => this.loadPagerEntry(entry));
+      this.resolvePagerEntryOnServer(entry, token, retry);
       return;
     }
     const info = live ?? { id: entry.id, key: entry.routeKey, taskKey: entry.taskKey,
       watchPath: entry.watchPath, projectName: project, state: this.pager.snapshot()?.lane ?? '',
       title: entry.title ?? entry.id } as TaskInfo;
     this.triageLaneState = this.pager.snapshot()?.lane ?? info.state;
-    this.startCore(info, project, token, () => this.loadPagerEntry(entry), true);
+    this.startCore(info, project, token, retry, { replaceTab: true });
   }
 
   closeDetail(): void {
@@ -735,7 +828,6 @@ export class TaskSelectionService {
     this.selected.set(null);
     this.triageLaneState = null;
     this.browserHistoryTaskKey = null;
-    this.pendingCoreReference = null;
     this.pager.clear();
     clearTaskUrl('push');
   }
@@ -774,30 +866,23 @@ export class TaskSelectionService {
       const token = ++this.openDetailToken;
       const info = liveInfo ?? { id: jobId, taskKey: '', key: null,
         watchPath: storageReference, projectName: handle, state: '', title: jobId } as TaskInfo;
-      this.startCore(info, handle, token, () => this.openDetailByTaskKey(taskKey), false,
-        core => { this.syncTaskUrl(this.coreInfo(core, info), 'replace'); this.triageLaneState = core.lane; });
+      this.startCore(info, handle, token, () => this.openDetailByTaskKey(taskKey), {
+        onAccepted: core => { this.syncTaskUrl(this.coreInfo(core, info), 'replace'); this.triageLaneState = core.lane; },
+      });
       return;
     }
+    // The storage reference no longer maps to a registered project: let the
+    // backend resolve the task id.
     this.prepareDetailLoad(() => this.openDetailByTaskKey(taskKey));
-    if (liveInfo) this.detailPreview.set(liveInfo);
+    this.cancelRequests();
     this.detailLoading.set(true);
     const token = ++this.openDetailToken;
-    const request = liveInfo
-      ? this.getDetailFor(liveInfo)
-      : this.withDetailTimeout(this.jobService.getDetail(
-          jobId,
-          undefined,
-          this.projectHandleForStorageReference(storageReference),
-        ));
-    request.subscribe({
+    const request = this.withDetailTimeout(this.jobService.getDetail(jobId)).subscribe({
       next: (detail) => {
         if (token !== this.openDetailToken) return;
-        this.detailLoading.set(false);
-        this.clearDetailLoadFailure();
         this.syncTaskUrl(detail.info, 'replace');
-        this.selected.set(detail);
-        this.detailPreview.set(null);
         this.triageLaneState = detail.info.state;
+        this.showFullDetail(detail);
       },
       error: (err) => {
         if (token !== this.openDetailToken) return;
@@ -805,6 +890,7 @@ export class TaskSelectionService {
         this.failDetailLoad(err, label, () => this.openDetailByTaskKey(taskKey));
       },
     });
+    this.activeRequests.push(request);
   }
 
   /**
@@ -824,7 +910,6 @@ export class TaskSelectionService {
     this.selected.set(null);
     this.triageLaneState = null;
     this.browserHistoryTaskKey = null;
-    this.pendingCoreReference = null;
     this.pager.clear();
     this.clearTaskParamsFromUrl();
   }
@@ -859,7 +944,8 @@ export class TaskSelectionService {
     }
 
     if (!taskReference && !legacyJobId) {
-      this.pendingCoreReference = null;
+      if (this.registryWait) clearTimeout(this.registryWait.timer);
+      this.registryWait = null;
       if (fromPopState) {
         this.openDetailToken++;
         this.cancelRequests();
@@ -877,71 +963,101 @@ export class TaskSelectionService {
 
     const token = ++this.openDetailToken;
     this.prepareDetailLoad(() => this.restoreFromUrl(fromPopState));
+    this.cancelRequests();
     this.detailLoading.set(true);
+    const resolveOnServer = () => this.resolveUrlOnServer(token, fromPopState,
+      taskReference, legacyJobId, legacyWatchPath, legacy || canonicalWithLegacyResidue);
     if (taskReference) {
       const project = this.projectForPublicReference(taskReference);
       if (project) {
-        this.pendingCoreReference = null;
         const info = { id: taskReference, taskKey: '', key: taskReference,
           watchPath: project.storageLocation, projectName: project.displayName,
           state: '', title: taskReference } as TaskInfo;
-        this.startCore(info, project.id, token, () => this.restoreFromUrl(fromPopState),
-          fromPopState, core => {
+        this.startCore(info, project.id, token, () => this.restoreFromUrl(fromPopState), {
+          replaceTab: fromPopState,
+          onAccepted: core => {
             const resolved = this.coreInfo(core, info);
             if (canonicalWithLegacyResidue) this.syncTaskUrl(resolved, 'replace');
-            if (fromPopState) this.browserHistoryTaskKey = core.taskKey;
-            this.triageLaneState = this.pager.snapshot()?.lane ?? core.lane;
-          });
+            this.browserHistoryTaskKey = fromPopState ? core.taskKey : null;
+            this.anchorRestoredSelection(core.taskKey, core.lane);
+          },
+          // The project was inferred from the key prefix (or a sole project);
+          // a miss there is not proof the task is gone.
+          onNotFound: resolveOnServer,
+        });
         return;
       }
-      if (this.projectLookup.allProjects().length > 0) {
-        this.detailLoading.set(false);
-        this.failDetailLoad(null, taskReference,
-          () => this.restoreFromUrl(fromPopState));
+      if (!this.projectLookup.loaded()) {
+        this.awaitRegistry(token, () => this.restoreFromUrl(fromPopState), resolveOnServer);
         return;
       }
-      this.pendingCoreReference = taskReference;
-      return;
     }
-    const request = taskReference
-      ? this.withDetailTimeout(this.jobService.getDetail(taskReference))
-      : this.withDetailTimeout(this.jobService.getDetail(legacyJobId!, legacyWatchPath ?? undefined));
+    // Keyless tasks, foreign prefixes in multi-project workspaces, and the
+    // legacy locators: the backend resolves the reference.
+    resolveOnServer();
+  }
 
-    request.subscribe({
+  /**
+   * Hold a cold public URL until the project registry lands, then retry on
+   * the core path. A registry that never answers must not strand the
+   * operator, so the wait is bounded and ends in server-side resolution.
+   */
+  private awaitRegistry(token: number, resume: () => void, fallback: () => void): void {
+    const timer = setTimeout(() => {
+      if (this.registryWait?.token !== token) return;
+      this.registryWait = null;
+      if (token === this.openDetailToken) fallback();
+    }, TaskSelectionService.REGISTRY_WAIT_MS);
+    this.registryWait = { token, resume, timer };
+  }
+
+  /** Keep a restored selection on the pager iteration it belongs to. */
+  private anchorRestoredSelection(taskKey: string, lane: string): void {
+    const snap = this.pager.snapshot();
+    if (snap && snap.jobs.some(j => j.taskKey === taskKey)) {
+      this.triageLaneState = snap.lane;
+      this.pager.reanchorTo(taskKey);
+    } else {
+      if (snap) this.pager.clear();
+      this.triageLaneState = lane;
+    }
+  }
+
+  private resolveUrlOnServer(token: number, fromPopState: boolean, taskReference: string | null,
+    legacyJobId: string | null, legacyWatchPath: string | null, rewriteUrl: boolean): void {
+    this.cancelRequests();
+    this.selectedCore.set(null);
+    this.detailLoading.set(true);
+    const request = (taskReference
+      ? this.withDetailTimeout(this.jobService.getDetail(taskReference))
+      : this.withDetailTimeout(this.jobService.getDetail(legacyJobId!, legacyWatchPath ?? undefined))
+    ).subscribe({
       next: (detail) => {
         if (token !== this.openDetailToken) return;
-        this.detailLoading.set(false);
-        this.clearDetailLoadFailure();
         // A clean canonical URL is deliberately left byte-for-byte untouched.
         // Legacy locators are redirected once, and mixed URLs are scrubbed
         // after the server proves which stable key owns the reference.
-        if (legacy || canonicalWithLegacyResidue) this.syncTaskUrl(detail.info, 'replace');
+        if (rewriteUrl) this.syncTaskUrl(detail.info, 'replace');
         if (fromPopState) {
           this.pendingTaskTabReplacement = detail.info.taskKey;
           this.browserHistoryTaskKey = detail.info.taskKey;
         } else {
           this.browserHistoryTaskKey = null;
         }
-        this.selected.set(detail);
-
-        const snap = this.pager.snapshot();
-        if (snap && snap.jobs.some(j => j.taskKey === detail.info.taskKey)) {
-          this.triageLaneState = snap.lane;
-          this.pager.reanchorTo(detail.info.taskKey);
-        } else {
-          if (snap) this.pager.clear();
-          this.triageLaneState = detail.info.state;
-        }
+        this.showFullDetail(detail);
+        this.anchorRestoredSelection(detail.info.taskKey, detail.info.state);
       },
       error: (err) => {
         if (token !== this.openDetailToken) return;
         this.detailLoading.set(false);
         this.selected.set(null);
+        this.detailPreview.set(null);
         this.triageLaneState = null;
         this.browserHistoryTaskKey = null;
         this.failDetailLoad(err, taskReference || legacyJobId || 'task', () => this.restoreFromUrl(fromPopState));
       },
     });
+    this.activeRequests.push(request);
   }
 
   /**
@@ -957,11 +1073,9 @@ export class TaskSelectionService {
   ): void {
     if (expectedToken !== this.openDetailToken) return;
     this.cancelRequests();
-    this.selectedCore.set(null);
     if (this.browserHistoryTaskKey !== detail.info.taskKey) this.browserHistoryTaskKey = null;
     if (replaceCurrentTaskTab) this.pendingTaskTabReplacement = detail.info.taskKey;
-    this.selected.set(detail);
-    this.markNextTaskRendered();
+    this.showFullDetail(detail);
   }
 
   /**
@@ -1004,17 +1118,7 @@ export class TaskSelectionService {
     this.browserHistoryTaskKey = null;
     this.prepareDetailLoad(() => this.loadAdvancedEntry(entry));
     if (entry.routeKey) writeTaskUrl(entry.routeKey, 'push', this.taskHistoryState());
-    const token = ++this.openDetailToken;
-    const live = this.jobService.jobs().find(task => task.taskKey === entry.taskKey);
-    const project = live ? this.projectFor(live) : this.projectHandleForStorageReference(entry.watchPath);
-    if (!project) {
-      this.failDetailLoad(null, entry.routeKey || entry.id, () => this.loadAdvancedEntry(entry));
-      return;
-    }
-    const info = live ?? { id: entry.id, key: entry.routeKey, taskKey: entry.taskKey,
-      watchPath: entry.watchPath, projectName: project, state: this.pager.snapshot()?.lane ?? '',
-      title: entry.title ?? entry.id } as TaskInfo;
-    this.startCore(info, project, token, () => this.loadAdvancedEntry(entry), true);
+    this.openPagerEntry(entry, ++this.openDetailToken, () => this.loadAdvancedEntry(entry));
   }
 
   retryDetailLoad(): void {
