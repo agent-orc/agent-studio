@@ -179,7 +179,11 @@ has a matching descendant.
 `frontend/src/app/components/tag-filters/` owns the shared area and facet
 controls. Both write the board filter service's selected tag ids, so the board,
 focused task list, Dossier overview, wiki tree, and wiki search use the same
-selection. The selection survives in-app navigation. Areas and facets are
+selection. The selection survives in-app navigation: every tag writer (the
+shared controls, the board tag menu, filter pills, clear-all, and `filters=` or
+`?tag=` links) persists it, and a route without a filter segment restores it;
+only an unfiltered board-to-board URL clears it. Other board facets keep the
+route-authoritative reset on every route. Areas and facets are
 separate controls but still use conjunctive matching. Project-specific registry
 entries are loaded from `GET /api/projects/{project}/tags`. Cards, task list
 rows, Dossier rows, and wiki tree entries render registry labels and colours;
