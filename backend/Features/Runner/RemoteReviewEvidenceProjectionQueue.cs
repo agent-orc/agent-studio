@@ -169,6 +169,9 @@ public sealed class RemoteReviewEvidenceProjectionWorker : BackgroundService
     /// <summary>Test seam: replaces the retry backoff so tests do not wait out the real schedule. Null in production.</summary>
     internal Func<int, TimeSpan>? RetryDelayOverride { get; set; }
 
+    /// <summary>Test seam: runs after the evidence write, before the generation fence.</summary>
+    internal Action? BeforeFencedProjection { get; set; }
+
     public RemoteReviewEvidenceProjectionWorker(
         RemoteReviewEvidenceProjectionQueue queue,
         TaskScannerService scanner,
@@ -259,13 +262,23 @@ public sealed class RemoteReviewEvidenceProjectionWorker : BackgroundService
                 entry.ReportSha256,
                 request.ReceivedAt,
                 ct);
-            await _projector.ProjectAsync(
-                task,
-                current,
-                entry.Report,
-                evidenceFile,
-                request.ReceivedAt,
-                ct);
+            // The attempt-named evidence file above is inert history. The shared
+            // task projection is applied inside the generation fence, so a
+            // successor created during this work is never overwritten.
+            ct.ThrowIfCancellationRequested();
+            BeforeFencedProjection?.Invoke();
+            if (!_authority.TryApplyForCurrentReview(current.AttemptId, () => _projector.Project(
+                    task,
+                    current,
+                    entry.Report,
+                    evidenceFile,
+                    request.ReceivedAt)))
+            {
+                _logger.LogInformation(
+                    "remote-review-evidence-projection-superseded attempt={AttemptId} task={TaskKey}",
+                    request.AttemptId, request.TaskKey);
+                return;
+            }
             RemoteReviewSettlementJournal.Write(task.FolderPath, entry with { EvidenceComplete = true });
             sw.Stop();
             _queue.Telemetry.RecordCompletion(DateTime.UtcNow, sw.Elapsed, succeeded: true);

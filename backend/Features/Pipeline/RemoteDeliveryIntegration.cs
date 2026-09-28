@@ -164,7 +164,15 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         ILogger<RemoteDeliveryIntegrationCoordinator> logger,
         AttemptAuthorityService authority)
         : this(
-            request => IntegrateAndRecordAsync(request, runner, scanner, provenance, timeline),
+            request => IntegrateAndRecordAsync(
+                request,
+                runner,
+                scanner,
+                provenance,
+                timeline,
+                request.ReviewAttemptId is { } reviewAttemptId
+                    ? apply => authority.TryApplyForCurrentReview(reviewAttemptId, apply)
+                    : null),
             logger,
             (request, failureCode, summary, detail) => RecordPreReviewFailure(
                 request,
@@ -298,7 +306,7 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                 {
                     CompleteDelivery(delivery, MergeIntoIntegrationResult.Of(
                         MergeIntoIntegrationOutcome.Error,
-                        error: "superseded-review-generation"));
+                        error: MergeIntoDevelopRunner.SupersededReviewGenerationError));
                     continue;
                 }
                 _logger.LogInformation(
@@ -312,7 +320,7 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                 {
                     CompleteDelivery(delivery, MergeIntoIntegrationResult.Of(
                         MergeIntoIntegrationOutcome.Error,
-                        error: "superseded-review-generation"));
+                        error: MergeIntoDevelopRunner.SupersededReviewGenerationError));
                     continue;
                 }
                 if (result.Outcome is MergeIntoIntegrationOutcome.AgentRoundRequired or MergeIntoIntegrationOutcome.Conflict)
@@ -439,7 +447,8 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         MergeIntoDevelopRunner runner,
         TaskScannerService scanner,
         TaskProvenanceService provenance,
-        TimelineLog timeline)
+        TimelineLog timeline,
+        Func<Action, bool>? publicationFence)
     {
         // The start row pairs with the outcome row below, so the integration
         // span is read from the ledger instead of from the merge step whose
@@ -466,7 +475,8 @@ public sealed class RemoteDeliveryIntegrationCoordinator
             request.IntegrationBranch,
             CancellationToken.None,
             request.IntegrationStrategy,
-            request.PipelineType).ConfigureAwait(false);
+            request.PipelineType,
+            publicationFence).ConfigureAwait(false);
 
         var job = scanner.FindJob(request.JobId, request.WatchPath);
         if (job is null) return result;

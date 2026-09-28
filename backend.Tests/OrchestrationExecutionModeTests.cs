@@ -35,15 +35,19 @@ public sealed class OrchestrationExecutionModeTests
     }
 
     // AGT-2762 added a fourth legacy loop owner (RemoteReviewEvidenceProjectionWorker)
-    // alongside the three named here, so the count grew from 3 to 4.
+    // and AGT-2936 a fifth (RemoteReviewSettlementReconciler, the restart owner of
+    // journaled review settlements), so the count grew from 3 to 5.
     [Fact]
-    public void Monolith_mode_registers_all_four_legacy_loop_owners()
+    public void Monolith_mode_registers_all_five_legacy_loop_owners()
     {
         var services = new ServiceCollection();
 
         services.AddOrchestrationExecutionLoops(OrchestrationExecutionMode.Monolith);
 
-        Assert.Equal(4, services.Count(descriptor =>
+        Assert.Equal(5, services.Count(descriptor =>
             descriptor.ServiceType == typeof(IHostedService)));
+        Assert.Contains(services, descriptor =>
+            descriptor.ServiceType == typeof(IHostedService)
+            && descriptor.ImplementationType == typeof(RemoteReviewSettlementReconciler));
     }
 }
