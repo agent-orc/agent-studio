@@ -720,8 +720,6 @@ export class App implements OnInit, OnDestroy {
    */
   onShellTogglePane(pane: 'prompt' | 'protocol' | 'git'): void {
     this.jobDetailRef?.togglePane(pane);
-    if (pane === 'git' && this.jobDetailRef?.panesVisible().git)
-      this.jobSelection.loadResource('git');
   }
 
   onPickDeleteE2E(): void {
@@ -877,8 +875,10 @@ export class App implements OnInit, OnDestroy {
       const core = this.selectedCore();
       const preview = this.detailPreview();
       const visible = selected ?? (core && preview ? { info: preview } as TaskDetail : null);
-      // Consume the pager/cursor retarget hint up-front (and unconditionally,
-      // so a no-op step never leaks the flag into a later genuine open).
+      // Consume the pager/cursor retarget hint on the first visible task. A
+      // core-first step can run this effect before its core lands (nothing
+      // visible yet); the hint survives until then so the step still reuses
+      // the current tab, and is consumed with that first visible task.
       const retargetNav = !!visible && (this.laneNavRetarget
         || this.jobSelection.consumeTaskTabReplacement(visible.info.taskKey));
       if (visible) this.laneNavRetarget = false;

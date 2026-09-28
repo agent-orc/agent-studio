@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using AgentStudio.Registry;
 using AgentStudio.Review;
 using AgentStudio.Security;
@@ -138,8 +139,11 @@ public static class TaskDetailResources
     private static DateTime? Modified(string path) => File.Exists(path) ? File.GetLastWriteTimeUtc(path) : null;
 }
 
+/// <summary>Reply envelope. `CoreVersion` is a decimal string on the wire, as on the core route.</summary>
 public sealed record TaskDetailResource<T>(string Id, string TaskKey, string ProjectId,
-    string? AttemptId, long CoreVersion, string Resource, string Version,
+    string? AttemptId,
+    [property: JsonNumberHandling(JsonNumberHandling.WriteAsString | JsonNumberHandling.AllowReadingFromString)]
+    long CoreVersion, string Resource, string Version,
     DateTime? ComputedAt, string State, T Data, string? Reason);
 public sealed record TaskGitResource(TaskMergeSignal? MergeSignal,
     TaskIntegrationStatus? Integration, TaskPublishSignal? PublishSignal,

@@ -12,7 +12,9 @@ import { LanePagerService } from './lane-pager.service';
 import { TaskService } from '../../../services/task.service';
 import { ErrorDialogService } from '../../../services/error-dialog.service';
 import { ConfirmDialogService } from '../../../services/confirm-dialog.service';
-import type { TaskInfo, TaskDetail } from '../../../models/task.model';
+import type { RegistryWorkspaceListItem, TaskInfo, TaskDetail } from '../../../models/task.model';
+import type { TaskCore } from '../../../models/task-core.model';
+import { ProjectLookupService } from '../../../services/project-lookup.service';
 
 const noop = (): void => undefined;
 
@@ -169,9 +171,9 @@ describe('TriageController · optimistic navigation on Accept', () => {
     const taskB = makeJob('task-b', '5-human-review');
     const taskBDetail = makeDetail('task-b', '5-human-review');
 
-    // Seed the lane-pager snapshot for [A, B], anchored on A. The
-    // service's effect prefetches B on snapshot change, so we mock the
-    // GET to land deterministically before move() runs.
+    // Seed the lane-pager snapshot for [A, B], anchored on A. No registry
+    // project contains `/wp`, so the advance keeps the server-side
+    // resolution; the mocked GET lands synchronously.
     const detailSpy = vi.spyOn(jobService, 'getDetail').mockReturnValue(of(taskBDetail));
     TestBed.inject(LanePagerService).capture('5-human-review', [taskA, taskB], taskA.taskKey);
     selection.triageLaneState = '5-human-review';
@@ -189,6 +191,38 @@ describe('TriageController · optimistic navigation on Accept', () => {
     expect(observedSelectedDuringCall?.info.id).toBe('task-b');
     // POST is still on the wire — no `next` callback has fired yet.
     expect(detailSpy).toHaveBeenCalled();
+    movePost.complete();
+  });
+
+  it('paints the prefetched core of the next peer synchronously without the legacy detail route', () => {
+    const taskA = makeJob('task-a', '5-human-review');
+    const taskB = makeJob('task-b', '5-human-review');
+    TestBed.inject(ProjectLookupService).setWorkspaces(([{ projects: [
+      { id: 'PROJ-P', displayName: 'p', shortCode: 'P', storageLocation: wp },
+    ] }]) as unknown as RegistryWorkspaceListItem[]);
+    const coreB = {
+      state: 'ready', projectId: 'PROJ-P', id: 'task-b', taskKey: taskB.taskKey, key: null,
+      title: 'task-b', lane: '5-human-review', coreVersion: '3', runtimeVersion: 'v1',
+      runtime: { attemptId: null }, pins: {}, prompt: { text: null }, statusSummary: { text: null },
+    } as unknown as TaskCore;
+    const coreSpy = vi.spyOn(jobService, 'getCore').mockReturnValue(new Subject<TaskCore>().asObservable());
+    prefetch.storeCore(coreB, 'PROJ-P');
+    const detailSpy = vi.spyOn(jobService, 'getDetail');
+    TestBed.inject(LanePagerService).capture('5-human-review', [taskA, taskB], taskA.taskKey);
+    selection.triageLaneState = '5-human-review';
+    (selection as unknown as { selected: ReturnType<typeof signal<TaskDetail | null>> }).selected
+      = signal<TaskDetail | null>(makeDetail('task-a', '5-human-review'));
+    const movePost = new Subject<object>();
+    vi.spyOn(jobService, 'moveJob').mockReturnValue(movePost.asObservable());
+    vi.spyOn(jobService, 'applyOptimisticMove').mockReturnValue({} as never);
+
+    ctrl.move(taskA, { targetState: '6-completed', actionId: 'mark-done' });
+
+    expect(selection.selectedCore()?.id).toBe('task-b');
+    expect(selection.detailPreview()?.id).toBe('task-b');
+    // The cached core is revalidated through `/core`; the full-detail route stays unused.
+    expect(coreSpy).toHaveBeenCalledWith('task-b', 'PROJ-P');
+    expect(detailSpy).not.toHaveBeenCalled();
     movePost.complete();
   });
 

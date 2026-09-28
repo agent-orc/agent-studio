@@ -67,7 +67,7 @@ export class TriageController {
    *   2. Repaint the board's lane immediately
    *      (`applyOptimisticMove`).
    *   3. Navigate to the next peer **before** the POST has returned
-   *      (`advanceAfterMutation` consumes prefetched detail
+   *      (`advanceAfterMutation` paints the prefetched core
    *      synchronously; falls back to the live lane peers).
    *   4. Fire the move POST in parallel. On 5xx / 4xx the optimistic
    *      reorder + the panel navigation both revert, an error toast
@@ -76,7 +76,7 @@ export class TriageController {
    * The previous shape did 1 then 2 then awaited the POST before step
    * 3, so the user paid both the move POST + the next-task GET in
    * series. With the lane-pager prefetch already warming the next
-   * peer's detail, step 3 is now a synchronous signal flip.
+   * peer's core, step 3 is now a synchronous signal flip.
    */
   /**
    * Lane-specific move. AGT-2069: accepting a planning task (move to
@@ -200,15 +200,14 @@ export class TriageController {
     const snapshot = this.jobService.applyOptimisticMove(info.id, info.watchPath, ev.targetState);
     this.jobService.beginOptimisticPersist();
 
-    // The optimistic detail for the departing job is stale the moment
-    // we move it; drop the cache entry so the next click-back doesn't
-    // serve a pre-move snapshot.
-    this.prefetch.invalidate(info.id, info.watchPath);
+    // The cached core for the departing job is stale the moment we move
+    // it; drop it so the next click-back doesn't serve a pre-move snapshot.
+    this.prefetch.invalidate(info.id);
 
     // Optimistic navigation: advance to the next peer right now, while
     // the POST is still on the wire. advanceAfterMutation uses the
     // pager snapshot (the lane iteration the user opened detail in)
-    // and the prefetch cache, so the new panel paints without a
+    // and the prefetched core, so the new panel paints without a
     // roundtrip.
     if (!this.jobSelection.advanceAfterMutation(info.taskKey)) {
       this.advanceToNextInLane(lane, info.taskKey, peers);
@@ -465,11 +464,8 @@ export class TriageController {
       this.jobSelection.triageLaneState = candidate.state;
       const token = this.jobSelection.bumpOpenDetailToken();
       this.jobSelection.syncTaskUrl(candidate, external ? 'replace' : 'push');
-      // Optimistic-paint: serve a prefetched TaskDetail when available
-      // so the panel re-renders without waiting for the GET roundtrip.
-      // The follow-up fetch reconciles any drift on the eventual reply.
-      const cached = this.prefetch.take(candidate.id, candidate.watchPath);
-      if (cached) this.jobSelection.setSelectedFromAdvance(cached, token, true);
+      // Fallback for selections without a pager snapshot (deep links):
+      // no core was prefetched for this candidate, so fetch its detail.
       this.jobService.getDetail(candidate.id, candidate.watchPath).subscribe({
         next: (detail) => this.jobSelection.setSelectedFromAdvance(detail, token, true),
         error: () => { /* leave panel on the previous job; the parent effect will reconcile */ },
