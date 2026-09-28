@@ -1,4 +1,4 @@
-import { WikiTreeNode } from '../../../../models/project-docs.model';
+import { WikiSearchResponse, WikiTreeNode } from '../../../../models/project-docs.model';
 
 /**
  * A flattened, depth-tagged row of the physical wiki tree, ready for `@for`
@@ -18,6 +18,45 @@ export interface WikiTreeRow {
  */
 export function nodeId(node: WikiTreeNode): string {
   return node.relPath ?? '';
+}
+
+export function findWikiNode(nodes: readonly WikiTreeNode[], id: string): WikiTreeNode | null {
+  for (const node of nodes) {
+    if (nodeId(node) === id) return node;
+    const child = findWikiNode(node.children, id);
+    if (child) return child;
+  }
+  return null;
+}
+
+export function findFirstWikiDocument(nodes: readonly WikiTreeNode[]): WikiTreeNode | null {
+  for (const node of nodes) {
+    if (node.type !== 'folder') return node;
+    const child = findFirstWikiDocument(node.children);
+    if (child) return child;
+  }
+  return null;
+}
+
+/** Keep only documents carrying every selected tag and their parent folders. */
+export function filterWikiTreeByTags(roots: readonly WikiTreeNode[], ids: ReadonlySet<string>): WikiTreeNode[] {
+  if (!ids.size) return [...roots];
+  const keep = (node: WikiTreeNode): WikiTreeNode | null => {
+    if (node.type !== 'folder') return [...ids].every(id => node.tags?.includes(id)) ? node : null;
+    const children = node.children.map(keep).filter((child): child is WikiTreeNode => child !== null);
+    return children.length ? { ...node, children } : null;
+  };
+  return roots.map(keep).filter((node): node is WikiTreeNode => node !== null);
+}
+
+export function filterWikiSearchByTags(
+  response: WikiSearchResponse | null,
+  roots: readonly WikiTreeNode[],
+  ids: ReadonlySet<string>,
+): WikiSearchResponse | null {
+  if (!response || !ids.size) return response;
+  const paths = new Set(collectDocumentPaths(roots));
+  return { ...response, results: response.results.filter(hit => paths.has(hit.relPath)) };
 }
 
 /**
