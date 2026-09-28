@@ -52,6 +52,8 @@ public sealed class CommandProgressWatchdogTests
                 TimeSpan.Zero));
 
     [SkippableFact]
+    [Trait("Category", "MachineBound")]
+    [Trait("Category", "ReviewFlaky")]
     public async Task Watchdog_fires_for_a_sleeping_tree_and_stays_quiet_for_a_busy_one()
     {
         Skip.IfNot(OperatingSystem.IsLinux(), "The CPU sampler reads /proc.");
@@ -61,6 +63,8 @@ public sealed class CommandProgressWatchdogTests
     }
 
     [SkippableFact]
+    [Trait("Category", "MachineBound")]
+    [Trait("Category", "ReviewFlaky")]
     public void Cpu_sample_covers_descendants_not_only_the_direct_child()
     {
         Skip.IfNot(OperatingSystem.IsLinux(), "The CPU sampler reads /proc.");

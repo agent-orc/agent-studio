@@ -85,4 +85,31 @@ public sealed class ProjectExecutionPolicyTests
             expectedWarning,
             RemoteProjectClaimabilityPolicy.IsMissingRepositoryUrl(project, settings));
     }
+
+    [Fact]
+    public void ClassPlacement_OffersAnyRunnerForCapabilityAdmissionWithoutChangingPins()
+    {
+        var shared = new ProjectSettings
+        {
+            PickupMode = PickupModes.Auto,
+            ExecutionLocation = "class:linux",
+        };
+        Assert.Equal("platform:linux", ExecutionLocations.RequiredClassCapability(
+            ProjectExecutionPolicy.ResolveExecutionLocation(shared)));
+        Assert.True(ProjectExecutionPolicy.IsAssignedRemote(shared, "runner-a"));
+        Assert.True(ProjectExecutionPolicy.IsAssignedRemote(shared, "runner-b"));
+
+        var pinned = shared with { ExecutionLocation = "runner-a" };
+        Assert.True(ProjectExecutionPolicy.IsAssignedRemote(pinned, "runner-a"));
+        Assert.False(ProjectExecutionPolicy.IsAssignedRemote(pinned, "runner-b"));
+    }
+
+    [Theory]
+    [InlineData(0, 1, true)]
+    [InlineData(1, 1, false)]
+    [InlineData(1, 2, true)]
+    [InlineData(2, 2, false)]
+    public void ProjectSlots_RemainSequentialUntilParallelismIsConfigured(
+        int occupied, int maximum, bool expected)
+        => Assert.Equal(expected, ProjectExecutionPolicy.HasProjectSlot(occupied, maximum));
 }

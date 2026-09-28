@@ -39,6 +39,15 @@ public static class PickupModes
 public static class ExecutionLocations
 {
     public const string Local = "local";
+    public const string ClassPrefix = "class:";
+
+    public static string? RequiredClassCapability(string? location)
+    {
+        if (location is null || !location.StartsWith(ClassPrefix, StringComparison.OrdinalIgnoreCase))
+            return null;
+        var name = location[ClassPrefix.Length..].Trim().ToLowerInvariant();
+        return name.Length == 0 ? null : $"platform:{name}";
+    }
 
     public static string Normalize(string? value) =>
         string.IsNullOrWhiteSpace(value)
@@ -54,6 +63,9 @@ public static class ExecutionLocations
 /// </summary>
 public static class ProjectExecutionPolicy
 {
+    public static bool HasProjectSlot(int occupiedTasks, int maxParallelism)
+        => occupiedTasks < Math.Max(1, maxParallelism);
+
     public static string ResolvePickupMode(ProjectSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
@@ -99,10 +111,15 @@ public static class ProjectExecutionPolicy
     public static bool IsLocalExecution(ProjectSettings settings) =>
         ResolveExecutionLocation(settings) == ExecutionLocations.Local;
 
+    /// <summary>
+    /// A class location offers work to remote runners for later capability
+    /// admission. This preliminary routing result is not a lease permit.
+    /// </summary>
     public static bool IsAssignedRemote(ProjectSettings settings, string? runnerId, string? runnerName = null)
     {
         var location = ResolveExecutionLocation(settings);
         if (location == ExecutionLocations.Local) return false;
+        if (ExecutionLocations.RequiredClassCapability(location) is not null) return true;
         return string.Equals(location, runnerId, StringComparison.OrdinalIgnoreCase)
                || string.Equals(location, runnerName, StringComparison.OrdinalIgnoreCase);
     }
