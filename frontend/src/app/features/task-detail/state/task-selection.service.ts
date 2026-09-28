@@ -621,6 +621,13 @@ export class TaskSelectionService {
     this.activeRequests.push(request);
   }
 
+  /** History and review evidence load only when their tab is expanded. */
+  loadResourcesForTab(tab: string): void {
+    if (tab === 'evidence') this.loadResource('review', true);
+    if (tab === 'code-review') this.loadResource('review');
+    if (tab === 'timeline') this.loadResource('history');
+  }
+
   retryDocuments(): void {
     if (this.selectedCore()) this.loadInitialDocuments(this.openDetailToken);
   }

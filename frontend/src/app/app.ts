@@ -875,10 +875,8 @@ export class App implements OnInit, OnDestroy {
       const core = this.selectedCore();
       const preview = this.detailPreview();
       const visible = selected ?? (core && preview ? { info: preview } as TaskDetail : null);
-      // Consume the pager/cursor retarget hint on the first visible task. A
-      // core-first step can run this effect before its core lands (nothing
-      // visible yet); the hint survives until then so the step still reuses
-      // the current tab, and is consumed with that first visible task.
+      // Consume the pager/cursor retarget hint with the first visible task: a
+      // core-first step runs this before its core lands and must keep the hint.
       const retargetNav = !!visible && (this.laneNavRetarget
         || this.jobSelection.consumeTaskTabReplacement(visible.info.taskKey));
       if (visible) this.laneNavRetarget = false;
@@ -2143,9 +2141,7 @@ export class App implements OnInit, OnDestroy {
 
   onTaskDetailTabChange(tab: TaskDetailRouteTab): void {
     this.routeDetailTab.set(tab);
-    if (tab === 'evidence') this.jobSelection.loadResource('review', true);
-    if (tab === 'code-review') this.jobSelection.loadResource('review');
-    if (tab === 'timeline') this.jobSelection.loadResource('history');
+    this.jobSelection.loadResourcesForTab(tab);
   }
 
   onTaskInspectorTabChange(tab: TaskInspectorRouteTab): void {
