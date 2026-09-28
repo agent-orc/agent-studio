@@ -299,7 +299,10 @@ public sealed record RunnerClaimResponse(
     IReadOnlyList<string>? ReprobeCapabilities = null,
     AgentStudio.TaskServer.Contracts.SessionContinuationLedgerEntry? PreviousSession = null,
     AgentStudio.TaskServer.Contracts.MechanicalRoundDelta? MechanicalDelta = null,
-    string? FreshRunReason = null);
+    string? FreshRunReason = null,
+    // v1 returns the admitted set, including project placement. The workstation
+    // rechecks local roots and tools from this set before creating a worker.
+    IReadOnlyList<string>? RequiredCapabilities = null);
 
 public static class RemoteChatWorkKinds
 {

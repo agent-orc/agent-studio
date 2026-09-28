@@ -68,10 +68,20 @@ public sealed class LeaseHeartbeat
         var interval = TimeSpan.FromSeconds(Math.Max(5, _options.HeartbeatSeconds));
         var authorityExpiresAt = _lease.ExpiresAt.ToUniversalTime();
         var uncertaintyMargin = TimeSpan.FromSeconds(Math.Max(1, interval.TotalSeconds));
+        var renewalAttempted = false;
         try
         {
             while (!stopRun.IsCancellationRequested && !shutdown.IsCancellationRequested)
             {
+                var stopBefore = _authority?.StopBeforeUtc
+                                 ?? authorityExpiresAt - uncertaintyMargin;
+                if (renewalAttempted && _utcNow() >= stopBefore)
+                {
+                    _authority?.Reject($"local autonomy deadline exhausted at {stopBefore:o}");
+                    MarkLeaseLost(stopRun,
+                        $"renewal safety boundary reached after wake; stop-before={stopBefore:o}");
+                    return;
+                }
                 RunLeaseResponse resp;
                 try
                 {
@@ -82,6 +92,7 @@ public sealed class LeaseHeartbeat
                         $"heartbeat:{_lease.AttemptId}:{Guid.NewGuid():N}",
                         inventory,
                         Volatile.Read(ref _startedPromptSha256));
+                    renewalAttempted = true;
                     resp = await _client.RenewLeaseAsync(req, shutdown);
                     if (_client.UsesDurableTaskServer && inventory is not null)
                         _inventory!.AcknowledgeReports(inventory);
@@ -125,20 +136,20 @@ public sealed class LeaseHeartbeat
                     // turn an unreachable Task Server into autonomous execution.
                     _authority?.MarkUncertain(
                         $"lease renewal transport failure: {ex.Message}");
-                    var stopBefore = _authority?.StopBeforeUtc
-                                     ?? authorityExpiresAt - uncertaintyMargin;
-                    if (_utcNow() >= stopBefore)
+                    var retryStopBefore = _authority?.StopBeforeUtc
+                                          ?? authorityExpiresAt - uncertaintyMargin;
+                    if (_utcNow() >= retryStopBefore)
                     {
                         _authority?.Reject(
-                            $"local autonomy deadline exhausted at {stopBefore:o}");
+                            $"local autonomy deadline exhausted at {retryStopBefore:o}");
                         MarkLeaseLost(
                             stopRun,
                             "renewal safety boundary reached: task-server-unavailable; " +
-                            $"stop-before={stopBefore:o}; cancelling and reaping the active process generation: {ex.Message}");
+                            $"stop-before={retryStopBefore:o}; cancelling and reaping the active process generation: {ex.Message}");
                         return;
                     }
 
-                    _log($"heartbeat error (will retry before {stopBefore:o}): {ex.Message}");
+                    _log($"heartbeat error (will retry before {retryStopBefore:o}): {ex.Message}");
                     await _delay(interval, stopRun.Token);
                     continue;
                 }
@@ -149,8 +160,16 @@ public sealed class LeaseHeartbeat
                     MarkLeaseLost(stopRun, $"{resp.Outcome} - {resp.Message}");
                     return;
                 }
-                if (resp.Lease is not null)
-                    authorityExpiresAt = resp.Lease.ExpiresAt.ToUniversalTime();
+                var renewedExpiresAt = resp.Lease?.ExpiresAt.ToUniversalTime() ?? authorityExpiresAt;
+                var responseReceivedAt = _utcNow();
+                if (responseReceivedAt >= stopBefore ||
+                    responseReceivedAt >= renewedExpiresAt - uncertaintyMargin)
+                {
+                    _authority?.Reject("renewal answer arrived after the local autonomy deadline");
+                    MarkLeaseLost(stopRun, "renewal answer arrived after the local autonomy deadline");
+                    return;
+                }
+                authorityExpiresAt = renewedExpiresAt;
                 _authority?.Confirm(
                     authorityExpiresAt,
                     "fenced lease renewal reconciled before report replay");
