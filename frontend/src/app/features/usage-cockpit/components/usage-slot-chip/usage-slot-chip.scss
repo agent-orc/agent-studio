@@ -1,0 +1,45 @@
+@use '../usage-chip' as chip;
+
+:host {
+  display: inline-flex;
+}
+
+.usage-slot-chip {
+  @include chip.chip;
+
+  gap: var(--studio-spacing-2);
+}
+
+.usage-slot-chip__body {
+  @include chip.body;
+}
+
+.usage-slot-chip__label {
+  @include chip.label;
+}
+
+.usage-slot-chip__sep {
+  color: var(--studio-text-muted);
+}
+
+.usage-slot-chip__pool {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--studio-spacing-1);
+}
+
+.usage-slot-chip__tag {
+  @include chip.tag;
+}
+
+.usage-slot-chip__value {
+  @include chip.value;
+}
+
+.usage-slot-chip__value--muted {
+  @include chip.value-muted;
+}
+
+.usage-slot-chip__placeholder {
+  @include chip.placeholder;
+}

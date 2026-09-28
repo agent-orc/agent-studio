@@ -1,0 +1,46 @@
+# usage-cockpit
+
+Header usage cockpit chips from the Dossier
+[docs/header-usage-cockpit/index.html](../../../../../docs/header-usage-cockpit/index.html)
+(AGT-2913). This folder holds slice HUC-S2: the shared chip components. The
+detail popover and sheet (HUC-S3), header integration (HUC-S4) and alarm
+states (HUC-S5) are separate slices.
+
+## Public API
+
+Imports via `from './features/usage-cockpit'`. See [`index.ts`](./index.ts).
+
+- `UsageCliChipComponent` (`app-usage-cli-chip`): one CLI with its weekly and
+  current-session windows as one native button, for example
+  `Codex WK 15% 5H 32%`.
+- `UsageCostChipComponent` (`app-usage-cost-chip`): today's USD token-ledger
+  estimate in the workspace-local day, for example `Today $12.48 USD`.
+- `UsageSlotChipComponent` (`app-usage-slot-chip`): remote, review and auto
+  slot pools. Expanded usage view only; never in the header strip.
+- `usage-chip.util.ts`: pure view models, formatting and state rules.
+- `models/usage-cockpit.model.ts`: wire types of `GET /api/usage/cockpit`.
+
+## Rules
+
+- Percentages are quota used, keep at most one decimal and are never clamped
+  (`142%` stays `142%`).
+- An unreported window reads `N/A`; unknown cost reads `N/A`. Neither is ever
+  shown as `0%` or `$0.00`. A session window never borrows the weekly value.
+- Visible cost from $10,000 uses a complete compact amount (`$12.5K`); the
+  accessible name and the tooltip carry the exact amount.
+- `5H` appears only when the provider reports a five-hour window; otherwise
+  the tag is `Session`.
+- States in this slice: normal, loading, unknown, stale, suspicious and
+  (cost only) partial coverage. Each state changes the accessible name and
+  shows a clock or question mark; values are muted, never recoloured as
+  alarms. Quota warning, provider limited and budget crossed are HUC-S5.
+- Times use the workspace IANA zone with the UTC equivalent alongside.
+- Chips emit `activate`; the host owns the dialog or pool region and
+  passes `expanded` and `controls` back.
+
+## Evidence
+
+The standalone `usage-chips-mockup` app (`src/mockups/usage-chips/`) mounts
+the real components with fixtures. `e2e/mockups/usage-chips.spec.ts` checks
+geometry, accessible names, focus and state labels in both themes and writes
+screenshots. Build first with `npm run build:mockup:usage`.
