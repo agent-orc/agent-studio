@@ -65,7 +65,7 @@ describe('TaskDetailPrefetchService · task core cache', () => {
 
   const results: TaskCoreResult[] = [];
   const read = (project: string, id: string) =>
-    cache.getCore(project, id).subscribe((result) => results.push(result));
+    cache.getCore(project, id, `C:/${project}::${id}`).subscribe((result) => results.push(result));
 
   beforeEach(async () => {
     results.length = 0;
@@ -117,7 +117,7 @@ describe('TaskDetailPrefetchService · task core cache', () => {
   });
 
   it('a foreground read joins an in-flight lookahead instead of duplicating it', () => {
-    cache.prefetchCores([{ project: 'PROJ-A', id: 'next' }]);
+    cache.prefetchCores([{ project: 'PROJ-A', id: 'next', taskKey: 'C:/PROJ-A::next' }]);
     read('PROJ-A', 'next');
     // The window moved on, but the joined request is no longer lookahead.
     cache.prefetchCores([]);
@@ -139,14 +139,14 @@ describe('TaskDetailPrefetchService · task core cache', () => {
 
   it('prefetches at most two cores and aborts lookahead that left the window', () => {
     cache.prefetchCores([
-      { project: 'PROJ-A', id: 'one' },
-      { project: 'PROJ-A', id: 'two' },
-      { project: 'PROJ-A', id: 'three' },
+      { project: 'PROJ-A', id: 'one', taskKey: 'C:/PROJ-A::one' },
+      { project: 'PROJ-A', id: 'two', taskKey: 'C:/PROJ-A::two' },
+      { project: 'PROJ-A', id: 'three', taskKey: 'C:/PROJ-A::three' },
     ]);
     const first = http.match(anyCore);
     expect(first.map((r) => r.request.url)).toEqual(['/api/tasks/one/core', '/api/tasks/two/core']);
 
-    cache.prefetchCores([{ project: 'PROJ-A', id: 'two' }, { project: 'PROJ-A', id: 'three' }]);
+    cache.prefetchCores([{ project: 'PROJ-A', id: 'two', taskKey: 'C:/PROJ-A::two' }, { project: 'PROJ-A', id: 'three', taskKey: 'C:/PROJ-A::three' }]);
     expect(first[0].cancelled).toBe(true);
     expect(first[1].cancelled).toBe(false);
     const third = http.expectOne(coreRequest('PROJ-A', 'three'));
@@ -322,5 +322,71 @@ describe('TaskDetailPrefetchService · task core cache', () => {
     http.expectOne(coreRequest('PROJ-A', 'a')).flush(makeCore('PROJ-A', 'a'));
     cache.clear();
     expect(cache.isCoreCurrent('PROJ-A', 'a')).toBe(true);
+  });
+
+  it('a delete in one project never evicts the in-flight core of the same slug in another', () => {
+    startHub();
+    read('PROJ-A', 'fix-login');
+    read('PROJ-B', 'fix-login');
+    const alpha = http.expectOne(coreRequest('PROJ-A', 'fix-login'));
+    const beta = http.expectOne(coreRequest('PROJ-B', 'fix-login'));
+
+    hub.handlers?.jobDeleted?.({ id: 'fix-login', watchPath: 'C:/PROJ-A' });
+    alpha.flush(makeCore('PROJ-A', 'fix-login'));
+    beta.flush(makeCore('PROJ-B', 'fix-login'));
+
+    expect(results[0]).toEqual({ state: 'missing', core: null });
+    expect(results[1]).toMatchObject({ state: 'ready', core: { projectId: 'PROJ-B' } });
+    expect(cache.peekCore('PROJ-A', 'fix-login')).toBeNull();
+    expect(cache.isCoreCurrent('PROJ-B', 'fix-login')).toBe(true);
+  });
+
+  it('a delete that names only an ambiguous id revalidates instead of evicting', () => {
+    read('PROJ-A', 'fix-login');
+    read('PROJ-B', 'fix-login');
+    http.expectOne(coreRequest('PROJ-A', 'fix-login')).flush(makeCore('PROJ-A', 'fix-login'));
+    http.expectOne(coreRequest('PROJ-B', 'fix-login')).flush(makeCore('PROJ-B', 'fix-login'));
+    tasks.jobs.set([
+      { id: 'fix-login', taskKey: 'C:/PROJ-A::fix-login', watchPath: 'C:/PROJ-A' },
+      { id: 'fix-login', taskKey: 'C:/PROJ-B::fix-login', watchPath: 'C:/PROJ-B' },
+    ] as TaskInfo[]);
+
+    tasks.deleteJob('fix-login').subscribe();
+    http.expectOne((r) => r.method === 'DELETE' && r.url === '/api/tasks/fix-login').flush(null);
+
+    for (const project of ['PROJ-A', 'PROJ-B']) {
+      expect(cache.peekCore(project, 'fix-login')).not.toBeNull();
+      expect(cache.isCoreCurrent(project, 'fix-login')).toBe(false);
+    }
+  });
+
+  it('a delete by id alone resolves a unique board record and evicts exactly it', () => {
+    read('PROJ-A', 'fix-login');
+    read('PROJ-B', 'fix-login');
+    http.expectOne(coreRequest('PROJ-A', 'fix-login')).flush(makeCore('PROJ-A', 'fix-login'));
+    http.expectOne(coreRequest('PROJ-B', 'fix-login')).flush(makeCore('PROJ-B', 'fix-login'));
+    tasks.jobs.set([{ id: 'fix-login', taskKey: 'C:/PROJ-A::fix-login', watchPath: 'C:/PROJ-A' }] as TaskInfo[]);
+
+    tasks.deleteJob('fix-login').subscribe();
+    http.expectOne((r) => r.method === 'DELETE' && r.url === '/api/tasks/fix-login').flush(null);
+
+    expect(cache.peekCore('PROJ-A', 'fix-login')).toBeNull();
+    expect(cache.isCoreCurrent('PROJ-B', 'fix-login')).toBe(true);
+  });
+
+  it('publishes a pushed delete after the board store removed the task', () => {
+    startHub();
+    const row = { id: 'a', taskKey: 'C:/PROJ-A::a', watchPath: 'C:/PROJ-A', state: '2-ready' } as TaskInfo;
+    tasks.jobs.set([row]);
+    tasks.grouped.set({ ready: [row] } as never);
+    const seen: { jobs: number; lane: number }[] = [];
+    const subscription = tasks.taskEvents.subscribe((event) => {
+      if (event.kind === 'deleted') seen.push({ jobs: tasks.jobs().length, lane: tasks.grouped().ready.length });
+    });
+
+    hub.handlers?.jobDeleted?.({ id: 'a', watchPath: 'C:/PROJ-A' });
+    subscription.unsubscribe();
+
+    expect(seen).toEqual([{ jobs: 0, lane: 0 }]);
   });
 });

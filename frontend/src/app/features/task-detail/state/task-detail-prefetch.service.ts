@@ -13,6 +13,8 @@ import { TaskService, type TaskStoreEvent } from '../../../services/task.service
 export interface TaskCoreTarget {
   project: string;
   id: string;
+  /** Board `taskKey` (`watchPath::id`) of the task; scopes store events to it. */
+  taskKey: string;
 }
 
 interface CoreEntry {
@@ -25,6 +27,11 @@ interface CoreEntry {
 
 interface CoreFlight {
   id: string;
+  /**
+   * Board `taskKey` of the requested task. A store event evicts a flight only
+   * on an exact `taskKey` match, so the same slug in another project is safe.
+   */
+  taskKey: string;
   subject: ReplaySubject<TaskCoreResult>;
   subscription: Subscription | null;
   /** Lookahead flights are cancellable until a foreground read joins them. */
@@ -69,7 +76,8 @@ interface CoreFlight {
  * - Invalidation is per task and per resource. A board-store event marks only
  *   that task's core stale; the next read revalidates with `If-None-Match`.
  *   Git state, sidecar generations and full-detail changes never touch it.
- *   Deletes, 404 and 403 evict.
+ *   Deletes of an exactly identified task, 404 and 403 evict; a delete that
+ *   names only the id revalidates instead.
  */
 @Injectable({ providedIn: 'root' })
 export class TaskDetailPrefetchService {
@@ -227,7 +235,7 @@ export class TaskDetailPrefetchService {
    * request (including a lookahead) is joined instead of duplicated; a stale
    * entry is revalidated with its ETag so an unchanged task costs a 304.
    */
-  getCore(project: string, id: string): Observable<TaskCoreResult> {
+  getCore(project: string, id: string, taskKey: string): Observable<TaskCoreResult> {
     const key = taskCoreKey(project, id);
     const entry = this.cores.get(key);
     if (entry && !entry.stale) {
@@ -239,7 +247,7 @@ export class TaskDetailPrefetchService {
       flight.lookahead = false;
       return flight.subject.asObservable();
     }
-    return this.startCoreRequest(key, project, id, false).subject.asObservable();
+    return this.startCoreRequest(key, project, id, taskKey, false).subject.asObservable();
   }
 
   /**
@@ -260,7 +268,7 @@ export class TaskDetailPrefetchService {
       const key = taskCoreKey(target.project, target.id);
       const entry = this.cores.get(key);
       if ((entry && !entry.stale) || this.coreFlights.has(key)) continue;
-      this.startCoreRequest(key, target.project, target.id, true);
+      this.startCoreRequest(key, target.project, target.id, target.taskKey, true);
     }
   }
 
@@ -284,9 +292,12 @@ export class TaskDetailPrefetchService {
     return { entries: this.cores.size, bytes: this.coreBytes, inFlight: this.coreFlights.size };
   }
 
-  private startCoreRequest(key: string, project: string, id: string, lookahead: boolean): CoreFlight {
+  private startCoreRequest(
+    key: string, project: string, id: string, taskKey: string, lookahead: boolean,
+  ): CoreFlight {
     const flight: CoreFlight = {
       id,
+      taskKey,
       subject: new ReplaySubject<TaskCoreResult>(1),
       subscription: null,
       lookahead,
@@ -425,14 +436,20 @@ export class TaskDetailPrefetchService {
   }
 
   /**
-   * Keys of cached or in-flight cores for one board task. A flight has no
-   * `taskKey` yet, so it matches on the task id: an extra revalidation is
-   * cheap, trusting a reply that raced the change is not.
+   * Keys of cached or in-flight cores for one board task. With a `taskKey` the
+   * match is exact: the registry handle and the board key both name the
+   * project, so an identical slug elsewhere never matches. Without one (a
+   * `jobMoved` push carries only the id) every core with that id matches;
+   * such a match may only revalidate, never evict.
    */
-  private coreKeysFor(match: (core: Pick<TaskCore, 'id' | 'taskKey'>) => boolean, id: string): string[] {
+  private coreKeysFor(id: string, taskKey: string | null): string[] {
     const keys = new Set<string>();
-    for (const [key, entry] of this.cores) if (match(entry.core)) keys.add(key);
-    for (const [key, flight] of this.coreFlights) if (flight.id === id) keys.add(key);
+    for (const [key, entry] of this.cores) {
+      if (taskKey ? entry.core.taskKey === taskKey : entry.core.id === id) keys.add(key);
+    }
+    for (const [key, flight] of this.coreFlights) {
+      if (taskKey ? flight.taskKey === taskKey : flight.id === id) keys.add(key);
+    }
     return [...keys];
   }
 
@@ -452,24 +469,30 @@ export class TaskDetailPrefetchService {
   private onTaskEvent(event: TaskStoreEvent): void {
     switch (event.kind) {
       case 'upserted': {
-        for (const key of this.coreKeysFor((c) => c.taskKey === event.info.taskKey, event.info.id)) {
+        for (const key of this.coreKeysFor(event.info.id, event.info.taskKey)) {
           this.patchCore(key, event.info);
           this.markCoreStale(key);
         }
         return;
       }
       case 'deleted': {
-        if (event.taskKey) this.cache.delete(event.taskKey);
-        for (const key of this.coreKeysFor((c) =>
-          event.taskKey ? c.taskKey === event.taskKey : c.id === event.id, event.id)) this.evictCore(key);
+        if (!event.taskKey) {
+          // The deleted task's project is unknown: revalidate every core with
+          // that id. The deleted one answers 404 and is evicted then; a twin
+          // in another project answers 304 and stays.
+          for (const key of this.coreKeysFor(event.id, null)) this.markCoreStale(key);
+          return;
+        }
+        this.cache.delete(event.taskKey);
+        for (const key of this.coreKeysFor(event.id, event.taskKey)) this.evictCore(key);
         return;
       }
       case 'moved':
-        for (const key of this.coreKeysFor((c) => c.id === event.id, event.id)) this.markCoreStale(key);
+        for (const key of this.coreKeysFor(event.id, null)) this.markCoreStale(key);
         return;
       case 'mutated': {
         const taskKey = event.watchPath ? `${event.watchPath}::${event.id}` : null;
-        for (const key of this.coreKeysFor((c) => (taskKey ? c.taskKey === taskKey : c.id === event.id), event.id)) {
+        for (const key of this.coreKeysFor(event.id, taskKey)) {
           if (event.lane) this.patchCore(key, { state: event.lane });
           this.markCoreStale(key);
         }

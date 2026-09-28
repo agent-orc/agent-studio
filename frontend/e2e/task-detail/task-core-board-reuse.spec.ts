@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 
 /**
@@ -9,10 +10,15 @@ import * as path from 'node:path';
  * Asserts that task selection never re-reads the grouped board, that each
  * core is requested at most once at a time, that the next two pager cores are
  * warmed after paint, and that the board returns with its filter and lane
- * scroll intact. The measurement case records the in-app
- * `task-core-select-to-ready` span for resident and uncached cores. It is a
- * mocked-latency observation; `TASK_SWITCH_BUDGET=1` also enforces the
- * uncached <=100 ms p95 (the card 6 workstation gate opts in there).
+ * scroll intact. The measurement case times each selection from the click
+ * event to the frame after the selected task's core facts (prompt, status and
+ * timeline heads, or the full detail when it was already prefetched) are in
+ * the DOM, and enforces resident p95 <=50 ms and uncached p95 <=100 ms. The
+ * API is mocked with a fixed core latency, so this is a client budget, not
+ * the workstation gate of Dossier card 6. A wall-clock budget is not
+ * decidable on an oversubscribed host (1-minute load above the CPU count):
+ * the run then records every sample and the load, annotates the skipped
+ * verdict, and asserts only the request invariants.
  * `PW_BASE_URL` may point at a served production bundle.
  */
 
@@ -135,7 +141,73 @@ async function installRoutes(page: Page): Promise<Traffic> {
   return traffic;
 }
 
+interface PaintSample { ms: number; start: number; end: number; surface: 'core' | 'full-detail'; id: string }
+
+/**
+ * In-page paint probe. `arm` names the task the next click selects; the
+ * click's event time starts the sample, and the first animation frame after
+ * that task's core facts are in the DOM ends it (a paint opportunity).
+ */
+function installPaintProbe(): void {
+  type Target = { id: string; taskKey: string; title: string };
+  const probe = { target: null as Target | null, start: 0, samples: [] as PaintSample[] };
+  (window as unknown as { __coreProbe: typeof probe }).__coreProbe = probe;
+  const surface = (target: Target): PaintSample['surface'] | null => {
+    const task = document.querySelector('[data-testid="studio-task"]');
+    if (!task) return null;
+    const sections = task.querySelector('[data-testid="task-detail-load-sections"]');
+    if (sections) {
+      if (sections.getAttribute('data-core-task') !== target.taskKey) return null;
+      const head = (id: string) => sections.querySelector(`[data-testid="${id}"]`)?.textContent ?? '';
+      return head('task-core-prompt').includes(`Prompt of ${target.id}`)
+        && head('task-core-status').includes(`Status of ${target.id}`)
+        && head('task-core-timeline').includes('Created') ? 'core' : null;
+    }
+    // The overview title also holds its edit affordance.
+    const title = task.querySelector('[data-testid="overview-title"]')?.textContent ?? '';
+    return title.includes(target.title) ? 'full-detail' : null;
+  };
+  document.addEventListener('click', event => {
+    const target = probe.target;
+    if (!target || probe.start) return;
+    probe.start = event.timeStamp;
+    const tick = () => {
+      const painted = surface(target);
+      if (!painted) {
+        requestAnimationFrame(tick);
+        return;
+      }
+      requestAnimationFrame(() => {
+        const end = performance.now();
+        probe.samples.push({ ms: end - probe.start, start: probe.start, end, surface: painted, id: target.id });
+        probe.target = null;
+        probe.start = 0;
+      });
+    };
+    requestAnimationFrame(tick);
+  }, true);
+}
+
+async function armProbe(page: Page, project: Project, i: number): Promise<number> {
+  const target = job(project, i);
+  return page.evaluate(t => {
+    const probe = (window as unknown as { __coreProbe: { target: unknown; start: number; samples: unknown[] } }).__coreProbe;
+    probe.target = t;
+    probe.start = 0;
+    return probe.samples.length;
+  }, { id: target.id, taskKey: target.taskKey, title: target.title });
+}
+
+async function nextPaint(page: Page, before: number): Promise<PaintSample> {
+  await expect.poll(() => page.evaluate(() =>
+    (window as unknown as { __coreProbe: { samples: unknown[] } }).__coreProbe.samples.length), { timeout: 10_000 })
+    .toBeGreaterThan(before);
+  return page.evaluate(index =>
+    (window as unknown as { __coreProbe: { samples: PaintSample[] } }).__coreProbe.samples[index], before);
+}
+
 async function openBoard(page: Page, hash: string): Promise<Traffic> {
+  await page.addInitScript(installPaintProbe);
   await page.addInitScript(() => {
     performance.setResourceTimingBufferSize(20_000);
     localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
@@ -169,23 +241,17 @@ async function waitForTask(page: Page, title: string): Promise<void> {
   await expect(page.getByTestId('studio-task')).toContainText(title, { timeout: 10_000 });
 }
 
-async function coreSpans(page: Page): Promise<number[]> {
-  return page.evaluate(() =>
-    performance.getEntriesByName('task-core-select-to-ready', 'measure').map(entry => entry.duration));
-}
-
-/** Split one sampled uncached span into dispatch delay, network and main-thread tail. */
-async function uncachedBreakdown(page: Page, id: string, spanIndex: number): Promise<{ dispatch: number; network: number; tail: number }> {
-  return page.evaluate(({ taskId, index }) => {
-    const span = performance.getEntriesByName('task-core-select-to-ready', 'measure')[index];
+/** Split one uncached sample into dispatch delay, core network time and render tail. */
+async function uncachedBreakdown(page: Page, id: string, sample: PaintSample): Promise<{ dispatch: number; network: number; tail: number }> {
+  return page.evaluate(({ taskId, start, end }) => {
     const resource = (performance.getEntriesByType('resource') as PerformanceResourceTiming[])
       .filter(entry => entry.name.includes(`/api/tasks/${taskId}/core`)).at(-1)!;
     return {
-      dispatch: resource.startTime - span.startTime,
+      dispatch: resource.startTime - start,
       network: resource.responseEnd - resource.startTime,
-      tail: span.startTime + span.duration - resource.responseEnd,
+      tail: end - resource.responseEnd,
     };
-  }, { taskId: id, index: spanIndex });
+  }, { taskId: id, start: sample.start, end: sample.end });
 }
 
 function percentile(values: number[], p: number): number {
@@ -237,6 +303,42 @@ test.describe('Task core board reuse (AGT-2956)', () => {
     }
   });
 
+  test('the task route paints the core while the full detail is still loading', async ({ page }) => {
+    const traffic = await openBoard(page, '#/board');
+    // Hold task-10's full detail so only the board record and the core can paint.
+    let releaseDetail: () => void = () => undefined;
+    const held = new Promise<void>(resolve => { releaseDetail = resolve; });
+    await page.route(/\/api\/tasks\/task-10(\?|$)/, async route => {
+      await held;
+      await route.fulfill({
+        status: 200, contentType: 'application/json', body: JSON.stringify(detail(REUSE, 'task-10')),
+      }).catch(() => undefined);
+    });
+
+    await card(page, REUSE, 10).scrollIntoViewIfNeeded();
+    await card(page, REUSE, 10).click();
+    const sections = page.getByTestId('task-detail-load-sections');
+    await expect(sections).toHaveAttribute('data-core-state', 'ready');
+    await expect(page.getByTestId('task-core-pins')).toContainText('sonnet');
+    await expect(page.getByTestId('task-core-prompt')).toContainText('Prompt of task-10');
+    await expect(page.getByTestId('task-core-status')).toContainText('Status of task-10');
+    await expect(page.getByTestId('task-core-timeline')).toContainText('Created');
+    // Git evidence is not core: it is still waiting for its own resource.
+    await expect(page.getByTestId('task-detail-section-evidence')).toHaveAttribute('aria-busy', 'true');
+    expect(traffic.core.filter(c => c.key === 'PROJ-REUSE/task-10')).toHaveLength(1);
+    if (RESULTS_DIR) {
+      fs.mkdirSync(RESULTS_DIR, { recursive: true });
+      for (const theme of ['light', 'dark'] as const) {
+        await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
+        await page.screenshot({ path: path.join(RESULTS_DIR, `task-core-first-paint-${theme}.png`) });
+      }
+    }
+
+    releaseDetail();
+    await expect(sections).toHaveCount(0);
+    await expect(page.getByTestId('overview-title')).toContainText('Reuse task-10');
+  });
+
   test('identical slugs in two projects read two cores', async ({ page }) => {
     const traffic = await openBoard(page, '#/board');
     await card(page, REUSE, 0).click();
@@ -250,30 +352,38 @@ test.describe('Task core board reuse (AGT-2956)', () => {
     expect(traffic.maxConcurrentPerCore).toBe(1);
   });
 
-  test('measures resident and uncached core readiness without grouped reads', async ({ page }) => {
+  test('measures resident and uncached core paint without grouped reads', async ({ page }) => {
     test.setTimeout(240_000);
     const traffic = await openBoard(page, '#/board');
     const lane = laneScroller(page);
     const phaseStart = Date.now();
     const groupedBefore = traffic.grouped.length;
-    const samples = { uncached: [] as number[], resident: [] as number[] };
+    const samples = { uncached: [] as PaintSample[], resident: [] as PaintSample[] };
     const breakdown = { dispatch: [] as number[], network: [] as number[], tail: [] as number[] };
     const uncachedIds: number[] = [];
+
+    // Warm-up (not sampled): the first task open loads the lazy task-route
+    // chunk. Task 95 and its lookahead lie outside every sampled window.
+    await card(page, REUSE, 95).scrollIntoViewIfNeeded();
+    await card(page, REUSE, 95).click();
+    await waitForTask(page, 'Reuse task-95');
+    await backToBoard(page);
+    await lane.evaluate(el => { el.scrollTop = 0; });
 
     // Uncached cohort: board click to a task outside every earlier lookahead
     // window (stride 3), so the core read is always a cold request.
     for (let i = 0; i < 30 * 3; i += 3) uncachedIds.push(i);
     for (const i of uncachedIds) {
-      const before = (await coreSpans(page)).length;
       await card(page, REUSE, i).scrollIntoViewIfNeeded();
+      const before = await armProbe(page, REUSE, i);
       await card(page, REUSE, i).click();
-      await waitForTask(page, `Reuse ${slug(i)}`);
-      await expect.poll(async () => (await coreSpans(page)).length).toBeGreaterThan(before);
-      samples.uncached.push((await coreSpans(page)).slice(before)[0]);
-      const parts = await uncachedBreakdown(page, slug(i), before);
+      const sample = await nextPaint(page, before);
+      samples.uncached.push(sample);
+      const parts = await uncachedBreakdown(page, slug(i), sample);
       breakdown.dispatch.push(parts.dispatch);
       breakdown.network.push(parts.network);
       breakdown.tail.push(parts.tail);
+      await waitForTask(page, `Reuse ${slug(i)}`);
       await backToBoard(page);
     }
 
@@ -286,12 +396,16 @@ test.describe('Task core board reuse (AGT-2956)', () => {
       await page.getByTestId(`studio-task-${direction}`).click();
       await page.waitForTimeout(150);
     }
+    let position = 0;
     for (let step = 0; step < 30; step++) {
       const direction = step % 6 < 3 ? 'next' : 'prev';
-      const before = (await coreSpans(page)).length;
+      // The pager arrows show once the current full detail is on screen.
+      await expect(page.getByTestId(`studio-task-${direction}`)).toBeVisible();
+      position += direction === 'next' ? 1 : -1;
+      const before = await armProbe(page, REUSE, position);
       await page.getByTestId(`studio-task-${direction}`).click();
-      await expect.poll(async () => (await coreSpans(page)).length).toBeGreaterThan(before);
-      samples.resident.push((await coreSpans(page)).slice(before)[0]);
+      samples.resident.push(await nextPaint(page, before));
+      await waitForTask(page, `Reuse ${slug(position)}`);
     }
 
     // Grouped reads in the measured phase are the 30 s heartbeat only, never per selection.
@@ -300,25 +414,36 @@ test.describe('Task core board reuse (AGT-2956)', () => {
     expect(phaseGrouped).toBeLessThanOrEqual(heartbeatWindows);
     expect(traffic.maxConcurrentPerCore).toBe(1);
 
+    const ms = (list: PaintSample[]) => list.map(sample => sample.ms);
+    const cpus = os.cpus().length;
+    const load = os.loadavg()[0];
+    const budgetDecidable = load <= cpus;
     const summary = {
       source: 'e2e/task-detail/task-core-board-reuse.spec.ts',
-      environment: 'Linux runner, Playwright Chromium, dev frontend, fully mocked API',
-      span: 'task-core-select-to-ready (selection to core available in TaskSelectionService; not a paint mark)',
+      environment: `Linux runner, Playwright Chromium, ${process.env['PW_BASE_URL'] ? 'served production bundle' : 'dev frontend'}, fully mocked API`,
+      measure: 'click event to the first animation frame after the selected task\'s core facts are in the DOM',
       mockedCoreLatencyMs: CORE_DELAY_MS,
+      mockedDetailLatencyMs: DETAIL_DELAY_MS,
+      host: { cpus, loadAverage1m: Number(load.toFixed(2)), budgetDecidable },
+      budgetsMs: { residentP95: 50, uncachedP95: 100 },
       groupedRequestsDuringSelections: phaseGrouped,
       heartbeatWindows,
       selections: samples.uncached.length + samples.resident.length,
       coreRequests: traffic.core.length,
       maxConcurrentRequestsPerCore: traffic.maxConcurrentPerCore,
+      residentSurfaces: {
+        core: samples.resident.filter(sample => sample.surface === 'core').length,
+        fullDetail: samples.resident.filter(sample => sample.surface === 'full-detail').length,
+      },
       uncachedBreakdownMs: Object.fromEntries(Object.entries(breakdown).map(([name, values]) => [name, {
         p50: Number(percentile(values, 50).toFixed(2)),
         p95: Number(percentile(values, 95).toFixed(2)),
       }])),
-      note: 'Stage percentiles overlap and do not add to the span p95.',
-      cohorts: Object.fromEntries(Object.entries(samples).map(([name, values]) => [name, {
-        n: values.length,
-        p50: Number(percentile(values, 50).toFixed(2)),
-        p95: Number(percentile(values, 95).toFixed(2)),
+      note: 'Stage percentiles overlap and do not add to the paint p95. Mocked latency: not a workstation measurement.',
+      cohorts: Object.fromEntries(Object.entries(samples).map(([name, list]) => [name, {
+        n: list.length,
+        p50: Number(percentile(ms(list), 50).toFixed(2)),
+        p95: Number(percentile(ms(list), 95).toFixed(2)),
       }])),
     };
     console.info(JSON.stringify(summary));
@@ -327,13 +452,15 @@ test.describe('Task core board reuse (AGT-2956)', () => {
       fs.writeFileSync(path.join(RESULTS_DIR, 'task-core-reuse-measurement.json'), JSON.stringify(summary, null, 2));
     }
     test.info().annotations.push({ type: 'task-core-p95-ms', description: JSON.stringify(summary.cohorts) });
-    expect(percentile(samples.resident, 95)).toBeLessThanOrEqual(50);
-    // The uncached span is network plus main-thread time and swings with host
-    // load. It is always recorded; the enforced <=100 ms gate is Dossier card 6
-    // on the workstation profile, which opts in here.
-    if (process.env['TASK_SWITCH_BUDGET'] === '1') {
-      expect(percentile(samples.uncached, 95)).toBeLessThanOrEqual(100);
+    if (!budgetDecidable) {
+      test.info().annotations.push({
+        type: 'task-core-budget-not-decidable',
+        description: `1-minute load ${load.toFixed(1)} on ${cpus} CPUs; samples recorded, p95 budgets not judged`,
+      });
+      return;
     }
+    expect(percentile(ms(samples.resident), 95)).toBeLessThanOrEqual(50);
+    expect(percentile(ms(samples.uncached), 95)).toBeLessThanOrEqual(100);
   });
 });
 
