@@ -1,4 +1,5 @@
 using System.Globalization;
+using AgentStudio.Shared;
 
 namespace AgentStudio.Tasks;
 
@@ -16,11 +17,14 @@ namespace AgentStudio.Tasks;
 /// fingerprint is derived only from its arguments, so the same facts always
 /// yield the same verdict.
 /// </para>
+/// <para>
+/// AGT-2989: the facts are length-prefixed (<see cref="CanonicalFields"/>)
+/// rather than delimiter-joined, because reasons and details are free text
+/// that may contain any separator character.
+/// </para>
 /// </summary>
 public static class AcceptanceRailAttemptPolicy
 {
-    private const char Separator = '\u001f';
-
     /// <summary>
     /// Identity of one rail attempt: the card facts, the Git-derived verdict,
     /// and the action those facts produced. Two attempts with the same
@@ -31,19 +35,18 @@ public static class AcceptanceRailAttemptPolicy
         TaskIntegrationStatus? integration,
         AcceptanceRailDecision decision,
         string? integrationAttemptReason = null)
-        => string.Join(
-            Separator,
+        => CanonicalFields.Encode(
             task.State,
             task.EnteredLaneAt.ToString("O", CultureInfo.InvariantCulture),
             decision.Action.ToString(),
             decision.Reason,
             integration?.Status ?? "unknown",
-            integration?.Sha ?? string.Empty,
-            integration?.DeliveryRef ?? string.Empty,
-            integration?.Detail ?? string.Empty,
-            integration?.Failure?.Code ?? string.Empty,
-            integration?.Failure?.FailureSignature ?? string.Empty,
-            integrationAttemptReason ?? string.Empty);
+            integration?.Sha,
+            integration?.DeliveryRef,
+            integration?.Detail,
+            integration?.Failure?.Code,
+            integration?.Failure?.FailureSignature,
+            integrationAttemptReason);
 
     /// <summary>
     /// Whether the rail may act on <paramref name="fingerprint"/>. False only
