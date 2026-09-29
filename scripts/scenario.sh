@@ -96,7 +96,6 @@ compose_full_cleanup() {
     if [ -n "$scenario_compose_project" ]; then
         docker compose --project-name "$scenario_compose_project" \
             --file "$scenario_compose_file" --file "$scenario_compose_override" \
-            --profile distributed --profile runner \
             down --volumes --remove-orphans >/dev/null 2>&1 || true
     fi
     case "$scenario_compose_host_dir" in
@@ -116,7 +115,6 @@ compose_full_diagnostics() {
     local compose=(
         docker compose --project-name "$scenario_compose_project"
         --file "$scenario_compose_file" --file "$scenario_compose_override"
-        --profile distributed --profile runner
     )
     echo "scenario: capturing Compose diagnostics before cleanup in $diagnostics" >&2
     {
@@ -179,7 +177,6 @@ wait_for_compose_port() {
     while :; do
         if binding="$(docker compose --project-name "$scenario_compose_project" \
             --file "$scenario_compose_file" --file "$scenario_compose_override" \
-            --profile distributed --profile runner \
             port "$service" "$container_port" 2>&1)" && [ -n "$binding" ]; then
             local host_port="${binding##*:}"
             case "$host_port" in
@@ -198,7 +195,6 @@ wait_for_compose_port() {
         local container_id
         container_id="$(docker compose --project-name "$scenario_compose_project" \
             --file "$scenario_compose_file" --file "$scenario_compose_override" \
-            --profile distributed --profile runner \
             ps --all --quiet "$service" 2>/dev/null || true)"
         container_id="${container_id%%$'\n'*}"
         if [ -n "$container_id" ]; then

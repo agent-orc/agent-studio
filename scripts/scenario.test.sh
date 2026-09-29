@@ -132,10 +132,16 @@ scenario_compose_json="$(
         --project-name scenario-contract-rendered \
         --file "$repo_root/docker-compose.yml" \
         --file "$repo_root/testsupport/scenario/docker-compose.scenario.yml" \
-        --profile distributed \
-        --profile runner \
         config --format json
 )"
+
+# The one-box Compose file has no distributed or runner profile; the scenario
+# must neither hide its runner behind one nor select one that does not exist.
+if grep -En -- '--profile.{0,4}(distributed|runner)' \
+    "$repo_root/scripts/scenario.sh" "$repo_root/task-server.Tests/ScenarioContext.cs"; then
+    printf 'The scenario selects a Compose profile the one-box file does not define.\n' >&2
+    exit 1
+fi
 
 node -e '
 const config = JSON.parse(process.argv[1]);

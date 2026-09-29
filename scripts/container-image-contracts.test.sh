@@ -139,6 +139,10 @@ for (const service of ["agent-host-review-distributed", "agent-host-review-distr
 for (const service of ["orchestrator-api", "orchestrator-api-dev"]) {
   if (services[service].volumes?.some(volume => ["workspace", "projects"].includes(volume.source)))
     throw new Error(`${service} must not retain a compatibility task store`);
+  // The compatibility API holds no task workspace; naming one in Compose
+  // would advertise a local store that no mounted volume backs.
+  if (Object.hasOwn(services[service].environment ?? {}, "TaskRepository"))
+    throw new Error(`${service} must not configure a compatibility TaskRepository`);
 }
 ' "$compose_json"
 

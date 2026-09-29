@@ -694,8 +694,6 @@ public sealed partial class ScenarioContext : IDisposable
             "--project-name", _composeProject,
             "--file", _composeFile,
             "--file", _composeOverrideFile,
-            "--profile", "distributed",
-            "--profile", "runner",
             .. command,
         ];
 

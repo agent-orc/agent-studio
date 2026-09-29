@@ -36,7 +36,6 @@ services:
         SHA: ${SCENARIO_BUILD_SHA:?set SCENARIO_BUILD_SHA}
 
   agent-host-distributed:
-    profiles: ["distributed", "runner"]
     image: "${SCENARIO_AGENT_HOST_IMAGE:?set SCENARIO_AGENT_HOST_IMAGE}"
     user: "${SCENARIO_UID:?set SCENARIO_UID}:${SCENARIO_GID:?set SCENARIO_GID}"
     build:

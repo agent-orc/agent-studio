@@ -79,15 +79,14 @@ x-bff: &bff
     start_period: 10s
   logging: *bounded-logs
 
+# Compatibility routes may read Task Server but never retain a second
+# workspace or project store.
 x-api: &api
   restart: unless-stopped
   environment:
-    TaskRepository: /data/workspace
     TaskServer__BaseUrl: http://task-server:5071
     TaskServer__AuthTokenFile: /run/agent-studio-secrets/studio_token
   volumes:
-    - workspace:/data/workspace
-    - projects:/data/projects
     - secrets:/run/agent-studio-secrets:ro
   networks: [control]
   mem_limit: 2g
@@ -210,10 +209,6 @@ services:
   orchestrator-api:
     <<: *api
     image: ghcr.io/agent-orc/agent-studio-api:v${AGENT_STUDIO_VERSION:-0.9.1}
-    # Compatibility routes may read Task Server but never retain a second
-    # workspace or project store.
-    volumes:
-      - secrets:/run/agent-studio-secrets:ro
     depends_on:
       task-server: {condition: service_healthy}
 
@@ -332,7 +327,6 @@ services:
     volumes:
       - secrets:/run/agent-studio-secrets:ro
     environment:
-      TaskRepository: /data/workspace
       TaskServer__BaseUrl: http://task-server-dev:5071
       TaskServer__AuthTokenFile: /run/agent-studio-secrets/studio_token
     depends_on:
