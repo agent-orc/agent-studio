@@ -151,9 +151,17 @@ public class TaskSessionLog
             // older open row. Close it before appending so the durable log
             // never exposes two simultaneous open runs for one task.
             var path = TaskPaths.SessionEventsLog(jobFolder);
-            var events = ReadSessionEventsFromPath(path);
+            var events = ReadSessionEventsFromPath(path, out var truncated);
             var predecessor = events.LastOrDefault();
-            if (predecessor is { FinishedAt: null })
+            if (truncated)
+            {
+                // Rewriting from a bounded window would drop every older row;
+                // keep the ledger intact and only append (AGT-2991).
+                _logger.LogWarning(
+                    "Session-event ledger for {JobId} exceeds {MaxBytes} bytes; appending without closing the predecessor row",
+                    jobId ?? jobFolder, BoundedFileRead.LedgerBytes);
+            }
+            else if (predecessor is { FinishedAt: null })
             {
                 var duration = evt.Ts >= predecessor.Ts
                     ? (evt.Ts - predecessor.Ts).TotalSeconds
@@ -179,11 +187,21 @@ public class TaskSessionLog
         }
     }
 
-    private static List<SessionEvent> ReadSessionEventsFromPath(string path)
+    private static List<SessionEvent> ReadSessionEventsFromPath(string path) =>
+        ReadSessionEventsFromPath(path, out _);
+
+    /// <summary>
+    /// Reads the newest <see cref="BoundedFileRead.LedgerBytes"/> of the
+    /// ledger. <paramref name="truncated"/> tells a caller that rewrites the
+    /// file that older rows were left unread, so it must not rewrite from
+    /// this list.
+    /// </summary>
+    private static List<SessionEvent> ReadSessionEventsFromPath(string path, out bool truncated)
     {
+        truncated = false;
         if (!File.Exists(path)) return [];
         var result = new List<SessionEvent>();
-        foreach (var line in File.ReadAllLines(path))
+        foreach (var line in BoundedFileRead.ReadTailLines(path, BoundedFileRead.LedgerBytes, out truncated))
         {
             if (string.IsNullOrWhiteSpace(line)) continue;
             try
@@ -316,7 +334,15 @@ public class TaskSessionLog
         if (!File.Exists(path)) return false;
         try
         {
-            var lines = File.ReadAllLines(path).ToList();
+            if (!BoundedFileRead.TryReadAllLines(path, BoundedFileRead.LedgerBytes, out var lines))
+            {
+                // The mutation rewrites the whole ledger, so it needs every
+                // row; an oversized ledger is left untouched (AGT-2991).
+                _logger.LogWarning(
+                    "Session-event ledger for {JobId} exceeds {MaxBytes} bytes; skipping the in-place update",
+                    jobId, BoundedFileRead.LedgerBytes);
+                return false;
+            }
             var idx = -1;
             SessionEvent? evt = null;
             for (var candidate = lines.Count - 1; candidate >= 0; candidate--)

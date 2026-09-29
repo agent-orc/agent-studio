@@ -14,7 +14,9 @@
     <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.53.3" />
     <PackageReference Include="Porta.Pty" Version="1.0.7" />
     <PackageReference Include="Markdig" Version="0.42.0" />
-    <PackageReference Include="HtmlSanitizer" Version="9.0.892" />
+    <PackageReference Include="HtmlSanitizer" Version="9.2.1039" />
+    <!-- Used directly by the docs and pipeline HTML parsers; pinned past GHSA-pgww-w46g-26qg (patched in 1.5.0). -->
+    <PackageReference Include="AngleSharp" Version="1.7.2" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
     <PackageReference Include="Serilog.AspNetCore" Version="9.0.0" />
     <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
