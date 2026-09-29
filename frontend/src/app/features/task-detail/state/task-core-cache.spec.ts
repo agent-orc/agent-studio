@@ -236,6 +236,21 @@ describe('TaskDetailPrefetchService · task core cache', () => {
     expect(cache.isCoreCurrent('PROJ-A', 'a')).toBe(false);
   });
 
+  it('a mutation reply without a project only revalidates same-slug cores, never patches their lane', () => {
+    read('PROJ-A', 'fix-login');
+    read('PROJ-B', 'fix-login');
+    http.expectOne(coreRequest('PROJ-A', 'fix-login')).flush(makeCore('PROJ-A', 'fix-login'));
+    http.expectOne(coreRequest('PROJ-B', 'fix-login')).flush(makeCore('PROJ-B', 'fix-login'));
+
+    tasks.moveJob('fix-login', '2-ready').subscribe();
+    http.expectOne((r) => r.url === '/api/tasks/fix-login/move').flush({});
+
+    for (const project of ['PROJ-A', 'PROJ-B']) {
+      expect(cache.peekCore(project, 'fix-login')?.lane).toBe('5-human-review');
+      expect(cache.isCoreCurrent(project, 'fix-login')).toBe(false);
+    }
+  });
+
   it('a reply that raced a change of its task is not trusted as current', () => {
     startHub();
     read('PROJ-A', 'a');

@@ -493,7 +493,9 @@ export class TaskDetailPrefetchService {
       case 'mutated': {
         const taskKey = event.watchPath ? `${event.watchPath}::${event.id}` : null;
         for (const key of this.coreKeysFor(event.id, taskKey)) {
-          if (event.lane) this.patchCore(key, { state: event.lane });
+          // An id-only match may name a same-slug core in another project:
+          // revalidate it, but patch the lane only on an exact project match.
+          if (event.lane && taskKey) this.patchCore(key, { state: event.lane });
           this.markCoreStale(key);
         }
         return;

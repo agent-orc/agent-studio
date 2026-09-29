@@ -220,7 +220,9 @@ task core cache for `GET /api/tasks/{id}/core` (see
   versions travel in the core ETag; Git and usage versions do not. A pushed
   row, a move or a successful own mutation marks only that task's core stale
   and patches its lane facts in place; the next read revalidates with
-  `If-None-Match`, so an unchanged core costs a 304. A reply that raced a
+  `If-None-Match`, so an unchanged core costs a 304. A mutation reply that
+  names only the id revalidates every same-slug core but patches no lane,
+  because the slug may belong to another project. A reply that raced a
   change of its task is kept for paint but not trusted as current.
   `gitStateChanged`, sidecar generations and an unchanged grouped snapshot
   leave every core current. Reconnect and bulk changes mark all cores stale
