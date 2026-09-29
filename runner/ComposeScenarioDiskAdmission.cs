@@ -23,7 +23,8 @@ internal static class ComposeScenarioDiskAdmission
     /// True when a deterministic review command executes a Docker Compose
     /// scenario or smoke: <c>scripts/scenario.sh --target compose</c> (any
     /// level) or <c>scripts/compose-smoke-test.sh</c>, run directly, through a
-    /// shell (<c>sh -lc '...'</c>, <c>bash script</c>) or behind environment
+    /// shell (<c>sh -lc '...'</c>, <c>bash script</c>), inside a command
+    /// substitution (<c>out=$(...)</c>, backticks) or behind environment
     /// assignments and <c>env</c>/<c>exec</c>/<c>timeout</c> wrappers. Only a
     /// command position counts: a mention inside quoted data, an argument of
     /// another program (<c>echo</c>, <c>grep</c>) or a shell comment does not,
@@ -186,8 +187,10 @@ internal static class ComposeScenarioDiskAdmission
 /// admission needs to find the program of every simple command in a
 /// <c>sh -c</c> script. Quotes and backslashes are removed as the shell does,
 /// comments are dropped, <c>; &amp; | &amp;&amp; || ( )</c> and newlines
-/// separate commands, redirection targets are skipped, and command
-/// substitutions stay opaque parts of the word that contains them.
+/// separate commands and redirection targets are skipped. A command
+/// substitution (<c>$(...)</c> or backticks, bare or inside double quotes)
+/// stays an opaque part of the word that contains it, and its body is parsed
+/// into simple commands of its own, because the shell executes it.
 /// </summary>
 internal static class ShellWords
 {
@@ -200,6 +203,7 @@ internal static class ShellWords
         var skipNextWord = false;
         var nextWordIsHeredocDelimiter = false;
         var heredocDelimiters = new Queue<string>();
+        var substitutions = new List<string>();
 
         void EndWord()
         {
@@ -276,6 +280,16 @@ internal static class ShellWords
                     index++;
                     while (index < script.Length && script[index] != '"')
                     {
+                        if (script[index] == '$' && index + 1 < script.Length && script[index + 1] == '(')
+                        {
+                            index = AppendSubstitution(script, index, word, substitutions);
+                            continue;
+                        }
+                        if (script[index] == '`')
+                        {
+                            index = AppendBackquoted(script, index, word, substitutions);
+                            continue;
+                        }
                         if (script[index] == '\\' && index + 1 < script.Length
                             && script[index + 1] is '"' or '\\' or '$' or '`' or '\n')
                         {
@@ -298,15 +312,11 @@ internal static class ShellWords
                     break;
                 case '$' when index + 1 < script.Length && script[index + 1] == '(':
                     inWord = true;
-                    index = AppendBalanced(script, index, word);
+                    index = AppendSubstitution(script, index, word, substitutions);
                     break;
                 case '`':
                     inWord = true;
-                    word.Append(script[index++]);
-                    while (index < script.Length && script[index] != '`')
-                        word.Append(script[index++]);
-                    if (index < script.Length)
-                        word.Append(script[index++]);
+                    index = AppendBackquoted(script, index, word, substitutions);
                     break;
                 default:
                     inWord = true;
@@ -316,6 +326,8 @@ internal static class ShellWords
             }
         }
         EndCommand();
+        foreach (var body in substitutions)
+            commands.AddRange(SimpleCommands(body));
         return commands;
     }
 
@@ -335,20 +347,85 @@ internal static class ShellWords
         return index;
     }
 
-    // Appends "$( ... )" verbatim and returns the index after its closing paren.
-    private static int AppendBalanced(string script, int index, System.Text.StringBuilder word)
+    // Appends "$( ... )" verbatim, records its body (not that of an arithmetic
+    // "$(( ... ))") and returns the index after the closing paren. Quoted and
+    // escaped parens do not count towards the nesting.
+    private static int AppendSubstitution(
+        string script,
+        int index,
+        System.Text.StringBuilder word,
+        List<string> substitutions)
     {
+        var start = index;
         var depth = 0;
+        var closed = false;
+        index++;
         while (index < script.Length)
         {
-            var character = script[index++];
-            word.Append(character);
+            var character = script[index];
+            if (character == '\\')
+            {
+                index += 2;
+                continue;
+            }
+            if (character is '\'' or '"')
+            {
+                index = SkipQuoted(script, index);
+                continue;
+            }
+            index++;
             if (character == '(')
                 depth++;
             else if (character == ')' && --depth == 0)
+            {
+                closed = true;
                 break;
+            }
         }
+        index = Math.Min(index, script.Length);
+        word.Append(script, start, index - start);
+        var arithmetic = start + 2 < script.Length && script[start + 2] == '(';
+        if (!arithmetic)
+            substitutions.Add(script[(start + 2)..(closed ? index - 1 : index)]);
         return index;
+    }
+
+    // Appends "`...`" verbatim, records its body with the backslash escapes
+    // the shell removes before running it, and returns the index after it.
+    private static int AppendBackquoted(
+        string script,
+        int index,
+        System.Text.StringBuilder word,
+        List<string> substitutions)
+    {
+        var start = index++;
+        var body = new System.Text.StringBuilder();
+        while (index < script.Length && script[index] != '`')
+        {
+            if (script[index] == '\\' && index + 1 < script.Length)
+            {
+                if (script[index + 1] is not ('$' or '`' or '\\'))
+                    body.Append('\\');
+                body.Append(script[index + 1]);
+                index += 2;
+                continue;
+            }
+            body.Append(script[index++]);
+        }
+        if (index < script.Length)
+            index++;
+        word.Append(script, start, index - start);
+        substitutions.Add(body.ToString());
+        return index;
+    }
+
+    // Returns the index after the quoted string that starts at index.
+    private static int SkipQuoted(string script, int index)
+    {
+        var quote = script[index++];
+        while (index < script.Length && script[index] != quote)
+            index += quote == '"' && script[index] == '\\' ? 2 : 1;
+        return Math.Min(index + 1, script.Length);
     }
 }
 

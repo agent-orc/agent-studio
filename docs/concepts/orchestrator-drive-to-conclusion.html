@@ -2780,8 +2780,9 @@
             run-outcome classification: it is an infrastructure terminal, no verdict is charged to the change, and the
             review takes the ordinary bounded <code>ReviewInfra</code> retry once disk is freed. The classifier in
             <code>runner/ComposeScenarioDiskAdmission.cs</code> parses the <code>sh -lc</code> script shell-aware
-            (quotes, comments, here-documents, command positions), so a step that only mentions the scenario in an
-            <code>echo</code>, quoted data, or a comment is never refused on disk.
+            (quotes, comments, here-documents, command positions, command substitutions), so a step that only
+            mentions the scenario in an <code>echo</code>, quoted data, or a comment is never refused on disk, while
+            one that runs it inside <code>out=$(...)</code> or backticks is gated like a direct call.
           </td>
         </tr>
       </tbody>

@@ -47,6 +47,21 @@ public sealed class ComposeScenarioDiskAdmissionTests
         { "sh", ["-lc", "cat scripts/scenario.sh > /dev/null && bash scripts/scenario.test.sh"], false },
         { "echo", ["scripts/scenario.sh", "--target", "compose"], false },
         { "sh", ["scripts/scenario.test.sh", "scripts/scenario.sh", "--target", "compose"], false },
+        // AGT-2993 review finding: a command substitution executes its body.
+        { "sh", ["-lc", "output=$(scripts/scenario.sh --target compose --level full)"], true },
+        { "sh", ["-lc", "output=`scripts/scenario.sh --target compose --level full`"], true },
+        { "sh", ["-lc", "echo \"$(SCENARIO_PROVIDER_REVIEW=1 scripts/scenario.sh --target compose --level full 2>&1)\""], true },
+        { "sh", ["-lc", "echo \"result: `./scripts/compose-smoke-test.sh`\""], true },
+        { "sh", ["-lc", "log=$(cd repo && echo $(bash scripts/scenario.sh --target=compose))"], true },
+        { "sh", ["-lc", "test -n \"$(timeout 3600 scripts/compose-smoke-test.sh | tail -1)\""], true },
+        { "sh", ["-lc", "out=$(sh -c 'scripts/scenario.sh --target compose')"], true },
+        { "sh", ["-lc", "out=$(echo \")\" && scripts/scenario.sh --target compose)"], true },
+        { "sh", ["-lc", "out=$(scripts/scenario.sh --target inproc --level full)"], false },
+        { "sh", ["-lc", "out=$(echo scripts/scenario.sh --target compose)"], false },
+        { "sh", ["-lc", "echo '$(scripts/scenario.sh --target compose)'"], false },
+        { "sh", ["-lc", "echo \\$\\(scripts/scenario.sh --target compose\\)"], false },
+        { "sh", ["-lc", "echo \"\\`scripts/compose-smoke-test.sh\\`\""], false },
+        { "sh", ["-lc", "out=$(cat <<EOF\nscripts/scenario.sh --target compose\nEOF\n)"], false },
     };
 
     [Theory]

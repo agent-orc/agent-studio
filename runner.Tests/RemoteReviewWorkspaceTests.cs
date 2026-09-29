@@ -1381,6 +1381,36 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             && line.Contains("minFreePercent=100 decision=refuse", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// AGT-2993 review finding: <c>out=$(scripts/scenario.sh --target compose)</c>
+    /// executes the scenario as much as a bare call does, so it is refused too.
+    /// </summary>
+    [Fact]
+    public async Task A_compose_scenario_inside_a_command_substitution_is_refused_below_the_floor()
+    {
+        var sha = await SeedOriginAsync();
+        var marker = Path.Combine(_root, "compose-scenario-substituted");
+        var command = await FakeComposeScenarioCommandAsync(marker, viaCommandSubstitution: true);
+        var journal = new List<string>();
+        var (workspace, _) = Workspace(
+            "attempt-scenario-substitution",
+            sha,
+            [command],
+            27005,
+            composeScenarioMinFreePercent: 100,
+            log: line => { lock (journal) journal.Add(line); });
+        await workspace.PrepareAsync(null!, default);
+
+        var exception = await Assert.ThrowsAsync<ReviewInfrastructureException>(
+            () => workspace.ExecutePlanAsync(default));
+
+        Assert.Equal(ComposeScenarioDiskAdmission.DiskLowClassification, exception.Classification);
+        Assert.False(File.Exists(marker));
+        Assert.Contains(journal, line =>
+            line.StartsWith("review-compose-scenario-disk step=verify-scenario ", StringComparison.Ordinal)
+            && line.Contains("decision=refuse", StringComparison.Ordinal));
+    }
+
     [Fact]
     public async Task A_compose_scenario_above_the_floor_runs_and_logs_the_free_disk()
     {
@@ -1443,9 +1473,12 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     /// <summary>
     /// A stand-in <c>scripts/scenario.sh</c> outside the checkout that only
     /// touches <paramref name="marker"/>, executed the way a verify command
-    /// runs the real one: <c>sh -lc 'SCENARIO_PROVIDER_REVIEW=1 sh .../scripts/scenario.sh --target compose --level full'</c>.
+    /// runs the real one: <c>sh -lc 'SCENARIO_PROVIDER_REVIEW=1 sh .../scripts/scenario.sh --target compose --level full'</c>,
+    /// or captured as <c>out=$(...)</c>.
     /// </summary>
-    private async Task<ReviewCommandDto> FakeComposeScenarioCommandAsync(string marker)
+    private async Task<ReviewCommandDto> FakeComposeScenarioCommandAsync(
+        string marker,
+        bool viaCommandSubstitution = false)
     {
         var script = Path.Combine(_root, "fake-scenario", "scripts", "scenario.sh");
         Directory.CreateDirectory(Path.GetDirectoryName(script)!);
@@ -1454,7 +1487,9 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             "verify-scenario",
             "scenario",
             PosixShell.RequirePath(),
-            ["-lc", $"SCENARIO_PROVIDER_REVIEW=1 sh '{PosixShell.ToShellPath(script)}' --target compose --level full"]);
+            ["-lc", viaCommandSubstitution
+                ? $"out=$(SCENARIO_PROVIDER_REVIEW=1 sh '{PosixShell.ToShellPath(script)}' --target compose --level full) && echo \"$out\""
+                : $"SCENARIO_PROVIDER_REVIEW=1 sh '{PosixShell.ToShellPath(script)}' --target compose --level full"]);
     }
 
     /// <summary>
