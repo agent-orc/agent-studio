@@ -162,6 +162,70 @@ public sealed class FailureInterventionTests : IDisposable
             item, followUp, firstRoundTrip, followUpTimeline, originTimeline, originPipeline, feed, reportLine);
     }
 
+    [Fact]
+    public async Task FailureWithFork_RaisesOneDecisionCard_InsteadOfAProseTask_AndEveryOriginWaitsOnIt()
+    {
+        var (scanner, mutations, service, log, _, _) = Build();
+        var first = CreateOrigin(scanner, mutations, "First merge");
+        var second = CreateOrigin(scanner, mutations, "Second merge");
+        var fork = new DecisionContent
+        {
+            Question = "Integration conflicts with the release branch. Rebase or hold?",
+            Options =
+            [
+                new DecisionOption { Id = "rebase", Label = "Rebase onto the release branch", Risk = "Re-run all gates" },
+                new DecisionOption { Id = "hold", Label = "Hold until the release ships", Consequences = "Delivery waits" },
+            ],
+        };
+        var evidence = new FailureCommandEvidence(
+            "IntegrationError", "IntegrationFailed", 1, 1_000, "origin is not configured", "conflict",
+            PipelineCatalogue.MergeIntoDevelopStepId, ["post-steps/"], DateTime.UtcNow, fork);
+
+        var raised = await service.RaiseAsync(first, evidence);
+        var attached = await service.RaiseAsync(second, evidence);
+
+        Assert.True(raised.Created);
+        Assert.False(attached.Created);
+        var item = Assert.Single(service.List(_project));
+        Assert.Equal(TaskKinds.Decision, item.FollowUpKind);
+        var decision = scanner.FindJob(item.FollowUpTaskId, _project)!;
+        Assert.Equal(TaskKinds.Decision, decision.Kind);
+        Assert.Equal(TaskStates.Preparation, decision.State);
+        Assert.Equal(["rebase", "hold"], decision.Decision!.Options.Select(option => option.Id));
+        Assert.Equal([first.Key!, second.Key!], decision.Decision.Dependants);
+        Assert.Equal([first.Key!, second.Key!], decision.Decision.AppliesTo);
+        Assert.Single(scanner.ScanAllJobs(), task => task.CreationSource == TimelineActors.Orchestrator);
+        Assert.Contains("choose one of the options on this card",
+            File.ReadAllText(Path.Combine(decision.FolderPath, "prompt.md")));
+        foreach (var origin in new[] { first, second })
+        {
+            var refs = scanner.FindJob(origin.Id, _project)!.References;
+            Assert.Contains(refs.DependsOn, edge => edge.Key == item.FollowUpKey);
+            Assert.Contains(item.FollowUpKey, refs.BlockedBy);
+            Assert.Contains(item.FollowUpKey, refs.RaisedFollowUps);
+        }
+        Assert.Contains(log.Read(_project), entry =>
+            entry.Topic == OrchestratorLogTopics.FailureIntervention && entry.Summary.Contains(item.FollowUpKey));
+    }
+
+    [Fact]
+    public async Task FailureWithInvalidFork_FallsBackToTheProseTask()
+    {
+        var (scanner, mutations, service, _, _, _) = Build();
+        var origin = CreateOrigin(scanner, mutations, "Single option");
+        var evidence = new FailureCommandEvidence("MissingSource", Fork: new DecisionContent
+        {
+            Question = "Only one way?",
+            Options = [new DecisionOption { Id = "a", Label = "Only" }],
+        });
+
+        await service.RaiseAsync(origin, evidence);
+
+        var item = Assert.Single(service.List(_project));
+        Assert.Equal(TaskKinds.Task, item.FollowUpKind);
+        Assert.Equal(TaskKinds.Task, scanner.FindJob(item.FollowUpTaskId, _project)!.Kind);
+    }
+
     private static void WriteEvidenceSnapshots(
         FailureInterventionRecord item,
         TaskInfo followUp,
@@ -237,7 +301,8 @@ public sealed class FailureInterventionTests : IDisposable
         var prompts = new RuntimePromptService(config, NullLogger<RuntimePromptService>.Instance);
         var pipeline = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
         var service = new FailureInterventionService(mutations, scanner, timeline, log,
-            NullLogger<FailureInterventionService>.Instance, prompts, pipelineLog: pipeline);
+            NullLogger<FailureInterventionService>.Instance, prompts, pipelineLog: pipeline,
+            decisionRequests: new DecisionCardRequests(scanner, mutations, NullLogger<DecisionCardRequests>.Instance));
         return (scanner, mutations, service, log, timeline, pipeline);
     }
 
