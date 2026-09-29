@@ -143,9 +143,11 @@ AGT-2991 brought both to a clean posture; keep them there.
   matches) goes through
   [`BoundedFileRead`](../../../backend/Shared/BoundedFileRead.cs) instead of
   `File.ReadAllText`/`ReadAllLines`. Whole-content readers refuse an oversized
-  file; line readers keep the newest complete lines. Never rewrite a ledger
-  from a bounded window: use `TryReadAllLines` and leave an oversized ledger
-  untouched.
+  file; line readers keep the newest complete lines. A writer that updates a
+  ledger row must keep working on an oversized ledger: read the newest window
+  with `ReadTailLineWindow`, change the row there, and rewrite the file only
+  from the window's `Offset`, so older rows keep their bytes. Never rewrite
+  the whole file from a truncated window, because that deletes the older rows.
 
 ## Trust considerations in both profiles
 
