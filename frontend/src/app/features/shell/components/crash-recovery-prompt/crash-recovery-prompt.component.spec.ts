@@ -3,6 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { of } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
+import { ModalStackService } from '../../../../services/modal-stack.service';
 import { NotificationService } from '../../../../services/notification.service';
 import { TaskService } from '../../../../services/task.service';
 import { CrashRecoveryPromptComponent } from './crash-recovery-prompt.component';
@@ -107,6 +108,49 @@ describe('CrashRecoveryPromptComponent', () => {
     expect(component.pending()).toEqual([trivial]);
     expect(component.open()).toBe(false);
     expect(TestBed.inject(NotificationService).notifications().some(item => item.title === 'Crash recovery found read-evidence sidecars')).toBe(true);
+  });
+
+  it('closes on Escape locally and releases its modal-stack entry exactly once', async () => {
+    const review = { id: 'review', projectName: 'Review', jobId: 'AGT-1', reason: 'r', repoRoot: 'x', message: 'm', files: ['source.ts'], createdAt: '2026-07-18T00:00:00Z', classification: 'review-required' as const };
+    const committed = vi.fn(() => of({ status: 'committed', pending: null, commitSha: 'abc123', error: null }));
+    const dismissed = vi.fn(() => of({ status: 'dismissed', pending: null, commitSha: null, error: null }));
+    await TestBed.configureTestingModule({
+      imports: [CrashRecoveryPromptComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideRouter([]),
+        { provide: TaskService, useValue: {
+          getPendingCrashRecoveries: () => of({ pending: [review] }),
+          commitCrashRecovery: committed,
+          dismissCrashRecovery: dismissed,
+        } },
+      ],
+    }).compileComponents();
+
+    const modalStack = TestBed.inject(ModalStackService);
+    modalStack.clearForTest();
+    // An unrelated overlay below the prompt must survive the prompt's cleanup.
+    const disposeLower = modalStack.push('lower-overlay', () => true);
+    const fixture = TestBed.createComponent(CrashRecoveryPromptComponent);
+    fixture.detectChanges();
+    const component = fixture.componentInstance;
+    component.openRecovery();
+    fixture.detectChanges();
+    expect(modalStack.depth()).toBe(2);
+    expect(modalStack.topId()).toBe('crash-recovery-prompt');
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    fixture.detectChanges();
+    expect(component.open()).toBe(false);
+    expect(modalStack.depth()).toBe(1);
+    expect(modalStack.topId()).toBe('lower-overlay');
+
+    fixture.destroy();
+    expect(modalStack.depth()).toBe(1);
+    expect(committed).not.toHaveBeenCalled();
+    expect(dismissed).not.toHaveBeenCalled();
+    disposeLower();
+    modalStack.clearForTest();
   });
 
   it('routes unattributed metadata sidecars to a non-blocking leave-uncommitted notification', async () => {
