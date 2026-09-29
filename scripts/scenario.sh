@@ -30,7 +30,9 @@ Targets:
 Levels:
   smoke    The first six steps in testsupport/scenario/steps.json (bootstrap
            principals through auto-review).
-  full     Every step in testsupport/scenario/steps.json.
+  full     Every step in testsupport/scenario/steps.json. With --target
+           inproc it also runs the Studio connector negative matrix and
+           writes connector-negative-matrix.md/.json to the report dir.
 
 Options:
   --report-dir DIR      Where to write the JUnit + Markdown report
@@ -84,11 +86,32 @@ run_inproc() {
     dotnet build "$repo_root/task-server.Tests/TaskServer.Tests.csproj" --configuration "$configuration" --nologo
 
     local test_name="Deployment_regression_scenario_${level}"
+    local status=0
     echo "scenario: running $test_name..." >&2
     SCENARIO_TARGET="inproc" SCENARIO_REPORT_DIR="$report_dir" \
       dotnet test "$repo_root/task-server.Tests/TaskServer.Tests.csproj" \
         --configuration "$configuration" --no-build \
         --filter "FullyQualifiedName~TaskServer.Tests.ScenarioTests.$test_name" \
+        --logger "console;verbosity=normal" || status=$?
+
+    # The full level also runs the Studio connector negative matrix (gate 4)
+    # so its report lands in the same evidence bundle, even when a scenario
+    # step already failed.
+    if [ "$level" = "full" ]; then
+        run_connector_matrix || status=$?
+    fi
+    return "$status"
+}
+
+run_connector_matrix() {
+    echo "scenario: building backend.Tests for the connector negative matrix ($configuration)..." >&2
+    dotnet build "$repo_root/backend.Tests/OrchestratorApi.Tests.csproj" --configuration "$configuration" --nologo
+
+    echo "scenario: running the connector negative matrix..." >&2
+    SCENARIO_REPORT_DIR="$report_dir" \
+      dotnet test "$repo_root/backend.Tests/OrchestratorApi.Tests.csproj" \
+        --configuration "$configuration" --no-build \
+        --filter "FullyQualifiedName~AgentStudio.Tests.ConnectorNegativeMatrixTests" \
         --logger "console;verbosity=normal"
 }
 
