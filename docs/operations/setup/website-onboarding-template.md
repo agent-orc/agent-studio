@@ -4,81 +4,26 @@
 > website integration, layout, analytics, and final publication. Product
 > engineering maintains the commands and product claims below.
 
-## Download Agent Studio for Linux
+## Install Agent Studio
 
-Download the guided Linux x64 setup executable:
+Download `agent-studio-setup` for Linux x64 or `agent-studio-setup.exe` for
+Windows x64 from the [latest release](https://github.com/agent-orc/agent-studio/releases/latest).
+Download `SHA256SUMS` from the same release and verify the executable before
+running it. The executable and product binaries are self-contained; no .NET
+installation is required.
 
-[Download `agent-orchestrator-setup`](https://github.com/agent-orc/agent-studio/releases/latest/download/agent-orchestrator-setup)
-
-Verify it before running:
-
-```sh
-curl -fLO https://github.com/agent-orc/agent-studio/releases/latest/download/agent-orchestrator-setup
-curl -fLO https://github.com/agent-orc/agent-studio/releases/latest/download/SHA256SUMS
-grep '  agent-orchestrator-setup$' SHA256SUMS | sha256sum -c -
-chmod +x agent-orchestrator-setup
-```
-
-The setup executable and installed product binaries are self-contained. You do
-not need to install .NET.
-
-## Choose a path
-
-### View the demo
-
-Use this path to inspect the board without connecting a repository or starting
-an Agent Host. Docker and Docker Compose v2 are required only for this path.
+The default path installs the complete one-box stack using Docker Engine on
+Linux or Docker Desktop with the WSL2 backend on Windows. It pins the release,
+starts the Task Server, Engine, Studio UI, and one runner container, waits for
+health, and prints the browser URL. The UI listens on loopback by default.
 
 ```sh
-./agent-orchestrator-setup --mode demo
+./agent-studio-setup
 ```
 
-The demo binds the UI to loopback, uses isolated Docker volumes, mounts no host
-repositories, and performs no coding work. Setup prints the local URL and stop
-command.
-
-### Run everything on one machine
-
-Use this path when the Control Plane, repositories, Git credentials, and coding
-CLI are on the same Linux machine.
-
-Authenticate Codex or Claude on that machine, then run:
-
-```sh
-sudo ./agent-orchestrator-setup --mode single
-```
-
-The guide checks prerequisites, asks for the Linux execution user and bootstrap
-values, installs the Control Plane and Agent Host, and verifies host
-registration. Docker is not required.
-
-### Use several machines
-
-Install the Control Plane first:
-
-```sh
-sudo ./agent-orchestrator-setup --mode control-plane
-```
-
-Setup prints a join command and protected join token. On every Agent Host
-machine:
-
-```sh
-sudo ./agent-orchestrator-setup --join
-```
-
-Paste the token at the hidden prompt. Each host needs Git and its own
-authenticated Codex or Claude CLI. The Control Plane needs neither. See the
-[multi-machine guide](./multi-machine.md) for the topology, TLS boundary, GitHub
-token permissions, role separation, and verification steps.
-
-## What setup checks
-
-- Linux x64 and required operating-system commands
-- Docker Compose only for the demo path
-- Git and a host-owned Agent CLI login only for Agent Host paths
-- SHA-256 of every downloaded release asset
-- Task Server readiness and Agent Host registration
-
-Release lifecycle and rollback details are in the
-[release runbook](../releases.md).
+For remote Linux deployments, use `--mode control-plane` on the Task Server
+machine and `--mode agent-host` on each runner machine. See the
+[install guide](./install.md) for platform requirements, offline bundles,
+unattended answers, update, rollback, and removal. Hosts without Docker use
+`--target native`; on Windows this installs the Task Server, Engine, and
+Studio connector as services.

@@ -94,6 +94,10 @@ public sealed record TaskCompletionClaim
 
     /// <summary>Delivery commit that proved containment. Null unless <see cref="Basis"/> is integrated.</summary>
     public string? CommitSha { get; init; }
+    /// <summary>Immutable result and review epoch confirmed by this decision.</summary>
+    public string? ResultSha { get; init; }
+    public string? DeliveryEpoch { get; init; }
+    public string? TargetRefFingerprint { get; init; }
 
     /// <summary>Integration branch the containment answer was computed against.</summary>
     public string? IntegrationBranch { get; init; }

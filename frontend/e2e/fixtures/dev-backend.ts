@@ -115,8 +115,8 @@ function runScript(cmd: 'start' | 'stop' | 'status'): { code: number; stdout: st
       } : {}),
     },
     encoding: 'utf8',
-    // A cold worktree build can exceed a minute before the API launcher starts
-    // its own bounded health check.
+    // api.sh already allows a 180-second cold compile. Keep the fixture's
+    // synchronous launcher budget aligned so it does not kill a healthy boot.
     timeout: 180_000,
   });
   return {
