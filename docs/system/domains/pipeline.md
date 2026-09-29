@@ -100,8 +100,12 @@ generations. Verified members also
 receive an idempotent integration bookkeeping
 record with their mapped SHA set and tested remote tip. A disabled project and
 a lone aged member use the ordinary per-card
-gate on the same immutable result subject. Code-bearing cards keep the
-existing route.
+gate on the same immutable result subject. A batch that pauses (a second
+infrastructure red, flaky red, an unresolved cohort, a failed publication or an
+unexpected fault) keeps `Paused` in its state history; on the next tick the
+worker returns every member it still owns to that per-card gate and records the
+batch as `Abandoned` with a `paused-to-per-task-gate` reason. Code-bearing
+cards keep the existing route.
 
 The default local store is
 `<LocalApplicationData>/agentstudio/batch-gates`: `pending/` holds durable
