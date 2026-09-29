@@ -200,12 +200,15 @@ public static class LeaseEndpoints
 
             // The claim gate is held across the whole release so a lost worker's
             // continuation is prepared before any runner can claim the card it
-            // returns to Ready.
+            // returns to Ready. A typed prelaunch infrastructure release never
+            // takes the lost-worker path: no agent process held the authority.
+            var route = RemoteLeaseReleasePolicy.Classify(req.Outcome);
             await ClaimGate.WaitAsync(ct);
             try
             {
-                await ApplyLostWorkerContinuationAsync(
-                    req, scanner, continuations, humanReviewEscalation, orchestratorLog, loggerFactory, ct);
+                if (route == RemoteLeaseReleaseRoute.LostWorker)
+                    await ApplyLostWorkerContinuationAsync(
+                        req, scanner, continuations, humanReviewEscalation, orchestratorLog, loggerFactory, ct);
                 var releaseWrite = leases.CurrentWriteReference(
                     req.TaskKey, $"infrastructure-release:{req.AttemptId}:{req.LeaseId}");
                 var released = leases.Release(req);
@@ -217,8 +220,7 @@ public static class LeaseEndpoints
                     if (task is not null)
                         mutations.RollbackStashedPendingIntent(task.FolderPath);
                     if (task is { State: TaskStates.Progress }
-                        && req.Outcome is ("runner-environment-preparation-failed"
-                            or "runner-salvage-failed" or "runner-results-handling-failed"))
+                        && route == RemoteLeaseReleaseRoute.PrelaunchInfrastructure)
                     {
                         var budget = new RemoteClaimFailureBudget(
                             loggerFactory.CreateLogger<RemoteClaimFailureBudget>(),
