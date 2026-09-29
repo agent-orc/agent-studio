@@ -20,35 +20,21 @@ internal static class ComposeScenarioDiskAdmission
     internal const int DefaultMinFreePercent = 10;
 
     /// <summary>
-    /// True when a deterministic review command starts a Docker Compose
+    /// True when a deterministic review command executes a Docker Compose
     /// scenario or smoke: <c>scripts/scenario.sh --target compose</c> (any
-    /// level) or <c>scripts/compose-smoke-test.sh</c>, also when wrapped in a
-    /// shell <c>-c</c> string.
+    /// level) or <c>scripts/compose-smoke-test.sh</c>, run directly, through a
+    /// shell (<c>sh -lc '...'</c>, <c>bash script</c>) or behind environment
+    /// assignments and <c>env</c>/<c>exec</c>/<c>timeout</c> wrappers. Only a
+    /// command position counts: a mention inside quoted data, an argument of
+    /// another program (<c>echo</c>, <c>grep</c>) or a shell comment does not,
+    /// because refusing such a step on a low disk would block a review that
+    /// never builds an image.
     /// </summary>
     internal static bool IsComposeScenario(ReviewCommandDto command)
     {
         if (ReviewCommandKinds.IsAgent(command.ExecutionKind))
             return false;
-        var tokens = new[] { command.FileName }
-            .Concat(command.Arguments)
-            .SelectMany(part => part.Split(
-                [' ', '\t', '\r', '\n', ';', '&', '|', '(', ')', '"', '\''],
-                StringSplitOptions.RemoveEmptyEntries))
-            .ToArray();
-        if (tokens.Any(token => IsScript(token, "compose-smoke-test.sh")))
-            return true;
-        if (!tokens.Any(token => IsScript(token, "scenario.sh")))
-            return false;
-        for (var index = 0; index < tokens.Length; index++)
-        {
-            if (string.Equals(tokens[index], "--target=compose", StringComparison.Ordinal))
-                return true;
-            if (string.Equals(tokens[index], "--target", StringComparison.Ordinal)
-                && index + 1 < tokens.Length
-                && string.Equals(tokens[index + 1], "compose", StringComparison.Ordinal))
-                return true;
-        }
-        return false;
+        return ExecutesComposeScenario([command.FileName, .. command.Arguments], depth: 0);
     }
 
     /// <summary>
@@ -70,10 +56,300 @@ internal static class ComposeScenarioDiskAdmission
         return new ComposeScenarioDiskDecision(admit, path, free, total, percent, floor);
     }
 
-    private static bool IsScript(string token, string name)
-        => string.Equals(token, name, StringComparison.Ordinal)
-           || token.EndsWith("/" + name, StringComparison.Ordinal)
-           || token.EndsWith("\\" + name, StringComparison.Ordinal);
+    private const int MaxShellNesting = 4;
+
+    private static readonly HashSet<string> Shells =
+        new(["sh", "bash", "dash", "ash", "ksh", "zsh"], StringComparer.Ordinal);
+
+    // Words that may precede the program of a simple command without being it.
+    private static readonly HashSet<string> ReservedWords =
+        new(["!", "{", "}", "if", "then", "else", "elif", "fi", "do", "done", "while", "until", "time"],
+            StringComparer.Ordinal);
+
+    private static readonly HashSet<string> Wrappers =
+        new(["env", "exec", "nohup", "time", "timeout"], StringComparer.Ordinal);
+
+    private static bool ExecutesComposeScenario(IReadOnlyList<string> argv, int depth)
+    {
+        if (depth > MaxShellNesting)
+            return false;
+        var index = 0;
+        while (index < argv.Count)
+        {
+            var word = argv[index];
+            if (ReservedWords.Contains(word) || IsAssignment(word))
+            {
+                index++;
+                continue;
+            }
+            var wrapper = ProgramName(word);
+            if (!Wrappers.Contains(wrapper))
+                break;
+            index++;
+            while (index < argv.Count && argv[index].StartsWith('-'))
+            {
+                // timeout -s SIGNAL / -k DURATION take a value.
+                index += wrapper == "timeout" && argv[index] is "-s" or "-k" ? 2 : 1;
+            }
+            // timeout DURATION COMMAND...
+            if (wrapper == "timeout" && index < argv.Count)
+                index++;
+        }
+        if (index >= argv.Count)
+            return false;
+
+        var program = ProgramName(argv[index]);
+        var arguments = argv.Skip(index + 1).ToArray();
+        if (program == "compose-smoke-test.sh")
+            return true;
+        if (program == "scenario.sh")
+            return TargetsCompose(arguments);
+        if (Shells.Contains(program))
+            return ShellRunsComposeScenario(arguments, depth);
+        return false;
+    }
+
+    /// <summary>
+    /// <c>sh [options] -c SCRIPT [name args]</c> runs SCRIPT; <c>sh [options]
+    /// FILE args</c> runs FILE. Combined flags (<c>-lc</c>, <c>-ec</c>) are
+    /// what the review plan emits for verify commands.
+    /// </summary>
+    private static bool ShellRunsComposeScenario(IReadOnlyList<string> arguments, int depth)
+    {
+        var readsScriptString = false;
+        for (var index = 0; index < arguments.Count; index++)
+        {
+            var argument = arguments[index];
+            if (argument == "--")
+            {
+                index++;
+                return index < arguments.Count && Operand(arguments, index, readsScriptString, depth);
+            }
+            if (argument.StartsWith("--", StringComparison.Ordinal))
+                continue;
+            if (argument.Length > 1 && (argument[0] == '-' || argument[0] == '+'))
+            {
+                if (argument[0] == '-' && argument.Contains('c'))
+                    readsScriptString = true;
+                // -o OPTION / -O OPTION take a value.
+                if (argument[1..] is "o" or "O")
+                    index++;
+                continue;
+            }
+            return Operand(arguments, index, readsScriptString, depth);
+        }
+        return false;
+    }
+
+    private static bool Operand(IReadOnlyList<string> arguments, int index, bool readsScriptString, int depth)
+        => readsScriptString
+            ? ShellWords.SimpleCommands(arguments[index])
+                .Any(words => ExecutesComposeScenario(words, depth + 1))
+            : ExecutesComposeScenario(arguments.Skip(index).ToArray(), depth + 1);
+
+    private static bool TargetsCompose(IReadOnlyList<string> arguments)
+    {
+        for (var index = 0; index < arguments.Count; index++)
+        {
+            if (string.Equals(arguments[index], "--target=compose", StringComparison.Ordinal))
+                return true;
+            if (string.Equals(arguments[index], "--target", StringComparison.Ordinal)
+                && index + 1 < arguments.Count
+                && string.Equals(arguments[index + 1], "compose", StringComparison.Ordinal))
+                return true;
+        }
+        return false;
+    }
+
+    private static string ProgramName(string word)
+    {
+        var name = word[(word.LastIndexOfAny(['/', '\\']) + 1)..];
+        return name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? name[..^4] : name;
+    }
+
+    private static bool IsAssignment(string word)
+    {
+        var equals = word.IndexOf('=');
+        if (equals <= 0 || !(char.IsAsciiLetter(word[0]) || word[0] == '_'))
+            return false;
+        for (var index = 1; index < equals; index++)
+        {
+            if (!(char.IsAsciiLetterOrDigit(word[index]) || word[index] == '_'))
+                return false;
+        }
+        return true;
+    }
+}
+
+/// <summary>
+/// AGT-2993: the subset of POSIX shell word splitting the compose disk
+/// admission needs to find the program of every simple command in a
+/// <c>sh -c</c> script. Quotes and backslashes are removed as the shell does,
+/// comments are dropped, <c>; &amp; | &amp;&amp; || ( )</c> and newlines
+/// separate commands, redirection targets are skipped, and command
+/// substitutions stay opaque parts of the word that contains them.
+/// </summary>
+internal static class ShellWords
+{
+    internal static IReadOnlyList<IReadOnlyList<string>> SimpleCommands(string script)
+    {
+        var commands = new List<IReadOnlyList<string>>();
+        var words = new List<string>();
+        var word = new System.Text.StringBuilder();
+        var inWord = false;
+        var skipNextWord = false;
+        var nextWordIsHeredocDelimiter = false;
+        var heredocDelimiters = new Queue<string>();
+
+        void EndWord()
+        {
+            if (!inWord)
+                return;
+            if (skipNextWord)
+            {
+                if (nextWordIsHeredocDelimiter)
+                    heredocDelimiters.Enqueue(word.ToString());
+                skipNextWord = false;
+                nextWordIsHeredocDelimiter = false;
+            }
+            else
+                words.Add(word.ToString());
+            word.Clear();
+            inWord = false;
+        }
+
+        void EndCommand()
+        {
+            EndWord();
+            skipNextWord = false;
+            nextWordIsHeredocDelimiter = false;
+            if (words.Count > 0)
+                commands.Add(words.ToArray());
+            words.Clear();
+        }
+
+        var index = 0;
+        while (index < script.Length)
+        {
+            var character = script[index];
+            switch (character)
+            {
+                case ' ' or '\t' or '\r':
+                    EndWord();
+                    index++;
+                    break;
+                case '\n':
+                    EndCommand();
+                    index = SkipHeredocBodies(script, index + 1, heredocDelimiters);
+                    break;
+                case ';' or '&' or '|' or '(' or ')':
+                    EndCommand();
+                    index++;
+                    break;
+                case '#' when !inWord:
+                    while (index < script.Length && script[index] != '\n')
+                        index++;
+                    break;
+                case '<' or '>':
+                    // A pure file-descriptor number before the operator (2>) is not a word.
+                    if (inWord && word.Length > 0 && word.ToString().All(char.IsAsciiDigit))
+                    {
+                        word.Clear();
+                        inWord = false;
+                    }
+                    EndWord();
+                    var start = index;
+                    while (index < script.Length && script[index] is '<' or '>' or '&' or '|' or '-')
+                        index++;
+                    skipNextWord = true;
+                    nextWordIsHeredocDelimiter = script.AsSpan(start, index - start).StartsWith("<<");
+                    break;
+                case '\'':
+                    inWord = true;
+                    index++;
+                    while (index < script.Length && script[index] != '\'')
+                        word.Append(script[index++]);
+                    index++;
+                    break;
+                case '"':
+                    inWord = true;
+                    index++;
+                    while (index < script.Length && script[index] != '"')
+                    {
+                        if (script[index] == '\\' && index + 1 < script.Length
+                            && script[index + 1] is '"' or '\\' or '$' or '`' or '\n')
+                        {
+                            if (script[index + 1] != '\n')
+                                word.Append(script[index + 1]);
+                            index += 2;
+                            continue;
+                        }
+                        word.Append(script[index++]);
+                    }
+                    index++;
+                    break;
+                case '\\':
+                    if (index + 1 < script.Length && script[index + 1] != '\n')
+                    {
+                        word.Append(script[index + 1]);
+                        inWord = true;
+                    }
+                    index += 2;
+                    break;
+                case '$' when index + 1 < script.Length && script[index + 1] == '(':
+                    inWord = true;
+                    index = AppendBalanced(script, index, word);
+                    break;
+                case '`':
+                    inWord = true;
+                    word.Append(script[index++]);
+                    while (index < script.Length && script[index] != '`')
+                        word.Append(script[index++]);
+                    if (index < script.Length)
+                        word.Append(script[index++]);
+                    break;
+                default:
+                    inWord = true;
+                    word.Append(character);
+                    index++;
+                    break;
+            }
+        }
+        EndCommand();
+        return commands;
+    }
+
+    // A here-document body is data, not commands: skip each body line up to
+    // its delimiter line (leading tabs allowed, as with <<-).
+    private static int SkipHeredocBodies(string script, int index, Queue<string> delimiters)
+    {
+        while (delimiters.Count > 0 && index < script.Length)
+        {
+            var newline = script.IndexOf('\n', index);
+            var end = newline < 0 ? script.Length : newline;
+            if (script[index..end].TrimStart('\t').TrimEnd('\r') == delimiters.Peek())
+                delimiters.Dequeue();
+            index = end + 1;
+        }
+        delimiters.Clear();
+        return index;
+    }
+
+    // Appends "$( ... )" verbatim and returns the index after its closing paren.
+    private static int AppendBalanced(string script, int index, System.Text.StringBuilder word)
+    {
+        var depth = 0;
+        while (index < script.Length)
+        {
+            var character = script[index++];
+            word.Append(character);
+            if (character == '(')
+                depth++;
+            else if (character == ')' && --depth == 0)
+                break;
+        }
+        return index;
+    }
 }
 
 internal sealed record ComposeScenarioDiskDecision(

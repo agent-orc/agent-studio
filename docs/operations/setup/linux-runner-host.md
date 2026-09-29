@@ -1061,7 +1061,10 @@ Three layers now bound it:
 3. **Admission.** The Review executor logs
    `review-compose-scenario-disk step=... freePercent=... decision=admit|refuse`
    before a compose scenario step and refuses the step below 10 % free on the
-   Docker data root. The refusal is a `ReviewInfra` outcome typed
+   Docker data root. A step counts only when it executes
+   `scripts/scenario.sh --target compose` or `scripts/compose-smoke-test.sh`
+   (directly, through `sh -lc`, or behind environment assignments); a mention
+   in an `echo`, quoted data, or a comment is not gated. The refusal is a `ReviewInfra` outcome typed
    `ComposeScenarioDiskLow`, so the review is retried and no verdict is
    recorded against the change (`RUNNER_COMPOSE_SCENARIO_MIN_FREE_PERCENT`,
    `RUNNER_DOCKER_DATA_ROOT`).
