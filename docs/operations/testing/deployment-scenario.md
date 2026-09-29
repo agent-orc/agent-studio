@@ -37,6 +37,37 @@ deeper release gate.
 | 8 | Backup | full | `POST /api/v1/management/backups` returns a file digest. |
 | 9 | Restore into an empty store, inventory hash equality | full | A second, empty Task Server instance restores that backup and reports the same SHA-256 (the most direct "before vs. after" equality check the store exposes today; see "Known gaps"). |
 
+### Connector negative matrix (full, `inproc`)
+
+`--target inproc --level full` also runs the Studio connector negative-test
+matrix (gate 4 of
+[Remote Task Server with local Studio](../remote-task-server-local-studio.md#current-cutover-gates),
+AGT-2984). It lives in `backend.Tests/ConnectorNegativeMatrixTests.cs`
+because the connector is the OrchestratorApi connector profile. It starts
+the built `task-server.dll` in bearer mode as a real process. The connector
+runs in-process with its production transport and its production credential
+source: the owner-only credential file on Linux, and a real Windows
+Credential Manager generic credential on Windows. Only a Windows logon
+session without a writable vault falls back to an in-memory source; the
+report's `credentialStore` field names the store that ran. The matrix proves
+these outcomes:
+
+- absent bearer: 401 from the Task Server, and `credential-unavailable`
+  from the connector;
+- invalid bearer: 401 from the Task Server, and `credential-rejected` from
+  the connector;
+- cross-origin, unconfigured loopback Origin, and missing Origin mutations:
+  403;
+- missing session: 401;
+- missing CSRF token: 403;
+- replayed CSRF token, from another session or after logout: 403 or 401;
+- `/api/v1` and Studio hub protocol mismatch: `503 connector-attach-refused`
+  with the Task Server's operator-readable reason.
+
+Positive controls prove an accepted mutation, a credential rotated in place
+without a restart, and that no rejected probe created data. The step runs
+even when a scenario step failed, so both reports reach the bundle.
+
 ## How to run each target
 
 ```bash
@@ -113,6 +144,9 @@ proving the step happened, such as a run id, a commit count, or a SHA-256
 prefix). A step after the first failure is marked `Skipped`,
 not silently omitted, since each step depends on the state the previous one
 left behind. This is the report a deployment card attaches to its status.
+At `--target inproc --level full` the same directory also receives
+`connector-negative-matrix.md` (one row per probe with expected and observed
+status, code, and refusal reason) and `connector-negative-matrix.json`.
 If Compose fails before the typed steps can start, the runner still writes a
 failed JUnit report, a failed Markdown topology-readiness row, and
 `scenario-compose-full.compose.log` with the pre-cleanup service status and
