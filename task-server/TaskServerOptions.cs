@@ -20,7 +20,7 @@ public sealed class TaskServerOptions
     public int InventoryGraceSeconds { get; set; } = 120;
     public int MaximumEventPayloadBytes { get; set; } = 256 * 1024;
     public long MaxRequestBodyBytes { get; set; } = 25L * 1024 * 1024;
-    public long ResultArtifactMaxFileBytes { get; set; } = 20L * 1024 * 1024;
+    public long ResultArtifactMaxFileBytes { get; set; } = 8L * 1024 * 1024;
     public long ResultArtifactMaxTotalBytes { get; set; } = 100L * 1024 * 1024;
     [Obsolete("Use AUTH=bearer and persisted Task Server principals. Removal planned after Phase B migration.")]
     public bool RequireAuthentication { get; set; }

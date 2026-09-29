@@ -399,10 +399,13 @@ public sealed class IntakeRunner
 
     public static string RenderConstraintMarkdown(IntakeConstraintSelection constraint)
     {
+        // Prompt markdown is composed with LF everywhere else in the enrichment
+        // pipeline; AppendLine would emit CRLF on Windows, so the exact block
+        // content would differ from its rendering on the Windows gate host.
         var sb = new StringBuilder();
-        sb.AppendLine($"- **{constraint.Title}** (`{constraint.Id}`)");
-        sb.AppendLine($"  Source: `{constraint.Source}`");
-        sb.AppendLine($"  {constraint.Text}");
+        sb.Append($"- **{constraint.Title}** (`{constraint.Id}`)").Append('\n');
+        sb.Append($"  Source: `{constraint.Source}`").Append('\n');
+        sb.Append($"  {constraint.Text}").Append('\n');
         return sb.ToString();
     }
 

@@ -49,14 +49,24 @@ public sealed class DurableHandoffRecovery
             var reconciled = false;
             try
             {
-                var lease = await _client.ReconcileOutboxAuthorityAsync(
-                    outbox.Authority,
-                    Math.Max(30, _options.TtlSeconds),
-                    ct);
+                var artifactReplay = string.Equals(
+                    outbox.Snapshot.FinalHandoffState, "artifact-replay", StringComparison.Ordinal);
+                if (artifactReplay)
+                {
+                    _client.RestoreCompletedOutboxAuthority(outbox.Authority);
+                    _log($"completed artifact authority restored run={outbox.Authority.RunId} fence={outbox.Authority.Fence}");
+                }
+                else
+                {
+                    var lease = await _client.ReconcileOutboxAuthorityAsync(
+                        outbox.Authority,
+                        Math.Max(30, _options.TtlSeconds),
+                        ct);
+                    _log(
+                        $"outbox authority reconciled run={outbox.Authority.RunId} " +
+                        $"fence={outbox.Authority.Fence} expires={lease.ExpiresAt:o}");
+                }
                 reconciled = true;
-                _log(
-                    $"outbox authority reconciled run={outbox.Authority.RunId} " +
-                    $"fence={outbox.Authority.Fence} expires={lease.ExpiresAt:o}");
                 await RecoverAsync(outbox, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -204,10 +214,12 @@ public sealed class DurableHandoffRecovery
         await ReportSafeAsync(outbox, ct);
         try
         {
-            await TransferArtifactsAfterDeliveryAsync(outbox, manifest, ct);
+            var retry = await TransferArtifactsAfterDeliveryAsync(outbox, manifest, ct);
+            outbox.RecordHandoffState(retry ? "artifact-replay" : "completed", envelopeDigest);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            outbox.RecordHandoffState("artifact-replay", envelopeDigest);
             _log(
                 $"artifact-transfer recovery remained non-fatal run={outbox.Authority.RunId} "
                 + $"artifacts=partial error={ex.Message}");
@@ -224,14 +236,18 @@ public sealed class DurableHandoffRecovery
             "tasks",
             GitWorkspace.SafeSegment(outbox.Authority.TaskKey),
             "results");
+        var evidence = RemoteTaskRunner.AttemptEvidenceDir(
+            _options.WorkDir, outbox.Authority.TaskKey, outbox.Authority.RunId);
+        if (!Directory.Exists(evidence))
+            RemoteTaskRunner.CopyResultEvidence(results, evidence);
         var limits = await _client.GetArtifactTransferLimitsAsync(outbox.Authority.TaskKey, ct);
-        var observed = RemoteTaskRunner.ObserveResultFiles(results);
-        var (selected, skipped) = ArtifactTransferPolicy.Select(results, observed, limits);
+        var observed = RemoteTaskRunner.ObserveResultFiles(evidence);
+        var (selected, skipped) = ArtifactTransferPolicy.Select(evidence, observed, limits);
         if (skipped.Count > 0)
         {
-            RemoteTaskRunner.UpdateDeliverablesArtifactPolicy(results, skipped, limits);
-            observed = RemoteTaskRunner.ObserveResultFiles(results);
-            (selected, skipped) = ArtifactTransferPolicy.Select(results, observed, limits);
+            RemoteTaskRunner.UpdateDeliverablesArtifactPolicy(evidence, skipped, limits);
+            observed = RemoteTaskRunner.ObserveResultFiles(evidence);
+            (selected, skipped) = ArtifactTransferPolicy.Select(evidence, observed, limits);
         }
         var entries = new List<ArtifactManifestEntry>();
         foreach (var file in selected)
@@ -240,12 +256,13 @@ public sealed class DurableHandoffRecovery
             var sha = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
             entries.Add(new ArtifactManifestEntry(file.RelativePath, sha, bytes.LongLength));
         }
+        entries.AddRange(await RemoteTaskRunner.BuildWithheldManifestEntriesAsync(evidence, skipped, ct));
         var manifest = RemoteTaskRunner.BuildArtifactManifest(entries);
         outbox.Enqueue("artifact-manifest", manifest.Json);
         return manifest;
     }
 
-    private async Task TransferArtifactsAfterDeliveryAsync(
+    private async Task<bool> TransferArtifactsAfterDeliveryAsync(
         DurableRunOutbox outbox,
         DurableArtifactManifest manifest,
         CancellationToken ct)
@@ -255,16 +272,28 @@ public sealed class DurableHandoffRecovery
             "tasks",
             GitWorkspace.SafeSegment(outbox.Authority.TaskKey),
             "results");
+        var evidence = RemoteTaskRunner.AttemptEvidenceDir(
+            _options.WorkDir, outbox.Authority.TaskKey, outbox.Authority.RunId);
+        if (Directory.Exists(evidence)) results = evidence;
         var limits = await _client.GetArtifactTransferLimitsAsync(outbox.Authority.TaskKey, ct);
         var (files, initialSkipped) = ArtifactTransferPolicy.Select(
             results,
             RemoteTaskRunner.ObserveResultFiles(results),
             limits);
-        var issues = initialSkipped.ToList();
         var expected = JsonSerializer.Deserialize<ArtifactManifestEntry[]>(manifest.Json, Json)
                        ?? throw new InvalidDataException(
                            $"Run '{outbox.Authority.RunId}' has an empty artifact manifest.");
-        var expectedByPath = expected.ToDictionary(
+        var withheldByPath = expected
+            .Where(entry => entry.TransferStatus == "withheld")
+            .ToDictionary(entry => entry.Path, StringComparer.Ordinal);
+        var issues = initialSkipped
+            .Where(issue => !withheldByPath.ContainsKey(issue.Path))
+            .ToList();
+        issues.AddRange(withheldByPath.Values.Select(entry => new ArtifactTransferIssue(
+            entry.Path,
+            entry.SizeBytes,
+            entry.Reason ?? "was withheld by the original artifact policy")));
+        var expectedByPath = expected.Where(entry => entry.TransferStatus != "withheld").ToDictionary(
             entry => entry.Path,
             StringComparer.Ordinal);
         var acknowledgedPaths = outbox.Items
@@ -278,6 +307,8 @@ public sealed class DurableHandoffRecovery
             .Concat(initialSkipped.Select(issue => issue.Path))
             .ToHashSet(StringComparer.Ordinal);
         foreach (var missing in expected.Where(entry =>
+                     entry.TransferStatus != "withheld"
+                     &&
                      !observedPaths.Contains(entry.Path)
                      && !acknowledgedPaths.Contains(entry.Path)))
         {
@@ -289,6 +320,7 @@ public sealed class DurableHandoffRecovery
         }
         foreach (var file in files)
         {
+            if (withheldByPath.ContainsKey(file.RelativePath)) continue;
             if (acknowledgedPaths.Contains(file.RelativePath)) continue;
             try
             {
@@ -328,7 +360,7 @@ public sealed class DurableHandoffRecovery
                     file.RelativePath,
                     file.SizeBytes,
                     ex.StatusCode == 413
-                        ? $"exceeded the {ArtifactTransferPolicy.FormatMb(limits.MaxRequestBodyBytes)} MB upload limit"
+                        ? ex.Message
                         : "was refused because artifact storage is full (HTTP 507)"));
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -357,7 +389,7 @@ public sealed class DurableHandoffRecovery
         {
             _log($"artifact finalization recovery was non-fatal run={outbox.Authority.RunId}: {ex.Message}");
         }
-        if (issues.Count == 0) return;
+        if (issues.Count == 0) return false;
         await _client.ReportArtifactTransferAsync(new ArtifactTransferReportRequest(
             outbox.Authority.TaskKey,
             "partial",
@@ -369,6 +401,7 @@ public sealed class DurableHandoffRecovery
         _log(
             $"artifact-transfer recovery run={outbox.Authority.RunId} artifacts=partial "
             + $"notTransferred={issues.Count}");
+        return issues.Any(issue => issue.Outcome == ArtifactTransferOutcomes.TransferFailed);
     }
 
     private static T? Latest<T>(DurableRunOutbox outbox, string kind)
