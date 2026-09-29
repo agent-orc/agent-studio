@@ -220,6 +220,7 @@ app.UseRouting();
 app.UsePublicDemoExecutionLock();
 app.UseMiddleware<TaskServerAuthenticationMiddleware>();
 app.UseMiddleware<TaskServerProtocolMiddleware>();
+app.UseMiddleware<ArtifactRequestLimitMiddleware>();
 app.MapTaskServerEndpoints();
 app.MapOperationPermitEndpoints();
 app.MapStudioEndpoints();

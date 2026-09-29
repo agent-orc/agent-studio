@@ -49,6 +49,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 
 | Topic | Start here |
 |---|---|
+| Product installer for Windows and Linux | [operations/setup/install.md](../operations/setup/install.md) |
 | Contribution and style conventions for all agents | [contribution-and-style-guide.html](contribution-and-style-guide.html) |
 | Windows process spawn safety and repository guards | [operations/windows-process-spawn-safety.md](../operations/windows-process-spawn-safety.md) |
 | Runner | [domains/runner.md](../system/domains/runner.md) |

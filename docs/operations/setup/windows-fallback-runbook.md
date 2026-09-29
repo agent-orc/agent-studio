@@ -34,7 +34,12 @@ inside the 15-minute budget) without ever being a second writer while the
 remote Task Server is authoritative. Re-running the install script with the
 same `-DataDirectory` keeps the existing `server.env`/`engine.env`/
 `studio-connector.env` and their bootstrap credentials untouched; only a
-fresh `C:\ProgramData\AgentOrchestrator` gets new ones.
+fresh `C:\ProgramData\AgentOrchestrator` gets new ones. A re-run with a newer
+package stops the three tasks and their executables before it moves the
+`current` junction. Credential files are restricted to the installing account,
+SYSTEM, and Administrators. `agent-studio-setup --target native` runs this
+script with `-RestMode Normal`: the local Task Server is then the primary one,
+not a dormant fallback ([install guide](./install.md)).
 
 Point the Studio connector back at the remote origin once the install is
 proved:
