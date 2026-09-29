@@ -49,6 +49,7 @@ public sealed class GitStateIndexService : BackgroundService
     private readonly TimeProvider _timeProvider;
     private readonly Func<string, string> _settingsVersion;
     private readonly SemaphoreSlim _repoSlots;
+    private const string SweepConfigUnavailable = "unavailable";
 
     private readonly ConcurrentDictionary<string, RepoState> _repos =
         new(StringComparer.OrdinalIgnoreCase);
@@ -256,7 +257,7 @@ public sealed class GitStateIndexService : BackgroundService
         try
         {
             var paths = new[] { gitDirectory, GitRefSignature.ResolveCommonGitDirectory(gitDirectory) }
-                .Distinct(StringComparer.OrdinalIgnoreCase);
+                .Distinct(FileSystemPathComparer.Instance);
             foreach (var path in paths)
             {
                 var fsw = new FileSystemWatcher(path)
@@ -287,11 +288,12 @@ public sealed class GitStateIndexService : BackgroundService
         var name = Path.GetFileName(path);
         var sep = Path.DirectorySeparatorChar;
         var altSep = Path.AltDirectorySeparatorChar;
+        var paths = FileSystemPathComparer.Instance;
         var relevant =
-            string.Equals(name, "HEAD", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(name, "packed-refs", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(name, "config", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(name, "config.worktree", StringComparison.OrdinalIgnoreCase)
+            paths.Equals(name, "HEAD")
+            || paths.Equals(name, "packed-refs")
+            || paths.Equals(name, "config")
+            || paths.Equals(name, "config.worktree")
             || path.Contains($"{sep}refs{sep}", StringComparison.OrdinalIgnoreCase)
             || path.Contains($"{altSep}refs{altSep}", StringComparison.OrdinalIgnoreCase)
             || path.Contains($"{sep}worktrees{sep}", StringComparison.OrdinalIgnoreCase)
@@ -320,8 +322,7 @@ public sealed class GitStateIndexService : BackgroundService
     }
 
     internal static bool IsGitRelevantSidecar(string path)
-        => string.Equals(Path.GetFileName(path), ReviewSubjectStore.FileName,
-            StringComparison.OrdinalIgnoreCase);
+        => FileSystemPathComparer.Instance.Equals(Path.GetFileName(path), ReviewSubjectStore.FileName);
 
     private static bool IsUnderWatchPath(string watchPath, string path)
     {
@@ -351,7 +352,15 @@ public sealed class GitStateIndexService : BackgroundService
                 var refs = SafeCapture(state.RepositoryPath);
                 string config;
                 try { config = GitConfigSignature.Capture(state.RepositoryPath).Signature; }
-                catch { config = "unavailable"; }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    // A missing checkout or unreadable config is a typed sweep
+                    // outcome: the changed value queues one refresh, whose run
+                    // publishes the bounded reason code and keeps the last snapshot.
+                    _logger.LogDebug(ex, "git-state-sweep-config-unavailable repository={Repository}",
+                        state.ProjectName);
+                    config = SweepConfigUnavailable;
+                }
                 string taskSignature;
                 try
                 {
@@ -574,14 +583,8 @@ public sealed class GitStateIndexService : BackgroundService
 
     private static void AppendFileFact(StringBuilder parts, string path)
     {
-        var file = new FileInfo(path);
-        parts.Append(file.Exists ? '1' : '0').Append('/');
-        if (file.Exists)
-        {
-            using var stream = file.OpenRead();
-            parts.Append(Convert.ToHexString(SHA256.HashData(stream)));
-        }
-        parts.Append(';');
+        var (exists, hash) = TaskListGitProjectionCache.SidecarStamp(path);
+        parts.Append(exists ? '1' : '0').Append('/').Append(hash).Append(';');
     }
 
     private async Task RetryAfterBackoffAsync(RepoState state, int failureCount)

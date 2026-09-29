@@ -1162,7 +1162,10 @@ their authoritative checks; display state never grants permission to mutate.
   (repository snapshots, review-subject generations, sidecar stamps and read
   grouping) share `FileSystemPathComparer`: case-sensitive on Linux,
   case-insensitive on Windows and macOS. Case-distinct checkouts on Linux
-  therefore keep separate origins, snapshots and subject generations.
+  therefore keep separate origins, snapshots and subject generations. A
+  board read that spans several repositories groups tasks by watch path and
+  takes each task's facts only from its own repository's snapshot; a fact a
+  snapshot carries for a task outside its group is never merged.
 - **`RequestRefresh(projectName, trigger)` primes a repository immediately.** A
   mutation path that already knows it just changed a repository's ref state
   does not have to wait for the debounced watcher or the periodic sweep;

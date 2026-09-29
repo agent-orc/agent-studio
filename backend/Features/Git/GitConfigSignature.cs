@@ -40,8 +40,7 @@ internal static class GitConfigSignature
             throw new OperationCanceledException(GitProcessBudget.Token);
         if (!result.Success) throw new IOException("repository-config-unavailable");
 
-        var filePaths = new HashSet<string>(OperatingSystem.IsWindows()
-            ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        var filePaths = new HashSet<string>(FileSystemPathComparer.Instance);
         string? originUrl = null;
         var fields = result.StandardOutput.Split('\0');
         for (var i = 0; i + 1 < fields.Length; i += 2)
@@ -102,8 +101,7 @@ internal static class GitConfigScope
     internal static bool TryReadOrigin(string root, out string? origin)
     {
         var current = Current.Value;
-        if (current is { } value && string.Equals(value.Root, NormalizeRoot(root),
-                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+        if (current is { } value && FileSystemPathComparer.Instance.Equals(value.Root, NormalizeRoot(root)))
         {
             origin = value.Origin;
             return true;

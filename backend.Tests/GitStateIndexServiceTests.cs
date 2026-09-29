@@ -821,6 +821,97 @@ public sealed class GitStateIndexServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task SafetySweep_MissingRepository_LogsTypedConfigFailureAndKeepsSweeping()
+    {
+        var jobsPath = NewRepoWatchPath("proj");
+        var repoPath = Path.Combine(Path.GetDirectoryName(jobsPath)!, "repo");
+        var scanner = BuildScanner("proj", jobsPath, repoPath);
+        var logger = new RecordingLogger();
+        using var service = new GitStateIndexService(scanner, BuildWatcher(scanner),
+            new TaskListGitProjectionCache(), _ => Task.FromResult(TaskListGitProjection.Empty),
+            _ => { }, logger,
+            FastOptions() with { SweepInterval = TimeSpan.FromMilliseconds(100), MaxRetries = 0 },
+            TimeProvider.System);
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            await WaitUntilAsync(() => !service.IsRunning("proj")
+                && service.GetRepositoryStatuses().FirstOrDefault()?.GitStateAt is not null);
+            Directory.Move(repoPath, repoPath + "-removed");
+
+            // Two sweep passes prove the typed failure did not end the sweep loop.
+            await WaitUntilAsync(() => logger.Count("git-state-sweep-config-unavailable") >= 2);
+            await WaitUntilAsync(() =>
+                service.GetRepositoryStatuses().Single().ReasonCode == "repository-unavailable");
+            var entry = logger.First("git-state-sweep-config-unavailable");
+            Assert.Equal(LogLevel.Debug, entry.Level);
+            Assert.IsType<DirectoryNotFoundException>(entry.Exception);
+        }
+        finally { await service.StopAsync(CancellationToken.None); }
+    }
+
+    [Fact]
+    public void ReviewSubjectStamp_IsTheOneContentHashBehindWatcherAndInputSignature()
+    {
+        var jobsPath = NewRepoWatchPath("proj");
+        var folder = Path.Combine(jobsPath, "task-1");
+        Directory.CreateDirectory(folder);
+        var task = new TaskInfo
+        {
+            Id = "task-1", TaskKey = "task-1", ProjectName = "proj",
+            WatchPath = jobsPath, FolderPath = folder,
+        };
+        var subject = ReviewSubjectStore.PathFor(folder);
+        var cache = new TaskListGitProjectionCache();
+
+        Assert.Equal(default, TaskListGitProjectionCache.SidecarStamp(subject));
+        var missing = GitStateIndexService.CaptureTaskInputSignature([task], cache);
+
+        Directory.CreateDirectory(Path.GetDirectoryName(subject)!);
+        File.WriteAllText(subject, "abc");
+        var written = File.GetLastWriteTimeUtc(subject);
+        Assert.Equal((true, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData("abc"u8))),
+            TaskListGitProjectionCache.SidecarStamp(subject));
+        var present = GitStateIndexService.CaptureTaskInputSignature([task], cache);
+        Assert.NotEqual(missing, present);
+
+        // Timestamp-only churn is invisible to both consumers of the stamp.
+        File.SetLastWriteTimeUtc(subject, written.AddMinutes(1));
+        Assert.Equal(present, GitStateIndexService.CaptureTaskInputSignature([task], cache));
+
+        // A same-length content change is visible to both, with the same hash.
+        File.WriteAllText(subject, "abd");
+        File.SetLastWriteTimeUtc(subject, written);
+        Assert.Equal((true, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData("abd"u8))),
+            TaskListGitProjectionCache.SidecarStamp(subject));
+        Assert.NotEqual(present, GitStateIndexService.CaptureTaskInputSignature([task], cache));
+    }
+
+    private sealed class RecordingLogger : ILogger
+    {
+        private readonly List<(LogLevel Level, string Message, Exception? Exception)> _entries = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            lock (_entries) _entries.Add((logLevel, formatter(state, exception), exception));
+        }
+
+        public int Count(string marker)
+        {
+            lock (_entries) return _entries.Count(entry => entry.Message.Contains(marker, StringComparison.Ordinal));
+        }
+
+        public (LogLevel Level, string Message, Exception? Exception) First(string marker)
+        {
+            lock (_entries) return _entries.First(entry => entry.Message.Contains(marker, StringComparison.Ordinal));
+        }
+    }
+
+    [Fact]
     public async Task FailureRetriesAreBounded()
     {
         var jobsPath = NewRepoWatchPath("proj");

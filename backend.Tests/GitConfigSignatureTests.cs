@@ -58,6 +58,22 @@ public sealed class GitConfigSignatureTests : IDisposable
         Assert.NotEqual(before, GitRefSignature.Capture(worktree));
     }
 
+    [Fact]
+    public void ConfigScope_MatchesRepositoryRootsWithTheSharedFileSystemPathComparer()
+    {
+        var root = Path.Combine(_root, "repo");
+        var caseDistinct = Path.Combine(_root, "REPO");
+        using (GitConfigScope.Begin(root, "https://example.invalid/origin.git"))
+        {
+            Assert.True(GitConfigScope.TryReadOrigin(root + Path.DirectorySeparatorChar, out var origin));
+            Assert.Equal("https://example.invalid/origin.git", origin);
+            // Linux: two directories, so the other root must resolve its own origin.
+            Assert.Equal(FileSystemPathComparer.Instance.Equals(root, caseDistinct),
+                GitConfigScope.TryReadOrigin(caseDistinct, out _));
+        }
+        Assert.False(GitConfigScope.TryReadOrigin(root, out _));
+    }
+
     public void Dispose()
     {
         if (!Directory.Exists(_root)) return;

@@ -98,6 +98,45 @@ public sealed class TaskListGitProjectionCacheTests
     }
 
     [Fact]
+    public void ReadCacheOnly_ProjectAcrossRepositories_ServesEachTaskFromItsOwnRepositorySnapshot()
+    {
+        (bool Exists, string? Hash) stamp = (true, "first");
+        var cache = new TaskListGitProjectionCache(_ => stamp);
+        var taskA = Job("task-a", "watch-a") with { FolderPath = Path.Combine("watch-a", "tasks", "task-a") };
+        var taskB = Job("task-b", "watch-b") with { FolderPath = Path.Combine("watch-b", "tasks", "task-b") };
+        var subjectB = ReviewSubjectStore.PathFor(taskB.FolderPath);
+        cache.SeedTaskInput(subjectB);
+        stamp = (true, "second");
+        Assert.True(cache.MarkTaskInputChanged(subjectB));
+
+        // watch-a holds an older-version snapshot without per-task signatures
+        // that still carries a fact under task B's key; watch-b holds the
+        // current version, bound to B's signature and subject generation 1.
+        var older = ProjectionFor(taskA, "task/a-older");
+        ((Dictionary<string, TaskMergeSignal>)older.Merge)[taskB.TaskKey] =
+            new TaskMergeSignal { Branch = "task/b-from-watch-a" };
+        cache.SetSnapshot(taskA.WatchPath, older, DateTimeOffset.UtcNow);
+        cache.SetSnapshot(taskB.WatchPath, ProjectionFor(taskB, "task/b-current") with
+        {
+            Signatures = new Dictionary<string, string> { [taskB.TaskKey] = TaskGitSignature.For(taskB) },
+            SubjectVersions = new Dictionary<string, long> { [taskB.TaskKey] = 1 },
+        }, DateTimeOffset.UtcNow);
+
+        foreach (var order in new[] { new[] { taskA, taskB }, new[] { taskB, taskA } })
+        {
+            var merged = cache.ReadCacheOnly(order);
+
+            Assert.Equal("task/a-older", merged.Merge[taskA.TaskKey].Branch);
+            Assert.Equal("task/b-current", merged.Merge[taskB.TaskKey].Branch);
+            Assert.Equal(TaskGitSignature.For(taskB), merged.TaskSignatures[taskB.TaskKey]);
+            Assert.Equal(1, merged.TaskSubjectVersions[taskB.TaskKey]);
+            Assert.False(merged.TaskSignatures.ContainsKey(taskA.TaskKey));
+            Assert.Equal(cache.ReadTask(taskB).Data?.Merge?.Branch, merged.Merge[taskB.TaskKey].Branch);
+        }
+        Assert.DoesNotContain(taskB.TaskKey, cache.ReadCacheOnly([taskA]).Merge.Keys);
+    }
+
+    [Fact]
     public void ReadFreshness_WhenOneOfSeveralRepositoriesNeverIndexed_IsStale()
     {
         var cache = new TaskListGitProjectionCache();

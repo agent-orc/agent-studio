@@ -130,8 +130,13 @@ public sealed class TaskListGitProjectionCache
     private TaskListGitProjection FilterForTasks(
         TaskListGitProjection projection, IReadOnlyCollection<TaskInfo> tasks)
     {
-        if (projection.TaskSignatures.Count == 0) return projection;
-        var valid = tasks.Where(task => projection.TaskSignatures.TryGetValue(task.TaskKey, out var signature)
+        // Only the requested tasks of this repository group are served from its
+        // snapshot. A snapshot without per-task signatures (an older version)
+        // is still restricted to them, so a fact it carries for a task that now
+        // lives in another repository never overwrites that repository's fact.
+        var signed = projection.TaskSignatures.Count > 0;
+        var valid = tasks.Where(task => !signed
+                || projection.TaskSignatures.TryGetValue(task.TaskKey, out var signature)
                 && signature == TaskGitSignature.For(task)
                 && (!projection.TaskSubjectVersions.TryGetValue(task.TaskKey, out var expected)
                     || expected == SubjectVersion(task.FolderPath)))
@@ -261,7 +266,12 @@ public sealed class TaskListGitProjectionCache
         return true;
     }
 
-    private static (bool Exists, string? Hash) SidecarStamp(string path)
+    /// <summary>
+    /// The one content stamp for a Git-relevant task sidecar. Both the watcher
+    /// path (<see cref="MarkTaskInputChanged"/>) and the indexer's input
+    /// signature hash through it, so the two can never disagree on a change.
+    /// </summary>
+    internal static (bool Exists, string? Hash) SidecarStamp(string path)
     {
         var file = new FileInfo(path);
         if (!file.Exists) return default;
