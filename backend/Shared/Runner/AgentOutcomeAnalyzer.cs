@@ -1237,6 +1237,17 @@ public static class AgentOutcomeAnalyzer
     public static string? ExtractBlockedMessage(IReadOnlyList<CliOutputLine> lines)
         => ExtractTerminalMessage(JoinAgentText(lines ?? Array.Empty<CliOutputLine>()), "BLOCKED");
 
+    /// <summary>
+    /// Extracts the assistant turn that owns the final Blocked or NeedsInput
+    /// sentinel. A failed run that stopped at a fork states it there; a run
+    /// that crashed without an interruptive sentinel returns null.
+    /// </summary>
+    public static string? ExtractInterruptiveMessage(IReadOnlyList<CliOutputLine> lines)
+    {
+        var agentText = JoinAgentText(lines ?? Array.Empty<CliOutputLine>());
+        return ExtractTerminalMessage(agentText, "BLOCKED") ?? ExtractTerminalMessage(agentText, "NEEDS_INPUT");
+    }
+
     private static string? ExtractNeedsInputMessage(string agentText)
         => ExtractTerminalMessage(agentText, "NEEDS_INPUT");
 

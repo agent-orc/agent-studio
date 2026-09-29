@@ -242,6 +242,38 @@ public sealed class DecisionCardApplyTests : IDisposable
     }
 
     [Fact]
+    public void ApplyPolicy_NoResolvableLink_FallsBackToRequirements()
+    {
+        // The service passes the linked cards without the decision's own key.
+        var decided = LockFileDecision("AGT-1") with { Status = DecisionStatuses.Decided, ChosenOptionId = "b" };
+
+        var plan = DecisionApplyPolicy.Plan(decided, []);
+
+        Assert.Equal(DecisionApplyOutcomes.CreatedCards, plan.Outcome);
+        Assert.Equal(2, plan.Requirements.Count);
+    }
+
+    [Fact]
+    public async Task Decide_AppliesToNamingOnlyTheDecisionItself_CreatesCardsFromTheChosenOption()
+    {
+        var h = Build();
+        var decisionId = h.Mutations.CreateJob(new CreateTaskRequest
+        {
+            Title = "Stable release contract", WatchPath = _watchPath, Kind = TaskKinds.Decision,
+            Decision = LockFileDecision(),
+        })!;
+        var decisionCard = h.Scanner.FindJob(decisionId, _watchPath)!;
+        Assert.True(h.Mutations.SetDecisionContent(decisionId,
+            decisionCard.Decision! with { AppliesTo = [decisionCard.Key!, " "] }, _watchPath));
+
+        await h.Decisions.DecideAsync(decisionId, _watchPath, new DecideCardRequest { OptionId = "b" }, "alice");
+
+        var entry = h.Scanner.FindJob(decisionId, _watchPath)!.Decision!.History[^1];
+        Assert.Equal(DecisionApplyOutcomes.CreatedCards, entry.ApplyOutcome);
+        Assert.Equal(2, entry.AppliedTaskKeys.Count);
+    }
+
+    [Fact]
     public async Task Decide_OptionWithoutRequirements_RecordsNothingToApply()
     {
         var h = Build();
@@ -473,6 +505,66 @@ public sealed class DecisionCardApplyTests : IDisposable
         Assert.StartsWith("# Decision", record);
         Assert.DoesNotContain("lifecycleState", record);
         Assert.Empty(h.Reminders(clock).Sweep());
+    }
+
+    [Fact]
+    public async Task ReminderSweep_StaleScan_DoesNotOverwriteADecisionTakenAfterTheScan()
+    {
+        var h = Build();
+        var decisionId = h.Mutations.CreateJob(new CreateTaskRequest
+        {
+            Title = "Stable release contract", WatchPath = _watchPath, Kind = TaskKinds.Decision,
+            Decision = LockFileDecision(),
+        })!;
+        var decision = h.Scanner.FindJob(decisionId, _watchPath)!;
+        var now = decision.CreatedAt.ToUniversalTime().AddDays(4);
+        var sweep = h.Reminders(new FakeTimeProvider(new DateTimeOffset(now)));
+
+        // The sweep scanned the card while it was pending and overdue ...
+        var scan = h.Scanner.ScanAllAutomationJobs();
+        var scanned = scan.Single(card => card.Id == decisionId);
+        Assert.True(DecisionReminderPolicy.IsDue(scanned.Decision!, scanned.CreatedAt, now));
+        // ... and the operator decides before the sweep reaches it.
+        await h.Decisions.DecideAsync(decisionId, _watchPath,
+            new DecideCardRequest { OptionId = "a", Rationale = "Reproducible." }, "alice");
+
+        Assert.Null(sweep.RemindIfStillDue(scanned, scan, now));
+
+        var stored = h.Scanner.FindJob(decisionId, _watchPath)!;
+        Assert.Equal(TaskStates.Completed, stored.State);
+        Assert.Equal(DecisionStatuses.Decided, stored.Decision!.Status);
+        Assert.Equal("a", stored.Decision.ChosenOptionId);
+        Assert.Equal("Reproducible.", stored.Decision.Rationale);
+        Assert.Null(stored.Decision.RemindedAt);
+        Assert.DoesNotContain("lifecycleState", ReadRecord(decision.Key!));
+        Assert.DoesNotContain(h.ActivityFeed.Read(_watchPath), e => e.Summary.StartsWith("Decision overdue:"));
+    }
+
+    [Fact]
+    public async Task ReminderSweep_WaitsForAnInFlightDecide_ThenSeesTheDecision()
+    {
+        var h = Build();
+        var decisionId = h.Mutations.CreateJob(new CreateTaskRequest
+        {
+            Title = "Stable release contract", WatchPath = _watchPath, Kind = TaskKinds.Decision,
+            Decision = LockFileDecision(),
+        })!;
+        var decision = h.Scanner.FindJob(decisionId, _watchPath)!;
+        var now = decision.CreatedAt.ToUniversalTime().AddDays(4);
+        var sweep = h.Reminders(new FakeTimeProvider(new DateTimeOffset(now)));
+        var scan = h.Scanner.ScanAllAutomationJobs();
+        var scanned = scan.Single(card => card.Id == decisionId);
+
+        // Hold the gate as a decide in flight would; the reminder must wait for it.
+        await DecisionCardService.WriteGate.WaitAsync();
+        var reminder = Task.Run(() => sweep.RemindIfStillDue(scanned, scan, now));
+        await Task.Delay(100);
+        Assert.False(reminder.IsCompleted);
+        DecisionCardService.WriteGate.Release();
+        Assert.NotNull(await reminder);
+
+        await h.Decisions.DecideAsync(decisionId, _watchPath, new DecideCardRequest { OptionId = "a" }, "alice");
+        Assert.Equal(DecisionStatuses.Decided, h.Scanner.FindJob(decisionId, _watchPath)!.Decision!.Status);
     }
 
     // ---- harness ----

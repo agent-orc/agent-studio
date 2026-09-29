@@ -5,7 +5,12 @@ namespace AgentStudio.Tasks;
 /// <summary>Card lifecycle binding for the shared decision record service.</summary>
 public sealed class DecisionCardService
 {
-    private static readonly SemaphoreSlim WriteGate = new(1, 1);
+    /// <summary>
+    /// Serialises every read-modify-write of a decision card's content: decide,
+    /// reopen, apply, and the reminder stamp. The reminder sweep holds it too, so
+    /// a stale scan never overwrites a decision taken after the scan.
+    /// </summary>
+    internal static readonly SemaphoreSlim WriteGate = new(1, 1);
     private readonly TaskScannerService _scanner;
     private readonly TaskMutationService _mutations;
     private readonly TaskTransitionService _transitions;

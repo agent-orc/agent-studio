@@ -1,3 +1,6 @@
+using AgentStudio.Runner;
+using AgentStudio.Shared;
+
 namespace AgentStudio.Tasks;
 
 /// <summary>
@@ -31,5 +34,18 @@ public static class BlockedForkReader
             RecommendationReason = recommended.Count == 1 ? RecommendationReason : null,
         };
         return DecisionCardPolicy.ValidateContent(content).Count == 0 ? content : null;
+    }
+
+    /// <summary>
+    /// The fork a failed run left for the failure intervention: read from the
+    /// agent turn that owns its final Blocked or NeedsInput sentinel only, so
+    /// crash output or a numbered build log never becomes a decision.
+    /// </summary>
+    public static DecisionContent? ReadRun(IReadOnlyList<CliOutputLine>? lines, string? reason)
+    {
+        if (lines is null || lines.Count == 0) return null;
+        var agentTurn = lines.Where(line => line is not null && !PendingDecisionScanner.IsFollowUpLine(line)).ToList();
+        var message = AgentOutcomeAnalyzer.ExtractInterruptiveMessage(agentTurn);
+        return message is null ? null : Read(reason, message);
     }
 }

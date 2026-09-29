@@ -46,20 +46,49 @@ public sealed class DecisionReminderSweep
             ct.ThrowIfCancellationRequested();
             if (!TaskKinds.IsDecision(card.Kind) || card.Decision is not { } decision) continue;
             if (!DecisionReminderPolicy.IsDue(decision, card.CreatedAt, now)) continue;
+            if (RemindIfStillDue(card, cards, now, ct) is { } reminder) reminders.Add(reminder);
+        }
+        return reminders;
+    }
+
+    /// <summary>
+    /// Reminds a card the scan saw as due. The scan is only a candidate list:
+    /// under the decision write gate the card is read again and reminded only if
+    /// it is still due, so a decide or reopen that landed after the scan is never
+    /// overwritten with the scanned pending state.
+    /// </summary>
+    internal DecisionReminder? RemindIfStillDue(TaskInfo scanned, IReadOnlyList<TaskInfo> cards, DateTime now,
+        CancellationToken ct = default)
+    {
+        DecisionCardService.WriteGate.Wait(ct);
+        try
+        {
+            var card = _scanner.FindJob(scanned.Id, scanned.WatchPath);
+            if (card is null || !TaskKinds.IsDecision(card.Kind) || card.Decision is not { } decision
+                || !DecisionReminderPolicy.IsDue(decision, card.CreatedAt, now))
+            {
+                _logger.LogInformation("decision-reminder-skipped job={JobId}: no longer pending", scanned.Id);
+                return null;
+            }
 
             var key = card.Key ?? card.Id;
             var waiting = cards
-                .Where(other => !ReferenceEquals(other, card) && !string.IsNullOrWhiteSpace(other.Key ?? other.Id))
+                .Where(other => !string.Equals(other.Id, card.Id, StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrWhiteSpace(other.Key ?? other.Id))
                 .Select(other => new DecisionWaitingCard(other.Key ?? other.Id, other.State,
                     other.References?.DependsOn.Any(edge =>
                         string.Equals(edge.Key, key, StringComparison.OrdinalIgnoreCase)) == true))
                 .ToList();
             var blocked = DecisionReminderPolicy.BlockedCards(decision, waiting);
             var dueAt = DecisionReminderPolicy.DueAt(decision, card.CreatedAt);
-            if (Remind(card, decision, key, dueAt, blocked, now))
-                reminders.Add(new(card.Id, key, dueAt, blocked));
+            return Remind(card, decision, key, dueAt, blocked, now)
+                ? new DecisionReminder(card.Id, key, dueAt, blocked)
+                : null;
         }
-        return reminders;
+        finally
+        {
+            DecisionCardService.WriteGate.Release();
+        }
     }
 
     private bool Remind(TaskInfo card, DecisionContent decision, string key, DateTime dueAt,

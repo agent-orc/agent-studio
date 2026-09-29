@@ -148,8 +148,9 @@ whose `references.dependsOn` points to a pending decision reports the key in
 the decision is pending.
 
 Deciding also applies the choice (`DecisionApplyService`). Keys listed in
-`decision.appliesTo` are linked implementation cards: each one waiting in
-Backlog, Preparation, or Escalated receives a decision block in `prompt.md`
+`decision.appliesTo` are linked implementation cards (blank keys and the
+decision's own key are ignored): each one waiting in Backlog, Preparation,
+Orchestrator Prep (`1a-orchestrator-prep`), or Escalated receives a decision block in `prompt.md`
 (question, chosen option, rationale, record link) and moves to `2-ready`; a card
 already in `2-ready` receives the block only, and a card past that point is left
 unchanged and named in the apply notes. With no linked card, the chosen option's
@@ -163,8 +164,14 @@ Decision cards are also raised automatically through `DecisionCardRequests`:
 by the runner's Blocked outcome when the agent's final message states a question
 with two to four options, by `FailureInterventionService` when the failure
 evidence carries a `fork`, and by concept promotion for a Dossier implementation
-item with a `decision` block. The blocked card becomes a dependant and apply
-target and gets a `dependsOn` edge to the decision card.
+item with a `decision` block (descriptor shape in
+[workflow-sized task cutting](../../operations/workflow-sized-task-cutting.md#decision-items)).
+The runner fills the failure `fork` at its run-failure boundary
+(`ProjectRunner`, core agent run step) with `BlockedForkReader.ReadRun`: only the
+agent turn that owns the final Blocked or NeedsInput sentinel is read, so crash
+output or build logs never become a decision; gate and review-plane failures carry
+no agent turn and keep the prose intervention. The blocked card becomes a
+dependant and apply target and gets a `dependsOn` edge to the decision card.
 
 `DecisionReminderSweep` runs every 30 minutes
 (`Supervisor:DecisionReminderSweepIntervalMinutes`). Once a pending decision
@@ -173,6 +180,9 @@ reopened), it posts one reminder per pending cycle: the wiki record gains
 lifecycle frontmatter (`pageKind: decision`, `review-requested`) so the
 workbench inbox lists it, and the activity feed gets an alert naming the decider
 and the blocked cards. Deciding rewrites the record without that frontmatter.
+The sweep reads each due card again under the decision write gate that decide,
+reopen, and apply hold, and skips it when it is no longer pending, so a decision
+taken after the scan is never overwritten by the reminder stamp.
 
 ## Result history
 

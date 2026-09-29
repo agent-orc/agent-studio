@@ -43,9 +43,11 @@ public static class DecisionApplyPolicy
         TaskStates.Backlog, TaskStates.Preparation, TaskStates.OrchestratorPrep, TaskStates.Escalated,
     };
 
+    /// <param name="linked">The linked implementation cards, without blank keys and without the
+    /// decision's own key; an <c>appliesTo</c> that names only the decision links nothing.</param>
     public static DecisionApplyPlan Plan(DecisionContent decided, IReadOnlyList<DecisionLinkedCardFact> linked)
     {
-        if ((decided.AppliesTo ?? []).Any(key => !string.IsNullOrWhiteSpace(key)))
+        if (linked.Count > 0)
             return new(DecisionApplyOutcomes.LinkedCards, linked.Select(Step).ToList(), []);
 
         var requirements = DecisionCardPolicy.ChosenOption(decided)?.Requirements ?? [];

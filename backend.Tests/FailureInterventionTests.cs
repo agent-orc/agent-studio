@@ -226,6 +226,85 @@ public sealed class FailureInterventionTests : IDisposable
         Assert.Equal(TaskKinds.Task, scanner.FindJob(item.FollowUpTaskId, _project)!.Kind);
     }
 
+    private static CliOutputLine Agent(string text, string stream = "stdout")
+        => new() { Timestamp = DateTime.UtcNow, Stream = stream, Text = text };
+
+    private static readonly CliOutputLine[] BlockedForkTurn =
+    [
+        Agent("The release branch diverged and both paths change the delivery."),
+        Agent("Should the delivery rebase onto the release branch or hold?"),
+        Agent("- Option A: Rebase onto the release branch. Re-runs every gate. Recommended."),
+        Agent("- Option B: Hold until the release ships. The delivery waits."),
+        Agent("[[TASK_BLOCKED:choose-rebase-or-hold]]"),
+        Agent("[supervisor] Agent emitted [[TASK_BLOCKED]]; escalating.", "supervisor"),
+    ];
+
+    [Fact]
+    public async Task RunFailure_WithForkInTheBlockedTurn_ProductionEvidenceRaisesADecisionCard()
+    {
+        var (scanner, mutations, service, _, _, _) = Build();
+        var origin = CreateOrigin(scanner, mutations, "Blocked at a fork");
+
+        // The same evidence ProjectRunner hands RaiseAsync at the end of a failed core run.
+        var evidence = ProjectRunner.RunFailureEvidence(RunIssueKind.OrchestratorInconclusive, "Blocked",
+            0, 12_000, BlockedForkTurn, "choose-rebase-or-hold", DateTime.UtcNow);
+
+        Assert.NotNull(evidence.Fork);
+        Assert.Equal("Should the delivery rebase onto the release branch or hold?", evidence.Fork!.Question);
+        Assert.Equal(["a", "b"], evidence.Fork.Options.Select(option => option.Id));
+        Assert.Equal("a", evidence.Fork.RecommendedOptionId);
+        Assert.Equal(PipelineCatalogue.CoreAgentRunStepId, evidence.StepId);
+
+        await service.RaiseAsync(origin, evidence);
+
+        var item = Assert.Single(service.List(_project));
+        Assert.Equal(TaskKinds.Decision, item.FollowUpKind);
+        var decision = scanner.FindJob(item.FollowUpTaskId, _project)!;
+        Assert.Equal(TaskKinds.Decision, decision.Kind);
+        Assert.Equal([origin.Key!], decision.Decision!.AppliesTo);
+        Assert.Contains(scanner.FindJob(origin.Id, _project)!.References.DependsOn,
+            edge => edge.Key == item.FollowUpKey);
+    }
+
+    [Fact]
+    public void RunFailure_ForkInTheNeedsInputTurn_IsCarried()
+    {
+        CliOutputLine[] output =
+        [
+            Agent("Which storage should the cache use?"),
+            Agent("a) Disk cache under the workspace."),
+            Agent("b) In-memory cache per process."),
+            Agent("[[TASK_NEEDS_INPUT:choose-cache-storage]]"),
+        ];
+
+        var evidence = ProjectRunner.RunFailureEvidence(RunIssueKind.OrchestratorInconclusive, "NeedsInput",
+            0, null, output, null, null);
+
+        Assert.Equal(["a", "b"], evidence.Fork!.Options.Select(option => option.Id));
+    }
+
+    [Fact]
+    public async Task RunFailure_CrashOutputWithANumberedList_CarriesNoFork_AndKeepsTheProseTask()
+    {
+        var (scanner, mutations, service, _, _, _) = Build();
+        var origin = CreateOrigin(scanner, mutations, "Crashed run");
+        CliOutputLine[] output =
+        [
+            Agent("Why did the restore fail?"),
+            Agent("1. Restore packages"),
+            Agent("2. Build the solution"),
+            Agent("process exited -1", "stderr"),
+        ];
+
+        var evidence = ProjectRunner.RunFailureEvidence(RunIssueKind.InfraCrash, "Failed",
+            -1, 3_000, output, "process exited -1", DateTime.UtcNow);
+
+        Assert.Equal("crash-as-completion", evidence.FailureCode);
+        Assert.Null(evidence.Fork);
+        await service.RaiseAsync(origin, evidence);
+        Assert.Equal(TaskKinds.Task, Assert.Single(service.List(_project)).FollowUpKind);
+    }
+
     private static void WriteEvidenceSnapshots(
         FailureInterventionRecord item,
         TaskInfo followUp,

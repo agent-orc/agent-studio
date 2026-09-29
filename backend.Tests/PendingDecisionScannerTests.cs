@@ -150,4 +150,18 @@ public class PendingDecisionScannerTests
         var wider = PendingDecisionScanner.Scan(lines, tailLines: 1000);
         Assert.NotNull(wider);
     }
+
+    [Theory]
+    [InlineData("supervisor", "escalating", true)]
+    [InlineData("orchestrator", "follow-up", true)]
+    [InlineData("user", "answer", true)]
+    [InlineData("stdout", "[supervisor] legacy tag in the text", true)]
+    [InlineData("stdout", "[user] legacy tag in the text", true)]
+    [InlineData("stdout", "plain agent text", false)]
+    [InlineData("system", "taskboard marker", false)]
+    public void IsFollowUpLine_MatchesTheStreamAndTheLegacyTextTag(string stream, string text, bool expected)
+    {
+        // Shared by the scan's resolution check and the Blocked fork reader.
+        Assert.Equal(expected, PendingDecisionScanner.IsFollowUpLine(Line(text, stream)));
+    }
 }

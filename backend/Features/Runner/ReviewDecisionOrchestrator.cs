@@ -1945,16 +1945,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         return Task.CompletedTask;
     }
 
-    private static bool IsFollowUpLine(CliOutputLine line) =>
-        line.Stream is { } stream
-            && (stream.Equals("supervisor", StringComparison.OrdinalIgnoreCase)
-                || stream.Equals("orchestrator", StringComparison.OrdinalIgnoreCase)
-                || stream.Equals("user", StringComparison.OrdinalIgnoreCase))
-        || line.Text is { } text
-            && (text.Contains("[supervisor]", StringComparison.OrdinalIgnoreCase)
-                || text.Contains("[orchestrator]", StringComparison.OrdinalIgnoreCase)
-                || text.Contains("[user]", StringComparison.OrdinalIgnoreCase));
-
     /// <summary>
     /// A blocked run that stopped at a fork (a stated question with two to four
     /// options) raises a decision card instead of leaving the question in prose.
@@ -1970,10 +1960,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             var escalated = _scanner.FindJob(current.Id, entry.Path);
             if (escalated is null) return null;
             // Agent lines only: the escalation above already appended a
-            // supervisor line that quotes [[TASK_BLOCKED]]. Follow-up tags are
-            // matched in the stream and in the text, as PendingDecisionScanner does.
+            // supervisor line that quotes [[TASK_BLOCKED]].
             var agentTurn = CliOutputLogParser.ParseFile(TaskPaths.CliOutputLog(escalated.FolderPath))
-                .Where(line => line is not null && !IsFollowUpLine(line))
+                .Where(line => line is not null && !PendingDecisionScanner.IsFollowUpLine(line))
                 .ToList();
             var fork = BlockedForkReader.Read(pending.Reason, AgentOutcomeAnalyzer.ExtractBlockedMessage(agentTurn));
             if (fork is null) return null;
