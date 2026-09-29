@@ -1,0 +1,225 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Text.Json;
+using AgentStudio.Diagnostics;
+
+namespace AgentStudio.Git;
+
+/// <summary>
+/// The directories a git write on one repository can take locks in: the
+/// working tree, its private git directory, and the shared common directory
+/// (they differ for a linked worktree).
+/// </summary>
+public sealed record GitLockScope(string WorkTree, string GitDirectory, string CommonDirectory)
+{
+    public IEnumerable<string> Paths()
+        => new[] { WorkTree, GitDirectory, CommonDirectory }
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+}
+
+/// <summary>Answers whether any running git process may hold a lock in a repository.</summary>
+public interface IGitLockOwnerProbe
+{
+    GitLockOwnership Probe(GitLockScope scope);
+}
+
+/// <summary>
+/// Live git children of this server, keyed by their working directory. Every
+/// backend spawn through <see cref="GitNetworkProcessRunner"/> registers here,
+/// so the stale-lock guard can tell "our own git is still running in that
+/// repository" without an OS inventory (on Windows the inventory cannot read
+/// another process's working directory).
+/// </summary>
+public static class GitChildProcessRegistry
+{
+    private static readonly ConcurrentDictionary<long, string> Live = new();
+    private static long _next;
+
+    public static IDisposable Track(string? workingDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(workingDirectory)) return NoopScope.Instance;
+        var id = Interlocked.Increment(ref _next);
+        Live[id] = workingDirectory;
+        return new Scope(id);
+    }
+
+    public static IReadOnlyList<string> WorkingDirectories() => Live.Values.ToArray();
+
+    private sealed class Scope(long id) : IDisposable
+    {
+        public void Dispose() => Live.TryRemove(id, out _);
+    }
+
+    private sealed class NoopScope : IDisposable
+    {
+        public static readonly NoopScope Instance = new();
+        public void Dispose() { }
+    }
+}
+
+/// <summary>
+/// Production probe. A lock is owned when a live server child runs git with its
+/// working directory inside the repository, or when the OS process list shows
+/// a git process tied to the repository: on Linux by <c>/proc/&lt;pid&gt;/cwd</c>
+/// or command line, on Windows by a <c>git*.exe</c> whose command line names the
+/// path. A process list that cannot be read yields <see cref="GitLockOwnership.Unknown"/>.
+/// </summary>
+public sealed class GitProcessLockOwnerProbe : IGitLockOwnerProbe
+{
+    private readonly Func<IReadOnlyList<string>> _serverChildren;
+    private readonly Func<IReadOnlyList<GitProcessObservation>?> _inventory;
+
+    public GitProcessLockOwnerProbe()
+        : this(GitChildProcessRegistry.WorkingDirectories, ReadInventory)
+    {
+    }
+
+    internal GitProcessLockOwnerProbe(
+        Func<IReadOnlyList<string>> serverChildren,
+        Func<IReadOnlyList<GitProcessObservation>?> inventory)
+    {
+        _serverChildren = serverChildren;
+        _inventory = inventory;
+    }
+
+    public GitLockOwnership Probe(GitLockScope scope)
+    {
+        var paths = scope.Paths().Select(NormalizeDirectory).ToArray();
+        if (_serverChildren().Any(cwd => IsInside(cwd, paths)))
+            return GitLockOwnership.Owned;
+
+        var processes = _inventory();
+        if (processes is null) return GitLockOwnership.Unknown;
+        return processes.Any(process => IsTiedTo(process, paths))
+            ? GitLockOwnership.Owned
+            : GitLockOwnership.None;
+    }
+
+    internal static bool IsTiedTo(GitProcessObservation process, IReadOnlyList<string> normalizedPaths)
+    {
+        if (process.WorkingDirectory is not null && IsInside(process.WorkingDirectory, normalizedPaths))
+            return true;
+        if (string.IsNullOrWhiteSpace(process.CommandLine)) return false;
+        var commandLine = process.CommandLine.Replace('\\', '/');
+        return normalizedPaths.Any(path => commandLine.Contains(path, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsInside(string candidate, IReadOnlyList<string> normalizedPaths)
+    {
+        var normalized = NormalizeDirectory(candidate);
+        return normalizedPaths.Any(path =>
+            string.Equals(normalized, path, StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith(path + "/", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string NormalizeDirectory(string path)
+    {
+        try { path = Path.GetFullPath(path); }
+        catch (Exception ex) { SilentCatch.Note(ex, "GitProcessLockOwnerProbe: path normalisation is best-effort"); }
+        return path.Replace('\\', '/').TrimEnd('/');
+    }
+
+    private static IReadOnlyList<GitProcessObservation>? ReadInventory()
+    {
+        if (OperatingSystem.IsLinux()) return ReadLinuxInventory();
+        if (OperatingSystem.IsWindows()) return ReadWindowsInventory();
+        // No portable inventory elsewhere; server children were checked above.
+        return [];
+    }
+
+    private static IReadOnlyList<GitProcessObservation>? ReadLinuxInventory()
+    {
+        try
+        {
+            var result = new List<GitProcessObservation>();
+            foreach (var dir in Directory.EnumerateDirectories("/proc"))
+            {
+                var name = Path.GetFileName(dir);
+                if (!int.TryParse(name, out var pid) || pid == Environment.ProcessId) continue;
+                try
+                {
+                    var comm = File.ReadAllText(Path.Combine(dir, "comm")).Trim();
+                    if (!comm.StartsWith("git", StringComparison.Ordinal)) continue;
+                    var cwd = new FileInfo(Path.Combine(dir, "cwd")).LinkTarget;
+                    var cmdline = File.ReadAllText(Path.Combine(dir, "cmdline")).Replace('\0', ' ').Trim();
+                    result.Add(new GitProcessObservation(pid, comm, cwd, cmdline));
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    // Exited between enumeration and read, or belongs to another
+                    // user whose process could not have written our lock file.
+                    SilentCatch.Note(ex, "GitProcessLockOwnerProbe: unreadable /proc entry is skipped");
+                }
+            }
+            return result;
+        }
+        catch (Exception ex)
+        {
+            SilentCatch.Note(ex, "GitProcessLockOwnerProbe: /proc inventory unavailable");
+            return null;
+        }
+    }
+
+    private static IReadOnlyList<GitProcessObservation>? ReadWindowsInventory()
+    {
+        const string script =
+            "$ErrorActionPreference='Stop'; " +
+            "@(Get-CimInstance Win32_Process -Filter \"Name LIKE 'git%'\" | Select-Object ProcessId,Name,CommandLine) | ConvertTo-Json -Compress";
+        try
+        {
+            using var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                ArgumentList = { "-NoProfile", "-NonInteractive", "-Command", script },
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            });
+            if (process is null) return null;
+            var stderr = process.StandardError.ReadToEndAsync();
+            var json = process.StandardOutput.ReadToEnd();
+            if (!process.WaitForExit(15_000) || process.ExitCode != 0)
+            {
+                try { process.Kill(entireProcessTree: true); }
+                catch (Exception ex) { SilentCatch.Note(ex, "GitProcessLockOwnerProbe: inventory kill is best-effort"); }
+                return null;
+            }
+            _ = stderr.Result;
+            return ParseWindowsInventory(json);
+        }
+        catch (Exception ex)
+        {
+            SilentCatch.Note(ex, "GitProcessLockOwnerProbe: Win32_Process inventory unavailable");
+            return null;
+        }
+    }
+
+    internal static IReadOnlyList<GitProcessObservation> ParseWindowsInventory(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return [];
+        using var document = JsonDocument.Parse(json);
+        var elements = document.RootElement.ValueKind == JsonValueKind.Array
+            ? document.RootElement.EnumerateArray().ToArray()
+            : [document.RootElement];
+        return elements.Select(element => new GitProcessObservation(
+                element.GetProperty("ProcessId").GetInt32(),
+                GetString(element, "Name"),
+                WorkingDirectory: null,
+                GetString(element, "CommandLine")))
+            .ToArray();
+    }
+
+    private static string? GetString(JsonElement element, string property)
+        => element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+}
+
+/// <summary>One running git process as the OS inventory reports it.</summary>
+public sealed record GitProcessObservation(
+    int ProcessId,
+    string? Name,
+    string? WorkingDirectory,
+    string? CommandLine);

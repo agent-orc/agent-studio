@@ -18,6 +18,7 @@ public static class PipelineHealthConventions
     public const int FilledQueueMinimumTasks = 2;
     public static readonly TimeSpan SensorInterval = TimeSpan.FromMinutes(1);
     public static readonly TimeSpan AlertCooldown = TimeSpan.FromHours(1);
+    public const string EvidenceFlushStalledKind = "evidence-flush-stalled";
 }
 
 public sealed record PipelineGateContext(
@@ -41,7 +42,8 @@ public sealed record PipelineHealthAlert(
     string Summary,
     string Detail,
     DateTime DetectedAtUtc,
-    string? JobId = null);
+    string? JobId = null,
+    string? Repository = null);
 
 public sealed record PipelineActiveGateHealth(
     string GateRunId,
@@ -237,11 +239,12 @@ public interface IPipelineHealthSensor
 }
 
 /// <summary>
-/// Visibility-only pipeline sensor. It observes gate lifecycle and the
-/// append-only lane ledger, emits deduplicated feed alarms, and exposes a
-/// compact read model. It never cancels gates or moves tasks.
+/// Visibility-only pipeline sensor. It observes gate lifecycle, the
+/// append-only lane ledger and stalled workspace evidence flushes, emits
+/// deduplicated feed alarms, and exposes a compact read model. It never cancels
+/// gates or moves tasks.
 /// </summary>
-public sealed class PipelineHealthService : BackgroundService, IPipelineHealthSensor
+public sealed class PipelineHealthService : BackgroundService, IPipelineHealthSensor, IEvidenceFlushAlarm
 {
     private static readonly string[] ObservedLanes =
     [
@@ -307,7 +310,8 @@ public sealed class PipelineHealthService : BackgroundService, IPipelineHealthSe
             .ToArray();
         var unhealthy = activeGate?.IsHanging == true
             || fingerprint?.IsSystemic == true
-            || lanes.Any(lane => lane.IsStalled);
+            || lanes.Any(lane => lane.IsStalled)
+            || alerts.Any(alert => alert.Kind == PipelineHealthConventions.EvidenceFlushStalledKind);
         return new PipelineHealthSnapshot(
             project,
             now,
@@ -316,6 +320,68 @@ public sealed class PipelineHealthService : BackgroundService, IPipelineHealthSe
             fingerprint,
             lanes,
             alerts);
+    }
+
+    /// <summary>
+    /// Raises <c>evidence-flush-stalled</c> for every project whose watch path
+    /// lives in the stalled workspace repository (AGT-3000). The alert stays in
+    /// the snapshot, and keeps the status at <c>alarm</c>, until the next
+    /// successful flush reports recovery.
+    /// </summary>
+    public void EvidenceFlushStalled(EvidenceFlushStall stall)
+    {
+        var minutes = Math.Max(0, (int)Math.Floor(stall.FailingFor.TotalMinutes));
+        var alert = new PipelineHealthAlert(
+            PipelineHealthConventions.EvidenceFlushStalledKind,
+            "high",
+            $"Workspace evidence flush failing for {minutes} min",
+            $"Repository {stall.GitRoot}: {stall.ConsecutiveFailures} consecutive evidence flushes failed since " +
+            $"{stall.FirstFailedAtUtc:O}. No evidence commit reaches the workspace repository until this clears. " +
+            $"Last error: {stall.Error}",
+            stall.LastFailedAtUtc,
+            Repository: stall.GitRoot);
+        var projects = ProjectsIn(stall.GitRoot);
+        if (projects.Count == 0)
+        {
+            _logger.LogWarning(
+                "pipeline_health_alarm kind={Kind} project=n/a repo={Repo} summary={Summary} error={Error}",
+                alert.Kind, stall.GitRoot, alert.Summary, stall.Error);
+            return;
+        }
+        foreach (var (project, watchPath) in projects)
+            EmitAlert(project, watchPath, alert, EvidenceFlushIdentity(stall.GitRoot));
+    }
+
+    public void EvidenceFlushRecovered(string gitRoot, DateTime recoveredAtUtc)
+    {
+        var suffix = "\0" + EvidenceFlushIdentity(gitRoot);
+        foreach (var key in _currentAlerts.Keys.Where(key => key.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)).ToArray())
+        {
+            _currentAlerts.TryRemove(key, out _);
+            // Re-arm: a later stall of the same repository alarms immediately.
+            _lastAlertAt.TryRemove(key, out _);
+        }
+        _logger.LogInformation(
+            "pipeline_health_alarm_cleared kind={Kind} repo={Repo} at={At:O}",
+            PipelineHealthConventions.EvidenceFlushStalledKind, gitRoot, recoveredAtUtc);
+    }
+
+    private static string EvidenceFlushIdentity(string gitRoot) => "evidence-flush:" + gitRoot;
+
+    private IReadOnlyList<(string Project, string WatchPath)> ProjectsIn(string gitRoot)
+    {
+        var root = Path.GetFullPath(gitRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return _scanner.GetWatchPaths()
+            .Where(entry => !string.IsNullOrWhiteSpace(entry.Path))
+            .Where(entry =>
+            {
+                var path = Path.GetFullPath(entry.Path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                return WatchPathComparison.PathsEqual(path, root)
+                    || path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                    || path.StartsWith(root + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+            })
+            .Select(entry => (entry.Name, entry.Path))
+            .ToArray();
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

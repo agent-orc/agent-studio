@@ -310,17 +310,20 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
     private readonly ILogger<BuildTestGateRunner> _logger;
     private readonly ILoadThrottleGate? _loadThrottle;
     private readonly IPipelineHealthSensor? _health;
+    private readonly GitStaleLockGuard _staleLocks;
     private readonly BuildTestMachineGateMode _machineGateMode;
     private readonly Func<int, IGateProcessResources> _resourceFactory = pid => new GateProcessResources(pid);
 
     public BuildTestGateRunner(
         ILogger<BuildTestGateRunner> logger,
         ILoadThrottleGate? loadThrottle = null,
-        IPipelineHealthSensor? health = null)
+        IPipelineHealthSensor? health = null,
+        GitStaleLockGuard? staleLocks = null)
     {
         _logger = logger;
         _loadThrottle = loadThrottle;
         _health = health;
+        _staleLocks = staleLocks ?? new GitStaleLockGuard();
         _machineGateMode = BuildTestMachineGateMode.Shared;
         _verdictCache = new GateResultCache();
     }
@@ -1414,6 +1417,11 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         try
         {
             Directory.CreateDirectory(ReviewWorkspaceRoot);
+            // The fetch and `worktree add` below write the shared ref store; a
+            // ref lock left by a dead git process would fail every gate
+            // (AGT-3000). The project checkout's own index is not ours to clear.
+            await _staleLocks.EnsureWritableAsync(repositoryPath, GitLockSurface.SharedRefs, bounded.Token)
+                .ConfigureAwait(false);
             var selfHealed = false;
             var available = await RunGitAsync(
                 repositoryPath, ["cat-file", "-e", expectedSha + "^{commit}"],
