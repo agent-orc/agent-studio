@@ -1,5 +1,5 @@
 {
-  "description": "Ordered step manifest for the deployment regression scenario (AGT-2739). This file is data: id, title, level, and the outcome a reader should expect. The assertions themselves are typed C# in ScenarioSteps.cs, keyed by id. `smoke` runs steps 1-6 in order; `full` runs all steps in order.",
+  "description": "Ordered step manifest for the deployment regression scenario (AGT-2739). This file is data: id, title, level, and the outcome a reader should expect. The assertions themselves are typed C# in ScenarioSteps.cs, keyed by id. `smoke` runs every smoke-level step (1-7) in order; `full` runs all steps in order.",
   "steps": [
     {
       "id": "bootstrap-principals",
@@ -37,6 +37,13 @@
       "expectedOutcome": "The task reaches 4-auto-review with an immutable result handoff, a new commit lands on the seeded repository's default branch, and the run's evidence artifacts include a results log naming both checks. In Compose, Studio BFF stays stopped during the run."
     },
     {
+      "id": "run-coding-attempt-legacy-plane",
+      "title": "Run with the fake CLI on the legacy runner plane",
+      "level": "smoke",
+      "description": "The same coding attempt on the plane the production fleet uses (AGT-2985): the backend monolith, a second real runner, and the fixture repository served over smart HTTP run as sibling processes; the runner claims over /api/runner/claim (no run id) and completes over /api/runner/completion with session-continuation evidence.",
+      "expectedOutcome": "The completion is accepted and the task reaches 4-auto-review; the continuation ledger entry names the server's fenced attempt id, which differs from the lease id; the runner never logs 'Session continuation evidence does not match'; a new commit lands on the fixture repository."
+    },
+    {
       "id": "auto-review",
       "title": "Auto-review",
       "level": "smoke",
@@ -69,6 +76,11 @@
     {
       "topic": "dossier decision",
       "reason": "The distributed Task Server / Studio BFF / Runner topology this scenario boots has no dossier or decision-gate concept yet; it exists only in the separate backend monolith. Tracked as future scenario growth once that concept lands in this topology.",
+      "trackedIn": "docs/operations/testing/deployment-scenario.md"
+    },
+    {
+      "topic": "legacy-plane result artifacts",
+      "reason": "Since AGT-2890 the runner uploads result artifacts after the fenced completion. The v1 Task Server admits that with the outbox authority; the backend monolith answers 409 'RunAttempt is Completed', so a legacy-plane run ships no result artifacts. The legacy step therefore asserts completion acceptance, not artifacts.",
       "trackedIn": "docs/operations/testing/deployment-scenario.md"
     },
     {
