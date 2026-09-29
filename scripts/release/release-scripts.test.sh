@@ -19,7 +19,7 @@ for executable in \
     orchestrator-engine/orchestrator-engine \
     agent-host-linux-x64/agent-host \
     agent-host-osx-arm64/agent-host \
-    setup/agent-orchestrator-setup
+    setup/agent-studio-setup
 do
     printf '#!/bin/sh\nexit 0\n' >"$publish_root/$executable"
     chmod 0755 "$publish_root/$executable"
@@ -30,14 +30,22 @@ SOURCE_DATE_EPOCH=1 "$repo_root/scripts/release/package-release.sh" \
     1.2.3 0123456789abcdef "$publish_root" "$frontend_root" "$output_root"
 (
     cd "$output_root"
-    [ "$(find . -maxdepth 1 -name '*.tar.gz' | wc -l)" -eq 3 ]
-    [ -x agent-orchestrator-setup ]
+    [ "$(find . -maxdepth 1 -name '*.tar.gz' | wc -l)" -eq 4 ]
+    [ -x agent-studio-setup ]
     sha256sum -c SHA256SUMS
     tar -tzf agent-orchestrator-1.2.3-linux-x64.tar.gz \
         | grep -q 'agent-orchestrator-1.2.3-linux-x64/update.sh'
     tar -tzf agent-host-1.2.3.tar.gz | grep -q 'agent-host-1.2.3/osx-arm64/agent-host'
     tar -tzf agent-studio-1.2.3.tar.gz | grep -q 'agent-studio-1.2.3/browser/index.html'
+    tar -tzf agent-studio-compose-1.2.3.tar.gz | grep -q 'agent-studio-compose-1.2.3/docker-compose.yml'
 )
+compose_root="$test_root/compose-extract"
+install -d -m 0755 "$compose_root"
+tar -xzf "$output_root/agent-studio-compose-1.2.3.tar.gz" -C "$compose_root"
+printf 'AGENT_STUDIO_VERSION=1.2.3\n' >"$compose_root/.env"
+docker compose --env-file "$compose_root/.env" \
+    -f "$compose_root/agent-studio-compose-1.2.3/docker-compose.yml" \
+    config --quiet
 
 fake_systemctl="$test_root/systemctl"
 cat >"$fake_systemctl" <<'EOF'
