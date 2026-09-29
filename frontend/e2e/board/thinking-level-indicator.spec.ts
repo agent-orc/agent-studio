@@ -45,11 +45,11 @@ function json(route: Route, body: unknown) {
 async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/**', route => {
     const url = route.request().url();
-    if (url.includes('/api/auth/status')) return json(route, { profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
+    if (url.includes('/api/v1/studio/auth/status')) return json(route, { profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
     if (url.includes('/api/tasks/archive')) return json(route, { items: [], total: 0, offset: 0, limit: 50 });
-    if (url.includes('/api/tasks/grouped')) return json(route, grouped);
+    if (url.includes('/api/v1/studio/board')) return json(route, grouped);
     if (/\/api\/(?:tasks|jobs)(\?|$)/.test(url)) return json(route, tasks);
-    const detailMatch = /\/api\/(?:tasks|jobs)\/([^/?]+)(?:\?|$)/.exec(url);
+    const detailMatch = /\/api\/v1\/projects\/[^/?]+\/tasks\/([^/?]+)(?:\?|$)/.exec(url);
     if (detailMatch) {
       const key = decodeURIComponent(detailMatch[1]);
       const info = tasks.find(item => item.id === key || item.taskKey === key);
@@ -63,7 +63,7 @@ async function installRoutes(page: Page): Promise<void> {
       cliType: 'codex', model: 'gpt-5.6-sol', thinkingLevel: 'high',
     });
     if (url.includes('/api/clients')) return json(route, [{ id: 'local-default', displayName: 'Local', kind: 'agent-instance', defaultCliType: 'codex', defaultModel: 'gpt-5.6-sol', defaultThinkingLevel: 'high' }]);
-    if (url.includes('/api/runner/status')) return json(route, { projects: {} });
+    if (url.includes('/api/v1/studio/runner/status')) return json(route, { projects: {} });
     if (url.includes('/api/environment')) return json(route, { isDev: false, devTools: {} });
     if (url.includes('/api/cli/quota')) return json(route, { at: '2026-07-11T00:00:00Z', ttlSeconds: 600, snapshots: [] });
     if (url.includes('/api/cli/usage')) return json(route, { at: '2026-07-11T00:00:00Z', sessions: [] });

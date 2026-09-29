@@ -48,7 +48,7 @@ test.describe('Locked folder move surfaces a clear diagnosis', () => {
 
       // Answer every move POST with the real DirectoryLocked shape
       // (423 + { error: <diagnosis> }). No backend folder is touched.
-      await page.route('**/api/tasks/*/move**', async (route) => {
+      await page.route('**/api/v1/projects/*/tasks/*/move**', async (route) => {
         if (route.request().method() !== 'POST') return route.continue();
         await route.fulfill({
           status: 423,

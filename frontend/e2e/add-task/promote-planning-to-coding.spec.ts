@@ -37,7 +37,7 @@ test.describe('Promote planning result -> coding task', () => {
     const CARRIER_ID = carrier.id;
     const CARRIER_WATCHPATH = carrier.watchPath;
 
-    const detailUrl = new RegExp(`/api/tasks/${escapeRe(CARRIER_ID)}(\\?|$)`);
+    const detailUrl = new RegExp(`/api/v1/projects/[^/]+/tasks/${escapeRe(CARRIER_ID)}(\\?|$)`);
     const promoteUrl = new RegExp(`/api/tasks/${escapeRe(CARRIER_ID)}/promote-to-coding`);
     const imageUrl = new RegExp(`/api/tasks/${escapeRe(CARRIER_ID)}/results/plan-mockup\\.png`);
 

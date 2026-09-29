@@ -95,7 +95,7 @@ test.describe('Archive-all loading indicator', () => {
     // Hold the move POSTs until the loading-state assertions have run.
     // `page.route` intercepts the browser-side fetch and lets us pause
     // before forwarding it.
-    await page.route('**/api/tasks/*/move*', async (route, request) => {
+    await page.route('**/api/v1/projects/*/tasks/*/move*', async (route, request) => {
       if (request.method() !== 'POST') return route.continue();
       movePostCount += 1;
       await gate;
@@ -148,7 +148,7 @@ test.describe('Archive-all loading indicator', () => {
       await expect(btn).toBeEnabled();
       await expect(btn).toContainText(/Archive all/i);
     } finally {
-      await page.unroute('**/api/tasks/*/move*').catch(() => {});
+      await page.unroute('**/api/v1/projects/*/tasks/*/move*').catch(() => {});
       // resolveGate may not have been called if an assertion failed early;
       // release it so the route handler doesn't keep the page hung on cleanup.
       resolveGate?.();

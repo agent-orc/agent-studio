@@ -115,9 +115,9 @@ async function stubBackground(page: Page) {
   const json = (body: unknown) => async (route: Route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
   await page.route('**/api/tasks', json([]));
-  await page.route('**/api/tasks/grouped*', json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
+  await page.route('**/api/v1/studio/board*', json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
   await page.route('**/api/watch-paths', json([]));
-  await page.route('**/api/runner/status', json({ projects: {} }));
+  await page.route('**/api/v1/studio/runner/status', json({ projects: {} }));
   await page.route('**/api/cli/quota/caps', json({ defaultCapPct: 95, caps: {} }));
   await page.route('**/api/cli/quota', json({ at: new Date().toISOString(), ttlSeconds: 600, snapshots: [] }));
   await page.route('**/api/clients', json([]));
