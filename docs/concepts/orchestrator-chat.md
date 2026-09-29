@@ -478,3 +478,86 @@ That slice gives the user a durable conversation and visible context before the 
 - Should memory refresh be automatic after every completed job, or only after review acceptance? Review acceptance is safer because it means the user agrees the result is real.
 - Which actions need confirmation? A good first rule: read-only and draft-creation actions can run immediately; task state changes, CLI starts, stops, and continues need visible confirmation unless auto-mode already owns the decision.
 - How much of the raw transcript should be loaded into chat? The default should be summaries plus source links; full logs stay one click away.
+## Chat turn usage metadata
+
+Assistant turns now carry the executing model and effort, provider thread or
+session id, host, queued/started/finished times, normalized token counts, and
+TokenEconomy cost with its catalogue version. Queue time is measured from
+enqueue until claim; run time is measured from claim until completion. Local
+turns use the workstation host and the local session gate. Missing provider
+fields remain absent rather than becoming zero. Workspace visibility defaults
+on; a project can override it, and the chat header has a user preference.
+The `coding-agent-chat` 0.5.0 metadata binding is gated by its exact package
+version. Agent Studio keeps the adapter and DTO ready on the current 0.4.1 pin.
+
+### Visibility settings API
+
+`GET /api/projects/{projectName}/chat-metadata` returns the effective project
+setting and both levels used to resolve it:
+
+```json
+{ "chatMetadataEnabled": true, "projectOverride": null, "workspaceDefault": true }
+```
+
+`PUT` to the same route accepts `{ "enabled": true | false | null }` and
+returns `{ "chatMetadataEnabled": true | false | null }`. A `null` value clears
+the project override; the returned value is the stored override, so clients
+should use `GET` to read the effective value. Unknown project names return
+`404` with an `error` string.
+
+`PUT /api/workspaces/{id}/chat-metadata` accepts the same request and returns
+`{ "chatMetadataEnabled": true | false }`, the effective workspace value.
+`null` clears the explicit workspace setting and resolves to the platform
+default, `true`. Unknown workspace IDs return `404` with an `error` string.
+`GET /api/workspaces/{id}/settings` also includes the effective
+`chatMetadataEnabled` Boolean. The chat header's per-user preference is local
+UI state and does not mutate either server setting. When the chat changes
+project, the header applies the platform default (`true`) until that project's
+`GET` answers, and keeps it when the request fails or returns a non-Boolean
+`chatMetadataEnabled`; it never carries the previous project's value over.
+
+### Turn wire and durable storage
+
+Assistant turns expose an optional `metadata` object on the existing
+`OrchestratorContextTurnDto` transcript response. Its JSON properties are
+`model`, `effort`, `providerThreadId`, `host`, `queuedAt`, `startedAt`,
+`finishedAt`, `inputTokens`, `cachedInputTokens`, `outputTokens`,
+`reasoningTokens`, `cost`, `currency`, and `priceCatalogueVersion`. All fields
+are nullable. Times are UTC timestamps; token counts are integers; `cost` is
+a decimal amount in `currency` (currently `USD`); and
+`priceCatalogueVersion` identifies the TokenEconomy package used at capture.
+Absent provider data stays `null`. Cached input is reported separately from
+uncached input and is charged once. Existing turns without `metadata` remain
+valid.
+
+```json
+{
+  "metadata": {
+    "model": "gpt-6-astra", "effort": "medium",
+    "providerThreadId": "thread-1", "host": "runner-01",
+    "queuedAt": "2026-09-26T09:00:00Z",
+    "startedAt": "2026-09-26T09:00:02Z",
+    "finishedAt": "2026-09-26T09:00:10Z",
+    "inputTokens": 80, "cachedInputTokens": 20,
+    "outputTokens": 10, "reasoningTokens": 2,
+    "cost": 0.001, "currency": "USD",
+    "priceCatalogueVersion": "TokenEconomy/0.3.5.0"
+  }
+}
+```
+
+The Task Server stores that object as JSON in the nullable
+`orchestrator_context_turns.metadata_json` SQLite column. This stored JSON
+uses the C# property names above with initial capitals because it is written
+with the default `System.Text.Json` options. The local context-keyed JSONL
+transcript carries the same optional `metadata` object using camel-case names.
+Project-chat Markdown turn files put `metadataJson` in YAML frontmatter: its
+value is standard Base64 of UTF-8 JSON serialized from `ChatTurnMetadata`,
+using C# property names with initial capitals. It includes a nested
+`Capabilities` object with `Tokens`, `Cost`, `ReasoningTokens`,
+`QueueDuration`, `RunDuration`, and `ProviderThreadId` Booleans. For example,
+`metadataJson: <base64-utf8-json>` appears alongside
+the existing `queuedAt`, `startedAt`, and `finishedAt` UTC fields. Readers
+accept files without it; malformed optional metadata is ignored while the
+turn body remains readable. The separate timestamp fields retain their
+existing `yyyy-MM-ddTHH:mm:ss.fffZ` format.
