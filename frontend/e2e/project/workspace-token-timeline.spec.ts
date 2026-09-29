@@ -1,5 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { contrastRatio } from '../helpers/contrast';
 import { setTheme, dismissDevErrorDialog, sampleColours } from '../helpers/theme';
@@ -24,7 +24,11 @@ import { setTheme, dismissDevErrorDialog, sampleColours } from '../helpers/theme
  * - Hovering a chart segment reveals the cell-detail popover.
  */
 
-const SCREENSHOT_DIR = process.env.OVERLAY_SHOT_DIR ?? 'test-results';
+// Agent runs ship only JOB_RESULTS_DIR to the reviewer, so the evidence
+// shots go there first; `test-results/` is discarded with the worktree.
+const SCREENSHOT_DIR = process.env.JOB_RESULTS_DIR?.trim()
+  || process.env.OVERLAY_SHOT_DIR
+  || 'test-results';
 
 interface FakeCell {
   project: string;
@@ -378,7 +382,14 @@ test.describe('Workspace token timeline', () => {
     await expect(page.getByTestId('wtt-ledger-warning')).toHaveCount(0);
 
     await models.scrollIntoViewIfNeeded();
-    await view.screenshot({ path: join(SCREENSHOT_DIR, 'workspace-token-timeline-models-hosts--mocked.png') });
+    const shot = join(SCREENSHOT_DIR, 'workspace-token-timeline-models-hosts--mocked.png');
+    await view.screenshot({ path: shot });
+    await models.screenshot({ path: join(SCREENSHOT_DIR, 'workspace-token-timeline-models-hosts-closeup--mocked.png') });
+    // The review needs this shot as persisted evidence: under an agent run it
+    // must land in JOB_RESULTS_DIR, which is the only folder shipped to review.
+    if (process.env.JOB_RESULTS_DIR?.trim()) {
+      expect(existsSync(join(process.env.JOB_RESULTS_DIR.trim(), 'workspace-token-timeline-models-hosts--mocked.png'))).toBe(true);
+    }
   });
 
   // The CLI-usage timeline overlay used fixed dark-theme colours and washed
