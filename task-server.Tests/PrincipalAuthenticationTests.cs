@@ -37,6 +37,32 @@ public sealed class PrincipalAuthenticationTests
     }
 
     [Fact]
+    public async Task Operations_principal_is_limited_to_permit_introspection()
+    {
+        using var temp = new TempDirectory();
+        await using var factory = Factory(temp.Path);
+        using var studio = Client(factory, StudioToken);
+        var issued = await CreateAsync(studio, "operations-a", TaskServerPrincipalKinds.Operations, null, null);
+        using var operations = Client(factory, issued.Credential);
+        foreach (var (method, path) in new[]
+        {
+            (HttpMethod.Get, "/api/v1/workspaces"),
+            (HttpMethod.Post, "/api/v1/operations/permits"),
+            (HttpMethod.Post, "/api/v1/runners/runner-a/claims"),
+        })
+        {
+            using var request = new HttpRequestMessage(method, path) { Content = new StringContent("{}", Encoding.UTF8, "application/json") };
+            Assert.Equal(HttpStatusCode.Forbidden, (await operations.SendAsync(request)).StatusCode);
+        }
+        var probe = new AgentStudio.Operations.Contracts.PermitIntrospectionRequest("unknown", "edge", "actor",
+            new("task", "run", 1), "host.inspect", 1, "digest", "host-a", "operations-server", "correlation", DateTimeOffset.UtcNow);
+        var response = await operations.PostAsJsonAsync("/api/v1/operations/permits/introspect", probe);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.False((await response.Content.ReadFromJsonAsync<AgentStudio.Operations.Contracts.PermitIntrospectionResponse>())!.Active);
+        Assert.Equal(HttpStatusCode.Forbidden, (await studio.PostAsJsonAsync("/api/v1/operations/permits/introspect", probe)).StatusCode);
+    }
+
+    [Fact]
     public async Task Representative_route_for_every_scope_rejects_a_wrong_scope()
     {
         using var temp = new TempDirectory();

@@ -4,7 +4,8 @@ namespace AgentStudio.Tasks;
 
 /// <summary>
 /// Operator-reviewed append-only integration bookkeeping. This is the HTTP
-/// boundary for the same record shape written by
+/// boundary for historical classifications and explicit curated SHA mappings.
+/// Historical rows use the same record shape written by
 /// <see cref="HistoricalIntegrationVerificationSweep"/>. It never changes a
 /// lane, task branch, commit chain, or Git history.
 /// </summary>
@@ -56,6 +57,9 @@ public static class TaskIntegrationRecordEndpoints
                 CommitShas = NormalizeValues(request.CommitShas, lower: true),
                 FenceRefs = NormalizeValues(request.FenceRefs, lower: false),
                 Evidence = request.Evidence.Trim(),
+                SourceSha = request.SourceSha?.Trim().ToLowerInvariant(),
+                IntegrationSha = request.IntegrationSha?.Trim().ToLowerInvariant(),
+                DeliveryEpoch = request.DeliveryEpoch?.Trim(),
             };
 
             var write = mutations.AppendIntegrationRecordOnFolder(task.FolderPath, record);
@@ -103,6 +107,9 @@ public sealed record AppendTaskIntegrationRecordRequest
     public List<string> CommitShas { get; init; } = [];
     public List<string> FenceRefs { get; init; } = [];
     public string Evidence { get; init; } = "";
+    public string? SourceSha { get; init; }
+    public string? IntegrationSha { get; init; }
+    public string? DeliveryEpoch { get; init; }
 }
 
 /// <summary>Pure boundary validation for append-only integration records.</summary>
@@ -114,13 +121,17 @@ public static class TaskIntegrationRecordAppendPolicy
         TaskStates.Escalated,
         TaskStates.Completed,
         TaskStates.Archive,
+        TaskStates.AutoReview,
     };
 
     public static IntegrationRecordAppendValidation Validate(
         string state,
         AppendTaskIntegrationRecordRequest? request)
     {
-        if (!AcceptedLanes.Contains(state))
+        if (!AcceptedLanes.Contains(state)
+            || state == TaskStates.AutoReview
+                && !string.Equals(request?.Classification?.Trim(),
+                    IntegrationRecordClasses.CuratedMapping, StringComparison.OrdinalIgnoreCase))
         {
             return new(false, true,
                 $"Integration records cannot be appended while a task is in-flight in '{state}'.");
@@ -135,7 +146,19 @@ public static class TaskIntegrationRecordAppendPolicy
 
         var classification = request.Classification.Trim().ToLowerInvariant();
         if (!IntegrationRecordClasses.All.Contains(classification, StringComparer.Ordinal))
-            return new(false, false, "classification must use the historical integration six-class schema.");
+            return new(false, false, "classification is not a supported integration record class.");
+
+        if (classification == IntegrationRecordClasses.CuratedMapping)
+        {
+            if (!IsFullCommitSha(request.SourceSha)
+                || !IsFullCommitSha(request.IntegrationSha)
+                || string.IsNullOrWhiteSpace(request.DeliveryEpoch)
+                || request.DeliveryEpoch.Trim().Length > 128)
+                return new(false, false, "A curated mapping needs full sourceSha and integrationSha values and a deliveryEpoch.");
+        }
+        else if (request.SourceSha is not null || request.IntegrationSha is not null
+                 || request.DeliveryEpoch is not null)
+            return new(false, false, "SHA mapping fields require curated-mapping classification.");
 
         var evidence = request.Evidence.Trim();
         if (evidence.Length is < 8 or > 4000)
@@ -171,6 +194,10 @@ public static class TaskIntegrationRecordAppendPolicy
         var trimmed = value?.Trim() ?? "";
         return trimmed.Length is >= 7 and <= 40 && trimmed.All(Uri.IsHexDigit);
     }
+
+    private static bool IsFullCommitSha(string? value)
+        => value is not null && value.Trim().Length == 40
+           && value.Trim().All(Uri.IsHexDigit);
 
     private static bool IsBranchName(string value)
         => value.Length is > 0 and <= 255

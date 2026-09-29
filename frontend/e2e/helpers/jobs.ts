@@ -62,6 +62,8 @@ export interface CreateJobInput {
   model?: string;
   promptMarkdown?: string;
   targetState?: string; // default '1-preparation'; we usually want '2-ready'
+  mode?: string;
+  requiresIntegration?: boolean;
   /**
    * When true, the new job is marked as a Playwright / E2E fixture
    * (`fixture: true` in job.json) and is hidden from the default
@@ -85,6 +87,8 @@ export async function createJob(input: CreateJobInput): Promise<{ id: string }> 
       model: input.model ?? null,
       promptMarkdown: input.promptMarkdown ?? null,
       targetState: input.targetState ?? '2-ready',
+      mode: input.mode,
+      requiresIntegration: input.requiresIntegration,
       fixture: input.fixture ?? true
     })
   });
