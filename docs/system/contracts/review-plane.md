@@ -52,7 +52,10 @@ The file-backed endpoint has these durable and asynchronous parts:
    An unaccepted journal left by process death is an orphan: the next report
    replaces it, and the reconciler releases it once the attempt is terminal.
    Only an accepted report owns the journal; another key or payload is then
-   answered by the authority and leaves the journal untouched. The endpoint writes the
+   answered by the authority and leaves the journal untouched. The journaled
+   delivery decision carries the outcome the authority settles (for example
+   `Pass`), never the raw report spelling; a journal whose delivery outcome
+   differs reads as corrupt. The endpoint writes the
    matching `RemoteDeliverySettlementStore` sidecar before integration. A failed
    required write returns typed `review-settlement-repair-required` instead of
    acknowledging incomplete work.
@@ -63,10 +66,14 @@ The file-backed endpoint has these durable and asynchronous parts:
    queue: it writes the grade markdown and artifact files
    (`RemoteReviewReportEvidence.WriteAsync`) and runs
    `RemotePipelineReviewEvidenceProjector`. A projection that fails with an
-   `IOException` or `UnauthorizedAccessException` re-enqueues itself with
-   exponential backoff (`RemoteReviewEvidenceProjectionWorker.RetryDelay`: 5s
-   base, doubling, capped at 2 minutes) up to 5 failed attempts. Failure count,
-   next attempt time, completion, and exhausted repair reason are journaled.
+   `IOException`, `UnauthorizedAccessException` or a timeout re-enqueues itself
+   with exponential backoff (`RemoteReviewEvidenceProjectionWorker.RetryDelay`:
+   5s base, doubling, capped at 2 minutes) for up to `MaxRetries` (5) retries
+   after the first failed pass. The journaled failure count, not the volatile
+   request counter, drives the delay, the logs and exhaustion, so a restart
+   keeps the schedule. Any other exception is a defect and becomes the typed
+   repair `review-evidence-projection-failed` at once, without retries. Failure
+   count, next attempt time, completion, and repair reason are journaled.
    A projection over 30s logs `remote-review-evidence-projection-slow`.
 
 `RemoteReviewSettlementReconciler` scans current settled attempts at startup
@@ -82,10 +89,14 @@ item completes with a typed error without running Git or a recovery round.
 
 Successor fencing is ordered, not only checked.
 `AttemptAuthorityService.TryApplyForCurrentReview` runs an effect under the
-authority gate only while the review is its task's current generation;
-`CreateReviewAttempt` takes the same gate, so a successor is ordered strictly
-before a continuation's commit point (the effect is refused) or after it (the
-effect was applied while current). The commit points are:
+task's continuation gate only while the settled review is its task's current
+generation; `CreateReviewAttempt` takes the same per-task gate before the
+authority gate, so a successor is ordered strictly before a continuation's
+commit point (the effect is refused) or after it (the effect was applied while
+current). The effect's disk I/O does not hold the global authority gate, so it
+delays only a successor for the same task. The lease-expiry successor replaces
+only a non-terminal review, which never has a continuation. The commit points
+are:
 
 - **Evidence projection.** The attempt-named grade file and artifacts are
   written first; they are inert history of that attempt. The task-level
@@ -99,7 +110,7 @@ effect was applied while current). The commit points are:
   `superseded-review-generation` without publishing anything.
 - **Lane move.** The endpoint and `AutoReviewDeliveryResumeService` check the
   current generation immediately before the move. The state-machine move is not
-  run under the authority gate, so this remains a check, not a fenced commit.
+  run under the continuation gate, so this remains a check, not a fenced commit.
 An infrastructure failure left in Auto Review without a durable retry schedule
 also reports repair while its evidence remains recoverable.
 Older reports with an existing grade file remain readable without a journal.
@@ -370,6 +381,9 @@ knows that.
 | Death after integration but before the lane move | `backend.Tests/AutoReviewRestartDrillTests.cs`: `Restart_after_integration_before_lane_move_uses_the_journaled_generation` checks a fresh service stack finishes the move without changing the integration tip. |
 | A rejected or interrupted settlement never blocks a later valid report | `backend.Tests/AutoReviewRestartDrillTests.cs`: `Rejected_or_interrupted_settlement_never_blocks_a_later_valid_report` (stale fence releases the journal, an orphan from process death is replaced, the accepted journal survives a late loser) and `Reconciler_releases_an_orphan_journal_once_the_attempt_is_terminal_without_acceptance`. |
 | A successor created mid-continuation prevents the stale effect | `backend.Tests/AutoReviewRestartDrillTests.cs`: `Generation_fence_orders_every_continuation_against_successor_creation`, `Successor_created_during_evidence_projection_prevents_the_stale_projection`; `backend.Tests/MergeIntoDevelopRunnerTests.cs`: `RunAsync_RefusedPublicationFence_RollsBackTheMergeAndPublishesNothing`, `RunAsync_AdmittedPublicationFence_PublishesInsideTheFence`. |
+| Continuation I/O does not hold the global authority gate, yet a same-task successor still waits for it | `backend.Tests/AutoReviewRestartDrillTests.cs`: `Continuation_runs_outside_the_global_authority_gate_and_still_fences_the_successor`. |
+| Evidence retries follow the journaled failure count across restarts; a defect is a typed repair without retries | `backend.Tests/AutoReviewRestartDrillTests.cs`: `Evidence_retry_uses_the_journaled_failure_count_for_delay_and_exhaustion`, `Non_transient_evidence_failure_is_a_typed_repair_without_retry`. |
+| The journaled delivery decision carries the authority outcome, and one policy restores the sidecar | `backend.Tests/AutoReviewRestartDrillTests.cs`: `Journaled_delivery_carries_the_authority_outcome_not_the_report_spelling`, `Journaled_delivery_restores_the_sidecar_only_for_an_auto_review_card_without_one`. |
 | A successor prevents queued stale integration | `backend.Tests/RemoteDeliveryIntegrationTests.cs`: `Queued_delivery_from_superseded_review_never_starts_integration` holds a preceding delivery, supersedes the queued attempt, then checks the stale request never calls the integration runner. |
 | A review Pass recorded before a restart reaches integration afterwards, without a new review | `backend.Tests/AutoReviewRestartDrillTests.cs`: `Restart_before_integration_starts_integrates_afterwards_without_a_new_review` (asserts the delivery reaches `develop`, the card reaches Human Review, and the task still has exactly one ReviewAttempt). |
 | A gate killed after a later gate published its merge completes on the next pass without re-merging | `backend.Tests/AutoReviewRestartDrillTests.cs`: `A_delivery_published_by_a_later_gate_completes_on_the_next_pass_without_remerging` (develop's tip is unchanged across the resume). |

@@ -34,7 +34,6 @@ public sealed record RemoteReviewSettlementRead(
 
 public static class RemoteReviewSettlementJournal
 {
-    public const int MaxEvidenceFailures = 5;
     private const string Prefix = "remote-review-settlement-";
     private static readonly object Gate = new();
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
@@ -67,7 +66,8 @@ public static class RemoteReviewSettlementJournal
                 || entry.Report is null || entry.Report.IdempotencyKey != entry.IdempotencyKey
                 || entry.Delivery is { } delivery
                    && (delivery.ReviewAttemptId != attemptId || delivery.TaskKey != entry.TaskKey
-                       || delivery.Outcome != entry.Report.Outcome
+                       || !V1ReviewPlaneEndpoints.TryOutcome(entry.Report.Outcome, out var settledOutcome)
+                       || delivery.Outcome != settledOutcome.ToString()
                        || !Enum.IsDefined(delivery.Stage))
                 || !string.Equals(HashDelivery(entry.Delivery), entry.DeliverySha256, StringComparison.Ordinal)
                 || !string.Equals(Hash(entry.Report), entry.ReportSha256, StringComparison.Ordinal))
@@ -158,4 +158,20 @@ public static class RemoteReviewSettlementPolicy
                review.Subject.ExpectedResultSha, StringComparison.OrdinalIgnoreCase)
            && string.Equals(entry.Report.Workspace.ActualHead,
                review.TestedResultSha, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Restores the delivery sidecar from the journaled decision when an
+    /// Auto Review card lost it (process death before the sidecar write).
+    /// Callers verify that the entry belongs to the current accepted review.
+    /// </summary>
+    public static bool RestoreDeliverySidecar(TaskInfo task, RemoteReviewSettlementEntry entry)
+    {
+        if (entry.Delivery is not { } delivery
+            || !string.Equals(task.State, TaskStates.AutoReview, StringComparison.Ordinal)
+            || RemoteDeliverySettlementStore.MatchesAttempt(
+                RemoteDeliverySettlementStore.Read(task.FolderPath), entry.AttemptId))
+            return false;
+        RemoteDeliverySettlementStore.Write(task.FolderPath, delivery);
+        return true;
+    }
 }

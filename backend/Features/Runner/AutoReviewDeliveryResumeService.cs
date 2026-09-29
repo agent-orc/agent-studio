@@ -151,11 +151,8 @@ public sealed class AutoReviewDeliveryResumeService
                 && !RemoteReviewSettlementPolicy.MatchesAcceptedReview(journalEntry, review))
                 return new AutoReviewResumeOutcome(AutoReviewResumeAction.None,
                     "review-settlement-repair-required", Resumed: false, "review-journal-authority-mismatch");
-            if (journal.Entry is { Delivery: { } delivery }
-                && !RemoteDeliverySettlementStore.MatchesAttempt(
-                    RemoteDeliverySettlementStore.Read(task.FolderPath), review.AttemptId)
-                && string.Equals(task.State, TaskStates.AutoReview, StringComparison.Ordinal))
-                RemoteDeliverySettlementStore.Write(task.FolderPath, delivery);
+            if (journal.Entry is { } restorable)
+                RemoteReviewSettlementPolicy.RestoreDeliverySidecar(task, restorable);
         }
         var settlement = RemoteDeliverySettlementStore.Read(task.FolderPath);
         if (!RemoteDeliverySettlementStore.MatchesAttempt(settlement, review?.AttemptId))

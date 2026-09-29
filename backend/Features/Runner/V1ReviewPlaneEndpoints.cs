@@ -739,14 +739,16 @@ public static class V1ReviewPlaneEndpoints
                         "The review report key is bound to a different payload."));
             }
             RemoteDeliverySettlementRecord? preparedDelivery = null;
-            if (!replay && !string.Equals(request.Outcome, "ReviewInfra", StringComparison.OrdinalIgnoreCase)
+            if (!replay && outcome != ReviewTerminalOutcome.InfrastructureFailure
                 && string.Equals(preparedTask.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
             {
                 var sourceRun = authority.GetRun(currentReview.SourceRunAttemptId);
                 var plan = currentReview.Subject.Plan
                     ?? ToSubject(currentReview, scanner, projects, settings, remoteReviewPlans, out _, out _).Plan;
+                // The authority settles the parsed outcome; the journaled decision
+                // carries that spelling, never the raw report string.
                 var decision = RemoteDeliveryIntegrationPolicy.Decide(
-                    HasSettledResultEnvelope(sourceRun), request.Outcome, plan, request.Verdicts);
+                    HasSettledResultEnvelope(sourceRun), outcome.ToString(), plan, request.Verdicts);
                 var projectSettings = settings.Get(preparedTask.ProjectName);
                 var subject = ReviewSubjectStore.Read(preparedTask.FolderPath);
                 preparedDelivery = new RemoteDeliverySettlementRecord
@@ -754,7 +756,7 @@ public static class V1ReviewPlaneEndpoints
                     TaskKey = currentReview.TaskKey,
                     ReviewAttemptId = attemptId,
                     JournalRequired = true,
-                    Outcome = request.Outcome,
+                    Outcome = outcome.ToString(),
                     ShouldIntegrate = decision.ShouldIntegrate,
                     BuildTestGate = decision.BuildTestGate.ToString(),
                     GateReason = decision.Reason,
@@ -2433,7 +2435,7 @@ public static class V1ReviewPlaneEndpoints
         return string.Join('\n', lines).TrimEnd();
     }
 
-    private static bool TryOutcome(string value, out ReviewTerminalOutcome outcome)
+    internal static bool TryOutcome(string value, out ReviewTerminalOutcome outcome)
     {
         outcome = value.Trim().ToLowerInvariant() switch
         {
