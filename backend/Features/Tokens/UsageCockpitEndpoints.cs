@@ -46,8 +46,8 @@ public static class UsageCockpitEndpoints
             var human = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal;
             var visibleProjects = allProjects.Where(project => human is null
                 || ProjectAccessAuthorization.Allows(human.User, project.Id, projects)).ToList();
-            if (human is not null && human.User.Role != StudioRoles.Owner
-                && human.User.Projects.Count > 0 && visibleProjects.Count == 0)
+            if (human is not null && !ProjectAccessAuthorization.HasUnrestrictedProjectAccess(human.User)
+                && visibleProjects.Count == 0)
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
 
             var now = DateTime.UtcNow;
@@ -107,7 +107,7 @@ public static class UsageCockpitEndpoints
                 var unattributed = new List<OrchestratorLogEntry>();
                 var unassignedCount = 0;
                 var canAssignUnattributed = workspace.IsDefault
-                    && (human is null || human.User.Role == StudioRoles.Owner || human.User.Projects.Count == 0);
+                    && (human is null || ProjectAccessAuthorization.HasUnrestrictedProjectAccess(human.User));
                 foreach (var message in messages)
                 {
                     var entry = BusTokenEntryConverter.ToEntry(message);
