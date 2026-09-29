@@ -307,7 +307,7 @@ describe('WorkbenchDecisionPanelComponent', () => {
       responses: fixture.componentInstance.responses(), idempotent: false,
     });
     const steer = http.expectOne(
-      '/api/orchestrator/sessions/workbench:Agent%20Studio/AGT-W48/turns');
+      '/api/v1/studio/orchestrator/sessions/workbench:Agent%20Studio/AGT-W48/turns');
     expect(steer.request.body).toEqual(expect.objectContaining({
       cliType: 'codex', model: 'gpt-5.6-sol', thinkingLevel: 'high',
     }));

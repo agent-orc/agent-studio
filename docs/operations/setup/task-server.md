@@ -812,7 +812,18 @@ and `TaskServerStudioEventStreamStore.cs`; wire contracts live in
 | `GET /api/v1/studio/orchestrator/sessions` | Orchestrator session listing, derived from durable orchestrator contexts | `tasks:read` |
 | `GET /api/v1/studio/runner/status` | Active runs grouped by project | `tasks:read` |
 | `GET`/`POST /api/v1/studio/runner/{project}/orchestrator-chat[/attachments[/{fileName}]]` | Orchestrator chat send/read and image attachment upload/download | `tasks:read` / `tasks:write` |
+| `POST /api/v1/studio/orchestrator/sessions/workbench:{project}/{workbenchKey}/turns` | Queue an operator prompt on a workbench orchestrator context (records a user turn and a `orchestrator-chat.appended` stream event; added by AGT-2983) | `tasks:write` |
+| `GET /api/v1/projects/{projectId}/tasks/{taskId}` | Single-task detail read with the board's `TaskDto`; the general v1 task read in `TaskServerEndpoints.cs` | `tasks:read` |
 | `DELETE`/`POST`/`PUT /api/v1/projects/{projectId}/tasks/{taskId}/{-,move,move-to-top,start,state,stop,continue}` | Task lifecycle mutation | `tasks:write` |
+
+Since AGT-2983 Angular calls exactly these paths (and `/hubs/v1/studio` for
+live updates) instead of their legacy `/api` equivalents. The `{projectId}`
+segment of the task routes accepts a project id, a project name (matched
+case-insensitively, an exact id wins), or the unscoped token below.
+OrchestratorApi answers the same versioned paths from its legacy handlers
+until cutover (`backend/Host/StudioV1LegacyRouteAlias.cs`), in both the local
+profile and the transitional `TaskServer:BaseUrl` proxy profile, so Stable
+keeps its current board and task wire shapes.
 
 A human Studio session (`ts-studio-session` / `ts-studio-csrf` cookies, or the
 `X-Studio-Session-Token` header) is a second, nested identity layer above the
@@ -837,13 +848,12 @@ already committed and is never a second source of truth.
 
 The task lifecycle routes above are project-scoped
 (`/api/v1/projects/{projectId}/tasks/{taskId}/...`), matching every other
-task-owned v1 route. The legacy Angular frontend calls their pre-cutover
-equivalents (for example `POST /api/tasks/{taskId}/move`) with only a task id;
-the OrchestratorApi connector profile (AGT-2754) is a mechanical path
-translator with no task-to-project lookup of its own, so it cannot fabricate
-a real project id for these calls. The connector substitutes the reserved
-literal `-` for `{projectId}` in that case
-(`ConnectorProxy.UnscopedProjectToken`), and the Task Server resolves the task
+task-owned v1 route. A Studio call that knows only a task id and its watch
+path (for example a move from the board) has no project id to send. Angular
+sends the reserved literal `-` for `{projectId}` in that case
+(`UNSCOPED_TASK_PROJECT` in `task.service.ts`, AGT-2983); before that switch
+the connector profile substituted the same literal when it translated a
+legacy task-only path (`ConnectorProxy.UnscopedProjectToken`). The Task Server resolves the task
 by id alone when it sees that literal (`TaskServerStore.UnscopedProjectToken`)
 rather than treating `-` as an unknown project. A real project id is never
 this literal, so the substitution cannot collide with an actual project. Every

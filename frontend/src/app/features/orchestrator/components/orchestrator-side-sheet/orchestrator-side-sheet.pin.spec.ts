@@ -136,7 +136,7 @@ describe('OrchestratorSideSheetComponent · navigation context + pin', () => {
       read.flush({ project: 'Quality Studio', turns: [] });
     }
 
-    for (const sessions of http.match('/api/orchestrator/sessions')) {
+    for (const sessions of http.match('/api/v1/studio/orchestrator/sessions')) {
       expect(sessions.request.method).toBe('GET');
       sessions.flush({ sessions: [] });
     }
@@ -163,7 +163,7 @@ describe('OrchestratorSideSheetComponent · navigation context + pin', () => {
     c.refresh();
     http.expectOne('/api/runner/task:Quality%20Studio/QS-54/orchestrator-chat')
       .flush({ project: 'Quality Studio', turns: [] });
-    http.expectOne('/api/orchestrator/sessions').flush({
+    http.expectOne('/api/v1/studio/orchestrator/sessions').flush({
       sessions: [{
         contextKey,
         kind: 'task',
@@ -272,7 +272,7 @@ describe('OrchestratorSideSheetComponent · navigation context + pin', () => {
       project: 'demo-project',
       turns: [{ id: 't1', ts: '2026-07-09T00:00:00Z', role: 'user', text: 'task thread' }],
     });
-    const sessions = http.expectOne('/api/orchestrator/sessions');
+    const sessions = http.expectOne('/api/v1/studio/orchestrator/sessions');
     expect(sessions.request.method).toBe('GET');
     sessions.flush({ sessions: [{
       contextKey: 'task:demo-project/AGT-1916',
@@ -307,7 +307,7 @@ describe('OrchestratorSideSheetComponent · navigation context + pin', () => {
     const req = http.expectOne('/api/runner/project:demo-project/orchestrator-chat');
     expect(req.request.method).toBe('GET');
     req.flush({ project: 'demo-project', turns: [] });
-    const sessions = http.expectOne('/api/orchestrator/sessions');
+    const sessions = http.expectOne('/api/v1/studio/orchestrator/sessions');
     expect(sessions.request.method).toBe('GET');
     sessions.flush({ sessions: [] });
     http.verify();

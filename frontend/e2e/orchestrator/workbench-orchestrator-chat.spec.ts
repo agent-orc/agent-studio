@@ -103,6 +103,7 @@ async function installRoutes(
       );
       return json(route, { project: PROJECT, reply: projectTurns.at(-1) });
     }
+    // The Dossier digest is a dev-seat read, not a Task Server route.
     if (/\/api\/orchestrator\/context\/workbench:/.test(pathname)) {
       return json(route, {
         contextKey: WORKBENCH_CONTEXT_KEY,
@@ -111,13 +112,13 @@ async function installRoutes(
         sources: [{ name: 'dossier', status: 'ok', capturedAt: '2026-09-06T10:00:00Z', detail: 'dossier metadata' }],
       });
     }
-    if (pathname === '/api/auth/status') {
+    if (pathname === '/api/v1/studio/auth/status') {
       return json(route, { profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
     }
     if (pathname === '/api/watch-paths') {
       return json(route, [{ name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH }]);
     }
-    if (pathname === '/api/tasks/grouped') return json(route, EMPTY_GROUPED);
+    if (pathname === '/api/v1/studio/board') return json(route, EMPTY_GROUPED);
     if (pathname === '/api/tasks/archive') return json(route, { items: [], total: 0 });
     if (pathname === '/api/tasks/reference-status') return json(route, { items: [] });
     if (pathname === '/api/epics') return json(route, []);
@@ -137,12 +138,12 @@ async function installRoutes(
         fingerprint: 'a'.repeat(64),
       });
     }
-    if (pathname === '/api/runner/status') return json(route, { projects: {} });
+    if (pathname === '/api/v1/studio/runner/status') return json(route, { projects: {} });
     if (pathname === '/api/runner/global') return json(route, { mode: 'paused', activeProjects: [] });
     if (pathname === '/api/crash-recovery/pending') return json(route, { pending: [] });
     if (pathname === '/api/cli/quota') return json(route, { snapshots: [], ttlSeconds: 600 });
     if (pathname === '/api/environment') return json(route, { isDev: false, devTools: {} });
-    if (pathname === '/api/orchestrator/sessions') return json(route, { sessions: [] });
+    if (pathname === '/api/v1/studio/orchestrator/sessions') return json(route, { sessions: [] });
     if (/\/api\/cli\/[^/]+\/models$/.test(pathname)) {
       return json(route, { models: [], source: 'workbench-orchestrator-chat-e2e' });
     }

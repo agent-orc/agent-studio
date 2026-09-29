@@ -76,7 +76,7 @@ async function stubHostLoad(
     },
   ]));
 
-  await page.route('**/api/auth/status', json({
+  await page.route('**/api/v1/studio/auth/status', json({
     profile: 'local',
     bootstrapRequired: false,
     authenticated: true,
@@ -88,7 +88,7 @@ async function stubHostLoad(
     path: `/mock/project-${index + 1}`,
     rootPath: `/mock/project-${index + 1}`,
   }))));
-  await page.route('**/api/tasks/grouped', json({
+  await page.route('**/api/v1/studio/board', json({
     preparation: [],
     ready: [],
     progress: [...local, ...remote],
@@ -97,7 +97,7 @@ async function stubHostLoad(
     archive: [],
   }));
   await page.route('**/api/tasks', json([]));
-  await page.route('**/api/runner/status', json({ projects: runnerProjects, cliRepairs }));
+  await page.route('**/api/v1/studio/runner/status', json({ projects: runnerProjects, cliRepairs }));
   await page.route('**/api/clients', json([{
     id: 'agent-runner-01',
     displayName: 'agent-runner-01',

@@ -78,37 +78,50 @@ public sealed class ConnectorProxy(
     {
         var sourceSegments = operation.Path.Split('/', StringSplitOptions.RemoveEmptyEntries);
         var targetSegments = operation.TargetRoute.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        var sourceParameterByPosition = sourceSegments
-            .Select((segment, index) => (segment, index))
-            .Where(item => item.segment.StartsWith('{') && item.segment.EndsWith('}'))
-            .ToDictionary(item => item.index, item => ParameterName(item.segment));
 
         for (var index = 0; index < targetSegments.Length; index++)
         {
-            var segment = targetSegments[index];
-            if (!segment.StartsWith('{') || !segment.EndsWith('}')) continue;
-            var targetName = ParameterName(segment);
-            object? value = null;
-            if (!routeValues.TryGetValue(targetName, out value)
-                && sourceParameterByPosition.TryGetValue(index, out var sourceName))
-                routeValues.TryGetValue(sourceName, out value);
-            if (value is null && query is not null)
+            // A parameter is either the whole segment ("{taskId}") or embedded
+            // in a complex segment ("workbench:{project}"); both are expanded.
+            var sourceNames = index < sourceSegments.Length
+                ? ParameterPattern.Matches(sourceSegments[index]).Select(match => ParameterName(match.Value)).ToArray()
+                : [];
+            var ordinal = 0;
+            targetSegments[index] = ParameterPattern.Replace(targetSegments[index], match =>
             {
-                if (query.TryGetValue(targetName, out var queryValue))
-                    value = queryValue.FirstOrDefault();
-                else if (targetName == "projectId" && query.TryGetValue("project", out queryValue))
-                    value = queryValue.FirstOrDefault();
-            }
-            if (value is null && targetName == "projectId")
-                value = UnscopedProjectToken;
-            if (value is null)
-                throw new InvalidOperationException($"Route value '{targetName}' is unavailable.");
-            var encoded = string.Join('/', value.ToString()!
-                .Split('/', StringSplitOptions.RemoveEmptyEntries)
-                .Select(Uri.EscapeDataString));
-            targetSegments[index] = encoded;
+                var sourceName = ordinal < sourceNames.Length ? sourceNames[ordinal] : null;
+                ordinal++;
+                var value = ResolveValue(ParameterName(match.Value), sourceName, routeValues, query);
+                return string.Join('/', value
+                    .Split('/', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(Uri.EscapeDataString));
+            });
         }
         return "/" + string.Join('/', targetSegments);
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex ParameterPattern = new(@"\{[^{}]+\}");
+
+    private static string ResolveValue(
+        string targetName,
+        string? sourceName,
+        RouteValueDictionary routeValues,
+        IQueryCollection? query)
+    {
+        object? value = null;
+        if (!routeValues.TryGetValue(targetName, out value) && sourceName is not null)
+            routeValues.TryGetValue(sourceName, out value);
+        if (value is null && query is not null)
+        {
+            if (query.TryGetValue(targetName, out var queryValue))
+                value = queryValue.FirstOrDefault();
+            else if (targetName == "projectId" && query.TryGetValue("project", out queryValue))
+                value = queryValue.FirstOrDefault();
+        }
+        if (value is null && targetName == "projectId")
+            value = UnscopedProjectToken;
+        return value?.ToString()
+            ?? throw new InvalidOperationException($"Route value '{targetName}' is unavailable.");
     }
 
     private async Task ForwardHubHttpAsync(HttpContext context, ConnectorRouteOperation operation)
