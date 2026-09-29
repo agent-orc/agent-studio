@@ -365,6 +365,9 @@ main() {
   set -m
   "$@" < /dev/null &
   child_pid=$!
+  # The launch window closes as soon as the process group is known; from here
+  # on (including after the gate exits) on_signal handles signals directly.
+  gate_launching=
   set +m
   if [[ -n "$pending_signal" ]]; then
     # shellcheck disable=SC2086 # "<name> <code>" splits into two arguments.
