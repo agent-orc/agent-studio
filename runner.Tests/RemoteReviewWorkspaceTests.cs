@@ -1357,11 +1357,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     {
         var sha = await SeedOriginAsync();
         var marker = Path.Combine(_root, "compose-scenario-started");
-        var command = new ReviewCommandDto(
-            "verify-scenario",
-            "scenario",
-            PosixShell.RequirePath(),
-            ["-c", $"touch '{marker}' # scripts/scenario.sh --target compose --level full"]);
+        var command = await FakeComposeScenarioCommandAsync(marker);
         var journal = new List<string>();
         // Every real disk has less than 100 % free, so this floor always refuses.
         var (workspace, _) = Workspace(
@@ -1390,11 +1386,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     {
         var sha = await SeedOriginAsync();
         var marker = Path.Combine(_root, "compose-scenario-admitted");
-        var command = new ReviewCommandDto(
-            "verify-scenario",
-            "scenario",
-            PosixShell.RequirePath(),
-            ["-c", $"touch '{marker}' # scripts/scenario.sh --target compose --level full"]);
+        var command = await FakeComposeScenarioCommandAsync(marker);
         var journal = new List<string>();
         var (workspace, _) = Workspace(
             "attempt-scenario-disk-ok",
@@ -1413,6 +1405,56 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             line.StartsWith("review-compose-scenario-disk step=verify-scenario ", StringComparison.Ordinal)
             && line.Contains("decision=admit", StringComparison.Ordinal)
             && !line.Contains("freeBytes=unknown", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// AGT-2993 review finding: a step that only mentions the scenario (in a
+    /// comment, an <c>echo</c> or quoted data) never builds an image, so even a
+    /// floor that refuses every real compose scenario must not refuse it.
+    /// </summary>
+    [Fact]
+    public async Task A_command_that_only_mentions_the_compose_scenario_is_not_gated_on_disk()
+    {
+        var sha = await SeedOriginAsync();
+        var marker = PosixShell.ToShellPath(Path.Combine(_root, "mention-only-ran"));
+        var command = new ReviewCommandDto(
+            "verify-mention",
+            "build-tests",
+            PosixShell.RequirePath(),
+            ["-lc", $"echo 'scripts/scenario.sh --target compose' && touch '{marker}' # scripts/scenario.sh --target compose --level full"]);
+        var journal = new List<string>();
+        var (workspace, _) = Workspace(
+            "attempt-scenario-mention",
+            sha,
+            [command],
+            27000,
+            composeScenarioMinFreePercent: 100,
+            log: line => { lock (journal) journal.Add(line); });
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal("Pass", evidence.Outcome);
+        Assert.True(File.Exists(Path.Combine(_root, "mention-only-ran")));
+        Assert.DoesNotContain(journal, line =>
+            line.StartsWith("review-compose-scenario-disk ", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A stand-in <c>scripts/scenario.sh</c> outside the checkout that only
+    /// touches <paramref name="marker"/>, executed the way a verify command
+    /// runs the real one: <c>sh -lc 'SCENARIO_PROVIDER_REVIEW=1 sh .../scripts/scenario.sh --target compose --level full'</c>.
+    /// </summary>
+    private async Task<ReviewCommandDto> FakeComposeScenarioCommandAsync(string marker)
+    {
+        var script = Path.Combine(_root, "fake-scenario", "scripts", "scenario.sh");
+        Directory.CreateDirectory(Path.GetDirectoryName(script)!);
+        await File.WriteAllTextAsync(script, $"touch '{PosixShell.ToShellPath(marker)}'\n");
+        return new ReviewCommandDto(
+            "verify-scenario",
+            "scenario",
+            PosixShell.RequirePath(),
+            ["-lc", $"SCENARIO_PROVIDER_REVIEW=1 sh '{PosixShell.ToShellPath(script)}' --target compose --level full"]);
     }
 
     /// <summary>

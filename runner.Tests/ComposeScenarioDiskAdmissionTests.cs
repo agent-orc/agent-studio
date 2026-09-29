@@ -27,6 +27,26 @@ public sealed class ComposeScenarioDiskAdmissionTests
         { "dotnet", ["test", "task-server.Tests", "--filter", "compose"], false },
         { "bash", ["scripts/compose-smoke-version.test.sh"], false },
         { "bash", ["-c", "echo --target compose"], false },
+        // How the review plan emits verify commands: sh -lc '<command>'.
+        { "sh", ["-lc", "scripts/scenario.sh --target compose --level full"], true },
+        { "sh", ["-lc", "dotnet build && SCENARIO_PROVIDER_REVIEW=1 bash scripts/scenario.sh --target \"compose\" --level full 2>&1 | tee scenario.log"], true },
+        { "sh", ["-ec", "set -x\nif true; then\n  env FOO=1 timeout -s KILL 3600 ./scripts/scenario.sh --level smoke --target compose\nfi"], true },
+        { "sh", ["-lc", "exec scripts/compose-smoke-test.sh >/dev/null"], true },
+        { "C:\\Program Files\\Git\\bin\\bash.exe", ["-lc", "scripts/scenario.sh --target=compose"], true },
+        { "bash", ["-c", "bash -c 'scripts/scenario.sh --target compose'"], true },
+        // AGT-2993 review finding: a mention is not an execution.
+        { "sh", ["-c", "touch marker # scripts/scenario.sh --target compose --level full"], false },
+        { "sh", ["-lc", "echo scripts/scenario.sh --target compose"], false },
+        { "sh", ["-lc", "echo 'run scripts/scenario.sh --target compose' > note.txt"], false },
+        { "sh", ["-lc", "printf '%s\\n' \"scripts/compose-smoke-test.sh\""], false },
+        { "sh", ["-lc", "grep -n 'scripts/scenario.sh --target compose' docs/operations/testing/deployment-scenario.md"], false },
+        { "sh", ["-lc", "git log --grep=\"scripts/scenario.sh --target compose\""], false },
+        { "sh", ["-lc", "cat <<EOF\nscripts/scenario.sh --target compose\nEOF\ndotnet test"], false },
+        { "sh", ["-lc", "test -x scripts/compose-smoke-test.sh"], false },
+        { "sh", ["-lc", "scripts/scenario.sh --target inproc --level full # not --target compose"], false },
+        { "sh", ["-lc", "cat scripts/scenario.sh > /dev/null && bash scripts/scenario.test.sh"], false },
+        { "echo", ["scripts/scenario.sh", "--target", "compose"], false },
+        { "sh", ["scripts/scenario.test.sh", "scripts/scenario.sh", "--target", "compose"], false },
     };
 
     [Theory]
