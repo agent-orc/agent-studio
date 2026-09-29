@@ -3337,6 +3337,7 @@ public sealed partial class TaskServerStore
                 effective_source TEXT,
                 native_file_shadowed INTEGER,
                 evidence_refs_json TEXT,
+                advertised_instance_id TEXT,
                 evidence_id TEXT,
                 evidence_excerpt TEXT,
                 supported_models_json TEXT,
@@ -3838,6 +3839,7 @@ public sealed partial class TaskServerStore
         await EnsureColumnAsync(connection, "runner_capabilities", "effective_source", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "native_file_shadowed", "INTEGER", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "evidence_refs_json", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "advertised_instance_id", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "evidence_id", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "evidence_excerpt", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "supported_models_json", "TEXT", ct);

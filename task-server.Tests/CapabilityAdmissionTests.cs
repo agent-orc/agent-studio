@@ -673,6 +673,61 @@ public sealed class CapabilityAdmissionTests
         Assert.Equal("environment-file", capability.EffectiveSource);
     }
 
+    [Fact]
+    public async Task Restarted_instance_is_not_fenced_by_the_previous_instances_clock()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(Start);
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var key = CapabilityProtocol.ProviderAuthentication("claude");
+        await RegisterAndAdvertiseAsync(store, clock, "runner-v2", "instance-a", "host-v2",
+            CapabilityProtocol.CodingExecutor, key);
+        var beforeRestart = clock.GetUtcNow().UtcDateTime.AddMinutes(1);
+        var previous = new CapabilityAdvertisementRequest("runner-v2", "instance-a", 2,
+            beforeRestart, 180, 50, [new AdvertisedCapabilityDto(key, "provider-auth",
+                CredentialGeneration: "generation-a", CredentialObservedAt: beforeRestart,
+                ExpiryProvenance: "unknown", EffectiveSource: "native-cli-store")]);
+        await store.AdvertiseCapabilitiesAsync(previous, "runner-v2", default);
+
+        // The host clock stepped back across the restart, so the new instance
+        // starts with a lower generation and earlier observation times.
+        await store.RegisterRunnerAsync("runner-v2", new RegisterRunnerRequest(
+            "runner-v2", "host-v2", "instance-b", "1.0", TaskServerProtocol.Current,
+            [ReviewCapabilities.CodingExecutor]), "runner-v2", default);
+        var afterRestart = beforeRestart.AddMinutes(-10);
+        var restarted = previous with
+        {
+            InstanceId = "instance-b",
+            AdvertisedAt = afterRestart,
+            Generation = 1,
+            Capabilities = [new AdvertisedCapabilityDto(key, "provider-auth",
+                CredentialGeneration: "generation-b", CredentialObservedAt: afterRestart,
+                ExpiryProvenance: "unknown", EffectiveSource: "environment-file")],
+        };
+        await store.AdvertiseCapabilitiesAsync(restarted, "runner-v2", default);
+
+        var capability = Assert.Single((await store.ListRunnerCapabilitySnapshotsAsync(default))
+            .Single(item => item.RunnerId == "runner-v2").Capabilities, item => item.Key == key);
+        Assert.Equal("generation-b", capability.CredentialGeneration);
+        Assert.Equal(afterRestart, capability.AdvertisedAt);
+
+        // Instance ownership still fences the replaced instance, and the new
+        // instance still cannot replay its own older observation.
+        var stale = await Assert.ThrowsAsync<TaskServerConflictException>(() =>
+            store.AdvertiseCapabilitiesAsync(previous with
+            {
+                AdvertisedAt = beforeRestart.AddMinutes(1), Generation = 99,
+            }, "runner-v2", default));
+        Assert.Equal("runner-instance-mismatch", stale.Code);
+        var delayed = await Assert.ThrowsAsync<TaskServerConflictException>(() =>
+            store.AdvertiseCapabilitiesAsync(restarted with
+            {
+                AdvertisedAt = afterRestart.AddSeconds(-1), Generation = 2,
+            }, "runner-v2", default));
+        Assert.Equal("stale-capability-advertisement", delayed.Code);
+    }
+
     private static async Task<ProjectDto> SeedTasksAsync(TaskServerStore store, int count)
     {
         var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest("Workspace"), "test", default);

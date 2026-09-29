@@ -845,12 +845,18 @@ rollout decision.
   Provider-auth keys remain unchanged. The added fields carry source,
   observed time, optional opaque credential generation, last real success,
   expiry provenance, access-token expiry and safe evidence references. A native
-  refreshable login's access-token expiry is never its session expiry. The
-  daemon environment selects auth before native-file metadata is considered;
-  a shadowed file is reported separately. Task Server rejects an older
-  generation, an older advertisement time even when the generation advances,
-  and an older per-capability credential observation time, so a delayed
-  positive report cannot replace newer data.
+  CLI store's generation is `native-cli-store:<write time in Unix ms>`, which
+  changes whenever the CLI installs a new secret; an environment credential's
+  generation stays unknown because no token hash may identify it. A native
+  refreshable login's access-token expiry is never its session expiry, and
+  only an `issuer` or `operator` expiry raises the `credentials-expiring`
+  signal. The daemon environment selects auth before native-file metadata is
+  considered; a shadowed file is reported separately. Task Server first
+  requires the runner's current instance. It then rejects that instance's older
+  generation, older advertisement time (even when the generation advances) and
+  older per-capability credential observation time, so a delayed positive report
+  cannot replace newer data. A restarted instance is not ordered against its
+  predecessor's clock or generation.
 - The monolith V1 Review compatibility mount accepts the Review service's
   `PUT /api/v1/runners/{runner-id}/capabilities` startup and refresh requests
   with the same advertisement and snapshot contracts as the standalone Task

@@ -10,7 +10,8 @@ public sealed record ProviderCredentialFreshness(
     DateTimeOffset? AccessTokenExpiresAt = null,
     string EffectiveSource = "unknown",
     bool NativeFileShadowed = false,
-    string ExpiryProvenance = "unknown");
+    string ExpiryProvenance = "unknown",
+    string? CredentialGeneration = null);
 
 /// <summary>
 /// Discovers the effective source from the daemon environment before reading
@@ -82,7 +83,10 @@ public static class ProviderCredentialMonitor
                     : "Native access-token expiry is a refresh hint; session expiry is unknown.",
                 AccessTokenExpiresAt: accessExpiresAt,
                 EffectiveSource: "native-cli-store",
-                ExpiryProvenance: accessExpiresAt is null ? "unknown" : "access-token-unverified");
+                ExpiryProvenance: accessExpiresAt is null ? "unknown" : "access-token-unverified",
+                // The CLI rewrites the store whenever it installs a new secret;
+                // the write time is an opaque version marker, never token material.
+                CredentialGeneration: $"native-cli-store:{new DateTimeOffset(DateTime.SpecifyKind(modifiedAt, DateTimeKind.Utc)).ToUnixTimeMilliseconds()}");
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or ArgumentOutOfRangeException)
         {

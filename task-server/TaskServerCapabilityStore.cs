@@ -39,12 +39,19 @@ public sealed partial class TaskServerStore
         {
             var runner = await ReadCapabilityRunnerAsync(
                 connection, transaction, request.RunnerId, request.InstanceId, ct);
+            // Generation and observation time order one instance's own
+            // advertisements. Other instances are fenced by instance ownership
+            // above, so a restart is not held back by the previous instance's
+            // clock. Rows without a recorded instance keep fencing everyone.
+            const string SameInstance =
+                "runner_id = $runner AND (advertised_instance_id IS NULL OR advertised_instance_id = $instance)";
             var generationValue = await ScalarAsync(
                     connection,
-                    "SELECT MAX(generation) FROM runner_capabilities WHERE runner_id = $runner;",
+                    $"SELECT MAX(generation) FROM runner_capabilities WHERE {SameInstance};",
                     ct,
                     transaction,
-                    ("$runner", request.RunnerId));
+                    ("$runner", request.RunnerId),
+                    ("$instance", request.InstanceId));
             var currentGeneration = generationValue is null or DBNull
                 ? 0L
                 : Convert.ToInt64(generationValue, CultureInfo.InvariantCulture);
@@ -57,8 +64,8 @@ public sealed partial class TaskServerStore
             // metadata.
             var advertisedAt = request.AdvertisedAt.ToUniversalTime();
             var latestAt = await ScalarAsync(connection,
-                "SELECT MAX(advertised_at) FROM runner_capabilities WHERE runner_id = $runner;",
-                ct, transaction, ("$runner", request.RunnerId));
+                $"SELECT MAX(advertised_at) FROM runner_capabilities WHERE {SameInstance};",
+                ct, transaction, ("$runner", request.RunnerId), ("$instance", request.InstanceId));
             if (latestAt is string prior && advertisedAt < Parse(prior))
                 throw new TaskServerConflictException("stale-capability-advertisement",
                     "A newer capability observation already exists for this runner.");
@@ -73,10 +80,11 @@ public sealed partial class TaskServerStore
                 if (key.Length == 0 || string.IsNullOrWhiteSpace(capability.Category))
                     throw new ArgumentException("Capability key and category are required.");
                 if (capability.CredentialObservedAt is { } credentialObserved &&
-                    await ScalarAsync(connection, """
+                    await ScalarAsync(connection, $"""
                         SELECT credential_observed_at FROM runner_capabilities
-                         WHERE runner_id = $runner AND capability_key = $key;
-                        """, ct, transaction, ("$runner", request.RunnerId), ("$key", key))
+                         WHERE {SameInstance} AND capability_key = $key;
+                        """, ct, transaction, ("$runner", request.RunnerId),
+                        ("$instance", request.InstanceId), ("$key", key))
                         is string priorObserved &&
                     credentialObserved.ToUniversalTime() < Parse(priorObserved))
                     throw new TaskServerConflictException("stale-capability-advertisement",
@@ -122,7 +130,7 @@ public sealed partial class TaskServerStore
                         limited_until, credential_modified_at, evidence_id, evidence_excerpt, supported_models_json,
                         credential_generation, credential_observed_at, last_real_success_at, expiry_provenance,
                         access_token_expires_at, effective_source, native_file_shadowed, evidence_refs_json,
-                        advertised_at, fresh_until,
+                        advertised_instance_id, advertised_at, fresh_until,
                         generation, recovery_history_json, updated_at)
                     VALUES (
                         $runner, $key, $category, $schema, $status, 'healthy',
@@ -130,7 +138,7 @@ public sealed partial class TaskServerStore
                         $limited, $credential_modified, $evidence_id, $evidence_excerpt, $supported_models,
                         $credential_generation, $credential_observed, $last_real_success, $expiry_provenance,
                         $access_expires, $effective_source, $native_shadowed, $evidence_refs,
-                        $advertised,
+                        $instance, $advertised,
                         $fresh, $generation, $history, $updated)
                     ON CONFLICT(runner_id, capability_key) DO UPDATE SET
                         category = excluded.category,
@@ -161,6 +169,7 @@ public sealed partial class TaskServerStore
                         effective_source = excluded.effective_source,
                         native_file_shadowed = excluded.native_file_shadowed,
                         evidence_refs_json = excluded.evidence_refs_json,
+                        advertised_instance_id = excluded.advertised_instance_id,
                         advertised_at = excluded.advertised_at,
                         fresh_until = excluded.fresh_until,
                         generation = excluded.generation,
@@ -193,6 +202,7 @@ public sealed partial class TaskServerStore
                     ("$effective_source", request.SchemaVersion == 2 ? capability.EffectiveSource : null),
                     ("$native_shadowed", request.SchemaVersion == 2 && capability.NativeFileShadowed is { } shadowed ? shadowed ? 1 : 0 : null),
                     ("$evidence_refs", request.SchemaVersion == 2 && capability.EvidenceRefs is not null ? JsonSerializer.Serialize(capability.EvidenceRefs) : null),
+                    ("$instance", request.InstanceId),
                     ("$advertised", Iso(advertisedAt)),
                     ("$fresh", Iso(freshUntil)),
                     ("$generation", request.Generation),

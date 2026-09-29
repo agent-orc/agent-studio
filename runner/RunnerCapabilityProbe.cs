@@ -862,7 +862,11 @@ public sealed class ProviderAuthProbe
         if (observation.Kind != ProviderAuthObservationKind.Authenticated) return observation;
 
         var freshness = _credentialFreshness(cliBinary);
-        var expiresAt = freshness.ExpiresAt;
+        // Only a verified login expiry drives the warning; a native
+        // access-token hint is refreshed by the CLI and is not login expiry.
+        var expiresAt = freshness.ExpiryProvenance is "issuer" or "operator"
+            ? freshness.ExpiresAt
+            : null;
         var expiring = expiresAt is not null
                        && expiresAt <= _clock().Add(ProviderCredentialMonitor.ExpiryWarningWindow);
         var freshnessDetail = freshness.ModifiedAt is null
@@ -880,6 +884,7 @@ public sealed class ProviderAuthProbe
             ExpiryProvenance = freshness.ExpiryProvenance,
             EffectiveSource = freshness.EffectiveSource,
             NativeFileShadowed = freshness.NativeFileShadowed,
+            CredentialGeneration = freshness.CredentialGeneration,
         };
     }
 
@@ -1071,6 +1076,7 @@ public sealed class ProviderAuthProbe
                     ExpiryProvenance: observation.ExpiryProvenance,
                     EffectiveSource: observation.EffectiveSource,
                     NativeFileShadowed: observation.NativeFileShadowed,
+                    CredentialGeneration: observation.CredentialGeneration,
                     LastRealSuccessAt: previous?.Status.EffectiveSource == observation.EffectiveSource
                         ? previous.Status.LastRealSuccessAt : null),
                 0);
@@ -1223,17 +1229,13 @@ public sealed class ProviderAuthProbe
         @"\b(?:sk-[A-Za-z0-9_\-]{6,}|[A-Za-z0-9_\-]{40,})\b",
         RegexOptions.Compiled);
 
+    private static readonly Regex Whitespace = new(@"\s+", RegexOptions.Compiled);
+
     private static string Excerpt(string? value, int maxChars = 200)
     {
-        // CLI status streams and process errors are untrusted. Preserve only
-        // diagnostic codes that cannot carry a token or prompt fragment.
-        var input = value ?? string.Empty;
-        if (SecretShaped.IsMatch(input)) return "[redacted] provider output omitted";
-        if (input.Contains("usage limit reached", StringComparison.OrdinalIgnoreCase))
-            return "usage limit reached";
-        if (input.Contains("spawn refused by the host", StringComparison.OrdinalIgnoreCase))
-            return "spawn refused by the host";
-        return "provider output omitted";
+        var single = Whitespace.Replace(value ?? string.Empty, " ").Trim();
+        var redacted = SecretShaped.Replace(single, "[redacted]");
+        return redacted.Length <= maxChars ? redacted : redacted[..maxChars] + "...";
     }
 
     private static string? SafeEvidenceId(string? id)
@@ -1279,7 +1281,8 @@ internal sealed record ProviderAuthObservation(
     DateTimeOffset? AccessTokenExpiresAt = null,
     string ExpiryProvenance = "unknown",
     string EffectiveSource = "unknown",
-    bool NativeFileShadowed = false);
+    bool NativeFileShadowed = false,
+    string? CredentialGeneration = null);
 
 internal sealed record ProviderAuthCacheEntry(
     ProviderAuthStatus Status,

@@ -561,7 +561,8 @@ public sealed class ProviderAuthProbeTests
             credentialFreshness: _ => new ProviderCredentialFreshness(
                 expiresAt,
                 now.AddDays(-20),
-                "Credential expiry metadata was read."));
+                "Credential expiry metadata was read.",
+                ExpiryProvenance: "issuer"));
 
         var status = await probe.RefreshAsync("codex", CancellationToken.None);
 
@@ -569,6 +570,79 @@ public sealed class ProviderAuthProbeTests
         Assert.Equal(ProviderAuthProbe.SignalExpiring, status.Signal);
         Assert.Equal(expiresAt, status.ExpiresAt);
         Assert.Contains("re-authentication may be needed soon", status.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Unverified_expiry_hint_never_raises_the_login_expiry_warning()
+    {
+        var now = new DateTimeOffset(2026, 9, 1, 12, 0, 0, TimeSpan.Zero);
+        var probe = Probe(
+            Answers(0, "Logged in"),
+            clock: () => now,
+            credentialFreshness: _ => new ProviderCredentialFreshness(
+                now.AddDays(2),
+                now.AddDays(-20),
+                "Native access-token expiry is a refresh hint.",
+                ExpiryProvenance: "access-token-unverified"));
+
+        var status = await probe.RefreshAsync("claude", CancellationToken.None);
+
+        Assert.Equal(ProviderAuthProbe.SignalOk, status.Signal);
+        Assert.Null(status.ExpiresAt);
+    }
+
+    [Fact]
+    public async Task The_detail_keeps_diagnostic_provider_text_while_redacting_tokens()
+    {
+        var probe = Probe(Answers(1, "",
+            "upstream 503: service overloaded,\n  retry later key=sk-ant-api03-AAAABBBBCCCCDDDDEEEEFFFF"));
+        await probe.RefreshAsync("claude", CancellationToken.None);
+        var status = await probe.RefreshAsync("claude", CancellationToken.None);
+
+        Assert.Contains("upstream 503: service overloaded, retry later", status.Detail, StringComparison.Ordinal);
+        Assert.Contains("[redacted]", status.Detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("sk-ant-api03", status.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Probe_status_carries_the_observed_credential_generation()
+    {
+        var probe = Probe(
+            Answers(0, "Logged in"),
+            credentialFreshness: _ => new ProviderCredentialFreshness(
+                null, null, "Credential metadata fixture.",
+                EffectiveSource: "native-cli-store",
+                CredentialGeneration: "native-cli-store:1788890400000"));
+
+        var status = await probe.RefreshAsync("claude", CancellationToken.None);
+
+        Assert.Equal("native-cli-store:1788890400000", status.CredentialGeneration);
+    }
+
+    [Fact]
+    public void Native_store_generation_is_an_opaque_file_version_without_token_material()
+    {
+        var home = Path.Combine(Path.GetTempPath(), $"provider-auth-home-{Guid.NewGuid():N}");
+        var modifiedAt = new DateTimeOffset(2026, 9, 12, 8, 30, 0, TimeSpan.Zero);
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(home, ".claude"));
+            var path = Path.Combine(home, ".claude", ".credentials.json");
+            File.WriteAllText(path, "{\"claudeAiOauth\":{\"accessToken\":\"fixture-secret\"}}");
+            File.SetLastWriteTimeUtc(path, modifiedAt.UtcDateTime);
+
+            var native = ProviderCredentialMonitor.Inspect("claude", home, new Dictionary<string, string?>());
+            var environment = ProviderCredentialMonitor.Inspect("claude", home,
+                new Dictionary<string, string?> { ["CLAUDE_CODE_OAUTH_TOKEN"] = "fixture-env-secret" });
+
+            Assert.Equal($"native-cli-store:{modifiedAt.ToUnixTimeMilliseconds()}", native.CredentialGeneration);
+            // An environment token has no safe version marker; hashing it is forbidden.
+            Assert.Null(environment.CredentialGeneration);
+        }
+        finally
+        {
+            if (Directory.Exists(home)) Directory.Delete(home, recursive: true);
+        }
     }
 
     [Fact]
