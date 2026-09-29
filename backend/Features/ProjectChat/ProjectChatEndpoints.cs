@@ -61,7 +61,8 @@ public static class ProjectChatEndpoints
                         kind = turn.Kind,
                         ts = turn.Ts.ToString("o", CultureInfo.InvariantCulture),
                         refs = turn.Refs,
-                        body = turn.Body
+                        body = turn.Body,
+                        metadata = turn.Metadata
                     }
                 });
             });
@@ -107,7 +108,8 @@ public static class ProjectChatEndpoints
                         kind = t.Kind,
                         ts = t.Ts.ToString("o", CultureInfo.InvariantCulture),
                         refs = t.Refs,
-                        body = t.Body
+                        body = t.Body,
+                        metadata = t.Metadata
                     })
                 });
             });

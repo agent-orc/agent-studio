@@ -25,6 +25,16 @@ describe('OrchestratorSideSheetComponent · ORCH-1 context digest', () => {
     return TestBed.createComponent(OrchestratorSideSheetComponent);
   }
 
+  // AGT-2970: the chat usage header reads the project's chat-metadata default.
+  function flushChatMetadataDefault(http: HttpTestingController, project: string) {
+    const requests = http.match(`/api/projects/${encodeURIComponent(project)}/chat-metadata`);
+    expect(requests.length).toBeGreaterThan(0);
+    for (const request of requests.filter(pending => !pending.cancelled)) {
+      expect(request.request.method).toBe('GET');
+      request.flush({ chatMetadataEnabled: true });
+    }
+  }
+
   function digest(contextKey: string, text = 'lanes: ready=2'): OrchestratorContextDigest {
     return {
       contextKey,
@@ -104,6 +114,7 @@ describe('OrchestratorSideSheetComponent · ORCH-1 context digest', () => {
 
     expect(component.contextDigestState.digest()?.digest).toBe('lanes: progress=1');
     expect(component.contextDigestState.error()).toBeNull();
+    flushChatMetadataDefault(http, 'Agent Studio');
     http.verify();
     fixture.destroy();
   });
@@ -176,6 +187,7 @@ describe('OrchestratorSideSheetComponent · ORCH-1 context digest', () => {
     background.flush(digest('project:demo-project', 'older background digest'));
 
     expect(component.contextDigestState.digest()?.digest).toBe('new forced digest');
+    flushChatMetadataDefault(http, 'demo-project');
     http.verify();
     fixture.destroy();
   });
@@ -200,6 +212,7 @@ describe('OrchestratorSideSheetComponent · ORCH-1 context digest', () => {
     expect(component.contextDigestState.scopeLabel()).toBe('Global context');
     expect(fixture.nativeElement.querySelector('[data-testid="orchestrator-global-chat-empty"]'))
       .toBeTruthy();
+    flushChatMetadataDefault(http, 'previous-project');
     http.verify();
     fixture.destroy();
   });
@@ -252,6 +265,7 @@ describe('OrchestratorSideSheetComponent · ORCH-1 context digest', () => {
     reconciliation.flush({ project: 'Agent Studio', turns: [] });
     activityReconciliation.flush({ sessions: [] });
 
+    flushChatMetadataDefault(http, 'Agent Studio');
     http.verify();
     fixture.destroy();
   });

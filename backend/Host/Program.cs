@@ -380,6 +380,7 @@ builder.Services.AddSingleton<OrchestratorContextDigestService>();
 builder.Services.AddSingleton<OrchestratorTaskPromptContextComposer>();
 builder.Services.AddSingleton<OrchestratorWorkbenchPromptContextComposer>();
 builder.Services.AddSingleton<RemoteChatWorkBroker>();
+builder.Services.AddSingleton<LocalChatUsageTracker>();
 builder.Services.AddSingleton<OrchestratorChatService>();
 builder.Services.AddSingleton<ProjectChatStore>();
 builder.Services.AddSingleton<ProjectChatIndex>();

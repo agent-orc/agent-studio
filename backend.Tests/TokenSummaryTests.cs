@@ -148,7 +148,7 @@ public class TokenSummaryTests
     [Fact]
     public void Summarize_KnownModelWithoutPrice_IsUnpricedButNotCatalogDrift()
     {
-        var entry = Entry("gpt-5-codex", 1_000, 100) with
+        var entry = Entry("gpt-6-astra", 1_000, 100) with
         {
             Ts = new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc),
         };
@@ -223,9 +223,9 @@ public class TokenSummaryTests
         Assert.Equal("claude-haiku-4-5", summary.Entries[1].Model);
         Assert.Equal("Claude Haiku 4.5", summary.Entries[1].DisplayModel);
         Assert.Equal(t.AddMinutes(5), summary.LastUpdate);
-        Assert.False(summary.AllModelsPriced);
+        Assert.True(summary.AllModelsPriced);
         Assert.True(summary.EstimatedApiCostUsd > 0m);
-        Assert.False(summary.Entries[0].ModelPriced);
+        Assert.True(summary.Entries[0].ModelPriced);
         Assert.True(summary.Entries[1].ModelPriced);
     }
 
@@ -256,11 +256,15 @@ public class TokenSummaryTests
     [Fact]
     public void SummarizePerJob_PricesEachCallAtItsRecordedTimestamp()
     {
-        var transition = TokenPricing.Catalog["claude-sonnet-5"].History.Max(price => price.ValidFrom);
+        var listing = TokenPricing.Catalog.Values
+            .Select(value => new { value.ModelId, History = value.History.OrderBy(price => price.ValidFrom).ToArray() })
+            .First(value => value.History.Length > 1
+                && value.History[0].InputPerMTok != value.History[1].InputPerMTok);
+        var transition = listing.History[1].ValidFrom;
         var entries = new[]
         {
-            JobEntry("claude-sonnet-5", 1_000_000, 0, transition.AddTicks(-1)),
-            JobEntry("claude-sonnet-5", 1_000_000, 0, transition),
+            JobEntry(listing.ModelId, 1_000_000, 0, transition.AddTicks(-1)),
+            JobEntry(listing.ModelId, 1_000_000, 0, transition),
         };
 
         var summary = TokenSummaryService.SummarizePerJob(entries)["job-a"];

@@ -30,6 +30,16 @@ describe('OrchestratorSideSheetComponent · navigation context + pin', () => {
     return TestBed.createComponent(OrchestratorSideSheetComponent);
   }
 
+  // AGT-2970: the chat usage header reads the project's chat-metadata default.
+  function flushChatMetadataDefault(http: HttpTestingController, project: string) {
+    const requests = http.match(`/api/projects/${encodeURIComponent(project)}/chat-metadata`);
+    expect(requests.length).toBeGreaterThan(0);
+    for (const request of requests.filter(pending => !pending.cancelled)) {
+      expect(request.request.method).toBe('GET');
+      request.flush({ chatMetadataEnabled: true });
+    }
+  }
+
   it('derives a project context on the board and a task context on a task page', async () => {
     const fixture = await makeFixture();
     const c = fixture.componentInstance;
@@ -140,6 +150,7 @@ describe('OrchestratorSideSheetComponent · navigation context + pin', () => {
       expect(sessions.request.method).toBe('GET');
       sessions.flush({ sessions: [] });
     }
+    flushChatMetadataDefault(http, 'Quality Studio');
     http.verify();
   });
 
