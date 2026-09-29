@@ -103,6 +103,7 @@ public sealed class DecisionRecordService
         var title = record.Title;
         var decision = record.Content;
         var sb = new StringBuilder();
+        if (record.Reminder is { } reminder) AppendInboxFrontmatter(sb, reminder);
         sb.Append("# Decision ").Append(key).Append(": ").Append(title).Append("\n\n");
         sb.Append("- Status: ").Append(decision.Status).Append("\n");
         sb.Append("- Decider: ").Append(decision.Decider).Append("\n");
@@ -110,6 +111,16 @@ public sealed class DecisionRecordService
             sb.Append("- Due: ").Append(due.ToUniversalTime().ToString("yyyy-MM-dd")).Append("\n");
         if (decision.Dependants is { Count: > 0 } dependants)
             sb.Append("- Dependants: ").Append(string.Join(", ", dependants)).Append("\n");
+        if (decision.AppliesTo is { Count: > 0 } appliesTo)
+            sb.Append("- Applies to: ").Append(string.Join(", ", appliesTo)).Append("\n");
+        if (record.Reminder is { } overdue)
+        {
+            sb.Append("\n## Reminder\n\n");
+            sb.Append("- Overdue since: ").Append(Utc(overdue.DueAt)).Append("\n");
+            sb.Append("- Blocked cards: ")
+                .Append(overdue.BlockedCards.Count == 0 ? "none recorded" : string.Join(", ", overdue.BlockedCards))
+                .Append("\n");
+        }
         sb.Append("\n## Question\n\n").Append(decision.Question.Trim()).Append("\n\n");
         sb.Append("## Options\n\n");
         foreach (var option in decision.Options)
@@ -142,6 +153,10 @@ public sealed class DecisionRecordService
                 sb.Append("- Rationale: ").Append(entry.Rationale).Append("\n");
             if (!string.IsNullOrWhiteSpace(entry.Note))
                 sb.Append("- Note: ").Append(entry.Note).Append("\n");
+            if (!string.IsNullOrWhiteSpace(entry.ApplyOutcome))
+                sb.Append("- Applied: ").Append(entry.ApplyOutcome).Append("\n");
+            if (entry.AppliedTaskKeys is { Count: > 0 } appliedKeys)
+                sb.Append("- Applied to: ").Append(string.Join(", ", appliedKeys)).Append("\n");
             sb.Append('\n');
         }
         sb.Append("## Receipts\n\n```json\n");
@@ -155,6 +170,7 @@ public sealed class DecisionRecordService
             Actor = entry.Actor,
             DecidedAt = entry.Status == DecisionStatuses.Reopened ? null
                 : entry.At.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'"),
+            SpawnedTaskKeys = [.. entry.AppliedTaskKeys ?? []],
             Responses = entry.OptionId is null ? [] :
                 [new WorkbenchDecisionResponse
                 {
@@ -168,12 +184,47 @@ public sealed class DecisionRecordService
         sb.Append("\n```\n");
         return sb.ToString();
     }
+
+    /// <summary>
+    /// Lifecycle frontmatter that lists an overdue decision in the workbench
+    /// inbox (wiki Pulse) as "wants review", next to Dossier decisions. The
+    /// decided record is rendered without it and leaves the inbox.
+    /// </summary>
+    private static void AppendInboxFrontmatter(StringBuilder sb, DecisionReminderNotice reminder)
+    {
+        var at = Utc(reminder.RemindedAt);
+        var blocked = reminder.BlockedCards.Count == 0 ? "no recorded cards" : string.Join(", ", reminder.BlockedCards);
+        sb.Append("---\n");
+        sb.Append("lifecycleSchema: wiki-page-lifecycle/v1\n");
+        sb.Append("pageKind: decision\n");
+        sb.Append("lifecycleState: review-requested\n");
+        sb.Append("editedBy: ").Append(reminder.Actor).Append("\n");
+        sb.Append("editedAt: ").Append(at).Append("\n");
+        sb.Append("lifecycleHistory:\n");
+        sb.Append("  - state: review-requested\n");
+        sb.Append("    editedBy: ").Append(reminder.Actor).Append("\n");
+        sb.Append("    editedAt: ").Append(at).Append("\n");
+        sb.Append("    note: \"Decision overdue since ").Append(Utc(reminder.DueAt))
+            .Append("; blocks ").Append(blocked).Append("\"\n");
+        sb.Append("---\n\n");
+    }
+
+    private static string Utc(DateTime value) =>
+        value.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'");
 }
 
 public sealed record DecisionRecordWriteResult(bool Success, string Path, string? Error);
 
 /// <summary>Decision facts without a Dossier or card lifecycle binding.</summary>
-public sealed record DecisionRecord(string Id, string Title, DecisionContent Content);
+public sealed record DecisionRecord(string Id, string Title, DecisionContent Content)
+{
+    /// <summary>Set while an overdue reminder stands; the record then doubles as an inbox entry.</summary>
+    public DecisionReminderNotice? Reminder { get; init; }
+}
+
+/// <summary>An overdue reminder for a pending decision and the cards it blocks.</summary>
+public sealed record DecisionReminderNotice(
+    DateTime DueAt, DateTime RemindedAt, IReadOnlyList<string> BlockedCards, string Actor);
 
 public sealed record DecisionReceiptInput
 {

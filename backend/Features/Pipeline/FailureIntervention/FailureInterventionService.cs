@@ -8,6 +8,8 @@ public sealed record FailureInterventionRecord
     public string Project { get; init; } = "";
     public string FollowUpTaskId { get; init; } = "";
     public string FollowUpKey { get; init; } = "";
+    /// <summary>Card kind of the follow-up: a prose task, or a decision card when the failure carried a fork.</summary>
+    public string FollowUpKind { get; init; } = TaskKinds.Task;
     public string FailureDomain { get; init; } = "";
     public string FailureClass { get; init; } = "";
     public string Fingerprint { get; init; } = "";
@@ -72,6 +74,7 @@ public sealed class FailureInterventionService
     private readonly PipelineStepEconomyAdvisor? _economy;
     private readonly CliOneShotRegistry? _oneShots;
     private readonly PipelineExecutionLog? _pipelineLog;
+    private readonly DecisionCardRequests? _decisionRequests;
 
     /// <summary>LLM classification seam used only when deterministic policy returns null.</summary>
     public Func<FailureCommandEvidence, Task<FailureClassificationResult>>? AmbiguousClassifier { get; set; }
@@ -87,7 +90,8 @@ public sealed class FailureInterventionService
         ProjectSettingsService? projectSettings = null,
         PipelineStepEconomyAdvisor? economy = null,
         CliOneShotRegistry? oneShots = null,
-        PipelineExecutionLog? pipelineLog = null)
+        PipelineExecutionLog? pipelineLog = null,
+        DecisionCardRequests? decisionRequests = null)
     {
         _mutations = mutations;
         _scanner = scanner;
@@ -100,6 +104,7 @@ public sealed class FailureInterventionService
         _economy = economy;
         _oneShots = oneShots;
         _pipelineLog = pipelineLog;
+        _decisionRequests = decisionRequests;
     }
 
     public async Task<FailureInterventionResult> RaiseAsync(
@@ -125,16 +130,28 @@ public sealed class FailureInterventionService
             if (existing is null)
             {
                 var prompt = BuildPrompt(origin, evidence, classification);
-                var taskId = _mutations.CreateJob(new CreateTaskRequest
-                {
-                    Title = $"Intervention: {ShortTitle(classification)}",
-                    WatchPath = origin.WatchPath,
-                    PromptMarkdown = prompt,
-                    TargetState = TaskStates.Preparation,
-                    CreationSource = TimelineActors.Orchestrator,
-                    CreatedBy = "Orchestrator",
-                    TaskType = TaskTypes.Bug,
-                }) ?? throw new InvalidOperationException("The orchestrator could not create the intervention task.");
+                var fork = ForkFor(evidence);
+                var taskId = fork is null
+                    ? _mutations.CreateJob(new CreateTaskRequest
+                    {
+                        Title = $"Intervention: {ShortTitle(classification)}",
+                        WatchPath = origin.WatchPath,
+                        PromptMarkdown = prompt,
+                        TargetState = TaskStates.Preparation,
+                        CreationSource = TimelineActors.Orchestrator,
+                        CreatedBy = "Orchestrator",
+                        TaskType = TaskTypes.Bug,
+                    })
+                    : _decisionRequests!.Request(new DecisionCardRequest
+                    {
+                        Title = $"Decision: {ShortTitle(classification)}",
+                        WatchPath = origin.WatchPath,
+                        Content = fork,
+                        BlockedCard = origin,
+                        PromptMarkdown = prompt,
+                    })?.JobId;
+                if (string.IsNullOrWhiteSpace(taskId))
+                    throw new InvalidOperationException("The orchestrator could not create the intervention task.");
                 var followUp = _scanner.FindJob(taskId, origin.WatchPath)
                     ?? throw new InvalidOperationException("The created intervention task could not be resolved.");
                 intervention = new FailureInterventionRecord
@@ -143,6 +160,7 @@ public sealed class FailureInterventionService
                     Project = origin.ProjectName,
                     FollowUpTaskId = taskId,
                     FollowUpKey = followUp.Key ?? taskId,
+                    FollowUpKind = fork is null ? TaskKinds.Task : TaskKinds.Decision,
                     FailureDomain = classification.Domain,
                     FailureClass = classification.FailureClass,
                     Fingerprint = classification.Fingerprint,
@@ -175,6 +193,7 @@ public sealed class FailureInterventionService
                 {
                     UpdateFollowUpReferences(followUp, intervention.AffectedCards);
                     UpdateFollowUpPrompt(followUp, intervention);
+                    AttachToDecision(followUp, origin);
                 }
             }
 
@@ -185,6 +204,43 @@ public sealed class FailureInterventionService
             return new FailureInterventionResult(intervention, created,
                 $"waiting on {intervention.FollowUpKey}: {ShortTitle(classification)}");
         }
+    }
+
+    /// <summary>The fork to decide, when the caller supplied a valid one and decision cards are wired.</summary>
+    private DecisionContent? ForkFor(FailureCommandEvidence evidence)
+    {
+        if (evidence.Fork is null || _decisionRequests is null) return null;
+        if (DecisionCardPolicy.ValidateContent(evidence.Fork) is { Count: > 0 } errors)
+        {
+            _logger.LogWarning("failure-intervention fork ignored: {Errors}",
+                string.Join(" ", errors.Select(error => error.Message)));
+            return null;
+        }
+        return evidence.Fork;
+    }
+
+    /// <summary>
+    /// A later origin that hits the same open decision becomes one of its
+    /// dependants and apply targets, and waits on it through <c>dependsOn</c>.
+    /// </summary>
+    private void AttachToDecision(TaskInfo followUp, TaskInfo origin)
+    {
+        if (!TaskKinds.IsDecision(followUp.Kind) || followUp.Decision is not { } decision
+            || !DecisionStatuses.IsOpen(decision.Status)) return;
+        var key = followUp.Key ?? followUp.Id;
+        var originKey = origin.Key ?? origin.Id;
+        _mutations.SetDecisionContent(followUp.Id, decision with
+        {
+            Dependants = decision.Dependants.Append(originKey).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+            AppliesTo = decision.AppliesTo.Append(originKey).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+        }, followUp.WatchPath);
+        var current = _scanner.FindJob(origin.Id, origin.WatchPath) ?? origin;
+        var refs = current.References ?? new TaskReferences();
+        if (!refs.DependsOn.Any(edge => string.Equals(edge.Key, key, StringComparison.OrdinalIgnoreCase)))
+            _mutations.SetTaskReferences(current.Id, refs with
+            {
+                DependsOn = [.. refs.DependsOn, new TaskDependencyReference(key)],
+            }, current.WatchPath);
     }
 
     private async Task<FailureClassificationResult> ClassifyAmbiguousAsync(
@@ -274,8 +330,10 @@ public sealed class FailureInterventionService
 
     private void UpdateOriginReferences(TaskInfo origin, string followUpKey)
     {
-        var refs = origin.References ?? new TaskReferences();
-        _mutations.SetTaskReferences(origin.Id, refs with
+        // Re-read: a decision follow-up already added its dependsOn edge to the origin.
+        var current = _scanner.FindJob(origin.Id, origin.WatchPath) ?? origin;
+        var refs = current.References ?? new TaskReferences();
+        _mutations.SetTaskReferences(current.Id, refs with
         {
             BlockedBy = refs.BlockedBy.Append(followUpKey).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
             RaisedFollowUps = refs.RaisedFollowUps.Append(followUpKey).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
@@ -293,10 +351,16 @@ public sealed class FailureInterventionService
 
     private void UpdateFollowUpPrompt(TaskInfo followUp, FailureInterventionRecord intervention)
     {
+        var instruction = TaskKinds.IsDecision(followUp.Kind)
+            ? "This decision was raised automatically by the orchestrator. The failure leaves a choice the orchestrator must not make alone; choose one of the options on this card. Every affected card receives the decision and returns to 2-ready."
+            : "This task was raised automatically by the orchestrator. Diagnose and correct the shared failure. Automatic remediation at detection time is out of scope.";
+        var closing = TaskKinds.IsDecision(followUp.Kind)
+            ? "Keep every affected origin in `references.followUpOf`."
+            : "Keep every affected origin in `references.followUpOf`. Resolve the underlying toolchain, configuration, or product defect, then complete this task so waiting origins can be re-driven.";
         var prompt = $"""
 # Orchestrator failure intervention
 
-This task was raised automatically by the orchestrator. Diagnose and correct the shared failure. Automatic remediation at detection time is out of scope.
+{instruction}
 
 - Failure domain: {intervention.FailureDomain}
 - Failure class: {intervention.FailureClass}
@@ -305,7 +369,7 @@ This task was raised automatically by the orchestrator. Diagnose and correct the
 - Evidence signature: {intervention.Signature}
 - Evidence pointers: {string.Join(", ", intervention.EvidencePointers)}
 
-Keep every affected origin in `references.followUpOf`. Resolve the underlying toolchain, configuration, or product defect, then complete this task so waiting origins can be re-driven.
+{closing}
 """;
         _mutations.UpdateJobFile(followUp.Id, "prompt.md", prompt, followUp.WatchPath);
     }

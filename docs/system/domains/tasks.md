@@ -145,9 +145,34 @@ move cannot return a decided card to Preparation; only the reopen lifecycle has
 the permit for that transition. A dependant
 whose `references.dependsOn` points to a pending decision reports the key in
 `blockedBy`; moves into Ready or Progress and runner claims are refused while
-the decision is pending. Deciding only releases that dependency gate. Applying
-the choice to prompts or creating implementation cards belongs to the separate
-apply delivery.
+the decision is pending.
+
+Deciding also applies the choice (`DecisionApplyService`). Keys listed in
+`decision.appliesTo` are linked implementation cards: each one waiting in
+Backlog, Preparation, or Escalated receives a decision block in `prompt.md`
+(question, chosen option, rationale, record link) and moves to `2-ready`; a card
+already in `2-ready` receives the block only, and a card past that point is left
+unchanged and named in the apply notes. With no linked card, the chosen option's
+`requirements` (Dossier implementation items) become `2-ready` coding cards
+through `ConceptPromotionService.CreateCards`, the ledger-backed mechanism
+concept promotion uses. The history entry records `applyOutcome` and
+`appliedTaskKeys`, and the wiki record lists them. A failed apply leaves the
+decision recorded and posts an activity feed alert.
+
+Decision cards are also raised automatically through `DecisionCardRequests`:
+by the runner's Blocked outcome when the agent's final message states a question
+with two to four options, by `FailureInterventionService` when the failure
+evidence carries a `fork`, and by concept promotion for a Dossier implementation
+item with a `decision` block. The blocked card becomes a dependant and apply
+target and gets a `dependsOn` edge to the decision card.
+
+`DecisionReminderSweep` runs every 30 minutes
+(`Supervisor:DecisionReminderSweepIntervalMinutes`). Once a pending decision
+passes its due date (`dueDate`, or three days after it was requested or last
+reopened), it posts one reminder per pending cycle: the wiki record gains
+lifecycle frontmatter (`pageKind: decision`, `review-requested`) so the
+workbench inbox lists it, and the activity feed gets an alert naming the decider
+and the blocked cards. Deciding rewrites the record without that frontmatter.
 
 ## Result history
 

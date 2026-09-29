@@ -10,6 +10,11 @@ public static class FailureDomains
     public const string Infrastructure = "infrastructure";
 }
 
+/// <summary>
+/// Evidence of one failed command. <see cref="Fork"/> is set by a caller whose
+/// failure leaves a choice a person must make; the intervention is then a
+/// decision card with these options instead of a prose follow-up.
+/// </summary>
 public sealed record FailureCommandEvidence(
     string FailureCode,
     string? Outcome = null,
@@ -19,7 +24,8 @@ public sealed record FailureCommandEvidence(
     string? StderrTail = null,
     string? StepId = null,
     IReadOnlyList<string>? EvidencePointers = null,
-    DateTime? OccurredAt = null);
+    DateTime? OccurredAt = null,
+    DecisionContent? Fork = null);
 
 public sealed record FailureClassificationResult(
     string Domain,

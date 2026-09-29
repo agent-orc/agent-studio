@@ -1665,6 +1665,12 @@ public class TaskMutationService
                     .Select(key => key.Trim())
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList(),
+                AppliesTo = (req.Decision?.AppliesTo ?? [])
+                    .Where(key => !string.IsNullOrWhiteSpace(key))
+                    .Select(key => key.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList(),
+                RemindedAt = null,
                 Decider = string.IsNullOrWhiteSpace(req.Decision?.Decider)
                     ? DecisionDeciders.Operator : req.Decision.Decider.Trim(),
             };

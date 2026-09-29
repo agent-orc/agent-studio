@@ -12,6 +12,7 @@ public sealed class DecisionCardService
     private readonly TimelineLog _timeline;
     private readonly DecisionRecordService _records;
     private readonly OrchestratorLog _activityFeed;
+    private readonly DecisionApplyService? _apply;
     private readonly ILogger<DecisionCardService> _logger;
 
     private DecisionRecordWriteResult WriteRecord(TaskInfo card, DecisionContent decision)
@@ -25,7 +26,7 @@ public sealed class DecisionCardService
     public DecisionCardService(TaskScannerService scanner, TaskMutationService mutations,
         TaskTransitionService transitions, TimelineLog timeline,
         ILogger<DecisionCardService> logger, DecisionRecordService records,
-        OrchestratorLog activityFeed)
+        OrchestratorLog activityFeed, DecisionApplyService? apply = null)
     {
         _scanner = scanner;
         _mutations = mutations;
@@ -34,6 +35,7 @@ public sealed class DecisionCardService
         _logger = logger;
         _records = records;
         _activityFeed = activityFeed;
+        _apply = apply;
     }
 
     public async Task<DecisionCardOutcome> DecideAsync(string jobId, string? watchPath,
@@ -102,7 +104,67 @@ public sealed class DecisionCardService
             JobId = jobId,
         });
         _logger.LogInformation("decision-decided job={JobId} option={OptionId}", jobId, optionId);
+        decided = await ApplyAsync(moved, decided, actor, ct);
         return new(DecisionCardStatus.Success, decided, TaskStates.Completed);
+    }
+
+    /// <summary>
+    /// Applies the recorded choice and stamps the outcome on its history entry,
+    /// so the wiki record links whatever the apply step produced. A failed apply
+    /// leaves the decision recorded and reports the failure on the feed.
+    /// </summary>
+    private async Task<DecisionContent> ApplyAsync(TaskInfo card, DecisionContent decided, string actor,
+        CancellationToken ct)
+    {
+        if (_apply is null) return decided;
+        var key = card.Key ?? card.Id;
+        DecisionApplyResult result;
+        try
+        {
+            result = await _apply.ApplyAsync(card, decided, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "decision-apply-failed job={JobId}", card.Id);
+            result = new(DecisionApplyOutcomes.Failed, [], [ex.Message]);
+        }
+
+        var last = decided.History[^1] with
+        {
+            ApplyOutcome = result.Outcome,
+            AppliedTaskKeys = [.. result.TaskKeys],
+        };
+        var applied = decided with { History = [.. decided.History.Take(decided.History.Count - 1), last] };
+        _mutations.SetDecisionContent(card.Id, applied, card.WatchPath);
+        var record = WriteRecord(card, applied);
+        if (!record.Success)
+            _logger.LogWarning("decision-apply-record-failed job={JobId} error={Error}", card.Id, record.Error);
+
+        var summary = result.Outcome switch
+        {
+            DecisionApplyOutcomes.LinkedCards => $"Decision applied: {key} updated {string.Join(", ", result.TaskKeys)}",
+            DecisionApplyOutcomes.CreatedCards => $"Decision applied: {key} created {string.Join(", ", result.TaskKeys)}",
+            DecisionApplyOutcomes.Nothing => $"Decision applied: {key} had nothing to apply",
+            _ => $"Decision apply failed: {key}",
+        };
+        var notes = result.Notes.Count == 0 ? null : string.Join(" ", result.Notes);
+        _timeline.Append(card.FolderPath, TimelineEventKinds.DecisionApplied, TimelineActors.Human(actor),
+            summary: summary, payloadRef: applied.RecordPath,
+            details: new()
+            {
+                ["outcome"] = result.Outcome,
+                ["taskKeys"] = string.Join(",", result.TaskKeys),
+                ["notes"] = notes ?? "",
+            });
+        _activityFeed.Append(card.WatchPath, new OrchestratorLogEntry
+        {
+            Kind = result.Outcome == DecisionApplyOutcomes.Failed ? OrchestratorLogKinds.Alert : OrchestratorLogKinds.Decision,
+            Topic = OrchestratorLogTopics.DecisionCard,
+            Summary = summary,
+            Reasoning = notes,
+            JobId = card.Id,
+        });
+        return applied;
     }
 
     public async Task<DecisionCardOutcome> ReopenAsync(string jobId, string? watchPath,
