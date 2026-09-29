@@ -121,7 +121,7 @@ test('the docs index has exactly one row for it', () => {
   assert.match(rows[0], /AGT-2906/);
 });
 
-test('AGT-W49 links the journey and the AGT-2905 bus Dossier and keeps D1 to D4 open', () => {
+test('AGT-W49 links the journey and the AGT-2905 bus Dossier and leaves D1 to D4 untouched', () => {
   const html = read(join(root, 'docs/operations/operations-server-backchannel/index.html'));
   const section = html.slice(html.indexOf('<section id="deployment">'));
   const deployment = section.slice(0, section.indexOf('</section>'));
@@ -129,5 +129,16 @@ test('AGT-W49 links the journey and the AGT-2905 bus Dossier and keeps D1 to D4 
   assert.match(deployment, /href="\.\.\/\.\.\/task-server-bus\/index\.html"/);
   assert.match(deployment, /one-box special case and an ordinary runner host/);
   assert.match(deployment, /quality work is made of shared pipeline-library steps/);
-  assert.match(deployment, /D1 to D4 below remain open and decision pending/);
+  // The reconciliation defers to W49's own decision record instead of
+  // restating a status that later implementation slices may change.
+  assert.match(deployment, /does not change the recorded status of D1 to D4/);
+  assert.match(html, /<span><b>Status<\/b> Decision pending<\/span>/);
+  for (const id of ['d1-architecture', 'd2-standard-deployment', 'd3-agt-2736', 'd4-orchestrator-sessions']) {
+    assert.match(html, new RegExp(`data-decision-id="${id}"`));
+  }
+  // The develop-side D12 execution-role amendment survives the merge.
+  assert.match(html, /D12 execution-role amendment \(2026-09-26\)/);
+  assert.match(html, />Workstation host adapter</);
+  assert.match(html, /One-box placement on a developer machine: Web, local Connector, Task Server, Engine, native host manager, and the same runner-host service used by other hosts/);
+  assert.equal(/^(?:<{7}|={7}|>{7})/m.test(html), false, 'no merge markers');
 });

@@ -19,7 +19,7 @@ One row was added to the Load-Bearing Entry Points table of `docs/start/README.m
 
 ## Related decisions
 
-AGT-W49's deployment section links this journey and AGT-W65 (the AGT-2905 bus Dossier) while retaining its open operations-boundary decisions and pending status. AGT-W18 remains the remote-publication authority and AGT-W57 remains delivery/recovery context.
+AGT-W49's deployment section links this journey and AGT-W65 (the AGT-2905 bus Dossier) while leaving the recorded status of its operations-boundary decisions D1 to D4 unchanged; W49's Decisions section and implementation log stay authoritative. AGT-W18 remains the remote-publication authority and AGT-W57 remains delivery/recovery context.
 
 ## Card references
 
