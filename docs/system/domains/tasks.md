@@ -94,7 +94,10 @@ slots, central host ceiling, and the current capacity version acknowledgement.
 Registration and capability advertisement alone do not acknowledge capacity;
 the daemon must report the desired version and effective ceiling on a claim
 poll. For configured placement, CPU telemetry above the host's target load
-blocks admission. The claim response carries `placementReason`; the
+blocks admission. Each project is evaluated once per claim poll, and the ready
+scan stops at the first admissible task. The claim response carries
+`placementReason`: `matched` for configured placement, `legacy-routing` for a
+project without placement, or the last refusal when nothing is admitted. The
 successful claim audit records the placement version and reason.
 `GET /api/v1/projects/{projectId}/placement/admissions` reads each runner's
 last placement decision with its timestamp. The placement GET, runner
@@ -123,9 +126,15 @@ the existing project-settings mutation. These map to fresh `platform:*`
 capability advertisements during coding claim and direct lease acquisition.
 An ordinary runner ID remains an explicit pin. This preserves existing
 project-to-runner configuration while letting another matching host claim
-future cards without editing their task records. The compatibility claim gate
-counts Progress cards per project and admits another only below that project's
-existing maxParallelism.
+future cards without editing their task records. The daemon claim loop and
+the direct task-key lease share one project slot policy
+(`ProjectExecutionPolicy.EvaluateProjectSlot`). It applies to pinned and
+class-placed projects alike. It counts Progress cards per project and admits
+another only below that project's existing maxParallelism. A refused claim
+candidate records `project-concurrency-full`, and a refused direct lease
+returns `ProjectCapacityFull`. Class-placed projects do not seed a host's
+deprecated compatibility ceiling, because every matching host shares their
+project limit. A class-only host keeps the ceiling it declares.
 
 ### Engine steering boundary (AGT-2933, D5)
 

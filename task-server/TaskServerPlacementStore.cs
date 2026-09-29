@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using AgentStudio.TaskServer.Contracts;
 using Microsoft.Data.Sqlite;
@@ -138,6 +139,53 @@ public sealed partial class TaskServerStore
             ("$project", projectId), ("$runner", runnerId),
             ("$reason", reason), ("$now", Iso(UtcNow)));
 
+    /// <summary>
+    /// Streams ready, unleased tasks the host may serve, in claim order. The
+    /// reader stays open only until the caller stops at an admissible task.
+    /// </summary>
+    private static async IAsyncEnumerable<TaskDto> ReadClaimableTasksAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string hostId,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        await using var command = Command(connection, """
+            SELECT t.id, t.project_id, t.task_key, t.title, t.state, t.version, t.created_at, t.updated_at, t.body,
+                   t.archive_state, t.archived_at
+              FROM tasks t
+             WHERE t.state = '2-ready'
+               AND NOT EXISTS (
+                   SELECT 1 FROM leases l
+                    WHERE l.task_id = t.id AND l.status IN ('active', 'process-unknown'))
+               AND (
+                   NOT EXISTS (
+                       SELECT 1 FROM host_project_policies policy
+                        WHERE policy.host_id = $host)
+                   OR EXISTS (
+                       SELECT 1 FROM host_project_policies policy
+                        WHERE policy.host_id = $host
+                          AND policy.allow_all_projects = 1)
+                   OR EXISTS (
+                       SELECT 1 FROM host_allowed_projects allowed
+                        WHERE allowed.host_id = $host
+                          AND allowed.project_id = t.project_id))
+             ORDER BY t.created_at, t.task_key;
+            """, transaction, ("$host", hostId));
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            yield return ReadTask(reader);
+    }
+
+    /// <summary>
+    /// One project's claim verdict for one poll. A legacy project (no placement
+    /// row) is admitted on the host-level capability admission.
+    /// </summary>
+    private sealed record ClaimPlacementVerdict(
+        string ProjectId,
+        string Reason,
+        ProjectPlacementDto? Placement,
+        CapabilityAdmission? Admission);
+
     private static async Task<int> CountProjectLeasesAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -149,6 +197,38 @@ public sealed partial class TaskServerStore
              WHERE t.project_id = $project
                AND l.status IN ('active', 'process-unknown');
             """, ct, transaction, ("$project", projectId)) ?? 0, CultureInfo.InvariantCulture);
+}
+
+internal static class ProjectPlacementReasons
+{
+    public const string Matched = "matched";
+    /// <summary>The project has no placement row and keeps legacy host routing.</summary>
+    public const string LegacyRouting = "legacy-routing";
+    public const string NoAdmissibleTask = "no-admissible-task";
+}
+
+internal static class ProjectPlacementSelection
+{
+    /// <summary>
+    /// Walks ready tasks in claim order, evaluates each project at most once and
+    /// stops reading at the first task whose project is admitted.
+    /// </summary>
+    public static async Task<(TaskDto? Task, TVerdict? Verdict)> SelectAsync<TVerdict>(
+        IAsyncEnumerable<TaskDto> readyInClaimOrder,
+        Func<string, Task<TVerdict>> evaluateProject,
+        Func<TVerdict, bool> admits)
+        where TVerdict : class
+    {
+        var evaluated = new Dictionary<string, TVerdict>(StringComparer.Ordinal);
+        await foreach (var candidate in readyInClaimOrder)
+        {
+            if (!evaluated.TryGetValue(candidate.ProjectId, out var verdict))
+                evaluated[candidate.ProjectId] = verdict = await evaluateProject(candidate.ProjectId);
+            if (admits(verdict))
+                return (candidate, verdict);
+        }
+        return (null, null);
+    }
 }
 
 internal static class ProjectPlacementAdmissionPolicy

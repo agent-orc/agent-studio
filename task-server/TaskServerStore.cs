@@ -1359,12 +1359,6 @@ public sealed partial class TaskServerStore
                 return;
             }
 
-            TaskDto? task = null;
-            ProjectPlacementDto? selectedPlacement = null;
-            var placementReason = "no-admissible-task";
-            var admissionForClaim = capabilityAdmission;
-            var placementsByProject = new Dictionary<string, ProjectPlacementDto?>(StringComparer.Ordinal);
-            var projectSlots = new Dictionary<string, (int Occupied, int Limit)>(StringComparer.Ordinal);
             var telemetryJson = Convert.ToString(await ScalarAsync(connection, """
                 SELECT payload_json FROM runner_telemetry_latest
                  WHERE runner_id = $runner AND observed_at > $fresh;
@@ -1374,100 +1368,66 @@ public sealed partial class TaskServerStore
             var cpuPercent = string.IsNullOrWhiteSpace(telemetryJson)
                 ? null
                 : JsonSerializer.Deserialize<HostTelemetrySnapshotDto>(telemetryJson)?.CpuPercent;
-            await using (var command = Command(connection, """
-                SELECT t.id, t.project_id, t.task_key, t.title, t.state, t.version, t.created_at, t.updated_at, t.body,
-                       t.archive_state, t.archived_at
-                  FROM tasks t
-                 WHERE t.state = '2-ready'
-                   AND NOT EXISTS (
-                       SELECT 1 FROM leases l
-                        WHERE l.task_id = t.id AND l.status IN ('active', 'process-unknown'))
-                   AND (
-                       NOT EXISTS (
-                           SELECT 1 FROM host_project_policies policy
-                            WHERE policy.host_id = $host)
-                       OR EXISTS (
-                           SELECT 1 FROM host_project_policies policy
-                            WHERE policy.host_id = $host
-                              AND policy.allow_all_projects = 1)
-                       OR EXISTS (
-                           SELECT 1 FROM host_allowed_projects allowed
-                            WHERE allowed.host_id = $host
-                              AND allowed.project_id = t.project_id))
-                 ORDER BY t.created_at, t.task_key;
-                """, transaction, ("$host", capabilityRunner.HostId)))
+            var hostAdmission = capabilityAdmission;
+            async Task<ClaimPlacementVerdict> EvaluateProjectAsync(string projectId)
             {
-                var ready = new List<TaskDto>();
-                await using (var reader = await command.ExecuteReaderAsync(ct))
-                    while (await reader.ReadAsync(ct))
-                        ready.Add(ReadTask(reader));
-                foreach (var candidate in ready)
-                {
-                    if (!placementsByProject.TryGetValue(candidate.ProjectId, out var placement))
-                    {
-                        placement = await ReadProjectPlacementAsync(
-                            connection, transaction, candidate.ProjectId, ct);
-                        placementsByProject[candidate.ProjectId] = placement;
-                    }
-                    if (placement is null)
-                    {
-                        task = candidate;
-                        break;
-                    }
-                    if (!projectSlots.TryGetValue(candidate.ProjectId, out var slots))
-                    {
-                        var occupied = await CountProjectLeasesAsync(
-                            connection, transaction, candidate.ProjectId, ct);
-                        var configuredParallelism = Convert.ToInt32(await ScalarAsync(connection, """
-                            SELECT COALESCE(max_parallelism, 1)
-                              FROM studio_project_settings WHERE project_id = $project;
-                            """, ct, transaction, ("$project", candidate.ProjectId)) ?? 1,
-                            CultureInfo.InvariantCulture);
-                        slots = (occupied, Math.Min(
-                            placement.MaxParallelism, Math.Clamp(configuredParallelism, 1, 256)));
-                        projectSlots[candidate.ProjectId] = slots;
-                    }
-                    var refusal = ProjectPlacementAdmissionPolicy.Refusal(
+                var placement = await ReadProjectPlacementAsync(connection, transaction, projectId, ct);
+                if (placement is null)
+                    return new ClaimPlacementVerdict(
+                        projectId, ProjectPlacementReasons.LegacyRouting, null, hostAdmission);
+                var occupied = await CountProjectLeasesAsync(connection, transaction, projectId, ct);
+                var configuredParallelism = Convert.ToInt32(await ScalarAsync(connection, """
+                    SELECT COALESCE(max_parallelism, 1)
+                      FROM studio_project_settings WHERE project_id = $project;
+                    """, ct, transaction, ("$project", projectId)) ?? 1,
+                    CultureInfo.InvariantCulture);
+                var refusal = ProjectPlacementAdmissionPolicy.Refusal(
+                    placement,
+                    request.RunnerId,
+                    occupied,
+                    Math.Min(placement.MaxParallelism, Math.Clamp(configuredParallelism, 1, 256)),
+                    adoption.ConfirmsDesired,
+                    cpuPercent,
+                    runtimeCapacity.TargetLoadPercent);
+                if (refusal is not null)
+                    return new ClaimPlacementVerdict(projectId, refusal, placement, null);
+                var required = (request.RequiredCapabilities ?? [])
+                    .Concat(placement.RequiredCapabilities)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+                var candidateAdmission = await EvaluateCapabilityAdmissionAsync(
+                    connection, transaction, request.RunnerId,
+                    capabilityRunner.HostId, required, ct);
+                return candidateAdmission.Eligible
+                    ? new ClaimPlacementVerdict(
+                        projectId, ProjectPlacementReasons.Matched, placement, candidateAdmission)
+                    : new ClaimPlacementVerdict(
+                        projectId,
+                        "placement-capability-unavailable: " + candidateAdmission.Message,
                         placement,
-                        request.RunnerId,
-                        slots.Occupied,
-                        slots.Limit,
-                        adoption.ConfirmsDesired,
-                        cpuPercent,
-                        runtimeCapacity.TargetLoadPercent);
-                    if (refusal is not null)
-                    {
-                        placementReason = refusal;
-                        await RecordProjectPlacementAdmissionAsync(
-                            connection, transaction, candidate.ProjectId,
-                            request.RunnerId, refusal, ct);
-                        continue;
-                    }
-                    var required = (request.RequiredCapabilities ?? [])
-                        .Concat(placement.RequiredCapabilities)
-                        .Distinct(StringComparer.Ordinal)
-                        .ToArray();
-                    var candidateAdmission = await EvaluateCapabilityAdmissionAsync(
-                        connection, transaction, request.RunnerId,
-                        capabilityRunner.HostId, required, ct);
-                    if (!candidateAdmission.Eligible)
-                    {
-                        placementReason = "placement-capability-unavailable: " + candidateAdmission.Message;
-                        await RecordProjectPlacementAdmissionAsync(
-                            connection, transaction, candidate.ProjectId,
-                            request.RunnerId, placementReason, ct);
-                        continue;
-                    }
-                    task = candidate;
-                    selectedPlacement = placement;
-                    admissionForClaim = candidateAdmission;
-                    placementReason = "matched";
-                    await RecordProjectPlacementAdmissionAsync(
-                        connection, transaction, candidate.ProjectId,
-                        request.RunnerId, placementReason, ct);
-                    break;
-                }
+                        null);
             }
+
+            // Each project is evaluated once per poll, and the ready scan stops
+            // at the first admissible task, so refused projects cost one
+            // evaluation and one admission receipt rather than one per task.
+            var verdicts = new List<ClaimPlacementVerdict>();
+            var (task, selected) = await ProjectPlacementSelection.SelectAsync(
+                ReadClaimableTasksAsync(connection, transaction, capabilityRunner.HostId, ct),
+                async projectId =>
+                {
+                    var verdict = await EvaluateProjectAsync(projectId);
+                    verdicts.Add(verdict);
+                    return verdict;
+                },
+                verdict => verdict.Admission is not null);
+            foreach (var verdict in verdicts.Where(verdict => verdict.Placement is not null))
+                await RecordProjectPlacementAdmissionAsync(
+                    connection, transaction, verdict.ProjectId, request.RunnerId, verdict.Reason, ct);
+            var selectedPlacement = selected?.Placement;
+            var placementReason = selected?.Reason
+                                  ?? verdicts.LastOrDefault()?.Reason
+                                  ?? ProjectPlacementReasons.NoAdmissibleTask;
 
             if (task is null)
             {
@@ -1479,7 +1439,7 @@ public sealed partial class TaskServerStore
                     PlacementReason: placementReason);
                 return;
             }
-            capabilityAdmission = admissionForClaim;
+            capabilityAdmission = selected!.Admission!;
 
             var providerContinuation = await ReadProviderFallbackForClaimAsync(
                 connection, transaction, task, ct);

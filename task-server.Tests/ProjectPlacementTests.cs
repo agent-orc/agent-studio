@@ -174,6 +174,65 @@ public sealed class ProjectPlacementTests
         Assert.Equal(desired.Version, snapshot.RuntimeCapacityAppliedVersion);
     }
 
+    [Fact]
+    public async Task Legacy_project_claim_reports_legacy_routing_after_an_earlier_refusal()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(Start);
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var pinnedElsewhere = await ReadyProjectAsync(store, 1, "Pinned", "PIN");
+        clock.Advance(TimeSpan.FromSeconds(1));
+        var legacy = await ReadyProjectAsync(store, 1, "Legacy", "LEG");
+        await HostAsync(store, clock, "runner-a", "host-a", "platform:linux");
+        await HostAsync(store, clock, "runner-b", "host-b", "platform:linux");
+        await store.UpdateProjectPlacementAsync(pinnedElsewhere.ProjectId,
+            new UpdateProjectPlacementRequest(["platform:linux"], "runner-a", 1, 0),
+            "operator", default);
+
+        var claim = await store.ClaimAsync(AcknowledgedClaim("runner-b"), "runner-b", default);
+
+        Assert.Equal("claimed", claim.Status);
+        Assert.Equal(legacy.ProjectId, claim.Task!.ProjectId);
+        Assert.Equal(ProjectPlacementReasons.LegacyRouting, claim.PlacementReason);
+        Assert.Contains(await store.ListProjectPlacementAdmissionsAsync(pinnedElsewhere.ProjectId, default),
+            admission => admission.RunnerId == "runner-b" && admission.Reason == "pinned-runner-mismatch");
+    }
+
+    [Fact]
+    public async Task Selection_evaluates_each_project_once_and_stops_at_the_first_admissible_task()
+    {
+        var yielded = 0;
+        async IAsyncEnumerable<TaskDto> Ready()
+        {
+            foreach (var (task, project) in new[]
+                     {
+                         ("A-1", "A"), ("A-2", "A"), ("A-3", "A"), ("B-1", "B"), ("C-1", "C"),
+                     })
+            {
+                yielded++;
+                await Task.Yield();
+                yield return new TaskDto(task, project, task, task, "2-ready", 1,
+                    Start.UtcDateTime, Start.UtcDateTime);
+            }
+        }
+        var evaluated = new List<string>();
+
+        var selected = await ProjectPlacementSelection.SelectAsync(
+            Ready(),
+            project =>
+            {
+                evaluated.Add(project);
+                return Task.FromResult(project == "B" ? "matched" : "refused");
+            },
+            verdict => verdict == "matched");
+
+        Assert.Equal("B-1", selected.Task?.TaskId);
+        Assert.Equal("matched", selected.Verdict);
+        Assert.Equal(["A", "B"], evaluated);
+        Assert.Equal(4, yielded);
+    }
+
     private static ClaimRequest AcknowledgedClaim(string runner) =>
         new(runner, runner + ":1", RequiredCapabilities: [CapabilityProtocol.CodingExecutor],
             EffectiveMaxParallelism: 2, RuntimeCapacityAppliedVersion: 1);

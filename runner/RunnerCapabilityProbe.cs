@@ -38,8 +38,7 @@ internal static class RunnerCapabilityProbe
                 connectivity?.Status == TaskServerConnectivityStates.Unreachable ? "unavailable" : "ready",
                 ConnectivityDetail(connectivity)),
             Capability($"platform:{Platform()}", "platform", RuntimeInformation.OSDescription, RuntimeInformation.ProcessArchitecture.ToString()),
-            Capability($"platform:{PlatformClass()}",
-                "platform", RuntimeInformation.OSDescription, RuntimeInformation.ProcessArchitecture.ToString()),
+            Capability($"platform:{PlatformClass()}", "platform", RuntimeInformation.OSDescription, RuntimeInformation.ProcessArchitecture.ToString()),
         };
         if (OperatingSystem.IsWindows())
         {

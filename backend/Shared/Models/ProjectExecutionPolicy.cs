@@ -66,6 +66,29 @@ public static class ProjectExecutionPolicy
     public static bool HasProjectSlot(int occupiedTasks, int maxParallelism)
         => occupiedTasks < Math.Max(1, maxParallelism);
 
+    /// <summary>
+    /// In-progress, non-fixture tasks per project. The daemon claim loop and the
+    /// direct task-key lease both count here, so every project, pinned or
+    /// class-placed, keeps one concurrency limit whichever path admits the run.
+    /// </summary>
+    public static IReadOnlyDictionary<string, int> ProjectOccupancy(
+        IEnumerable<TaskInfo> tasks, string? excludingTaskId = null)
+        => tasks
+            .Where(task => !task.Fixture
+                           && task.State == TaskStates.Progress
+                           && !string.Equals(task.Id, excludingTaskId, StringComparison.OrdinalIgnoreCase))
+            .GroupBy(task => task.ProjectName, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
+
+    public static ProjectSlotVerdict EvaluateProjectSlot(
+        IReadOnlyDictionary<string, int> occupancy, string projectName, ProjectSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        var limit = Math.Max(1, settings.MaxParallelism);
+        var occupied = occupancy.GetValueOrDefault(projectName);
+        return new ProjectSlotVerdict(HasProjectSlot(occupied, limit), occupied, limit);
+    }
+
     public static string ResolvePickupMode(ProjectSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
@@ -169,4 +192,10 @@ public static class ProjectExecutionPolicy
         !string.IsNullOrWhiteSpace(value)
         && !string.Equals(value, ExecutionLocations.Local, StringComparison.OrdinalIgnoreCase)
         && !IsLegacyComposite(value);
+}
+
+/// <summary>Whether a project has a free run slot under its concurrency limit.</summary>
+public sealed record ProjectSlotVerdict(bool HasSlot, int Occupied, int Limit)
+{
+    public string Detail => $"Project has {Occupied} active tasks and allows {Limit}.";
 }

@@ -60,8 +60,9 @@ public static class LeaseEndpoints
                             "ProjectDenied", false, null,
                             "The Runner is not assigned to this project's execution location."), statusCode: StatusCodes.Status403Forbidden);
                 }
+                var taskProjectSettings = settings.Get(task.ProjectName);
                 var classCapability = ExecutionLocations.RequiredClassCapability(
-                    ProjectExecutionPolicy.ResolveExecutionLocation(settings.Get(task.ProjectName)));
+                    ProjectExecutionPolicy.ResolveExecutionLocation(taskProjectSettings));
                 if (classCapability is not null
                     && !capabilityRegistry.EvaluateCodingAdmission(
                         req.RunnerId, req.LeaseInstanceId,
@@ -70,20 +71,13 @@ public static class LeaseEndpoints
                         "ProjectDenied", false, null,
                         $"Runner lacks a fresh {classCapability} capability for this project."),
                         statusCode: StatusCodes.Status403Forbidden);
-                if (classCapability is not null)
-                {
-                    var projectLimit = Math.Max(1, settings.Get(task.ProjectName).MaxParallelism);
-                    var occupied = scanner.ScanAllJobs().Count(other =>
-                        !other.Fixture
-                        && other.State == TaskStates.Progress
-                        && !string.Equals(other.Id, task.Id, StringComparison.OrdinalIgnoreCase)
-                        && string.Equals(other.ProjectName, task.ProjectName,
-                            StringComparison.OrdinalIgnoreCase));
-                    if (!ProjectExecutionPolicy.HasProjectSlot(occupied, projectLimit))
-                        return Results.Conflict(new RunLeaseResponse(
-                            "ProjectCapacityFull", false, null,
-                            $"Project has {occupied} other active tasks and allows {projectLimit}."));
-                }
+                var projectSlot = ProjectExecutionPolicy.EvaluateProjectSlot(
+                    ProjectExecutionPolicy.ProjectOccupancy(scanner.ScanAllJobs(), excludingTaskId: task.Id),
+                    task.ProjectName,
+                    taskProjectSettings);
+                if (!projectSlot.HasSlot)
+                    return Results.Conflict(new RunLeaseResponse(
+                        "ProjectCapacityFull", false, null, projectSlot.Detail));
                 var project = projects.FindByStorageLocation(task.WatchPath)
                               ?? projects.FindByIdOrDisplayName(task.ProjectName);
                 var repository = RemoteProjectRepositoryResolver.Resolve(
@@ -750,11 +744,7 @@ public static class LeaseEndpoints
                     })
                     .OrderBy(t => t.Order)
                     .ThenBy(t => t.CreatedAt);
-                var occupiedByProject = liveSnapshot
-                    .Where(task => !task.Fixture && task.State == TaskStates.Progress)
-                    .GroupBy(task => task.ProjectName, StringComparer.OrdinalIgnoreCase)
-                    .ToDictionary(group => group.Key, group => group.Count(),
-                        StringComparer.OrdinalIgnoreCase);
+                var occupiedByProject = ProjectExecutionPolicy.ProjectOccupancy(liveSnapshot);
 
                 TaskInfo? candidate = null;
                 QuotaAdmissionPlan? candidateQuotaPlan = null;
@@ -767,12 +757,11 @@ public static class LeaseEndpoints
                 foreach (var task in eligible)
                 {
                     var taskProjectSettings = settings.Get(task.ProjectName);
-                    var projectLimit = Math.Max(1, taskProjectSettings.MaxParallelism);
-                    var projectOccupied = occupiedByProject.GetValueOrDefault(task.ProjectName);
-                    if (!ProjectExecutionPolicy.HasProjectSlot(projectOccupied, projectLimit))
+                    var projectSlot = ProjectExecutionPolicy.EvaluateProjectSlot(
+                        occupiedByProject, task.ProjectName, taskProjectSettings);
+                    if (!projectSlot.HasSlot)
                     {
-                        RecordRejection(task, "project-concurrency-full",
-                            $"Project has {projectOccupied} active tasks and allows {projectLimit}.");
+                        RecordRejection(task, "project-concurrency-full", projectSlot.Detail);
                         continue;
                     }
                     var buildProfileGate = BuildProfileGate.Evaluate(taskProjectSettings.BuildProfile);

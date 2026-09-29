@@ -112,4 +112,32 @@ public sealed class ProjectExecutionPolicyTests
     public void ProjectSlots_RemainSequentialUntilParallelismIsConfigured(
         int occupied, int maximum, bool expected)
         => Assert.Equal(expected, ProjectExecutionPolicy.HasProjectSlot(occupied, maximum));
+
+    [Fact]
+    public void ProjectOccupancy_CountsLiveProgressOnlyAndExcludesTheLeasedTask()
+    {
+        TaskInfo Task(string id, string project, string state, bool fixture = false)
+            => new() { Id = id, ProjectName = project, State = state, Fixture = fixture };
+        var tasks = new[]
+        {
+            Task("a-1", "Alpha", TaskStates.Progress),
+            Task("a-2", "alpha", TaskStates.Progress),
+            Task("a-3", "Alpha", TaskStates.Ready),
+            Task("a-4", "Alpha", TaskStates.Progress, fixture: true),
+            Task("b-1", "Beta", TaskStates.Progress),
+        };
+
+        var all = ProjectExecutionPolicy.ProjectOccupancy(tasks);
+        var sequential = new ProjectSettings { ExecutionLocation = "runner-a" };
+        Assert.Equal(new ProjectSlotVerdict(false, 2, 1),
+            ProjectExecutionPolicy.EvaluateProjectSlot(all, "Alpha", sequential));
+        Assert.Equal(new ProjectSlotVerdict(true, 2, 3),
+            ProjectExecutionPolicy.EvaluateProjectSlot(all, "Alpha", sequential with { MaxParallelism = 3 }));
+        Assert.Equal(new ProjectSlotVerdict(true, 0, 1),
+            ProjectExecutionPolicy.EvaluateProjectSlot(all, "Gamma", sequential));
+
+        var excludingSelf = ProjectExecutionPolicy.ProjectOccupancy(tasks, excludingTaskId: "B-1");
+        Assert.Equal(new ProjectSlotVerdict(true, 0, 1),
+            ProjectExecutionPolicy.EvaluateProjectSlot(excludingSelf, "Beta", sequential));
+    }
 }
