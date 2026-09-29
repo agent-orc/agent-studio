@@ -91,7 +91,49 @@ public sealed record HostTelemetrySnapshotDto(
     string? TaskServerConnectionLastError = null,
     DateTime? TaskServerConnectionLastRecoveredAt = null,
     long? CliProcessesReaped = null,
-    ReviewPlaneBudgetDto? ReviewPlane = null);
+    ReviewPlaneBudgetDto? ReviewPlane = null,
+    SalvageStoreDto? SalvageStore = null);
+
+/// <summary>
+/// The coding host's salvage store (AGT-2999): the tarball directory the
+/// retention sweep owns, measured on the host, and the outcome of the last
+/// sweep over tarballs and this runner's <c>agent-studio/salvage/*</c> refs.
+/// </summary>
+public sealed record SalvageStoreDto(
+    DateTime ObservedAt,
+    string Path,
+    bool Exists,
+    long SizeBytes,
+    int EntryCount,
+    int TarballCount,
+    int UnrecognizedCount,
+    string? OldestEntry,
+    DateTime? OldestEntryAt,
+    string Mode,
+    int RetentionDays,
+    int MaxPerCard,
+    SalvageSweepDto? LastSweep = null);
+
+/// <summary>
+/// One retention sweep. <c>Eligible</c> counts what the policy selected;
+/// <c>Deleted</c> counts what was removed, which is zero in <c>report</c> mode.
+/// </summary>
+public sealed record SalvageSweepDto(
+    DateTime StartedAt,
+    DateTime CompletedAt,
+    string Mode,
+    string Status,
+    int TarballsInspected,
+    int TarballsEligible,
+    long TarballBytesEligible,
+    int TarballsDeleted,
+    long TarballBytesDeleted,
+    int RefsInspected,
+    int RefsEligible,
+    int RefsDeleted,
+    int ProtectedByActiveRun,
+    int Failures,
+    string? Error = null);
 
 /// <summary>
 /// Review-role capacity observed from the role unit's cgroup. The raw

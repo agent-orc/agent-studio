@@ -217,7 +217,8 @@ internal static class RunnerCapabilityProbe
 
     public static HostTelemetrySnapshotDto? Telemetry(
         HostTelemetrySample? sample,
-        ReviewPlaneBudgetDto? reviewPlane = null)
+        ReviewPlaneBudgetDto? reviewPlane = null,
+        SalvageStoreDto? salvageStore = null)
         => sample is null
             ? null
             : new HostTelemetrySnapshotDto(
@@ -244,7 +245,8 @@ internal static class RunnerCapabilityProbe
                 sample.TaskServerConnectionLastError,
                 sample.TaskServerConnectionLastRecoveredAt,
                 CliProcessReaper.ReapedCount,
-                reviewPlane);
+                reviewPlane,
+                salvageStore);
 
     private static string ConnectivityDetail(TaskServerConnectivitySnapshot? connectivity)
     {
