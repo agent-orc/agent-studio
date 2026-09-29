@@ -207,5 +207,7 @@ public static class ProjectExecutionPolicy
 /// </summary>
 public sealed record ProjectSlotVerdict(bool HasSlot, int Occupied, int? Limit)
 {
-    public string Detail => $"Project has {Occupied} active tasks and allows {Limit}.";
+    public string Detail => Limit is { } limit
+        ? $"Project has {Occupied} active tasks and allows {limit}."
+        : $"Project has {Occupied} active tasks and no project limit.";
 }

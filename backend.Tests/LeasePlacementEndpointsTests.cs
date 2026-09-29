@@ -178,7 +178,7 @@ public sealed class LeasePlacementEndpointsTests : IDisposable
         // ceiling, not the project limit, admits the second card.
         var second = await client.ClaimAsync(Claim("pinned-2"), CancellationToken.None);
         Assert.Equal(RClaimStatus.Claimed, second.Status);
-        Assert.Equal("LP-PIN-2", second.TaskKey);
+        Assert.Equal("LP-PIN-2", second.JobId);
     }
 
     [Fact]

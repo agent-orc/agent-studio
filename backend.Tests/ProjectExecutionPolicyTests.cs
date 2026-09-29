@@ -149,7 +149,8 @@ public sealed class ProjectExecutionPolicyTests
         var occupancy = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase) { ["Alpha"] = 3 };
         var pinned = new ProjectSettings { ExecutionLocation = location, MaxParallelism = 1 };
 
-        Assert.Equal(new ProjectSlotVerdict(true, 3, null),
-            ProjectExecutionPolicy.EvaluateProjectSlot(occupancy, "Alpha", pinned));
+        var verdict = ProjectExecutionPolicy.EvaluateProjectSlot(occupancy, "Alpha", pinned);
+        Assert.Equal(new ProjectSlotVerdict(true, 3, null), verdict);
+        Assert.Equal("Project has 3 active tasks and no project limit.", verdict.Detail);
     }
 }
