@@ -17,10 +17,11 @@ namespace AgentStudio.Tests;
 /// The connector negative-test matrix (gate 4 of
 /// docs/operations/remote-task-server-local-studio.md) against a real Task
 /// Server process in bearer mode. The connector runs in-process with its
-/// production transport and, on Linux, its production owner-only credential
-/// file. Every row is written to connector-negative-matrix.md/.json in the
-/// deployment regression scenario report directory, so the release evidence
-/// bundle carries it next to the scenario report.
+/// production transport and its production credential source: the owner-only
+/// credential file on Linux, the Windows Credential Manager on Windows. Every
+/// row is written to connector-negative-matrix.md/.json in the deployment
+/// regression scenario report directory, so the release evidence bundle
+/// carries it next to the scenario report.
 /// </summary>
 [Collection(WebApplicationFactorySerialCollection.Name)]
 public sealed class ConnectorNegativeMatrixTests
@@ -49,9 +50,9 @@ public sealed class ConnectorNegativeMatrixTests
             "--TaskServer:DataDirectory", Path.Combine(work.Path, "data"));
         await ProcessWaiters.WaitForHttpAsync(serverUrl + "/readyz", server);
 
-        var credential = new CredentialStore(Path.Combine(work.Path, "studio-connector.credential"));
+        using var credential = new CredentialStore(Path.Combine(work.Path, "studio-connector.credential"));
         credential.Write(studioToken);
-        var matrix = new MatrixReport(serverUrl);
+        var matrix = new MatrixReport(serverUrl, credential.Description);
 
         using (var direct = new HttpClient { BaseAddress = new Uri(serverUrl) })
         {
@@ -153,16 +154,19 @@ public sealed class ConnectorNegativeMatrixTests
         Assert.True(matrix.Passed, $"Connector negative matrix failed; see {markdown} and {json}.{Environment.NewLine}{matrix.Failures}");
     }
 
-    private static ConnectorTestSetup Setup(string serverUrl, CredentialStore credential) => new(
-        Credentials: credential.Source,
-        Settings: new Dictionary<string, string?>
+    private static ConnectorTestSetup Setup(string serverUrl, CredentialStore credential)
+    {
+        var settings = new Dictionary<string, string?>
         {
             ["Connector:Upstream:Mode"] = "local",
             ["Connector:Upstream:BaseUrl"] = serverUrl,
             ["Connector:Upstream:MaskedName"] = "matrix-task-server",
             ["Connector:CredentialFile"] = credential.Path,
             ["Connector:CredentialRefreshSeconds"] = "0",
-        });
+        };
+        if (credential.Target is not null) settings["Connector:CredentialTarget"] = credential.Target;
+        return new ConnectorTestSetup(Credentials: credential.Source, Settings: settings);
+    }
 
     private static string RepositoryRoot([CallerFilePath] string sourceFile = "")
     {
@@ -177,33 +181,69 @@ public sealed class ConnectorNegativeMatrixTests
     }
 
     /// <summary>
-    /// The operator's credential store for the connector under test: the
-    /// production owner-only file on Linux and macOS. Windows CI has no
-    /// writable Credential Manager entry for the test user, so there the same
-    /// rotations go through an in-memory source.
+    /// The operator's credential store for the connector under test, read by
+    /// the production <see cref="ConnectorCredentialSource"/>: the owner-only
+    /// file on Linux and macOS, and a real Windows Credential Manager entry on
+    /// Windows. Only a Windows logon session without a writable vault (some
+    /// service accounts) falls back to an in-memory source, and the report
+    /// names the store that ran.
     /// </summary>
-    private sealed class CredentialStore(string path)
+    private sealed class CredentialStore : IDisposable
     {
-        private readonly MutableCredentialSource? _windows = OperatingSystem.IsWindows() ? new MutableCredentialSource(null) : null;
+        private readonly MutableCredentialSource? _fallback;
 
-        public string Path { get; } = path;
-        public IConnectorCredentialSource? Source => _windows;
+        public CredentialStore(string path)
+        {
+            Path = path;
+            if (!OperatingSystem.IsWindows())
+            {
+                Description = "owner-only file (0600), production source";
+                return;
+            }
+            Target = WindowsCredentialManager.NewTestTarget();
+            if (WindowsCredentialManager.TryWrite(Target, "probe", out var error))
+            {
+                WindowsCredentialManager.Delete(Target);
+                Description = "Windows Credential Manager generic credential, production source";
+                return;
+            }
+            Target = null;
+            _fallback = new MutableCredentialSource(null);
+            Description = $"in-memory (this Windows logon session has no writable Credential Manager vault, Win32 error {error})";
+        }
+
+        public string Path { get; }
+        public string? Target { get; }
+        public string Description { get; }
+        public IConnectorCredentialSource? Source => _fallback;
 
         public void Write(string value)
         {
-            if (_windows is not null)
+            if (_fallback is not null)
             {
-                _windows.Rotate(value);
-                return;
+                _fallback.Rotate(value);
             }
-            File.WriteAllText(Path, value);
-            File.SetUnixFileMode(Path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            else if (OperatingSystem.IsWindows())
+            {
+                Assert.True(WindowsCredentialManager.TryWrite(Target!, value, out var error), $"CredWrite failed (Win32 error {error}).");
+            }
+            else
+            {
+                File.WriteAllText(Path, value);
+                File.SetUnixFileMode(Path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            }
         }
 
         public void Remove()
         {
-            if (_windows is not null) _windows.Rotate(null);
+            if (_fallback is not null) _fallback.Rotate(null);
+            else if (OperatingSystem.IsWindows()) WindowsCredentialManager.Delete(Target!);
             else File.Delete(Path);
+        }
+
+        public void Dispose()
+        {
+            if (Target is not null) WindowsCredentialManager.Delete(Target);
         }
     }
 
@@ -221,7 +261,7 @@ public sealed class ConnectorNegativeMatrixTests
 
     private sealed record MatrixRow(string Category, string Probe, string Expected, string Observed, bool Passed);
 
-    private sealed class MatrixReport(string serverUrl)
+    private sealed class MatrixReport(string serverUrl, string credentialStore)
     {
         private readonly List<MatrixRow> _rows = [];
 
@@ -285,7 +325,7 @@ public sealed class ConnectorNegativeMatrixTests
                 .AppendLine("# Connector negative-test matrix")
                 .AppendLine()
                 .AppendLine($"Generated {DateTimeOffset.UtcNow:yyyy-MM-ddTHH:mm:ssZ} by `ConnectorNegativeMatrixTests` against a real `task-server.dll` in bearer mode at {serverUrl}.")
-                .AppendLine($"Connector {ConnectorUpstreamTransport.ConnectorVersion}, /api/v1 protocol {TaskServerProtocol.MinimumSupported}-{TaskServerProtocol.MaximumSupported}, Studio hub protocol {TaskServerHubProtocol.MinimumSupported}-{TaskServerHubProtocol.MaximumSupported}. Credential store: {(OperatingSystem.IsWindows() ? "in-memory (Windows CI)" : "owner-only file (0600)")}.")
+                .AppendLine($"Connector {ConnectorUpstreamTransport.ConnectorVersion}, /api/v1 protocol {TaskServerProtocol.MinimumSupported}-{TaskServerProtocol.MaximumSupported}, Studio hub protocol {TaskServerHubProtocol.MinimumSupported}-{TaskServerHubProtocol.MaximumSupported}. Credential store: {credentialStore}.")
                 .AppendLine()
                 .AppendLine($"Result: **{(Passed ? "Passed" : "Failed")}** ({_rows.Count(row => row.Passed)}/{_rows.Count} rows).")
                 .AppendLine()
@@ -295,7 +335,7 @@ public sealed class ConnectorNegativeMatrixTests
                 markdown.AppendLine($"| {row.Category} | {Cell(row.Probe)} | {Cell(row.Expected)} | {Cell(row.Observed)} | {(row.Passed ? "Passed" : "Failed")} |");
             File.WriteAllText(markdownPath, markdown.ToString());
             File.WriteAllText(jsonPath, JsonSerializer.Serialize(
-                new { passed = Passed, generatedAtUtc = DateTimeOffset.UtcNow, rows = _rows },
+                new { passed = Passed, generatedAtUtc = DateTimeOffset.UtcNow, credentialStore, rows = _rows },
                 new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
             return (markdownPath, jsonPath);
         }

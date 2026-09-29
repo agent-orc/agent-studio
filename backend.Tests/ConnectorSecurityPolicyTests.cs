@@ -225,6 +225,51 @@ public sealed class ConnectorSecurityPolicyTests
         }
     }
 
+    [SkippableFact]
+    public void Windows_credential_manager_entry_is_read_and_rotated_without_restart()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(), "Windows Credential Manager is the native Windows credential store.");
+
+        var target = WindowsCredentialManager.NewTestTarget();
+        var options = ConnectorProfileTests.TestOptions() with { CredentialTarget = target };
+        var source = new ConnectorCredentialSource();
+        try
+        {
+            var missing = source.Load(options);
+            Assert.Equal(ConnectorCredentialFailureCodes.Unavailable, missing.FailureCode);
+            Assert.Contains("set-studio-credential.ps1", missing.FailureMessage, StringComparison.Ordinal);
+
+            var writable = WindowsCredentialManager.TryWrite(target, "wincred-v1", out var error);
+            Skip.IfNot(writable, $"This logon session has no writable Credential Manager vault (Win32 error {error}).");
+
+            var time = new FakeTimeProvider(DateTimeOffset.Parse("2026-09-29T08:00:00Z"));
+            var provider = new ConnectorCredentialProvider(
+                options with { CredentialRefreshInterval = TimeSpan.FromSeconds(5) },
+                source,
+                time);
+            var first = provider.CurrentState();
+            Assert.Equal("wincred-v1", first.Result.Credential!.Bearer);
+
+            Assert.True(WindowsCredentialManager.TryWrite(target, "wincred-v2", out error), $"Win32 error {error}");
+            Assert.Equal("wincred-v1", provider.Current().Credential!.Bearer);
+            time.Advance(TimeSpan.FromSeconds(5));
+            var rotated = provider.CurrentState();
+            Assert.Equal("wincred-v2", rotated.Result.Credential!.Bearer);
+            Assert.Equal(first.Revision + 1, rotated.Revision);
+
+            WindowsCredentialManager.Delete(target);
+            provider.Invalidate();
+            var removed = provider.Current();
+            Assert.Null(removed.Credential);
+            Assert.Equal(ConnectorCredentialFailureCodes.Unavailable, removed.FailureCode);
+            Assert.DoesNotContain("wincred", removed.FailureMessage, StringComparison.Ordinal);
+        }
+        finally
+        {
+            WindowsCredentialManager.Delete(target);
+        }
+    }
+
     [Fact]
     public void Linux_native_source_reads_the_configured_file()
     {

@@ -527,6 +527,75 @@ public sealed class ConnectorProfileTests
     }
 
     [Fact]
+    public async Task Rotation_between_capture_and_attach_cannot_skip_the_new_credentials_handshake()
+    {
+        var options = TestOptions();
+        var source = new MutableCredentialSource("studio-secret");
+        var credentials = new ConnectorCredentialProvider(options, source, TimeProvider.System);
+        var transport = new RecordingTransport
+        {
+            // The Task Server no longer accepts the rotated value: only a handshake with it can reveal that.
+            Attach = (request, authorization) => authorization == "Bearer rotated-secret"
+                ? (HttpStatusCode.Unauthorized, new { error = "unauthorized" })
+                : (HttpStatusCode.OK, RecordingTransport.MatchingServer(request)),
+        };
+        var manager = new ConnectorUpstreamManager(
+            options,
+            credentials,
+            transport,
+            new ConnectorSessionStore(),
+            ConnectorProtocolRange.Supported,
+            ConnectorRouteInventory.Load(),
+            TimeProvider.System);
+
+        // Request A captures the old credential; another request's refresh rotates it before A attaches.
+        var stale = manager.Capture();
+        source.Rotate("rotated-secret");
+        credentials.Invalidate();
+        Assert.Equal("rotated-secret", credentials.Current().Credential!.Bearer);
+
+        var staleAttach = await manager.EnsureAttachedAsync(stale, default);
+        Assert.True(staleAttach.Ready);
+        Assert.Equal(["Bearer studio-secret"], transport.AttachAuthorizations);
+
+        // The old credential's handshake must not vouch for the rotated credential.
+        var rotated = manager.Capture();
+        Assert.Equal("rotated-secret", rotated.Credential!.Bearer);
+        Assert.NotEqual(stale.CredentialRevision, rotated.CredentialRevision);
+        var rotatedAttach = await manager.EnsureAttachedAsync(rotated, default);
+        Assert.False(rotatedAttach.Ready);
+        Assert.Equal(ConnectorAttachFailureCodes.CredentialRejected, rotatedAttach.FailureCode);
+        Assert.Equal(["Bearer studio-secret", "Bearer rotated-secret"], transport.AttachAuthorizations);
+
+        // Once the Task Server accepts the rotated value, its own proven handshake is reused.
+        transport.Attach = (request, _) => (HttpStatusCode.OK, RecordingTransport.MatchingServer(request));
+        manager.InvalidateAttachment();
+        Assert.True((await manager.EnsureAttachedAsync(manager.Capture(), default)).Ready);
+        Assert.True((await manager.EnsureAttachedAsync(manager.Capture(), default)).Ready);
+        Assert.Equal(
+            ["Bearer studio-secret", "Bearer rotated-secret", "Bearer rotated-secret"],
+            transport.AttachAuthorizations);
+    }
+
+    [Fact]
+    public void Credential_state_pairs_each_value_with_the_revision_it_was_read_under()
+    {
+        var source = new MutableCredentialSource("v1");
+        var credentials = new ConnectorCredentialProvider(TestOptions(), source, TimeProvider.System);
+
+        var first = credentials.CurrentState();
+        source.Rotate("v2");
+        credentials.Invalidate();
+        var second = credentials.CurrentState();
+        credentials.Invalidate();
+        var unchanged = credentials.CurrentState();
+
+        Assert.Equal(("v1", 1L), (first.Result.Credential!.Bearer, first.Revision));
+        Assert.Equal(("v2", 2L), (second.Result.Credential!.Bearer, second.Revision));
+        Assert.Equal(second.Revision, unchanged.Revision);
+    }
+
+    [Fact]
     public async Task Health_separates_liveness_from_redacted_upstream_readiness()
     {
         var transport = new RecordingTransport();

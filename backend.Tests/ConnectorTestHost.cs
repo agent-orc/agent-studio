@@ -2,6 +2,7 @@ using System.Collections;
 using System.Net;
 using System.Net.Http.Json;
 using System.Net.WebSockets;
+using System.Runtime.InteropServices;
 using AgentStudio.Connector;
 using AgentStudio.TaskServer.Contracts;
 using Microsoft.AspNetCore.Hosting;
@@ -231,6 +232,77 @@ internal sealed class MutableCredentialSource(string? bearer) : IConnectorCreden
         return bearer is null
             ? new ConnectorCredentialLoadResult(null, ConnectorCredentialFailureCodes.Unavailable, "No Studio credential is stored.")
             : new ConnectorCredentialLoadResult(new ConnectorCredential(bearer), null);
+    }
+}
+
+/// <summary>
+/// Writes real generic credentials into the Windows Credential Manager the
+/// way deploy/windows/studio-connector/set-studio-credential.ps1 does (UTF-16
+/// blob, CRED_TYPE_GENERIC), so tests read them back through the production
+/// <see cref="ConnectorCredentialSource"/>. Entries are session-scoped and the
+/// caller deletes them; a logon session without a credential vault (some
+/// service accounts) reports its Win32 error instead of throwing.
+/// </summary>
+internal static class WindowsCredentialManager
+{
+    private const int GenericType = 1;
+    private const int PersistSession = 1;
+
+    public static string NewTestTarget() => $"{ConnectorOptions.CredentialTargetPrefix}test-{Guid.NewGuid():N}";
+
+    public static bool TryWrite(string target, string secret, out int win32Error)
+    {
+        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
+        var blob = Marshal.StringToHGlobalUni(secret);
+        try
+        {
+            var credential = new NativeCredential
+            {
+                Type = GenericType,
+                TargetName = target,
+                CredentialBlobSize = (uint)(secret.Length * sizeof(char)),
+                CredentialBlob = blob,
+                Persist = PersistSession,
+                UserName = "studio-connector-test",
+            };
+            var written = CredWrite(ref credential, 0);
+            win32Error = written ? 0 : Marshal.GetLastWin32Error();
+            return written;
+        }
+        finally
+        {
+            Marshal.ZeroFreeGlobalAllocUnicode(blob);
+        }
+    }
+
+    public static void Delete(string target)
+    {
+        if (OperatingSystem.IsWindows()) CredDelete(target, GenericType, 0);
+    }
+
+    [DllImport("advapi32.dll", EntryPoint = "CredWriteW", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CredWrite(ref NativeCredential credential, uint flags);
+
+    [DllImport("advapi32.dll", EntryPoint = "CredDeleteW", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CredDelete(string target, int type, int flags);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct NativeCredential
+    {
+        public uint Flags;
+        public uint Type;
+        public string TargetName;
+        public string? Comment;
+        public System.Runtime.InteropServices.ComTypes.FILETIME LastWritten;
+        public uint CredentialBlobSize;
+        public IntPtr CredentialBlob;
+        public uint Persist;
+        public uint AttributeCount;
+        public IntPtr Attributes;
+        public string? TargetAlias;
+        public string? UserName;
     }
 }
 

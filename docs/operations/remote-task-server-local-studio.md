@@ -305,7 +305,10 @@ production evidence must be attached before cutover:
      the credential. The connector re-reads the store every
      `Connector:CredentialRefreshSeconds` (default 5) and immediately after an
      upstream 401. A changed value is proven by a fresh attach before use, so
-     overlap-and-prove rotation needs no restart.
+     overlap-and-prove rotation needs no restart. Each request snapshot carries
+     the credential together with the revision it was read under, and the
+     attach cache is keyed by that pair, so a handshake made with the old
+     value can never vouch for a value rotated in between.
    - **Origin and CSRF.** Browser requests are accepted only from the loopback
      Studio origins `http://localhost:4011` and `http://[::1]:4011`, or from
      the validated loopback list in `Connector:StudioOrigins`. Mutations and

@@ -201,6 +201,13 @@ public sealed class ConnectorCredentialSource : IConnectorCredentialSource
 }
 
 /// <summary>
+/// One credential read paired with the revision it was stored under. The pair
+/// is published as a single object so a reader can never combine one read's
+/// credential with another read's revision.
+/// </summary>
+public sealed record ConnectorCredentialState(ConnectorCredentialLoadResult Result, long Revision);
+
+/// <summary>
 /// Rotation without restart: the connector re-reads its credential store at
 /// most once per <see cref="ConnectorOptions.CredentialRefreshInterval"/>, and
 /// immediately after the Task Server rejects the current credential. A changed
@@ -214,27 +221,33 @@ public sealed class ConnectorCredentialProvider(
 {
     private readonly object _gate = new();
     private CachedCredential? _cached;
-    private long _revision;
 
-    public long Revision => Interlocked.Read(ref _revision);
+    public long Revision => Volatile.Read(ref _cached)?.State.Revision ?? 0;
 
-    public ConnectorCredentialLoadResult Current()
+    public ConnectorCredentialLoadResult Current() => CurrentState().Result;
+
+    /// <summary>The current credential together with its revision, read atomically.</summary>
+    public ConnectorCredentialState CurrentState()
     {
         var cached = Volatile.Read(ref _cached);
         if (cached is not null && time.GetUtcNow() - cached.LoadedAtUtc < options.CredentialRefreshInterval)
-            return cached.Result;
+            return cached.State;
 
         lock (_gate)
         {
             cached = _cached;
             var now = time.GetUtcNow();
             if (cached is not null && now - cached.LoadedAtUtc < options.CredentialRefreshInterval)
-                return cached.Result;
+                return cached.State;
             var loaded = source.Load(options);
-            if (cached is null || !Equals(cached.Result.Credential, loaded.Credential))
-                Interlocked.Increment(ref _revision);
-            Volatile.Write(ref _cached, new CachedCredential(loaded, now));
-            return loaded;
+            var revision = cached is null
+                ? 1
+                : Equals(cached.State.Result.Credential, loaded.Credential)
+                    ? cached.State.Revision
+                    : cached.State.Revision + 1;
+            var state = new ConnectorCredentialState(loaded, revision);
+            Volatile.Write(ref _cached, new CachedCredential(state, now));
+            return state;
         }
     }
 
@@ -248,5 +261,5 @@ public sealed class ConnectorCredentialProvider(
         }
     }
 
-    private sealed record CachedCredential(ConnectorCredentialLoadResult Result, DateTimeOffset LoadedAtUtc);
+    private sealed record CachedCredential(ConnectorCredentialState State, DateTimeOffset LoadedAtUtc);
 }

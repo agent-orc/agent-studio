@@ -9,11 +9,18 @@ using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Connector;
 
+/// <summary>
+/// One upstream as a request sees it. <see cref="CredentialRevision"/> is the
+/// provider revision <see cref="Credential"/> was read under; the attach cache
+/// is keyed by it, so a successful handshake only vouches for the exact
+/// credential that performed it.
+/// </summary>
 public sealed record ConnectorUpstreamSnapshot(
     string Mode,
     Uri BaseUri,
     string? TlsCertificateSha256,
     ConnectorCredential? Credential,
+    long CredentialRevision,
     int MinimumProtocol,
     int MaximumProtocol,
     long Generation,
@@ -196,11 +203,13 @@ public sealed class ConnectorUpstreamManager
         _protocols = protocols;
         _time = time;
         _expectedHubPath = inventory.TaskServerOperations.Single(operation => operation.Method == "WS").TargetRoute;
+        var credential = credentials.CurrentState();
         _current = new ConnectorUpstreamSnapshot(
             options.UpstreamMode,
             options.UpstreamBaseUri,
             options.TlsCertificateSha256,
-            credentials.Current().Credential,
+            credential.Result.Credential,
+            credential.Revision,
             protocols.MinimumApi,
             protocols.MaximumApi,
             options.Generation,
@@ -209,17 +218,21 @@ public sealed class ConnectorUpstreamManager
 
     /// <summary>
     /// The current upstream with the current credential. A rotated credential
-    /// replaces the snapshot's credential in place; the upstream itself changes
-    /// only through <see cref="TrySwitchAsync"/>.
+    /// replaces the snapshot's credential and its revision together; the
+    /// upstream itself changes only through <see cref="TrySwitchAsync"/>.
     /// </summary>
     public ConnectorUpstreamSnapshot Capture()
     {
         while (true)
         {
             var observed = Volatile.Read(ref _current);
-            var credential = _credentials.Current().Credential;
-            if (Equals(observed.Credential, credential)) return observed;
-            var refreshed = observed with { Credential = credential };
+            var credential = _credentials.CurrentState();
+            if (observed.CredentialRevision == credential.Revision) return observed;
+            var refreshed = observed with
+            {
+                Credential = credential.Result.Credential,
+                CredentialRevision = credential.Revision,
+            };
             if (ReferenceEquals(Interlocked.CompareExchange(ref _current, refreshed, observed), observed))
                 return refreshed;
         }
@@ -228,13 +241,16 @@ public sealed class ConnectorUpstreamManager
     /// <summary>
     /// The attach gate every forwarded request passes. A successful handshake
     /// is reused for <see cref="AttachedRecheckInterval"/> as long as neither
-    /// the upstream generation nor the credential changed.
+    /// the upstream generation nor the credential changed. The key comes from
+    /// the snapshot, never from the provider: a rotation between
+    /// <see cref="Capture"/> and this call must not file the old credential's
+    /// handshake under the new credential's revision.
     /// </summary>
     public async Task<ConnectorUpstreamProbe> EnsureAttachedAsync(
         ConnectorUpstreamSnapshot snapshot,
         CancellationToken cancellationToken)
     {
-        var key = new AttachmentKey(snapshot.Generation, _credentials.Revision);
+        var key = AttachmentKey.For(snapshot);
         if (TryFreshAttachment(key) is { } fresh) return fresh;
 
         await _attachGate.WaitAsync(cancellationToken);
@@ -350,7 +366,7 @@ public sealed class ConnectorUpstreamManager
 
         Volatile.Write(
             ref _attachment,
-            new CachedAttachment(new AttachmentKey(candidate.Generation, _credentials.Revision), probe, _time.GetUtcNow()));
+            new CachedAttachment(AttachmentKey.For(candidate), probe, _time.GetUtcNow()));
         _sessions.RotateAll();
         return new ConnectorUpstreamSwitchResult(true, null, candidate.Generation);
     }
@@ -391,7 +407,11 @@ public sealed class ConnectorUpstreamManager
     private static ConnectorUpstreamProbe Refused(string code, string reason, string? serverVersion = null)
         => new(false, code, TaskServerProtocol.Current, null, reason, ServerVersion: serverVersion);
 
-    private readonly record struct AttachmentKey(long Generation, long CredentialRevision);
+    private readonly record struct AttachmentKey(long Generation, long CredentialRevision)
+    {
+        public static AttachmentKey For(ConnectorUpstreamSnapshot snapshot)
+            => new(snapshot.Generation, snapshot.CredentialRevision);
+    }
 
     private sealed record CachedAttachment(AttachmentKey Key, ConnectorUpstreamProbe Probe, DateTimeOffset CheckedAtUtc);
 }

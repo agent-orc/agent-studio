@@ -45,8 +45,12 @@ matrix (gate 4 of
 AGT-2984). It lives in `backend.Tests/ConnectorNegativeMatrixTests.cs`
 because the connector is the OrchestratorApi connector profile. It starts
 the built `task-server.dll` in bearer mode as a real process. The connector
-runs in-process with its production transport and, on Linux, its owner-only
-credential file. The matrix proves these outcomes:
+runs in-process with its production transport and its production credential
+source: the owner-only credential file on Linux, and a real Windows
+Credential Manager generic credential on Windows. Only a Windows logon
+session without a writable vault falls back to an in-memory source; the
+report's `credentialStore` field names the store that ran. The matrix proves
+these outcomes:
 
 - absent bearer: 401 from the Task Server, and `credential-unavailable`
   from the connector;
