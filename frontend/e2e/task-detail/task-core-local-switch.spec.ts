@@ -36,6 +36,12 @@ async function coreReadyCount(page: Page): Promise<number> {
   return page.evaluate(() => performance.getEntriesByName('task-core-ready').length);
 }
 
+/** Step toward the other task from the rich view's pager position, never off the lane end. */
+async function stepToOtherTask(page: Page): Promise<string> {
+  const position = (await page.getByTestId('studio-task-pager-position').innerText()).trim();
+  return position.startsWith('1 ') ? 'j' : 'k';
+}
+
 test('measures local end-to-end core switches against the legacy detail wait', async ({ page, devBackend }, testInfo) => {
   void devBackend;
   testInfo.setTimeout(300_000);
@@ -78,12 +84,22 @@ test('measures local end-to-end core switches against the legacy detail wait', a
     const box = await card.boundingBox();
     if (!box) throw new Error('Task card has no layout box');
     await card.click({ position: { x: box.width / 2, y: box.height - 4 }, force: true });
-    await page.waitForFunction(() => performance.getEntriesByName('task-core-ready').length > 0);
-    const coldOpenMs = await page.evaluate(() => {
+    // The first open also downloads the lazy task view. In a production
+    // build that chunk can land after the documents, so the first view may
+    // already be the rich pane; record which one painted first.
+    const firstView = await page.waitForFunction(() => {
+      if (performance.getEntriesByName('task-core-ready').length > 0) return 'core';
+      if (document.querySelector('[data-testid="studio-task"] app-job-detail')) {
+        performance.mark('local-open-rich');
+        return 'rich';
+      }
+      return null;
+    }, undefined, { polling: 'raf', timeout: 30_000 }).then(handle => handle.jsonValue());
+    const coldOpenMs = await page.evaluate(view => {
       const click = performance.getEntriesByName('local-open-click').at(-1)!;
-      const ready = performance.getEntriesByName('task-core-ready').at(-1)!;
+      const ready = performance.getEntriesByName(view === 'core' ? 'task-core-ready' : 'local-open-rich').at(-1)!;
       return ready.startTime - click.startTime;
-    });
+    }, firstView);
     await expect(page.getByTestId('studio-task')).toContainText(ids[0]);
 
     // Thirty keyboard switches between the two tasks. Each waits for the
@@ -91,10 +107,14 @@ test('measures local end-to-end core switches against the legacy detail wait', a
     const switches: number[] = [];
     for (let index = 0; index < 30; index++) {
       const before = await coreReadyCount(page);
+      const hash = await page.evaluate(() => location.hash);
+      const key = await stepToOtherTask(page);
       await page.evaluate(() => document.addEventListener('keydown',
         () => performance.mark('local-switch-start'), { capture: true, once: true }));
-      await page.keyboard.press(index % 2 === 0 ? 'j' : 'k');
-      await page.waitForFunction(count => performance.getEntriesByName('task-core-ready').length > count, before);
+      await page.keyboard.press(key);
+      // A core-ready mark counts only once the route names the other task.
+      await page.waitForFunction(({ count, previous }) => location.hash !== previous
+        && performance.getEntriesByName('task-core-ready').length > count, { count: before, previous: hash });
       switches.push(await page.evaluate(() => {
         const start = performance.getEntriesByName('local-switch-start').at(-1)!;
         const ready = performance.getEntriesByName('task-core-ready').at(-1)!;
@@ -132,7 +152,12 @@ test('measures local end-to-end core switches against the legacy detail wait', a
       await documentGate;
       await route.continue().catch(() => undefined);
     });
-    await page.keyboard.press('j');
+    // Keyboard switching is measured above. Browser Back returns to the
+    // previous task through the same core-first restore, independent of the
+    // lane order the background reads may have refreshed.
+    const shownHash = await page.evaluate(() => location.hash);
+    await page.goBack();
+    await expect.poll(() => page.evaluate(() => location.hash)).not.toBe(shownHash);
     await expect(page.getByTestId('task-core')).toBeVisible();
     for (const id of ['identity', 'state', 'pins', 'execution', 'status', 'prompt', 'timeline'])
       await expect(page.getByTestId(`task-core-${id}`)).toBeVisible();
@@ -160,6 +185,7 @@ test('measures local end-to-end core switches against the legacy detail wait', a
       environment: 'local Linux workstation, headless Chromium, ng serve proxy to the worktree dev backend on :5030; real transport, no API mocks',
       fixture: 'two human-review tasks with a 220 KB prompt in the fixture workspace; not the production-shaped snapshot of the dossier baseline',
       coldOpenMs: Math.round(coldOpenMs * 10) / 10,
+      coldOpenFirstView: firstView,
       switchToCoreReady: cachedSwitch,
       coreRead,
       legacyDetailRead: legacyRead,
