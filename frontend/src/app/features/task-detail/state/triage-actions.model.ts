@@ -13,7 +13,6 @@
 import { TaskState } from '../../../models/task.model';
 import type { TaskDeliveryClaimAnswer, TaskInfo } from '../../../models/task.model';
 import type { LandedState } from '../../../features/git';
-import { isMergedIntegrationStatus } from '../../../features/git';
 import { LANE_PRESENTATIONS, laneName } from '../../../models/lane-presentation';
 
 export type TriageActionIntent =
@@ -196,9 +195,10 @@ export function archiveIntegrationVerdict(info: TaskInfo): ArchiveIntegrationVer
     // AGT-2849: an unpublished merge is still a merge, so the archive guard
     // has its answer here instead of falling through to `unknown` and asking
     // the server for a containment answer that says the same thing.
-    case 'integrated':
-    case 'merged-locally': return 'integrated';
-    case 'no-branch': return 'nothing-to-integrate';
+    case 'integrated': return 'integrated';
+    case 'not-applicable': return 'nothing-to-integrate';
+    case 'merged-locally':
+    case 'no-branch': return 'not-integrated';
     case 'pending':
     case 'partial':
     case 'conflict-skipped': return 'not-integrated';
@@ -214,7 +214,7 @@ export function deliveryClaimVerdict(
   answer: Pick<TaskDeliveryClaimAnswer, 'integrated' | 'containmentStatus'>,
 ): ArchiveIntegrationVerdict {
   if (answer.integrated) return 'integrated';
-  if (answer.containmentStatus === 'no-branch') return 'nothing-to-integrate';
+  if (answer.containmentStatus === 'not-applicable') return 'nothing-to-integrate';
   return answer.containmentStatus === 'unknown' ? 'unknown' : 'not-integrated';
 }
 
@@ -243,9 +243,8 @@ export function primaryActionFor(state: string): TriageButton | null {
 
 /**
  * State-dependent presentation for the `5-human-review` acceptance primary.
- * The label always says "Accept" because acceptance only completes a delivery
- * already proven integrated. Git membership still determines the landed
- * status and whether acceptance can complete.
+ * Acceptance confirms the result already present on the target branch. A
+ * pending delivery is labelled "Await integration" and held by the header.
  */
 export interface MergeAcceptView {
   /** True once the work is on develop (or further); drives status + relabel. */
@@ -281,18 +280,19 @@ export function mergeAcceptViewFor(
   // results-only, or no-op outcome, even when its base is in the git graph.
   const hasTaskCommits = (info.commits?.length ?? 0) > 0 || !!info.commit;
   const mergeSha = shortMergeSha(info.integration?.sha);
-  // AGT-2849: merged-locally is landed for this view. Offering "Merge into
-  // Develop" for a delivery that is already merged would invite a second merge
-  // of work that only needs its push, which the push backstop owns.
-  const landed = isMergedIntegrationStatus(info.integration?.status);
+  // Only the published target branch proves that acceptance can proceed.
+  const landed = info.integration?.status === 'integrated';
 
   if (!hasTaskCommits) {
     return {
-      landed: false,
+      landed,
       landedState: 'on-branch-only',
-      acceptLabel: 'Accept',
+      acceptLabel: landed || info.integration?.status === 'not-applicable'
+        ? 'Accept' : 'Await integration',
       statusLabel: null,
-      statusTooltip: 'This task has no code changes to merge. Accept moves the card to Delivered.',
+      statusTooltip: info.integration?.status === 'not-applicable'
+        ? 'This delivery needs no integration. Accept moves the card to Delivered.'
+        : null,
     };
   }
 
@@ -300,7 +300,7 @@ export function mergeAcceptViewFor(
     return {
       landed: false,
       landedState: 'on-branch-only',
-      acceptLabel: 'Accept',
+      acceptLabel: 'Await integration',
       statusLabel: null,
       statusTooltip: null,
     };

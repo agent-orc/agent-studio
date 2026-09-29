@@ -49,6 +49,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 
 | Topic | Start here |
 |---|---|
+| Product installer for Windows and Linux | [operations/setup/install.md](../operations/setup/install.md) |
 | Contribution and style conventions for all agents | [contribution-and-style-guide.html](contribution-and-style-guide.html) |
 | Windows process spawn safety and repository guards | [operations/windows-process-spawn-safety.md](../operations/windows-process-spawn-safety.md) |
 | Runner | [domains/runner.md](../system/domains/runner.md) |
@@ -213,6 +214,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Concurrent review workers deadlock on one host-shared .NET build server (AGT-2831) | [common-problems/review-parallelism-shared-build-server/](../operations/common-problems/review-parallelism-shared-build-server/) |
 | Gate tests fail only on the Studio machine because the child inherits the Studio's listener (AGT-2840) | [common-problems/gate-child-inherits-studio-listener/](../operations/common-problems/gate-child-inherits-studio-listener/) |
 | Orchestrator drive-to-conclusion & CLI-crash resilience | [concepts/orchestrator-drive-to-conclusion.html](../concepts/orchestrator-drive-to-conclusion.html) |
+| Operations Server authority boundary, outbound agent protocol, Task Server permits, delivery gates (AGT-2907) | [contracts/operations-backchannel.md](../system/contracts/operations-backchannel.md) |
 | Task integration & worktree/merge workflow | [concepts/task-integration-and-merge-workflow.md](../concepts/task-integration-and-merge-workflow.md) |
 | Merge config analysis (parallelism coupling) | [concepts/task-integration-merge-config-analysis.html](../concepts/task-integration-merge-config-analysis.html) |
 | Auto-review reissue / evidence-gate analysis | [concepts/auto-review-evidence-gate-analysis.html](../concepts/auto-review-evidence-gate-analysis.html) |
