@@ -35,6 +35,14 @@ public sealed class IntegrationPushBackstopHostedService : BackgroundService
     public async Task<int> RunOnceAsync(CancellationToken ct = default)
     {
         var pushed = 0;
+        // Without an approval SHA the backstop publishes the integration line
+        // tip, which carries an unverified merge while a gate is running
+        // (AGT-2996). The next sweep picks the push up once the gate settled.
+        if (_runner.IsMergeGateBusy)
+        {
+            _logger.LogInformation("integration-push-backstop deferred: an integration gate is in flight");
+            return pushed;
+        }
         var accepted = _scanner.ScanAllAutomationJobsWithArchive()
             .Where(job => job.State is TaskStates.Completed or TaskStates.Archive)
             .Where(job => File.Exists(Path.Combine(job.FolderPath, PipelineExecutionLog.FileName)))

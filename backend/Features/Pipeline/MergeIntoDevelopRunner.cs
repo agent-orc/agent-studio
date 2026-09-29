@@ -305,7 +305,10 @@ public sealed class MergeIntoDevelopRunner
                     lineage = ImmediateIntegrationLineagePolicy.Decide(
                         branch,
                         developAvailable: true,
-                        mainIsAncestorOfDevelop: _git.IsAncestor(repoRoot, branch, "develop"));
+                        mainIsAncestorOfDevelop: _git.IsAncestor(
+                            repoRoot,
+                            _git.IntegrationLineRef(repoRoot, branch),
+                            _git.IntegrationLineRef(repoRoot, "develop")));
                 }
             }
             else
@@ -396,12 +399,12 @@ public sealed class MergeIntoDevelopRunner
                 && TryResolveDirectDelivery(
                     jobFolderPath,
                     developerRoot,
-                    branch,
+                    _git.IntegrationLineRef(developerRoot, branch),
                     out var directEvidence))
             {
                 result = MergeIntoIntegrationResult.Of(
                     MergeIntoIntegrationOutcome.AlreadyOnIntegrationBranch,
-                    mergedSha: _git.GetBranchTip(repoRoot, branch) ?? directEvidence[^1]) with
+                    mergedSha: _git.GetBranchTip(repoRoot, _git.IntegrationLineRef(repoRoot, branch)) ?? directEvidence[^1]) with
                 {
                     EvidenceShas = directEvidence,
                 };
@@ -447,19 +450,24 @@ public sealed class MergeIntoDevelopRunner
                 // push runs, the tip may carry a merge no gate approved.
                 approvedPushSha = !string.IsNullOrWhiteSpace(result.MergedSha)
                     ? result.MergedSha
-                    : _git.GetBranchTip(repoRoot, branch);
+                    : _git.GetBranchTip(repoRoot, _git.IntegrationLineRef(repoRoot, branch));
                 pushBranch = branch;
             }
-            if (pushBranch is not null)
-            {
-                MaybeEnqueueIntegrationPush(
+            if (pushBranch is not null
+                && !MaybeEnqueueIntegrationPush(
                     project,
                     jobId,
                     jobFolderPath,
                     watchPath,
                     pushBranch,
                     approvedPushSha,
-                    pipelineType);
+                    pipelineType)
+                && !string.IsNullOrWhiteSpace(approvedPushSha))
+            {
+                // AGT-2996: no push worker will publish this result (the push
+                // step is disabled, or no queue is wired), so nothing later can
+                // release it. The gate has passed; the checkout follows now.
+                ReleaseToDeveloperCheckout(developerRoot, pushBranch, approvedPushSha!);
             }
 
             return result;
@@ -587,7 +595,7 @@ public sealed class MergeIntoDevelopRunner
 
         var developSha = !string.IsNullOrWhiteSpace(developMerge.MergedSha)
             ? developMerge.MergedSha
-            : _git.GetBranchTip(repoRoot, workBranch);
+            : _git.GetBranchTip(repoRoot, _git.IntegrationLineRef(repoRoot, workBranch));
         if (string.IsNullOrWhiteSpace(developSha))
         {
             return new(
@@ -707,7 +715,7 @@ public sealed class MergeIntoDevelopRunner
             JobId = jobId,
             RepoRoot = developerRoot,
             IntegrationBranch = integrationBranch,
-            PreMergeTip = _git.GetBranchTip(repoRoot, integrationBranch)
+            PreMergeTip = _git.GetBranchTip(repoRoot, _git.IntegrationLineRef(repoRoot, integrationBranch))
                           ?? _git.GetBranchTip(repoRoot, "origin/" + integrationBranch),
             StartedAt = DateTimeOffset.UtcNow,
         });
@@ -730,7 +738,7 @@ public sealed class MergeIntoDevelopRunner
 
         var gatedSha = result.Outcome.IsFreshMerge()
             ? result.MergedSha
-            : _git.GetBranchTip(repoRoot, integrationBranch);
+            : _git.GetBranchTip(repoRoot, _git.IntegrationLineRef(repoRoot, integrationBranch));
         if (string.IsNullOrWhiteSpace(gatedSha))
         {
             IntegrationGateJournal.Clear(jobFolderPath);
@@ -1074,8 +1082,10 @@ public sealed class MergeIntoDevelopRunner
         string releaseBranch,
         CancellationToken ct)
     {
-        var sourceSha = _git.GetBranchTip(repoRoot, workBranch);
-        var targetSha = _git.GetBranchTip(repoRoot, releaseBranch);
+        var workLine = _git.IntegrationLineRef(repoRoot, workBranch);
+        var releaseLine = _git.IntegrationLineRef(repoRoot, releaseBranch);
+        var sourceSha = _git.GetBranchTip(repoRoot, workLine);
+        var targetSha = _git.GetBranchTip(repoRoot, releaseLine);
         if (string.IsNullOrWhiteSpace(sourceSha) || string.IsNullOrWhiteSpace(targetSha))
         {
             return (
@@ -1084,7 +1094,7 @@ public sealed class MergeIntoDevelopRunner
                     error: "Could not resolve the exact develop and main SHAs for immediate release integration."),
                 null);
         }
-        if (!_git.IsAncestor(repoRoot, releaseBranch, workBranch))
+        if (!_git.IsAncestor(repoRoot, releaseLine, workLine))
         {
             return (
                 MergeIntoIntegrationResult.Of(
@@ -1109,7 +1119,7 @@ public sealed class MergeIntoDevelopRunner
                 null);
         }
 
-        var changedPaths = _git.ChangedPathsAgainstMergeBase(repoRoot, releaseBranch, workBranch);
+        var changedPaths = _git.ChangedPathsAgainstMergeBase(repoRoot, releaseLine, workLine);
         BuildTestGateResult gate;
         if (DocsOnlyDeliveryPolicy.IsDocsOnly(changedPaths))
         {
@@ -1216,7 +1226,8 @@ public sealed class MergeIntoDevelopRunner
                     error: $"Task branch '{taskBranch}' does not exist."),
                 null);
         }
-        if (!_git.BranchExists(repoRoot, releaseBranch))
+        var releaseLine = _git.IntegrationLineRef(repoRoot, releaseBranch);
+        if (_git.GetBranchTip(repoRoot, releaseLine) is null)
         {
             return (
                 MergeIntoIntegrationResult.Of(
@@ -1224,7 +1235,7 @@ public sealed class MergeIntoDevelopRunner
                     error: $"Release branch '{releaseBranch}' does not exist."),
                 null);
         }
-        if (_git.IsAncestor(repoRoot, taskBranch, releaseBranch))
+        if (_git.IsAncestor(repoRoot, taskBranch, releaseLine))
         {
             return (
                 MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.AlreadyMerged),
@@ -1240,7 +1251,7 @@ public sealed class MergeIntoDevelopRunner
         }
 
         var sourceSha = _git.GetBranchTip(repoRoot, taskBranch);
-        var targetSha = _git.GetBranchTip(repoRoot, releaseBranch);
+        var targetSha = _git.GetBranchTip(repoRoot, releaseLine);
         if (string.IsNullOrWhiteSpace(sourceSha) || string.IsNullOrWhiteSpace(targetSha))
         {
             return (
@@ -1256,7 +1267,7 @@ public sealed class MergeIntoDevelopRunner
         // rebased-onto-main requirement and integrates through the same
         // conflict-checked merge the non-release path uses; a real conflict
         // still surfaces honestly. Unknown diffs stay on the strict path.
-        var changedPaths = _git.ChangedPathsAgainstMergeBase(repoRoot, releaseBranch, taskBranch);
+        var changedPaths = _git.ChangedPathsAgainstMergeBase(repoRoot, releaseLine, taskBranch);
         if (DocsOnlyDeliveryPolicy.IsDocsOnly(changedPaths))
         {
             var lightGate = new BuildTestGateResult(
@@ -1286,7 +1297,7 @@ public sealed class MergeIntoDevelopRunner
             return (docsMerge, lightGate);
         }
 
-        if (!_git.IsAncestor(repoRoot, releaseBranch, taskBranch))
+        if (!_git.IsAncestor(repoRoot, releaseLine, taskBranch))
         {
             return (
                 MergeIntoIntegrationResult.Of(
@@ -1355,19 +1366,22 @@ public sealed class MergeIntoDevelopRunner
     /// (the unit-test fixtures) - <see cref="Run"/> then stays merge-only and a
     /// test drives <see cref="PushIntegrationBranchAsync"/> directly. Never
     /// throws: the merge has already landed and the push is best-effort.
+    /// Returns whether a push worker is going to handle the result, which is
+    /// also what later releases it to the developer checkout. A closed queue
+    /// still counts: the restart backstop owns that push.
     /// </summary>
-    private void MaybeEnqueueIntegrationPush(
+    private bool MaybeEnqueueIntegrationPush(
         string project, string jobId, string jobFolderPath, string? watchPath, string integrationBranch,
         string? approvedSha,
         string pipelineType)
     {
-        if (_pushQueue == null) return;
+        if (_pushQueue == null) return false;
         if (!IntegrationPushEnabled(project, pipelineType))
         {
             _logger.LogInformation(
                 "merge-into-develop push disabled for project={Project} job={JobId}; leaving origin unchanged",
                 project, jobId);
-            return;
+            return false;
         }
 
         var enqueued = _pushQueue.Enqueue(new IntegrationPushRequest(
@@ -1380,6 +1394,27 @@ public sealed class MergeIntoDevelopRunner
             _logger.LogWarning(
                 "merge-into-develop push enqueue failed (queue closed) for project={Project} job={JobId}",
                 project, jobId);
+        return true;
+    }
+
+    /// <summary>
+    /// AGT-2996: moves the developer checkout's local branch (and, for a
+    /// release target with a develop line, develop as well) to a gated result
+    /// that no push worker will publish. Best-effort: the result stays on the
+    /// integration lane, so a checkout that cannot follow is only logged.
+    /// </summary>
+    private void ReleaseToDeveloperCheckout(string developerRoot, string branch, string approvedSha)
+    {
+        try
+        {
+            if (IsReleaseBranch(branch) && HasDevelopLine(developerRoot))
+                _git.ReleaseIntegrationBranchToCheckout(developerRoot, "develop", approvedSha);
+            _git.ReleaseIntegrationBranchToCheckout(developerRoot, branch, approvedSha);
+        }
+        catch (Exception ex)
+        {
+            SilentCatch.Note(ex, "MergeIntoDevelopRunner: releasing the result to the developer checkout is best-effort");
+        }
     }
 
     /// <summary>
@@ -1458,7 +1493,10 @@ public sealed class MergeIntoDevelopRunner
                 var decision = ImmediateIntegrationLineagePolicy.Decide(
                     integrationBranch,
                     developAvailable: true,
-                    mainIsAncestorOfDevelop: _git.IsAncestor(repoRoot, integrationBranch, "develop"));
+                    mainIsAncestorOfDevelop: _git.IsAncestor(
+                        repoRoot,
+                        _git.IntegrationLineRef(repoRoot, integrationBranch),
+                        _git.IntegrationLineRef(repoRoot, "develop")));
                 if (decision.Mode == ImmediateIntegrationLineageMode.Blocked)
                 {
                     var blocked = new GitPushResult(
@@ -1502,6 +1540,8 @@ public sealed class MergeIntoDevelopRunner
         var startedAt = DateTime.UtcNow;
         GitPushResult result;
         var environmentalRetries = 0;
+        string? releaseRoot = null;
+        string? releaseBranch = null;
         try
         {
             var repoRoot = _git.ResolveRepoRootForWatchPath(watchPath)
@@ -1513,6 +1553,8 @@ public sealed class MergeIntoDevelopRunner
             else
             {
                 var branch = _git.ResolveIntegrationBranch(repoRoot, integrationBranch);
+                releaseRoot = repoRoot;
+                releaseBranch = branch;
                 while (true)
                 {
                     result = await _git.PushIntegrationBranchAsync(repoRoot, branch, ct, approvedSha);
@@ -1550,6 +1592,19 @@ public sealed class MergeIntoDevelopRunner
         _logger.LogInformation(
             "merge-into-develop-push project={Project} job={JobId} branch={Branch} status={Status} retries={Retries}",
             project, jobId, integrationBranch, result.Status, environmentalRetries);
+        if (result.Success && releaseRoot is not null && !string.IsNullOrWhiteSpace(result.Sha))
+        {
+            // AGT-2996: the only point at which the developer checkout's local
+            // branch moves - after the gate passed and origin carries the result.
+            try
+            {
+                _git.ReleaseIntegrationBranchToCheckout(releaseRoot, releaseBranch!, result.Sha);
+            }
+            catch (Exception ex)
+            {
+                SilentCatch.Note(ex, "MergeIntoDevelopRunner: releasing the pushed result to the developer checkout is best-effort");
+            }
+        }
         try
         {
             if (!result.Success || recordSuccessfulStep)

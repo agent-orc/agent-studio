@@ -1146,9 +1146,11 @@ public sealed class TaskIntegrationStatusService
                 ? integrationRef["origin/".Length..]
                 : integrationRef;
 
+            // AGT-2996: a merge waiting for its push lives on the integration
+            // lane, not on the local branch; it is present locally all the same.
             var succeeded = _git.TryGetAncestorShaSet(
                 root,
-                [integrationBranch, "origin/" + integrationBranch],
+                [integrationBranch, "origin/" + integrationBranch, GitService.IntegrationLaneRef(integrationBranch)],
                 out var ancestors);
 
             var releaseSucceeded = _git.TryGetAncestorShaSet(

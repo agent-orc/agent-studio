@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 using Xunit;
@@ -1928,13 +1929,18 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
             "Fixture", "61", jobFolder, repo, "develop", CancellationToken.None);
 
         Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
-        var developAfter = RunGit(repo, "rev-parse develop").Out.Trim();
-        Assert.NotEqual(developBefore, developAfter);
-        Assert.Equal(developAfter, outcome.MergedSha);
-        Assert.Equal(developAfter, gateRunner.Request!.ExpectedSha);
-        Assert.Equal(0, RunGit(repo, "rev-parse --verify develop^2").Code); // merge commit stands
+        var laneAfter = RunGit(repo, $"rev-parse {GitService.IntegrationLaneRef("develop")}").Out.Trim();
+        Assert.NotEqual(developBefore, laneAfter);
+        Assert.Equal(laneAfter, outcome.MergedSha);
+        Assert.Equal(laneAfter, gateRunner.Request!.ExpectedSha);
+        Assert.Equal(0, RunGit(repo, $"rev-parse --verify {laneAfter}^2").Code); // merge commit stands
         Assert.True(queue.Reader.TryRead(out var queued), "a green gate merges and pushes as before");
         Assert.Equal("develop", queued!.IntegrationBranch);
+        // AGT-2996: the push worker has not run yet, so develop has not moved.
+        Assert.Equal(developBefore, RunGit(repo, "rev-parse develop").Out.Trim());
+        await runner.PushIntegrationBranchAsync(
+            "Fixture", "61", jobFolder, repo, "develop", CancellationToken.None, queued.ApprovedSha);
+        Assert.Equal(laneAfter, RunGit(repo, "rev-parse develop").Out.Trim());
 
         var step = ReadMergeStep(log, jobFolder);
         Assert.NotNull(step);
@@ -2047,7 +2053,7 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         // Convention instead of a settings switch: no build profile, no gate.
         Assert.Equal(0, gateRunner.Invocations);
         Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
-        Assert.Equal(0, RunGit(repo, "rev-parse --verify develop^2").Code);
+        Assert.Equal(0, RunGit(repo, $"rev-parse --verify {outcome.MergedSha}^2").Code);
         Assert.True(queue.Reader.TryRead(out _));
 
         var step = ReadMergeStep(log, jobFolder);
@@ -2212,46 +2218,258 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
     }
 
     [Fact]
-    public void Run_LocalDelivery_DivergedIntegrationBranch_ReportsHealingErrorInsteadOfMergingStale()
+    public void Run_LocalDelivery_DivergedIntegrationLane_ReportsHealingErrorInsteadOfMergingStale()
     {
-        // Local develop and origin/develop both moved on from main: a real
-        // divergence. The local task-branch path used to merge onto the stale
-        // local tip and report success; it must now say so and merge nothing.
-        var (repo, _) = SeedRepoWithOrigin("develop-diverged");
+        // The integration lane still carries a gated merge the push worker has
+        // not published, and origin/develop moved on underneath it: a real
+        // divergence. Merging onto either tip would silently drop the other's
+        // commits, so the lane says so and merges nothing.
+        var (repo, remote) = SeedRepoWithOrigin("develop-diverged");
         RunGit(repo, "checkout -q -b develop");
-        File.WriteAllText(Path.Combine(repo, "local.txt"), "local develop work");
-        Commit(repo, "chore: local develop work");
         RunGit(repo, "push -q -u origin develop");
-
-        // Rewrite origin/develop onto an unrelated commit -> histories diverge.
-        RunGit(repo, "checkout -q -b origin-side main");
-        File.WriteAllText(Path.Combine(repo, "remote.txt"), "remote develop work");
-        Commit(repo, "chore: remote develop work");
-        RunGit(repo, "push -q -f origin origin-side:develop");
-
-        RunGit(repo, "checkout -q develop");
-        RunGit(repo, "checkout -q -b task/64");
+        RunGit(repo, "checkout -q -b task/64a");
+        File.WriteAllText(Path.Combine(repo, "first.txt"), "first delivery");
+        Commit(repo, "feat: first delivery");
+        RunGit(repo, "checkout -q -b task/64 develop");
         File.WriteAllText(Path.Combine(repo, "task.txt"), "task work");
         Commit(repo, "feat: task work");
         RunGit(repo, "checkout -q develop");
         var developBefore = RunGit(repo, "rev-parse develop").Out.Trim();
 
-        var (git, log) = Build(repo);
-        var jobFolder = BeginRun(log, repo, jobId: "64");
-        var runner = new MergeIntoDevelopRunner(git, log, NullLogger<MergeIntoDevelopRunner>.Instance);
+        var (git, log, settings) = BuildWithSettings(repo);
+        var queue = new IntegrationPushQueue();
+        var runner = new MergeIntoDevelopRunner(
+            git, log, NullLogger<MergeIntoDevelopRunner>.Instance, pushQueue: queue, projectSettings: settings);
+        var first = runner.Run("Fixture", "64a", BeginRun(log, repo, jobId: "64a"), repo, "develop");
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, first.Outcome);
+        var lane = GitService.IntegrationLaneRef("develop");
+        Assert.Equal(first.MergedSha, RunGit(repo, $"rev-parse {lane}").Out.Trim());
 
+        // Someone publishes straight to origin/develop before that push ran.
+        RunGit(repo, "checkout -q -b origin-side develop");
+        File.WriteAllText(Path.Combine(repo, "remote.txt"), "remote develop work");
+        Commit(repo, "chore: remote develop work");
+        RunGit(repo, "push -q origin origin-side:develop");
+        RunGit(repo, "checkout -q develop");
+        var remoteTip = RemoteSha(remote, "develop");
+
+        var jobFolder = BeginRun(log, repo, jobId: "64");
         var outcome = runner.Run("Fixture", "64", jobFolder, repo, "develop");
 
         Assert.Equal(MergeIntoIntegrationOutcome.Error, outcome.Outcome);
         Assert.Contains(
             "Integration branch 'develop' diverged from origin - heal or recreate it via project settings before accepting deliveries.",
             outcome.Error);
+        Assert.Contains(lane, outcome.Error);
+        Assert.Equal(first.MergedSha, RunGit(repo, $"rev-parse {lane}").Out.Trim());
+        Assert.Equal(remoteTip, RemoteSha(remote, "develop"));
         Assert.Equal(developBefore, RunGit(repo, "rev-parse develop").Out.Trim());
 
         var step = ReadMergeStep(log, jobFolder);
         Assert.NotNull(step);
         Assert.Equal(PipelineStepStatus.Failed, step!.Status);
         Assert.Equal("error", step.Verdict);
+    }
+
+    /// <summary>
+    /// AGT-2996: commits someone made on the developer checkout's develop are
+    /// not integration's business. The lane follows origin, so a local develop
+    /// that diverged from origin no longer blocks deliveries, and it is neither
+    /// merged into the delivery line nor moved.
+    /// </summary>
+    [Fact]
+    public void Run_DeveloperDevelopDivergedFromOrigin_IntegratesOnThePublishedLine()
+    {
+        var (repo, remote) = SeedRepoWithOrigin("developer-develop-diverged");
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "push -q -u origin develop");
+        RunGit(repo, "checkout -q -b task/65");
+        File.WriteAllText(Path.Combine(repo, "task.txt"), "task work");
+        Commit(repo, "feat: task work");
+
+        RunGit(repo, "checkout -q -b origin-side develop");
+        File.WriteAllText(Path.Combine(repo, "remote.txt"), "remote develop work");
+        Commit(repo, "chore: remote develop work");
+        RunGit(repo, "push -q origin origin-side:develop");
+        var remoteTip = RemoteSha(remote, "develop");
+
+        RunGit(repo, "checkout -q develop");
+        File.WriteAllText(Path.Combine(repo, "local.txt"), "local develop work");
+        Commit(repo, "chore: local develop work");
+        var developBefore = RunGit(repo, "rev-parse develop").Out.Trim();
+
+        var (git, log, settings) = BuildWithSettings(repo);
+        var queue = new IntegrationPushQueue();
+        var jobFolder = BeginRun(log, repo, jobId: "65");
+        var runner = new MergeIntoDevelopRunner(
+            git, log, NullLogger<MergeIntoDevelopRunner>.Instance, pushQueue: queue, projectSettings: settings);
+
+        var outcome = runner.Run("Fixture", "65", jobFolder, repo, "develop");
+
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
+        Assert.Equal(remoteTip, RunGit(repo, $"rev-parse {outcome.MergedSha}^1").Out.Trim());
+        Assert.NotEqual(0, RunGit(repo, $"merge-base --is-ancestor {developBefore} {outcome.MergedSha}").Code);
+        Assert.Equal(developBefore, RunGit(repo, "rev-parse develop").Out.Trim());
+    }
+
+    // ---- AGT-2996: the developer checkout's develop follows published results only ----
+
+    /// <summary>
+    /// Contract: a failing gate leaves the developer checkout's develop at the
+    /// pre-merge tip - not only after the rollback, but for the whole gate
+    /// window, which is when a push from that checkout used to publish the
+    /// un-gated merge.
+    /// </summary>
+    [Fact]
+    public async Task Contract_RedGate_DeveloperCheckoutDevelopStaysAtThePreMergeTip()
+    {
+        var (repo, remote) = SeedDevelopWithOriginAndTask("contract-red", "task/2996-red");
+        var developBefore = RunGit(repo, "rev-parse refs/heads/develop").Out.Trim();
+        string? developDuringGate = null;
+
+        var (git, log, settings) = BuildWithSettings(repo);
+        settings.SetBuildProfile("Fixture", new BuildProfile { BuildCmds = ["cd ."] });
+        var gateRunner = new CapturingBuildTestGateRunner(
+            new BuildTestGateResult(
+                BuildTestGateVerdict.Fail, 1, 20, "CS0103: the merge does not compile",
+                "backend build exit 1", true, false),
+            duringRun: () => developDuringGate = RunGit(repo, "rev-parse refs/heads/develop").Out.Trim());
+        var queue = new IntegrationPushQueue();
+        var jobFolder = BeginRun(log, repo, jobId: "2996-red");
+        var runner = new MergeIntoDevelopRunner(
+            git, log, NullLogger<MergeIntoDevelopRunner>.Instance,
+            pushQueue: queue,
+            projectSettings: settings,
+            preDevelopBuildGate: new PreDevelopBuildGate(gateRunner),
+            preDevelopTimeout: TimeSpan.FromSeconds(30));
+
+        var outcome = await runner.RunAsync(
+            "Fixture", "2996-red", jobFolder, repo, "develop", CancellationToken.None);
+
+        Assert.Equal(MergeIntoIntegrationOutcome.GateFailed, outcome.Outcome);
+        Assert.NotEqual(developBefore, gateRunner.Request!.ExpectedSha);
+        Assert.Equal(developBefore, developDuringGate);
+        Assert.Equal(developBefore, RunGit(repo, "rev-parse refs/heads/develop").Out.Trim());
+        Assert.Equal(developBefore, RemoteSha(remote, "develop"));
+        Assert.Equal(
+            developBefore,
+            RunGit(repo, $"rev-parse {GitService.IntegrationLaneRef("develop")}").Out.Trim());
+        Assert.False(File.Exists(Path.Combine(repo, "task.txt")));
+        Assert.Equal(string.Empty, RunGit(repo, "status --porcelain").Out.Trim());
+        Assert.False(queue.Reader.TryRead(out _), "a gate-blocked merge must never enqueue a push");
+    }
+
+    /// <summary>
+    /// Contract: a passing gate advances the developer checkout's develop to
+    /// the pushed SHA, and only once the integration push worker has published
+    /// it. Between the green gate and the push, develop is still untouched.
+    /// </summary>
+    [Fact]
+    public async Task Contract_GreenGate_DeveloperCheckoutDevelopAdvancesToThePushedShaAfterThePush()
+    {
+        var (repo, remote) = SeedDevelopWithOriginAndTask("contract-green", "task/2996-green");
+        var developBefore = RunGit(repo, "rev-parse refs/heads/develop").Out.Trim();
+        string? developDuringGate = null;
+
+        var (git, log, settings) = BuildWithSettings(repo);
+        settings.SetBuildProfile("Fixture", new BuildProfile { BuildCmds = ["cd ."] });
+        var gateRunner = new CapturingBuildTestGateRunner(
+            new BuildTestGateResult(
+                BuildTestGateVerdict.Ok, 0, 20, "", "verify gate passed (build-profile)", true, false),
+            duringRun: () => developDuringGate = RunGit(repo, "rev-parse refs/heads/develop").Out.Trim());
+        var queue = new IntegrationPushQueue();
+        var jobFolder = BeginRun(log, repo, jobId: "2996-green");
+        var runner = new MergeIntoDevelopRunner(
+            git, log, NullLogger<MergeIntoDevelopRunner>.Instance,
+            pushQueue: queue,
+            projectSettings: settings,
+            preDevelopBuildGate: new PreDevelopBuildGate(gateRunner),
+            preDevelopTimeout: TimeSpan.FromSeconds(30));
+
+        var outcome = await runner.RunAsync(
+            "Fixture", "2996-green", jobFolder, repo, "develop", CancellationToken.None);
+
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
+        Assert.Equal(developBefore, developDuringGate);
+        Assert.Equal(developBefore, RunGit(repo, "rev-parse refs/heads/develop").Out.Trim());
+        Assert.Equal(developBefore, RemoteSha(remote, "develop"));
+        Assert.True(queue.Reader.TryRead(out var queued));
+        Assert.Equal(outcome.MergedSha, queued!.ApprovedSha);
+
+        var worker = new IntegrationPushWorker(queue, runner, NullLogger<IntegrationPushWorker>.Instance);
+        await worker.ProcessAsync(queued, CancellationToken.None);
+
+        Assert.Equal("pushed", ReadPushStep(log, jobFolder)!.Verdict);
+        Assert.Equal(outcome.MergedSha, RemoteSha(remote, "develop"));
+        Assert.Equal(outcome.MergedSha, RunGit(repo, "rev-parse refs/heads/develop").Out.Trim());
+        // The checkout holds develop, so its working tree followed the branch.
+        Assert.Equal("task work", File.ReadAllText(Path.Combine(repo, "task.txt")));
+        Assert.Equal(string.Empty, RunGit(repo, "status --porcelain").Out.Trim());
+    }
+
+    /// <summary>
+    /// Someone committed on the developer checkout's develop while the
+    /// delivery was integrating. The push publishes the gated result, but the
+    /// checkout keeps its commit: the lane warns with both SHAs and does not
+    /// touch the branch.
+    /// </summary>
+    [Fact]
+    public async Task Release_CheckoutAheadOfOrigin_IsLeftUntouchedWithAWarningNamingBothShas()
+    {
+        var (repo, remote) = SeedDevelopWithOriginAndTask("release-local-ahead", "task/2996-ahead");
+        var originBefore = RemoteSha(remote, "develop");
+        File.WriteAllText(Path.Combine(repo, "local.txt"), "committed in the checkout");
+        Commit(repo, "chore: local commit on develop");
+        var localAhead = RunGit(repo, "rev-parse refs/heads/develop").Out.Trim();
+
+        var entries = new List<(LogLevel Level, string Message)>();
+        var (git, log, settings) = BuildWithSettings(repo, new CollectingLogger<GitService>(entries));
+        var queue = new IntegrationPushQueue();
+        var jobFolder = BeginRun(log, repo, jobId: "2996-ahead");
+        var runner = new MergeIntoDevelopRunner(
+            git, log, NullLogger<MergeIntoDevelopRunner>.Instance, pushQueue: queue, projectSettings: settings);
+
+        var outcome = runner.Run("Fixture", "2996-ahead", jobFolder, repo, "develop");
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
+        Assert.Equal(originBefore, RunGit(repo, $"rev-parse {outcome.MergedSha}^1").Out.Trim());
+        Assert.True(queue.Reader.TryRead(out var queued));
+        await new IntegrationPushWorker(queue, runner, NullLogger<IntegrationPushWorker>.Instance)
+            .ProcessAsync(queued!, CancellationToken.None);
+
+        Assert.Equal(outcome.MergedSha, RemoteSha(remote, "develop"));
+        Assert.Equal(localAhead, RunGit(repo, "rev-parse refs/heads/develop").Out.Trim());
+        Assert.Equal("committed in the checkout", File.ReadAllText(Path.Combine(repo, "local.txt")));
+        var warning = Assert.Single(entries, entry =>
+            entry.Level == LogLevel.Warning && entry.Message.Contains("is ahead of origin/develop", StringComparison.Ordinal));
+        Assert.Contains(localAhead, warning.Message);
+        Assert.Contains(outcome.MergedSha!, warning.Message);
+    }
+
+    private (string Repo, string Remote) SeedDevelopWithOriginAndTask(string name, string taskBranch)
+    {
+        var (repo, remote) = SeedRepoWithOrigin(name);
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "push -q -u origin develop");
+        RunGit(repo, $"checkout -q -b {taskBranch}");
+        File.WriteAllText(Path.Combine(repo, "task.txt"), "task work");
+        Commit(repo, "feat: task work");
+        RunGit(repo, "checkout -q develop");
+        return (repo, remote);
+    }
+
+    private sealed class CollectingLogger<T>(List<(LogLevel Level, string Message)> entries) : ILogger<T>
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            lock (entries) entries.Add((logLevel, formatter(state, exception)));
+        }
     }
 
     /// <summary>
@@ -2499,9 +2717,11 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         return record?.Steps.FirstOrDefault(s => s.StepId == PipelineCatalogue.MergeIntoDevelopPushStepId);
     }
 
-    private (GitService Git, PipelineExecutionLog Log, ProjectSettingsService Settings) BuildWithSettings(string repo)
+    private (GitService Git, PipelineExecutionLog Log, ProjectSettingsService Settings) BuildWithSettings(
+        string repo,
+        ILogger<GitService>? gitLogger = null)
     {
-        var (git, log) = Build(repo);
+        var (git, log) = Build(repo, gitLogger);
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
@@ -2561,7 +2781,7 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         return record?.Steps.FirstOrDefault(s => s.StepId == PipelineCatalogue.MergeIntoDevelopStepId);
     }
 
-    private (GitService Git, PipelineExecutionLog Log) Build(string repo)
+    private (GitService Git, PipelineExecutionLog Log) Build(string repo, ILogger<GitService>? gitLogger = null)
     {
         var dict = new Dictionary<string, string?>
         {
@@ -2573,7 +2793,7 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         var config = new ConfigurationBuilder().AddInMemoryCollection(dict).Build();
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
-        var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
+        var git = new GitService(gitLogger ?? NullLogger<GitService>.Instance, scanner, config);
         var log = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
         return (git, log);
     }
