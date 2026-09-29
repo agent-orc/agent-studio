@@ -633,6 +633,26 @@ public sealed class GitWorktreePrimitivesTests : IDisposable
         Assert.Equal("operator edit in flight", File.ReadAllText(Path.Combine(repo, "README.md")));
     }
 
+    [Fact]
+    public void ReleaseToCheckout_CheckoutCommittedOnTopOfPublishedSha_IsReportedAsLocalAheadAndUntouched()
+    {
+        var repo = SeedRepo("release-local-ahead-of-published");
+        var git = BuildGitService(("Fixture", repo));
+        var publishedSha = RunGit(repo, "rev-parse main").Out.Trim();
+
+        // A developer commits after the published SHA became the branch's ancestor.
+        File.WriteAllText(Path.Combine(repo, "local.txt"), "local work");
+        Commit(repo, "wip: local commit");
+        var localTip = RunGit(repo, "rev-parse main").Out.Trim();
+
+        var release = git.ReleaseIntegrationBranchToCheckout(repo, "main", publishedSha);
+
+        Assert.Null(release.Error);
+        Assert.Equal(DeveloperCheckoutReleaseAction.LocalAhead, release.Action);
+        Assert.Equal(localTip, release.LocalTip);
+        Assert.Equal(localTip, RunGit(repo, "rev-parse refs/heads/main").Out.Trim());
+    }
+
     private string SeedRepo(string name)
     {
         var repo = Path.Combine(_tempDir, name);

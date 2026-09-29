@@ -464,10 +464,14 @@ public sealed class MergeIntoDevelopRunner
                     pipelineType)
                 && !string.IsNullOrWhiteSpace(approvedPushSha))
             {
-                // AGT-2996: no push worker will publish this result (the push
-                // step is disabled, or no queue is wired), so nothing later can
-                // release it. The gate has passed; the checkout follows now.
-                ReleaseToDeveloperCheckout(developerRoot, pushBranch, approvedPushSha!);
+                // AGT-2996: only the integration push worker publishes the
+                // branch and releases it to the developer checkout. Without one
+                // (push step disabled, or no queue wired) the gated result stays
+                // on the integration lane and the checkout is not moved.
+                _logger.LogInformation(
+                    "merge-into-develop project={Project} job={JobId}: no integration push worker publishes {Branch}; " +
+                    "gated result {Sha} stays on {Lane} and the developer checkout is left unchanged",
+                    project, jobId, pushBranch, approvedPushSha, GitService.IntegrationLaneRef(pushBranch));
             }
 
             return result;
@@ -1366,8 +1370,8 @@ public sealed class MergeIntoDevelopRunner
     /// (the unit-test fixtures) - <see cref="Run"/> then stays merge-only and a
     /// test drives <see cref="PushIntegrationBranchAsync"/> directly. Never
     /// throws: the merge has already landed and the push is best-effort.
-    /// Returns whether a push worker is going to handle the result, which is
-    /// also what later releases it to the developer checkout. A closed queue
+    /// Returns whether a push worker is going to handle the result; that worker
+    /// is the only thing that releases it to the developer checkout. A closed queue
     /// still counts: the restart backstop owns that push.
     /// </summary>
     private bool MaybeEnqueueIntegrationPush(
@@ -1397,25 +1401,6 @@ public sealed class MergeIntoDevelopRunner
         return true;
     }
 
-    /// <summary>
-    /// AGT-2996: moves the developer checkout's local branch (and, for a
-    /// release target with a develop line, develop as well) to a gated result
-    /// that no push worker will publish. Best-effort: the result stays on the
-    /// integration lane, so a checkout that cannot follow is only logged.
-    /// </summary>
-    private void ReleaseToDeveloperCheckout(string developerRoot, string branch, string approvedSha)
-    {
-        try
-        {
-            if (IsReleaseBranch(branch) && HasDevelopLine(developerRoot))
-                _git.ReleaseIntegrationBranchToCheckout(developerRoot, "develop", approvedSha);
-            _git.ReleaseIntegrationBranchToCheckout(developerRoot, branch, approvedSha);
-        }
-        catch (Exception ex)
-        {
-            SilentCatch.Note(ex, "MergeIntoDevelopRunner: releasing the result to the developer checkout is best-effort");
-        }
-    }
 
     /// <summary>
     /// True unless the operator disabled the deferred push step for this project

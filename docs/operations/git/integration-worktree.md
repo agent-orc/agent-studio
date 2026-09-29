@@ -99,13 +99,14 @@ published SHA:
 | Local branch | What happens |
 |---|---|
 | Behind the published SHA | Fast-forwarded to it. A checkout that holds the branch is asked first, so its working tree follows; git refuses rather than overwriting an overlapping local edit, and then only the ref moves. |
-| Already contains the published SHA | Left as it is. |
-| Ahead of `origin/<branch>` (someone committed there) | Left untouched. A warning names the local SHA, the `origin/<branch>` SHA, and the published SHA. |
+| Already contains the published SHA, and origin carries everything it has | Left as it is. |
+| Ahead of `origin/<branch>` (someone committed there), whether or not it already contains the published SHA | Left untouched. A warning names the local SHA, the `origin/<branch>` SHA, and the published SHA. |
 | On origin but on another line than the published SHA | Left untouched. |
 
 When no push worker will ever run for the result - the project disabled the
-`post-merge-into-develop-push` step - nothing is published, and the checkout is
-fast-forwarded right after the green gate under the same rules.
+`post-merge-into-develop-push` step - nothing is published and the checkout is
+not moved at all. The gated result stays on `refs/agent-studio/integration/<branch>`;
+the lane logs that and later integrations build on it.
 
 Recovering a lane that diverged from origin (the integration error names the
 lane): the gated merges on the lane were never published. Drop the lane with

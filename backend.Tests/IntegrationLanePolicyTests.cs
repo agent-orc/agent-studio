@@ -37,6 +37,11 @@ public sealed class IntegrationLanePolicyTests
     // The checkout already has the published result (equal or further along).
     [InlineData("local", "origin", true, false, true, DeveloperCheckoutReleaseAction.AlreadyContains)]
     [InlineData("local", "origin", true, true, true, DeveloperCheckoutReleaseAction.AlreadyContains)]
+    [InlineData("local", null, true, true, false, DeveloperCheckoutReleaseAction.AlreadyContains)]
+    // Already contains the published SHA but carries commits origin lacks:
+    // someone committed after the result landed; reported, never silent.
+    [InlineData("local", "origin", true, false, false, DeveloperCheckoutReleaseAction.LocalAhead)]
+    [InlineData("local", null, true, false, false, DeveloperCheckoutReleaseAction.LocalAhead)]
     // Behind the published result: fast-forward.
     [InlineData("local", "origin", false, true, true, DeveloperCheckoutReleaseAction.FastForward)]
     [InlineData("local", null, false, true, false, DeveloperCheckoutReleaseAction.FastForward)]

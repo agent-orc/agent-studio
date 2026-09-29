@@ -94,7 +94,16 @@ public static class IntegrationLanePolicy
     public static DeveloperCheckoutReleaseAction DecideRelease(DeveloperCheckoutReleaseState state)
     {
         if (string.IsNullOrWhiteSpace(state.LocalTip)) return DeveloperCheckoutReleaseAction.NoLocalBranch;
-        if (state.LocalContainsPublished) return DeveloperCheckoutReleaseAction.AlreadyContains;
+        if (state.LocalContainsPublished)
+        {
+            // Equal to the published SHA, or further along on history origin
+            // already carries: nothing to do. Further along with commits origin
+            // lacks means someone committed here; that must be reported even
+            // though the published SHA is already an ancestor.
+            return state.PublishedContainsLocal || state.OriginContainsLocal
+                ? DeveloperCheckoutReleaseAction.AlreadyContains
+                : DeveloperCheckoutReleaseAction.LocalAhead;
+        }
         if (state.PublishedContainsLocal) return DeveloperCheckoutReleaseAction.FastForward;
         // The local branch carries commits the published result does not. Only
         // commits that exist on origin are someone else's publication; anything
