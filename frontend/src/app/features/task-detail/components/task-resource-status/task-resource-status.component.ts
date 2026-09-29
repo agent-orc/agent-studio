@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, effect, inject, untracked
 import type { ResourceName } from '../../../../models/task-core.model';
 import { LayoutPanesService } from '../../services/layout-panes.service';
 import { TaskSelectionService } from '../../state/task-selection.service';
-import { resourceReasonLabel } from '../../state/task-core.model';
+import { resourceReasonLabel } from '../../state/task-resource-states';
 
 const LABELS: Record<ResourceName, { title: string; retry: string }> = {
   documents: { title: 'Documents unavailable', retry: 'Retry documents' },

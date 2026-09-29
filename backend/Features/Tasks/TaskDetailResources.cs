@@ -1,6 +1,8 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.Options;
+using HttpJsonOptions = Microsoft.AspNetCore.Http.Json.JsonOptions;
 using AgentStudio.Registry;
 using AgentStudio.Review;
 using AgentStudio.Security;
@@ -113,8 +115,14 @@ public static class TaskDetailResources
         if (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
             && !ProjectAccessAuthorization.Allows(human.User, record.Id, projects))
             return (null, null, Results.StatusCode(StatusCodes.Status403Forbidden));
-        var core = index.GetCore(jobId, record.StorageLocation).Record;
-        if (core is null) return (null, null, Results.NotFound());
+        var lookup = index.GetCore(jobId, record.StorageLocation);
+        var core = lookup.Record;
+        // A re-hydrating index cannot tell a missing task from one it has not
+        // placed yet; answer like the core route so clients retry, not revoke.
+        if (core is null)
+            return (null, null, lookup.Warming
+                ? Results.Json(new { state = "warming", reason = "task-index-warming" }, statusCode: StatusCodes.Status202Accepted)
+                : Results.NotFound());
         if (generation is not null && generation != core.Version)
             return (null, null, Results.Conflict(new { state = "stale", reason = "core-generation-changed" }));
         return (core, record.Id, null);
@@ -124,27 +132,49 @@ public static class TaskDetailResources
         ITaskCoreRuntime runtime, string resource, string state, T data, string? reason, DateTime? computedAt)
     {
         var attemptId = runtime.Read(core).AttemptId;
-        var content = JsonSerializer.SerializeToUtf8Bytes(data, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        // Serialized once, with the host's shared HTTP options: the same bytes
+        // are hashed into `version` and embedded as the wire `data`.
+        var json = context.RequestServices.GetRequiredService<IOptions<HttpJsonOptions>>().Value.SerializerOptions;
+        var content = JsonSerializer.SerializeToUtf8Bytes(data, json);
         var version = Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant();
         var etag = $"\"{resource}-{state}-{reason}-{version}-{core.Version:x}-{attemptId}\"";
         context.Response.Headers.ETag = etag;
         context.Response.Headers.CacheControl = "private, no-cache";
         if (context.Request.Headers.IfNoneMatch.Any(value => value == etag))
             return Results.StatusCode(StatusCodes.Status304NotModified);
-        return Results.Ok(new TaskDetailResource<T>(core.Id, core.TaskKey,
+        return Results.Ok(new TaskDetailResource(core.Id, core.TaskKey,
             projectId, attemptId, core.Version,
-            resource, version, computedAt, state, data, reason));
+            resource, version, computedAt, state, new PreSerializedJson(content), reason));
     }
 
     private static DateTime? Modified(string path) => File.Exists(path) ? File.GetLastWriteTimeUtc(path) : null;
 }
 
-/// <summary>Reply envelope. `CoreVersion` is a decimal string on the wire, as on the core route.</summary>
-public sealed record TaskDetailResource<T>(string Id, string TaskKey, string ProjectId,
+/// <summary>
+/// Reply envelope. `CoreVersion` is a decimal string on the wire, as on the
+/// core route. `Data` is one of the resource records below, already serialized.
+/// </summary>
+public sealed record TaskDetailResource(string Id, string TaskKey, string ProjectId,
     string? AttemptId,
     [property: JsonNumberHandling(JsonNumberHandling.WriteAsString | JsonNumberHandling.AllowReadingFromString)]
     long CoreVersion, string Resource, string Version,
-    DateTime? ComputedAt, string State, T Data, string? Reason);
+    DateTime? ComputedAt, string State, PreSerializedJson Data, string? Reason);
+
+/// <summary>UTF-8 JSON written verbatim, so a hashed payload is not serialized twice.</summary>
+[JsonConverter(typeof(PreSerializedJsonConverter))]
+public readonly record struct PreSerializedJson(byte[] Utf8);
+
+internal sealed class PreSerializedJsonConverter : JsonConverter<PreSerializedJson>
+{
+    public override PreSerializedJson Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        using var document = JsonDocument.ParseValue(ref reader);
+        return new PreSerializedJson(JsonSerializer.SerializeToUtf8Bytes(document.RootElement));
+    }
+
+    public override void Write(Utf8JsonWriter writer, PreSerializedJson value, JsonSerializerOptions options) =>
+        writer.WriteRawValue(value.Utf8, skipInputValidation: true);
+}
 public sealed record TaskGitResource(TaskMergeSignal? MergeSignal,
     TaskIntegrationStatus? Integration, TaskPublishSignal? PublishSignal,
     TaskTestRunEvidence? TestEvidence, TaskCommitInfo? Commit,

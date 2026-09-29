@@ -7,7 +7,7 @@ import { provideRouter } from '@angular/router';
 import { TaskResourceStatusComponent } from './task-resource-status.component';
 import { LayoutPanesService } from '../../services/layout-panes.service';
 import { TaskSelectionService } from '../../state/task-selection.service';
-import { idleResources } from '../../state/task-core.model';
+import { idleResources } from '../../state/task-resource-states';
 
 describe('TaskResourceStatusComponent', () => {
   let selection: TaskSelectionService;

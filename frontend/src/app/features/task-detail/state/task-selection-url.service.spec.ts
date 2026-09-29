@@ -77,6 +77,28 @@ describe('TaskSelectionService · stable task URLs', () => {
     data: { name, markdown: `${name} markdown`, summaryState: null }, reason: null,
   });
 
+  const historyReply = (task: TaskInfo, coreVersion = '1') => ({
+    id: task.id, taskKey: task.taskKey, projectId: 'Agent Studio', attemptId: null,
+    coreVersion, resource: 'history', version: 'h1', computedAt: null, state: 'ready',
+    data: { promptHistory: [], titleHistory: [], log: [{ at: 'x', message: `${task.id} log` }] }, reason: null,
+  });
+  /** Land both documents after the core paint, then usage (and history) after the rich paint. */
+  const paintRich = async (task: TaskInfo, opts: { history?: boolean; coreVersion?: string } = {}) => {
+    await afterPaint();
+    const documents = http.match(req => req.url.endsWith(`/${task.id}/details/documents`));
+    expect(documents).toHaveLength(2);
+    for (const request of documents)
+      request.flush(documentReply(task, request.request.params.get('name')!, opts.coreVersion));
+    await afterPaint();
+    http.expectOne(req => req.url.endsWith(`/${task.id}/details/usage`))
+      .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
+    if (opts.history) {
+      const request = http.expectOne(req => req.url.endsWith(`/${task.id}/details/history`));
+      expect(request.request.params.get('generation')).toBe(opts.coreVersion ?? '1');
+      request.flush(historyReply(task, opts.coreVersion));
+    }
+  };
+
   afterEach(() => {
     http.verify();
     history.replaceState(null, '', '/');
@@ -334,12 +356,13 @@ describe('TaskSelectionService · stable task URLs', () => {
     expect(selection.resourceStates().git.phase).toBe('idle');
   });
 
-  it('loads history and review evidence only when their tab is expanded', () => {
+  it('loads history and review evidence only when their tab is expanded', async () => {
     selection.openDetail(info);
     http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
       .flush(coreFor(info, 'Agent Studio'));
     selection.loadResourcesForTab('prompt');
     http.expectNone(req => req.url.includes('/details/'));
+    await paintRich(info);
 
     selection.loadResourcesForTab('timeline');
     http.expectOne(req => req.url.endsWith('/details/history'));
@@ -347,6 +370,97 @@ describe('TaskSelectionService · stable task URLs', () => {
     const evidence = http.expectOne(req => req.url.endsWith('/details/review'));
     expect(evidence.request.params.get('evidence')).toBe('true');
     expect(selection.resourceStates().git.phase).toBe('idle');
+  });
+
+  describe('expanded tab resources', () => {
+    it('waits for the rich paint when the tab is expanded before the documents land', async () => {
+      selection.openDetail(info);
+      http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+        .flush(coreFor(info, 'Agent Studio'));
+      selection.loadResourcesForTab('timeline');
+      await afterPaint();
+      http.expectNone(req => req.url.endsWith('/details/history'));
+
+      await paintRich(info, { history: true });
+      expect(selection.selected()?.log).toEqual([{ at: 'x', message: 'human-readable-slug log' }]);
+    });
+
+    it('reloads the open tab after a task switch', async () => {
+      const other = { ...info, id: 'other-task', key: 'AGT-2125',
+        taskKey: 'C:\\private\\project::other-task', title: 'Other task' } as TaskInfo;
+      selection.openDetail(info);
+      http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+        .flush(coreFor(info, 'Agent Studio'));
+      await paintRich(info);
+      selection.loadResourcesForTab('timeline');
+      http.expectOne(req => req.url.endsWith('/human-readable-slug/details/history')).flush(historyReply(info));
+
+      selection.openDetail(other);
+      http.expectOne(req => req.url.endsWith('/other-task/core')).flush(coreFor(other, 'Agent Studio'));
+      await paintRich(other, { history: true });
+
+      expect(selection.resourceStates().history.phase).toBe('ready');
+      expect(selection.selected()?.log).toEqual([{ at: 'x', message: 'other-task log' }]);
+    });
+
+    it('reloads the open tab for a new core generation of the same task', async () => {
+      TestBed.inject(TaskDetailPrefetchService)
+        .storeCore(coreFor(info, 'Agent Studio') as unknown as TaskCore, 'Agent Studio');
+      selection.openDetail(info);
+      const revalidation = http.expectOne(req => req.url.endsWith('/human-readable-slug/core'));
+      await paintRich(info);
+      selection.loadResourcesForTab('timeline');
+      http.expectOne(req => req.url.endsWith('/details/history')).flush(historyReply(info));
+
+      revalidation.flush({ ...coreFor(info, 'Agent Studio'), coreVersion: '2' });
+      expect(selection.resourceStates().history.phase).toBe('idle');
+      await paintRich(info, { history: true, coreVersion: '2' });
+
+      expect(selection.resourceStates().history.phase).toBe('ready');
+    });
+
+    it('restores the tab named by a task URL on reload and back/forward', async () => {
+      registry({ id: 'Agent Studio', shortCode: 'AGT', storageLocation: 'C:\\private\\project' });
+      history.replaceState(null, '', '/#/tasks/AGT-2124?view=timeline:protocol');
+
+      selection.restoreFromUrl(true);
+      http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2124/core')).flush(coreFor(info, 'Agent Studio'));
+      await paintRich(info, { history: true });
+
+      expect(selection.resourceStates().history.phase).toBe('ready');
+    });
+  });
+
+  it('keeps the selection while the task index warms under an enrichment read', async () => {
+    selection.openDetail(info);
+    http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+      .flush(coreFor(info, 'Agent Studio'));
+    const warming = { state: 'warming', reason: 'task-index-warming', jobId: info.id, projectId: 'Agent Studio' };
+    await afterPaint();
+    for (const request of http.match(req => req.url.endsWith('/details/documents')))
+      request.flush(warming, { status: 202, statusText: 'Accepted' });
+
+    expect(selection.selectedCore()?.id).toBe(info.id);
+    expect(selection.detailPreview()?.id).toBe(info.id);
+    expect(selection.detailLoadError()).toBeNull();
+    expect(selection.resourceStates().documents).toEqual({ phase: 'warming', reason: 'task-index-warming' });
+    http.expectNone(req => req.url.endsWith('/details/usage'));
+
+    // One warming retry later the rich view paints as usual.
+    await new Promise(resolve => setTimeout(resolve, 650));
+    await paintRich(info);
+    expect(selection.resourceStates().documents.phase).toBe('ready');
+    expect(selection.selected()?.promptMarkdown).toBe('prompt markdown');
+
+    selection.loadResource('review');
+    http.expectOne(req => req.url.endsWith('/details/review'))
+      .flush(warming, { status: 202, statusText: 'Accepted' });
+    expect(selection.resourceStates().review).toEqual({ phase: 'warming', reason: 'task-index-warming' });
+    expect(selection.selectedCore()?.id).toBe(info.id);
+    await new Promise(resolve => setTimeout(resolve, 650));
+    http.expectOne(req => req.url.endsWith('/details/review'))
+      .flush({ error: 'offline' }, { status: 503, statusText: 'Unavailable' });
+    expect(selection.resourceStates().review.phase).toBe('error');
   });
 
   describe('server-side resolution fallbacks', () => {
@@ -364,6 +478,19 @@ describe('TaskSelectionService · stable task URLs', () => {
       expect(selection.detailPreview()).toBeNull();
       expect(selection.detailLoadError()).toBeNull();
       expect(selection.consumeTaskTabReplacement(info.taskKey)).toBe(true);
+    });
+
+    it('does not read a short code out of a public reference without a dash', () => {
+      // 'TWO' once became prefix 'tw' and was sent to the project whose short code is TW.
+      registry({ id: 'PROJ-001', shortCode: 'ONE', storageLocation: 'C:\\one' },
+        { id: 'PROJ-002', shortCode: 'TW', storageLocation: 'C:\\two' });
+      history.replaceState(null, '', '/#/tasks/TWO');
+
+      selection.restoreFromUrl();
+
+      http.expectNone(req => req.url.endsWith('/core'));
+      http.expectOne(req => req.url.endsWith('/api/tasks/TWO')).flush(detail);
+      expect(selection.selected()?.info.id).toBe(info.id);
     });
 
     it('falls back to the backend when the inferred sole project does not own the task', () => {

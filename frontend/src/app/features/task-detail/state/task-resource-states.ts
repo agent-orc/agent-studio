@@ -25,6 +25,7 @@ export function resourceReasonLabel(reason: string | null): string {
     case 'review-projection-pending': return 'The review projection is still warming.';
     case 'document-read-failed': return 'The document could not be read.';
     case 'document-access-denied': return 'The document is not accessible.';
+    case 'task-index-warming': return 'The task index is still warming.';
     case 'core-generation-changed': return 'The task changed while this section loaded.';
     default: return reason ?? 'The request failed.';
   }

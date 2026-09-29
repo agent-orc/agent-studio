@@ -375,8 +375,8 @@ describe('App studio-tab mirror (pager reuse)', () => {
 
   /** Directly drive the extracted mirror mapping (the effect body). */
   function mirror(app: App, detail: TaskDetail, retargetNav: boolean): void {
-    (app as unknown as { mirrorSelectionToStudioTab(d: TaskDetail, r: boolean): void })
-      .mirrorSelectionToStudioTab(detail, retargetNav);
+    (app as unknown as { mirrorSelectionToStudioTab(d: TaskInfo, r: boolean): void })
+      .mirrorSelectionToStudioTab(detail.info, retargetNav);
   }
 
   it('retargets the active task tab in place on a pager/cursor step (no new tab)', async () => {
@@ -566,6 +566,17 @@ describe('App active project scope on task open', () => {
     app.jobService.jobs.set(jobs);
     app.jobService.grouped.set({ ...app.jobService.grouped(), ready: jobs });
   }
+
+  it('lands a board open on Overview in the selection too, so the previous tab is not reloaded', async () => {
+    const app = await configure();
+    const tabs = vi.spyOn(TestBed.inject(TaskSelectionService), 'loadResourcesForTab');
+    app.onTaskDetailTabChange('timeline');
+
+    app.openDetail(boardTask({}));
+
+    expect(tabs.mock.calls).toEqual([['timeline'], [null]]);
+    expect(app.routeDetailTab()).toBeNull();
+  });
 
   it('leaves the active scope on All projects when a task is opened from the cross-project board', async () => {
     const app = await configure();

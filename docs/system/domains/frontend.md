@@ -209,7 +209,7 @@ without a parallel surface.
   registered storage location, or a registry still loading after 3 s) is
   resolved server-side through the legacy detail route instead of failing.
   A revalidated core generation refreshes an already painted rich pane in
-  place. The feature README records the client flow and compatibility
+  place, and the expanded history or review tab reloads with it. The feature README records the client flow and compatibility
   boundary; the backend contract of `/details/*` lives in the
   [Tasks domain](tasks.md#task-detail-resources-agt-2955).
   Pending crash recovery remains visible through a persistent review control;

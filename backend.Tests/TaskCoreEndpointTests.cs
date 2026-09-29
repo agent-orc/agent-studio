@@ -128,6 +128,43 @@ public sealed class TaskCoreEndpointTests : IDisposable
     }
 
     [Fact]
+    public async Task DetailResources_VersionHashesTheWireData_AndWarmingIsNotMissing()
+    {
+        Seed("AGT-core", TaskStates.Ready);
+        await using var factory = Factory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var project = factory.Services.GetRequiredService<ProjectRegistry>().FindByStorageLocation(Jobs)!;
+        var index = factory.Services.GetRequiredService<TaskIndexCache>();
+        index.ForceRefresh();
+
+        // `version` is the hash of exactly the `data` bytes on the wire, which
+        // are serialized once with the host's HTTP JSON options (string enums).
+        using var response = await client.GetAsync(
+            $"/api/tasks/AGT-core/details/documents?project={project.Id}&name=status");
+        response.EnsureSuccessStatusCode();
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var data = body.RootElement.GetProperty("data");
+        Assert.Equal(JsonValueKind.String, data.GetProperty("summaryState").GetProperty("status").ValueKind);
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            Encoding.UTF8.GetBytes(data.GetRawText()))).ToLowerInvariant();
+        Assert.Equal(hash, body.RootElement.GetProperty("version").GetString());
+
+        // A task the re-hydrating index cannot place yet answers 202 like the
+        // core route, so the client keeps the selection instead of revoking it.
+        index.Invalidate();
+        using var warming = await client.GetAsync($"/api/tasks/AGT-unknown/details/usage?project={project.Id}");
+        Assert.Equal(HttpStatusCode.Accepted, warming.StatusCode);
+        using var warmingBody = JsonDocument.Parse(await warming.Content.ReadAsStringAsync());
+        Assert.Equal("warming", warmingBody.RootElement.GetProperty("state").GetString());
+        Assert.Equal("task-index-warming", warmingBody.RootElement.GetProperty("reason").GetString());
+
+        index.ForceRefresh();
+        using var missing = await client.GetAsync($"/api/tasks/AGT-unknown/details/usage?project={project.Id}");
+        Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+    }
+
+    [Fact]
     public async Task CoreRoute_UsesCacheOnly_WithThrowingGitRegistration()
     {
         Seed("AGT-core", TaskStates.Ready);
