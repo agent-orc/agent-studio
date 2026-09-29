@@ -49,6 +49,75 @@ describe('IntegrationStatusBadgeComponent', () => {
     expect(badge.classList.contains('integration-badge--acute')).toBe(false);
   });
 
+  describe('AGT-3002 gate verification', () => {
+    function badgeOf(fixture: ReturnType<typeof render>): HTMLElement {
+      return fixture.nativeElement.querySelector('[data-testid="integration-status-badge"]') as HTMLElement;
+    }
+
+    it('marks a merged delivery whose tree passed a gate as verified and keeps it green', () => {
+      const fixture = render(integration('integrated', {
+        sha: 'deadbee',
+        verification: { state: 'integrated-verified', sha: 'deadbee'.padEnd(40, '0'), evidence: 'gate-run', gateVerdict: 'Ok' },
+      }));
+      const badge = badgeOf(fixture);
+
+      expect(badge.textContent).toContain('merged @deadbee · verified');
+      expect(badge.dataset['kind']).toBe('integrated');
+      expect(badge.dataset['integrationVerification']).toBe('integrated-verified');
+      expect(badge.classList.contains('integration-badge--acute')).toBe(false);
+      expect(badge.getAttribute('aria-label')).toBe('Integrated into develop, verified by a gate');
+    });
+
+    it('marks a contained delivery without gate evidence as acute and unverified', () => {
+      const fixture = render(integration('integrated', {
+        sha: 'deadbee',
+        verification: {
+          state: 'integrated-unverified',
+          sha: 'feedfacecafe'.padEnd(40, '0'),
+          evidence: 'gate-run',
+          gateVerdict: 'Fail',
+          gateFailed: true,
+          reason: 'The gate ran once on the current branch tip feedfac and returned Fail: 2 tests failed',
+        },
+      }));
+      const badge = badgeOf(fixture);
+
+      expect(badge.textContent).toContain('merged @deadbee · unverified');
+      expect(badge.textContent).toContain('!');
+      expect(badge.dataset['kind']).toBe('unverified');
+      expect(badge.dataset['integrationVerification']).toBe('integrated-unverified');
+      expect(badge.classList.contains('integration-badge--acute')).toBe(true);
+      expect(badge.getAttribute('aria-label')).toBe('Integrated into develop, not verified by any gate');
+      expect(fixture.componentInstance.tooltip()).toContain(
+        'Integrated-unverified: no gate passed on the merged tree feedfac.',
+      );
+      expect(fixture.componentInstance.tooltip()).toContain('2 tests failed');
+    });
+
+    it('keeps the local-only wording when a merged-locally delivery is also unverified', () => {
+      const fixture = render(integration('merged-locally', {
+        verification: { state: 'integrated-unverified' },
+      }));
+      const badge = badgeOf(fixture);
+
+      expect(badge.textContent).toContain('merged locally, not pushed · unverified');
+      expect(badge.dataset['kind']).toBe('unverified');
+    });
+
+    it('renders no verification for a legacy merged card or a status that is not merged', () => {
+      const legacy = badgeOf(render(integration('integrated', { sha: 'deadbee', verification: null })));
+      expect(legacy.textContent?.trim()).toMatch(/merged @deadbee$/);
+      expect(legacy.hasAttribute('data-integration-verification')).toBe(false);
+
+      const pending = badgeOf(render(integration('pending', {
+        verification: { state: 'integrated-unverified' },
+      })));
+      expect(pending.textContent).toContain('NICHT integriert');
+      expect(pending.textContent).not.toContain('unverified');
+      expect(pending.dataset['kind']).toBe('pending');
+    });
+  });
+
   it('renders a code-free delivery as neutral and without a recovery action', () => {
     const fixture = render(integration('not-applicable'));
     const badge = fixture.nativeElement.querySelector('[data-testid="integration-status-badge"]') as HTMLElement;

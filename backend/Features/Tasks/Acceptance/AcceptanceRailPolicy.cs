@@ -130,9 +130,12 @@ public static class AcceptanceRailPolicy
         if (task.State == TaskStates.HumanReview
             && IntegrationStatuses.IsMerged(integration?.Status))
         {
-            return new AcceptanceRailDecision(
-                AcceptanceRailAction.Accept,
-                "git-derived-integrated");
+            // AGT-3002: containment without gate evidence is not a reason to
+            // accept. The integration lane sent this card here with its gate
+            // verdict; accepting it on ancestry would undo exactly that.
+            return IntegrationVerificationStates.PermitsCompletion(integration!.Verification)
+                ? new AcceptanceRailDecision(AcceptanceRailAction.Accept, "git-derived-integrated")
+                : Ignore("integrated-unverified");
         }
 
         var failure = string.Equals(

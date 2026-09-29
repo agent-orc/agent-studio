@@ -188,7 +188,13 @@ public sealed class TaskIntegrationStatusService
                 .Select(key => reaches.TryGetValue(key!, out var reach)
                     ? $"{key!.Root}:{key.Branch}:{reach.PublishedHead ?? "missing"}"
                     : $"{key!.Root}:{key.Branch}:unavailable"));
-            result[job.TaskKey] = classified with { TargetRefFingerprint = fingerprint };
+            result[job.TaskKey] = classified with
+            {
+                TargetRefFingerprint = fingerprint,
+                Verification = IntegrationStatuses.IsMerged(classified.Status)
+                    ? ResolveVerification(job)
+                    : null,
+            };
         }
 
         return result;
@@ -249,11 +255,7 @@ public sealed class TaskIntegrationStatusService
         if (IntegrationStatuses.IsMerged(status?.Status)
             && lastMerge?.Status != PipelineStepStatus.Pending)
         {
-            return new AcceptedIntegrationRecoveryDecision(
-                AcceptedIntegrationRecoveryAction.Finalize,
-                "Git proves that the attributed delivery is merged into the integration branch; "
-                + "no merge replay is required (a missing push is the push backstop's work).",
-                lastMerge);
+            return ResolveMergedRecovery(job, status!.Verification, lastMerge);
         }
 
         // AGT-2688: the merge itself already succeeded and only the deferred
@@ -290,6 +292,72 @@ public sealed class TaskIntegrationStatusService
                 ? "The Passed step contradicts current Git truth and must be revalidated."
                 : "The accepted integration has no terminal recovery decision.",
             lastMerge);
+    }
+
+    /// <summary>
+    /// AGT-3002 - a merged card finalizes only when its verification permits
+    /// completion. A contained delivery without gate evidence goes back
+    /// through the merge runner, which applies the lane's rule: evidence for
+    /// the exact tree, or one gate run on the current tip. Once that gate has
+    /// failed on the tree, the card returns to Human Review instead of
+    /// running it again. Archived cards are history and are left alone.
+    /// </summary>
+    internal static AcceptedIntegrationRecoveryDecision ResolveMergedRecovery(
+        TaskInfo job,
+        TaskIntegrationVerification? verification,
+        PipelineStepExecution? lastMerge)
+    {
+        if (IntegrationVerificationStates.PermitsCompletion(verification))
+        {
+            return new AcceptedIntegrationRecoveryDecision(
+                AcceptedIntegrationRecoveryAction.Finalize,
+                "Git proves that the attributed delivery is merged into the integration branch; "
+                + "no merge replay is required (a missing push is the push backstop's work).",
+                lastMerge);
+        }
+
+        if (verification!.GateFailed)
+        {
+            return new AcceptedIntegrationRecoveryDecision(
+                AcceptedIntegrationRecoveryAction.ReturnToReview,
+                "The delivery is contained but integrated-unverified: a gate already failed on its tree. "
+                + (verification.Reason ?? string.Empty),
+                lastMerge);
+        }
+
+        if (job.State == TaskStates.Archive)
+        {
+            return new AcceptedIntegrationRecoveryDecision(
+                AcceptedIntegrationRecoveryAction.Ignore,
+                "An archived card is not re-verified.",
+                lastMerge);
+        }
+
+        return new AcceptedIntegrationRecoveryDecision(
+            AcceptedIntegrationRecoveryAction.Retry,
+            "The delivery is contained but integrated-unverified; the merge runner verifies the exact tree once.",
+            lastMerge);
+    }
+
+    /// <summary>
+    /// AGT-3002 - the card's gate evidence for its merged delivery: the lane's
+    /// own verification record, else what the last merge step implies. Local
+    /// file reads only; never throws.
+    /// </summary>
+    private TaskIntegrationVerification? ResolveVerification(TaskInfo job)
+    {
+        try
+        {
+            return IntegrationVerificationProjection.Resolve(
+                IntegrationVerificationStore.Read(job.FolderPath),
+                ReadLatestMergeStep(job),
+                job.IntegrationRecords);
+        }
+        catch (Exception ex)
+        {
+            SilentCatch.Note(ex, "TaskIntegrationStatusService: integration verification is best-effort");
+            return null;
+        }
     }
 
     /// <summary>
