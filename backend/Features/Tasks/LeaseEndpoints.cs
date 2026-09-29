@@ -212,7 +212,6 @@ public static class LeaseEndpoints
                 var releaseWrite = leases.CurrentWriteReference(
                     req.TaskKey, $"infrastructure-release:{req.AttemptId}:{req.LeaseId}");
                 var released = leases.Release(req);
-                stops.Clear(req.TaskKey);
                 if (string.Equals(released.Outcome, "Released", StringComparison.OrdinalIgnoreCase))
                 {
                     stops.Clear(req.TaskKey, req.AttemptId, req.FencingToken, "released");

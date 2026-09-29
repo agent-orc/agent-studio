@@ -1510,6 +1510,65 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// AGT-2932 review finding: a delayed release from an older attempt is
+    /// rejected by the fence, and must leave the stop request recorded for the
+    /// newer attempt of the same card deliverable on that attempt's heartbeat.
+    /// </summary>
+    [Fact]
+    public async Task Stale_lease_release_keeps_the_stop_request_of_the_newer_attempt()
+    {
+        SeedTask(TaskStates.Ready, TaskKey, "Stop survives a stale release", "Prompt.");
+        using var factory = BuildFactory(remoteRequeueGraceSeconds: 900);
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/agent-orc/agent-studio.git");
+
+        var first = await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+            RunnerId, ProjectName, "host", 1, "remote-runner", ActiveTaskKeys: []));
+        Assert.Equal(RClaimStatus.Claimed, first.Status);
+        var firstRelease = new RRelease(
+            first.TaskKey!, first.Lease!.LeaseId, first.Lease.FencingToken, RunnerId,
+            first.Lease.AttemptId, first.Lease.AuthorityEpoch,
+            "release:first",
+            Outcome: "runner-environment-preparation-failed",
+            Detail: "fatal: not a git repository");
+        Assert.Equal("Released", (await client.ReleaseLeaseAsync(firstRelease, CancellationToken.None)).Outcome);
+
+        var second = await client.ClaimAsync(new RClaim(
+            RunnerId, ProjectName, "host", 1, "remote-runner", ActiveTaskKeys: []), CancellationToken.None);
+        Assert.Equal(RClaimStatus.Claimed, second.Status);
+        Assert.NotEqual(first.Lease.AttemptId, second.Lease!.AttemptId);
+        var taskKey = second.TaskKey!;
+        var stops = factory.Services.GetRequiredService<AgentStudio.Runner.RemoteRunStopRequestStore>();
+        var stop = stops.Record(
+            taskKey, AgentStudio.Runner.RemoteRunStopReasons.User, second.Lease.AttemptId,
+            "operator", second.Lease.FencingToken);
+
+        // Posted directly: the runner client forgets a released lease locally,
+        // so only a delayed or replayed request reaches the endpoint this way.
+        using var staleResponse = await http.PostAsJsonAsync(
+            "/api/runner/lease/release",
+            firstRelease with { IdempotencyKey = "release:first-delayed" });
+        Assert.Equal(HttpStatusCode.OK, staleResponse.StatusCode);
+        var stale = await staleResponse.Content.ReadFromJsonAsync<RunLeaseResponse>();
+
+        Assert.NotEqual("Released", stale!.Outcome);
+        Assert.Equal(stop.CommandId, stops.Peek(taskKey)?.CommandId);
+        var renew = await client.RenewLeaseAsync(new RHeartbeat(
+            taskKey,
+            second.Lease.LeaseId,
+            second.Lease.FencingToken,
+            RunnerId,
+            AttemptId: second.Lease.AttemptId,
+            AuthorityEpoch: second.Lease.AuthorityEpoch,
+            IdempotencyKey: $"renew:{second.Lease.AttemptId}"), CancellationToken.None);
+        Assert.True(renew.Granted, renew.Message);
+        Assert.Equal(stop.CommandId, renew.StopRequest?.CommandId);
+    }
+
     [Fact]
     public async Task Remote_runner_reports_clone_failure_instead_of_releasing_an_unexplained_claim()
     {
