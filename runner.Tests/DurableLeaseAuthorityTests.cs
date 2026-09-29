@@ -53,7 +53,9 @@ public sealed class DurableLeaseAuthorityTests
         };
         using var client = new TaskServerClient(http, options.RunnerId);
         using var stop = new CancellationTokenSource();
-        var heartbeat = new LeaseHeartbeat(client, options, lease, _ => { });
+        // The lease window is pinned to a fixed date, so the heartbeat must read the
+        // same controlled clock; the wall clock would see the lease long expired.
+        var heartbeat = new LeaseHeartbeat(client, options, lease, _ => { }, utcNow: () => now);
 
         await heartbeat.RunAsync(stop, CancellationToken.None);
 

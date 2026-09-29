@@ -134,6 +134,14 @@ scripts/scenario.sh --target compose --level full \
   --report-dir "$JOB_RESULTS_DIR/compose-full"
 ```
 
+A card whose diff can change the Compose stack also renders it in its own
+gate. The gate runs `scripts/scenario.test.sh` and
+`scripts/compose-smoke-version.test.sh` on a host that advertises
+`toolchain:compose-render`, which needs the Docker CLI with the compose plugin
+but no daemon. A gate host without it fails with a routing verdict instead of
+passing. The trigger paths are listed in the
+[Compose-render gate step](../../system/domains/pipeline.md#compose-render-gate-step-agt-2981).
+
 The card build profile invokes the smoke test from
 `scripts/release/promotion-full-gate.sh`. The tag-triggered Release workflow
 keeps `Test release topology`, then runs `inproc full` and the blocking

@@ -767,12 +767,12 @@ public sealed class MergeIntoDevelopRunner
         var changedPaths = string.IsNullOrWhiteSpace(preMergeTip)
             ? null
             : _git.ChangedPathsAgainstMergeBase(repoRoot, preMergeTip, gatedSha);
-        var gateApplies = PreDevelopBuildGate.AppliesTo(profile, changedPaths);
+        var gateApplies = PreDevelopBuildGate.AppliesTo(profile, changedPaths, repoRoot);
         if (!gateApplies && changedPaths is not null)
         {
             const string skipReason =
-                "the merge touches neither frontend/ nor managed sources and the project " +
-                "declares no build-profile build commands";
+                "the merge touches neither frontend/, managed sources, nor the Compose stack, " +
+                "and the project declares no build-profile build commands";
             _logger.LogInformation(
                 "merge-into-develop build gate skipped for project={Project} job={JobId} integration={Integration}: {Reason}",
                 project, jobId, integrationBranch, skipReason);
@@ -866,6 +866,7 @@ public sealed class MergeIntoDevelopRunner
                         JobFolderPath = jobFolderPath,
                         SubjectRef = integrationBranch,
                         TimeoutBudgetSource = preDevelopTimeoutSource,
+                        CoveredRequirements = reuse.Reused ? reuse.CoveredRequirements : [],
                     },
                     changedPaths,
                     profile,
