@@ -10,8 +10,9 @@ namespace AgentStudio.Tests;
 /// AGT-2991: <c>logs/timeline.jsonl</c> and <c>logs/session-events.jsonl</c>
 /// have no size cap, so their readers are bounded to
 /// <see cref="BoundedFileRead.LedgerBytes"/>. Readers get the newest complete
-/// events; writers that rewrite the ledger from what they read must never do
-/// so from a truncated window, because that would delete the older rows.
+/// events. Writers that update a row rewrite only the newest window from its
+/// line-aligned start offset, so an oversized session ledger still gets its
+/// latest run closed and backfilled while every older row keeps its bytes.
 /// </summary>
 public sealed class BoundedLedgerReadTests : IDisposable
 {
@@ -66,49 +67,143 @@ public sealed class BoundedLedgerReadTests : IDisposable
     }
 
     [Fact]
-    public void AppendSessionEvent_OversizedLedger_AppendsWithoutRewritingOlderRows()
+    public void AppendSessionEvent_OversizedLedger_ClosesThePredecessorAndKeepsOlderRows()
     {
         var folder = JobFolder("session-task");
         var path = TaskPaths.SessionEventsLog(folder);
-        // Every row is an open run, so the normal path would close the last one
-        // by rewriting the whole file.
-        WriteOversizedLedger(path, i => SessionRow(i));
+        var total = WriteOversizedSessionLedger(path);
         var before = File.ReadAllBytes(path);
+        var windowStart = BoundedFileRead.ReadTailLineWindow(path, BoundedFileRead.LedgerBytes).Offset;
+        Assert.True(windowStart > 0, "the fixture must exceed the ledger window");
         var sessions = BuildSessions();
+        var successorTs = new DateTime(2026, 9, 29, 0, 0, 0, DateTimeKind.Utc);
 
         Assert.True(sessions.AppendSessionEventToFolder(folder, new SessionEvent
         {
-            Ts = new DateTime(2026, 9, 29, 0, 0, 0, DateTimeKind.Utc),
+            Ts = successorTs,
             Kind = "continue",
+            InputSessionId = "session-successor",
         }, "session-task"));
 
         var after = File.ReadAllBytes(path);
-        Assert.True(after.Length > before.Length);
-        Assert.Equal(before, after[..before.Length]);
-        var appended = Encoding.UTF8.GetString(after, before.Length, after.Length - before.Length);
-        Assert.Contains("\"continue\"", appended);
-        Assert.Single(appended.Split('\n', StringSplitOptions.RemoveEmptyEntries));
+        Assert.Equal(before[..(int)windowStart], after[..(int)windowStart]);
+        var rows = ParseRows(path);
+        Assert.Equal(total + 1, rows.Count);
+        Assert.Equal("session-0", rows[0].InputSessionId);
+        var predecessor = rows[^2];
+        Assert.Equal($"session-{total - 1}", predecessor.InputSessionId);
+        Assert.Equal(successorTs, predecessor.FinishedAt);
+        Assert.Equal("superseded", predecessor.Status);
+        Assert.Equal("session-successor", rows[^1].InputSessionId);
+        Assert.Single(rows, row => row.FinishedAt is null);
     }
 
     [Fact]
-    public void BackfillSessionEvent_OversizedLedger_LeavesTheFileUntouched()
+    public void AppendSessionEvent_OversizedLedger_RepeatedStartsNeverLeaveTwoOpenRuns()
+    {
+        var folder = JobFolder("repeat-task");
+        var path = TaskPaths.SessionEventsLog(folder);
+        var total = WriteOversizedSessionLedger(path);
+        var sessions = BuildSessions();
+
+        for (var i = 0; i < 3; i++)
+        {
+            Assert.True(sessions.AppendSessionEventToFolder(folder, new SessionEvent
+            {
+                Ts = new DateTime(2026, 9, 29, 0, 0, i, DateTimeKind.Utc),
+                Kind = "start",
+                InputSessionId = $"session-new-{i}",
+            }, "repeat-task"));
+        }
+
+        var rows = ParseRows(path);
+        Assert.Equal(total + 3, rows.Count);
+        var open = Assert.Single(rows, row => row.FinishedAt is null);
+        Assert.Equal("session-new-2", open.InputSessionId);
+    }
+
+    [Fact]
+    public void BackfillSessionEvent_OversizedLedger_UpdatesTheLatestRowAndKeepsOlderRows()
     {
         var folder = JobFolder("backfill-task");
         var path = TaskPaths.SessionEventsLog(folder);
-        WriteOversizedLedger(path, i => SessionRow(i));
+        var total = WriteOversizedSessionLedger(path);
         var before = File.ReadAllBytes(path);
+        var windowStart = BoundedFileRead.ReadTailLineWindow(path, BoundedFileRead.LedgerBytes).Offset;
         var sessions = BuildSessions();
 
-        Assert.False(sessions.BackfillLatestSessionEventCapturedId("backfill-task", "session-xyz"));
+        Assert.True(sessions.BackfillLatestSessionEventCapturedId("backfill-task", "session-xyz"));
+        Assert.True(sessions.BackfillLatestSessionEventHeadShaRange("backfill-task", "aaa111", "bbb222"));
+        Assert.True(sessions.BackfillLatestSessionEventResumed("backfill-task", true, "resumed-after-review"));
 
-        Assert.Equal(before, File.ReadAllBytes(path));
+        var after = File.ReadAllBytes(path);
+        Assert.Equal(before[..(int)windowStart], after[..(int)windowStart]);
+        var rows = ParseRows(path);
+        Assert.Equal(total, rows.Count);
+        Assert.Equal("session-0", rows[0].InputSessionId);
+        var latest = rows[^1];
+        Assert.Equal($"session-{total - 1}", latest.InputSessionId);
+        Assert.Equal("session-xyz", latest.CapturedSessionId);
+        Assert.Equal("aaa111", latest.HeadShaBefore);
+        Assert.Equal("bbb222", latest.HeadShaAfter);
+        Assert.True(latest.Resumed);
+        Assert.Equal("resumed-after-review", latest.Reason);
+        Assert.Null(rows[^2].CapturedSessionId);
+    }
+
+    [Fact]
+    public void CloseSessionEvent_OversizedLedger_ClosesTheMatchingAttempt()
+    {
+        var folder = JobFolder("close-task");
+        var path = TaskPaths.SessionEventsLog(folder);
+        var total = WriteOversizedSessionLedger(path, openAttemptId: "attempt-open");
+        var sessions = BuildSessions();
+        var finishedAt = new DateTime(2026, 9, 29, 1, 0, 0, DateTimeKind.Utc);
+
+        Assert.True(sessions.CloseSessionEvent("close-task", new RunSessionCloseout
+        {
+            RunAttemptId = "attempt-open",
+            FinishedAt = finishedAt,
+            Result = "completed",
+            Status = "done",
+            ExitCode = 0,
+        }));
+
+        var rows = ParseRows(path);
+        Assert.Equal(total, rows.Count);
+        Assert.Equal(finishedAt, rows[^1].FinishedAt);
+        Assert.Equal("done", rows[^1].Status);
+        Assert.DoesNotContain(rows, row => row.FinishedAt is null);
+    }
+
+    [Fact]
+    public void BackfillSessionEvent_NormalLedger_IsRewrittenWhole()
+    {
+        var folder = JobFolder("small-backfill");
+        var sessions = BuildSessions();
+        for (var i = 0; i < 3; i++)
+        {
+            sessions.AppendSessionEventToFolder(folder, new SessionEvent
+            {
+                Ts = new DateTime(2026, 9, 29, 0, 0, i, DateTimeKind.Utc),
+                Kind = "start",
+                InputSessionId = $"session-{i}",
+            }, "small-backfill");
+        }
+
+        Assert.True(sessions.BackfillLatestSessionEventCapturedId("small-backfill", "session-xyz"));
+
+        var rows = sessions.ReadSessionEvents("small-backfill");
+        Assert.Equal(["session-0", "session-1", "session-2"], rows.Select(row => row.InputSessionId));
+        Assert.Equal("session-xyz", rows[^1].CapturedSessionId);
+        Assert.Single(rows, row => row.FinishedAt is null);
     }
 
     [Fact]
     public void ReadSessionEvents_OversizedLedger_ReturnsNewestEvents()
     {
         var folder = JobFolder("read-task");
-        var total = WriteOversizedLedger(TaskPaths.SessionEventsLog(folder), i => SessionRow(i));
+        var total = WriteOversizedSessionLedger(TaskPaths.SessionEventsLog(folder));
         var sessions = BuildSessions();
 
         var events = sessions.ReadSessionEvents("read-task");
@@ -120,13 +215,35 @@ public sealed class BoundedLedgerReadTests : IDisposable
 
     private static readonly string Filler = new('f', 180);
 
-    private static string SessionRow(int i) => JsonSerializer.Serialize(new SessionEvent
+    private static string SessionRow(int i, bool open = false, string? attemptId = null) => JsonSerializer.Serialize(new SessionEvent
     {
         Ts = new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc).AddSeconds(i),
         Kind = "start",
         InputSessionId = $"session-{i}",
+        RunAttemptId = attemptId,
         Reason = Filler,
+        FinishedAt = open ? null : new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc).AddSeconds(i + 1),
+        Status = open ? null : "done",
     }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+
+    /// <summary>
+    /// Writes closed runs past the ledger cap and ends with one open run, the
+    /// shape a long-lived task's ledger has while its current run is live.
+    /// Returns the row count.
+    /// </summary>
+    private static int WriteOversizedSessionLedger(string path, string? openAttemptId = null)
+    {
+        var closed = WriteOversizedLedger(path, i => SessionRow(i));
+        File.AppendAllText(path, SessionRow(closed, open: true, openAttemptId) + "\n", new UTF8Encoding(false));
+        return closed + 1;
+    }
+
+    private static readonly JsonSerializerOptions CaseInsensitive = new() { PropertyNameCaseInsensitive = true };
+
+    private static List<SessionEvent> ParseRows(string path) => File.ReadLines(path)
+        .Where(line => !string.IsNullOrWhiteSpace(line))
+        .Select(line => JsonSerializer.Deserialize<SessionEvent>(line, CaseInsensitive)!)
+        .ToList();
 
     /// <summary>Writes rows until the file is past the ledger cap; returns the row count.</summary>
     private static int WriteOversizedLedger(string path, Func<int, string> row)

@@ -169,14 +169,44 @@ public sealed class BoundedFileReadTests : IDisposable
     }
 
     [Fact]
-    public void TryReadAllLines_SplitsLikeFileReadAllLines_AndRefusesOversizedFiles()
+    public void ReadTailLineWindow_UnderCap_StartsAtZeroWithTheWholeFile()
     {
-        var path = Write("rows.jsonl", "a\r\nb\rc\n\nd");
+        var path = Write("rows.jsonl", "a\r\nb\n\nc", bom: true);
 
-        Assert.True(BoundedFileRead.TryReadAllLines(path, 1024, out var lines));
-        Assert.Equal(File.ReadAllLines(path), lines);
-        Assert.False(BoundedFileRead.TryReadAllLines(path, 4, out var refused));
-        Assert.Empty(refused);
+        var window = BoundedFileRead.ReadTailLineWindow(path, 1024);
+
+        Assert.Equal(0, window.Offset);
+        Assert.False(window.Truncated);
+        Assert.Equal(File.ReadAllLines(path), window.Lines);
+    }
+
+    [Fact]
+    public void ReadTailLineWindow_OverCap_OffsetPointsAtTheFirstReturnedLine()
+    {
+        var content = new StringBuilder();
+        for (var i = 0; i < 1000; i++) content.Append("{\"n\":").Append(i).Append("}\n");
+        var path = Write("ledger.jsonl", content.ToString());
+        var bytes = File.ReadAllBytes(path);
+
+        var window = BoundedFileRead.ReadTailLineWindow(path, 100);
+
+        Assert.True(window.Truncated);
+        Assert.Equal((byte)'\n', bytes[window.Offset - 1]);
+        var rest = Encoding.UTF8.GetString(bytes, (int)window.Offset, bytes.Length - (int)window.Offset);
+        Assert.Equal(rest.Split('\n', StringSplitOptions.RemoveEmptyEntries), window.Lines);
+        Assert.Equal("{\"n\":999}", window.Lines[^1]);
+    }
+
+    [Fact]
+    public void ReadTailLineWindow_OverCapSingleLine_ReturnsNoLinesAtTheEnd()
+    {
+        var path = Write("one-line.log", new string('x', 500));
+
+        var window = BoundedFileRead.ReadTailLineWindow(path, 100);
+
+        Assert.True(window.Truncated);
+        Assert.Empty(window.Lines);
+        Assert.Equal(500, window.Offset);
     }
 
     [Fact]
