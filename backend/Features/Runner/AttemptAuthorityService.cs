@@ -89,20 +89,23 @@ public sealed class AttemptAuthorityService
     private AuthorityState _state;
 
     /// <summary>
-    /// UTC time a ReviewAttempt was most recently claimed by an executor.
-    /// In-memory only (not persisted, reset on restart);
-    /// <see cref="ReadReviewClaimActivity"/> combines it with persisted lease
-    /// acquisitions so the review-claim stagnation clock survives a restart.
+    /// Latest UTC time of a ReviewAttempt claim that can no longer be deferred:
+    /// its lease was delivered, settled, expired, or re-fenced. In-memory only
+    /// (not persisted, reset on restart); <see cref="ReadReviewClaimActivity"/>
+    /// combines it with persisted lease acquisitions so the review-claim
+    /// stagnation clock survives a restart.
     /// </summary>
-    private DateTime? _lastReviewClaimAtUtc;
+    private DateTime? _settledReviewClaimAtUtc;
 
     /// <summary>
-    /// The value <see cref="_lastReviewClaimAtUtc"/> held before the most
-    /// recent claim. <see cref="DeferReviewClaim"/> restores it, because a
-    /// claim the server relinquished before delivery is not drain progress
-    /// (AGT-2987).
+    /// Claim times of review leases that are still live and may still be
+    /// relinquished by <see cref="DeferReviewClaim"/>, keyed per attempt and
+    /// fence. A deferred claim is removed without ever counting as drain
+    /// progress; any other end of the lease folds its time into
+    /// <see cref="_settledReviewClaimAtUtc"/>. Keeping one entry per lease makes
+    /// out-of-order deferrals of concurrent claims exact (AGT-2987).
     /// </summary>
-    private DateTime? _previousReviewClaimAtUtc;
+    private readonly Dictionary<(string AttemptId, long Fence), DateTime> _deferrableReviewClaims = new();
 
     public AttemptAuthorityService(
         IConfiguration configuration,
@@ -137,10 +140,13 @@ public sealed class AttemptAuthorityService
         get { lock (_gate) return _state.AuthorityEpoch; }
     }
 
-    /// <summary>See <see cref="_lastReviewClaimAtUtc"/>.</summary>
+    /// <summary>
+    /// UTC time a ReviewAttempt was most recently claimed by an executor, not
+    /// counting claims the server deferred before delivery. In-memory only.
+    /// </summary>
     public DateTime? LastReviewClaimAtUtc
     {
-        get { lock (_gate) return _lastReviewClaimAtUtc; }
+        get { lock (_gate) return LastReviewClaimLocked(); }
     }
 
     public AttemptWriteResult AcquireRun(
@@ -697,8 +703,8 @@ public sealed class AttemptAuthorityService
             SetReviewLeaseIsolation(review, fence);
             review.CurrentClaimDeliveryKey = deliveryKey;
             review.IdempotencyKeys.Add(deliveryKey);
-            _previousReviewClaimAtUtc = _lastReviewClaimAtUtc;
-            _lastReviewClaimAtUtc = now;
+            SettleReviewClaimsLocked();
+            _deferrableReviewClaims[(review.AttemptId, fence)] = now;
             PersistLocked();
             return new AttemptWriteResult(AttemptWriteStatus.Accepted, review.AttemptId, ReviewAttempt: ToDto(review));
         }
@@ -960,11 +966,7 @@ public sealed class AttemptAuthorityService
                 .Where(review => review.Lease is not null)
                 .Select(review => (DateTime?)review.Lease!.AcquiredAt)
                 .Max();
-            var lastClaim = _lastReviewClaimAtUtc is null
-                ? persistedClaim
-                : persistedClaim is null || _lastReviewClaimAtUtc > persistedClaim
-                    ? _lastReviewClaimAtUtc
-                    : persistedClaim;
+            var lastClaim = Later(LastReviewClaimLocked(), persistedClaim);
             var oldest = pending.FirstOrDefault();
             return new ReviewClaimActivity(
                 pending.Length,
@@ -974,6 +976,36 @@ public sealed class AttemptAuthorityService
                 lastClaim);
         }
     }
+
+    private DateTime? LastReviewClaimLocked()
+    {
+        SettleReviewClaimsLocked();
+        var last = _settledReviewClaimAtUtc;
+        foreach (var claimedAt in _deferrableReviewClaims.Values)
+            last = Later(last, claimedAt);
+        return last;
+    }
+
+    /// <summary>
+    /// Folds every tracked claim whose lease is no longer the live lease of its
+    /// attempt into <see cref="_settledReviewClaimAtUtc"/>. Deferral removes its
+    /// entry before clearing the lease, so only claims that reached an executor
+    /// are folded here.
+    /// </summary>
+    private void SettleReviewClaimsLocked()
+    {
+        foreach (var ((attemptId, fence), claimedAt) in _deferrableReviewClaims.ToArray())
+        {
+            var review = FindReview(attemptId);
+            if (review is { State: AttemptLifecycleState.Leased, Lease: { } lease } && lease.Fence == fence)
+                continue;
+            _deferrableReviewClaims.Remove((attemptId, fence));
+            _settledReviewClaimAtUtc = Later(_settledReviewClaimAtUtc, claimedAt);
+        }
+    }
+
+    private static DateTime? Later(DateTime? left, DateTime? right) =>
+        left is null ? right : right is null || left >= right ? left : right;
 
     /// <summary>
     /// Terminalizes a ReviewAttempt whose lease expired before a report was
@@ -1041,8 +1073,7 @@ public sealed class AttemptAuthorityService
 
             if (!Blank(review.CurrentClaimDeliveryKey))
                 review.IdempotencyKeys.Remove(review.CurrentClaimDeliveryKey!);
-            if (_lastReviewClaimAtUtc == review.Lease.AcquiredAt)
-                _lastReviewClaimAtUtc = _previousReviewClaimAtUtc;
+            _deferrableReviewClaims.Remove((review.AttemptId, review.Lease.Fence));
             review.CurrentClaimDeliveryKey = null;
             review.Lease = null;
             review.State = AttemptLifecycleState.Pending;

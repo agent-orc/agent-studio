@@ -11,6 +11,9 @@ public sealed partial class TaskServerStore
 {
     private static readonly JsonSerializerOptions ReviewJson = new(JsonSerializerDefaults.Web);
 
+    /// <summary>Rows the review claim reads per poll when selecting a candidate.</summary>
+    private const int ClaimCandidatePageSize = 32;
+
     /// <summary>AGT-2987: last time each unclaimable attempt was logged; one line per attempt per hour.</summary>
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTime> _unclaimableReviewLoggedAt =
         new(StringComparer.Ordinal);
@@ -232,6 +235,8 @@ public sealed partial class TaskServerStore
     {
         RequireAdmission();
         ReviewClaimResponse? response = null;
+        // Every unclaimable attempt, not only the ones the response names.
+        IReadOnlyList<ReviewUnclaimableAttemptDto> unclaimableToLog = [];
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
             var executor = await ReadReviewExecutorAsync(
@@ -270,39 +275,46 @@ public sealed partial class TaskServerStore
             string? capabilityBlock = null;
             var candidates = new List<(ReviewAttemptDto Attempt, ReviewSubjectDto Subject)>();
             var unclaimable = new List<ReviewUnclaimableAttemptDto>();
-            await using (var command = Command(connection, """
-                SELECT a.id, a.subject_id, a.task_id, a.attempt_number, a.status,
-                       a.executor_id, a.host_id, a.fence, a.created_at, a.reported_at,
-                       a.cleaned_at, a.outcome, a.failure_classification,
-                       s.source_run_id, s.repository_id, s.repository_url,
-                       s.expected_result_sha, s.result_ref, s.source_bundle_artifact_id,
-                       s.source_bundle_sha256, s.coding_host_id, s.review_policy_hash,
-                       s.plan_json, s.created_at
-                  FROM review_attempts a
-                  JOIN review_subjects s ON s.id = a.subject_id
-                  JOIN tasks t ON t.id = a.task_id
-                 WHERE (
-                         a.status = 'queued'
-                         OR a.status = 'process-unknown'
-                         OR (a.status = 'leased' AND a.expires_at <= $now)
-                       )
-                   AND t.state = '4-auto-review'
-                   AND NOT (
-                         json_extract(s.plan_json, '$.requireDifferentHostFailureDomain') = 1
-                         AND s.coding_host_id = $host
-                       )
-                 ORDER BY a.created_at, a.attempt_number
-                 LIMIT 32;
-                """, transaction, ("$now", Iso(UtcNow)), ("$host", executor.HostId)))
-            await using (var reader = await command.ExecuteReaderAsync(ct))
+            // Returns the number of rows read so a full page can be told apart
+            // from the end of the queue.
+            async Task<int> ScanCandidatesAsync(long limit, bool collectClaimable)
             {
+                var rows = 0;
+                await using var command = Command(connection, """
+                    SELECT a.id, a.subject_id, a.task_id, a.attempt_number, a.status,
+                           a.executor_id, a.host_id, a.fence, a.created_at, a.reported_at,
+                           a.cleaned_at, a.outcome, a.failure_classification,
+                           s.source_run_id, s.repository_id, s.repository_url,
+                           s.expected_result_sha, s.result_ref, s.source_bundle_artifact_id,
+                           s.source_bundle_sha256, s.coding_host_id, s.review_policy_hash,
+                           s.plan_json, s.created_at
+                      FROM review_attempts a
+                      JOIN review_subjects s ON s.id = a.subject_id
+                      JOIN tasks t ON t.id = a.task_id
+                     WHERE (
+                             a.status = 'queued'
+                             OR a.status = 'process-unknown'
+                             OR (a.status = 'leased' AND a.expires_at <= $now)
+                           )
+                       AND t.state = '4-auto-review'
+                       AND NOT (
+                             json_extract(s.plan_json, '$.requireDifferentHostFailureDomain') = 1
+                             AND s.coding_host_id = $host
+                           )
+                     ORDER BY a.created_at, a.attempt_number
+                     LIMIT $limit;
+                    """, transaction, ("$now", Iso(UtcNow)), ("$host", executor.HostId), ("$limit", limit));
+                await using var reader = await command.ExecuteReaderAsync(ct);
                 while (await reader.ReadAsync(ct))
                 {
+                    rows++;
                     var candidateAttempt = ReadReviewAttempt(reader);
                     var candidateSubject = ReadReviewSubjectFromClaim(reader);
                     var missing = MissingSubjectCapabilities(executor, candidateSubject);
                     if (missing.Count == 0)
-                        candidates.Add((candidateAttempt, candidateSubject));
+                    {
+                        if (collectClaimable) candidates.Add((candidateAttempt, candidateSubject));
+                    }
                     else
                         unclaimable.Add(new ReviewUnclaimableAttemptDto(
                             candidateAttempt.AttemptId,
@@ -310,7 +322,9 @@ public sealed partial class TaskServerStore
                             candidateAttempt.CreatedAt,
                             missing));
                 }
+                return rows;
             }
+            var scannedRows = await ScanCandidatesAsync(ClaimCandidatePageSize, collectClaimable: true);
             foreach (var candidate in candidates)
             {
                 var candidateRequirements = RequiredReviewCapabilities(
@@ -338,6 +352,16 @@ public sealed partial class TaskServerStore
             {
                 // AGT-2987: a subject the registered capabilities cannot serve
                 // used to be skipped without a word. Name it instead.
+                if (capabilityBlock is null && unclaimable.Count > 0 && scannedRows == ClaimCandidatePageSize)
+                {
+                    // AGT-2987: the claim page is full of attempts this executor
+                    // cannot serve. Enumerate the whole backlog so every
+                    // unclaimable attempt is counted and logged, not only the
+                    // first page. Claim selection itself keeps its page size.
+                    unclaimable.Clear();
+                    await ScanCandidatesAsync(-1, collectClaimable: false);
+                }
+                if (capabilityBlock is null) unclaimableToLog = unclaimable;
                 response = capabilityBlock is not null
                     ? ReviewClaimEmptyResponses.Empty(ReviewClaimEmptyReasons.CapabilityAdmission, capabilityBlock)
                     : ReviewClaimEmptyResponses.ForQueue(
@@ -419,13 +443,19 @@ public sealed partial class TaskServerStore
                 RequiredCapabilities: capabilityAdmission.Required,
                 CanaryCapabilities: capabilityAdmission.Canaries);
         }, ct);
-        LogUnclaimableReviews(request.ExecutorId, response!);
+        LogUnclaimableReviews(request.ExecutorId, unclaimableToLog);
         return response!;
     }
 
-    private void LogUnclaimableReviews(string executorId, ReviewClaimResponse response)
+    /// <summary>
+    /// Logs every unclaimable attempt once per hour. Takes the full list the
+    /// claim scan found: the response names at most
+    /// <see cref="ReviewClaimEmptyResponses.MaxNamedAttempts"/> attempts, and
+    /// logging only those would leave the rest of a large backlog silent.
+    /// </summary>
+    private void LogUnclaimableReviews(string executorId, IReadOnlyList<ReviewUnclaimableAttemptDto> attempts)
     {
-        if (response.UnclaimableAttempts is not { Count: > 0 } attempts) return;
+        if (attempts.Count == 0) return;
         var now = UtcNow;
         foreach (var attempt in attempts)
         {
@@ -436,7 +466,7 @@ public sealed partial class TaskServerStore
             _logger?.LogWarning(
                 "review-claim-unclaimable reason={Reason} attempt={AttemptId} task={TaskKey} "
                 + "executor={ExecutorId} missing={MissingCapabilities} pendingSince={PendingSince:O}",
-                response.Reason,
+                ReviewClaimEmptyReasons.UnclaimablePlanRequirements,
                 attempt.AttemptId,
                 attempt.TaskKey,
                 executorId,
