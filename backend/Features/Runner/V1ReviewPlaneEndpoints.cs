@@ -1289,7 +1289,7 @@ public static class V1ReviewPlaneEndpoints
                     {
                         var integrated = await remoteIntegration.EnqueueAsync(integrationRequest).ConfigureAwait(false);
                         integrationOutcome = integrated.Outcome.ToString();
-                        integrationParkReason = integrated.AutomaticRecoveryDetail;
+                        integrationParkReason = RemoteDeliveryParkReason.For(integrated);
                     }
                     else
                     {

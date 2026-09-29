@@ -172,6 +172,32 @@ public static class RemoteDeliverySettlementStore
     }
 
     /// <summary>
+    /// Records the result of an integration run that this pass actually
+    /// executed. Unlike <see cref="Advance"/> it replaces the outcome and the
+    /// detail outright, so a re-run after an operator moved the card out of its
+    /// park never keeps the stale verdict's detail beside the fresh outcome
+    /// (AGT-2995). The stage still never rewinds.
+    /// </summary>
+    public static bool RecordIntegration(
+        string taskFolder,
+        string integrationOutcome,
+        string? integrationDetail)
+    {
+        var current = Read(taskFolder);
+        if (current is null) return false;
+        Write(taskFolder, current with
+        {
+            Stage = current.Stage >= RemoteDeliverySettlementStage.IntegrationSettled
+                ? current.Stage
+                : RemoteDeliverySettlementStage.IntegrationSettled,
+            IntegrationOutcome = integrationOutcome,
+            IntegrationDetail = integrationDetail,
+            RecordedAtUtc = DateTimeOffset.UtcNow,
+        });
+        return true;
+    }
+
+    /// <summary>
     /// True when the record describes the delivery generation that is current
     /// right now. A card that was requeued and re-reviewed has a different
     /// current ReviewAttempt, and its old record must never be replayed.
