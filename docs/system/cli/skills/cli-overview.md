@@ -40,7 +40,7 @@ CAR -> Studio output mirror -> marker renderer -> SignalR -> Activity Log
     -> Studio session, quota, usage, ledger, sentinel and reaper policy
 ```
 
-[`GenericCliExecutionService`](../../../../backend/Features/Cli/Execution/CliExecutionServiceBase.cs) is the shared Studio host adapter. It always creates a typed CAR request. Engine rollout settings and the raw-spawn rollback were removed in AGT-2373. Antigravity keeps the persisted CLI type `gemini`, which the adapter maps to CAR's `antigravity` (`agentapi`) descriptor; CAR's deprecated `gemini` descriptor is never used for card runs (ADR-0076).
+[`GenericCliExecutionService`](../../../../backend/Features/Cli/Execution/CliExecutionServiceBase.cs) is the shared Studio host adapter. It always creates a typed CAR request. Engine rollout settings and the raw-spawn rollback were removed in AGT-2373. Antigravity keeps the persisted CLI type `gemini`, which the adapter maps to CAR's `antigravity` (`agentapi`) descriptor; CAR's deprecated `gemini` descriptor is never used for card runs (ADR-0077).
 
 ## Session model invariants
 

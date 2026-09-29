@@ -165,7 +165,7 @@ host_opt="$probe_root/opt/host"
 host_config="$probe_root/etc/host"
 host_state="$probe_root/var/host"
 systemd_root="$probe_root/etc/systemd"
-setup_binary="$release_root/agent-orchestrator-setup"
+setup_binary="$release_root/agent-studio-setup"
 control_output="$probe_root/control-output"
 join_file="$probe_root/join.token"
 base_url="http://127.0.0.1:$port"
@@ -185,6 +185,7 @@ export AGENT_SETUP_SYSTEMD_ROOT="$systemd_root"
 umask 077
 "$setup_binary" \
   --mode control-plane \
+  --target native \
   --release-version "$version" \
   --release-dir "$release_root" \
   --listen-url "$base_url" \

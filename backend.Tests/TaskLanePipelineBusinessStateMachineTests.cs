@@ -355,7 +355,8 @@ public sealed class TaskLanePipelineBusinessStateMachineTests : IDisposable
         => MoveAndAssertAsync(
             TaskStates.Escalated,
             TaskStates.Completed,
-            includeCommit: false);
+            includeCommit: false,
+            noBranchExpected: true);
 
     [Fact]
     public Task Completed_AuditReopen_TaskReturnsToReady()
@@ -482,8 +483,10 @@ public sealed class TaskLanePipelineBusinessStateMachineTests : IDisposable
             id,
             target,
             _fixture.WatchPath,
-            cause: "business-contract-test",
-            reason: $"{source} -> {target}");
+            cause: !includeCommit && target == TaskStates.Completed
+                ? TimelineActors.Human("owner") : "business-contract-test",
+            reason: $"{source} -> {target}",
+            operatorOverride: !includeCommit && target == TaskStates.Completed);
 
         Assert.Equal(MoveJobStatus.Success, outcome.Status);
         Assert.False(string.IsNullOrWhiteSpace(outcome.NewFolderPath));
@@ -540,7 +543,7 @@ public sealed class TaskLanePipelineEdgeCaseTests : IDisposable
     [Theory]
     [InlineData(TaskStates.Completed)]
     [InlineData(TaskStates.Archive)]
-    public async Task AutoReview_TerminalTransition_OpenReviewAttemptIsSuperseded(
+    public async Task AutoReview_TerminalTransition_SupersedesOnlyAfterSuccessfulMove(
         string terminalState)
     {
         const string id = "terminal-review-cleanup";
@@ -577,6 +580,14 @@ public sealed class TaskLanePipelineEdgeCaseTests : IDisposable
             terminalState,
             _fixture.WatchPath,
             cause: "business-contract-test");
+
+        if (terminalState == TaskStates.Completed)
+        {
+            Assert.Equal(MoveJobStatus.IntegrationFailed, moved.Status);
+            Assert.NotEqual(AttemptLifecycleState.Superseded,
+                authority.GetReview(review.AttemptId)!.State);
+            return;
+        }
 
         Assert.Equal(MoveJobStatus.Success, moved.Status);
         var superseded = authority.GetReview(review.AttemptId)!;

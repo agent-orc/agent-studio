@@ -262,11 +262,11 @@ The investigation also surfaced a parallel question from the user: "is this a WS
 **Reasoning style.** Test what can be tested deterministically, run the live probes opt-in, write down what is unproven so the next reader does not over-trust the fix. The five live probes triangulate observable shapes (`.exe` direct, `.CMD` shim, production code path with realistic prompt, sequential kill+restart). The two deterministic probes pin the runner's stream/stop chain shape using a fake CLI we fully control. Together they catch ~80% of plausible regressions; the missing 20% (live ASP.NET hosting interaction, concurrent-process contention) is what the open caveat is for.
 
 **Implementation pointers.** The original Studio-owned spawn helpers and their
-live/fake CLI tests were removed by ADR-0076 after CAR parity was established.
+live/fake CLI tests were removed by ADR-0077 after CAR parity was established.
 The retained operator guidance is
 [`docs/system/cli/skills/cli-claude.md`](../../cli/skills/cli-claude.md).
 
-**Status.** Superseded for card-run process ownership by ADR-0076. The historical
+**Status.** Superseded for card-run process ownership by ADR-0077. The historical
 diagnosis remains useful, but CAR now owns the affected spawn mechanics.
 
 ---
@@ -1813,7 +1813,57 @@ The standalone Linux Runner owns one clean checkout per project and executor. It
 
 ---
 
-## ADR-0076 - Studio uses CodingAgentRunner as its only card-run CLI execution layer (2026-09-24)
+## ADR-0076 - Operations Server brokers host execution beside Task Server authority (2026-09-25)
+
+**Status.** Accepted architecture from AGT-W49 D1, D2 and D4. Implementation is
+staged in AGT-2907. Deployment promotion remains gated on route and security
+parity. The 2026-09-26 operator instruction resolves delivery ownership below.
+
+**Decision.** Add Operations Server as a fourth independently deployable runtime
+role beside Studio, Task Server, and the execution plane. Outbound Operations
+Agents execute declared capabilities. Operations Server accepts audience-bound
+service principals, never browser cookies, sessions, or credentialed CORS.
+Each frontend backend has its own principal. The Connector retains its exact
+loopback Host, Origin, CSRF, allowlist and credential-injection boundary. A LAN
+browser uses a separate HTTPS edge, with independent Task and Operations
+credentials held on that edge.
+
+Task Server retains tasks, runs, reviews, workspace identity, orchestration
+sessions, context, budgets, accepted responses, decisions, leases, fences and
+lane transitions. Operations Server stores bounded commands, attempts and
+operational evidence only. A Task Server permit binds executable task-linked
+work to a current subject and fence. Operations credentials cannot issue such a
+permit or mutate task state. No operation result causes a task transition by
+itself. Standalone host maintenance requires an explicit separate scope.
+
+One-box Docker is the selected standard after full parity: only the HTTPS edge
+is published, host-native operations use an enrolled agent, and no Docker socket
+is mounted. Workstation and distributed WireGuard deployments use the same
+contracts with different placement and listeners. Public demo has no executable
+Operations credential. No service failure permits fallback to another task
+authority, and no partially sent mutation is retried against another upstream.
+
+**Consequences.** This amends ADR-0063's three-component target. The original
+Task Server route migration remains valid. Native handlers move to agents;
+Studio and BFF remain browser edges. Agent loss expires authority and retains
+uncertain evidence. Mutating work cannot be reassigned without fence advancement
+and positive no-overlap proof. Closing Studio does not own any service lifetime.
+
+**D3 staged delivery.** The operator resolved the card ownership on 2026-09-26:
+AGT-2736 delivers bounded Option C without scope extension. AGT-2907 owns D3's
+Operations Server expansion above that compatible transitional baseline. Its
+first accepted stage is the Task Server contract and outbound Operations Agent
+channel. Full catalogue, Connector/BFF adapter migration with review permits,
+and deployment parity are typed follow-up stages. D1, D2 and D4 remain selected;
+one-box production parity cannot be claimed from the foundation stage.
+
+**Contract and delivery evidence.** See
+[Operations backchannel contract](../../contracts/operations-backchannel.md) and
+[the source dossier](../../../operations/operations-server-backchannel/index.html).
+
+---
+
+## ADR-0077 - Studio uses CodingAgentRunner as its only card-run CLI execution layer (2026-09-24)
 
 **Decision.** Every coding-agent card run in Agent Studio and the standalone
 Agent Runner is expressed as a typed `CliRunRequest` and executed by a

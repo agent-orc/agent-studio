@@ -98,6 +98,49 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
     }
 
     [Fact]
+    public void BuildLookup_CuratedMapping_RequiresCurrentEpochAndReachableIntegrationSha()
+    {
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q -b task/rewritten");
+        File.WriteAllText(Path.Combine(repo, "rewritten.txt"), "delivered content");
+        Commit(repo, "feat: original delivery");
+        var source = RunGit(repo, "rev-parse HEAD").Out.Trim();
+        RunGit(repo, "checkout -q develop");
+        File.WriteAllText(Path.Combine(repo, "rewritten.txt"), "delivered content");
+        Commit(repo, "feat: curated integration");
+        var integrated = RunGit(repo, "rev-parse HEAD").Out.Trim();
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job("rewritten", "AGT-2202", project, repo, log,
+            commits: [Commit(source) with { RunAttemptId = "epoch-1" }]);
+        ReviewSubjectStore.Write(job.FolderPath, new ReviewSubjectRecord
+        {
+            TaskKey = "AGT-2202", RunAttemptId = "epoch-1", Project = project,
+            Repository = repo, ResultSha = source, AttemptChainId = "chain-1",
+            ResultRef = "refs/heads/task/rewritten",
+        });
+        Assert.Equal(IntegrationStatuses.Pending, svc.BuildLookup([job])[job.TaskKey].Status);
+
+        var mapping = new TaskIntegrationRecord
+        {
+            Id = "curated-epoch-1", Classification = IntegrationRecordClasses.CuratedMapping,
+            SourceSha = source, IntegrationSha = integrated, DeliveryEpoch = "epoch-1",
+            IntegrationBranch = "develop", Evidence = "Curated merge of reviewed result",
+        };
+        Assert.Equal(IntegrationStatuses.Integrated,
+            svc.BuildLookup([job with { IntegrationRecords = [mapping] }])[job.TaskKey].Status);
+        Assert.Equal(IntegrationStatuses.Pending,
+            svc.BuildLookup([job with { IntegrationRecords = [mapping with { DeliveryEpoch = "old-epoch" }] }])[job.TaskKey].Status);
+        Assert.Equal(IntegrationStatuses.Pending,
+            svc.BuildLookup([job with { IntegrationRecords = [mapping with { IntegrationSha = source }] }])[job.TaskKey].Status);
+
+        var attributedOnly = Job("rewritten-attributed", "AGT-2203", project, repo, log,
+            commits: [Commit(source) with { RunAttemptId = "epoch-1", DeliveryGeneration = 1 }])
+            with { IntegrationRecords = [mapping] };
+        Assert.Equal(IntegrationStatuses.Integrated,
+            svc.BuildLookup([attributedOnly])[attributedOnly.TaskKey].Status);
+    }
+
+    [Fact]
     public void BuildLookup_OutOfBandMergeWithoutOwnAttempt_IsIntegrated()
     {
         var repo = SeedDevelopMainRepo();
@@ -170,7 +213,7 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
 
         Assert.Equal(IntegrationStatuses.Integrated, status.Status);
         Assert.Equal(rebasedSha[..7], status.Sha);
-        Assert.Contains("superseded", status.Detail);
+        Assert.Equal("current-result-ancestor", status.Detail);
     }
 
     [Fact]
@@ -273,7 +316,11 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
 
         var svc = BuildService(repo, out var project, out var log);
         var job = Job("partial", "AGT-3006", project, repo, log,
-            commits: new[] { Commit(landed), Commit(notLanded) },
+            commits: new[]
+            {
+                Commit(landed) with { RunAttemptId = "run-current" },
+                Commit(notLanded) with { RunAttemptId = "run-current" },
+            },
             prov: Prov(branch: "task/partial"));
         ReviewSubjectStore.Write(job.FolderPath, new ReviewSubjectRecord
         {
@@ -281,7 +328,7 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
             RunAttemptId = "run-current",
             Project = project,
             Repository = repo,
-            ResultSha = landed,
+            ResultSha = notLanded,
             AttemptChainId = "chain-current",
             ResultRef = "refs/heads/agent-studio/results/current",
         });
@@ -767,6 +814,39 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
     }
 
     [Fact]
+    public void BuildLookup_Agt2301FailedMergeRecordHealsWhenCommitAppearsOnTarget()
+    {
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q -b task/agt2301 develop");
+        File.WriteAllText(Path.Combine(repo, "agt2301.txt"), "delivered\n");
+        Commit(repo, "feat: recorded delivery");
+        var delivered = RunGit(repo, "rev-parse HEAD").Out.Trim();
+        var service = BuildService(repo, out var project, out var log);
+        var job = Job("agt2301", "AGT-2301", project, repo, log,
+            commits: [Commit(delivered)]) with { State = TaskStates.Completed };
+        log.EnsureRun(job.FolderPath, PipelineCatalogue.Standard, project, job.Id);
+        log.RecordStep(job.FolderPath, new PipelineStepExecution
+        {
+            StepId = PipelineCatalogue.MergeIntoDevelopStepId,
+            Kind = StepKind.Tool,
+            Status = PipelineStepStatus.Failed,
+            Verdict = "conflict",
+            Reason = "The earlier merge attempt failed.",
+        });
+        Assert.Equal(IntegrationStatuses.ConflictSkipped,
+            service.BuildLookup([job])[job.TaskKey].Status);
+
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "merge --no-ff --no-edit task/agt2301");
+        var healed = service.BuildLookup([job])[job.TaskKey];
+
+        Assert.Equal(IntegrationStatuses.Integrated, healed.Status);
+        Assert.Equal(delivered[..7], healed.Sha);
+        Assert.Equal(PipelineStepStatus.Failed, log.Read(job.FolderPath)?.Steps.Last(
+            step => step.StepId == PipelineCatalogue.MergeIntoDevelopStepId).Status);
+    }
+
+    [Fact]
     public void BuildLookup_PreparationFailure_ShowsTheStderrTailInTheIntegrationDetail()
     {
         // AGT-2822: a repository preparation failure reached the card as a bare
@@ -1077,7 +1157,7 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         var batched = svc.BuildLookup([job, neighbour])[job.TaskKey];
 
         Assert.Equal(IntegrationStatuses.Integrated, alone.Status);
-        Assert.Equal("reviewed-result-ancestor", alone.Detail);
+        Assert.Equal("current-result-ancestor", alone.Detail);
         Assert.Equal(delivered[..7], alone.Sha);
         Assert.Empty(alone.Repositories);
         Assert.Equal(batched.Status, alone.Status);
@@ -1109,7 +1189,7 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
 
     [Fact]
     [Trait("Category", "MachineBound")]
-    public void BuildLookup_LegacyContentEqualCommit_IsIntegratedByContent()
+    public void BuildLookup_LegacyContentEqualCommit_RequiresDurableMapping()
     {
         var repo = SeedDevelopMainRepo();
         RunGit(repo, "checkout -q -b task/legacy develop");
@@ -1125,9 +1205,8 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
 
         var status = service.BuildLookup([job])[job.TaskKey];
 
-        Assert.Equal(IntegrationStatuses.Integrated, status.Status);
-        Assert.Contains("integrated-by-content", status.Detail);
-        Assert.Equal(CommitIntegrationRules.IntegratedByContent, status.Repositories[0].Commits[0].IntegrationRule);
+        Assert.Equal(IntegrationStatuses.Pending, status.Status);
+        Assert.Equal(CommitIntegrationRules.Missing, status.Repositories[0].Commits[0].IntegrationRule);
 
         RunGit(repo, "reset -q --hard HEAD^");
         var afterReset = service.BuildLookup([job])[job.TaskKey];
@@ -1227,6 +1306,71 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         Assert.Contains("1 earlier generation commits superseded", integrated.Detail);
         Assert.Equal("agent-studio/results/final", integrated.DeliveryRef);
         Assert.Equal(3, integrated.Repositories[0].Commits.Count);
+    }
+
+    [Theory]
+    [Trait("Category", "MachineBound")]
+    [InlineData(null, false, true)]
+    [InlineData("", false, true)]
+    [InlineData("   ", false, true)]
+    [InlineData("matching", true, true)]
+    [InlineData("old-ref", false, true)]
+    [InlineData(null, false, false)]
+    [InlineData("", false, false)]
+    [InlineData("   ", false, false)]
+    [InlineData("matching", true, false)]
+    [InlineData("old-ref", false, false)]
+    public void ArchiveGuard_AndReconciliation_RequireCurrentTargetFingerprint(
+        string? fingerprint, bool allowed, bool withReviewSubject)
+    {
+        var repo = SeedDevelopMainRepo();
+        var sha = RunGit(repo, "rev-parse develop").Out.Trim();
+        var service = BuildService(repo, out var project, out _);
+        var config = ConfigFor(repo, project);
+        var watchPath = Path.Combine(repo, ".orchestrator", "jobs");
+        var folder = Path.Combine(watchPath, TaskStates.Completed, "accepted");
+        foreach (var lane in TaskStates.All)
+            Directory.CreateDirectory(Path.Combine(watchPath, lane));
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = "accepted", key = "AGT-2920", title = "Accepted delivery",
+            state = TaskStates.Completed, requiresIntegration = true,
+            commits = new[] { Commit(sha) with { RunAttemptId = "epoch-1", ResultSha = sha } },
+        }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
+        if (withReviewSubject)
+            ReviewSubjectStore.Write(folder, new ReviewSubjectRecord
+            {
+                TaskKey = "AGT-2920", RunAttemptId = "epoch-1",
+                AttemptChainId = "chain-1", ResultSha = sha,
+            });
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var card = Assert.IsType<TaskInfo>(scanner.FindJob("accepted", watchPath));
+        var status = service.BuildLookup([card])[card.TaskKey];
+        Assert.Equal(IntegrationStatuses.Integrated, status.Status);
+        Assert.False(string.IsNullOrWhiteSpace(status.TargetRefFingerprint));
+        TaskJsonFile.UpdateField(folder, "completionClaim", new TaskCompletionClaim
+        {
+            Basis = CompletionClaimBases.IntegratedDelivery,
+            DeliveryEpoch = "epoch-1", ResultSha = sha, IntegrationBranch = "develop",
+            TargetRefFingerprint = fingerprint == "matching" ? status.TargetRefFingerprint : fingerprint,
+        }, NullLogger.Instance);
+        scanner.InvalidateCache();
+        card = Assert.IsType<TaskInfo>(scanner.FindJob("accepted", watchPath));
+        var reconciliationTarget = DeliveryLanePolicy.ReconciliationTarget(card, status);
+        var states = new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance,
+            integrationStatus: service, configuration: config);
+
+        var outcome = states.MoveJob(card.Id, TaskStates.Archive, watchPath);
+
+        Assert.Equal(allowed ? MoveJobStatus.Success : MoveJobStatus.IntegrationFailed, outcome.Status);
+        Assert.Equal(allowed ? null : TaskStates.AutoReview, reconciliationTarget);
+        Assert.Equal(reconciliationTarget is null, outcome.Status == MoveJobStatus.Success);
+        Assert.Equal(allowed ? TaskStates.Archive : TaskStates.Completed,
+            scanner.FindJob(card.Id, watchPath)?.State);
+        if (!allowed)
+            Assert.Contains("Reintegrate and review the current delivery.", outcome.Message);
     }
 
     // --- helpers -----------------------------------------------------------

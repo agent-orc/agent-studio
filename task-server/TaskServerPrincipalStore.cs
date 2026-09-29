@@ -15,6 +15,7 @@ public sealed partial class TaskServerStore
                 [
                     TaskServerScopes.TasksRead,
                     TaskServerScopes.TasksWrite,
+                    TaskServerScopes.OperationsIssue,
                     TaskServerScopes.Management,
                     TaskServerScopes.EventsSubscribe,
                 ],
@@ -24,9 +25,11 @@ public sealed partial class TaskServerStore
                     TaskServerScopes.TasksRead,
                     TaskServerScopes.OrchestrationClaim,
                     TaskServerScopes.OrchestrationWrite,
+                    TaskServerScopes.OperationsIssue,
                     TaskServerScopes.EventsSubscribe,
                 ],
                 StringComparer.Ordinal),
+            [TaskServerPrincipalKinds.Operations] = new HashSet<string>([TaskServerScopes.OperationsInspect], StringComparer.Ordinal),
             [TaskServerPrincipalKinds.Runner] = new HashSet<string>(
                 [
                     TaskServerScopes.TasksRead,

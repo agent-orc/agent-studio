@@ -53,7 +53,9 @@ public sealed class DurableLeaseAuthorityTests
         };
         using var client = new TaskServerClient(http, options.RunnerId);
         using var stop = new CancellationTokenSource();
-        // Pin the clock to the lease window; the real clock has moved past it.
+        // The lease is dated 2026-09-27; without an injected clock the renewal
+        // answer arrives "after the local autonomy deadline" on any later day and
+        // the heartbeat reports the lease lost (the test turned red on 27.09.).
         var heartbeat = new LeaseHeartbeat(client, options, lease, _ => { }, utcNow: () => now);
 
         await heartbeat.RunAsync(stop, CancellationToken.None);
