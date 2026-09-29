@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
+import type { Page } from '@playwright/test';
 import { expect, test } from '../fixtures/dev-backend';
 import { setTheme } from '../helpers/theme';
 
@@ -9,6 +10,65 @@ function percentile(sorted: readonly number[], p: number): number {
   const rank = p * (sorted.length - 1);
   const lower = Math.floor(rank);
   return sorted[lower] + (sorted[Math.ceil(rank)] - sorted[lower]) * (rank - lower);
+}
+
+/** Warm pager switches: five warmups, then 100 samples until the changed title has painted. */
+async function measurePagerSwitches(page: Page, titles: readonly string[]): Promise<number[]> {
+  return page.evaluate(async (taskTitles) => {
+    const durations: number[] = [];
+    let current = 0;
+    for (let i = 0; i < 105; i++) {
+      const next = current === 0 ? 1 : 0;
+      const button = document.querySelector<HTMLButtonElement>(
+        `[data-testid="studio-task-${next === 1 ? 'next' : 'prev'}"]`);
+      if (!button) throw new Error('Task pager is missing');
+      const start = performance.now();
+      button.click();
+      await new Promise<void>((resolve, reject) => {
+        const matches = () => document.querySelector('[data-testid="overview-title"]')
+          ?.textContent?.includes(taskTitles[next]) ?? false;
+        const observer = new MutationObserver(() => {
+          if (!matches()) return;
+          observer.disconnect();
+          clearTimeout(timeout);
+          resolve();
+        });
+        const timeout = window.setTimeout(() => {
+          observer.disconnect();
+          reject(new Error(`Task title did not switch to ${taskTitles[next]}`));
+        }, 15_000);
+        observer.observe(document.body, { subtree: true, childList: true, characterData: true });
+        if (matches()) {
+          observer.disconnect();
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      if (i >= 5) durations.push(performance.now() - start);
+      current = next;
+    }
+    return durations;
+  }, titles);
+}
+
+/** Warm serialized core reads of two tasks: five warmups, then 100 samples. */
+async function measureCoreReads(page: Page, baseUrl: string, keys: readonly string[], project: string) {
+  const coreDurations: number[] = [];
+  const coreSizes: number[] = [];
+  for (let i = 0; i < 105; i++) {
+    const key = keys[i % keys.length];
+    const started = performance.now();
+    const response = await page.request.get(`${baseUrl}/api/tasks/${key}/core?project=${encodeURIComponent(project)}`);
+    const body = await response.body();
+    expect(response.status()).toBe(200);
+    expect(body.length).toBeLessThanOrEqual(16 * 1024);
+    if (i >= 5) {
+      coreDurations.push(performance.now() - started);
+      coreSizes.push(body.length);
+    }
+  }
+  return { coreDurations, coreSizes, coreP95Ms: percentile([...coreDurations].sort((a, b) => a - b), 0.95) };
 }
 
 test.describe('Crash recovery prompt', () => {
@@ -69,60 +129,10 @@ test.describe('Crash recovery prompt', () => {
         await expect(page).toHaveURL(new RegExp(`/tasks/${keys[0]}`));
         if (process.env['CRASH_RECOVERY_MEASURE'] === '1') {
           await expect(page.getByTestId('overview-title')).toContainText(titles[0]);
-          const samples = await page.evaluate(async (taskTitles) => {
-            const durations: number[] = [];
-            let current = 0;
-            for (let i = 0; i < 105; i++) {
-              const next = current === 0 ? 1 : 0;
-              const button = document.querySelector<HTMLButtonElement>(
-                `[data-testid="studio-task-${next === 1 ? 'next' : 'prev'}"]`);
-              if (!button) throw new Error('Task pager is missing');
-              const start = performance.now();
-              button.click();
-              await new Promise<void>((resolve, reject) => {
-                const matches = () => document.querySelector('[data-testid="overview-title"]')
-                  ?.textContent?.includes(taskTitles[next]) ?? false;
-                const observer = new MutationObserver(() => {
-                  if (!matches()) return;
-                  observer.disconnect();
-                  clearTimeout(timeout);
-                  resolve();
-                });
-                const timeout = window.setTimeout(() => {
-                  observer.disconnect();
-                  reject(new Error(`Task title did not switch to ${taskTitles[next]}`));
-                }, 15_000);
-                observer.observe(document.body, { subtree: true, childList: true, characterData: true });
-                if (matches()) {
-                  observer.disconnect();
-                  clearTimeout(timeout);
-                  resolve();
-                }
-              });
-              await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-              if (i >= 5) durations.push(performance.now() - start);
-              current = next;
-            }
-            return durations;
-          }, titles);
+          const samples = await measurePagerSwitches(page, titles);
           expect(samples).toHaveLength(100);
           const sorted = [...samples].sort((a, b) => a - b);
-          const coreDurations: number[] = [];
-          const coreSizes: number[] = [];
-          for (let i = 0; i < 105; i++) {
-            const key = keys[i % keys.length];
-            const started = performance.now();
-            const response = await page.request.get(
-              `${devBackend.baseUrl}/api/tasks/${key}/core?project=${encodeURIComponent(watchPaths[0].name)}`);
-            const body = await response.body();
-            expect(response.status()).toBe(200);
-            expect(body.length).toBeLessThanOrEqual(16 * 1024);
-            if (i >= 5) {
-              coreDurations.push(performance.now() - started);
-              coreSizes.push(body.length);
-            }
-          }
-          const coreP95Ms = percentile([...coreDurations].sort((a, b) => a - b), 0.95);
+          const { coreDurations, coreSizes, coreP95Ms } = await measureCoreReads(page, devBackend.baseUrl, keys, watchPaths[0].name);
           if (evidenceDir) {
             await writeFile(join(evidenceDir, 'pending-recovery-navigation-measurement.json'), JSON.stringify({
               capturedAt: new Date().toISOString(), recordId: record.id, bootId: record.bootId,
@@ -217,6 +227,54 @@ test.describe('Crash recovery prompt', () => {
     expect(watchPaths[0].rootPath).not.toContain('recovery-repository');
     const pending = await (await page.request.get(`${devBackend.baseUrl}/api/crash-recovery/pending`)).json();
     expect(pending.pending.some((item: { files: string[] }) => item.files.includes('recovery-proof.txt'))).toBe(false);
+  });
+
+  test('measures the same task switches without a pending record as the comparison baseline', async ({ page, devBackend }) => {
+    test.skip(process.env['CRASH_RECOVERY_MEASURE'] !== '1', 'Measurement run only');
+    const pending = await (await page.request.get(`${devBackend.baseUrl}/api/crash-recovery/pending`)).json();
+    expect(pending.pending.filter((item: { classification: string }) => item.classification === 'review-required')).toEqual([]);
+    const watchPaths = await (await page.request.get(`${devBackend.baseUrl}/api/watch-paths`)).json();
+    const watchPath = watchPaths[0].path as string;
+    const ids: string[] = [];
+    const keys: string[] = [];
+    const titles = ['Recovery navigation first', 'Recovery navigation second'];
+    try {
+      for (const title of titles) {
+        const created = await page.request.post(`${devBackend.baseUrl}/api/tasks`, {
+          headers: { 'X-Client-Id': 'local-default' },
+          data: { title, watchPath, agent: 'codex', cliType: 'codex', targetState: '1-preparation', fixture: false },
+        });
+        expect(created.ok(), await created.text()).toBe(true);
+        ids.push((await created.json()).id);
+        const detail = await (await page.request.get(`${devBackend.baseUrl}/api/tasks/${ids.at(-1)}?watchPath=${encodeURIComponent(watchPath)}`)).json();
+        keys.push(detail.info.key);
+      }
+      await page.goto(`/#/tasks/${keys[0]}`, { waitUntil: 'domcontentloaded' });
+      await expect(page.getByTestId('overview-title')).toContainText(titles[0], { timeout: 30_000 });
+      await expect(page.getByTestId('crash-recovery-entry')).toBeHidden();
+      const samples = await measurePagerSwitches(page, titles);
+      const sorted = [...samples].sort((a, b) => a - b);
+      const { coreDurations, coreSizes, coreP95Ms } = await measureCoreReads(page, devBackend.baseUrl, keys, watchPaths[0].name);
+      const evidenceDir = process.env['CRASH_RECOVERY_RESULTS_DIR'];
+      if (evidenceDir) {
+        await mkdir(evidenceDir, { recursive: true });
+        await writeFile(join(evidenceDir, 'no-recovery-navigation-baseline.json'), JSON.stringify({
+          capturedAt: new Date().toISOString(),
+          environment: 'Isolated dev backend and Chromium browser on Linux runner; no review-required recovery record',
+          pager: { warmups: 5, samples: samples.length, criterion: 'changed overview title and two animation frames',
+            p50Ms: percentile(sorted, 0.5), p95Ms: percentile(sorted, 0.95), durationsMs: samples },
+          core: { targetP95Ms: 100, warmups: 5, samples: coreDurations.length, p95Ms: coreP95Ms,
+            maxBytes: Math.max(...coreSizes), durationsMs: coreDurations },
+        }, null, 2));
+      }
+      expect(coreP95Ms).toBeLessThanOrEqual(100);
+    } finally {
+      for (const id of ids) {
+        await page.request.delete(`${devBackend.baseUrl}/api/tasks/${id}?watchPath=${encodeURIComponent(watchPath)}`, {
+          headers: { 'X-Client-Id': 'local-default' },
+        });
+      }
+    }
   });
 
   test('shows pending startup recovery items and commits only after confirmation', async ({ page, devBackend }) => {
