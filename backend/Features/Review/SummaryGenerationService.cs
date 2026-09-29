@@ -17,6 +17,7 @@ public sealed class SummaryGenerationService
     public const int DefaultFinalizationMaxAttempts = 3;
     private const int MaxLogChars = 60_000;
     private const int HaikuTimeoutSeconds = 90;
+    private const int MaxProtocolAttempts = 2;
     private static readonly Regex ProtocolImagePathRegex = new(
         @"(?<![\w./\\-])(?<path>(?:results|attachments)[/\\][^\s`'""<>)\]]+\.(?:png|jpe?g|gif|webp|bmp|svg))(?:[.,;:!?])?(?![\w./\\-])",
         RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
@@ -27,6 +28,7 @@ public sealed class SummaryGenerationService
     private readonly AdHocUsageRecorder? _usage;
     private readonly FileGenerationIndex? _fileGenerationIndex;
     private readonly ResultVersionStore? _resultVersions;
+    private readonly PipelineExecutionLog? _pipelineLog;
     private readonly ConcurrentDictionary<string, TaskSummaryState> _states = new();
 
     public SummaryGenerationService(ILogger<SummaryGenerationService> logger, IConfiguration configuration)
@@ -41,7 +43,8 @@ public sealed class SummaryGenerationService
         AdHocUsageRecorder? usage = null,
         CliOneShotRegistry? oneShotRegistry = null,
         FileGenerationIndex? fileGenerationIndex = null,
-        ResultVersionStore? resultVersions = null)
+        ResultVersionStore? resultVersions = null,
+        PipelineExecutionLog? pipelineLog = null)
     {
         _logger = logger;
         _configuration = configuration;
@@ -50,6 +53,7 @@ public sealed class SummaryGenerationService
         _oneShotRegistry = oneShotRegistry;
         _fileGenerationIndex = fileGenerationIndex;
         _resultVersions = resultVersions;
+        _pipelineLog = pipelineLog;
     }
 
     private readonly CliOneShotRegistry? _oneShotRegistry;
@@ -94,8 +98,10 @@ public sealed class SummaryGenerationService
             1,
             10);
         string? error = null;
+        var attempts = 0;
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
+            attempts = attempt;
             await GenerateAsync(info, runOutcome, ct);
             var state = GetState(info.TaskKey);
             var statusPath = Path.Combine(info.FolderPath, "status.md");
@@ -122,6 +128,9 @@ public sealed class SummaryGenerationService
             }
 
             error = state?.ErrorMessage ?? "Generated status.md is missing.";
+            // Structural failures have already consumed their one retry with
+            // identical inputs. Do not multiply that budget in finalization.
+            if (error.StartsWith(SummaryProtocolValidation.ErrorPrefix, StringComparison.Ordinal)) break;
             _logger.LogWarning(
                 "Result finalization retry taskKey={TaskKey} jobId={JobId} attempt={Attempt}/{MaxAttempts} error={Error}",
                 info.TaskKey,
@@ -137,18 +146,18 @@ public sealed class SummaryGenerationService
             Status = TaskSummaryStatus.Degraded,
             FinishedAt = DateTime.UtcNow,
             ErrorMessage = error,
-            Attempt = maxAttempts,
+            Attempt = attempts,
             MaxAttempts = maxAttempts,
         };
         _logger.LogWarning(
             "Result finalization degraded taskKey={TaskKey} jobId={JobId} attempts={Attempts} error={Error}",
             info.TaskKey,
             info.Id,
-            maxAttempts,
+            attempts,
             error);
         return new ResultFinalizationOutcome(
             TaskSummaryStatus.Degraded,
-            maxAttempts,
+            attempts,
             maxAttempts,
             error);
     }
@@ -159,13 +168,13 @@ public sealed class SummaryGenerationService
         var runIndex = _fileGenerationIndex?.CurrentRunIndex(info.FolderPath);
 
         // Inflight guard: if a previous GenerateAsync for the same job is
-        // still inside its Haiku window, dropping this duplicate avoids
+        // still inside its generation and format-retry window, dropping this duplicate avoids
         // racing two subprocesses against the same status.md (manual
         // Regenerate clicked while the post-run auto-call is still in
         // flight, or the runner re-fires after a missed completion). The
         // outstanding call will publish either Ready or Failed when it
         // returns; the user-visible spinner stays where it was.
-        if (_states.TryGetValue(key, out var prev) && IsInflight(prev, DateTime.UtcNow, HaikuTimeoutSeconds))
+        if (_states.TryGetValue(key, out var prev) && IsInflight(prev, DateTime.UtcNow, HaikuTimeoutSeconds * MaxProtocolAttempts))
         {
             _logger.LogDebug("Skipping summary generation for {JobId}: prior call still in flight (started {StartedAt:o})",
                 info.Id, prev.StartedAt);
@@ -194,7 +203,7 @@ public sealed class SummaryGenerationService
                 BuildSummarySlots(info, truncated, runOutcome?.ProtocolResult ?? "unknown"),
                 new PromptCallContext(info.ProjectName, "summary", SummaryModel()));
 
-            var result = await RunHaikuAsync(prompt, info.FolderPath, ct);
+            var result = await RunValidatedSummaryAsync(prompt, info, recordPipeline: true, ct);
             if (!result.Ok || string.IsNullOrWhiteSpace(result.Summary))
             {
                 Fail(key, result.Error ?? "Empty Haiku response");
@@ -304,7 +313,7 @@ public sealed class SummaryGenerationService
             new PromptCallContext(info.ProjectName, "summary", SummaryModel()));
 
         var sw = Stopwatch.StartNew();
-        var result = await RunHaikuAsync(prompt, info.FolderPath, ct);
+        var result = await RunValidatedSummaryAsync(prompt, info, recordPipeline: false, ct);
         sw.Stop();
 
         if (!result.Ok || string.IsNullOrWhiteSpace(result.Summary))
@@ -358,6 +367,49 @@ public sealed class SummaryGenerationService
             ["outcome"] = outcome,
         };
 
+    private async Task<HaikuSummaryResult> RunValidatedSummaryAsync(
+        string prompt, TaskInfo info, bool recordPipeline, CancellationToken ct)
+    {
+        var evidence = new List<string>();
+        var pipelineAttempt = _pipelineLog?.Read(info.FolderPath)?.Attempt;
+        var step = new PipelineStepExecution
+        {
+            StepId = "summary", Kind = StepKind.Module, Attempt = pipelineAttempt,
+            StartedAt = DateTime.UtcNow,
+        };
+        for (var attempt = 1; ; attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+            var result = await RunHaikuAsync(prompt, info.FolderPath, ct);
+            var validationError = result.Ok ? SummaryProtocolValidation.Validate(result.Summary) : null;
+            if (validationError is not null)
+                result = result with { Ok = false, Error = validationError };
+
+            AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.SummaryGeneration, result.Model, result.Usage,
+                result.DurationMs, ok: result.Ok, project: info.ProjectName, jobId: info.Id);
+            evidence.Add($"Attempt {attempt}: {(result.Ok ? "passed" : result.Error ?? "generation failed")}");
+            step = step with
+            {
+                Model = result.Model,
+                Status = result.Ok ? PipelineStepStatus.Passed : PipelineStepStatus.Failed,
+                CompletedAt = result.EndedAt,
+                DurationMs = step.DurationMs + result.DurationMs,
+                InputTokens = step.InputTokens + (result.Usage?.InputTokens ?? 0),
+                OutputTokens = step.OutputTokens + (result.Usage?.OutputTokens ?? 0),
+                CacheReadTokens = step.CacheReadTokens + (result.Usage?.CacheReadTokens ?? 0),
+                CacheCreationTokens = step.CacheCreationTokens + (result.Usage?.CacheCreationTokens ?? 0),
+                Reason = result.Error,
+                VerdictSummary = string.Join("\n", evidence),
+            };
+            if (recordPipeline) _pipelineLog?.RecordStep(info.FolderPath, step);
+            if (validationError is null || attempt == MaxProtocolAttempts) return result;
+
+            _logger.LogWarning(
+                "Summary protocol rejected taskKey={TaskKey} attempt={Attempt}; retrying once: {Error}",
+                info.TaskKey, attempt, validationError);
+        }
+    }
+
     private async Task<HaikuSummaryResult> RunHaikuAsync(
         string prompt, string workingDirectory, CancellationToken ct)
     {
@@ -379,10 +431,8 @@ public sealed class SummaryGenerationService
 
             sw.Stop();
             var endedAt = DateTime.UtcNow;
-            AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.SummaryGeneration, model, r.Usage,
-                (long)r.Duration.TotalMilliseconds, ok: r.Ok);
-            if (!r.Ok) return HaikuSummaryResult.Failure(model, r.Error, startedAt, endedAt, sw.ElapsedMilliseconds);
-            return HaikuSummaryResult.Success(model, r.Usage, SanitizeMarkdown(r.ParsedText), startedAt, endedAt,
+            if (!r.Ok) return HaikuSummaryResult.Failure(model, r.Error, startedAt, endedAt, sw.ElapsedMilliseconds) with { Usage = r.Usage };
+            return HaikuSummaryResult.Success(model, r.Usage, r.ParsedText.Trim(), startedAt, endedAt,
                 (long)r.Duration.TotalMilliseconds);
         }
 
@@ -429,13 +479,11 @@ public sealed class SummaryGenerationService
             var endedAt = DateTime.UtcNow;
             if (p.ExitCode != 0)
             {
-                AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.SummaryGeneration, model, null, sw.ElapsedMilliseconds, ok: false);
                 return HaikuSummaryResult.Failure(model, $"claude exited {p.ExitCode}: {stderr.Trim()}", startedAt, endedAt, sw.ElapsedMilliseconds);
             }
 
             var (text, usage) = AdHocClaudeInvoker.ParseOrFallback(stdout, model);
-            AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.SummaryGeneration, model, usage, sw.ElapsedMilliseconds, ok: true);
-            return HaikuSummaryResult.Success(model, usage, SanitizeMarkdown(text), startedAt, endedAt, sw.ElapsedMilliseconds);
+            return HaikuSummaryResult.Success(model, usage, text.Trim(), startedAt, endedAt, sw.ElapsedMilliseconds);
         }
         catch (OperationCanceledException)
         {
@@ -534,19 +582,6 @@ public sealed class SummaryGenerationService
         {
             _logger.LogWarning(ex, "Failed to validate status.md image references for {JobId}", info.Id);
         }
-    }
-
-    private static string SanitizeMarkdown(string raw)
-    {
-        var trimmed = raw.Trim();
-        // Strip a wrapping ```markdown ... ``` fence if Haiku adds one despite instructions.
-        if (trimmed.StartsWith("```"))
-        {
-            var firstNewline = trimmed.IndexOf('\n');
-            if (firstNewline > 0) trimmed = trimmed[(firstNewline + 1)..];
-            if (trimmed.EndsWith("```")) trimmed = trimmed[..^3].TrimEnd();
-        }
-        return trimmed;
     }
 
     public static string ApplyOutcomeResultLine(string markdown, string protocolResult)

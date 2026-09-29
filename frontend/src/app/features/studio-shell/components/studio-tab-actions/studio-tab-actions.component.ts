@@ -48,6 +48,7 @@ export interface StudioTabTriage {
   primaryLabel: string;
   primaryTooltip: string;
   awaitingGit: boolean;
+  blockedByIntegration: boolean;
   actingId: string | null;
   menuItems: MenuItem[];
 }

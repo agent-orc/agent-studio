@@ -1,4 +1,5 @@
-using System.Collections.Concurrent;
+using System.Text.Json;
+using AgentStudio.Persistence;
 
 namespace AgentStudio.Runner;
 
@@ -77,50 +78,111 @@ public static class RemoteRunStopReasons
         => string.Equals((reason ?? string.Empty).Trim(), Followup, StringComparison.OrdinalIgnoreCase);
 }
 
-/// <summary>One recorded, not yet consumed operator stop for a remote attempt.</summary>
+/// <summary>A durable stop command and its delivery receipt for one fenced attempt.</summary>
 public sealed record RemoteRunStopRequest(
     string TaskKey,
     string Reason,
     DateTime RequestedAtUtc,
     string? AttemptId = null,
-    string? RequestedBy = null);
+    string? RequestedBy = null)
+{
+    public string CommandId { get; init; } = string.Empty;
+    public string? RunnerId { get; init; }
+    public long FencingToken { get; init; }
+    public DateTime ExpiresAtUtc { get; init; }
+    public DateTime? ObservedAtUtc { get; init; }
+    public DateTime? TerminalAtUtc { get; init; }
+    public string? TerminalReason { get; init; }
+    public string State => TerminalAtUtc is not null ? "terminal" : ObservedAtUtc is not null ? "observed" : "requested";
+}
 
 /// <summary>
-/// The stop requests waiting for their runner to pick them up. In-memory on
-/// purpose: a request is delivered on the next heartbeat (seconds), and a
-/// backend restart in that window loses nothing an operator cannot repeat,
-/// whereas a durable request could outlive the attempt it was meant for and stop
-/// an unrelated later round.
+/// Stop receipts are written before the HTTP acknowledgement. A request can only
+/// be observed by the exact attempt and fence it names. Terminal receipts remain
+/// queryable for idempotent command replay, but cannot be delivered again.
 /// </summary>
 public sealed class RemoteRunStopRequestStore
 {
-    private readonly ConcurrentDictionary<string, RemoteRunStopRequest> _requests =
-        new(StringComparer.OrdinalIgnoreCase);
-
+    public const string RelativePath = ".metadata/remote-run-stop-requests.json";
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+    private static readonly TimeSpan RequestLifetime = TimeSpan.FromDays(1);
+    private readonly object _gate = new();
+    private readonly string? _path;
+    private readonly IAtomicJsonFileWriter _writer;
+    private Dictionary<string, RemoteRunStopRequest> _requests = new(StringComparer.Ordinal);
     private readonly Func<DateTime> _utcNow;
 
-    public RemoteRunStopRequestStore()
-        : this(() => DateTime.UtcNow)
+    public RemoteRunStopRequestStore(IConfiguration configuration, IAtomicJsonFileWriter? writer = null)
+        : this(RequireRoot(configuration), () => DateTime.UtcNow, writer)
     {
     }
 
-    internal RemoteRunStopRequestStore(Func<DateTime> utcNow) => _utcNow = utcNow;
+    internal RemoteRunStopRequestStore(Func<DateTime> utcNow)
+        : this(null, utcNow, null) { }
+
+    internal RemoteRunStopRequestStore(string? root, Func<DateTime> utcNow, IAtomicJsonFileWriter? writer = null)
+    {
+        _path = string.IsNullOrWhiteSpace(root) ? null : Path.Combine(root, RelativePath);
+        _utcNow = utcNow;
+        _writer = writer ?? new AtomicJsonFileWriter();
+        if (_path is null || !File.Exists(_path)) return;
+        var loaded = JsonSerializer.Deserialize<List<RemoteRunStopRequest>>(File.ReadAllText(_path), Json)
+            ?? throw new InvalidDataException("Remote stop receipt file is empty.");
+        _requests = loaded.ToDictionary(item => item.CommandId, StringComparer.Ordinal);
+    }
 
     public RemoteRunStopRequest Record(
         string taskKey,
         string reason,
         string? attemptId = null,
-        string? requestedBy = null)
+        string? requestedBy = null,
+        long fencingToken = 0,
+        string? commandId = null,
+        string? runnerId = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(taskKey);
-        var request = new RemoteRunStopRequest(
-            taskKey.Trim(),
-            string.IsNullOrWhiteSpace(reason) ? RemoteRunStopReasons.User : reason.Trim(),
-            _utcNow(),
-            string.IsNullOrWhiteSpace(attemptId) ? null : attemptId.Trim(),
-            string.IsNullOrWhiteSpace(requestedBy) ? null : requestedBy.Trim());
-        _requests[request.TaskKey] = request;
-        return request;
+        var normalizedTask = taskKey.Trim();
+        var normalizedReason = string.IsNullOrWhiteSpace(reason) ? RemoteRunStopReasons.User : reason.Trim();
+        var normalizedAttempt = string.IsNullOrWhiteSpace(attemptId) ? null : attemptId.Trim();
+        var normalizedBy = string.IsNullOrWhiteSpace(requestedBy) ? null : requestedBy.Trim();
+        if (_path is not null && (normalizedAttempt is null || fencingToken <= 0))
+            throw new ArgumentException("A current attempt and fence are required for a durable stop.");
+        lock (_gate)
+        {
+            var id = string.IsNullOrWhiteSpace(commandId) ? null : commandId.Trim();
+            if (id?.Length > 128) throw new ArgumentException("Stop command id is too long.", nameof(commandId));
+            if (id is not null && _requests.TryGetValue(id, out var replay))
+            {
+                if (!SameCommand(replay, normalizedTask, normalizedReason, normalizedAttempt, fencingToken, normalizedBy))
+                    throw new InvalidOperationException("Stop command id is bound to different input.");
+                return replay;
+            }
+            var existing = ActiveFor(normalizedTask);
+            // A delayed request for an older lease must not replace a command
+            // already recorded for the successor generation.
+            if (existing is not null && existing.FencingToken > fencingToken)
+                throw new InvalidOperationException("Stop target was superseded by a newer lease.");
+            if (existing is not null && existing.FencingToken == fencingToken
+                && !string.Equals(existing.AttemptId, normalizedAttempt, StringComparison.Ordinal))
+                throw new InvalidOperationException("Stop target does not match the current attempt.");
+            if (id is null && existing is not null && SameCommand(existing, normalizedTask, normalizedReason, normalizedAttempt, fencingToken, normalizedBy))
+                return existing;
+            var now = _utcNow();
+            var request = new RemoteRunStopRequest(normalizedTask, normalizedReason, now, normalizedAttempt, normalizedBy)
+            {
+                CommandId = id ?? Guid.NewGuid().ToString("N"),
+                RunnerId = runnerId,
+                FencingToken = fencingToken,
+                ExpiresAtUtc = now.Add(RequestLifetime),
+            };
+            var next = new Dictionary<string, RemoteRunStopRequest>(_requests, StringComparer.Ordinal);
+            if (existing is not null)
+                next[existing.CommandId] = existing with { TerminalAtUtc = now, TerminalReason = "superseded" };
+            next.Add(request.CommandId, request);
+            Persist(next);
+            _requests = next;
+            return request;
+        }
     }
 
     /// <summary>
@@ -129,14 +191,114 @@ public sealed class RemoteRunStopRequestStore
     /// attempt it belongs to actually hands back.
     /// </summary>
     public RemoteRunStopRequest? Peek(string? taskKey)
-        => string.IsNullOrWhiteSpace(taskKey)
-            ? null
-            : _requests.TryGetValue(taskKey.Trim(), out var request) ? request : null;
-
-    /// <summary>Drop the request once its attempt released or completed.</summary>
-    public RemoteRunStopRequest? Clear(string? taskKey)
     {
         if (string.IsNullOrWhiteSpace(taskKey)) return null;
-        return _requests.TryRemove(taskKey.Trim(), out var request) ? request : null;
+        lock (_gate) return ActiveFor(taskKey.Trim());
     }
+
+    public RemoteRunStopRequest? GetReceipt(string commandId)
+    {
+        lock (_gate)
+        {
+            var receipt = _requests.GetValueOrDefault(commandId);
+            if (receipt is not null) _ = ActiveFor(receipt.TaskKey);
+            return _requests.GetValueOrDefault(commandId);
+        }
+    }
+
+    public RemoteRunStopRequest? Observe(string taskKey, string? attemptId, long fencingToken)
+    {
+        lock (_gate)
+        {
+            var request = ActiveFor(taskKey);
+            if (request is null) return null;
+            if (!string.Equals(request.AttemptId, attemptId, StringComparison.Ordinal)
+                || request.FencingToken != fencingToken) return null;
+            if (request.ObservedAtUtc is not null) return request;
+            var observed = request with { ObservedAtUtc = _utcNow() };
+            Replace(observed);
+            return observed;
+        }
+    }
+
+    public void RetireSuperseded(string taskKey, string? currentAttemptId, long currentFence)
+    {
+        lock (_gate)
+        {
+            var request = ActiveFor(taskKey);
+            // An older acquire callback may run after a successor has already
+            // recorded its stop. Only a strictly newer fence can retire it.
+            if (request is null || request.FencingToken >= currentFence) return;
+            Replace(request with { TerminalAtUtc = _utcNow(), TerminalReason = "superseded" });
+        }
+    }
+
+    /// <summary>
+    /// Close the gap between reading a held lease and persisting its stop.
+    /// Acquisition retires commands already present, while this read-after-write
+    /// retires a command recorded after a successor's acquisition callback.
+    /// </summary>
+    public RemoteRunStopRequest ReconcileWithLease(RemoteRunStopRequest request, RunLeaseResponse current)
+    {
+        if (!string.Equals(current.Outcome, "Held", StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(current.Lease?.AttemptId, request.AttemptId, StringComparison.Ordinal)
+            || current.Lease?.FencingToken != request.FencingToken)
+            Clear(request.TaskKey, request.AttemptId, request.FencingToken, "superseded");
+        return GetReceipt(request.CommandId) ?? throw new InvalidOperationException("Stop receipt disappeared.");
+    }
+
+    /// <summary>Drop the request once its attempt released or completed.</summary>
+    public RemoteRunStopRequest? Clear(string? taskKey, string? attemptId = null, long? fencingToken = null,
+        string terminalReason = "settled")
+    {
+        if (string.IsNullOrWhiteSpace(taskKey)) return null;
+        lock (_gate)
+        {
+            var request = ActiveFor(taskKey.Trim());
+            if (request is null) return null;
+            if (attemptId is not null && !string.Equals(request.AttemptId, attemptId, StringComparison.Ordinal)) return null;
+            if (fencingToken is not null && request.FencingToken != fencingToken) return null;
+            Replace(request with { TerminalAtUtc = _utcNow(), TerminalReason = terminalReason });
+            return request;
+        }
+    }
+
+    private RemoteRunStopRequest? ActiveFor(string taskKey)
+    {
+        var request = _requests.Values.LastOrDefault(request =>
+            string.Equals(request.TaskKey, taskKey, StringComparison.OrdinalIgnoreCase)
+            && request.TerminalAtUtc is null);
+        if (request is null) return null;
+        if (request.ExpiresAtUtc > _utcNow()) return request;
+        Replace(request with { TerminalAtUtc = _utcNow(), TerminalReason = "expired" });
+        return null;
+    }
+
+    private static bool SameCommand(RemoteRunStopRequest request, string taskKey, string reason,
+        string? attemptId, long fence, string? by)
+        => string.Equals(request.TaskKey, taskKey, StringComparison.OrdinalIgnoreCase)
+           && string.Equals(request.Reason, reason, StringComparison.Ordinal)
+           && string.Equals(request.AttemptId, attemptId, StringComparison.Ordinal)
+           && request.FencingToken == fence
+           && string.Equals(request.RequestedBy, by, StringComparison.Ordinal);
+
+    private void Replace(RemoteRunStopRequest request)
+    {
+        var next = new Dictionary<string, RemoteRunStopRequest>(_requests, StringComparer.Ordinal)
+        {
+            [request.CommandId] = request,
+        };
+        Persist(next);
+        _requests = next;
+    }
+
+    private void Persist(Dictionary<string, RemoteRunStopRequest> requests)
+    {
+        if (_path is not null) _writer.Write(_path, JsonSerializer.Serialize(requests.Values.ToList(), Json));
+    }
+
+    private static string RequireRoot(IConfiguration configuration)
+        => !string.IsNullOrWhiteSpace(configuration["TaskRepository"])
+            ? configuration["TaskRepository"]!
+            : throw new InvalidOperationException("TaskRepository is required for durable remote stop receipts.");
 }

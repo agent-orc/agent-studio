@@ -39,6 +39,7 @@ public static class LeaseEndpoints
             ProjectSettingsService settings,
             AgentStudio.Registry.ProjectRegistry projects,
             RunLeaseService leases,
+            RemoteRunStopRequestStore stops,
             RunnerIdentity identity,
             CancellationToken ct) =>
         {
@@ -71,7 +72,11 @@ public static class LeaseEndpoints
                                    ?? (string.IsNullOrWhiteSpace(project?.Id) ? task.ProjectName : project.Id),
                     ClientId = string.IsNullOrWhiteSpace(clientId) ? null : clientId,
                 };
-                return Results.Ok(leases.TryAcquire(canonical));
+                var acquired = leases.TryAcquire(canonical);
+                if (acquired.Granted && acquired.Lease is { } acquiredLease)
+                    stops.RetireSuperseded(
+                        req.TaskKey, acquiredLease.AttemptId, acquiredLease.FencingToken);
+                return Results.Ok(acquired);
             }
             finally
             {
@@ -136,7 +141,7 @@ public static class LeaseEndpoints
                 return Results.Conflict(new RunLeaseResponse(
                     "PromptMismatch", false, renewed.Lease, promptRejection));
             if (!renewed.Granted) return Results.Ok(renewed);
-            var stop = stops.Peek(req.TaskKey);
+            var stop = stops.Observe(req.TaskKey, renewed.Lease?.AttemptId, renewed.Lease?.FencingToken ?? -1);
             return Results.Ok(stop is null
                 ? renewed
                 : renewed with
@@ -146,7 +151,9 @@ public static class LeaseEndpoints
                         stop.Reason,
                         stop.RequestedAtUtc,
                         stop.AttemptId ?? req.AttemptId,
-                        stop.RequestedBy),
+                        stop.RequestedBy,
+                        stop.CommandId,
+                        stop.FencingToken),
                 });
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
@@ -177,10 +184,10 @@ public static class LeaseEndpoints
             {
                 await ApplyLostWorkerContinuationAsync(
                     req, scanner, continuations, humanReviewEscalation, orchestratorLog, loggerFactory, ct);
-                stops.Clear(req.TaskKey);
                 var released = leases.Release(req);
                 if (string.Equals(released.Outcome, "Released", StringComparison.OrdinalIgnoreCase))
                 {
+                    stops.Clear(req.TaskKey, req.AttemptId, req.FencingToken, "released");
                     var task = FindTask(scanner, req.TaskKey);
                     if (task is not null)
                         mutations.RollbackStashedPendingIntent(task.FolderPath);
@@ -282,6 +289,7 @@ public static class LeaseEndpoints
             AgentStudio.Registry.ProjectRegistry projects,
             TaskTransitionService transitions,
             RunLeaseService leases,
+            RemoteRunStopRequestStore stops,
             TaskSessionLog sessions,
             HttpContext context,
             AgentStudio.Clients.ClientIdentityStore clients,
@@ -1043,6 +1051,13 @@ public static class LeaseEndpoints
                 runSpec = AddPromptEnrichment(runSpec, enrichmentPreparation?.ContextMarkdown);
                 remoteClaimFailures.PrepareForClaim(candidate);
                 remoteDeliveryFailures.PrepareForClaim(candidate);
+                // Resolve provenance before the lane move. The scanner may
+                // still publish the source-lane snapshot immediately after a
+                // successful transition, while the folder itself has moved.
+                var priorSessionEventCount = sessions
+                    .ReadSessionEvents(candidate.Id, candidate.WatchPath)
+                    .Count;
+                var concernRound = ReviewConcernRoundStore.Read(candidate.FolderPath);
                 var claimKey = string.IsNullOrWhiteSpace(req.IdempotencyKey)
                     ? $"claim:{taskKey}:{req.RunnerId.Trim()}:{Guid.NewGuid():N}"
                     : req.IdempotencyKey.Trim();
@@ -1060,6 +1075,7 @@ public static class LeaseEndpoints
                     return Results.Ok(WithCapacity(new RunnerClaimResponse(
                         RunnerClaimStatus.Empty, Message: acquire.Message ?? acquire.Outcome)));
 
+                stops.RetireSuperseded(taskKey, acquire.Lease.AttemptId, acquire.Lease.FencingToken);
                 var stashedIntent = candidate.PendingIntent is null
                     ? null
                     : mutations.ReadAndStashPendingIntent(candidate.FolderPath);
@@ -1109,6 +1125,10 @@ public static class LeaseEndpoints
                     return Results.Ok(WithCapacity(new RunnerClaimResponse(
                         RunnerClaimStatus.Empty, Message: $"claim move refused: {move.Status} {move.Message}")));
                 }
+                // The claim immediately records and then projects its run.
+                // Publish the new lane synchronously instead of waiting for
+                // the filesystem watcher's debounce window.
+                scanner.InvalidateCache();
                 logger.LogInformation(
                     "remote-runner-task-claimed project={Project} projectId={ProjectId} task={TaskKey} runner={Runner} lease={LeaseId} token={FencingToken} repositorySource={RepositorySource} defaultBranch={DefaultBranch}",
                     candidate.ProjectName, repository.ProjectId, taskKey, req.RunnerName, acquire.Lease.LeaseId,
@@ -1156,10 +1176,21 @@ public static class LeaseEndpoints
                         "build-profile-revalidation-grace-consumed project={Project} task={TaskKey} remainingRuns={RemainingRuns}",
                         candidate.ProjectName, taskKey, graceRunsRemaining);
                 }
-                sessions.AppendSessionEvent(candidate.Id, new SessionEvent
+                var remoteTrigger = BuildRemoteClaimTrigger(
+                    candidate.OwnerClientId,
+                    candidate.PendingIntent,
+                    priorSessionEventCount,
+                    concernRound,
+                    acquire.Lease.RunnerId,
+                    acquire.Lease.AttemptId ?? string.Empty);
+                sessions.AppendSessionEventToFolder(claimedFolderPath, new SessionEvent
                 {
                     Ts = acquire.Lease.AcquiredAt,
                     Kind = "start",
+                    Trigger = remoteTrigger.Trigger,
+                    TriggeredBy = remoteTrigger.TriggeredBy,
+                    TriggerReason = remoteTrigger.TriggerReason,
+                    TriggerSource = remoteTrigger.TriggerSource,
                     Cli = "remote-runner",
                     RunAttemptId = acquire.Lease.AttemptId,
                     Model = runSpec.Model,
@@ -1183,7 +1214,7 @@ public static class LeaseEndpoints
                         LeaseState = "active",
                         TrustReason = "Captured from the fenced run lease granted by the task server.",
                     },
-                }, candidate.WatchPath);
+                }, candidate.Id);
                 // One more lease is now held by this host. Free slots follow from
                 // the central ceiling, not from the daemon's reported headroom.
                 var occupiedAfterClaim = hostActiveRuns + 1;
@@ -1510,6 +1541,9 @@ public static class LeaseEndpoints
                     ? Results.BadRequest(response)
                     : Results.Conflict(response);
             }
+            // Settlement has already committed the attempt's terminal fact. The
+            // stop receipt must be retired even if a later projection fails.
+            var settledStop = stops.Clear(req.TaskKey, attemptId, req.FencingToken, "settled");
             var settledRun = settled.RunAttempt ?? authority.GetRun(attemptId);
             var terminalAt = settledRun?.TerminalAt ?? DateTime.UtcNow;
             var terminalResult = settledRun?.TerminalOutcome ?? outcome;
@@ -1756,7 +1790,8 @@ public static class LeaseEndpoints
                         task,
                         repositoryPath,
                         taskProjectSettings,
-                        integrationRef));
+                        integrationRef,
+                        run.ResultSha));
             }
 
             if (!isEpicPlanning
@@ -2403,7 +2438,7 @@ public static class LeaseEndpoints
             // consumes that follow-up as the next round.
             if (operatorStopped)
             {
-                var stopRequest = stops.Clear(req.TaskKey);
+                var stopRequest = settledStop;
                 task = scanner.FindJob(task.Id, task.WatchPath) ?? task;
                 if (RemoteRunStopReasons.IsFollowup(stopRequest?.Reason) && task.PendingIntent is not null)
                 {
@@ -2929,6 +2964,37 @@ public static class LeaseEndpoints
             Summary = $"Parked \"{task.Title}\": {escalationReason}",
             Reasoning = escalationReason,
         });
+    }
+
+    internal static RunTriggerMetadata BuildRemoteClaimTrigger(
+        string? ownerClientId,
+        PendingIntent? pendingIntent,
+        int priorRunCount,
+        ReviewConcernRoundLedger? concernRound,
+        string runnerId,
+        string attemptId)
+    {
+        if (concernRound is { StillOpen: true })
+        {
+            return new RunTriggerMetadata(
+                concernRound.RoundKind,
+                "pipeline",
+                concernRound.RoundKind == RunTriggers.ReviewConcern
+                    ? $"Review concern round {concernRound.Used} of {concernRound.Maximum}."
+                    : $"Blocking findings from review {concernRound.ReviewAttemptId} require another coding run.",
+                $"review={concernRound.ReviewAttemptId};aspects={string.Join(',', concernRound.AspectIds)}");
+        }
+
+        if (pendingIntent is not null)
+            return PendingIntentTriggerPolicy.Resolve(pendingIntent, ownerClientId);
+
+        return new RunTriggerMetadata(
+            priorRunCount == 0 ? RunTriggers.Initial : RunTriggers.DependencyRelease,
+            $"runner {runnerId}",
+            priorRunCount == 0
+                ? "Remote runner claimed the initial task run."
+                : "A dependency release made the task eligible for a remote run.",
+            $"attempt={attemptId}");
     }
 
     private static TaskInfo? FindTask(ITaskScanner scanner, string taskKey)

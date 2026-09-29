@@ -738,6 +738,40 @@ public sealed class ManagementApiTests : IDisposable
     }
 
     [Fact]
+    public async Task ArchiveSweep_SkipsAndReportsEveryUnintegratedCompletedCard()
+    {
+        foreach (var id in new[] { "blocked-one", "blocked-two" })
+        {
+            var folder = Path.Combine(_root, TaskStates.Completed, id);
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
+            {
+                id, title = id, state = TaskStates.Completed,
+                projectName = "Management Test", requiresIntegration = true,
+            }));
+            File.WriteAllText(Path.Combine(folder, "status.md"), "Result: delivered.\n");
+        }
+        await using var factory = BuildFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var response = await client.PostAsJsonAsync("/api/v1/management/commands", new
+        {
+            kind = "archive-sweep", dryRun = false, confirmation = "archive-sweep",
+            idempotencyKey = "blocked-archive-sweep",
+        });
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(0, result.GetProperty("affected").GetInt32());
+        var blocked = result.GetProperty("detail").GetProperty("blocked")
+            .EnumerateArray().Select(item => item.GetProperty("taskKey").GetString()).ToArray();
+        Assert.Equal(2, blocked.Length);
+        Assert.Contains(blocked, key => key?.EndsWith("blocked-one", StringComparison.Ordinal) == true);
+        Assert.Contains(blocked, key => key?.EndsWith("blocked-two", StringComparison.Ordinal) == true);
+        Assert.All(new[] { "blocked-one", "blocked-two" }, id =>
+            Assert.True(Directory.Exists(Path.Combine(_root, TaskStates.Completed, id))));
+    }
+
+    [Fact]
     public async Task WhitespacePaddedOwnerCommand_IsRejectedForOperatorBeforeAudit()
     {
         await using var factory = BuildFactory();

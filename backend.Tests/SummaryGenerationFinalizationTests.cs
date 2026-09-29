@@ -104,10 +104,12 @@ public sealed class SummaryGenerationFinalizationTests
 
                 - Result: Success
                 - Case: feature
+                - Duration: unknown
 
                 ## Overview
 
-                - Local completion remains unchanged.
+                - Problem: Local completion must preserve its Result.
+                - Solution: Local completion remains unchanged.
 
                 ## What Was Done
 

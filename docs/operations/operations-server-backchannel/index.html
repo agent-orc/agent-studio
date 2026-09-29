@@ -330,12 +330,13 @@
 
   <section id="target">
     <h2><span class="number">03</span> Target system</h2>
+    <p><b>D12 execution-role amendment (2026-09-26):</b> The workstation runs the same runner-host agent as another capable host for coding, review and task delivery. The local Connector and native host manager remain separate browser-edge and host-lifecycle boundaries. In the topology below, the workstation-side operations adapter performs only bounded native operations; it is not a second task executor or task authority. The current runner-host profile is documented in <a href="../setup/workstation-runner-host.md">Workstation runner host</a>.</p>
     <p>The Operations Server is a central API and coordination service, not a remote desktop backend. It publishes a versioned operation catalogue, accepts authorized commands, selects an eligible Operations Agent, tracks a bounded attempt, and returns typed events and artifacts. It has no Angular application, no recovery UI, no browser cookie authentication, and no implicit access to a project filesystem.</p>
 
     <figure class="breakout">
       <svg viewBox="0 0 1120 760" role="img" aria-labelledby="target-title target-desc">
         <title id="target-title">Target topology with Task Server and Operations Server</title>
-        <desc id="target-desc">Several frontend products use their own browser edge or local Connector. Those edges call the Task Server for durable task state and the Operations Server for executable operations. The Task Server controls the Orchestrator Engine and issues task-linked operation permits. The Operations Server sends commands over outbound authenticated channels to runner-host Operations Agents on workstations and other capable hosts.</desc>
+        <desc id="target-desc">Several frontend products use their own browser edge or local Connector. Those edges call the Task Server for durable task state and the Operations Server for executable host operations. The Task Server controls the Orchestrator Engine and task-linked runner-host claims. The workstation uses the same runner-host task execution contract as fleet hosts. A workstation host adapter receives only bounded native host operations.</desc>
         <defs>
           <marker id="arrow-target" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="var(--article-link)"/></marker>
           <marker id="arrow-execution" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="var(--article-good)"/></marker>
@@ -400,8 +401,8 @@
         <text class="svg-sub" x="54" y="648">policy and decision evaluation</text>
         <text class="svg-tiny" x="54" y="675">Task Server client</text>
         <rect class="svg-execution" x="352" y="594" width="220" height="106" rx="9"/>
-        <text class="svg-label" x="372" y="624">Runner-host Agent</text>
-        <text class="svg-sub" x="372" y="648">files, Git, CLI, launchers</text>
+        <text class="svg-label" x="372" y="624">Workstation host adapter</text>
+        <text class="svg-sub" x="372" y="648">native host operations only</text>
         <text class="svg-tiny" x="372" y="675">outbound channel</text>
         <rect class="svg-execution" x="610" y="594" width="220" height="106" rx="9"/>
         <text class="svg-label" x="630" y="624">Runner-host Agent</text>
@@ -417,7 +418,7 @@
         <path class="svg-flow-execution" d="M827 512 V554 H720 V594"/>
         <path class="svg-flow-execution" d="M912 512 V554 H977 V594"/>
       </svg>
-      <figcaption><b>Figure 2. Recommended target.</b> Blue marks durable control-plane authority. Green marks executable operations and their agents. Every frontend is replaceable; each uses an edge or backend appropriate to its session model. The Operations Server never receives a browser cookie and cannot mint task authority.</figcaption>
+      <figcaption><b>Figure 2. Host-operations target with D12 execution-role amendment.</b> Blue marks durable control-plane authority. Green marks bounded host operations. The workstation's task execution uses the ordinary runner-host claim, lease and report path to the Task Server; the shown host adapter does not execute tasks. Every frontend uses an edge or backend appropriate to its session model. The Operations Server never receives a browser cookie and cannot mint task authority.</figcaption>
     </figure>
 
     <h3>Minimum Operations Server contract</h3>
@@ -480,7 +481,7 @@
     <table class="breakout">
       <thead><tr><th>Form</th><th>Placement and wiring</th><th>Listener policy</th><th>Use</th></tr></thead>
       <tbody>
-        <tr><td><b>Workstation</b><br><code>workstation</code></td><td>Web, local Connector, Task Server, Operations Server, Engine, and workstation Operations Agent on one developer machine. The Connector can initially host the local agent adapter in-process.</td><td>Browser and Connector remain loopback. Central services may use loopback or a private process boundary. No LAN listener.</td><td>Local development, a single operator, and Windows-integrated Git, CLI and launcher operations.</td></tr>
+        <tr><td><b>Workstation</b><br><code>workstation</code></td><td>Web, local Connector, Task Server, Engine, native host manager, and the same runner-host service used by other hosts. A future Operations Server may use a Connector-local adapter for native host operations; that adapter has no task-execution role.</td><td>Browser and Connector remain loopback. Central services may use loopback or a private process boundary. No LAN listener.</td><td>Local development, a single operator, and Windows-integrated tooling under bounded runner capabilities.</td></tr>
         <tr><td><b>One-box Docker</b><br><code>one-box</code></td><td>Web edge, studio-bff, Task Server, Operations Server, Engine, and a container-capable Operations Agent in one Compose project. Host-native operations use a separately enrolled host agent instead of a Docker socket.</td><td>Only the HTTPS edge is published to the LAN. Task and Operations services remain private to the Compose network. LAN exposure is explicit and uses an Origin allowlist.</td><td><b>Recommended standard product deployment</b> after full route and security parity. It gives AGT-2736 and AGT-2738 one reproducible artifact family.</td></tr>
         <tr><td><b>Distributed</b><br><code>distributed</code></td><td>Task Server, Operations Server and Engine may share <code>task-server-01</code> as separate containers initially; Runner hosts may keep coding and review slots on separate machines. Local Studio uses its loopback Connector. Other frontends use their own edge.</td><td>Private TLS on WireGuard. Agents connect outbound. Public interface exposes neither server. A compromised Runner remains outside the control-plane host boundary.</td><td>Phase B, agent-only hosts, independent frontend products, and later fleet growth.</td></tr>
       </tbody>
@@ -627,6 +628,8 @@
     <p>Implementation slices append their current delivery state here after a human decision. Decision content above remains unchanged.</p>
     <ol class="implementation-log">
 <!-- agent-studio:implementation-log:start -->
+      <li><b>2026-09-25, AGT-2907: partial implementation.</b> D1 and D4 now have a separate Operations Server, outbound diagnostic agent, bounded attempt ledger, scoped principals, and Task Server permit issuance/introspection. <a href="../../system/contracts/operations-backchannel.md">The canonical contract</a> records the exact shipped surface and remaining gates; ADR-0076 amends the three-component target. D2 selects one-box Docker after full parity, which is not yet delivered. D3 selected expanding AGT-2736, overriding the original Option 3 recommendation. The AGT-2736 card also contains a later operator instruction to deliver Option C without extending scope; reconciliation was requested before mutating its live prompt. Connector/BFF migration, the full operation catalogue, deployment proofs and installer integration remain open. This entry does not claim full Dossier completion.</li>
+      <li><b>2026-09-26, AGT-2907: foundation stage delivered.</b> The operator resolved D3: AGT-2736 ships its bounded Option C baseline; AGT-2907 owns the Operations Server expansion above it. The Task Server permit contract and outbound Operations Agent channel are the accepted scope of this delivery. Separate scoped principals, live permit checks, bounded fenced attempts, cancellation and durable replay are implemented. Full catalogue, Connector/BFF migration with review permits, and full deployment parity are <a href="../../system/contracts/operations-backchannel.md#typed-follow-up-stages">typed follow-up stages</a>. The private source-built Compose rehearsal does not claim full one-box parity.</li>
 <!-- agent-studio:implementation-log:end -->
     </ol>
   </section>

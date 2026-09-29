@@ -29,14 +29,15 @@ public sealed partial class TaskServerStore
     // per-host model minimum alerts.
     // 20 keeps a single-use mechanical continuation delta on each task and
     // binds its claim to the fenced run for replay and restart safety.
-    // The migration block is idempotent; the number guards downgrades from
-    // binaries that do not know this state.
     // 21 adds versioned engine steering receipts.
     // 22 adds transactional queued-follow-up claim, start acknowledgement,
     // rollback, and terminal supersession state.
-    // 23 adds ordered continuation rounds with immutable acceptance and fenced
+    // 23 adds bounded opaque operation permits, always checked against live leases.
+    // 24 adds ordered continuation rounds with immutable acceptance and fenced
     // consumption receipts.
-    public const int CurrentSchemaVersion = 23;
+    // The migration block is idempotent; the number guards downgrades from
+    // binaries that do not know this state.
+    public const int CurrentSchemaVersion = 24;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -1418,7 +1419,7 @@ public sealed partial class TaskServerStore
             var now = UtcNow;
             var expires = now.AddSeconds(NormalizeTtl(request.RequestedTtlSeconds));
             // An ordered continuation round takes precedence. A follow-up row
-            // saved before schema 22 stays queued for a later claim.
+            // saved before schema 24 stays queued for a later claim.
             var followUp = continuationIntent is not null
                 ? ToFollowUpDelivery(continuationIntent, runId)
                 : await ReadPendingFollowUpAsync(connection, transaction, task.TaskId, ct);
@@ -3223,7 +3224,7 @@ public sealed partial class TaskServerStore
             );
             CREATE TABLE IF NOT EXISTS principals(
                 principal_id TEXT PRIMARY KEY,
-                kind TEXT NOT NULL CHECK(kind IN ('studio', 'engine', 'runner')),
+                kind TEXT NOT NULL CHECK(kind IN ('studio', 'engine', 'runner', 'operations')),
                 scopes_json TEXT NOT NULL,
                 runner_id TEXT UNIQUE,
                 created_at TEXT NOT NULL,
@@ -3391,6 +3392,11 @@ public sealed partial class TaskServerStore
                 runner_id TEXT PRIMARY KEY REFERENCES runners(id),
                 payload_json TEXT NOT NULL,
                 observed_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS operation_permits(
+                token_hash TEXT PRIMARY KEY,
+                binding_json TEXT NOT NULL,
+                expires_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS runs(
                 id TEXT PRIMARY KEY,
@@ -3915,6 +3921,7 @@ public sealed partial class TaskServerStore
             CREATE INDEX IF NOT EXISTS ix_studio_stream_events_project ON studio_stream_events(project_id, cursor);
             """, ct);
         await ApplyWorkbenchContextMigrationAsync(connection, ct);
+        await ApplyOperationsPrincipalMigrationAsync(connection, ct);
         await SetMetaAsync(connection, null, "schema_version", CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture), ct);
     }
 

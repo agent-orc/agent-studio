@@ -210,7 +210,9 @@ public sealed record RunStopDirective(
     string Reason,
     DateTime RequestedAtUtc,
     string? AttemptId = null,
-    string? RequestedBy = null);
+    string? RequestedBy = null,
+    string? CommandId = null,
+    long? FencingToken = null);
 
 public sealed record LeaseResponse(
     string Status,
