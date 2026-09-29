@@ -68,8 +68,8 @@ public static class ProjectExecutionPolicy
 
     /// <summary>
     /// In-progress, non-fixture tasks per project. The daemon claim loop and the
-    /// direct task-key lease both count here, so every project, pinned or
-    /// class-placed, keeps one concurrency limit whichever path admits the run.
+    /// direct task-key lease both count here, so a class-placed project keeps one
+    /// concurrency limit whichever path and whichever matching host admits the run.
     /// </summary>
     public static IReadOnlyDictionary<string, int> ProjectOccupancy(
         IEnumerable<TaskInfo> tasks, string? excludingTaskId = null)
@@ -80,12 +80,19 @@ public static class ProjectExecutionPolicy
             .GroupBy(task => task.ProjectName, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Only a class-placed project has a project limit: many hosts share it, so
+    /// no single host ceiling bounds it. A pinned project is served by one host
+    /// whose slot ceiling already bounds it, so it has no limit here (Limit null).
+    /// </summary>
     public static ProjectSlotVerdict EvaluateProjectSlot(
         IReadOnlyDictionary<string, int> occupancy, string projectName, ProjectSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
-        var limit = Math.Max(1, settings.MaxParallelism);
         var occupied = occupancy.GetValueOrDefault(projectName);
+        if (ExecutionLocations.RequiredClassCapability(ResolveExecutionLocation(settings)) is null)
+            return new ProjectSlotVerdict(true, occupied, null);
+        var limit = Math.Max(1, settings.MaxParallelism);
         return new ProjectSlotVerdict(HasProjectSlot(occupied, limit), occupied, limit);
     }
 
@@ -194,8 +201,11 @@ public static class ProjectExecutionPolicy
         && !IsLegacyComposite(value);
 }
 
-/// <summary>Whether a project has a free run slot under its concurrency limit.</summary>
-public sealed record ProjectSlotVerdict(bool HasSlot, int Occupied, int Limit)
+/// <summary>
+/// Whether a project has a free run slot under its concurrency limit. A null
+/// limit means the project has none and host slots alone admit its runs.
+/// </summary>
+public sealed record ProjectSlotVerdict(bool HasSlot, int Occupied, int? Limit)
 {
     public string Detail => $"Project has {Occupied} active tasks and allows {Limit}.";
 }

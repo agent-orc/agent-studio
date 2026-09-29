@@ -128,9 +128,11 @@ An ordinary runner ID remains an explicit pin. This preserves existing
 project-to-runner configuration while letting another matching host claim
 future cards without editing their task records. The daemon claim loop and
 the direct task-key lease share one project slot policy
-(`ProjectExecutionPolicy.EvaluateProjectSlot`). It applies to pinned and
-class-placed projects alike. It counts Progress cards per project and admits
-another only below that project's existing maxParallelism. A refused claim
+(`ProjectExecutionPolicy.EvaluateProjectSlot`). It limits class-placed
+projects, which many matching hosts share: it counts Progress cards per
+project and admits another only below that project's existing maxParallelism.
+A pinned project keeps its existing admission; its one host's slot ceiling
+bounds it, so the policy sets no project limit for it. A refused claim
 candidate records `project-concurrency-full`, and a refused direct lease
 returns `ProjectCapacityFull`. Class-placed projects do not seed a host's
 deprecated compatibility ceiling, because every matching host shares their

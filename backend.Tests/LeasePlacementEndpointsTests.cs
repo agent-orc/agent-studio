@@ -21,8 +21,9 @@ namespace AgentStudio.Tests;
 /// AGT-2939: the backend lease boundary enforces host-class placement and the
 /// per-project concurrency limit on both admission paths: the daemon claim loop
 /// (<c>/api/runner/claim</c>) and the direct task-key lease
-/// (<c>/api/runner/lease/acquire</c>). Both paths read one occupancy policy
-/// and apply it to pinned and class-placed projects alike.
+/// (<c>/api/runner/lease/acquire</c>). Both paths read one occupancy policy.
+/// It limits class-placed projects, which many hosts share; a pinned project
+/// keeps its existing admission, bounded by its one host's slot ceiling.
 /// </summary>
 [Collection(WebApplicationFactorySerialCollection.Name)]
 public sealed class LeasePlacementEndpointsTests : IDisposable
@@ -89,10 +90,8 @@ public sealed class LeasePlacementEndpointsTests : IDisposable
         Assert.True(granted.Body.Granted);
     }
 
-    [Theory]
-    [InlineData(ProjectName)]
-    [InlineData("class:linux")]
-    public async Task Direct_lease_is_refused_when_the_project_has_no_free_slot(string location)
+    [Fact]
+    public async Task Direct_lease_is_refused_when_the_class_project_has_no_free_slot()
     {
         SeedTask(TaskStates.Ready, "LP-BUSY-1", order: 1);
         SeedTask(TaskStates.Ready, "LP-NEXT-2", order: 2);
@@ -100,7 +99,7 @@ public sealed class LeasePlacementEndpointsTests : IDisposable
         using var http = factory.CreateClient();
         using var client = new RClient(http, RunnerId);
         await RegisterCodingRunnerAsync(client, http, platformClass: "platform:linux");
-        await AssignAsync(http, location);
+        await AssignAsync(http, "class:linux");
         await AddRepositoryUrlAsync(http, "https://github.com/example/lease-placement.git");
         var busy = await ClaimWithSuccessfulPreflightAsync(client, Claim("busy"));
         Assert.Equal(RClaimStatus.Claimed, busy.Status);
@@ -117,7 +116,51 @@ public sealed class LeasePlacementEndpointsTests : IDisposable
     }
 
     [Fact]
-    public async Task Claim_keeps_a_pinned_project_sequential_until_parallelism_is_configured()
+    public async Task Direct_lease_on_a_pinned_project_keeps_its_host_slot_admission()
+    {
+        SeedTask(TaskStates.Ready, "LP-PIN-BUSY-1", order: 1);
+        SeedTask(TaskStates.Ready, "LP-PIN-NEXT-2", order: 2);
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http, platformClass: null);
+        await AssignAsync(http, ProjectName);
+        await AddRepositoryUrlAsync(http, "https://github.com/example/lease-placement.git");
+        var busy = await ClaimWithSuccessfulPreflightAsync(client, Claim("pin-busy"));
+        Assert.Equal(RClaimStatus.Claimed, busy.Status);
+
+        var next = await AcquireAsync(http, client, "LP-PIN-NEXT-2");
+        Assert.Equal(HttpStatusCode.OK, next.Status);
+        Assert.True(next.Body.Granted);
+    }
+
+    [Fact]
+    public async Task Claim_keeps_a_class_project_sequential_until_parallelism_is_configured()
+    {
+        SeedTask(TaskStates.Ready, "LP-SEQ-1", order: 1);
+        SeedTask(TaskStates.Ready, "LP-SEQ-2", order: 2);
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http, platformClass: "platform:linux");
+        await AssignAsync(http, "class:linux");
+        await AddRepositoryUrlAsync(http, "https://github.com/example/lease-placement.git");
+        var first = await ClaimWithSuccessfulPreflightAsync(client, Claim("sequential-1"));
+        Assert.Equal(RClaimStatus.Claimed, first.Status);
+
+        var held = await client.ClaimAsync(Claim("sequential-2"), CancellationToken.None);
+        Assert.Equal(RClaimStatus.Empty, held.Status);
+        var rejection = AgentStudio.Runner.RemoteDispatchRejectionStore.Read(
+            Path.Combine(_watchPath, TaskStates.Ready, "LP-SEQ-2"));
+        Assert.Equal("project-concurrency-full", rejection?.Code);
+
+        await SetMaxParallelismAsync(http, 2);
+        var second = await client.ClaimAsync(Claim("sequential-3"), CancellationToken.None);
+        Assert.Contains(second.Status, new[] { RClaimStatus.Claimed, RClaimStatus.PreflightRequired });
+    }
+
+    [Fact]
+    public async Task Claim_leaves_a_pinned_project_to_its_host_slots()
     {
         SeedTask(TaskStates.Ready, "LP-PIN-1", order: 1);
         SeedTask(TaskStates.Ready, "LP-PIN-2", order: 2);
@@ -127,18 +170,15 @@ public sealed class LeasePlacementEndpointsTests : IDisposable
         await RegisterCodingRunnerAsync(client, http, platformClass: null);
         await AssignAsync(http, ProjectName);
         await AddRepositoryUrlAsync(http, "https://github.com/example/lease-placement.git");
-        var first = await ClaimWithSuccessfulPreflightAsync(client, Claim("sequential-1"));
+        var first = await ClaimWithSuccessfulPreflightAsync(client, Claim("pinned-1"));
         Assert.Equal(RClaimStatus.Claimed, first.Status);
 
-        var held = await client.ClaimAsync(Claim("sequential-2"), CancellationToken.None);
-        Assert.Equal(RClaimStatus.Empty, held.Status);
-        var rejection = AgentStudio.Runner.RemoteDispatchRejectionStore.Read(
-            Path.Combine(_watchPath, TaskStates.Ready, "LP-PIN-2"));
-        Assert.Equal("project-concurrency-full", rejection?.Code);
-
-        await SetMaxParallelismAsync(http, 2);
-        var second = await client.ClaimAsync(Claim("sequential-3"), CancellationToken.None);
-        Assert.Contains(second.Status, new[] { RClaimStatus.Claimed, RClaimStatus.PreflightRequired });
+        // The pinned host has four slots and the project keeps the deprecated
+        // default maxParallelism of 1. As on develop before AGT-2939, the host
+        // ceiling, not the project limit, admits the second card.
+        var second = await client.ClaimAsync(Claim("pinned-2"), CancellationToken.None);
+        Assert.Equal(RClaimStatus.Claimed, second.Status);
+        Assert.Equal("LP-PIN-2", second.TaskKey);
     }
 
     [Fact]

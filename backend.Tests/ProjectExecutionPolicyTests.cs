@@ -128,7 +128,7 @@ public sealed class ProjectExecutionPolicyTests
         };
 
         var all = ProjectExecutionPolicy.ProjectOccupancy(tasks);
-        var sequential = new ProjectSettings { ExecutionLocation = "runner-a" };
+        var sequential = new ProjectSettings { ExecutionLocation = "class:linux" };
         Assert.Equal(new ProjectSlotVerdict(false, 2, 1),
             ProjectExecutionPolicy.EvaluateProjectSlot(all, "Alpha", sequential));
         Assert.Equal(new ProjectSlotVerdict(true, 2, 3),
@@ -139,5 +139,17 @@ public sealed class ProjectExecutionPolicyTests
         var excludingSelf = ProjectExecutionPolicy.ProjectOccupancy(tasks, excludingTaskId: "B-1");
         Assert.Equal(new ProjectSlotVerdict(true, 0, 1),
             ProjectExecutionPolicy.EvaluateProjectSlot(excludingSelf, "Beta", sequential));
+    }
+
+    [Theory]
+    [InlineData("runner-a")]
+    [InlineData(null)]
+    public void ProjectSlot_LeavesPinnedAndLegacyProjectsToHostSlots(string? location)
+    {
+        var occupancy = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase) { ["Alpha"] = 3 };
+        var pinned = new ProjectSettings { ExecutionLocation = location, MaxParallelism = 1 };
+
+        Assert.Equal(new ProjectSlotVerdict(true, 3, null),
+            ProjectExecutionPolicy.EvaluateProjectSlot(occupancy, "Alpha", pinned));
     }
 }
