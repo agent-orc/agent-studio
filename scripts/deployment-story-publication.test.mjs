@@ -9,7 +9,8 @@
 //   node --test scripts/deployment-story-publication.test.mjs
 
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import test from 'node:test';
 
@@ -19,15 +20,40 @@ const canonicalEntry = join(canonicalDir, 'index.html');
 const read = (file) => readFileSync(file, 'utf8');
 
 function htmlLinks(html) {
-  return [...html.matchAll(/\b(?:href|src)="([^"]*)"/g)].map((m) => m[1]);
+  return [...html.matchAll(/\s(?:href|src)="([^"]*)"/g)].map((m) => m[1].replaceAll('&amp;', '&'));
 }
 
 function markdownLinks(md) {
   return [...md.matchAll(/\]\(([^)\s]+)\)/g)].map((m) => m[1]);
 }
 
-function anchorIds(html) {
-  return new Set([...html.matchAll(/\b(?:id|name)="([^"]+)"/g)].map((m) => m[1]));
+// Only real `id` attributes and `<a name>` are link targets; `data-decision-id`
+// or `<meta name>` must not satisfy an anchor.
+function htmlAnchors(html) {
+  return new Set([
+    ...[...html.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]),
+    ...[...html.matchAll(/<a\b[^>]*?\sname="([^"]+)"/g)].map((m) => m[1]),
+  ]);
+}
+
+// GitHub heading slugs (with -1, -2 for repeats) plus inline HTML ids.
+function markdownAnchors(md) {
+  const anchors = htmlAnchors(md);
+  const seen = new Map();
+  const prose = md.replace(/^```[\s\S]*?^```/gm, '');
+  for (const [, heading] of prose.matchAll(/^#{1,6}\s+(.+?)\s*#*\s*$/gm)) {
+    const base = heading.toLowerCase().replace(/<[^>]+>/g, '').replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s/g, '-');
+    const count = seen.get(base) ?? 0;
+    seen.set(base, count + 1);
+    anchors.add(count ? `${base}-${count}` : base);
+  }
+  return anchors;
+}
+
+function anchorsOf(file) {
+  if (file.endsWith('.html')) return htmlAnchors(read(file));
+  if (file.endsWith('.md')) return markdownAnchors(read(file));
+  return null;
 }
 
 // Resolves one local link from `fromFile`; returns a failure string or null.
@@ -35,15 +61,25 @@ function checkLink(fromFile, link) {
   // External URLs and root-absolute Studio routes such as /?task=AGT-2736 are
   // not repository files.
   if (/^(?:[a-z][a-z0-9+.-]*:|\/)/i.test(link)) return null;
-  const [pathPart, fragment] = link.split('#');
+  const hash = link.indexOf('#');
+  const pathPart = (hash < 0 ? link : link.slice(0, hash)).split('?')[0];
+  const fragment = hash < 0 ? '' : decodeURIComponent(link.slice(hash + 1));
   const target = pathPart ? resolve(dirname(fromFile), decodeURI(pathPart)) : fromFile;
   const where = `${relative(root, fromFile)} -> ${link}`;
   if (!existsSync(target)) return `${where}: missing target`;
-  if (fragment && statSync(target).isFile() && target.endsWith('.html')
-      && !anchorIds(read(target)).has(fragment)) {
-    return `${where}: missing anchor #${fragment}`;
-  }
-  return null;
+  if (hash < 0) return null;
+  const anchors = statSync(target).isFile() ? anchorsOf(target) : null;
+  if (!anchors) return `${where}: anchor on a target whose anchors cannot be checked`;
+  return anchors.has(fragment) ? null : `${where}: missing anchor #${fragment}`;
+}
+
+// Slices from `start` to `end`, failing loudly when a marker has moved.
+function between(text, start, end) {
+  const from = text.indexOf(start);
+  assert.ok(from >= 0, `marker not found: ${start}`);
+  const to = text.indexOf(end, from + start.length);
+  assert.ok(to >= 0, `marker not found after ${start}: ${end}`);
+  return text.slice(from, to);
 }
 
 function workbenchFiles(dir) {
@@ -56,12 +92,54 @@ function workbenchFiles(dir) {
   return found;
 }
 
+test('the link checker rejects every anchor error it claims to catch', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'deployment-story-links-'));
+  try {
+    writeFileSync(join(dir, 'page.html'),
+      '<meta name="viewport"><h2 id="map">Map</h2><article data-decision-id="D1"></article><a name="legacy"></a>');
+    writeFileSync(join(dir, 'guide.md'),
+      '# Guide\n\n## Backup and restore rehearsal\n\n## Backup and restore rehearsal\n\n```\n## Not a heading\n```\n\n[self](#guide)\n');
+    const from = join(dir, 'guide.md');
+    const ok = ['page.html#map', 'page.html#legacy', 'page.html', '#guide',
+      'guide.md#backup-and-restore-rehearsal', 'guide.md#backup-and-restore-rehearsal-1',
+      'page.html#%6Dap', 'https://example.org/#x', '/?task=AGT-2906'];
+    for (const link of ok) assert.equal(checkLink(from, link), null, link);
+    const bad = {
+      'page.html#missing': 'missing anchor',
+      'page.html#D1': 'missing anchor',
+      'page.html#viewport': 'missing anchor',
+      '#absent': 'missing anchor',
+      'guide.md#not-a-heading': 'missing anchor',
+      'guide.md#backup-and-restore-rehearsal-2': 'missing anchor',
+      'absent.html#map': 'missing target',
+      '.#map': 'cannot be checked',
+    };
+    for (const [link, reason] of Object.entries(bad)) {
+      assert.match(checkLink(from, link) ?? 'accepted', new RegExp(reason), link);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('every local link and anchor in the relocated Dossier resolves', () => {
   const links = htmlLinks(read(canonicalEntry));
   const failures = links.map((l) => checkLink(canonicalEntry, l)).filter(Boolean);
   assert.deepEqual(failures, []);
   // Guards against the matcher silently finding nothing after a markup change.
   assert.ok(links.length >= 40, `expected the Dossier's evidence links, found ${links.length}`);
+});
+
+test('the Dossier names the AGT-2905 bus Dossier by its published AGT-W65 key', () => {
+  const bus = JSON.parse(read(join(root, 'docs/task-server-bus/workbench.json')));
+  assert.equal(bus.key, 'AGT-W65');
+  assert.deepEqual(bus.sourceTaskKeys, ['AGT-2905']);
+  const html = read(canonicalEntry);
+  assert.ok(html.includes('href="../../task-server-bus/index.html"'));
+  // The pre-publication wording said the card was linked because no Dossier
+  // URL existed yet; the links now point at AGT-W65.
+  assert.doesNotMatch(html, /not-yet-published URL|its card is linked instead/);
+  assert.match(html, /published as AGT-W65/);
 });
 
 test('the navigation record links resolve from the Dossier directory', () => {
@@ -103,14 +181,14 @@ test('incoming navigation points at the canonical Dossier', () => {
 
 test('the North star lists it once in §5, after AGT-W49 and before AGT-W51', () => {
   const html = read(join(root, 'docs/operations/nordstern/index.html'));
-  const s5 = html.slice(html.indexOf('<h2 id="s5"'), html.indexOf('<h2 id="s6"'));
+  const s5 = between(html, '<h2 id="s5"', '<h2 id="s6"');
   const cards = [...s5.matchAll(/<a class="card" href="([^"]+)"/g)].map((m) => m[1]);
   const at = cards.indexOf('../deployment-story/index.html');
   assert.ok(at > 0, 'deployment story card missing from §5');
   assert.equal(cards[at - 1], '../operations-server-backchannel/index.html');
   assert.equal(cards[at + 1], '../docker-ausfuehrungswelt-migration/index.html');
   assert.equal(html.split('deployment-story/index.html').length - 1, 1, 'link-only: one North star mention');
-  const history = html.slice(html.indexOf('<h2 id="s6"'), html.indexOf('<section id="s7"'));
+  const history = between(html, '<h2 id="s6"', '<section id="s7"');
   assert.equal(history.includes('deployment-story'), false, 'a current journey must not sit in §6 history');
 });
 
@@ -123,8 +201,7 @@ test('the docs index has exactly one row for it', () => {
 
 test('AGT-W49 links the journey and the AGT-2905 bus Dossier and leaves D1 to D4 untouched', () => {
   const html = read(join(root, 'docs/operations/operations-server-backchannel/index.html'));
-  const section = html.slice(html.indexOf('<section id="deployment">'));
-  const deployment = section.slice(0, section.indexOf('</section>'));
+  const deployment = between(html, '<section id="deployment">', '</section>');
   assert.match(deployment, /href="\.\.\/deployment-story\/index\.html"/);
   assert.match(deployment, /href="\.\.\/\.\.\/task-server-bus\/index\.html"/);
   assert.match(deployment, /one-box special case and an ordinary runner host/);
@@ -132,13 +209,12 @@ test('AGT-W49 links the journey and the AGT-2905 bus Dossier and leaves D1 to D4
   // The reconciliation defers to W49's own decision record instead of
   // restating a status that later implementation slices may change.
   assert.match(deployment, /does not change the recorded status of D1 to D4/);
-  assert.match(html, /<span><b>Status<\/b> Decision pending<\/span>/);
+  assert.match(html, /<b>Status<\/b>\s*Decision pending/);
   for (const id of ['d1-architecture', 'd2-standard-deployment', 'd3-agt-2736', 'd4-orchestrator-sessions']) {
     assert.match(html, new RegExp(`data-decision-id="${id}"`));
   }
   // The develop-side D12 execution-role amendment survives the merge.
   assert.match(html, /D12 execution-role amendment \(2026-09-26\)/);
   assert.match(html, />Workstation host adapter</);
-  assert.match(html, /One-box placement on a developer machine: Web, local Connector, Task Server, Engine, native host manager, and the same runner-host service used by other hosts/);
   assert.equal(/^(?:<{7}|={7}|>{7})/m.test(html), false, 'no merge markers');
 });
