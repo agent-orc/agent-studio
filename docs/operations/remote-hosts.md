@@ -10,6 +10,8 @@ The Task Server counts consecutive infrastructure failures per card and failure
 fingerprint. Environment preparation, salvage, and results handling report a
 typed lease release. A release with one of these codes settles immediately;
 the 120 second silence grace applies to a lease that lost authority mid-run.
+Such a release never takes the lost-worker continuation path, even when it
+names a salvage ref, because no agent process held the authority.
 The default budget is three identical consecutive failures. The durable Task
 Server accepts `TaskServer:RunnerInfrastructureFailureBudget` from 1 to 20. On
 the legacy runner API, set `Runner:RemoteClaimFailureBudget` to the same value.

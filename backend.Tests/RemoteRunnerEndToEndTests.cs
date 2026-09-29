@@ -1461,6 +1461,55 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Equal(RClaimStatus.Empty, next.Status);
     }
 
+    /// <summary>
+    /// AGT-2932 review finding: a typed prelaunch release must not enter the
+    /// AGT-2870 lost-worker continuation even when it names a salvage ref (the
+    /// runner lists the salvage it found in a failed salvage). The lost-worker
+    /// release with the same salvage is the control proving the probe can see a
+    /// continuation.
+    /// </summary>
+    [Theory]
+    [InlineData("runner-salvage-failed", false)]
+    [InlineData("worker-lost", true)]
+    public async Task Typed_prelaunch_release_bypasses_the_lost_worker_continuation(
+        string outcome, bool expectContinuation)
+    {
+        SeedTask(TaskStates.Ready, TaskKey, "Salvage failed before launch", "Prompt.");
+        using var factory = BuildFactory(remoteRequeueGraceSeconds: 900);
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/agent-orc/agent-studio.git");
+
+        var claim = await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+            RunnerId, ProjectName, "host", 1, "remote-runner", ActiveTaskKeys: []));
+        Assert.Equal(RClaimStatus.Claimed, claim.Status);
+        await client.ReleaseLeaseAsync(new RRelease(
+            claim.TaskKey!, claim.Lease!.LeaseId, claim.Lease.FencingToken, RunnerId,
+            claim.Lease.AttemptId, claim.Lease.AuthorityEpoch,
+            $"release:{outcome}",
+            Outcome: outcome,
+            SalvageBranch: $"agent-studio/salvage/{RunnerId}/{TaskKey}/fence-1",
+            SalvageCommitSha: "5a1a5a1a5a1a5a1a5a1a5a1a5a1a5a1a5a1a5a1a",
+            Detail: "fatal: not a git repository"), CancellationToken.None);
+
+        var ready = Path.Combine(_watchPath, TaskStates.Ready, TaskKey);
+        Assert.True(Directory.Exists(ready));
+        var traces = string.Join('\n', Directory
+            .EnumerateFiles(ready, "*", SearchOption.AllDirectories)
+            .Select(File.ReadAllText));
+        Assert.Equal(expectContinuation, traces.Contains(AgentStudio.Runner.LostWorkerContinuationPolicy.ContinuationReason));
+        var budget = AgentStudio.Runner.RemoteClaimFailureBudget.Read(ready);
+        if (expectContinuation)
+            Assert.Null(budget);
+        else
+        {
+            Assert.Equal(1, budget!.Attempts);
+            Assert.Equal("runner-salvage-failed", budget.Cause);
+        }
+    }
+
     [Fact]
     public async Task Remote_runner_reports_clone_failure_instead_of_releasing_an_unexplained_claim()
     {
