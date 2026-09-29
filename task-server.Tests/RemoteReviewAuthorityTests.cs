@@ -66,6 +66,54 @@ public sealed class RemoteReviewAuthorityTests
     }
 
     [Fact]
+    public async Task Every_unclaimable_attempt_is_logged_once_even_beyond_the_named_and_claim_page_caps()
+    {
+        using var temp = new TempDirectory();
+        var logs = new CapturingStoreLogger();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 27, 15, 8, 0, TimeSpan.Zero));
+        var store = new TaskServerStore(
+            Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
+            clock,
+            new ApplicationResultFinalizationSummaryGenerator(),
+            operationalEvents: null,
+            logs);
+        await store.InitializeAsync();
+        var plan = new ReviewPlanDto(
+            [new ReviewCommandDto("verify-subject", "completion", "git", ["rev-parse", "HEAD"])],
+            ["completion"], LibraryVersion: ReviewLibraryStepPolicy.Version);
+        const int backlog = 34;
+        for (var index = 0; index < backlog; index++)
+            await SeedReviewSubjectAsync(store, title: $"Task {index}", plan: plan);
+        await store.RegisterRunnerAsync(
+            "legacy-review",
+            new RegisterRunnerRequest(
+                "legacy-review", "host-legacy", "instance-legacy", "1.0.0",
+                TaskServerProtocol.Current,
+                [ReviewCapabilities.ReviewExecutor, ReviewCapabilities.GitMaterialization,
+                    ReviewCapabilities.SemanticReview]),
+            "legacy-review", default);
+
+        var empty = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("legacy-review", "instance-legacy"), "legacy-review", default);
+
+        Assert.Equal(ReviewClaimEmptyReasons.UnclaimablePlanRequirements, empty.Reason);
+        Assert.Equal(ReviewClaimEmptyResponses.MaxNamedAttempts, empty.UnclaimableAttempts!.Count);
+        Assert.StartsWith($"{backlog} pending ReviewAttempt(s)", empty.Message);
+        var logged = logs.Messages.Where(message => message.StartsWith("review-claim-unclaimable")).ToArray();
+        Assert.Equal(backlog, logged.Length);
+        Assert.Equal(backlog, logged.Select(message => message.Split(" attempt=")[1].Split(' ')[0]).Distinct().Count());
+
+        await store.ClaimReviewAsync(
+            new ReviewClaimRequest("legacy-review", "instance-legacy"), "legacy-review", default);
+        Assert.Equal(backlog, logs.Messages.Count(message => message.StartsWith("review-claim-unclaimable")));
+
+        clock.Advance(TimeSpan.FromHours(1));
+        await store.ClaimReviewAsync(
+            new ReviewClaimRequest("legacy-review", "instance-legacy"), "legacy-review", default);
+        Assert.Equal(2 * backlog, logs.Messages.Count(message => message.StartsWith("review-claim-unclaimable")));
+    }
+
+    [Fact]
     public async Task Versioned_review_retry_can_move_to_another_capable_host_without_changing_the_step()
     {
         using var temp = new TempDirectory();
@@ -1973,6 +2021,30 @@ public sealed class RemoteReviewAuthorityTests
             new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
 
         Assert.NotEqual(beforeClaim, await store.ComputeIntegrityDigestAsync(default));
+    }
+
+    private sealed class CapturingStoreLogger : Microsoft.Extensions.Logging.ILogger<TaskServerStore>
+    {
+        private readonly List<string> _messages = [];
+
+        public IReadOnlyList<string> Messages
+        {
+            get { lock (_messages) return _messages.ToArray(); }
+        }
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            Microsoft.Extensions.Logging.LogLevel logLevel,
+            Microsoft.Extensions.Logging.EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            lock (_messages) _messages.Add(formatter(state, exception));
+        }
     }
 
     private static TaskServerStore Store(string dataDirectory, TimeProvider? timeProvider = null)
