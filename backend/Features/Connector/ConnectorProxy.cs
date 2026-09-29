@@ -26,9 +26,10 @@ public sealed class ConnectorProxy(
     public async Task ForwardHttpAsync(HttpContext context, ConnectorRouteOperation operation)
     {
         var snapshot = upstream.Capture();
-        if (snapshot.Credential is null)
+        var attach = await upstream.EnsureAttachedAsync(snapshot, context.RequestAborted);
+        if (!attach.Ready)
         {
-            await UnavailableAsync(context, "connector-credential-unavailable");
+            await AttachRefusedAsync(context, snapshot, attach);
             return;
         }
 
@@ -38,11 +39,12 @@ public sealed class ConnectorProxy(
         if (context.Request.ContentLength > 0 || context.Request.Headers.ContainsKey("Transfer-Encoding"))
             request.Content = new StreamContent(context.Request.Body);
         CopyRequestHeaders(context.Request, request);
-        ConnectorUpstreamTransport.AddConnectorHeaders(request.Headers, snapshot);
+        ConnectorUpstreamTransport.AddConnectorHeaders(request.Headers, snapshot, attach.Protocol);
 
         try
         {
             using var response = await transport.SendAsync(snapshot, request, context.RequestAborted);
+            ObserveUpstreamStatus(response.StatusCode);
             await CopyResponseAsync(context, response);
         }
         catch (Exception exception) when (exception is HttpRequestException
@@ -80,13 +82,28 @@ public sealed class ConnectorProxy(
         var targetSegments = operation.TargetRoute.Split('/', StringSplitOptions.RemoveEmptyEntries);
         var sourceParameterByPosition = sourceSegments
             .Select((segment, index) => (segment, index))
-            .Where(item => item.segment.StartsWith('{') && item.segment.EndsWith('}'))
+            .Where(item => IsWholeSegmentParameter(item.segment))
             .ToDictionary(item => item.index, item => ParameterName(item.segment));
 
         for (var index = 0; index < targetSegments.Length; index++)
         {
             var segment = targetSegments[index];
-            if (!segment.StartsWith('{') || !segment.EndsWith('}')) continue;
+            if (!segment.Contains('{')) continue;
+            if (!IsWholeSegmentParameter(segment))
+            {
+                // A parameter embedded in a literal segment, such as
+                // "workbench:{project}", maps by name only.
+                targetSegments[index] = EmbeddedParameter.Replace(segment, match =>
+                {
+                    var name = ParameterName(match.Value);
+                    var embedded = routeValues.TryGetValue(name, out var routeValue) ? routeValue : null;
+                    if (embedded is null && query is not null && query.TryGetValue(name, out var queryValue))
+                        embedded = queryValue.FirstOrDefault();
+                    return Uri.EscapeDataString(embedded?.ToString()
+                        ?? throw new InvalidOperationException($"Route value '{name}' is unavailable."));
+                });
+                continue;
+            }
             var targetName = ParameterName(segment);
             object? value = null;
             if (!routeValues.TryGetValue(targetName, out value)
@@ -125,9 +142,10 @@ public sealed class ConnectorProxy(
     private async Task ForwardWebSocketAsync(HttpContext context, ConnectorRouteOperation operation)
     {
         var snapshot = upstream.Capture();
-        if (snapshot.Credential is null)
+        var attach = await upstream.EnsureAttachedAsync(snapshot, context.RequestAborted);
+        if (!attach.Ready)
         {
-            await UnavailableAsync(context, "connector-credential-unavailable");
+            await AttachRefusedAsync(context, snapshot, attach);
             return;
         }
 
@@ -152,6 +170,7 @@ public sealed class ConnectorProxy(
                 uriBuilder.Uri,
                 protocols,
                 clientId,
+                attach.Protocol,
                 context.RequestAborted);
             using var browserSocket = await context.WebSockets.AcceptWebSocketAsync(
                 new WebSocketAcceptContext { SubProtocol = upstreamSocket.SubProtocol });
@@ -252,12 +271,47 @@ public sealed class ConnectorProxy(
            || string.Equals(name, "WWW-Authenticate", StringComparison.OrdinalIgnoreCase)
            || string.Equals(name, "Content-Length", StringComparison.OrdinalIgnoreCase);
 
+    private void ObserveUpstreamStatus(System.Net.HttpStatusCode status)
+    {
+        // 401: the Task Server no longer accepts the Studio credential, most
+        // likely because it was rotated. 426: the server's protocol range moved.
+        // Either way the next request re-reads the credential and renegotiates.
+        if (status == System.Net.HttpStatusCode.Unauthorized) upstream.ReportCredentialRejected();
+        else if (status == System.Net.HttpStatusCode.UpgradeRequired) upstream.InvalidateAttachment();
+    }
+
+    private static async Task AttachRefusedAsync(
+        HttpContext context,
+        ConnectorUpstreamSnapshot snapshot,
+        ConnectorUpstreamProbe attach)
+    {
+        context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+        context.Response.ContentType = "application/json";
+        context.Response.Headers.CacheControl = "no-store";
+        await context.Response.WriteAsJsonAsync(new
+        {
+            code = AttachRefusedCode,
+            reason = attach.FailureCode,
+            message = attach.FailureReason,
+            upstream = snapshot.MaskedName,
+            generation = snapshot.Generation,
+        });
+    }
+
+    public const string AttachRefusedCode = "connector-attach-refused";
+
     private static async Task UnavailableAsync(HttpContext context, string code)
     {
         context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
         context.Response.ContentType = "application/json";
         await context.Response.WriteAsJsonAsync(new { code });
     }
+
+    private static readonly System.Text.RegularExpressions.Regex EmbeddedParameter =
+        new(@"\{[^{}/]+\}", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    private static bool IsWholeSegmentParameter(string segment)
+        => segment.StartsWith('{') && segment.EndsWith('}') && segment.IndexOf('{', 1) < 0;
 
     private static string ParameterName(string segment)
     {

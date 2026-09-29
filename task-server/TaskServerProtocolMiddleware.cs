@@ -35,5 +35,8 @@ public sealed class TaskServerProtocolMiddleware(RequestDelegate next)
     private static bool RequiresProtocolHeader(PathString path)
         => path.StartsWithSegments("/api/v1")
            && !path.Equals("/api/v1/protocol", StringComparison.OrdinalIgnoreCase)
-           && !path.Equals("/api/v1/protocol/compatibility", StringComparison.OrdinalIgnoreCase);
+           && !path.Equals("/api/v1/protocol/compatibility", StringComparison.OrdinalIgnoreCase)
+           // The attach handshake carries its own ranges and answers a mismatch
+           // with a negotiation reason instead of a bare header rejection.
+           && !path.Equals("/api/v1/protocol/attach", StringComparison.OrdinalIgnoreCase);
 }
