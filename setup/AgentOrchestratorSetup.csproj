@@ -5,7 +5,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <AssemblyName>agent-orchestrator-setup</AssemblyName>
+    <AssemblyName>agent-studio-setup</AssemblyName>
     <RootNamespace>AgentStudio.Setup</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>

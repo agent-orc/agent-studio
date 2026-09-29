@@ -5,7 +5,7 @@ Status: bootstrap material for Phase B slice B5
 runtime changed from systemd packages to Docker containers per the
 2026-09-06 operator decision, plus the S3-compatible cold archive target
 (AGT-2746, 2026-09-11). Reuses the same published images and the same
-`agent-orchestrator-setup` guided installer as the systemd target; only the
+`agent-studio-setup` guided installer as the systemd target; only the
 runtime differs.
 
 This is the Docker-target sibling of
@@ -61,7 +61,7 @@ or through the guided installer, which also mints and writes the Studio,
 Engine, and bootstrap Runner credentials:
 
 ```bash
-sudo ./agent-orchestrator-setup --mode control-plane --target docker \
+sudo ./agent-studio-setup --mode control-plane --target docker \
     --server-url task-server-01.wg.internal \
     --wg-address 10.60.0.1 \
     --offhost-backup-path /mnt/agent-orchestrator-offhost-backup
