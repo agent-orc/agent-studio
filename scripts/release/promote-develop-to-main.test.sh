@@ -4,8 +4,45 @@ set -Eeuo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 driver_source="$repo_root/scripts/release/promote-develop-to-main.sh"
+window_source="$repo_root/scripts/release/release-gate-window.sh"
 test_root=$(mktemp -d 2>/dev/null || mktemp -d -t promotion-tests)
 trap 'rm -rf -- "$test_root"' EXIT HUP INT TERM
+
+# The gate capacity window must never touch the real runner units of the host
+# that runs these tests (they run inside the promotion gate itself). A fake
+# systemctl reports both units as absent unless a scenario seeds their quota.
+fake_window_bin="$test_root/fake-window-bin"
+mkdir -p "$fake_window_bin"
+cat > "$fake_window_bin/systemctl" <<'FAKE'
+#!/usr/bin/env bash
+set -eu
+state=${FAKE_SYSTEMCTL_STATE:-/nonexistent}
+case "$1" in
+  show)
+    if [[ ! -f "$state/$5.quota" ]]; then
+      [[ "$3" == LoadState ]] && { printf 'not-found\n'; exit 0; }
+      exit 1
+    fi
+    [[ "$3" == LoadState ]] && { printf 'loaded\n'; exit 0; }
+    cat "$state/$5.quota"
+    ;;
+  set-property)
+    printf '%s %s\n' "$3" "$4" >> "$state/calls.log"
+    value=${4#CPUQuota=}
+    if [[ -z "$value" ]]; then printf 'infinity\n'; else printf '%ss\n' "$((${value%\%} / 100))"; fi \
+      > "$state/$3.quota"
+    ;;
+  *) exit 64 ;;
+esac
+FAKE
+chmod +x "$fake_window_bin/systemctl"
+printf '1.25 1.00 1.00 1/100 1\n' > "$test_root/fake-loadavg"
+export RELEASE_GATE_SYSTEMCTL="$fake_window_bin/systemctl"
+export RELEASE_GATE_SUDO=
+export RELEASE_GATE_LOADAVG_FILE="$test_root/fake-loadavg"
+export RELEASE_GATE_CPU_COUNT=12
+export RELEASE_GATE_SETTLE_SECONDS=0
+export FAKE_SYSTEMCTL_STATE="$test_root/no-runner-units"
 
 make_fixture() {
   local name=$1
@@ -23,7 +60,9 @@ make_fixture() {
   git -C "$seed" config user.email 'promotion-test@example.invalid'
   mkdir -p "$seed/scripts/release"
   cp "$driver_source" "$seed/scripts/release/promote-develop-to-main.sh"
-  chmod +x "$seed/scripts/release/promote-develop-to-main.sh"
+  cp "$window_source" "$seed/scripts/release/release-gate-window.sh"
+  chmod +x "$seed/scripts/release/promote-develop-to-main.sh" \
+    "$seed/scripts/release/release-gate-window.sh"
 
   case "$gate_mode" in
     pass)
@@ -146,6 +185,8 @@ test "$(git --git-dir="$preview_remote" rev-parse refs/heads/main)" = "$preview_
 ! git --git-dir="$preview_remote" show-ref --verify --quiet refs/tags/release/test-preview
 grep -q '"status":"preview"' "$preview_evidence/promotion-record.json"
 grep -q '"gate":"not-run"' "$preview_evidence/promotion-record.json"
+grep -q '"hostLoadAtGateStart":null,"hostLoadAtGateEnd":null,"gateDurationSeconds":null,"appliedQuotas":{}' \
+  "$preview_evidence/promotion-record.json"
 printf '%s\n' 'local bare remote dry-run passed'
 
 # A normal execute run promotes the exact develop tip, produces one annotated
@@ -153,9 +194,14 @@ printf '%s\n' 'local bare remote dry-run passed'
 green_operator=$(make_fixture green pass)
 green_remote="$test_root/green/remote.git"
 green_evidence="$test_root/green/evidence"
+green_units="$test_root/green/runner-units"
+mkdir -p "$green_units"
+printf 'infinity\n' > "$green_units/agent-runner.service.quota"
+printf '6s\n' > "$green_units/agent-runner-review.service.quota"
 old_main=$(git --git-dir="$green_remote" rev-parse refs/heads/main)
 develop=$(git --git-dir="$green_remote" rev-parse refs/heads/develop)
-"$green_operator/scripts/release/promote-develop-to-main.sh" \
+FAKE_SYSTEMCTL_STATE="$green_units" \
+  "$green_operator/scripts/release/promote-develop-to-main.sh" \
   --execute --tag release/test-green --required-ancestor "$develop" \
   --evidence-dir "$green_evidence" >/dev/null
 new_main=$(git --git-dir="$green_remote" rev-parse refs/heads/main)
@@ -167,6 +213,18 @@ grep -q '"status":"promoted"' "$green_evidence/promotion-record.json"
 grep -q '"atomicPush":true' "$green_evidence/promotion-record.json"
 grep -Fxq 'PROMOTION_FULL_GATE=passed' "$green_evidence/full-gate.log"
 grep -q 'historical-whitespace.txt' "$green_evidence/candidate-whitespace-review.txt"
+# The gate ran inside the capacity window: both units were throttled, then
+# restored, and the record attributes the gate to its host load (AGT-2982).
+test "$(cat "$green_units/agent-runner.service.quota")" = infinity
+test "$(cat "$green_units/agent-runner-review.service.quota")" = 6s
+test "$(tr '\n' '|' < "$green_units/calls.log")" = \
+  'agent-runner.service CPUQuota=200%|agent-runner-review.service CPUQuota=500%|agent-runner.service CPUQuota=|agent-runner-review.service CPUQuota=600%|'
+grep -q '"hostLoadAtGateStart":1.25,"hostLoadAtGateEnd":1.25,"gateDurationSeconds":[0-9][0-9]*,' \
+  "$green_evidence/promotion-record.json"
+grep -Fq '"appliedQuotas":{"agent-runner.service":{"recorded":"infinity","applied":"200%"},"agent-runner-review.service":{"recorded":"600%","applied":"500%"}}' \
+  "$green_evidence/promotion-record.json"
+grep -Fq '"gateWindow":{"mode":"applied","cpuCount":12,"reservedCores":5,"loadThreshold":24.00,"loadBeforeWait":1.25,"loadWaitSeconds":0,"quotasRestored":"restored","gateExit":"0"}' \
+  "$green_evidence/promotion-record.json"
 printf '%s\n' 'local bare remote execute passed'
 
 # Annotated tags use the promotion identity even when HOME is empty and neither
@@ -259,6 +317,21 @@ for gate_mode in fail incomplete; do
   test "$(git --git-dir="$remote" rev-parse refs/heads/main)" = "$before"
   ! git --git-dir="$remote" show-ref --verify --quiet "refs/tags/release/test-$gate_mode"
 done
+
+# A required capacity window that cannot be applied never runs the gate and
+# leaves main unchanged with a distinct record status (AGT-2982).
+window_operator=$(make_fixture window-required pass)
+window_remote="$test_root/window-required/remote.git"
+window_evidence="$test_root/window-required/evidence"
+window_main=$(git --git-dir="$window_remote" rev-parse refs/heads/main)
+run_expect_rc 4 env RELEASE_GATE_WINDOW=required \
+  "$window_operator/scripts/release/promote-develop-to-main.sh" \
+  --execute --tag release/test-window-required --evidence-dir "$window_evidence" >/dev/null 2>&1
+test "$(git --git-dir="$window_remote" rev-parse refs/heads/main)" = "$window_main"
+! grep -Fxq 'PROMOTION_FULL_GATE=passed' "$window_evidence/full-gate.log"
+grep -q '"status":"blocked-gate-window"' "$window_evidence/promotion-record.json"
+grep -q '"gate":"not-run"' "$window_evidence/promotion-record.json"
+grep -q '"gateWindow":{"mode":"failed"' "$window_evidence/promotion-record.json"
 
 # A develop advance during the gate is informational. The exact candidate that
 # started the gate is promoted, while the newer develop commit waits for the
