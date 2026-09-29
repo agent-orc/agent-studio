@@ -13,6 +13,8 @@ export {
   laneLabelFor,
   mergeAcceptViewFor,
   LANE_LABELS,
+  triageDecisionRefusal,
+  triageDecisionRowState,
   type MergeAcceptView,
   type TriageActionPayload,
   type TriageButton,

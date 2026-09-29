@@ -59,6 +59,14 @@ export class TaskReferenceNavigationService {
     return true;
   }
 
+  /** Open a task by a display reference such as `AGT-1234` (key, id, or folder slug). */
+  openReference(label: string | null | undefined): boolean {
+    const wanted = (label ?? '').trim().toUpperCase();
+    if (!wanted) return false;
+    const match = this.markdownReferences().find((item) => item.label.toUpperCase() === wanted);
+    return this.openTaskKey(match?.taskKey);
+  }
+
   private currentJobs(): readonly TaskInfo[] {
     const source = this.tasks.jobs as unknown;
     if (typeof source === 'function') return source() as readonly TaskInfo[];
