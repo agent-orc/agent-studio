@@ -180,6 +180,7 @@ public sealed class BatchGatePilotService
         try
         {
             RecoverInterrupted();
+            await ResolvePausedAsync(ct).ConfigureAwait(false);
             await RecoverPublishedAsync(ct).ConfigureAwait(false);
             var waiting = _store.ListPending();
             foreach (var item in waiting)
@@ -293,6 +294,36 @@ public sealed class BatchGatePilotService
         }
     }
 
+    // A pause stops the batch, not its members. Every member the paused batch
+    // still owns returns to the per-task gate on its unchanged immutable
+    // subject, which either integrates the card or escalates it with the gate
+    // reason. Members are released before the terminal state is written, so an
+    // interruption in between only repeats an idempotent release.
+    private async Task ResolvePausedAsync(CancellationToken ct)
+    {
+        foreach (var manifest in _store.ListPausedManifests())
+        {
+            ct.ThrowIfCancellationRequested();
+            BatchCoordinatorLease? lease;
+            try { lease = _leases.TryAcquire(manifest.Scope, "batch-pause-fallback"); }
+            catch (IOException) { continue; }
+            if (lease is null) continue;
+            IReadOnlyList<BatchGatePendingRecord> released;
+            try
+            {
+                var paused = _store.LatestState(manifest.BatchId);
+                _logger.LogWarning("batch-gate-paused batch={BatchId} reason={Reason}",
+                    manifest.BatchId, paused.Reason);
+                released = ReturnToPending(manifest);
+                State(manifest, BatchPhase.Abandoned, paused.CandidateSha, lease.Fence,
+                    "paused-to-per-task-gate: " + paused.Reason);
+            }
+            finally { _leases.Release(lease); }
+            foreach (var item in released)
+                await RunPerTaskFallbackAsync(item, ct).ConfigureAwait(false);
+        }
+    }
+
     private async Task RecoverPublishedAsync(CancellationToken ct)
     {
         var waiting = _store.ListPending();
@@ -355,10 +386,11 @@ public sealed class BatchGatePilotService
         }
     }
 
-    private void ReturnToPending(BatchGateManifest manifest)
+    private IReadOnlyList<BatchGatePendingRecord> ReturnToPending(BatchGateManifest manifest)
     {
+        var released = new List<BatchGatePendingRecord>();
         if (manifest.ParentBatchId is { } parentId)
-            ReturnToPending(_store.ReadManifest(parentId));
+            released.AddRange(ReturnToPending(_store.ReadManifest(parentId)));
         foreach (var member in manifest.Members)
         {
             var pending = _store.ListPending().FirstOrDefault(item =>
@@ -373,9 +405,13 @@ public sealed class BatchGatePilotService
                     || manifest.ParentBatchId is not null
                     && ownership.BatchId == manifest.ParentBatchId)
                 && ownership.BatchRunId is null)
+            {
                 BatchGateOwnershipStore.Write(task.FolderPath,
                     new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject));
+                released.Add(pending);
+            }
         }
+        return released;
     }
 
     private async Task ExecuteAsync(BatchGateManifest manifest,

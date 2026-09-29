@@ -220,6 +220,15 @@ public sealed class BatchGateStore
             .ToArray();
     }
 
+    // A pause stays in the append-only history, but an unpublished paused batch
+    // must hand its members back; the pilot resolves each one on its next tick.
+    public IReadOnlyList<BatchGateManifest> ListPausedManifests()
+        => ListManifests()
+            .Where(manifest => Directory.Exists(Path.Combine(BatchDirectory(manifest.BatchId), "state"))
+                && LatestState(manifest.BatchId).Phase == BatchPhase.Paused
+                && ReadPublication(manifest.BatchId) is null)
+            .ToArray();
+
     public void ResolvePending(string reviewAttemptId, string outcome)
     {
         var path = Path.Combine(_root, "pending", SafeName(reviewAttemptId) + ".json");
