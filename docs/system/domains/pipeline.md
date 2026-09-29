@@ -1265,7 +1265,9 @@ operator changes cause the step to fail before its writer runs.
   `delivery-attribution-ambiguous` and starts one bounded automatic steer round
   before Human Review. Task-key or review-subject validation failures stay
   visible but do not offer an unrelated rebase action. The raw pipeline reason
-  and timeline event remain the detailed evidence.
+  and timeline event remain the detailed evidence. Every merge `Error` names a
+  typed code (AGT-2995); the code table and the Error sites are in
+  [rebase-merge-and-integration-invariants.md](../../concepts/platform-architecture/rebase-merge-and-integration-invariants.md#typed-codes-of-an-error-outcome-agt-2995).
 - `post-orchestrator-review` is an early completeness gate. It must never render
   as a final verdict.
 - `post-orchestrator-decision` is the single final orchestrator verdict.
