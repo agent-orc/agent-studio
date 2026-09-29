@@ -78,11 +78,11 @@ async function stubGrowingTranscript(page: Page): Promise<TranscriptController> 
   await page.route(/\/api\//, route => {
     const requestPath = new URL(route.request().url()).pathname;
     let body = '{}';
-    if (requestPath === '/api/auth/status') {
+    if (requestPath === '/api/v1/studio/auth/status') {
       body = JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
     } else if (requestPath === '/api/watch-paths') {
       body = JSON.stringify([{ name: PROJECT, path: `/tmp/${PROJECT}`, rootPath: `/tmp/${PROJECT}` }]);
-    } else if (requestPath === '/api/workspaces') {
+    } else if (requestPath === '/api/v1/workspaces') {
       body = JSON.stringify([{
         id: 'workspace-1', displayName: 'Scroll fixture', sortOrder: 0, isDefault: true,
         projects: [{ id: PROJECT, displayName: PROJECT, shortCode: 'SS', workspaceId: 'workspace-1',
@@ -92,14 +92,14 @@ async function stubGrowingTranscript(page: Page): Promise<TranscriptController> 
       body = JSON.stringify({ items: [], total: 0, offset: 0, limit: 50 });
     } else if (requestPath === '/api/tasks') {
       body = '[]';
-    } else if (requestPath === '/api/tasks/grouped') {
+    } else if (requestPath === '/api/v1/studio/board') {
       body = JSON.stringify({ backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
         failedPickup: [], autoReview: [], humanReview: [], review: [], completed: [], archive: [] });
-    } else if (requestPath === '/api/orchestrator/sessions') {
+    } else if (requestPath === '/api/v1/studio/orchestrator/sessions') {
       body = JSON.stringify({ sessions: [] });
     } else if (/\/api\/(?:tags|clients|workspaces\/[^/]+\/tags)\/?$/.test(requestPath)) {
       body = '[]';
-    } else if (requestPath === '/api/runner/status') {
+    } else if (requestPath === '/api/v1/studio/runner/status') {
       body = JSON.stringify({ projects: {} });
     } else if (requestPath === '/api/cli/quota') {
       body = JSON.stringify({ snapshots: [] });

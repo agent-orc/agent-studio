@@ -82,7 +82,7 @@ test.describe('Activity tab — interactive chat continuation', () => {
   // test from leaving the runner in a "failed" snapshot that re-opens the
   // error dialog on the next page load and blocks pointer events.
   test.beforeEach(async ({ page }) => {
-    await page.route('**/api/tasks/*/continue**', async route => {
+    await page.route('**/api/v1/projects/*/tasks/*/continue**', async route => {
       const body = JSON.stringify({
         status: 'started',
         execution: {

@@ -64,7 +64,7 @@ export class WorkbenchDecisionStore {
         confirmed: true,
       })),
       switchMap(confirmed => this.http.post<unknown>(
-        `/api/orchestrator/sessions/workbench:${encodeURIComponent(projectName)}/${encodeURIComponent(workbenchKey)}/turns`,
+        `/api/v1/studio/orchestrator/sessions/workbench:${encodeURIComponent(projectName)}/${encodeURIComponent(workbenchKey)}/turns`,
         {
           prompt,
           cliType: agent.cliType,

@@ -24,7 +24,7 @@ test('keeps pickup mode and execution location as independent controls', async (
       body: '[]',
     });
   });
-  await page.route('**/api/auth/status', route => route.fulfill({
+  await page.route('**/api/v1/studio/auth/status', route => route.fulfill({
     status: 200, contentType: 'application/json',
     body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }),
   }));
@@ -129,7 +129,7 @@ test('shows the assigned host project delivery failure beside provider refusals'
   await page.route('**/api/crash-recovery/pending', route => route.fulfill({
     status: 200, contentType: 'application/json', body: '[]',
   }));
-  await page.route('**/api/auth/status', route => route.fulfill({
+  await page.route('**/api/v1/studio/auth/status', route => route.fulfill({
     status: 200, contentType: 'application/json',
     body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }),
   }));

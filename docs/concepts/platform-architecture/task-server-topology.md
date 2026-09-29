@@ -348,9 +348,11 @@ Control stays on HTTP with leases and fences, as described in
 - **Orchestration still defaults to `Monolith`.**
   `Orchestration:ExecutionMode` must be set to `Engine` for the external Engine
   to own the review, council, post-processing, gate and completion loops.
-- **The Studio surface is not on the versioned plane by default.** Angular
-  still consumes the broad legacy `/api/**` plus `/hubs/jobs`; `studio-bff`
-  covers neither. The full route inventory, classification, and the connector
+- **The Studio surface is only partly on the versioned plane.** Since
+  AGT-2983 the 27 P0 core-attach operations call their `/api/v1` routes and
+  `/hubs/v1/studio` (OrchestratorApi serves those paths from its legacy
+  handlers until cutover, see `backend/Host/StudioV1LegacyRouteAlias.cs`);
+  the other 259 Task Server operations still call the legacy `/api/**`. The full route inventory, classification, and the connector
   profile that forwards classified routes to the standalone Task Server are
   slice B1 (see [Studio route ownership](../../studio-route-ownership/index.html)).
   The P0 core-attach bundle now has real Task Server v1 handlers (AGT-2755, see

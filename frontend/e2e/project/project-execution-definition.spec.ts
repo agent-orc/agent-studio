@@ -7,12 +7,12 @@ test('Execution settings show unused-cache warning and justified override guard 
   const project = 'cache-demo';
   await page.setViewportSize({ width: 1400, height: 1200 });
   await page.route('**/api/**', route => route.fulfill({ json: [] }));
-  await page.route(/\/api\/(?:jobs|tasks)\/grouped/, route => route.fulfill({ json: {
+  await page.route(/\/api\/v1\/studio\/board/, route => route.fulfill({ json: {
     backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
     failedPickup: [], codeNotComplete: [], review: [], autoReview: [],
     humanReview: [], completed: [], archive: [],
   } }));
-  await page.route('**/api/auth/status', route => route.fulfill({ json: {
+  await page.route('**/api/v1/studio/auth/status', route => route.fulfill({ json: {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   } }));
   await page.route('**/api/watch-paths**', route => route.fulfill({ json: [
@@ -44,7 +44,7 @@ test('Execution settings show unused-cache warning and justified override guard 
   };
   await page.route('**/api/projects/settings', route => route.fulfill({ json: { [project]: settings } }));
   await page.route(`**/api/projects/${project}/snapshot`, route => route.fulfill({ json: { settings } }));
-  await page.route('**/api/runner/status**', route => route.fulfill({ json: { projects: {} } }));
+  await page.route('**/api/v1/studio/runner/status**', route => route.fulfill({ json: { projects: {} } }));
   await page.route('**/api/cli/usage**', route => route.fulfill({ json: { items: [] } }));
   await page.route('**/api/cli/quota**', route => route.fulfill({ json: { snapshots: [] } }));
   await page.addInitScript(projectName => {

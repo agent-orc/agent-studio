@@ -107,7 +107,7 @@ async function installRoutes(
   output = OUTPUT,
   queued = false,
 ) {
-  await page.route('**/hubs/jobs/negotiate**', (route) =>
+  await page.route('**/hubs/v1/studio/negotiate**', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -118,7 +118,7 @@ async function installRoutes(
         availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text', 'Binary'] }],
       }),
     }));
-  await page.routeWebSocket('**/hubs/jobs**', (socket) => {
+  await page.routeWebSocket('**/hubs/v1/studio**', (socket) => {
     socket.onMessage((message) => {
       if (message.toString().includes('"protocol":"json"')) socket.send('{}\u001e');
     });
@@ -136,7 +136,7 @@ async function installRoutes(
         items: [],
       }),
     }));
-  await page.route('**/api/auth/status', (route) =>
+  await page.route('**/api/v1/studio/auth/status', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -157,7 +157,7 @@ async function installRoutes(
         snapshots: [],
       }),
     }));
-  await page.route('**/api/tasks/grouped**', (route) =>
+  await page.route('**/api/v1/studio/board**', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -182,7 +182,7 @@ async function installRoutes(
       contentType: 'application/json',
       body: JSON.stringify([{ name: 'fixture', path: TARGET.watchPath, rootPath: TARGET.watchPath }]),
     }));
-  await page.route('**/api/runner/status**', (route) =>
+  await page.route('**/api/v1/studio/runner/status**', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -198,7 +198,7 @@ async function installRoutes(
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ events: [], sessionChain: [] }) }));
   await page.route(`**/api/tasks/${encodeURIComponent(TARGET.id)}/claude-session?**`, (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: 'null' }));
-  await page.route(`**/api/tasks/${encodeURIComponent(TARGET.id)}?**`, (route) =>
+  await page.route(`**/api/v1/projects/*/tasks/${encodeURIComponent(TARGET.id)}?**`, (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(detail(queued)) }));
 }
 
