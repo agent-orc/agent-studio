@@ -11,6 +11,8 @@ namespace AgentRunner.Tests;
 /// and the daemon exits only when its slot set is empty, so a deploy never lands
 /// on running gate work.
 /// </summary>
+[Trait("Category", "MachineBound")]
+[Trait("Category", "ReviewFlaky")]
 public sealed class ReviewDaemonDrainTests : IDisposable
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);

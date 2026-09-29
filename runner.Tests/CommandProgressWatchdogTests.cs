@@ -52,6 +52,8 @@ public sealed class CommandProgressWatchdogTests
                 TimeSpan.Zero));
 
     [SkippableFact]
+    [Trait("Category", "MachineBound")]
+    [Trait("Category", "ReviewFlaky")]
     public async Task Watchdog_fires_for_a_sleeping_tree_and_stays_quiet_for_a_busy_one()
     {
         Skip.IfNot(OperatingSystem.IsLinux(), "The CPU sampler reads /proc.");
@@ -61,6 +63,8 @@ public sealed class CommandProgressWatchdogTests
     }
 
     [SkippableFact]
+    [Trait("Category", "MachineBound")]
+    [Trait("Category", "ReviewFlaky")]
     public void Cpu_sample_covers_descendants_not_only_the_direct_child()
     {
         Skip.IfNot(OperatingSystem.IsLinux(), "The CPU sampler reads /proc.");
@@ -78,9 +82,12 @@ public sealed class CommandProgressWatchdogTests
             // The parent shell only waits; every tick observed here was burned by
             // the grandchild loop.
             Assert.NotEmpty(samples);
+            // The last sample can land after the busy grandchild exits, when
+            // the live process tree contains only the waiting parent.
+            var peak = samples.Max();
             Assert.True(
-                samples[^1] > TimeSpan.FromMilliseconds(200),
-                $"expected descendant CPU to accumulate, saw {samples[^1]}");
+                peak > TimeSpan.FromMilliseconds(200),
+                $"expected descendant CPU to accumulate, saw {peak}");
         }
         finally
         {

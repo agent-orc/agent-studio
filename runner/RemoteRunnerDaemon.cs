@@ -510,10 +510,7 @@ public sealed class RemoteRunnerDaemon
                 idleWatchdog.RecordPollStarted();
                 var claimedAny = false;
                 var inventorySnapshot = inventory.Snapshot();
-                var activeTaskKeys = inventorySnapshot.Processes
-                    .Select(process => process.TaskKey)
-                    .Distinct(StringComparer.Ordinal)
-                    .ToArray();
+                var activeTaskKeys = ActiveTaskKeys(inventorySnapshot, state);
                 var loadDecision = loadGate.Observe(
                     TakeTelemetry(),
                     DateTime.UtcNow);
@@ -605,10 +602,7 @@ public sealed class RemoteRunnerDaemon
                         $"threshold={_options.ClaimMaxLoadPerCore:0.00} " +
                         $"sustainedSeconds={loadDecision.SustainedFor.TotalSeconds:0} activeSlots={active.Count}");
                     inventorySnapshot = inventory.Snapshot();
-                    activeTaskKeys = inventorySnapshot.Processes
-                        .Select(process => process.TaskKey)
-                        .Distinct(StringComparer.Ordinal)
-                        .ToArray();
+                    activeTaskKeys = ActiveTaskKeys(inventorySnapshot, state);
                     if (!_client.UsesHostOrchestrator)
                     {
                         var response = await _client.ClaimAsync(new RunnerClaimRequest(
@@ -636,10 +630,7 @@ public sealed class RemoteRunnerDaemon
                         interactiveChat.HeavyCount) == 0)
                 {
                     inventorySnapshot = inventory.Snapshot();
-                    activeTaskKeys = inventorySnapshot.Processes
-                        .Select(process => process.TaskKey)
-                        .Distinct(StringComparer.Ordinal)
-                        .ToArray();
+                    activeTaskKeys = ActiveTaskKeys(inventorySnapshot, state);
                     if (!_client.UsesHostOrchestrator)
                     {
                         var response = await _client.ClaimAsync(new RunnerClaimRequest(
@@ -709,10 +700,7 @@ public sealed class RemoteRunnerDaemon
                     }
 
                     inventorySnapshot = inventory.Snapshot();
-                    activeTaskKeys = inventorySnapshot.Processes
-                        .Select(process => process.TaskKey)
-                        .Distinct(StringComparer.Ordinal)
-                        .ToArray();
+                    activeTaskKeys = ActiveTaskKeys(inventorySnapshot, state);
                     var claim = await ClaimWithProjectPreflightAsync(new RunnerClaimRequest(
                         _options.RunnerId, _options.RunnerName, _options.Hostname,
                         Environment.ProcessId, _options.BackendName, _options.TtlSeconds,
@@ -809,7 +797,8 @@ public sealed class RemoteRunnerDaemon
                             claim.ContinuationBaseSha,
                             claim.PreviousSession,
                             claim.MechanicalDelta,
-                            claim.FreshRunReason)));
+                            claim.FreshRunReason,
+                            claim.RequiredCapabilities)));
                     idleWatchdog.RecordActiveSlots(active.Count);
                 }
 
@@ -907,10 +896,32 @@ public sealed class RemoteRunnerDaemon
             $"persisted authority deadline exhausted task={slot.TaskKey} " +
             $"attempt={slot.AttemptId} stop-before={stopBefore:o}; " +
             "reaping the contained process generation before any replacement");
-        await WorktreeProcessReaper.ReapAsync(
-            slot.WorktreePath,
-            _log,
-            CancellationToken.None);
+        if (OperatingSystem.IsWindows())
+        {
+            // Windows has no /proc worktree sweep. The persisted PID and start
+            // time identify this exact detached worker generation after sleep.
+            if (slot.ProcessId is not { } processId || slot.ProcessStartedAtUtc is null)
+                throw new InvalidOperationException(
+                    $"Expired workstation attempt '{slot.AttemptId}' has no proven worker process identity.");
+            ProcessSignalGuard.TryKillTree(
+                processId,
+                "workstation-authority-deadline",
+                slot.ProcessStartedAtUtc,
+                _log);
+            for (var attempt = 0; attempt < 20
+                                  && DurableAgentProcess.InspectForReattach(slot).IsLive; attempt++)
+                await Task.Delay(TimeSpan.FromMilliseconds(100), CancellationToken.None);
+            if (DurableAgentProcess.InspectForReattach(slot).IsLive)
+                throw new InvalidOperationException(
+                    $"Expired workstation attempt '{slot.AttemptId}' still has a live worker; refusing new claims.");
+        }
+        else
+        {
+            await WorktreeProcessReaper.ReapAsync(
+                slot.WorktreePath,
+                _log,
+                CancellationToken.None);
+        }
         state.Save(slot with
         {
             Phase = "authority-deadline-exhausted",
@@ -990,6 +1001,18 @@ public sealed class RemoteRunnerDaemon
         try { await Task.Delay(delay, shutdown); }
         catch (OperationCanceledException) { /* shutting down; the loop condition ends it */ }
     }
+
+    internal static string[] ActiveTaskKeys(
+        RunnerProcessInventory inventory,
+        RunnerStateStore state)
+        => inventory.Processes.Select(process => process.TaskKey)
+            // A terminal worker has no process, but its persisted result still
+            // owns the delivery. Reporting it absent would let the legacy
+            // Task Server requeue the card while finalization is being retried.
+            .Concat(RunnerActiveAttemptReporter.Coding(state.LoadAll())
+                .Select(attempt => attempt.TaskKey))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
 
     private void AcknowledgeInventory(
         RunnerProcessInventoryTracker inventory,

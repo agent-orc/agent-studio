@@ -438,6 +438,8 @@ builder.Services.AddSingleton<ReviewProjectionService>();
 builder.Services.AddSingleton<TaskTransitionService>();
 builder.Services.AddSingleton<DecisionCardService>();
 builder.Services.AddSingleton<DecisionRecordService>();
+builder.Services.AddSingleton<DeliveryChainReconciler>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<DeliveryChainReconciler>());
 builder.Services.AddSingleton<IBatchMoveItemExecutor, BatchMoveItemExecutor>();
 builder.Services.AddSingleton<BatchMoveJobCoordinator>();
 if (!publicDemoExecutionProfile)
@@ -1169,6 +1171,7 @@ if (SecurityProfiles.IsLocal(app.Configuration)) app.UseCors();
 // boundary. X-Client-Id remains attribution only and is never consulted as a
 // credential. Local development retains the legacy attribution middleware.
 app.UseAccessSecurity();
+app.UseMiddleware<AgentStudio.Diagnostics.ArtifactRequestLimitMiddleware>();
 
 // The local profile's X-Client-Id registration boundary rejects mutations from
 // unregistered identities and stamps lastSeenAt on known ones. This is local

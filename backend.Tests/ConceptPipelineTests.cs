@@ -199,6 +199,7 @@ public sealed class ConceptPipelineTests : IDisposable
             Id = "concept-source",
             Title = "Concept source",
             Mode = TaskModes.Concept,
+            RequiresIntegration = false,
             WatchPath = taskStore,
             TargetState = TaskStates.HumanReview,
         });
@@ -344,10 +345,14 @@ public sealed class ConceptPipelineTests : IDisposable
             Id = "sight-review",
             Title = "Sight review",
             Mode = TaskModes.Concept,
+            RequiresIntegration = false,
             WatchPath = taskStore,
             TargetState = TaskStates.HumanReview,
         });
         var source = scanner.FindJob(sourceId!, taskStore)!;
+        Directory.CreateDirectory(TaskPaths.ResultsDir(source.FolderPath));
+        File.WriteAllText(Path.Combine(TaskPaths.ResultsDir(source.FolderPath), "deliverables.md"),
+            "# Approved concept\n\nThe sight review approved this no-code deliverable.\n");
         var pipelineLog = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
         pipelineLog.Begin(
             source.FolderPath,

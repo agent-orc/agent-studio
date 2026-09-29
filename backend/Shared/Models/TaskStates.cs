@@ -83,7 +83,7 @@ public static class LifecyclePhases
     {
         [TaskStates.Ready] = [HumanReady, IntakeRunning, IntakeBlocked, IntakePassed],
         [TaskStates.Progress] = [ExecutionRunning, ExecutionStalled, LoopWaiting, SteerPending, QuotaWaiting, PostProcessingRunning, PostProcessingBlocked, AwaitingReview],
-        [TaskStates.AutoReview] = [PostProcessingRunning, PostProcessingBlocked, AwaitingReview],
+        [TaskStates.AutoReview] = [PostProcessingRunning, PostProcessingBlocked, AwaitingReview, Integrating],
         [TaskStates.HumanReview] = [Integrating],
     };
 
