@@ -7,10 +7,10 @@
   },
   "components": {
     "src/app/app.ts": {
-      "typeScript": 2557,
+      "typeScript": 2563,
       "template": 819,
       "styles": 1082,
-      "total": 4458
+      "total": 4464
     },
     "src/app/components/markdown-rich-editor/markdown-rich-editor.ts": {
       "typeScript": 466,
@@ -25,8 +25,8 @@
       "total": 710
     },
     "src/app/features/board/components/task-card/task-card.component.ts": {
-      "typeScript": 574,
-      "template": 482,
+      "typeScript": 584,
+      "template": 488,
       "styles": 1726,
       "total": 2782
     },
@@ -94,10 +94,10 @@
       "total": 909
     },
     "src/app/features/project-detail/components/project-wiki-section/project-wiki-section.ts": {
-      "typeScript": 1955,
-      "template": 850,
+      "typeScript": 1965,
+      "template": 852,
       "styles": 1711,
-      "total": 4516
+      "total": 4528
     },
     "src/app/features/project-detail/components/uxui-panel/uxui-panel.component.ts": {
       "typeScript": 247,
@@ -121,8 +121,8 @@
     "src/app/features/studio-shell/components/explorer-workspace-tree/explorer-workspace-tree.component.ts": {
       "typeScript": 508,
       "template": 279,
-      "styles": 147,
-      "total": 937
+      "styles": 186,
+      "total": 940
     },
     "src/app/features/studio-shell/studio-shell.component.ts": {
       "typeScript": 1333,
@@ -137,8 +137,8 @@
       "total": 1471
     },
     "src/app/features/task-detail/components/detail-header/detail-header.component.ts": {
-      "typeScript": 489,
-      "template": 214,
+      "typeScript": 495,
+      "template": 217,
       "styles": 308,
       "total": 1011
     },
@@ -161,10 +161,10 @@
       "total": 3003
     },
     "src/app/features/task-detail/task-detail.ts": {
-      "typeScript": 1541,
-      "template": 208,
+      "typeScript": 1548,
+      "template": 225,
       "styles": 1284,
-      "total": 3023
+      "total": 3032
     },
     "src/app/features/tokens/components/workspace-token-timeline/workspace-token-timeline.ts": {
       "typeScript": 432,

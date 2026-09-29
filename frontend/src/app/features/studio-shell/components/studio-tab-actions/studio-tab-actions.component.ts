@@ -49,6 +49,8 @@ export interface StudioTabTriage {
   primaryTooltip: string;
   awaitingGit: boolean;
   blockedByIntegration: boolean;
+  /** AGT-2795: the primary move is refused by a pending decision; the tooltip says which. */
+  blockedByDecision?: boolean;
   actingId: string | null;
   menuItems: MenuItem[];
 }

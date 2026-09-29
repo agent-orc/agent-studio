@@ -1,0 +1,44 @@
+:host { display: block; min-width: 0; }
+
+// AGT-2795: waiting on a pending decision is a current, actionable block, so
+// it reads as a warn tint with a status dot (R1: no accent bar).
+.decision-blocked {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--studio-spacing-2);
+  margin: var(--studio-spacing-2) var(--studio-spacing-3);
+  padding: var(--studio-spacing-2) var(--studio-spacing-3);
+  border: 1px solid color-mix(in srgb, var(--studio-accent-warn) 42%, var(--studio-border));
+  border-radius: var(--studio-radius-md);
+  background: color-mix(in srgb, var(--studio-accent-warn) 8%, var(--studio-bg-elevated));
+  color: var(--studio-fg);
+  font-size: 0.78rem;
+}
+
+.decision-blocked__dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  margin-top: var(--studio-spacing-1);
+  border-radius: 50%;
+  background: var(--studio-accent-warn);
+}
+
+.decision-blocked__body { display: grid; gap: var(--studio-spacing-1); min-width: 0; }
+.decision-blocked__line,
+.decision-blocked__hint { margin: 0; }
+.decision-blocked__line { color: var(--studio-fg-strong); font-weight: 600; }
+.decision-blocked__hint { color: var(--studio-fg-muted); font-size: 0.72rem; }
+.decision-blocked__title { margin-left: var(--studio-spacing-1); color: var(--studio-fg); font-weight: 400; }
+
+.decision-blocked__link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--studio-wiki-link);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+
+  &:focus-visible { outline: 2px solid var(--studio-accent-3); outline-offset: 2px; }
+}

@@ -1690,7 +1690,12 @@ export function buildDependencyChip(waitsOn: TaskInfo['waitsOn']): DependencyChi
  */
 export function buildVisibleDependencyChip(job: TaskInfo): DependencyChip | null {
   if (job.liveStatus) return null;
-  return buildDependencyChip(job.waitsOn);
+  // AGT-2795: an edge to a pending decision card already renders as its own
+  // "blocked by" link; do not repeat it as a generic waits-on chip.
+  const waitsOn = job.waitsOn;
+  if (!waitsOn?.items.some((item) => item.pendingDecision)) return buildDependencyChip(waitsOn);
+  const items = waitsOn.items.filter((item) => !item.pendingDecision);
+  return items.length > 0 ? buildDependencyChip({ ...waitsOn, items }) : null;
 }
 
 /**
