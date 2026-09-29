@@ -6,6 +6,14 @@ namespace AgentStudio.Tasks;
 /// <summary>
 /// Owns the bounded acceptance-integration section in status.md. The markers
 /// allow retries to replace stale reasons while preserving the task result.
+/// <para>
+/// AGT-2989: caller text (outcome, branch, reason) can carry anything a Git
+/// failure or an operator typed, including the section markers themselves.
+/// Every caller value is escaped so it cannot open or close an HTML comment,
+/// and the markers are matched only as whole lines, so neither caller text
+/// nor an agent-written task result above the section can make a later
+/// upsert truncate or duplicate the document.
+/// </para>
 /// </summary>
 public static class AcceptanceIntegrationStatusDocument
 {
@@ -81,13 +89,43 @@ public static class AcceptanceIntegrationStatusDocument
         }
     }
 
-    private static string RemoveOwnedSection(string content)
+    internal static string RemoveOwnedSection(string content)
     {
-        var start = content.IndexOf(StartMarker, StringComparison.Ordinal);
+        // The owned section is always appended last, so the last start line
+        // is ours; an earlier marker line belongs to preserved task text.
+        var start = LastMarkerLine(content, StartMarker);
         if (start < 0) return content;
-        var end = content.IndexOf(EndMarker, start, StringComparison.Ordinal);
-        if (end < 0) return content[..start];
+        var end = MarkerLine(content, EndMarker, start + StartMarker.Length);
+        // Sections are replaced atomically, so an unterminated start line is
+        // preserved text quoting the marker, not a torn section of ours.
+        if (end < 0) return content;
         return content.Remove(start, end + EndMarker.Length - start);
+    }
+
+    private static int MarkerLine(string content, string marker, int from)
+    {
+        for (var index = content.IndexOf(marker, from, StringComparison.Ordinal);
+             index >= 0;
+             index = content.IndexOf(marker, index + 1, StringComparison.Ordinal))
+            if (IsWholeLine(content, index, marker.Length)) return index;
+        return -1;
+    }
+
+    private static int LastMarkerLine(string content, string marker)
+    {
+        for (var index = content.LastIndexOf(marker, StringComparison.Ordinal);
+             index >= 0;
+             index = index == 0 ? -1 : content.LastIndexOf(marker, index - 1, StringComparison.Ordinal))
+            if (IsWholeLine(content, index, marker.Length)) return index;
+        return -1;
+    }
+
+    private static bool IsWholeLine(string content, int index, int length)
+    {
+        var startsLine = index == 0 || content[index - 1] == '\n';
+        var after = index + length;
+        var endsLine = after == content.Length || content[after] is '\r' or '\n';
+        return startsLine && endsLine;
     }
 
     private static void ReplaceAtomically(string path, string content)
@@ -104,11 +142,17 @@ public static class AcceptanceIntegrationStatusDocument
         }
     }
 
-    private static string SingleLine(string? value, string fallback = "")
+    /// <summary>
+    /// Folds caller text onto one line and escapes HTML comment delimiters, so
+    /// a value can neither start a new line nor spell a section marker.
+    /// </summary>
+    internal static string SingleLine(string? value, string fallback = "")
     {
         var normalized = (value ?? string.Empty)
             .Replace('\r', ' ')
             .Replace('\n', ' ')
+            .Replace("<!--", "&lt;!--", StringComparison.Ordinal)
+            .Replace("-->", "--&gt;", StringComparison.Ordinal)
             .Trim();
         return normalized.Length == 0 ? fallback : normalized;
     }
