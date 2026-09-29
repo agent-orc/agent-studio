@@ -88,7 +88,12 @@ pressure threshold, assembles the candidate, persists a run before invoking
 `BuildTestGateRunner` on its exact SHA, and records verdict and evidence.
 Green publication rechecks member generations and the remote pre-tip under a
 coordinator lease and the shared fenced ref-mutation lease. A changed pre-tip
-returns members for reconstruction and another suite run. The worker verifies
+returns members for reconstruction and another suite run. Both leases are
+rechecked against their durable fences immediately before the push. When the
+coordinator heartbeat loses its lease while the suite runs, the gate stops,
+the batch is recorded `Abandoned` with `coordinator lease lost during the gate`,
+and its members return to the pending queue; other scopes in the same tick
+continue. The worker verifies
 the remote SHA before recording publication. The pilot publishes only a tested
 fast-forward candidate; it does not synthesize a merge commit after the gate.
 Each admitted member receives an
@@ -100,7 +105,10 @@ generations. Verified members also
 receive an idempotent integration bookkeeping
 record with their mapped SHA set and tested remote tip. A disabled project and
 a lone aged member use the ordinary per-card
-gate on the same immutable result subject. A batch that pauses (a second
+gate on the same immutable result subject. Within one backend process that
+per-card gate runs at most once at a time per review generation: a retried
+review report or a tick that meets a running fallback waits for it instead of
+starting a second gate. A batch that pauses (a second
 infrastructure red, flaky red, an unresolved cohort, a failed publication or an
 unexpected fault) keeps `Paused` in its state history; on the next tick the
 worker returns every member it still owns to that per-card gate and records the

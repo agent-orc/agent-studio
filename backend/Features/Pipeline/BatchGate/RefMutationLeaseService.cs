@@ -59,7 +59,7 @@ public sealed class RefMutationLeaseService
                     value.Write(bytes);
                     value.Flush(flushToDisk: true);
                 }
-                return new Lease(stream, semaphore, fence);
+                return new Lease(stream, semaphore, fence, path);
             }
             catch
             {
@@ -74,23 +74,42 @@ public sealed class RefMutationLeaseService
         }
     }
 
+    /// <summary>
+    /// True while the grant is held and no later grant advanced the durable
+    /// fence. Publication rechecks this immediately before it mutates a ref.
+    /// </summary>
+    public static bool IsCurrent(Lease lease)
+    {
+        if (lease.Disposed) return false;
+        try
+        {
+            return long.TryParse(File.ReadAllText(lease.FencePath),
+                    System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture, out var fence)
+                && fence == lease.Fence;
+        }
+        catch (IOException) { return false; }
+    }
+
     public sealed class Lease : IDisposable
     {
         private readonly FileStream _stream;
         private readonly SemaphoreSlim _semaphore;
-        private bool _disposed;
-        internal Lease(FileStream stream, SemaphoreSlim semaphore, long fence)
+        internal Lease(FileStream stream, SemaphoreSlim semaphore, long fence, string fencePath)
         {
             _stream = stream;
             _semaphore = semaphore;
             Fence = fence;
+            FencePath = fencePath;
         }
 
         public long Fence { get; }
+        internal string FencePath { get; }
+        internal bool Disposed { get; private set; }
         public void Dispose()
         {
-            if (_disposed) return;
-            _disposed = true;
+            if (Disposed) return;
+            Disposed = true;
             _stream.Dispose();
             _semaphore.Release();
         }

@@ -26,6 +26,10 @@ public sealed class BatchGatePilotService
     private readonly ILogger<BatchGatePilotService> _logger;
     private readonly ILoadThrottleGate? _load;
     private readonly SemaphoreSlim _tick = new(1, 1);
+    private readonly Dictionary<string, Task> _fallbackFlights = new(StringComparer.Ordinal);
+
+    /// <summary>Coordinator lease renewal cadence; well inside the two-minute grant.</summary>
+    internal TimeSpan HeartbeatInterval { get; set; } = TimeSpan.FromSeconds(30);
 
     public BatchGatePilotService(
         BatchGateStore store, BatchGateLeaseService leases,
@@ -542,7 +546,20 @@ public sealed class BatchGatePilotService
         {
             AbandonSuperseded("superseded during gate");
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested
+            && cancellation.IsCancellationRequested)
+        {
+            // Only the heartbeat cancels this batch on its own: the coordinator
+            // lease is gone, so the batch may not publish. A verified remote
+            // publication keeps its phase for the next tick's recovery.
+            if (_store.ReadPublication(manifest.BatchId) is null)
+            {
+                State(manifest, BatchPhase.Abandoned, null, lease.Fence,
+                    "coordinator lease lost during the gate");
+                ReturnToPending(manifest);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
             _logger.LogError(ex, "batch-gate-failed batch={BatchId}", manifest.BatchId);
             // A verified remote publication is durable. Keep its phase so the
@@ -606,7 +623,8 @@ public sealed class BatchGatePilotService
                 repo, manifest.Scope.IntegrationBranch, ct);
             var decision = BatchGatePublicationPolicy.Decide(
                 manifest, assembly, run, verdict, current,
-                remoteTip ?? string.Empty, _leases.IsCurrent(lease), true,
+                remoteTip ?? string.Empty, _leases.IsCurrent(lease),
+                RefMutationLeaseService.IsCurrent(refLease),
                 _git.IsAncestor(repo, manifest.BaseSha, assembly.CandidateSha));
             if (decision != BatchPublishDecision.FastForward)
             {
@@ -628,10 +646,10 @@ public sealed class BatchGatePilotService
                 return;
             }
             State(manifest, BatchPhase.Publishing, assembly.CandidateSha, lease.Fence);
-            if (!_leases.IsCurrent(lease))
+            if (!_leases.IsCurrent(lease) || !RefMutationLeaseService.IsCurrent(refLease))
             {
                 State(manifest, BatchPhase.Abandoned, assembly.CandidateSha,
-                    lease.Fence, "coordinator lease lost before publication");
+                    lease.Fence, "lease lost before publication");
                 ReturnToPending(manifest);
                 return;
             }
@@ -753,7 +771,7 @@ public sealed class BatchGatePilotService
     {
         while (!cancellation.IsCancellationRequested)
         {
-            await Task.Delay(TimeSpan.FromSeconds(30), cancellation.Token).ConfigureAwait(false);
+            await Task.Delay(HeartbeatInterval, cancellation.Token).ConfigureAwait(false);
             if (_leases.Renew(lease) is null)
             {
                 await cancellation.CancelAsync().ConfigureAwait(false);
@@ -923,8 +941,41 @@ public sealed class BatchGatePilotService
             throw new IOException("Batch integration bookkeeping could not be recorded.");
     }
 
-    private async Task RunPerTaskFallbackAsync(BatchGatePendingRecord pending,
+    // One per-task gate per review generation in this process. A retried
+    // settlement request, or a tick that meets a running fallback, joins it
+    // instead of starting a second gate on the same immutable subject.
+    private Task RunPerTaskFallbackAsync(BatchGatePendingRecord pending,
         CancellationToken ct, bool recordInStore = true)
+    {
+        Task flight;
+        lock (_fallbackFlights)
+        {
+            if (!_fallbackFlights.TryGetValue(pending.ReviewAttemptId, out flight!))
+            {
+                flight = RunFallbackFlightAsync(pending, recordInStore, ct);
+                _fallbackFlights[pending.ReviewAttemptId] = flight;
+            }
+        }
+        return flight.WaitAsync(ct);
+    }
+
+    private async Task RunFallbackFlightAsync(BatchGatePendingRecord pending,
+        bool recordInStore, CancellationToken ct)
+    {
+        // Yield first so the flight is registered before it can complete.
+        await Task.Yield();
+        try
+        {
+            await RunPerTaskFallbackCoreAsync(pending, ct, recordInStore).ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (_fallbackFlights) _fallbackFlights.Remove(pending.ReviewAttemptId);
+        }
+    }
+
+    private async Task RunPerTaskFallbackCoreAsync(BatchGatePendingRecord pending,
+        CancellationToken ct, bool recordInStore)
     {
         var refreshed = Refresh(pending);
         if (!refreshed.Subject.CurrentGeneration)

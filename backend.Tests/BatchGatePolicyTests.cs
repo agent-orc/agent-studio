@@ -71,14 +71,4 @@ public sealed class BatchGatePolicyTests
             reviewQueueLength: 12).Manifest);
         Assert.Null(BatchGatePolicy.Form([Subject("a"), Subject("b")], Scope, Sha, Enabled, Now).Manifest);
     }
-
-    [Fact]
-    public void SupersedeMomentsFailClosed()
-    {
-        Assert.Equal(BatchSupersedeAction.EjectAndReconstruct, BatchGatePolicy.Supersede(BatchPhase.Formed));
-        Assert.Equal(BatchSupersedeAction.EjectAndReconstruct, BatchGatePolicy.Supersede(BatchPhase.Assembled));
-        Assert.Equal(BatchSupersedeAction.StopAndDiscardVerdict, BatchGatePolicy.Supersede(BatchPhase.Running));
-        Assert.Equal(BatchSupersedeAction.BlockPublication, BatchGatePolicy.Supersede(BatchPhase.Green));
-        Assert.Equal(BatchSupersedeAction.PreserveHistory, BatchGatePolicy.Supersede(BatchPhase.Published));
-    }
 }

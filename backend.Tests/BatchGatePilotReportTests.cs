@@ -41,17 +41,24 @@ public sealed class BatchGatePilotReportTests
     }
 
     [Fact]
-    public void CorrectnessViolationStopsPilotEvenWhenThroughputTargetsPass()
+    public void CorrectnessViolationFailsTheFloorWhateverTheThroughput()
     {
-        var waves = Enumerable.Range(0, 5).Select(i => new BatchGatePilotWave(
-            $"batch-{i}", 4, 1, 4, 0, true,
-            1, 3, 2, 6, [10, 12, 14, 15], 1m,
-            UntestedPublishShas: i == 0 ? 1 : 0)).ToArray();
-        var report = BatchGatePilotReport.Calculate(waves);
-        Assert.Equal(.25, report.FullSuiteRunsPerEligibleMember);
-        Assert.Equal(4, report.MeanBatchSize);
-        Assert.Equal(1, report.UntestedPublishShas);
-        Assert.False(report.CorrectnessFloorMet);
-        Assert.False(report.MeetsPilotTargets);
+        var root = Path.Combine(Path.GetTempPath(), "batch-metrics-test-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new BatchGateStore(root);
+            var report = BatchGatePilotSnapshotReader.Read(store, "project",
+                falseCompletedCards: 1);
+            Assert.Equal(1, report.FalseCompletedCards);
+            Assert.False(report.CorrectnessFloorMet);
+            report = BatchGatePilotSnapshotReader.Read(store, "project",
+                staleReleasedCards: 1);
+            Assert.Equal(1, report.StaleAttemptPasses);
+            Assert.False(report.CorrectnessFloorMet);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
     }
 }

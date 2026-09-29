@@ -171,17 +171,6 @@ public static class BatchGatePolicy
     public static int DiagnosticRunsPerCycle(int memberCount)
         => memberCount <= 1 ? 0 : (int)Math.Ceiling(Math.Log2(memberCount));
 
-    public static BatchSupersedeAction Supersede(BatchPhase phase)
-        => phase switch
-        {
-            BatchPhase.Formed or BatchPhase.Assembling or BatchPhase.Assembled
-                => BatchSupersedeAction.EjectAndReconstruct,
-            BatchPhase.Running => BatchSupersedeAction.StopAndDiscardVerdict,
-            BatchPhase.Green or BatchPhase.Publishing => BatchSupersedeAction.BlockPublication,
-            BatchPhase.Published => BatchSupersedeAction.PreserveHistory,
-            _ => BatchSupersedeAction.BlockPublication,
-        };
-
     private static int Compare(BatchGateSubject a, BatchGateSubject b)
     {
         var byTime = a.ReviewCompletedAtUtc.CompareTo(b.ReviewCompletedAtUtc);
@@ -198,4 +187,3 @@ public static class BatchGatePolicy
 }
 
 public enum BatchPhase { Formed, Assembling, Assembled, Running, Green, Publishing, Published, Red, Paused, Abandoned }
-public enum BatchSupersedeAction { EjectAndReconstruct, StopAndDiscardVerdict, BlockPublication, PreserveHistory }

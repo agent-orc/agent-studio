@@ -245,6 +245,155 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Coordinator_lease_lost_by_the_heartbeat_mid_gate_abandons_the_batch_without_ending_the_tick()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var member = SeedMember(factory, "DOC-HEARTBEAT", "docs/heartbeat.md");
+        var baseTip = RemoteTip();
+        var leases = factory.Services.GetRequiredService<BatchGateLeaseService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        pilot.HeartbeatInterval = TimeSpan.FromMilliseconds(50);
+        BatchCoordinatorLease? intruder = null;
+        _gate.BatchAsync = async (_, ct) =>
+        {
+            // The grant expires and another coordinator takes the scope while
+            // the suite still runs; only the heartbeat can notice.
+            _clock = _clock.AddMinutes(3);
+            intruder = leases.TryAcquire(Assert.Single(store.ListManifests()).Scope, "intruder");
+            await Task.Delay(Timeout.Infinite, ct);
+            throw new InvalidOperationException("The lost lease did not stop the gate.");
+        };
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        Assert.NotNull(intruder);
+        var manifest = Assert.Single(store.ListManifests());
+        var state = AssertPhase(store, manifest.BatchId, BatchPhase.Abandoned);
+        Assert.Equal("coordinator lease lost during the gate", state.Reason);
+        Assert.Null(store.ReadPublication(manifest.BatchId));
+        Assert.Equal(baseTip, RemoteTip());
+        Assert.Null(Ownership(member.Key)?.BatchId);
+        Assert.Equal(member.Key, Assert.Single(store.ListPending()).Subject.TaskKey);
+        AssertLane(member.Key, TaskStates.AutoReview);
+    }
+
+    [Fact]
+    public async Task Member_superseded_before_the_suite_starts_is_ejected_and_no_gate_runs()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var superseded = SeedMember(factory, "DOC-EARLY-1", "docs/early-one.md");
+        var survivor = SeedMember(factory, "DOC-EARLY-2", "docs/early-two.md");
+        var baseTip = RemoteTip();
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        _gate.Batch = _ => throw new InvalidOperationException("A stale manifest reached the suite.");
+        var (ready, go) = PauseAtFirstCandidateRef();
+
+        var tick = Task.Run(() => pilot.TickAsync(CancellationToken.None));
+        await WaitForAsync(() => File.Exists(ready));
+        Supersede(authority, superseded.Key);
+        File.WriteAllText(go, string.Empty);
+        await tick;
+
+        var manifest = Assert.Single(store.ListManifests());
+        var state = AssertPhase(store, manifest.BatchId, BatchPhase.Abandoned);
+        Assert.Equal("superseded after replay", state.Reason);
+        Assert.Equal(0, _gate.BatchRuns);
+        Assert.Empty(store.ListRuns(manifest.BatchId));
+        Assert.Equal(baseTip, RemoteTip());
+        Assert.Null(Ownership(superseded.Key));
+        Assert.Null(Ownership(survivor.Key)?.BatchId);
+        Assert.Equal(survivor.Key, Assert.Single(store.ListPending()).Subject.TaskKey);
+        AssertLane(survivor.Key, TaskStates.AutoReview);
+    }
+
+    [Fact]
+    public async Task Member_superseded_after_verified_publication_keeps_history_and_never_transfers_the_verdict()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var member = SeedMember(factory, "DOC-AFTER", "docs/after.md");
+        _gate.Batch = request => Green(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        await pilot.TickAsync(CancellationToken.None);
+        var manifest = Assert.Single(store.ListManifests());
+        var publication = store.ReadPublication(manifest.BatchId)!;
+        var frozen = Assert.Single(manifest.Members);
+
+        Supersede(authority, member.Key);
+        await pilot.TickAsync(CancellationToken.None);
+
+        // The published history stays exactly as verified.
+        AssertPhase(store, manifest.BatchId, BatchPhase.Published);
+        Assert.Equal(publication.TestedCandidateSha, RemoteTip());
+        Assert.Equal(1, _gate.BatchRuns);
+        var record = store.TryReadMember(manifest.BatchId, member.Key, publication.BatchRunId)!;
+        Assert.Equal(member.RunAttemptId, record.RunAttempt);
+        // The newer attempt cannot reuse the old generation's gate result.
+        var newer = authority.GetTaskProjection(member.Key).CurrentRunAttempt!;
+        Assert.NotEqual(member.RunAttemptId, newer.AttemptId);
+        var release = store.CheckRelease(frozen with
+        {
+            RunAttempt = newer.AttemptId,
+            FencingToken = newer.LastFence,
+            DeliveryEpoch = newer.AuthorityEpoch,
+            CurrentGeneration = true,
+        }, manifest.BatchId, publication.BatchRunId);
+        Assert.False(release.Allowed);
+        Assert.Equal("batch-gate-evidence-missing", release.FailureCode);
+    }
+
+    [Fact]
+    public async Task Retried_emergency_fallback_joins_the_running_per_task_gate()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "CODE-RETRY", "backend/Retry.cs", settleReview: false);
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var claimed = authority.ClaimReview(member.ReviewAttemptId, "review-executor", "review-host",
+            600, "claim-" + member.Key);
+        Assert.True(claimed.Accepted, claimed.Message);
+        var passed = authority.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(member.ReviewAttemptId, claimed.ReviewAttempt!.LastFence,
+                claimed.ReviewAttempt.AuthorityEpoch, "pass-" + member.Key),
+            member.ResultSha, ReviewTerminalOutcome.Pass));
+        Assert.True(passed.Accepted, passed.Message);
+        var task = factory.Services.GetRequiredService<TaskScannerService>().FindJob(member.Key, _watchPath)!;
+        var source = authority.GetRun(member.RunAttemptId)!;
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _gate.FallbackAsync = async (request, ct) =>
+        {
+            await release.Task.WaitAsync(ct);
+            return Red(request.ExpectedSha);
+        };
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+
+        // The report request times out on the client while the gate runs and
+        // the client retries the same settled report.
+        var first = pilot.RunEmergencyFallbackAsync(task, passed.ReviewAttempt!, source,
+            DateTimeOffset.UtcNow, CancellationToken.None);
+        await WaitForAsync(() => _gate.FallbackRuns == 1);
+        var retry = pilot.RunEmergencyFallbackAsync(task, passed.ReviewAttempt!, source,
+            DateTimeOffset.UtcNow, CancellationToken.None);
+        release.SetResult();
+        await Task.WhenAll(first, retry);
+
+        Assert.Equal(1, _gate.FallbackRuns);
+        AssertLane(member.Key, TaskStates.Escalated);
+        Assert.Null(Ownership(member.Key));
+    }
+
+    [Fact]
     public async Task Review_settlement_that_cannot_enqueue_runs_the_per_task_gate_before_answering()
     {
         using var factory = BuildFactory();
@@ -358,6 +507,29 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         factory.Services.GetRequiredService<BatchGatePilotService>().Enqueue(task,
             passed.ReviewAttempt!, authority.GetRun(run.AttemptId)!, DateTimeOffset.UtcNow);
         return new SeededMember(key, run.AttemptId, reviewId, resultSha);
+    }
+
+    // A reference-transaction hook parks the assembler right after it creates
+    // the candidate ref, which is after close and before the suite starts.
+    private (string Ready, string Go) PauseAtFirstCandidateRef()
+    {
+        var ready = Path.Combine(_workspace, "candidate-ref-ready");
+        var go = Path.Combine(_workspace, "candidate-ref-go");
+        var hooks = Path.Combine(_repo, ".git", "hooks");
+        Directory.CreateDirectory(hooks);
+        var hook = Path.Combine(hooks, "reference-transaction");
+        File.WriteAllText(hook, "#!/bin/sh\n"
+            + "[ \"$1\" = committed ] || exit 0\n"
+            + "grep -q 'refs/agent-studio/batch-candidates/' || exit 0\n"
+            + $"[ -e '{ready}' ] && exit 0\n"
+            + $"touch '{ready}'\n"
+            + "i=0\n"
+            + $"while [ ! -e '{go}' ] && [ $i -lt 600 ]; do sleep 0.05; i=$((i+1)); done\n"
+            + "exit 0\n");
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite
+                | UnixFileMode.UserExecute);
+        return (ready, go);
     }
 
     private static void Supersede(AttemptAuthorityService authority, string key)
@@ -532,8 +704,12 @@ public sealed class BatchGatePilotServiceTests : IDisposable
             = _ => throw new InvalidOperationException("No batch gate result is scripted.");
         public Func<BuildTestGateRequest, BuildTestGateResult> Fallback { get; set; }
             = _ => throw new InvalidOperationException("No per-task gate result is scripted.");
-        public int BatchRuns { get; private set; }
-        public int FallbackRuns { get; private set; }
+        public Func<BuildTestGateRequest, CancellationToken, Task<BuildTestGateResult>>? BatchAsync { get; set; }
+        public Func<BuildTestGateRequest, CancellationToken, Task<BuildTestGateResult>>? FallbackAsync { get; set; }
+        private int _batchRuns;
+        private int _fallbackRuns;
+        public int BatchRuns => Volatile.Read(ref _batchRuns);
+        public int FallbackRuns => Volatile.Read(ref _fallbackRuns);
 
         public Task<BuildTestGateResult> RunAsync(BuildTestGateRequest request,
             IReadOnlyList<string>? changedFiles, BuildProfile? profile, PostStepMode mode,
@@ -541,11 +717,11 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         {
             if (request.GateId == "batch-gate")
             {
-                BatchRuns++;
-                return Task.FromResult(Batch(request));
+                Interlocked.Increment(ref _batchRuns);
+                return BatchAsync?.Invoke(request, ct) ?? Task.FromResult(Batch(request));
             }
-            FallbackRuns++;
-            return Task.FromResult(Fallback(request));
+            Interlocked.Increment(ref _fallbackRuns);
+            return FallbackAsync?.Invoke(request, ct) ?? Task.FromResult(Fallback(request));
         }
     }
 }
