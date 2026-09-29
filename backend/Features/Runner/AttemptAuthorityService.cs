@@ -73,6 +73,14 @@ public sealed class AttemptAuthorityService
     };
 
     private readonly object _gate = new();
+
+    /// <summary>
+    /// Per-task continuation gates. A review continuation holds its task's gate
+    /// while it applies; successor creation takes the same gate before
+    /// <see cref="_gate"/>. Lock order is always continuation gate, then _gate.
+    /// </summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, object> _continuationGates =
+        new(StringComparer.OrdinalIgnoreCase);
     private readonly string? _path;
     private readonly ILogger<AttemptAuthorityService> _logger;
     private readonly Func<DateTime> _utcNow;
@@ -475,6 +483,7 @@ public sealed class AttemptAuthorityService
             return new AttemptWriteResult(AttemptWriteStatus.Invalid, string.Empty, exception.Message);
         }
 
+        lock (ContinuationGate(request.TaskKey))
         lock (_gate)
         {
             var deliveryKey = DeliveryKey("create", request.IdempotencyKey);
@@ -1039,22 +1048,36 @@ public sealed class AttemptAuthorityService
     }
 
     /// <summary>
-    /// Applies a review continuation only while the review is its task's current
-    /// generation. Successor creation takes the same gate, so it is ordered
-    /// strictly before (the effect is refused) or after (the effect applied
-    /// while current) - never in between. <paramref name="apply"/> must be short
-    /// and must not call back into this service from another thread.
+    /// Applies a review continuation only while the settled review is its task's
+    /// current generation. Successor creation takes the same per-task gate, so
+    /// it is ordered strictly before (the effect is refused) or after (the
+    /// effect applied while current) - never in between. <paramref name="apply"/>
+    /// runs outside the global authority gate, so its I/O stalls only a
+    /// successor for the same task. The lease-expiry successor needs no gate: it
+    /// replaces only a non-terminal review, which never has a continuation.
     /// </summary>
     public bool TryApplyForCurrentReview(string attemptId, Action apply)
     {
+        string taskKey;
         lock (_gate)
         {
-            var review = FindReview(attemptId);
-            if (review is null || !IsCurrentReview(review)) return false;
+            if (FindReview(attemptId) is not { } review) return false;
+            taskKey = review.TaskKey;
+        }
+        lock (ContinuationGate(taskKey))
+        {
+            lock (_gate)
+            {
+                var review = FindReview(attemptId);
+                if (review is null || !IsCurrentReview(review) || !Terminal(review.State)) return false;
+            }
             apply();
             return true;
         }
     }
+
+    private object ContinuationGate(string taskKey)
+        => _continuationGates.GetOrAdd(Normalize(taskKey), _ => new object());
 
     public bool HasScheduledReviewInfrastructureRetry(string attemptId)
     {

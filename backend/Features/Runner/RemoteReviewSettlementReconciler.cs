@@ -97,14 +97,10 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
         if (!RemoteReviewSettlementPolicy.MatchesAcceptedReview(entry, review))
             return RemoteReviewSettlementReconcileStatus.Repair;
 
-        if (entry.Delivery is { } delivery
-            && string.Equals(task.State, TaskStates.AutoReview, StringComparison.Ordinal)
-            && !RemoteDeliverySettlementStore.MatchesAttempt(
-                RemoteDeliverySettlementStore.Read(task.FolderPath), review.AttemptId))
-            RemoteDeliverySettlementStore.Write(task.FolderPath, delivery);
-        else if (entry.Delivery is null
-                 && AutoReviewResumePolicy.IsAdmissibleOutcome(review.Outcome)
-                 && string.Equals(task.State, TaskStates.AutoReview, StringComparison.Ordinal))
+        RemoteReviewSettlementPolicy.RestoreDeliverySidecar(task, entry);
+        if (entry.Delivery is null
+            && AutoReviewResumePolicy.IsAdmissibleOutcome(review.Outcome)
+            && string.Equals(task.State, TaskStates.AutoReview, StringComparison.Ordinal))
             return RemoteReviewSettlementReconcileStatus.Repair;
 
         if (entry.RepairReason is not null) return RemoteReviewSettlementReconcileStatus.Repair;

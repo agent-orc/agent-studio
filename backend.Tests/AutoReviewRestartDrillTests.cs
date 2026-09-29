@@ -381,6 +381,188 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         Assert.False(RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId).Entry!.EvidenceComplete);
     }
 
+    /// <summary>
+    /// Code-quality concern of AGT-2936: the continuation's disk I/O ran under the
+    /// global authority gate. It now holds only the task's continuation gate, so
+    /// unrelated authority calls proceed while a successor for the same task still
+    /// waits until the continuation has applied.
+    /// </summary>
+    [Fact]
+    public void Continuation_runs_outside_the_global_authority_gate_and_still_fences_the_successor()
+    {
+        var stack = Build();
+        var card = SeedPassedDelivery(stack, "journal-fence-io");
+        var old = stack.Authority.GetReview(card.ReviewAttemptId)!;
+        Task<AttemptWriteResult>? successor = null;
+        var readDuringApply = false;
+        var successorHeldBack = false;
+
+        Assert.True(stack.Authority.TryApplyForCurrentReview(card.ReviewAttemptId, () =>
+        {
+            readDuringApply = Task.Run(() => stack.Authority.GetTaskProjection("AGT-unrelated"))
+                .Wait(TimeSpan.FromSeconds(10));
+            successor = Task.Run(() => stack.Authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
+                card.TaskKey, old.Subject.RepositoryId, card.DeliverySha, old.SourceRunAttemptId,
+                "req", "policy", [], "successor-during-apply")));
+            successorHeldBack = !successor.Wait(TimeSpan.FromMilliseconds(500));
+        }));
+
+        Assert.True(readDuringApply);
+        Assert.True(successorHeldBack);
+        Assert.True(successor!.Wait(TimeSpan.FromSeconds(10)));
+        Assert.True(successor.Result.Accepted);
+        Assert.False(stack.Authority.TryApplyForCurrentReview(card.ReviewAttemptId, () => { }));
+    }
+
+    /// <summary>
+    /// Code-quality concerns of AGT-2936: the unused journal constant, the
+    /// off-by-one exhaustion and the retry delay and log keyed off the volatile
+    /// request counter. The journaled failure count now drives all of them, so a
+    /// restarted worker keeps the same backoff and grants MaxRetries retries.
+    /// </summary>
+    [Fact]
+    public async Task Evidence_retry_uses_the_journaled_failure_count_for_delay_and_exhaustion()
+    {
+        var stack = Build();
+        var card = SeedPassedDelivery(stack, "journal-evidence-retry");
+        var entry = JournalEntry(card, stack) with
+        {
+            EvidenceFailures = RemoteReviewEvidenceProjectionWorker.MaxRetries - 1,
+        };
+        RemoteReviewSettlementJournal.Write(card.FolderPath, entry);
+        var worker = EvidenceWorker(stack);
+        var retries = new List<int>();
+        worker.RetryDelayOverride = retry =>
+        {
+            retries.Add(retry);
+            return TimeSpan.FromMinutes(30);
+        };
+        worker.BeforeFencedProjection = () => throw new IOException("disk full");
+
+        // A fresh request after a restart starts its volatile counter at zero.
+        await worker.ProcessAsync(EvidenceRequest(card, stack, entry), CancellationToken.None);
+        var retried = RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId).Entry!;
+        Assert.Equal(RemoteReviewEvidenceProjectionWorker.MaxRetries, retried.EvidenceFailures);
+        Assert.Null(retried.RepairReason);
+        Assert.Equal([RemoteReviewEvidenceProjectionWorker.MaxRetries - 1], retries);
+        Assert.True(retried.NextEvidenceAttemptUtc > DateTime.UtcNow.AddMinutes(20));
+
+        await worker.ProcessAsync(EvidenceRequest(card, stack, retried), CancellationToken.None);
+        var exhausted = RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId).Entry!;
+        Assert.Equal(RemoteReviewEvidenceProjectionWorker.MaxRetries + 1, exhausted.EvidenceFailures);
+        Assert.Equal("review-evidence-projection-exhausted", exhausted.RepairReason);
+        Assert.Single(retries);
+    }
+
+    /// <summary>
+    /// Code-quality concern of AGT-2936: the worker retried every exception. Only
+    /// transient I/O is retried; a defect becomes a typed repair at once.
+    /// </summary>
+    [Fact]
+    public async Task Non_transient_evidence_failure_is_a_typed_repair_without_retry()
+    {
+        var stack = Build();
+        var card = SeedPassedDelivery(stack, "journal-evidence-defect");
+        var entry = JournalEntry(card, stack);
+        RemoteReviewSettlementJournal.Write(card.FolderPath, entry);
+        var worker = EvidenceWorker(stack);
+        var retries = 0;
+        worker.RetryDelayOverride = _ =>
+        {
+            retries++;
+            return TimeSpan.FromMinutes(30);
+        };
+        worker.BeforeFencedProjection = () => throw new InvalidOperationException("projection defect");
+
+        await worker.ProcessAsync(EvidenceRequest(card, stack, entry), CancellationToken.None);
+
+        var failed = RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId).Entry!;
+        Assert.Equal(1, failed.EvidenceFailures);
+        Assert.Equal("review-evidence-projection-failed", failed.RepairReason);
+        Assert.Equal(0, retries);
+        var reconciler = new RemoteReviewSettlementReconciler(
+            stack.Scanner, stack.Authority, new RemoteReviewEvidenceProjectionQueue(), stack.Resume,
+            NullLogger<RemoteReviewSettlementReconciler>.Instance);
+        Assert.Equal(RemoteReviewSettlementReconcileStatus.Repair,
+            reconciler.Reconcile(stack.Scanner.FindJob(card.Id, _watchPath)!));
+    }
+
+    /// <summary>
+    /// Code-quality concern of AGT-2936: the journaled delivery decision took the
+    /// raw report spelling. It carries the outcome the authority settles, and a
+    /// journal with any other spelling is a typed repair.
+    /// </summary>
+    [Fact]
+    public void Journaled_delivery_carries_the_authority_outcome_not_the_report_spelling()
+    {
+        var stack = Build();
+        var card = SeedPassedDelivery(stack, "journal-outcome");
+        var report = JournalEntry(card, stack).Report with { Outcome = " pass" };
+        var entry = JournalEntry(card, stack) with
+        {
+            Report = report,
+            ReportSha256 = RemoteReviewSettlementJournal.Hash(report),
+            Delivery = Settlement(card, shouldIntegrate: true),
+        };
+
+        RemoteReviewSettlementJournal.Write(card.FolderPath, entry);
+        Assert.Equal(RemoteReviewSettlementReadStatus.Ready,
+            RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId).Status);
+
+        foreach (var spelling in new[] { " pass", nameof(ReviewTerminalOutcome.ProductFailure) })
+        {
+            RemoteReviewSettlementJournal.Write(card.FolderPath, entry with
+            {
+                Delivery = entry.Delivery! with { Outcome = spelling },
+            });
+            Assert.Equal(RemoteReviewSettlementReadStatus.Repair,
+                RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId).Status);
+        }
+    }
+
+    /// <summary>
+    /// Code-quality concern of AGT-2936: the resume service and the reconciler
+    /// each restored the delivery sidecar. Both now use one policy.
+    /// </summary>
+    [Fact]
+    public void Journaled_delivery_restores_the_sidecar_only_for_an_auto_review_card_without_one()
+    {
+        var stack = Build();
+        var card = SeedPassedDelivery(stack, "journal-restore");
+        var entry = JournalEntry(card, stack) with { Delivery = Settlement(card, shouldIntegrate: true) };
+        var task = stack.Scanner.FindJob(card.Id, _watchPath)!;
+
+        Assert.False(RemoteReviewSettlementPolicy.RestoreDeliverySidecar(task with { State = TaskStates.HumanReview }, entry));
+        Assert.Null(RemoteDeliverySettlementStore.Read(card.FolderPath));
+        Assert.False(RemoteReviewSettlementPolicy.RestoreDeliverySidecar(task, entry with { Delivery = null }));
+        Assert.True(RemoteReviewSettlementPolicy.RestoreDeliverySidecar(task, entry));
+        Assert.True(RemoteDeliverySettlementStore.MatchesAttempt(
+            RemoteDeliverySettlementStore.Read(card.FolderPath), card.ReviewAttemptId));
+        Assert.False(RemoteReviewSettlementPolicy.RestoreDeliverySidecar(task, entry));
+    }
+
+    private static RemoteReviewEvidenceProjectionWorker EvidenceWorker(Stack stack)
+        => new(
+            new RemoteReviewEvidenceProjectionQueue(),
+            stack.Scanner,
+            stack.Authority,
+            new RemotePipelineReviewEvidenceProjector(
+                stack.Pipeline,
+                stack.Timeline,
+                new FileGenerationIndex(NullLogger<FileGenerationIndex>.Instance),
+                new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance,
+                    new ConfigurationBuilder().Build())),
+            NullLogger<RemoteReviewEvidenceProjectionWorker>.Instance);
+
+    private static RemoteReviewEvidenceProjectionRequest EvidenceRequest(
+        SeededCard card,
+        Stack stack,
+        RemoteReviewSettlementEntry entry)
+        => new(
+            card.ReviewAttemptId, card.TaskKey, stack.Authority.GetReview(card.ReviewAttemptId)!, entry.Report,
+            RemoteReviewReportEvidence.EvidenceFileName(card.ReviewAttemptId), entry.ReportSha256,
+            DateTime.UtcNow, DateTime.UtcNow);
+
     private static int TimelineLength(string folder)
     {
         var path = Path.Combine(folder, "logs", "timeline.jsonl");

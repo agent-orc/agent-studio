@@ -294,13 +294,19 @@ public sealed class RemoteReviewEvidenceProjectionWorker : BackgroundService
                     request.AttemptId, request.TaskKey, sw.ElapsedMilliseconds);
             }
         }
-        catch (Exception exception) when (exception is not OperationCanceledException || !ct.IsCancellationRequested)
+        catch (Exception exception) when (IsTransient(exception) && !ct.IsCancellationRequested)
         {
             sw.Stop();
             _queue.Telemetry.RecordCompletion(DateTime.UtcNow, sw.Elapsed, succeeded: false);
+            // The journaled failure count survives a restart, so it alone drives
+            // the backoff, the log and exhaustion: MaxRetries retries follow the
+            // first failed pass.
             var failures = entry.EvidenceFailures + 1;
-            var exhausted = failures >= MaxRetries;
-            var delay = RetryDelay(failures - 1);
+            var retryAttempt = failures - 1;
+            var exhausted = retryAttempt >= MaxRetries;
+            var delay = exhausted
+                ? TimeSpan.Zero
+                : RetryDelayOverride?.Invoke(retryAttempt) ?? RetryDelay(retryAttempt);
             RemoteReviewSettlementJournal.Write(task.FolderPath, entry with
             {
                 EvidenceFailures = failures,
@@ -312,21 +318,20 @@ public sealed class RemoteReviewEvidenceProjectionWorker : BackgroundService
                 _logger.LogWarning(
                     exception,
                     "remote-review-evidence-projection-exhausted attempt={AttemptId} task={TaskKey} attempts={Attempts}",
-                    request.AttemptId, request.TaskKey, request.Attempt);
+                    request.AttemptId, request.TaskKey, failures);
                 return;
             }
-            delay = RetryDelayOverride?.Invoke(request.Attempt) ?? delay;
             _logger.LogWarning(
                 exception,
                 "remote-review-evidence-projection-retry attempt={AttemptId} task={TaskKey} "
                 + "retryAttempt={RetryAttempt} retryInMs={RetryInMs}",
-                request.AttemptId, request.TaskKey, request.Attempt, (long)delay.TotalMilliseconds);
+                request.AttemptId, request.TaskKey, retryAttempt, (long)delay.TotalMilliseconds);
             _ = Task.Run(async () =>
             {
                 try
                 {
                     await Task.Delay(delay, CancellationToken.None);
-                    _queue.Enqueue(request with { Attempt = request.Attempt + 1, EnqueuedAtUtc = DateTime.UtcNow });
+                    _queue.Enqueue(request with { Attempt = failures, EnqueuedAtUtc = DateTime.UtcNow });
                 }
                 catch (Exception retryException)
                 {
@@ -337,5 +342,25 @@ public sealed class RemoteReviewEvidenceProjectionWorker : BackgroundService
                 }
             }, CancellationToken.None);
         }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // A defect does not heal on retry. Record the typed repair instead of
+            // leaving the journal pending for the reconciler to replay forever.
+            sw.Stop();
+            _queue.Telemetry.RecordCompletion(DateTime.UtcNow, sw.Elapsed, succeeded: false);
+            RemoteReviewSettlementJournal.Write(task.FolderPath, entry with
+            {
+                EvidenceFailures = entry.EvidenceFailures + 1,
+                RepairReason = "review-evidence-projection-failed",
+            });
+            _logger.LogError(
+                exception,
+                "remote-review-evidence-projection-failed attempt={AttemptId} task={TaskKey}",
+                request.AttemptId, request.TaskKey);
+        }
     }
+
+    /// <summary>Failures a later pass can outlive: disk, permission and timeout faults.</summary>
+    private static bool IsTransient(Exception exception)
+        => exception is IOException or UnauthorizedAccessException or OperationCanceledException;
 }
