@@ -309,6 +309,29 @@ public sealed class RemoteRunnerDaemon
                 $"runner-provider-auth status={logStatus} binary={check.Binary} " +
                 $"detail={check.Status.Detail}");
         }
+        // AGT-3005: stale MSBuild and VBCSCompiler reuse nodes left by earlier
+        // runs are terminated at startup and once per hour, before they can make
+        // a later preparation hang in "Determining projects to restore".
+        var nextBuildNodeSweep = DateTime.MinValue;
+        void SweepBuildNodesIfDue()
+        {
+            if (DateTime.UtcNow < nextBuildNodeSweep) return;
+            nextBuildNodeSweep = DateTime.UtcNow.Add(BuildNodeSweep.Interval);
+            try
+            {
+                var tracked = inventory.Snapshot().Processes;
+                BuildNodeSweep.Run(
+                    tracked.Select(process => process.Pid),
+                    tracked.Select(process => process.Cwd)
+                        .Concat(state.LoadAll().Select(slot => slot.WorktreePath)),
+                    _log);
+            }
+            catch (Exception exception)
+            {
+                _log($"build-node-sweep failed; retrying next interval: {exception.Message}");
+            }
+        }
+        SweepBuildNodesIfDue();
         var capabilityGeneration = DateTime.UtcNow.Ticks;
         var telemetry = new HostTelemetrySampler();
         HostTelemetrySample? latestTelemetry = telemetry.SampleIfDue(
@@ -509,6 +532,7 @@ public sealed class RemoteRunnerDaemon
                 // observed poll for the independent stall deadline.
                 idleWatchdog.RecordPollStarted();
                 var claimedAny = false;
+                SweepBuildNodesIfDue();
                 var inventorySnapshot = inventory.Snapshot();
                 var activeTaskKeys = ActiveTaskKeys(inventorySnapshot, state);
                 var loadDecision = loadGate.Observe(

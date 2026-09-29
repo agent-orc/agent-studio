@@ -337,6 +337,9 @@ public sealed class RemoteReviewDaemon
                 ReviewSlotReconciler.MaximumDormantAge,
                 _log,
                 ActiveWorkspacePaths()));
+            // AGT-3005: host-wide stale build-node sweep; the hourly repeat runs
+            // with the workspace retention sweep below.
+            BuildNodeSweep.Run([], ActiveWorkspacePaths(), _log);
             if (active.Count > 0)
             {
                 _log(
@@ -471,6 +474,7 @@ public sealed class RemoteReviewDaemon
                                 ReviewSlotReconciler.MaximumDormantAge,
                                 _log,
                                 ActiveWorkspacePaths()));
+                            BuildNodeSweep.Run([], ActiveWorkspacePaths(), _log);
                         }
                         catch (Exception exception)
                         {

@@ -244,7 +244,11 @@ internal static class RunnerCapabilityProbe
                 sample.TaskServerConnectionLastError,
                 sample.TaskServerConnectionLastRecoveredAt,
                 CliProcessReaper.ReapedCount,
-                reviewPlane);
+                reviewPlane,
+                BuildNodeSweep.Latest?.DotnetProcesses,
+                BuildNodeSweep.Latest?.StaleBuildNodes,
+                BuildNodeSweep.Latest is null ? null : BuildNodeSweep.TerminatedTotal,
+                BuildNodeSweep.Latest?.ObservedAt);
 
     private static string ConnectivityDetail(TaskServerConnectivitySnapshot? connectivity)
     {
