@@ -126,6 +126,53 @@ public sealed class AutoReviewQueueStagnationWatchdogAttemptAuthorityTests : IDi
         Assert.Null(snapshot.LastReviewClaimAt);
     }
 
+    [Fact]
+    public void Concurrent_claims_deferred_out_of_order_leave_no_claim_on_the_clock()
+    {
+        var now = new DateTime(2026, 9, 27, 15, 8, 0, DateTimeKind.Utc);
+        var authority = NewAuthority(() => now);
+        CreatePendingReviewAttempt(authority, "AGT-1", "sha-1");
+        CreatePendingReviewAttempt(authority, "AGT-2", "sha-2");
+        var watchdog = NewWatchdog(new AutoReviewPostProcessingQueue(), authority, thresholdMinutes: 20);
+        var pending = authority.ListPendingReviewAttempts().OrderBy(attempt => attempt.TaskKey).ToArray();
+
+        now = now.AddMinutes(25);
+        authority.ClaimReview(pending[0].AttemptId, "reviewer", "review-host", 60, "claim-a", "instance-1");
+        now = now.AddSeconds(1);
+        authority.ClaimReview(pending[1].AttemptId, "reviewer", "review-host", 60, "claim-b", "instance-1");
+        // A is relinquished first, then B: the old single rollback slot restored
+        // A's time when B was deferred, although A was never delivered either.
+        Assert.True(authority.DeferReviewClaim(pending[0].AttemptId, "reviewer", "instance-1"));
+        Assert.True(authority.DeferReviewClaim(pending[1].AttemptId, "reviewer", "instance-1"));
+
+        Assert.Null(authority.LastReviewClaimAtUtc);
+        var snapshot = watchdog.Refresh(now.AddMinutes(1));
+        Assert.True(snapshot.ReviewClaimStagnant);
+        Assert.Null(snapshot.LastReviewClaimAt);
+    }
+
+    [Fact]
+    public void Deferring_one_concurrent_claim_keeps_the_time_of_the_claim_that_was_delivered()
+    {
+        var now = new DateTime(2026, 9, 27, 15, 8, 0, DateTimeKind.Utc);
+        var authority = NewAuthority(() => now);
+        CreatePendingReviewAttempt(authority, "AGT-1", "sha-1");
+        CreatePendingReviewAttempt(authority, "AGT-2", "sha-2");
+        var pending = authority.ListPendingReviewAttempts().OrderBy(attempt => attempt.TaskKey).ToArray();
+
+        var claimedA = now.AddMinutes(1);
+        now = claimedA;
+        authority.ClaimReview(pending[0].AttemptId, "reviewer", "review-host", 60, "claim-a", "instance-1");
+        now = now.AddMinutes(1);
+        authority.ClaimReview(pending[1].AttemptId, "reviewer", "review-host", 60, "claim-b", "instance-1");
+        Assert.Equal(now, authority.LastReviewClaimAtUtc);
+
+        Assert.True(authority.DeferReviewClaim(pending[1].AttemptId, "reviewer", "instance-1"));
+
+        Assert.Equal(claimedA, authority.LastReviewClaimAtUtc);
+        Assert.Equal(claimedA, authority.ReadReviewClaimActivity().LastClaimAt);
+    }
+
     private static void CreatePendingReviewAttempt(AttemptAuthorityService authority, string taskKey, string sha)
     {
         var run = authority.AcquireRun(

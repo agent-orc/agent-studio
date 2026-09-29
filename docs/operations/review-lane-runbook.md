@@ -92,7 +92,9 @@ For `unclaimable-plan-requirements` the response also carries:
 Logs on both sides:
 
 - Server: `review-claim-unclaimable reason=... attempt=... task=... executor=... missing=... pendingSince=...`
-  at warning level, at most once per attempt per hour.
+  at warning level, at most once per attempt per hour. Every unclaimable
+  attempt is logged, including those beyond the 20 the response names and, on
+  the standalone Task Server, those beyond the 32-row claim page.
 - Runner journal: `review claim warning: reason=unclaimable-plan-requirements missing=... unclaimableAttempts=... oldestAttempt=... oldestTask=...`.
   It repeats every 15 minutes for the same key set, and at once when the set
   changes.
@@ -113,7 +115,9 @@ Logs on both sides:
 The claim clock starts at the later of the last delivered claim and the oldest
 pending attempt's creation. Only a delivered claim restarts it. Coding runs,
 legacy post-processing dequeues, and claims the server deferred before
-delivery (capability or quota) do not. Before AGT-2987 one shared clock was
+delivery (capability or quota) do not. Claim times are tracked per lease, so
+when several concurrent claims are deferred in any order, none of them counts
+and an earlier delivered claim keeps its time. Before AGT-2987 one shared clock was
 reset by any legacy dequeue, which kept `isStagnant` false for the whole
 incident. The legacy local queue keeps its own clock, reset only by legacy
 starts.
