@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, ElementRef, HostListener, afterRend
 import type { TaskInfo } from '../../../../models/task.model';
 import { laneLabelFor } from '../../state/triage-actions.model';
 import type { TaskCore } from '../../../../models/task-core.model';
-import { resourceReasonLabel, type ResourceStates } from '../../state/task-core.model';
+import { resourceReasonLabel, type ResourceStates } from '../../state/task-resource-states';
 import { LanePagerService } from '../../state/lane-pager.service';
 import { taskDetailShortcutTargetAllowed, taskNavigationOwnsFocus } from '../../task-detail-keyboard.util';
 

@@ -16,9 +16,10 @@ import {
   type TaskUrlHistoryMode,
 } from './task-url';
 import { ProjectLookupService } from '../../../services/project-lookup.service';
+import { parseStudioRoute } from '../../studio-shell/services/studio-route';
 import type { TaskCore, TaskDocumentData, TaskResource, ResourceName,
   TaskUsageData, TaskReviewData, TaskHistoryData, TaskGitData } from '../../../models/task-core.model';
-import { emptyDetail, idleResources, type ResourcePhase, type ResourceStates } from './task-core.model';
+import { emptyDetail, idleResources, type ResourcePhase, type ResourceStates } from './task-resource-states';
 
 export interface TaskDetailLoadError {
   taskLabel: string;
@@ -39,6 +40,11 @@ interface CoreOpenOptions {
 function httpStatus(error: unknown): number {
   return typeof error === 'object' && error !== null && 'status' in error
     ? Number((error as { status: unknown }).status) : 0;
+}
+
+/** The 202 body of a resource read while the task index re-hydrates. */
+function indexWarming(reply: { reason: string | null }): boolean {
+  return reply.reason === 'task-index-warming';
 }
 
 /** Run `work` after the browser had one frame to paint the current state. */
@@ -216,6 +222,7 @@ export class TaskSelectionService {
   private activeRequests: Subscription[] = [];
   private activeProject: string | null = null;
   private activeAttempt: string | null = null;
+  private expandedTab: string | null = null;
 
   /** Monotonic event consumed by the studio shell when Back returns to a non-task URL. */
   readonly browserRouteCleared = signal(0);
@@ -519,6 +526,11 @@ export class TaskSelectionService {
     let pending = 2;
     const finish = () => {
       if (--pending !== 0 || !this.isCurrent(token, core)) return;
+      // The painted core stays; the rich view waits for the warm index.
+      if (this.resourceStates().documents.phase === 'warming') {
+        this.retryWhenWarm(token, core, 'documents', () => this.loadInitialDocuments(token));
+        return;
+      }
       const previous = this.selected();
       const info = this.detailPreview() ?? previous?.info;
       if (!info) return;
@@ -530,8 +542,13 @@ export class TaskSelectionService {
       this.detailPreview.set(null);
       if (this.resourceStates().documents.phase === 'loading')
         this.setResourceState('documents', 'ready', null);
-      // Usage is requested only after the rich view has a paint opportunity.
-      afterNextPaint(() => { if (this.isCurrent(token, core)) this.loadResource('usage'); });
+      // Usage and the expanded tab's resource are requested only after the
+      // rich view has a paint opportunity.
+      afterNextPaint(() => {
+        if (!this.isCurrent(token, core)) return;
+        this.loadResource('usage');
+        this.loadResourcesForTab(this.expandedTab);
+      });
     };
     for (const name of ['prompt', 'status'] as const) {
       const request = this.jobService.getDetailResource<TaskDocumentData>(core.id, project,
@@ -540,7 +557,8 @@ export class TaskSelectionService {
         ).subscribe({
         next: reply => {
           if (this.isCurrent(token, core)) {
-            if (!this.resourceMatches(reply, core))
+            if (indexWarming(reply)) this.setResourceState('documents', 'warming', reply.reason);
+            else if (!this.resourceMatches(reply, core))
               this.setResourceState('documents', 'stale', 'core-generation-changed');
             else if (reply.state === 'ready') docs[name] = reply.data;
             else this.setResourceState('documents', reply.state === 'stale' ? 'stale' : 'unavailable', reply.reason);
@@ -574,6 +592,11 @@ export class TaskSelectionService {
       ).subscribe({
       next: reply => {
         if (!this.isCurrent(token, core)) return;
+        if (indexWarming(reply)) {
+          this.setResourceState(name, 'warming', reply.reason);
+          this.retryWhenWarm(token, core, name, () => this.loadResource(name, evidence));
+          return;
+        }
         if (!this.resourceMatches(reply, core)) {
           this.setResourceState(name, 'stale', 'core-generation-changed');
           return;
@@ -621,8 +644,27 @@ export class TaskSelectionService {
     this.activeRequests.push(request);
   }
 
-  /** History and review evidence load only when their tab is expanded. */
-  loadResourcesForTab(tab: string): void {
+  /**
+   * A task the index is re-hydrating answers 202 on its resource reads, as
+   * on the core route. That is transient, not revoked access: retry while
+   * the same core generation is still painted.
+   */
+  private retryWhenWarm(token: number, core: TaskCore, name: ResourceName, retry: () => void): void {
+    setTimeout(() => {
+      if (this.isCurrent(token, core) && this.resourceStates()[name].phase === 'warming') retry();
+    }, TaskSelectionService.WARMING_RETRY_MS);
+  }
+
+  /**
+   * History and review evidence load only when their tab is expanded. The
+   * expanded tab is remembered, so a task switch, a new core generation or a
+   * restored route reloads it with the rich paint instead of leaving it idle.
+   */
+  loadResourcesForTab(tab: string | null): void {
+    this.expandedTab = tab;
+    // Before the rich paint the documents own the request budget; the rich
+    // paint loads the expanded tab (see loadInitialDocuments).
+    if (!this.selected() || !this.selectedCore()) return;
     if (tab === 'evidence') this.loadResource('review', true);
     if (tab === 'code-review') this.loadResource('review');
     if (tab === 'timeline') this.loadResource('history');
@@ -700,7 +742,8 @@ export class TaskSelectionService {
   }
 
   private projectForPublicReference(reference: string): { id: string; storageLocation: string; displayName: string } | null {
-    const prefix = reference.slice(0, reference.lastIndexOf('-')).toLowerCase();
+    const dash = reference.lastIndexOf('-');
+    const prefix = dash > 0 ? reference.slice(0, dash).toLowerCase() : null;
     const projects = [...this.projectLookup.allProjects()];
     return projects.find(project => project.shortCode?.toLowerCase() === prefix)
       ?? (projects.length === 1 ? projects[0] : null);
@@ -968,6 +1011,8 @@ export class TaskSelectionService {
       return;
     }
 
+    const route = parseStudioRoute(currentUrl.hash);
+    this.expandedTab = route?.kind === 'task' ? route.tab : null;
     const token = ++this.openDetailToken;
     this.prepareDetailLoad(() => this.restoreFromUrl(fromPopState));
     this.cancelRequests();

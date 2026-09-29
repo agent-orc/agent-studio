@@ -1222,7 +1222,10 @@ cannot reappear behind a new path.
 
 - **Identity and authorization.** Resolution matches the core route: `project`
   is required (`400`), an unknown project or unindexed task is `404`, and a
-  scoped principal without access to the project gets `403`. The task comes
+  scoped principal without access to the project gets `403`. While the index
+  re-hydrates and cannot place the task yet, the read answers `202` with
+  `state=warming, reason=task-index-warming`, as the core route does, so a
+  client retries instead of treating the task as gone. The task comes
   from `TaskIndexCache.GetCore`, so no request scans the filesystem or calls
   `FindJob`.
 - **Generation binding.** `generation` is the `coreVersion` the client painted.
@@ -1233,7 +1236,9 @@ cannot reappear behind a new path.
   JavaScript number it rounds beyond 2^53 and every read would answer `409`.
 - **Envelope.** Every `200` carries `id`, `taskKey`, `projectId`, `attemptId`,
   `coreVersion`, `resource`, `version` (SHA-256 of the serialized data),
-  `computedAt`, `state`, `data` and `reason`.
+  `computedAt`, `state`, `data` and `reason`. The data is serialized once with
+  the host's HTTP JSON options and embedded verbatim, so `version` hashes
+  exactly the `data` bytes on the wire.
 - **Conditional reads.** The strong `ETag` combines resource, state, reason,
   data version, core version and attempt. `Cache-Control` is
   `private, no-cache`, and a matching `If-None-Match` returns `304`.
