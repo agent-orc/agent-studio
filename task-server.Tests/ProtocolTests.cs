@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using AgentStudio.TaskServer;
 using AgentStudio.TaskServer.Contracts;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -11,6 +12,10 @@ namespace TaskServer.Tests;
 
 public sealed class ProtocolTests
 {
+    [Fact]
+    public void Default_artifact_file_limit_is_eight_mebibytes()
+        => Assert.Equal(8L * 1024 * 1024, new TaskServerOptions().ResultArtifactMaxFileBytes);
+
     [Fact]
     public async Task Artifact_limits_are_advertised_from_server_configuration()
     {
@@ -35,6 +40,58 @@ public sealed class ProtocolTests
         Assert.Equal(10L * 1024 * 1024, limits!.MaxRequestBodyBytes);
         Assert.True(limits.MaxFileBytes < limits.MaxRequestBodyBytes);
         Assert.Equal(30L * 1024 * 1024, limits.MaxTotalBytes);
+    }
+
+    [Fact]
+    public async Task Oversized_artifact_request_returns_typed_413()
+    {
+        using var temp = new TempDirectory();
+        await using var factory = new TaskServerFactory(
+            temp.Path,
+            new Dictionary<string, string?>
+            {
+                ["TaskServer:MaxRequestBodyBytes"] = "1024",
+            });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add(
+            TaskServerProtocol.HeaderName,
+            TaskServerProtocol.Current.ToString());
+        using var body = new StringContent(new string('x', 2048));
+
+        var response = await client.PostAsync("/api/v1/runs/run-1/artifacts", body);
+
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
+        using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("artifact-request-too-large", problem.RootElement.GetProperty("type").GetString());
+        Assert.Equal(1024, problem.RootElement.GetProperty("limitBytes").GetInt64());
+        Assert.Equal(2048, problem.RootElement.GetProperty("receivedBytes").GetInt64());
+    }
+
+    [Fact]
+    public async Task Artifact_larger_than_advertised_file_cap_returns_typed_413()
+    {
+        using var temp = new TempDirectory();
+        await using var factory = new TaskServerFactory(
+            temp.Path,
+            new Dictionary<string, string?>
+            {
+                ["TaskServer:ResultArtifactMaxFileBytes"] = "1024",
+            });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add(
+            TaskServerProtocol.HeaderName,
+            TaskServerProtocol.Current.ToString());
+        var payload = new ArtifactIngestRequest(
+            "artifact-1", "results/proof.bin", "application/octet-stream",
+            Convert.ToBase64String(new byte[2048]), new string('0', 64),
+            "artifact-limit-test", 1);
+
+        var response = await client.PostAsJsonAsync("/api/v1/runs/run-1/artifacts", payload);
+
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
+        using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(1024, problem.RootElement.GetProperty("limitBytes").GetInt64());
+        Assert.Equal(2048, problem.RootElement.GetProperty("receivedBytes").GetInt64());
     }
 
     [Fact]

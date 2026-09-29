@@ -1,4 +1,7 @@
 using System.Text;
+using System.Text.Json;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 
 using Xunit;
 
@@ -25,6 +28,51 @@ public sealed class ArtifactIngestionEndpointsTests : IDisposable
         Assert.True(policy.MaxFileBytes < 20L * 1024 * 1024);
         Assert.True((policy.MaxFileBytes * 4 / 3) < policy.MaxRequestBodyBytes);
         Assert.Equal(100L * 1024 * 1024, policy.MaxTotalBytes);
+    }
+
+    [Fact]
+    public void Default_per_file_limit_is_eight_mebibytes()
+    {
+        var limits = ArtifactTransferPolicy.Resolve(25L * 1024 * 1024, null, null);
+        Assert.Equal(8L * 1024 * 1024, limits.MaxFileBytes);
+    }
+
+    [Theory]
+    [InlineData(1024)]
+    [InlineData(1025)]
+    public void Base64_size_calculation_preserves_the_exact_binary_boundary(int size)
+    {
+        Assert.Equal(size, ArtifactTransferPolicy.DecodedLength(
+            Convert.ToBase64String(new byte[size])));
+    }
+
+    [Fact]
+    public async Task Oversized_artifact_request_returns_typed_limit_and_received_size()
+    {
+        var called = false;
+        var middleware = new ArtifactRequestLimitMiddleware(
+            _ => { called = true; return Task.CompletedTask; },
+            new ArtifactRequestLimits(1024));
+        var context = new DefaultHttpContext();
+        context.Request.Method = "POST";
+        context.Request.Path = "/api/runner/artifacts";
+        context.Request.ContentLength = 2048;
+        context.Response.Body = new MemoryStream();
+        context.RequestServices = new ServiceCollection()
+            .AddOptions()
+            .AddLogging()
+            .Configure<Microsoft.AspNetCore.Http.Json.JsonOptions>(_ => { })
+            .BuildServiceProvider();
+
+        await middleware.InvokeAsync(context);
+
+        Assert.False(called);
+        Assert.Equal(StatusCodes.Status413PayloadTooLarge, context.Response.StatusCode);
+        context.Response.Body.Position = 0;
+        using var body = await JsonDocument.ParseAsync(context.Response.Body);
+        Assert.Equal("artifact-request-too-large", body.RootElement.GetProperty("type").GetString());
+        Assert.Equal(1024, body.RootElement.GetProperty("limitBytes").GetInt64());
+        Assert.Equal(2048, body.RootElement.GetProperty("receivedBytes").GetInt64());
     }
 
     [Fact]
