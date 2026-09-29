@@ -1462,6 +1462,40 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     }
 
     /// <summary>
+    /// AGT-2932 review finding: Execution Hosts lists a card escalated under a
+    /// configured failure budget below the default of three.
+    /// </summary>
+    [Fact]
+    public async Task Configured_budget_below_three_escalates_and_stays_visible_on_execution_hosts()
+    {
+        SeedTask(TaskStates.Ready, TaskKey, "Broken worktree", "Prompt.");
+        using var factory = BuildFactory(remoteRequeueGraceSeconds: 900, remoteClaimFailureBudget: 1);
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/agent-orc/agent-studio.git");
+
+        var claim = await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+            RunnerId, ProjectName, "host", 1, "remote-runner", ActiveTaskKeys: []));
+        Assert.Equal(RClaimStatus.Claimed, claim.Status);
+        await client.ReleaseLeaseAsync(new RRelease(
+            claim.TaskKey!, claim.Lease!.LeaseId, claim.Lease.FencingToken, RunnerId,
+            claim.Lease.AttemptId, claim.Lease.AuthorityEpoch,
+            "release:broken-worktree:1",
+            Outcome: "runner-environment-preparation-failed",
+            Detail: "fatal: not a git repository"), CancellationToken.None);
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.Escalated, TaskKey)));
+
+        using var management = factory.CreateClient();
+        management.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var visible = await management.GetFromJsonAsync<Contract.RunnerInfrastructureFailureDto[]>(
+            "/api/v1/management/runner-infrastructure-failures", ApiJson);
+        var failure = Assert.Single(visible!);
+        Assert.Equal(1, failure.Attempts);
+    }
+
+    /// <summary>
     /// AGT-2932 review finding: a typed prelaunch release must not enter the
     /// AGT-2870 lost-worker continuation even when it names a salvage ref (the
     /// runner lists the salvage it found in a failed salvage). The lost-worker
@@ -3400,7 +3434,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         string? repositoryPath = null,
         string? primaryProjectName = null,
         string? primaryWatchPath = null,
-        Func<DateTime>? authorityNow = null) =>
+        Func<DateTime>? authorityNow = null,
+        int? remoteClaimFailureBudget = null) =>
         new WebApplicationFactory<Program>()
             .WithWebHostBuilder(b =>
             {
@@ -3419,6 +3454,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                         ["Runner:ReviewInfrastructureRetry:Enabled"] = authorityNow is null ? null : "false",
                         ["Runner:RemoteRequeue:GraceSeconds"] =
                             remoteRequeueGraceSeconds?.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        ["Runner:RemoteClaimFailureBudget"] =
+                            remoteClaimFailureBudget?.ToString(System.Globalization.CultureInfo.InvariantCulture),
                     };
                     if (!string.IsNullOrWhiteSpace(additionalProjectName)
                         && !string.IsNullOrWhiteSpace(additionalWatchPath))
