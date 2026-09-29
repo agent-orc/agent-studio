@@ -220,7 +220,9 @@ app.UseRouting();
 app.UsePublicDemoExecutionLock();
 app.UseMiddleware<TaskServerAuthenticationMiddleware>();
 app.UseMiddleware<TaskServerProtocolMiddleware>();
+app.UseMiddleware<ArtifactRequestLimitMiddleware>();
 app.MapTaskServerEndpoints();
+app.MapOperationPermitEndpoints();
 app.MapStudioEndpoints();
 // Studio route-ownership P1 "task detail and hosts" bundle
 // (docs/studio-route-ownership/index.html).

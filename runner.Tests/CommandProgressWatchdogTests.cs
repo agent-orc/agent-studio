@@ -82,9 +82,12 @@ public sealed class CommandProgressWatchdogTests
             // The parent shell only waits; every tick observed here was burned by
             // the grandchild loop.
             Assert.NotEmpty(samples);
+            // The last sample can land after the busy grandchild exits, when
+            // the live process tree contains only the waiting parent.
+            var peak = samples.Max();
             Assert.True(
-                samples[^1] > TimeSpan.FromMilliseconds(200),
-                $"expected descendant CPU to accumulate, saw {samples[^1]}");
+                peak > TimeSpan.FromMilliseconds(200),
+                $"expected descendant CPU to accumulate, saw {peak}");
         }
         finally
         {

@@ -1,0 +1,71 @@
+# Isolated service-boundary rehearsal. This is not the complete one-box product.
+# No host ports, host filesystem, browser edge or Docker socket are exposed.
+name: agent-operations-foundation
+x-runtime: &runtime
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  networks: [operations]
+  logging:
+    driver: json-file
+    options:
+      max-size: "5m"
+      max-file: "3"
+  deploy:
+    resources:
+      limits:
+        cpus: "1"
+        memory: 256m
+services:
+  bootstrap:
+    build:
+      context: ../../..
+      dockerfile: operations-server/Dockerfile
+    image: agent-operations-server:local
+    command: [bootstrap, /run/operations/principals, /run/operations/agent, /run/operations/client]
+    network_mode: none
+    volumes:
+      - principals:/run/operations/principals
+      - agent-secret:/run/operations/agent
+      - client-secret:/run/operations/client
+  operations-server:
+    <<: *runtime
+    image: agent-operations-server:local
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    environment:
+      Operations__DataDirectory: /var/lib/operations
+      Operations__PrincipalsFile: /run/operations/principals/principals.json
+      Operations__AllowPrivateHttp: "true"
+    volumes:
+      - operations-data:/var/lib/operations
+      - principals:/run/operations/principals:ro
+  operations-agent:
+    <<: *runtime
+    build:
+      context: ../../..
+      dockerfile: operations-agent/Dockerfile
+    image: agent-operations-agent:local
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    environment:
+      OPERATIONS_URL: http://operations-server:5081
+      OPERATIONS_ALLOW_PRIVATE_HTTP: "true"
+      OPERATIONS_TOKEN_FILE: /run/operations/agent/token
+      OPERATIONS_AGENT_ID: container-agent
+      OPERATIONS_SPOOL_DIRECTORY: /var/lib/operations-agent
+    volumes:
+      - agent-data:/var/lib/operations-agent
+      - agent-secret:/run/operations/agent:ro
+networks:
+  operations:
+    internal: true
+volumes:
+  principals:
+  agent-secret:
+  client-secret:
+  operations-data:
+  agent-data:

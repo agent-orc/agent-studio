@@ -284,8 +284,13 @@ public class DecisionCardServiceTests : IDisposable
         Assert.Contains(h.ActivityFeed.Read(_watchPath), e => e.Summary.StartsWith("Decision reopened:"));
     }
 
-    [Fact]
-    public async Task GenericMove_CannotReopenDecidedCard_OrSkipItsAuditTrail()
+    [Theory]
+    [InlineData(TaskStates.Completed, false)]
+    [InlineData(TaskStates.Completed, true)]
+    [InlineData(TaskStates.Archive, false)]
+    [InlineData(TaskStates.Archive, true)]
+    public async Task GenericMove_CannotReopenDecidedCard_OrSkipItsAuditTrail(
+        string sourceState, bool operatorOverride)
     {
         var h = Build();
         var jobId = h.Mutations.CreateJob(new CreateTaskRequest
@@ -295,7 +300,17 @@ public class DecisionCardServiceTests : IDisposable
         })!;
         Assert.Equal(DecisionCardStatus.Success, (await h.Decisions.DecideAsync(jobId, _watchPath,
             new DecideCardRequest { OptionId = "a", Rationale = "Initial choice" }, "alice")).Status);
+        Assert.Equal(MoveJobStatus.Success, h.States.MoveJob(jobId, sourceState, _watchPath).Status);
         var decided = h.Scanner.FindJob(jobId, _watchPath)!;
+        var dependantId = h.Mutations.CreateJob(new CreateTaskRequest
+        {
+            Id = "waiting-work", Title = "Waiting work", WatchPath = _watchPath,
+            TargetState = TaskStates.Preparation,
+        })!;
+        h.Mutations.SetTaskReferences(dependantId,
+            new TaskReferences { DependsOn = [new TaskDependencyReference(decided.Key!)] }, _watchPath);
+        var dependant = h.Scanner.FindJob(dependantId, _watchPath)!;
+        Assert.False(h.Scanner.GetReferenceIndex().EvaluateWaitsOn(dependant).Blocked);
         var recordPath = Path.Combine(_watchPath, "docs", decided.Decision!.RecordPath!.Replace('/', Path.DirectorySeparatorChar));
         var recordBefore = File.ReadAllText(recordPath);
         var timelineLog = new TimelineLog(NullLogger<TimelineLog>.Instance);
@@ -304,13 +319,15 @@ public class DecisionCardServiceTests : IDisposable
 
         var direct = h.States.MoveJob(jobId, TaskStates.Preparation, _watchPath);
         var generic = await h.Transitions.MoveAsync(jobId, TaskStates.Preparation, _watchPath,
-            cause: TimelineActors.Human("alice"));
+            cause: TimelineActors.Human("alice"), operatorOverride: operatorOverride);
 
         Assert.Equal(MoveJobStatus.Failure, direct.Status);
         Assert.Equal(MoveJobStatus.Failure, generic.Status);
         Assert.Contains("decision reopen", generic.Message);
-        Assert.Equal(TaskStates.Completed, h.Scanner.FindJob(jobId, _watchPath)!.State);
+        Assert.Equal(sourceState, h.Scanner.FindJob(jobId, _watchPath)!.State);
         Assert.Equal(DecisionStatuses.Decided, h.Scanner.FindJob(jobId, _watchPath)!.Decision!.Status);
+        Assert.Single(h.Scanner.FindJob(jobId, _watchPath)!.Decision!.History);
+        Assert.False(h.Scanner.GetReferenceIndex().EvaluateWaitsOn(dependant).Blocked);
         Assert.Equal(recordBefore, File.ReadAllText(recordPath));
         Assert.Equal(timelineCount, timelineLog.ReadAll(decided.FolderPath).Count);
         Assert.Equal(activityCount, h.ActivityFeed.Read(_watchPath).Count);
@@ -319,6 +336,12 @@ public class DecisionCardServiceTests : IDisposable
             new ReopenDecisionRequest { Note = "New evidence" }, "alice")).Status);
         Assert.Equal(TaskStates.Preparation, h.Scanner.FindJob(jobId, _watchPath)!.State);
         Assert.Equal(DecisionStatuses.Pending, h.Scanner.FindJob(jobId, _watchPath)!.Decision!.Status);
+        Assert.Equal([decided.Key!],
+            DecisionBlockProjection.BlockedBy(h.Scanner.GetReferenceIndex().EvaluateWaitsOn(dependant)));
+        Assert.Equal(MoveJobStatus.Failure,
+            h.States.MoveJob(dependantId, TaskStates.Ready, _watchPath).Status);
+        Assert.Equal(2, h.Scanner.FindJob(jobId, _watchPath)!.Decision!.History.Count);
+        Assert.Contains("Initial choice", File.ReadAllText(recordPath));
         Assert.Contains("New evidence", File.ReadAllText(recordPath));
         Assert.Contains(timelineLog.ReadAll(decided.FolderPath), e => e.Kind == TimelineEventKinds.DecisionReopened);
         Assert.Contains(h.ActivityFeed.Read(_watchPath), e => e.Summary.StartsWith("Decision reopened:"));

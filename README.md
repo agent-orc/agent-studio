@@ -31,28 +31,23 @@
   definitions and in-flight runs remain durable Task Server data, so restarting
   the Engine does not orphan work.
 
-## Install with Docker
+## Install
 
 ```bash
-git clone https://github.com/agent-orc/agent-studio.git
-cd agent-studio
-docker compose --profile dev up --build --wait task-server-dev orchestrator-engine-dev studio-bff-dev orchestrator-api-dev web-dev agent-host-distributed-dev
+curl -fLO https://github.com/agent-orc/agent-studio/releases/latest/download/agent-studio-setup
+curl -fLO https://github.com/agent-orc/agent-studio/releases/latest/download/SHA256SUMS
+grep '  agent-studio-setup$' SHA256SUMS | sha256sum -c -
+chmod +x agent-studio-setup
+./agent-studio-setup
 ```
 
-Open [http://localhost:4011](http://localhost:4011). This source-built Compose
-path is the verified installation path for this checkout. The one-box stack
-starts the Task Server, Engine, Studio BFF, compatibility API, web UI, and an agent host.
-It creates restricted principal credentials in a named volume on first start
-and reuses them on later starts. Coding tasks additionally need provider and
-Git credentials mounted into the agent host.
-
-To run a published release after its images pass post-release CI, copy
-`.env.example` to `.env`, set `AGENT_STUDIO_VERSION` to that release version,
-and run `docker compose up -d --wait`. The default UI listens only on loopback;
-LAN exposure is an explicit `.env` setting. See the
-[Docker operations guide](./docs/operations/setup/docker.md) for updates,
-backups, product-managed credential rotation, credential mounts, and the current
-route coverage limit beyond `/api/v1`.
+The default path needs Docker Engine on Linux or Docker Desktop with WSL2 on
+Windows; `--target native` installs services instead on hosts without Docker.
+The installer uses the version of the downloaded release, verifies its Compose
+bundle, starts the full one-box stack, and opens the browser. Windows users
+download `agent-studio-setup.exe` and verify it against `SHA256SUMS`.
+See the [install guide](./docs/operations/setup/install.md) for Windows commands,
+the native and connector profiles, unattended answers, update, rollback, uninstall, and remote topologies.
 
 ## Testing
 

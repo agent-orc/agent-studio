@@ -159,6 +159,33 @@ public class DecisionCardPolicyTests
         Assert.False(DecisionCardPolicy.MayDecide(Valid() with { Decider = "role:owner" }, "bob", "operator"));
     }
 
+    [Theory]
+    [InlineData(DecisionStatuses.Pending, TaskStates.Preparation, true)]
+    [InlineData(DecisionStatuses.Pending, TaskStates.Completed, false)]
+    [InlineData(DecisionStatuses.Pending, TaskStates.Archive, false)]
+    [InlineData(DecisionStatuses.Pending, TaskStates.Ready, false)]
+    [InlineData(DecisionStatuses.Pending, TaskStates.Progress, false)]
+    [InlineData(DecisionStatuses.Decided, TaskStates.Preparation, false)]
+    [InlineData(DecisionStatuses.Decided, TaskStates.Completed, true)]
+    [InlineData(DecisionStatuses.Decided, TaskStates.Archive, true)]
+    [InlineData(DecisionStatuses.Decided, TaskStates.Ready, false)]
+    [InlineData(DecisionStatuses.Decided, TaskStates.Progress, false)]
+    public void OrdinaryDecisionMoves_RespectLifecycle(string status, string target, bool allowed)
+    {
+        var decision = new TaskInfo
+        {
+            Id = "choice", Key = "APP-1", Kind = TaskKinds.Decision,
+            State = status == DecisionStatuses.Decided ? TaskStates.Completed : TaskStates.Preparation,
+            Decision = Valid(status),
+        };
+
+        var refusal = DecisionLaneGuard.Refusal(decision, target, TaskReferenceIndex.Build([decision]));
+
+        Assert.Equal(allowed, refusal is null);
+        if (status == DecisionStatuses.Decided && target == TaskStates.Preparation)
+            Assert.Contains("decision reopen", refusal);
+    }
+
     [Fact]
     public void RemoteClaim_RefusesDecisionAndItsPendingDependant()
     {
