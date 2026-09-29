@@ -1,5 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { contrastRatio } from '../helpers/contrast';
 import { setTheme, dismissDevErrorDialog, sampleColours } from '../helpers/theme';
@@ -24,7 +24,11 @@ import { setTheme, dismissDevErrorDialog, sampleColours } from '../helpers/theme
  * - Hovering a chart segment reveals the cell-detail popover.
  */
 
-const SCREENSHOT_DIR = process.env.OVERLAY_SHOT_DIR ?? 'test-results';
+// Agent runs ship only JOB_RESULTS_DIR to the reviewer, so the evidence
+// shots go there first; `test-results/` is discarded with the worktree.
+const SCREENSHOT_DIR = process.env.JOB_RESULTS_DIR?.trim()
+  || process.env.OVERLAY_SHOT_DIR
+  || 'test-results';
 
 interface FakeCell {
   project: string;
@@ -142,6 +146,41 @@ function buildFakeTimeline(windowHours: number, bucketMinutes: number) {
     }
   }
 
+  // AGT-2986: per (project, model, host) rows from the merged ledger. Each
+  // project splits into a remote runner row and a local workstation row that
+  // add up to the project total. Remote models are ids the registry does not
+  // label, so the label is the id itself.
+  const remoteModel: Record<string, string> = {
+    alpha: 'gpt-6-sol',
+    bravo: 'claude-opus-5-5',
+    charlie: 'gpt-6-sol',
+  };
+  const models = Object.values(totals).flatMap((t) => {
+    const remote = Math.round(t.total * 0.6);
+    const local = t.total - remote;
+    const remoteCalls = Math.ceil(t.calls / 2);
+    return [
+      {
+        project: t.project, model: remoteModel[t.project], modelLabel: remoteModel[t.project],
+        host: 'agent-runner-01', cliTypes: [remoteModel[t.project].startsWith('gpt') ? 'codex' : 'claude'],
+        calls: remoteCalls, input: remote, output: 0, cacheRead: 0, cacheWrite: 0, total: remote,
+        dollars: null, allModelsPriced: false,
+      },
+      {
+        project: t.project, model: 'claude-sonnet-5', modelLabel: 'Claude Sonnet 5',
+        host: 'local', cliTypes: ['claude'],
+        calls: t.calls - remoteCalls, input: local, output: 0, cacheRead: 0, cacheWrite: 0, total: local,
+        dollars: t.dollars, allModelsPriced: true,
+      },
+    ];
+  }).sort((a, b) => b.total - a.total);
+  const projectRows = Object.values(totals).map((t) => ({
+    ...t,
+    hosts: models
+      .filter((m) => m.project === t.project)
+      .map((m) => ({ host: m.host, calls: m.calls, total: m.total })),
+  }));
+
   return {
     windowStart: new Date(windowStart).toISOString(),
     windowEnd: new Date(windowEnd).toISOString(),
@@ -149,7 +188,14 @@ function buildFakeTimeline(windowHours: number, bucketMinutes: number) {
     bucketMinutes,
     bucketCount,
     cells,
-    projects: Object.values(totals).sort((a, b) => b.total - a.total),
+    projects: projectRows.sort((a, b) => b.total - a.total),
+    models,
+    freshness: {
+      status: 'complete',
+      asOf: new Date(windowEnd).toISOString(),
+      warning: null,
+      sources: ['historical-token-bus', 'task-token-receipts'],
+    },
     betterCandidateUsage: [{
       project: 'bravo',
       weekStart: '2026-09-07',
@@ -209,7 +255,7 @@ test.describe('Workspace token timeline', () => {
     await page.setViewportSize({ width: 1600, height: 900 });
     await stubBackgroundApis(page);
     await stubTimeline(page);
-    await page.goto('http://localhost:4010/#/workspace/tokens');
+    await page.goto('/#/workspace/tokens');
     await page.waitForLoadState('domcontentloaded');
   });
 
@@ -299,6 +345,53 @@ test.describe('Workspace token timeline', () => {
     });
   });
 
+  test('shows remote runner and local usage per model and host', async ({ page }) => {
+    const view = page.getByTestId('workspace-token-timeline');
+    await expect(view).toBeVisible({ timeout: 5_000 });
+    await dismissDevErrorDialog(page);
+
+    // Project rows carry their executing hosts.
+    await expect(page.getByTestId('wtt-hosts-bravo')).toContainText('agent-runner-01');
+    await expect(page.getByTestId('wtt-hosts-bravo')).toContainText('local');
+
+    const models = page.getByTestId('wtt-models-table');
+    await expect(models).toBeVisible();
+    await expect(models).toContainText('By model and executing host');
+
+    // A model id the registry does not label renders as the id, never as
+    // another model's label (claude-opus-5-5 is not "Claude Opus 5").
+    const bravoRemote = page.getByTestId('wtt-model-row-bravo|claude-opus-5-5|agent-runner-01');
+    await expect(bravoRemote).toBeVisible();
+    await expect(bravoRemote.getByTestId('wtt-model-label')).toHaveText('claude-opus-5-5');
+    await expect(bravoRemote.getByTestId('wtt-model-host')).toHaveText('agent-runner-01');
+    await expect(models).not.toContainText('Claude Opus 5');
+    await expect(page.getByTestId('wtt-model-row-bravo|claude-sonnet-5|local')
+      .getByTestId('wtt-model-label')).toHaveText('Claude Sonnet 5');
+
+    // Sum invariant: the model table total equals the project table total.
+    const projectTotal = await page.getByTestId('wtt-table-total').locator('td').nth(2).innerText();
+    const modelTotal = await page.getByTestId('wtt-models-total').locator('td').nth(5).innerText();
+    expect(modelTotal).toBe(projectTotal);
+
+    // Toggling a project off removes its model rows too.
+    await page.getByTestId('wtt-legend-bravo').click();
+    await expect(page.getByTestId('wtt-model-row-bravo|claude-opus-5-5|agent-runner-01')).toHaveCount(0);
+    await page.getByTestId('wtt-legend-bravo').click();
+    await expect(bravoRemote).toBeVisible();
+
+    await expect(page.getByTestId('wtt-ledger-warning')).toHaveCount(0);
+
+    await models.scrollIntoViewIfNeeded();
+    const shot = join(SCREENSHOT_DIR, 'workspace-token-timeline-models-hosts--mocked.png');
+    await view.screenshot({ path: shot });
+    await models.screenshot({ path: join(SCREENSHOT_DIR, 'workspace-token-timeline-models-hosts-closeup--mocked.png') });
+    // The review needs this shot as persisted evidence: under an agent run it
+    // must land in JOB_RESULTS_DIR, which is the only folder shipped to review.
+    if (process.env.JOB_RESULTS_DIR?.trim()) {
+      expect(existsSync(join(process.env.JOB_RESULTS_DIR.trim(), 'workspace-token-timeline-models-hosts--mocked.png'))).toBe(true);
+    }
+  });
+
   // The CLI-usage timeline overlay used fixed dark-theme colours and washed
   // out on the light theme. After the Tier-2 token conversion its chrome must
   // clear WCAG AA on BOTH themes; the SVG chart's flip is shown by the shots.
@@ -316,6 +409,8 @@ test.describe('Workspace token timeline', () => {
         { what: 'active window button', selector: '.wtt__win-btn--active' },
         { what: 'legend chip', selector: '.wtt__chip' },
         { what: 'table cell', selector: '.wtt__tab td' },
+        { what: 'model table cell', selector: '[data-testid="wtt-models-table"] td' },
+        { what: 'host share', selector: '.wtm__host-num' },
       ];
       for (const { what, selector } of samples) {
         const { color, bg } = await sampleColours(page, selector);

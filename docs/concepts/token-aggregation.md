@@ -241,6 +241,14 @@ For an operator or an LLM instance working in this area, the rules of the road:
 Append new findings about the token-aggregation area here, newest on top. Keep
 each entry short: date, what was learned, and a pointer to the code/commit/task.
 
+- **2026-09-28 (AGT-2986).** The workspace timeline (and the status-bar
+  usage panels that read it) still read the bus alone, so a week of remote
+  runner work showed zero cells while cards carried receipts. The timeline now
+  reads the same merged ledger as the project surfaces. Remote review attempts
+  write receipt rows and orchestrator chat turns write project bus rows, so
+  every execution path lands in one ledger with host, CLI, level, and cached
+  input. Model ids are stored as ids; `claude-opus-5-5` is a routing alias of
+  `claude-opus-5`, not the same model, and no longer borrows its label.
 - **2026-08-12 (AGT-2624).** Receipt discovery was working, but remote
   completion never wrote `task.json.tokenSummary`; recent TE/CAC cards therefore
   had no current source to discover. `RemoteTokenReceiptService` now folds the
