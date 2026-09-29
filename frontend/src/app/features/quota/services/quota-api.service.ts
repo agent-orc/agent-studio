@@ -1,6 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import type { QuotaReport, QuotaSnapshot } from '../models/quota.model';
+import type { QuotaHistoryResponse } from '../models/quota-history.model';
 
 export interface CliModelRouteProfile {
   cliType: string;
@@ -118,6 +119,17 @@ export class QuotaApiService {
       `${this.baseUrl}/cli/quota/refresh/${cliType}`,
       {},
     );
+  }
+
+  /**
+   * Recorded quota series of one CLI over the last `hours` (AGT-3001), with the
+   * three-hour burn rate and the forecast time of 100 % per window. Store read
+   * only; never triggers a probe.
+   */
+  getQuotaHistory(cliType: string, hours = 48) {
+    return this.http.get<QuotaHistoryResponse>(`${this.baseUrl}/cli/quota/history`, {
+      params: { cli: cliType, hours },
+    });
   }
 
   /**
