@@ -1,4 +1,5 @@
 using System.Text;
+using AgentStudio.Prompts;
 
 namespace AgentStudio.Runner;
 
@@ -70,7 +71,7 @@ public static class ResultsInventory
             return "results/ folder present but empty.";
 
         var sb = new StringBuilder();
-        sb.AppendLine($"results/ folder contains {files.Count} file(s):");
+        sb.AppendLf($"results/ folder contains {files.Count} file(s):");
         var shown = Math.Min(files.Count, maxFiles);
         for (var i = 0; i < shown; i++)
         {
@@ -78,10 +79,10 @@ public static class ResultsInventory
             long size;
             try { size = new FileInfo(files[i]).Length; }
             catch { size = -1; }
-            sb.AppendLine(size >= 0 ? $"- {rel} ({size} bytes)" : $"- {rel}");
+            sb.AppendLf(size >= 0 ? $"- {rel} ({size} bytes)" : $"- {rel}");
         }
         if (files.Count > shown)
-            sb.AppendLine($"- ... and {files.Count - shown} more file(s).");
+            sb.AppendLf($"- ... and {files.Count - shown} more file(s).");
 
         // Short excerpts of the first few small text artefacts so the reviewer
         // sees the actual deliverable, not just names. Non-text / oversized files
@@ -104,9 +105,9 @@ public static class ResultsInventory
             }
             if (string.IsNullOrWhiteSpace(excerpt)) continue;
 
-            sb.AppendLine();
-            sb.AppendLine($"Excerpt of {RelativePath(resultsDir, file)}:");
-            sb.AppendLine(excerpt.Trim());
+            sb.AppendLf();
+            sb.AppendLf($"Excerpt of {RelativePath(resultsDir, file)}:");
+            sb.AppendLf(excerpt.Trim());
             excerpted++;
         }
 

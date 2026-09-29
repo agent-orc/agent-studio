@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using Xunit;
+using AgentStudio.TestSupport;
 
 namespace AgentStudio.Tests;
 
@@ -317,21 +318,7 @@ public class TaskFolderAccessIsolationTest
     }
 
     private static string ResolveRepoRoot()
-    {
-        // Walk up from the test binary location to the repo root.
-        // The test runner's working directory is the test project's
-        // bin/Debug/net10.0/, so the repo root is a few levels above.
-        var current = AppContext.BaseDirectory;
-        for (var i = 0; i < 8 && current is not null; i++)
-        {
-            var marker = Path.Combine(current, "backend", "OrchestratorApi.csproj");
-            if (File.Exists(marker)) return current;
-            current = Directory.GetParent(current)?.FullName;
-        }
-
-        throw new InvalidOperationException(
-            $"Could not locate repo root by walking up from {AppContext.BaseDirectory}.");
-    }
+        => RepositoryRoot.Find();
 
     private readonly record struct Violation(string RelativePath, int Line, string Source);
 }
