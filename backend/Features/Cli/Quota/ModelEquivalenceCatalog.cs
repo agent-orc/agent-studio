@@ -1,4 +1,5 @@
 using System.Reflection;
+using AgentStudio.Pipeline;
 using TokenEconomy;
 
 namespace AgentStudio.Cli;
@@ -36,6 +37,9 @@ public sealed class ModelEquivalenceCatalog : IModelEquivalenceCatalog
 {
     private static readonly ModelRoutingKnowledgeBase Knowledge = ModelRoutingKnowledgeBase.Default;
     private static readonly ModelPriceCatalog Prices = ModelPriceCatalog.Default;
+    private static readonly IReadOnlySet<string> AutoRoutedCodexModels =
+        new HashSet<string>(new ModelRoutingPolicyRegistry().Policy.Tiers.Select(tier => tier.Model),
+            StringComparer.OrdinalIgnoreCase);
     public string Version { get; } = BuildVersion();
     public IReadOnlyList<ModelEquivalenceRoute> Routes { get; }
 
@@ -131,7 +135,9 @@ public sealed class ModelEquivalenceCatalog : IModelEquivalenceCatalog
 
     private static bool IsUsableSource(ModelRoutingModel model)
         => ModelMetadataRegistry.Find(model.CanonicalId)?.Deprecated != true
-           && !string.Equals(model.RoutingStatus.ToString(), "Deprecated", StringComparison.OrdinalIgnoreCase);
+           && !string.Equals(model.RoutingStatus.ToString(), "Deprecated", StringComparison.OrdinalIgnoreCase)
+           && (NormalizeCli(model.CliId) != CliTypes.Codex
+               || AutoRoutedCodexModels.Contains(model.CanonicalId));
 
     private static bool IsSelectable(ModelRoutingModel model)
         => IsUsableSource(model)

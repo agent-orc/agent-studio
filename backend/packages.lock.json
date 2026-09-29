@@ -97,9 +97,9 @@
       },
       "TokenEconomy": {
         "type": "Direct",
-        "requested": "[0.3.4, 0.3.4]",
-        "resolved": "0.3.4",
-        "contentHash": "8kxLaMnZvdzgiHcZ3Rv6GkK9h51voEA1dAmvXIY+CmoAGHp/EthA8QAR23dEYL+r1PQOgf+j87/SHEIoW3lLVQ=="
+        "requested": "[0.3.5, 0.3.5]",
+        "resolved": "0.3.5",
+        "contentHash": "Ikq6ahhuR5vJCpPi7AINQte51LNCvHF/WL6BGNQAmu92SMN+/zqrMCM7bOba1Ru1XtQsu8/BJbvZE3lYha//Mg=="
       },
       "AngleSharp": {
         "type": "Transitive",
