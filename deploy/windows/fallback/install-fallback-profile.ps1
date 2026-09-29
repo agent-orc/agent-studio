@@ -12,6 +12,11 @@ param(
 
     [ValidateSet('none', 'bearer')] [string] $AuthMode = 'bearer',
 
+    # Maintenance keeps the recovery profile warm but inactive. The product
+    # installer (agent-studio-setup --target native) passes Normal because the
+    # local Task Server is then the primary one.
+    [ValidateSet('Maintenance', 'Normal')] [string] $RestMode = 'Maintenance',
+
     [switch] $NonInteractive
 )
 
@@ -33,11 +38,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib.ps1')
 
 $packageRoot = (Resolve-Path -LiteralPath $ReleasePackageRoot).Path
-foreach ($required in 'task-server.exe', 'orchestrator-engine.exe', 'agent-studio-bff.exe', 'VERSION', 'RELEASE-SHA') {
-    if (-not (Test-Path -LiteralPath (Join-Path $packageRoot $required))) {
-        throw "Release package is incomplete; missing $required in $packageRoot."
-    }
-}
+$serviceTaskNames = 'AgentOrchestrator-TaskServer', 'AgentOrchestrator-Engine', 'AgentOrchestrator-StudioConnector'
 $version = (Get-Content -LiteralPath (Join-Path $packageRoot 'VERSION') -TotalCount 1).Trim()
 if ([string]::IsNullOrWhiteSpace($version)) { throw "VERSION file in $packageRoot is empty." }
 $releaseSha = (Get-Content -LiteralPath (Join-Path $packageRoot 'RELEASE-SHA') -TotalCount 1).Trim()
@@ -49,8 +50,6 @@ if ($normalizedDataDirectory.Equals($normalizedInstallBase, [StringComparison]::
     throw 'DataDirectory must be outside the versioned installation root.'
 }
 
-$releaseDirectory = Join-Path $InstallBase "release-$version"
-$current = Join-Path $InstallBase 'current'
 $backupDirectory = Join-Path $DataDirectory 'backups'
 
 function New-BearerToken {
@@ -62,29 +61,16 @@ function New-BearerToken {
     -join ($bytes | ForEach-Object { $_.ToString('x2') })
 }
 
-if (-not $PSCmdlet.ShouldProcess($releaseDirectory, 'Install the agent-orchestrator Windows fallback profile')) {
+if (-not $PSCmdlet.ShouldProcess((Join-Path $InstallBase "release-$version"), 'Install the agent-orchestrator Windows fallback profile')) {
     return
 }
 
-New-Item -ItemType Directory -Path $InstallBase -Force | Out-Null
 New-Item -ItemType Directory -Path $DataDirectory -Force | Out-Null
 New-Item -ItemType Directory -Path $backupDirectory -Force | Out-Null
 New-Item -ItemType Directory -Path $ConfigRoot -Force | Out-Null
 
-if (-not (Test-Path -LiteralPath $releaseDirectory)) {
-    $staging = "$releaseDirectory.staging.$PID"
-    if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
-    Copy-Item -LiteralPath $packageRoot -Destination $staging -Recurse
-    Move-Item -LiteralPath $staging -Destination $releaseDirectory
-    Write-FallbackLog "Staged release $version at $releaseDirectory."
-}
-else {
-    $installedVersion = (Get-Content -LiteralPath (Join-Path $releaseDirectory 'VERSION') -TotalCount 1).Trim()
-    if ($installedVersion -ne $version) {
-        throw "Existing release directory has version $installedVersion, expected $version: $releaseDirectory"
-    }
-    Write-FallbackLog "Release $version is already staged."
-}
+$releaseDirectory = Copy-FallbackRelease -PackageRoot $packageRoot -InstallBase $InstallBase `
+    -RequiredFiles 'task-server.exe', 'orchestrator-engine.exe', 'agent-studio-bff.exe'
 
 $serverEnvPath = Join-Path $ConfigRoot 'server.env'
 $engineEnvPath = Join-Path $ConfigRoot 'engine.env'
@@ -102,6 +88,8 @@ if (-not (Test-Path -LiteralPath $serverEnvPath)) {
         $engineToken = New-BearerToken
         Set-Content -LiteralPath $studioTokenFile -Value $studioToken -Encoding ascii -NoNewline
         Set-Content -LiteralPath $engineTokenFile -Value $engineToken -Encoding ascii -NoNewline
+        Protect-FallbackSecretFile -Path $studioTokenFile
+        Protect-FallbackSecretFile -Path $engineTokenFile
         Write-FallbackLog "Generated Studio and Engine bootstrap credentials in $ConfigRoot. Capture them through the host administration channel; they are never printed again."
     }
     elseif (-not ($ListenUrl -match '^https?://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?/?$')) {
@@ -133,6 +121,7 @@ if (-not (Test-Path -LiteralPath $serverEnvPath)) {
         'POLL_SECONDS=2',
         'LEASE_SECONDS=120'
     ) | Set-Content -LiteralPath $engineEnvPath -Encoding ascii
+    Protect-FallbackSecretFile -Path $engineEnvPath
 
     @(
         '# Loopback Studio connector configuration (agent-studio-bff.exe).',
@@ -150,22 +139,15 @@ else {
     Write-FallbackLog "Keeping existing operator configuration in $ConfigRoot."
 }
 
-if (Test-Path -LiteralPath $current) {
-    $item = Get-Item -LiteralPath $current -Force
-    if (-not ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-        throw "Refusing to replace non-junction current path: $current"
-    }
-    & cmd.exe /d /c "rmdir `"$current`""
-    if ($LASTEXITCODE -ne 0) { throw 'Could not remove the previous current junction.' }
-}
-& cmd.exe /d /c "mklink /J `"$current`" `"$releaseDirectory`"" | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'Could not create the current junction.' }
+$current = Set-FallbackCurrentRelease -InstallBase $InstallBase -ReleaseDirectory $releaseDirectory `
+    -TaskNames $serviceTaskNames
+$scriptRoot = Get-FallbackScriptRoot -Current $current -CallerRoot $PSScriptRoot
 
-& (Join-Path $PSScriptRoot '..\task-server\register-task-server.ps1') `
+& (Join-Path $scriptRoot 'task-server\register-task-server.ps1') `
     -InstallRoot $current -EnvFile $serverEnvPath
-& (Join-Path $PSScriptRoot '..\orchestrator-engine\register-orchestrator-engine.ps1') `
+& (Join-Path $scriptRoot 'orchestrator-engine\register-orchestrator-engine.ps1') `
     -InstallRoot $current -EnvFile $engineEnvPath
-& (Join-Path $PSScriptRoot '..\studio-connector\register-studio-connector.ps1') `
+& (Join-Path $scriptRoot 'studio-connector\register-studio-connector.ps1') `
     -InstallRoot $current -EnvFile $connectorEnvPath
 
 if (-not (Wait-HttpReady -Url "$($ListenUrl.TrimEnd('/'))/readyz" -TimeoutSeconds 60 -ExpectedText '"status":"ready"')) {
@@ -191,8 +173,13 @@ second writer. warm-standby pulls call `backup verify-full` offline through
 the CLI and never touch this running instance; only run-switch-drill.ps1
 moves it back to Normal, through a real backup restore.
 #>
-Set-TaskServerMode -BaseUrl $ListenUrl -Token $authToken -Mode 'Maintenance' -Reason 'fallback profile installed; dormant until a drill or a real switch'
-Write-FallbackLog 'Task Server rests in Maintenance mode. Point the Studio connector at the remote upstream with switch-upstream.ps1 -UpstreamProfile Remote before returning this device to normal use.'
+if ($RestMode -eq 'Maintenance') {
+    Set-TaskServerMode -BaseUrl $ListenUrl -Token $authToken -Mode 'Maintenance' -Reason 'fallback profile installed; dormant until a drill or a real switch'
+    Write-FallbackLog 'Task Server rests in Maintenance mode. Point the Studio connector at the remote upstream with switch-upstream.ps1 -UpstreamProfile Remote before returning this device to normal use.'
+}
+else {
+    Write-FallbackLog 'Task Server rests in Normal mode as the primary Task Server on this device.'
+}
 
 [pscustomobject]@{
     Version           = $version

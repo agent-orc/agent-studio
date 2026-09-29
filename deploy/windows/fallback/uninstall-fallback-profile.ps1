@@ -33,6 +33,13 @@ foreach ($taskName in $TaskNames) {
     Write-FallbackLog "Unregistered scheduled task $taskName."
 }
 
+if ($PSCmdlet.ShouldProcess($InstallBase, 'Stop service executables still running from the release tree')) {
+    $installPrefix = [IO.Path]::GetFullPath($InstallBase).TrimEnd('\') + '\'
+    Get-Process -Name 'task-server', 'orchestrator-engine', 'agent-studio-bff' -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -and $_.Path.StartsWith($installPrefix, [StringComparison]::OrdinalIgnoreCase) } |
+        Stop-Process -Force
+}
+
 $current = Join-Path $InstallBase 'current'
 if (Test-Path -LiteralPath $current) {
     $item = Get-Item -LiteralPath $current -Force

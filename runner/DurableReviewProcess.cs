@@ -132,11 +132,15 @@ internal sealed class DurableReviewProcess
     /// delegation on <c>agent-runner-review</c> on 18.09.2026 came from builds
     /// started before a plan's environment applied, and a node started with
     /// reuse enabled outlives the worker whatever the plan does afterwards.
-    /// Credentials are not filtered here: a review worker resolves them from its
-    /// own spec through <see cref="RunnerOptions.ReviewCredentialEnvironment"/>.
+    /// Browser-edge and Task Server credentials are removed here. A review
+    /// worker resolves allowed provider credentials from its own spec through
+    /// <see cref="RunnerOptions.ReviewCredentialEnvironment"/>.
     /// </summary>
     internal static void ApplyWorkerEnvironment(IDictionary<string, string?> environment)
-        => WorkerBuildServerHygiene.ApplyTo(environment);
+    {
+        WorkerEdgeCredentialBoundary.RemoveFrom(environment);
+        WorkerBuildServerHygiene.ApplyTo(environment);
+    }
 
     /// <summary>
     /// Fills in worker provenance a pre-AGT-2863 daemon never stamped, using the

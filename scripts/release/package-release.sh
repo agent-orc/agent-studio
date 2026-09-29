@@ -35,7 +35,7 @@ for required in \
     "$publish_root/orchestrator-engine/orchestrator-engine" \
     "$publish_root/agent-host-linux-x64/agent-host" \
     "$publish_root/agent-host-osx-arm64/agent-host" \
-    "$publish_root/setup/agent-orchestrator-setup" \
+    "$publish_root/setup/agent-studio-setup" \
     "$frontend_root/index.html"
 do
     [ -f "$required" ] || {
@@ -51,9 +51,11 @@ install -d -m 0755 "$output_dir"
 orchestrator="agent-orchestrator-$version-linux-x64"
 host="agent-host-$version"
 studio="agent-studio-$version"
+compose="agent-studio-compose-$version"
 install -d -m 0755 "$work/$orchestrator" "$work/$host/linux-x64" \
     "$work/$host/osx-arm64" "$work/$host/config" "$work/$host/systemd" \
-    "$work/$studio/browser"
+    "$work/$studio/browser" "$work/$compose/scripts" \
+    "$work/$compose/deploy/compose"
 
 install -m 0755 "$publish_root/task-server/task-server" \
     "$work/$orchestrator/task-server"
@@ -73,8 +75,13 @@ install -m 0755 "$repo_root/scripts/agent-host-resource-governance.sh" \
     "$work/$host/agent-host-resource-governance.sh"
 
 cp -a "$frontend_root/." "$work/$studio/browser/"
+install -m 0644 "$repo_root/docker-compose.yml" "$work/$compose/docker-compose.yml"
+install -m 0755 "$repo_root/scripts/compose-secret-bootstrap.sh" "$work/$compose/scripts/"
+install -m 0755 "$repo_root/scripts/compose-rotate-credentials.sh" "$work/$compose/scripts/"
+cp -a "$repo_root/deploy/compose/empty-credentials" "$work/$compose/deploy/compose/"
+install -m 0644 "$repo_root/deploy/compose/Caddyfile.edge" "$work/$compose/deploy/compose/"
 
-for component in "$orchestrator" "$host" "$studio"
+for component in "$orchestrator" "$host" "$studio" "$compose"
 do
     printf '%s\n' "$version" >"$work/$component/VERSION"
     printf '%s\n' "$git_sha" >"$work/$component/RELEASE-SHA"
@@ -101,6 +108,12 @@ printf '%s\n' \
     "gitSha=$git_sha" \
     "protocolVersion=2" \
     >"$work/$studio/RELEASE"
+printf '%s\n' \
+    "component=agent-studio-compose" \
+    "version=$version" \
+    "gitSha=$git_sha" \
+    "runtimeIdentifiers=linux-x64,win-x64" \
+    >"$work/$compose/RELEASE"
 
 archive()
 {
@@ -117,16 +130,18 @@ archive()
 archive "$orchestrator" "$output_dir/$orchestrator.tar.gz"
 archive "$host" "$output_dir/$host.tar.gz"
 archive "$studio" "$output_dir/$studio.tar.gz"
-install -m 0755 "$publish_root/setup/agent-orchestrator-setup" \
-    "$output_dir/agent-orchestrator-setup"
+archive "$compose" "$output_dir/$compose.tar.gz"
+install -m 0755 "$publish_root/setup/agent-studio-setup" \
+    "$output_dir/agent-studio-setup"
 (
     cd "$output_dir"
     sha256sum \
-        agent-orchestrator-setup \
+        agent-studio-setup \
         "$orchestrator.tar.gz" \
         "$host.tar.gz" \
         "$studio.tar.gz" \
+        "$compose.tar.gz" \
         >SHA256SUMS
 )
 
-printf 'Created the guided setup executable, three release archives, and SHA256SUMS in %s\n' "$output_dir"
+printf 'Created the setup executable, four release archives, and SHA256SUMS in %s\n' "$output_dir"

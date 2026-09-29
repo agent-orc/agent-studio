@@ -211,7 +211,14 @@ public sealed class ReviewWorkerReleaseProvenanceTests : IDisposable
         await shutdown.CancelAsync();
         await run.WaitAsync(TimeSpan.FromSeconds(20));
 
-        Assert.Single(server.Reports);
+        // Reporting is at least once. A cancellation race may replay the same
+        // fenced receipt after the drain opens; it must remain the same attempt.
+        Assert.NotEmpty(server.Reports);
+        Assert.All(server.Reports, report =>
+        {
+            Assert.Equal("review-report:attempt-1:17", report.IdempotencyKey);
+            Assert.Equal(17, report.Fence);
+        });
         Assert.Contains(logs, line =>
             line.Contains("review slot admission reopened", StringComparison.Ordinal));
     }

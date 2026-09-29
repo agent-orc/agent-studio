@@ -1,4 +1,5 @@
 using AgentStudio.Runner;
+using AgentStudio.Persistence;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -72,6 +73,159 @@ public sealed class RemoteRunStopAndLostWorkerContinuationTests
         Assert.Equal(recorded, store.Peek("agt-2869"));
         Assert.Equal(recorded, store.Clear("AGT-2869"));
         Assert.Null(store.Peek("AGT-2869"));
+    }
+
+    [Fact]
+    public void Acknowledged_stop_survives_restart_and_observation_is_durable()
+    {
+        var root = Directory.CreateTempSubdirectory("remote-stop-restart-").FullName;
+        try
+        {
+            var first = new RemoteRunStopRequestStore(root, () => Now);
+            var requested = first.Record("AGT-2869", RemoteRunStopReasons.Followup,
+                "attempt-1", "operator", fencingToken: 4, commandId: "stop-1");
+            Assert.Equal("requested", requested.State);
+            Assert.True(File.Exists(Path.Combine(root, RemoteRunStopRequestStore.RelativePath)));
+
+            var restarted = new RemoteRunStopRequestStore(root, () => Now.AddMinutes(3));
+            Assert.Null(restarted.Observe("AGT-2869", "attempt-2", 5));
+            Assert.Null(restarted.Observe("AGT-2869", "attempt-1", 5));
+            var observed = restarted.Observe("AGT-2869", "attempt-1", 4);
+            Assert.Equal("observed", observed?.State);
+            Assert.Equal(requested.CommandId, observed?.CommandId);
+            Assert.Equal(Now.AddMinutes(3), observed?.ObservedAtUtc);
+            Assert.Equal(observed, restarted.Observe("AGT-2869", "attempt-1", 4));
+            Assert.Equal("observed", new RemoteRunStopRequestStore(root, () => Now.AddMinutes(4))
+                .GetReceipt("stop-1")?.State);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void Duplicate_stop_is_idempotent_and_a_successor_cannot_observe_the_old_fence()
+    {
+        var root = Directory.CreateTempSubdirectory("remote-stop-fence-").FullName;
+        try
+        {
+            var store = new RemoteRunStopRequestStore(root, () => Now);
+            var original = store.Record("AGT-2869", RemoteRunStopReasons.User,
+                "attempt-1", "operator", 4, "stop-1");
+            Assert.Equal(original, store.Record("AGT-2869", RemoteRunStopReasons.User,
+                "attempt-1", "operator", 4, "stop-1"));
+            var replacement = store.Record("AGT-2869", RemoteRunStopReasons.User,
+                "attempt-1", "operator", 4, "stop-2");
+            Assert.Equal("stop-2", replacement.CommandId);
+            Assert.Equal("superseded", store.GetReceipt("stop-1")?.TerminalReason);
+            Assert.Throws<InvalidOperationException>(() => store.Record("AGT-2869",
+                RemoteRunStopReasons.Followup, "attempt-1", "operator", 4, "stop-1"));
+
+            store.RetireSuperseded("AGT-2869", "attempt-2", 5);
+            Assert.Null(store.Observe("AGT-2869", "attempt-2", 5));
+            Assert.Equal("superseded", store.GetReceipt("stop-2")?.TerminalReason);
+            Assert.Null(new RemoteRunStopRequestStore(root, () => Now).Peek("AGT-2869"));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void Stop_recorded_after_successor_retirement_is_retired_by_post_write_validation()
+    {
+        var root = Directory.CreateTempSubdirectory("remote-stop-race-").FullName;
+        try
+        {
+            var store = new RemoteRunStopRequestStore(root, () => Now);
+            // The successor acquired its lease and ran RetireSuperseded before
+            // the stop endpoint finished writing the old command.
+            store.RetireSuperseded("AGT-2869", "attempt-2", 5);
+            var old = store.Record("AGT-2869", RemoteRunStopReasons.User,
+                "attempt-1", "operator", 4, "stop-old");
+            Assert.Equal("requested", old.State);
+
+            var current = new RunLeaseResponse("Held", false,
+                new RunLeaseInfoDto("AGT-2869", "runner", "runner", "host", 1,
+                    "codex", "lease-2", 5, Now, Now.AddMinutes(10), "attempt-2"));
+            var receipt = store.ReconcileWithLease(old, current);
+
+            Assert.Equal("superseded", receipt.TerminalReason);
+            Assert.Null(store.Observe("AGT-2869", "attempt-2", 5));
+            Assert.Equal("superseded", new RemoteRunStopRequestStore(root, () => Now)
+                .GetReceipt("stop-old")?.TerminalReason);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void Late_old_stop_cannot_replace_an_active_successor_stop()
+    {
+        var store = new RemoteRunStopRequestStore(() => Now);
+        var successor = store.Record("AGT-2869", RemoteRunStopReasons.Followup,
+            "attempt-2", "operator", 5, "stop-new");
+
+        Assert.Throws<InvalidOperationException>(() => store.Record("AGT-2869",
+            RemoteRunStopReasons.User, "attempt-1", "operator", 4, "stop-old"));
+        Assert.Equal(successor, store.Peek("AGT-2869"));
+        Assert.Equal("requested", store.GetReceipt("stop-new")?.State);
+    }
+
+    [Fact]
+    public void Late_old_acquire_callback_cannot_retire_the_successor_stop()
+    {
+        var store = new RemoteRunStopRequestStore(() => Now);
+        var successor = store.Record("AGT-2869", RemoteRunStopReasons.User,
+            "attempt-2", "operator", 5, "stop-new");
+
+        store.RetireSuperseded("AGT-2869", "attempt-1", 4);
+
+        Assert.Equal(successor, store.Peek("AGT-2869"));
+    }
+
+    [Fact]
+    public void A_late_old_completion_cannot_retire_the_successor_stop()
+    {
+        var store = new RemoteRunStopRequestStore(() => Now);
+        store.Record("AGT-2869", RemoteRunStopReasons.User, "attempt-1", "operator", 4);
+        store.RetireSuperseded("AGT-2869", "attempt-2", 5);
+        var successor = store.Record("AGT-2869", RemoteRunStopReasons.Followup,
+            "attempt-2", "operator", 5);
+        Assert.Null(store.Clear("AGT-2869", "attempt-1", 4));
+        var observed = store.Observe("AGT-2869", "attempt-2", 5);
+        Assert.Equal(successor.CommandId, observed?.CommandId);
+        Assert.Equal("observed", observed?.State);
+    }
+
+    [Fact]
+    public void A_failed_receipt_write_cannot_acknowledge_a_stop()
+    {
+        var root = Directory.CreateTempSubdirectory("remote-stop-write-").FullName;
+        try
+        {
+            var store = new RemoteRunStopRequestStore(root, () => Now, new FailingWriter());
+            Assert.Throws<IOException>(() => store.Record("AGT-2869", RemoteRunStopReasons.User,
+                "attempt-1", "operator", 4, "stop-1"));
+            Assert.Null(store.Peek("AGT-2869"));
+            Assert.False(File.Exists(Path.Combine(root, RemoteRunStopRequestStore.RelativePath)));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void An_expired_command_is_terminal_and_cannot_be_delivered()
+    {
+        var root = Directory.CreateTempSubdirectory("remote-stop-expiry-").FullName;
+        try
+        {
+            new RemoteRunStopRequestStore(root, () => Now).Record("AGT-2869",
+                RemoteRunStopReasons.User, "attempt-1", "operator", 4, "stop-1");
+            var restarted = new RemoteRunStopRequestStore(root, () => Now.AddDays(2));
+            Assert.Null(restarted.Observe("AGT-2869", "attempt-1", 4));
+            Assert.Equal("expired", restarted.GetReceipt("stop-1")?.TerminalReason);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    private sealed class FailingWriter : IAtomicJsonFileWriter
+    {
+        public void Write(string path, string content) => throw new IOException("disk unavailable");
     }
 
     /// <summary>

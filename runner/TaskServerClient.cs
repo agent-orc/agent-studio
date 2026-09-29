@@ -807,7 +807,8 @@ public sealed class TaskServerClient : IDisposable
             PreviousSession: claim.PreviousSession,
             MechanicalDelta: claim.MechanicalDelta,
             FreshRunReason: claim.MechanicalDelta is null
-                ? claim.MechanicalFreshRoute?.Reason : null);
+                ? claim.MechanicalFreshRoute?.Reason : null,
+            RequiredCapabilities: claim.RequiredCapabilities);
     }
 
     private void AdoptRuntimeCapacity(Contract.RuntimeCapacitySettingsDto? capacity)
@@ -1342,7 +1343,9 @@ public sealed class TaskServerClient : IDisposable
                 directive.Reason,
                 directive.RequestedAtUtc,
                 directive.AttemptId,
-                directive.RequestedBy);
+                directive.RequestedBy,
+                directive.CommandId,
+                directive.FencingToken);
 
     private static IReadOnlyList<RunnerReconciliationAction>? FromContract(
         IReadOnlyList<Contract.RunnerReconciliationAction>? actions)

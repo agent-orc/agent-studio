@@ -49,6 +49,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 
 | Topic | Start here |
 |---|---|
+| Product installer for Windows and Linux | [operations/setup/install.md](../operations/setup/install.md) |
 | Contribution and style conventions for all agents | [contribution-and-style-guide.html](contribution-and-style-guide.html) |
 | Windows process spawn safety and repository guards | [operations/windows-process-spawn-safety.md](../operations/windows-process-spawn-safety.md) |
 | Runner | [domains/runner.md](../system/domains/runner.md) |
@@ -135,6 +136,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Wiki as a cognitive interface (AIP-4 page backchannel, page context, archive semantics) | [concept](../concepts/wiki-as-cognitive-interface.md) · [Visual StyleGuide Dossier](../quality/visual-styleguide-workbench-wiki/index.html) |
 | Wiki grading run (global LLM grade per page; trigger + critical pages; GRADE-1) | [concepts/wiki-grading-run.md](../concepts/wiki-grading-run.md) |
 | Run-liveness & slot semantics (heartbeat, process-lost demotion) | [concepts/run-liveness-and-slot-semantics.md](../concepts/run-liveness-and-slot-semantics.md) |
+| Run record trigger provenance schema | [schemas/run-record.schema.json](../app/schemas/run-record.schema.json) |
 | UI task iteration pipeline and Human Gate hand-off | [contracts/ui-task-pipeline.md](../system/contracts/ui-task-pipeline.md) |
 | Operator decision surface for escalated tasks | [operations/decision-surface/README.md](../operations/decision-surface/README.md) |
 | Parked-card recall (machine-readable blocker, Wiedervorlage sweep, lane aging; AGT-2492) | [concepts/parked-card-recall.md](../concepts/parked-card-recall.md) |
@@ -184,6 +186,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Retention and archive dossier (policy defaults, archive stages, Task Server management contract, full backup sets) | [operations/retention-und-archiv/index.html](../operations/retention-und-archiv/index.html) |
 | Task Server legacy migration, signed cutover evidence, retention, archive, restore, and full backup operator commands | [legacy migration](../operations/setup/task-server.md#legacy-single-writer-migration) · [retention and archive](../operations/setup/task-server.md#retention-against-the-sqlite-store) |
 | Standalone remote runner / agent host daemon (Linux) | [operations/setup/linux-runner-host.md](../operations/setup/linux-runner-host.md) |
+| Workstation runner-host profile (Windows roots, tools, preview evidence, same Task Server authority) | [operations/setup/workstation-runner-host.md](../operations/setup/workstation-runner-host.md) |
 | Guided multi-machine setup (Control Plane, join token, Agent Hosts) | [operations/setup/multi-machine.md](../operations/setup/multi-machine.md) |
 | Website onboarding source copy (Demo, Single Machine, Multi Machine) | [operations/setup/website-onboarding-template.md](../operations/setup/website-onboarding-template.md) |
 | Runner-host resource governance (Linux cgroups, coding/review role defaults, AIMD capacity boundary) | [target architecture](../operations/haertung-verteilte-ausfuehrung/target-architecture/resource-governance.md) |
@@ -211,6 +214,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Concurrent review workers deadlock on one host-shared .NET build server (AGT-2831) | [common-problems/review-parallelism-shared-build-server/](../operations/common-problems/review-parallelism-shared-build-server/) |
 | Gate tests fail only on the Studio machine because the child inherits the Studio's listener (AGT-2840) | [common-problems/gate-child-inherits-studio-listener/](../operations/common-problems/gate-child-inherits-studio-listener/) |
 | Orchestrator drive-to-conclusion & CLI-crash resilience | [concepts/orchestrator-drive-to-conclusion.html](../concepts/orchestrator-drive-to-conclusion.html) |
+| Operations Server authority boundary, outbound agent protocol, Task Server permits, delivery gates (AGT-2907) | [contracts/operations-backchannel.md](../system/contracts/operations-backchannel.md) |
 | Task integration & worktree/merge workflow | [concepts/task-integration-and-merge-workflow.md](../concepts/task-integration-and-merge-workflow.md) |
 | Merge config analysis (parallelism coupling) | [concepts/task-integration-merge-config-analysis.html](../concepts/task-integration-merge-config-analysis.html) |
 | Auto-review reissue / evidence-gate analysis | [concepts/auto-review-evidence-gate-analysis.html](../concepts/auto-review-evidence-gate-analysis.html) |

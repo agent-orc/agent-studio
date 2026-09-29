@@ -444,7 +444,8 @@ public sealed class AutoPushStrategyTests : IDisposable
                 ["WatchPaths:0:Path"] = _watchPath,
                 ["WatchPaths:0:RootPath"] = _repoRoot,
                 ["WatchPaths:0:RepositoryPath"] = _repoRoot,
-                ["TaskRepository"] = _watchPath
+                ["TaskRepository"] = _watchPath,
+                ["DeliveryChain:Guarded"] = "false"
             })
             .Build();
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
@@ -469,7 +470,8 @@ public sealed class AutoPushStrategyTests : IDisposable
             pushQueue: pushQueue,
             bus: bus,
             integrationStatus: integrationStatus,
-            timeProvider: timeProvider);
+            timeProvider: timeProvider,
+            configuration: config);
         return new Deps(config, scanner, settings, transitions);
     }
 

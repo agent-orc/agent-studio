@@ -31,7 +31,8 @@ function json(route: Route, body: unknown): Promise<void> {
 
 interface MergeFact { mergeCommit: string | null }
 
-function detail(merge: MergeFact | null, hasDeliverable = true) {
+function detail(merge: MergeFact | null, hasDeliverable = true,
+  integrationStatus: 'pending' | 'integrated' | 'not-applicable' = 'pending') {
   return {
     info: {
       id: JOB_ID,
@@ -53,6 +54,7 @@ function detail(merge: MergeFact | null, hasDeliverable = true) {
         sha: 'abc1234abc1234abc1234abc1234abc1234abc1', shortSha: 'abc1234',
         message: 'feat: task deliverable', filesChanged: 1, files: ['src/task.ts'], at: '2026-06-09T12:20:00Z',
       }] : [],
+      integration: { status: integrationStatus, integrationBranch: 'develop' },
       ownerClientId: 'local-default',
       createdAt: '2026-06-09T12:00:00Z',
       sessionChain: [],
@@ -118,6 +120,8 @@ async function installBaseRoutes(page: Page): Promise<void> {
   await page.route('**/api/auth/status', (route) => json(route, {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
+  await page.route('**/api/tasks/*/runs**', (route) =>
+    json(route, { runs: [], runnerEvents: [], hasActiveRun: false }));
   await page.route('**/api/tasks', (route) => json(route, []));
   await page.route('**/api/tasks/grouped**', (route) => json(route, {
     backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
@@ -146,6 +150,9 @@ async function installBaseRoutes(page: Page): Promise<void> {
   await page.route(/\/api\/runner\/status(\?|$)/, (route) => json(route, {
     projects: { [PROJECT]: { projectName: PROJECT, mode: 'manual', activeJobId: null, activeExecution: null, queuedJobIds: [] } },
   }));
+  await page.route('**/api/auth/status', (route) => json(route, {
+    profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
+  }));
 }
 
 /**
@@ -158,9 +165,14 @@ async function installJobRoutes(
   opts: { detailMerge: MergeFact | null; landedState: 'on-branch-only' | 'merged-to-develop' | 'released-to-main'; viewMerge?: MergeFact | null; hasDeliverable?: boolean },
 ): Promise<void> {
   const idEsc = JOB_ID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  await page.route(new RegExp(`/api/tasks/${idEsc}/runs(\\?|$)`), (route) =>
+    json(route, { runs: [], runnerEvents: [], hasActiveRun: false }));
   await page.route(new RegExp(`/api/tasks/${idEsc}/provenance(\\?|$)`), (route) =>
     json(route, provenanceView(opts.landedState, opts.viewMerge ?? opts.detailMerge)));
-  await page.route(new RegExp(`/api/tasks/${idEsc}(\\?|$)`), (route) => json(route, detail(opts.detailMerge, opts.hasDeliverable ?? true)));
+  await page.route(new RegExp(`/api/tasks/${idEsc}(\\?|$)`), (route) => json(route,
+    detail(opts.detailMerge, opts.hasDeliverable ?? true,
+      opts.hasDeliverable === false ? 'not-applicable'
+        : opts.landedState === 'on-branch-only' ? 'pending' : 'integrated')));
 }
 
 async function saveEvidence(page: Page, fileName: string): Promise<void> {
@@ -176,76 +188,17 @@ async function openJob(page: Page): Promise<void> {
 
 test.describe('Human Review acceptance primary is landed-state aware', () => {
   test.use({ serviceWorkers: 'block' });
-  for (const theme of ['light', 'dark'] as const) {
-    test(`acceptance dead end offers the contextual continuation in ${theme} theme`, async ({ page }) => {
-      await installBaseRoutes(page);
-      await installJobRoutes(page, { detailMerge: null, landedState: 'on-branch-only' });
-      const pending = {
-        status: 'pending', deliveryRef: `task/${JOB_ID}`, sha: null,
-        integrationBranch: 'develop', detail: 'Delivery ref is not integrated into develop.',
-        failure: null,
-      };
-      const card = { ...detail(null).info, integration: pending };
-      await page.route('**/api/tasks/grouped**', (route) => json(route, {
-        backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
-        failedPickup: [], codeNotComplete: [], autoReview: [], humanReview: [card],
-        escalated: [], completed: [], archive: [],
-      }));
-      await page.route(new RegExp(`/api/tasks/${JOB_ID}(\\?|$)`), (route) =>
-        json(route, { ...detail(null), info: card }));
-      await page.route(`**/api/tasks/${JOB_ID}/delivery-claim**`, (route) => json(route, {
-        taskKey: `${WATCH_PATH}::${JOB_ID}`, jobId: JOB_ID, lane: '5-human-review',
-        deliveryRef: `task/${JOB_ID}`, integrationBranch: 'develop', releaseBranch: 'main',
-        containmentStatus: 'pending', integrated: false, released: false,
-        commits: [], detail: 'Delivery ref is not integrated into develop.',
-      }));
-      let queued = false;
-      await page.route(`**/api/tasks/${JOB_ID}/move**`, (route) => route.fulfill({
-        status: 409, contentType: 'application/json',
-        body: JSON.stringify({ code: 'integration-dead-end', error: 'Acceptance does not integrate deliveries. Delivery is pending on develop.' }),
-      }));
-      await page.route(`**/api/tasks/${JOB_ID}/failure/continue**`, (route) => {
-        queued = true;
-        return route.fulfill({ status: 202, contentType: 'application/json',
-          body: JSON.stringify({ status: 'queued', stage: 'delivery-pending', taskKey: JOB_ID }) });
-      });
-      await page.route(`**/api/tasks/${JOB_ID}/timeline**`, (route) => json(route, queued ? [{
-        ts: '2026-09-25T12:00:00Z', kind: 'integration_recovery_queued', actor: 'system',
-        summary: 'Continuation queued from delivery-pending: delivery is not on develop.',
-        details: { failureStage: 'delivery-pending', source: 'operator-failure-panel' },
-      }] : []));
-
-      await page.addInitScript((value) => localStorage.setItem('atp.studio.theme', value), theme);
-      await openJob(page);
-      await page.getByTestId('studio-triage-action-mark-done').click();
-      const panel = page.getByTestId('integration-dead-end');
-      await expect(panel).toBeVisible();
-      await expect(panel).toContainText('Delivery pending');
-      await expect(panel).toContainText('Stage: integration reach');
-      await expect(page.getByText('Failed to move task')).toHaveCount(0);
-      if (RESULTS_DIR) {
-        fs.mkdirSync(RESULTS_DIR, { recursive: true });
-        await panel.screenshot({ path: path.join(RESULTS_DIR, `acceptance-dead-end-${theme}.png`) });
-      }
-      await panel.getByRole('button', { name: 'Continue the task with this context' }).click();
-      await expect.poll(() => queued).toBe(true);
-      await page.reload();
-      await page.getByRole('tab', { name: 'Timeline' }).click();
-      await expect(page.getByTestId('timeline-event').filter({ hasText: 'Continuation queued' }))
-        .toBeVisible({ timeout: 15_000 });
-    });
-  }
-
-  test('not landed: keeps the Accept label and shows no status pill', async ({ page }) => {
+  test('not landed: waits for integration and shows no status pill', async ({ page }) => {
     await installBaseRoutes(page);
     await installJobRoutes(page, { detailMerge: null, landedState: 'on-branch-only' });
     await openJob(page);
 
     const primary = page.getByTestId('studio-triage-action-mark-done');
     await expect(primary).toBeVisible();
-    await expect(primary).toHaveText(/Accept/);
+    await expect(primary).toHaveText(/Await integration/);
+    await expect(primary).toBeDisabled();
     await expect(page.getByTestId('studio-triage-merge-status')).toHaveCount(0);
-    await saveEvidence(page, 'merge-action-with-deliverable.png');
+    await saveEvidence(page, 'merge-action-with-deliverable--mocked.png');
   });
 
   test('no task diff: offers Accept instead of Merge into Develop', async ({ page }) => {
@@ -256,7 +209,7 @@ test.describe('Human Review acceptance primary is landed-state aware', () => {
     const primary = page.getByTestId('studio-triage-action-mark-done');
     await expect(primary).toContainText('Accept');
     await expect(primary).not.toContainText('Merge');
-    await saveEvidence(page, 'accept-action-without-deliverable.png');
+    await saveEvidence(page, 'accept-action-without-deliverable--mocked.png');
   });
 
   test('merged to develop: relabels the primary to "Accept" without a redundant pill', async ({ page }) => {
@@ -271,7 +224,7 @@ test.describe('Human Review acceptance primary is landed-state aware', () => {
     // The former "Merged to develop" pill is gone; the on-develop state lives
     // once at the task commit (git pane landed ladder), not in this cluster.
     await expect(page.getByTestId('studio-triage-merge-status')).toHaveCount(0);
-    await saveEvidence(page, 'accept-action-already-merged.png');
+    await saveEvidence(page, 'accept-action-already-merged--mocked.png');
   });
 
   test('released to main: still relabels the primary to "Accept" without a pill', async ({ page }) => {
@@ -310,7 +263,7 @@ test.describe('Human Review acceptance primary is landed-state aware', () => {
       await provenanceGate;
       await json(route, provenanceView('merged-to-develop', { mergeCommit: MERGE_SHA }));
     });
-    await page.route(new RegExp(`/api/tasks/${idEsc}(\\?|$)`), (route) => json(route, detail(null)));
+    await page.route(new RegExp(`/api/tasks/${idEsc}(\\?|$)`), (route) => json(route, detail(null, true, 'integrated')));
 
     await openJob(page);
 
