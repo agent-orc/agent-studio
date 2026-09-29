@@ -154,7 +154,7 @@ public sealed partial class TaskServerStore
             SELECT command_id FROM continuation_intents
              WHERE task_id = $task AND status = 'queued' ORDER BY round LIMIT 1;
             """, ct, transaction, ("$task", taskId)));
-        return commandId is null ? null : await ReadContinuationAsync(connection, transaction, commandId, ct);
+        return string.IsNullOrEmpty(commandId) ? null : await ReadContinuationAsync(connection, transaction, commandId, ct);
     }
 
     private static FollowUpDeliveryDto ToFollowUpDelivery(
@@ -174,7 +174,9 @@ public sealed partial class TaskServerStore
             SELECT command_id FROM continuation_intents
              WHERE task_id = $task AND run_id = $run AND status IN ('claimed', 'consumed');
             """, ct, transaction, ("$task", lease.TaskId), ("$run", lease.RunId)));
-        if (commandId is null) return false;
+        // Convert.ToString maps a missing row to ""; a follow-up saved before
+        // continuation intents then falls through to the reserved follow-up path.
+        if (string.IsNullOrEmpty(commandId)) return false;
         var intent = (await ReadContinuationAsync(connection, transaction, commandId, ct))!;
         if (intent.Fence != lease.Fence
             || !string.Equals(FollowUpPromptDigest.Compute(intent.Prompt), startedPromptSha256,

@@ -57,6 +57,48 @@ public sealed class TaskServerStoreTests
     }
 
     [Fact]
+    public async Task Follow_up_saved_before_continuation_intents_is_still_delivered_on_worker_start()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        const string prompt = "Follow-up saved by an older server.";
+        await using (var connection = new SqliteConnection($"Data Source={store.DatabasePath};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO pending_follow_ups(task_id, state, prompt, mode, prompt_sha256, saved_at, saved_reason, author)
+                VALUES ($task, 'queued', $prompt, 'continue', $sha, '2026-09-20T10:00:00.0000000+00:00', 'operator', 'human:owner');
+                """;
+            command.Parameters.AddWithValue("$task", task.TaskId);
+            command.Parameters.AddWithValue("$prompt", prompt);
+            command.Parameters.AddWithValue("$sha", FollowUpPromptDigest.Compute(prompt));
+            await command.ExecuteNonQueryAsync();
+        }
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Null(claim.ContinuationIntent);
+        Assert.Equal(prompt, claim.FollowUp!.Prompt);
+
+        await store.RenewLeaseAsync(
+            claim.Run!.RunId,
+            new LeaseRenewRequest("runner-a", "instance-a", claim.Lease!.LeaseId, claim.Lease.Fence,
+                StartedPromptSha256: claim.FollowUp.PromptSha256),
+            "runner-a",
+            default);
+
+        var history = await store.GetTaskHistoryAsync(project.ProjectId, task.TaskId, 0, default);
+        var delivered = Assert.Single(history!.Audit, row => row.Action == "follow-up.delivered");
+        Assert.Equal(claim.Run.RunId, delivered.TargetId);
+        Assert.DoesNotContain(history.Audit, row => row.Action == "continuation.consumed");
+        await using var verify = new SqliteConnection($"Data Source={store.DatabasePath};Pooling=False");
+        await verify.OpenAsync();
+        Assert.Equal(0L, Scalar(verify, "SELECT count(*) FROM pending_follow_ups;"));
+    }
+
+    [Fact]
     public async Task Follow_up_is_restored_when_claimed_worker_is_lost_before_start()
     {
         using var temp = new TempDirectory();
