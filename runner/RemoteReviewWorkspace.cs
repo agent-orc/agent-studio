@@ -1818,21 +1818,7 @@ public sealed class RemoteReviewWorkspace
 
     private string ReviewFailureFingerprint(
         string stepId, IReadOnlyList<string> failures, ProcessResult? process)
-    {
-        var specific = failures.Count > 0
-                       && !failures.All(failure => failure.StartsWith("<unparsed failure", StringComparison.Ordinal));
-        var raw = process is null ? string.Empty : process.StdOut + "\n" + process.StdErr;
-        raw = Regex.Replace(raw,
-            Regex.Escape(AttemptRoot) + @"[/\\](?:repository|clean-repeat-[0-9a-f]+)",
-            "<workspace>", RegexOptions.IgnoreCase);
-        var normalized = stepId.Trim().ToLowerInvariant() + "\n" +
-            (specific
-                ? string.Join("\n", failures.Select(failure => failure.Trim().ToLowerInvariant())
-                    .Order(StringComparer.Ordinal))
-                : raw.Trim().ToLowerInvariant());
-        return "review:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized)))
-            .ToLowerInvariant();
-    }
+        => AgentRunner.ReviewFailureFingerprint.Compute(AttemptRoot, stepId, failures, process);
 
     /// <summary>
     /// Classifies the candidate failure against a baseline result an earlier

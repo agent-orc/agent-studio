@@ -388,6 +388,16 @@ is always the first, failed run with its own output, and the fresh clone's run
 is recorded separately under phase and workspace role `clean-repeat`. A failure
 the clean repeat cleared therefore stays visible to diagnosis and grading.
 
+The review fingerprint (`ReviewFailureFingerprint`) is the step id plus the
+parsed failed test names. A command without parseable test names, such as a
+build or lint step, uses its diagnostic lines instead: lines naming an error,
+failure, or exception. Before comparison, every attempt-local path (candidate
+`repository`, `clean-repeat-<hash>-<guid>`, baseline workspace, and runtime
+home, temp, and cache directories) becomes a placeholder, and all timestamps
+and durations are removed. Output without a diagnostic line falls back to the
+exit status. A reproducible build or lint regression therefore produces the
+same fingerprint in both runs and can be classified as `product`.
+
 | Evidence | Diagnosis | Card charge |
 |---|---|---|
 | Baseline green, clean repeat red with the same fingerprint, no other card matches | `product` | yes |

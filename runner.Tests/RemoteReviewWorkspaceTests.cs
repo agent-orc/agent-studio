@@ -1019,6 +1019,71 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.Equal("block", Assert.Single(evidence.Verdicts).Status);
     }
 
+    /// <summary>
+    /// AGT-2916 review finding (2026-09-29): a lint or build failure has no
+    /// parseable test names, so its fingerprint came from the raw output. That
+    /// output names the workspace (the clean repeat clone carries a random
+    /// suffix), the runtime temp directory and timings, so the first run and
+    /// the clean repeat never matched and a reproducible regression settled
+    /// as <c>unclassified-first-occurrence</c> instead of <c>product</c>.
+    /// </summary>
+    [Fact]
+    public async Task A_lint_regression_whose_output_names_the_workspace_and_timings_is_a_product_failure()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var command = LintCommand(
+            "if grep -q subject product.txt; then " +
+            "printf '%s/src/app.ts\\n' \"$PWD\"; " +
+            "printf '  3:7  error  %s is assigned a value but never used  no-unused-vars\\n' \"'unused'\"; " +
+            "printf 'cache: %s/eslint-%s\\n' \"$TMPDIR\" \"$$\"; " +
+            "printf 'Done in %s.%sms\\n' \"$$\" \"$$\"; exit 1; fi; exit 0");
+        var (workspace, _) = Workspace(
+            "attempt-lint-noisy",
+            subjectSha,
+            [command],
+            26122,
+            resultRef: "refs/heads/task/new-failure",
+            integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        var candidate = CandidateVerification(evidence);
+        var clean = Assert.Single(evidence.Commands, item =>
+            item is { Phase: "clean-repeat", WorkspaceRole: "clean-repeat" });
+        Assert.Equal(1, candidate.ExitCode);
+        Assert.Equal(1, clean.ExitCode);
+        Assert.Equal(0, candidate.BaselineExitCode);
+        Assert.Equal(DeliveryFailureDiagnosis.Product, candidate.Diagnosis?.Classification);
+        Assert.True(candidate.Diagnosis!.ChargesCard);
+        Assert.Equal("ProductFailure", evidence.Outcome);
+        Assert.Equal("block", Assert.Single(evidence.Verdicts).Status);
+    }
+
+    [Fact]
+    public async Task A_build_regression_without_diagnostic_lines_is_a_product_failure_by_exit_status()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var command = BaselineCommand(
+            "if grep -q subject product.txt; then " +
+            "printf 'Building %s took %sms\\n' \"$PWD\" \"$$\"; exit 2; fi; exit 0");
+        var (workspace, _) = Workspace(
+            "attempt-build-noisy",
+            subjectSha,
+            [command],
+            26124,
+            resultRef: "refs/heads/task/new-failure",
+            integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        var candidate = CandidateVerification(evidence);
+        Assert.Equal(2, candidate.ExitCode);
+        Assert.Equal(DeliveryFailureDiagnosis.Product, candidate.Diagnosis?.Classification);
+        Assert.Equal("ProductFailure", evidence.Outcome);
+    }
+
     [Fact]
     [Trait("Category", "MachineBound")]
     [Trait("Category", "ReviewFlaky")]
