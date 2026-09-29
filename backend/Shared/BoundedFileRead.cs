@@ -78,22 +78,6 @@ public static class BoundedFileRead
         SplitLines(ReadTailText(path, maxBytes, out truncated));
 
     /// <summary>
-    /// Line form of <see cref="TryReadAllText"/> for callers that rewrite the
-    /// file from what they read and therefore need every line or none.
-    /// Splits exactly like <see cref="File.ReadAllLines(string)"/>.
-    /// </summary>
-    public static bool TryReadAllLines(string path, int maxBytes, out List<string> lines)
-    {
-        if (!TryReadAllText(path, maxBytes, out var text))
-        {
-            lines = [];
-            return false;
-        }
-        lines = SplitLines(text);
-        return true;
-    }
-
-    /// <summary>
     /// Reads the newest window of at most <paramref name="maxBytes"/> bytes
     /// as text. When the file is larger, the window starts after the first
     /// line break inside it, so no partial line or split UTF-8 sequence is
@@ -101,21 +85,42 @@ public static class BoundedFileRead
     /// </summary>
     public static string ReadTailText(string path, int maxBytes, out bool truncated)
     {
+        var (_, text, isTruncated) = ReadTailWindowText(path, maxBytes);
+        truncated = isTruncated;
+        return text;
+    }
+
+    /// <summary>
+    /// Line form of <see cref="ReadTailText"/> that also returns the byte
+    /// offset at which the first returned line starts. A caller that edits a
+    /// row inside the window rewrites the file from that offset only, so the
+    /// older rows before it keep their bytes and are never loaded
+    /// (AGT-2991). The offset is 0 when the whole file fits the window.
+    /// </summary>
+    public static TailLineWindow ReadTailLineWindow(string path, int maxBytes)
+    {
+        var (offset, text, truncated) = ReadTailWindowText(path, maxBytes);
+        return new TailLineWindow(offset, SplitLines(text), truncated);
+    }
+
+    private static (long Offset, string Text, bool Truncated) ReadTailWindowText(string path, int maxBytes)
+    {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxBytes);
         using var stream = OpenShared(path);
         var length = stream.Length;
-        truncated = length > maxBytes;
-        if (!truncated)
+        if (length <= maxBytes)
         {
             var whole = ReadUpTo(stream, maxBytes);
-            return Decode(whole, whole.Length);
+            return (0, Decode(whole, whole.Length), false);
         }
 
-        stream.Seek(-maxBytes, SeekOrigin.End);
+        var start = stream.Seek(-maxBytes, SeekOrigin.End);
         var window = ReadUpTo(stream, maxBytes);
         var newline = Array.IndexOf(window, (byte)'\n');
-        if (newline < 0) return string.Empty;
-        return Encoding.UTF8.GetString(window, newline + 1, window.Length - newline - 1);
+        if (newline < 0) return (start + window.Length, string.Empty, true);
+        return (start + newline + 1,
+            Encoding.UTF8.GetString(window, newline + 1, window.Length - newline - 1),
+            true);
     }
 
     /// <summary>
@@ -220,3 +225,12 @@ public static class BoundedFileRead
         return end - lead < expected ? lead : end;
     }
 }
+
+/// <summary>
+/// The newest line-aligned window of a file as returned by
+/// <see cref="BoundedFileRead.ReadTailLineWindow"/>.
+/// </summary>
+/// <param name="Offset">Byte offset of the first line in <paramref name="Lines"/>.</param>
+/// <param name="Lines">Complete lines from <paramref name="Offset"/> to the end of the file.</param>
+/// <param name="Truncated">True when older content before <paramref name="Offset"/> was left unread.</param>
+public sealed record TailLineWindow(long Offset, List<string> Lines, bool Truncated);
