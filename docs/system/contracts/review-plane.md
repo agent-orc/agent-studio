@@ -46,13 +46,15 @@ The file-backed endpoint has these durable and asynchronous parts:
    verdict authority. A prepared journal without an accepted authority report
    grants no projection or integration authority.
    `RemoteReviewSettlementJournal.PrepareAndSettle` serializes journal write,
-   settlement and release: when the authority refuses the report (stale fence,
+   settlement and release per attempt (reports for other attempts never wait): when the authority refuses the report (stale fence,
    superseded, subject mismatch, invalid replay) the journal is deleted in the
    same step, so a rejected request never binds the attempt to its payload.
    An unaccepted journal left by process death is an orphan: the next report
    replaces it, and the reconciler releases it once the attempt is terminal.
-   Only an accepted report owns the journal; another key or payload is then
-   answered by the authority and leaves the journal untouched. The journaled
+   Only an accepted report owns the journal; another key is then answered by
+   the authority and leaves the journal untouched. A different payload under
+   the accepted key returns `409 idempotency-conflict`, including a replay that
+   raced past the endpoint's replay check. The journaled
    delivery decision carries the outcome the authority settles (for example
    `Pass`), never the raw report spelling; a journal whose delivery outcome
    differs reads as corrupt. The endpoint writes the
@@ -83,9 +85,16 @@ integration and lane work. Every replay checks the current ReviewAttempt id,
 accepted report key, immutable subject SHA, and tested result SHA. A missing journal with missing
 evidence, corrupt journal, mismatched payload, or exhausted projection yields a
 typed repair state; a terminal `Pass` alone never supplies a gate verdict.
+A repair is logged once per task and review generation, not on every tick. An
+archived card has no lane continuation: once its current review reconciles to
+`Complete`, `NoWork` or `Repair`, ordinary ticks skip it until a new review
+generation appears; a restarted process reconciles the whole archive once.
 The integration coordinator checks the review generation again when a queued
 delivery starts, after any wait behind another delivery. A superseded queued
 item completes with a typed error without running Git or a recovery round.
+After the runner returns, the coordinator never relabels its result: a merge
+the publication fence admitted stays merged. A superseded conflict starts no
+integration agent round.
 
 Successor fencing is ordered, not only checked.
 `AttemptAuthorityService.TryApplyForCurrentReview` runs an effect under the
@@ -107,7 +116,9 @@ are:
   `publicationFence`. Merge and gate stay local; enqueueing the origin push is
   the commit point and runs inside the fence. A refused publication resets the
   local integration branches to their synchronized tips and returns
-  `superseded-review-generation` without publishing anything.
+  `superseded-review-generation` without publishing anything. A clean
+  rollback is routine supersession and raises no failure intervention; a
+  failed rollback does.
 - **Lane move.** The endpoint and `AutoReviewDeliveryResumeService` check the
   current generation immediately before the move. The state-machine move is not
   run under the continuation gate, so this remains a check, not a fenced commit.
@@ -385,6 +396,9 @@ knows that.
 | Evidence retries follow the journaled failure count across restarts; a defect is a typed repair without retries | `backend.Tests/AutoReviewRestartDrillTests.cs`: `Evidence_retry_uses_the_journaled_failure_count_for_delay_and_exhaustion`, `Non_transient_evidence_failure_is_a_typed_repair_without_retry`. |
 | The journaled delivery decision carries the authority outcome, and one policy restores the sidecar | `backend.Tests/AutoReviewRestartDrillTests.cs`: `Journaled_delivery_carries_the_authority_outcome_not_the_report_spelling`, `Journaled_delivery_restores_the_sidecar_only_for_an_auto_review_card_without_one`. |
 | A successor prevents queued stale integration | `backend.Tests/RemoteDeliveryIntegrationTests.cs`: `Queued_delivery_from_superseded_review_never_starts_integration` holds a preceding delivery, supersedes the queued attempt, then checks the stale request never calls the integration runner. |
+| A successor after the publication fence never relabels a published merge; a superseded conflict starts no agent round; a clean supersession raises no intervention | `backend.Tests/RemoteDeliveryIntegrationTests.cs`: `Successor_after_a_published_merge_keeps_the_true_merge_result`, `Superseded_conflict_starts_no_agent_round`; `backend.Tests/MergeIntoDevelopRunnerTests.cs`: `RunAsync_RefusedPublicationFence_RaisesNoFailureIntervention`. |
+| A changed payload under the accepted key is an idempotency conflict on every path; the journal gate is per attempt | `backend.Tests/AutoReviewRestartDrillTests.cs`: `Replayed_report_key_keeps_one_canonical_payload`, `Journal_gate_serializes_one_attempt_without_blocking_another`. |
+| The reconciler logs a repair once per generation and skips settled archived cards on ordinary ticks | `backend.Tests/AutoReviewRestartDrillTests.cs`: `Reconciler_reports_a_repair_once_per_review_generation`, `Reconciler_skips_a_settled_archived_card_on_ordinary_ticks`. |
 | A review Pass recorded before a restart reaches integration afterwards, without a new review | `backend.Tests/AutoReviewRestartDrillTests.cs`: `Restart_before_integration_starts_integrates_afterwards_without_a_new_review` (asserts the delivery reaches `develop`, the card reaches Human Review, and the task still has exactly one ReviewAttempt). |
 | A gate killed after a later gate published its merge completes on the next pass without re-merging | `backend.Tests/AutoReviewRestartDrillTests.cs`: `A_delivery_published_by_a_later_gate_completes_on_the_next_pass_without_remerging` (develop's tip is unchanged across the resume). |
 | `deferral-exhausted` is never logged for a card with a terminal Pass attempt | `backend.Tests/AutoReviewPostProcessingWorkerTests.cs`: `ApplyOutcome_DeliveryResumeWait_NeverExhaustsTheDeferralBudget`, `ApplyOutcome_IntegrationCompletionWait_NeverExhaustsTheDeferralBudget`, `ApplyOutcome_RegisteredExecutor_ResetsTheBudgetInsteadOfExhaustingIt`, with `ApplyOutcome_IdleExecutorWait_StillExhaustsTheDeferralBudget` as the counter-example that keeps AGT-2842's backoff. |

@@ -822,6 +822,9 @@ public static class V1ReviewPlaneEndpoints
                     "The accepted report has no matching settlement journal."),
                     statusCode: StatusCodes.Status503ServiceUnavailable);
             }
+            if (RemoteReviewSettlementJournal.IsIdempotencyConflict(settled))
+                return Results.Conflict(new Contract.ApiError("idempotency-conflict",
+                    "The review report key is bound to a different payload."));
             if (!settled.Accepted || settled.ReviewAttempt is null)
                 return AttemptError(settled);
 
@@ -1413,11 +1416,10 @@ public static class V1ReviewPlaneEndpoints
                             != attemptId)
                             return Results.Conflict(new Contract.ApiError("superseded-review-generation",
                                 "A successor review generation owns this task."));
+                        // The merge runner's publication fence is the commit point: a
+                        // published merge is recorded as such, and the lane move below
+                        // is what a successor still refuses.
                         var integrated = await remoteIntegration.EnqueueAsync(integrationRequest).ConfigureAwait(false);
-                        if (authority.GetTaskProjection(settled.ReviewAttempt.TaskKey).CurrentReviewAttempt?.AttemptId
-                            != attemptId)
-                            return Results.Conflict(new Contract.ApiError("superseded-review-generation",
-                                "A successor review generation owns this task."));
                         integrationOutcome = integrated.Outcome.ToString();
                         integrationParkReason = integrated.AutomaticRecoveryDetail;
                     }

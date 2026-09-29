@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -35,7 +36,14 @@ public sealed record RemoteReviewSettlementRead(
 public static class RemoteReviewSettlementJournal
 {
     private const string Prefix = "remote-review-settlement-";
-    private static readonly object Gate = new();
+    private const string IdempotencyConflictMessage = "idempotency-conflict";
+
+    /// <summary>
+    /// Per-attempt gates: only reports for the same attempt share a journal, so
+    /// a slow settlement never stalls another review. One small object per
+    /// attempt settled in this process.
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, object> Gates = new(StringComparer.Ordinal);
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private static readonly JsonSerializerOptions HashJson = new(JsonSerializerDefaults.Web);
 
@@ -82,9 +90,11 @@ public static class RemoteReviewSettlementJournal
 
     /// <summary>
     /// Journals the payload, settles the authority and releases the journal when
-    /// the authority refuses it, as one step per journal gate. A rejected or
+    /// the authority refuses it, as one step per attempt gate. A rejected or
     /// interrupted request therefore never binds the attempt to its payload:
-    /// only an accepted report owns the journal.
+    /// only an accepted report owns the journal. A different payload under the
+    /// accepted key is refused as an idempotency conflict
+    /// (<see cref="IsIdempotencyConflict"/>) without reaching the authority.
     /// </summary>
     public static AttemptWriteResult PrepareAndSettle(
         string folder,
@@ -92,13 +102,18 @@ public static class RemoteReviewSettlementJournal
         Func<string?> acceptedIdempotencyKey,
         Func<AttemptWriteResult> settle)
     {
-        lock (Gate)
+        lock (Gates.GetOrAdd(entry.AttemptId, _ => new object()))
         {
             var accepted = acceptedIdempotencyKey();
             // An accepted report owns the journal. A different key cannot settle
             // this attempt any more, so the authority answers it untouched.
             if (accepted is not null && accepted != entry.IdempotencyKey) return settle();
             var existing = Read(folder, entry.AttemptId);
+            // A replay that raced past the endpoint's replay check: the authority
+            // would answer Duplicate for the key without seeing the payload.
+            if (accepted is not null && existing.Entry is { } bound
+                && bound.IdempotencyKey == entry.IdempotencyKey && bound.ReportSha256 != entry.ReportSha256)
+                return new AttemptWriteResult(AttemptWriteStatus.InvalidState, entry.AttemptId, IdempotencyConflictMessage);
             var owned = existing.Entry is { } prior
                         && prior.IdempotencyKey == entry.IdempotencyKey
                         && prior.ReportSha256 == entry.ReportSha256;
@@ -123,6 +138,11 @@ public static class RemoteReviewSettlementJournal
             return settled;
         }
     }
+
+    /// <summary>True when <see cref="PrepareAndSettle"/> refused a changed payload under the accepted key.</summary>
+    public static bool IsIdempotencyConflict(AttemptWriteResult result)
+        => result.Status == AttemptWriteStatus.InvalidState
+           && string.Equals(result.Message, IdempotencyConflictMessage, StringComparison.Ordinal);
 
     /// <summary>Deletes the journal of an attempt whose authority accepted no report.</summary>
     public static void Release(string folder, string attemptId)

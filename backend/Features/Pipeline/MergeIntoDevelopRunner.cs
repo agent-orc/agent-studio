@@ -460,7 +460,8 @@ public sealed class MergeIntoDevelopRunner
             // continuation. The fence enqueues the push only while its review is
             // still current; a successor refuses it and the unpublished local
             // merge is rolled back to the synchronized anchors.
-            var published = false;
+            var pushDecidedByFence = false;
+            var supersededCleanly = false;
             if (publicationFence is not null
                 && (pushBranch is not null || result.Outcome.IsSuccessfulIntegration()))
             {
@@ -474,25 +475,30 @@ public sealed class MergeIntoDevelopRunner
                                 admittedPushBranch, admittedPushSha, pipelineType);
                     }))
                 {
-                    result = RollBackSupersededPublication(repoRoot, fenceAnchors);
+                    result = RollBackSupersededPublication(repoRoot, fenceAnchors, out supersededCleanly);
                     preMainResult = null;
                     preDevelopResult = null;
                 }
-                published = true;
+                pushDecidedByFence = true;
             }
             _logger.LogInformation(
                 "merge-into-develop project={Project} job={JobId} delivery={Delivery} integration={Integration} strategy={Strategy} outcome={Outcome}",
                 project, jobId, taskBranch, branch, strategy, result.Outcome);
             Record(jobFolderPath, project, jobId, branch, result, preMainResult, preDevelopResult, startedAt);
-            await MaybeRaiseInterventionAsync(project, jobId, watchPath, result,
-                preMainResult, preDevelopResult, startedAt, ct).ConfigureAwait(false);
+            // A cleanly rolled-back supersession is routine, not a failure; only
+            // a failed rollback needs the operator.
+            if (!supersededCleanly)
+            {
+                await MaybeRaiseInterventionAsync(project, jobId, watchPath, result,
+                    preMainResult, preDevelopResult, startedAt, ct).ConfigureAwait(false);
+            }
 
             // AGT-1999: once the accepted task is folded into the integration
             // branch, push that branch to origin so integration is never only
             // local. Offloaded to the background worker (the same "not on the
             // request path" strategy as the completed-job workspace push), so the
             // accept transition never awaits the network round-trip.
-            if (!published && pushBranch is not null)
+            if (!pushDecidedByFence && pushBranch is not null)
             {
                 MaybeEnqueueIntegrationPush(
                     project,
@@ -1396,7 +1402,8 @@ public sealed class MergeIntoDevelopRunner
     /// </summary>
     private MergeIntoIntegrationResult RollBackSupersededPublication(
         string repoRoot,
-        IReadOnlyDictionary<string, string> anchors)
+        IReadOnlyDictionary<string, string> anchors,
+        out bool rolledBack)
     {
         var failures = new List<string>();
         foreach (var (anchoredBranch, anchorSha) in anchors)
@@ -1406,6 +1413,7 @@ public sealed class MergeIntoDevelopRunner
             var reset = _git.ResetIntegrationBranch(repoRoot, anchoredBranch, anchorSha);
             if (!reset.Success) failures.Add($"{anchoredBranch}: {reset.Error ?? "reset failed"}");
         }
+        rolledBack = failures.Count == 0;
         return MergeIntoIntegrationResult.Of(
             MergeIntoIntegrationOutcome.Error,
             error: failures.Count == 0

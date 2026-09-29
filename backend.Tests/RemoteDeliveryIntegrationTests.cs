@@ -321,6 +321,59 @@ public sealed class RemoteDeliveryIntegrationCoordinatorTests
         Assert.Equal("superseded-review-generation", skipped.Error);
     }
 
+    /// <summary>
+    /// AGT-2936 code-quality: the merge runner's publication fence is the commit
+    /// point. A successor created after the fence admitted the publication must
+    /// not relabel the published merge as a superseded error.
+    /// </summary>
+    [Fact]
+    public async Task Successor_after_a_published_merge_keeps_the_true_merge_result()
+    {
+        var current = true;
+        var mergedSha = new string('a', 40);
+        var coordinator = new RemoteDeliveryIntegrationCoordinator(
+            _ =>
+            {
+                current = false;
+                return Task.FromResult(MergeIntoIntegrationResult.Of(
+                    MergeIntoIntegrationOutcome.Merged, mergedSha: mergedSha));
+            },
+            NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance,
+            isCurrentReview: _ => current);
+
+        var result = await coordinator.EnqueueAsync(Request("published", 1) with { ReviewAttemptId = "review-old" })
+            .WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, result.Outcome);
+        Assert.Equal(mergedSha, result.MergedSha);
+    }
+
+    [Fact]
+    public async Task Superseded_conflict_starts_no_agent_round()
+    {
+        var current = true;
+        var rounds = 0;
+        var coordinator = new RemoteDeliveryIntegrationCoordinator(
+            _ =>
+            {
+                current = false;
+                return Task.FromResult(MergeIntoIntegrationResult.Conflicted(["a.txt"], "conflict"));
+            },
+            NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance,
+            startAgentRound: (_, _) =>
+            {
+                rounds++;
+                return Task.FromResult(new IntegrationAgentRoundStartResult(true, "started"));
+            },
+            isCurrentReview: _ => current);
+
+        var result = await coordinator.EnqueueAsync(Request("conflicted", 1) with { ReviewAttemptId = "review-old" })
+            .WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(MergeIntoIntegrationOutcome.Conflict, result.Outcome);
+        Assert.Equal(0, rounds);
+    }
+
     private static RemoteDeliveryIntegrationRequest Request(string jobId, int minute)
         => new(
             "project",

@@ -316,14 +316,19 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                     delivery.Sequence,
                     delivery.Request.DeliveredAtUtc);
                 var result = await _integrate(delivery.Request).ConfigureAwait(false);
-                if (!_isCurrentReview(delivery.Request))
+                // The runner's publication fence already decided a merge; its
+                // result stays true. Only an unmerged delivery could still start
+                // a stale repair round, which a successor refuses.
+                if (result.Outcome is MergeIntoIntegrationOutcome.AgentRoundRequired or MergeIntoIntegrationOutcome.Conflict
+                    && !_isCurrentReview(delivery.Request))
                 {
-                    CompleteDelivery(delivery, MergeIntoIntegrationResult.Of(
-                        MergeIntoIntegrationOutcome.Error,
-                        error: MergeIntoDevelopRunner.SupersededReviewGenerationError));
-                    continue;
+                    _logger.LogInformation(
+                        "remote-delivery-integration continuation project={Project} job={JobId} started=False reason={Reason}",
+                        delivery.Request.Project,
+                        delivery.Request.JobId,
+                        MergeIntoDevelopRunner.SupersededReviewGenerationError);
                 }
-                if (result.Outcome is MergeIntoIntegrationOutcome.AgentRoundRequired or MergeIntoIntegrationOutcome.Conflict)
+                else if (result.Outcome is MergeIntoIntegrationOutcome.AgentRoundRequired or MergeIntoIntegrationOutcome.Conflict)
                 {
                     var continuation = await _startAgentRound(
                         delivery.Request,

@@ -183,28 +183,35 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         var acceptedKey = () => seeded.Authority.GetReview(card.ReviewAttemptId)!.Reports
             .LastOrDefault(report => report.AuthorityStatus == AttemptWriteStatus.Accepted)?.IdempotencyKey;
         var settleCalls = 0;
-        var changed = entry.Report with { Summary = "Different verdict detail." };
-        // The accepted key owns the journal: a changed payload under it, and any
-        // other key, is answered by the authority and never rebinds the journal.
-        foreach (var candidate in new[]
-                 {
-                     entry with { Report = changed, ReportSha256 = RemoteReviewSettlementJournal.Hash(changed) },
-                     entry with
-                     {
-                         IdempotencyKey = "other-key",
-                         Report = changed with { IdempotencyKey = "other-key" },
-                         ReportSha256 = RemoteReviewSettlementJournal.Hash(changed with { IdempotencyKey = "other-key" }),
-                     },
-                 })
+        AttemptWriteResult CountedSettle()
         {
-            var refused = RemoteReviewSettlementJournal.PrepareAndSettle(card.FolderPath, candidate, acceptedKey,
-                () =>
-                {
-                    settleCalls++;
-                    return new AttemptWriteResult(AttemptWriteStatus.Invalid, card.ReviewAttemptId);
-                });
-            Assert.Equal(AttemptWriteStatus.Invalid, refused.Status);
+            settleCalls++;
+            return new AttemptWriteResult(AttemptWriteStatus.Duplicate, card.ReviewAttemptId);
         }
+        var changed = entry.Report with { Summary = "Different verdict detail." };
+        // The accepted key owns the journal. A changed payload under it is an
+        // idempotency conflict even when it raced past the endpoint's replay
+        // check; the authority would only answer Duplicate for its key.
+        var conflict = RemoteReviewSettlementJournal.PrepareAndSettle(card.FolderPath,
+            entry with { Report = changed, ReportSha256 = RemoteReviewSettlementJournal.Hash(changed) },
+            acceptedKey, CountedSettle);
+        Assert.True(RemoteReviewSettlementJournal.IsIdempotencyConflict(conflict));
+        Assert.False(conflict.Accepted);
+        Assert.Equal(0, settleCalls);
+        // Any other key is answered by the authority and never rebinds the journal.
+        var otherKey = RemoteReviewSettlementJournal.PrepareAndSettle(card.FolderPath,
+            entry with
+            {
+                IdempotencyKey = "other-key",
+                Report = changed with { IdempotencyKey = "other-key" },
+                ReportSha256 = RemoteReviewSettlementJournal.Hash(changed with { IdempotencyKey = "other-key" }),
+            },
+            acceptedKey, CountedSettle);
+        Assert.False(RemoteReviewSettlementJournal.IsIdempotencyConflict(otherKey));
+        Assert.Equal(1, settleCalls);
+        // The same payload under the accepted key stays an ordinary duplicate.
+        var replay = RemoteReviewSettlementJournal.PrepareAndSettle(card.FolderPath, entry, acceptedKey, CountedSettle);
+        Assert.Equal(AttemptWriteStatus.Duplicate, replay.Status);
         Assert.Equal(2, settleCalls);
         Assert.Equal(entry.ReportSha256,
             RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId).Entry!.ReportSha256);
@@ -324,6 +331,108 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
             reconciler.Reconcile(stack.Scanner.FindJob(card.Id, _watchPath)!));
         Assert.Equal(RemoteReviewSettlementReadStatus.Missing,
             RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId).Status);
+    }
+
+    /// <summary>
+    /// AGT-2936 code-quality: the journal gate is per attempt. A slow settlement
+    /// of one review still serializes its own attempt but never stalls another.
+    /// </summary>
+    [Fact]
+    public async Task Journal_gate_serializes_one_attempt_without_blocking_another()
+    {
+        var stack = Build();
+        var card = SeedPassedDelivery(stack, "journal-gate", settleReview: false);
+        var entry = JournalEntry(card, stack);
+        var folderA = Path.Combine(_root, "journal-gate-a");
+        var folderB = Path.Combine(_root, "journal-gate-b");
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        AttemptWriteResult Accepted(string attemptId) => new(AttemptWriteStatus.Accepted, attemptId);
+
+        var slow = Task.Run(() => RemoteReviewSettlementJournal.PrepareAndSettle(
+            folderA, entry with { AttemptId = "review_gate_a" }, () => null, () =>
+            {
+                entered.Set();
+                release.Wait(TimeSpan.FromSeconds(30));
+                return Accepted("review_gate_a");
+            }));
+        Assert.True(entered.Wait(TimeSpan.FromSeconds(10)));
+        Task<AttemptWriteResult> sameAttempt;
+        try
+        {
+            var other = Task.Run(() => RemoteReviewSettlementJournal.PrepareAndSettle(
+                folderB, entry with { AttemptId = "review_gate_b" }, () => null, () => Accepted("review_gate_b")));
+            Assert.Same(other, await Task.WhenAny(other, Task.Delay(TimeSpan.FromSeconds(10))));
+            Assert.Equal(AttemptWriteStatus.Accepted, (await other).Status);
+
+            sameAttempt = Task.Run(() => RemoteReviewSettlementJournal.PrepareAndSettle(
+                folderA, entry with { AttemptId = "review_gate_a" }, () => null, () => Accepted("review_gate_a")));
+            Assert.NotSame(sameAttempt, await Task.WhenAny(sameAttempt, Task.Delay(TimeSpan.FromMilliseconds(300))));
+        }
+        finally
+        {
+            release.Set();
+        }
+        Assert.Equal(AttemptWriteStatus.Accepted, (await slow).Status);
+        Assert.Equal(AttemptWriteStatus.Accepted, (await sameAttempt.WaitAsync(TimeSpan.FromSeconds(10))).Status);
+    }
+
+    /// <summary>
+    /// AGT-2936 code-quality: an unrecoverable card is reported once per review
+    /// generation, not on every 30-second tick.
+    /// </summary>
+    [Fact]
+    public async Task Reconciler_reports_a_repair_once_per_review_generation()
+    {
+        var seeded = Build();
+        var card = SeedPassedDelivery(seeded, "journal-repair-once");
+        var restarted = Build();
+        var entries = new List<string>();
+        var reconciler = new RemoteReviewSettlementReconciler(
+            restarted.Scanner, restarted.Authority, new RemoteReviewEvidenceProjectionQueue(), restarted.Resume,
+            new CollectingLogger<RemoteReviewSettlementReconciler>(entries));
+
+        await reconciler.RunOnceAsync();
+        await reconciler.RunOnceAsync();
+        await reconciler.RunOnceAsync();
+
+        Assert.Single(entries, entry => entry.Contains("remote-review-settlement-repair-required", StringComparison.Ordinal)
+            && entry.Contains(card.TaskKey, StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// AGT-2936 code-quality: an archived card has no lane continuation. Once
+    /// its current review reconciled to a settled status, ordinary ticks skip it
+    /// instead of re-reading its folder; a new review generation re-admits it.
+    /// </summary>
+    [Fact]
+    public async Task Reconciler_skips_a_settled_archived_card_on_ordinary_ticks()
+    {
+        var stack = Build();
+        var card = SeedPassedDelivery(stack, "journal-archived", lane: TaskStates.Archive);
+        RemoteReviewSettlementJournal.Write(card.FolderPath, JournalEntry(card, stack) with { EvidenceComplete = true });
+        var evidence = Path.Combine(card.FolderPath, RemoteReviewReportEvidence.EvidenceFileName(card.ReviewAttemptId));
+        File.WriteAllText(evidence, "{}");
+        var entries = new List<string>();
+        var reconciler = new RemoteReviewSettlementReconciler(
+            stack.Scanner, stack.Authority, new RemoteReviewEvidenceProjectionQueue(), stack.Resume,
+            new CollectingLogger<RemoteReviewSettlementReconciler>(entries));
+        Assert.Equal(RemoteReviewSettlementReconcileStatus.Complete,
+            reconciler.Reconcile(stack.Scanner.FindJob(card.Id, _watchPath)!));
+
+        await reconciler.RunOnceAsync();
+        // Re-reading the folder now would report a repair; a settled archived
+        // card is not re-read.
+        File.Delete(evidence);
+        await reconciler.RunOnceAsync();
+        Assert.DoesNotContain(entries, entry => entry.Contains(card.TaskKey, StringComparison.Ordinal));
+
+        // A fresh process reconciles the whole archive once at startup.
+        var restarted = new RemoteReviewSettlementReconciler(
+            stack.Scanner, stack.Authority, new RemoteReviewEvidenceProjectionQueue(), stack.Resume,
+            new CollectingLogger<RemoteReviewSettlementReconciler>(entries));
+        await restarted.RunOnceAsync();
+        Assert.Single(entries, entry => entry.Contains(card.TaskKey, StringComparison.Ordinal));
     }
 
     [Fact]
@@ -857,7 +966,11 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
     /// whose canonical ReviewAttempt has settled Pass - the durable state the
     /// backend had for AGT-2855 at 08:39.
     /// </summary>
-    private SeededCard SeedPassedDelivery(Stack stack, string id, bool settleReview = true)
+    private SeededCard SeedPassedDelivery(
+        Stack stack,
+        string id,
+        bool settleReview = true,
+        string lane = TaskStates.AutoReview)
     {
         Git(_repo, "checkout", "-q", "-b", "task/" + id, "develop");
         File.WriteAllText(Path.Combine(_repo, id + ".txt"), id + "\n");
@@ -867,7 +980,7 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         Git(_repo, "checkout", "-q", "develop");
 
         var taskKey = "AGT-" + id;
-        var folder = Path.Combine(_watchPath, TaskStates.AutoReview, id);
+        var folder = Path.Combine(_watchPath, lane, id);
         Directory.CreateDirectory(folder);
         File.WriteAllText(
             Path.Combine(folder, "task.json"),
@@ -877,7 +990,7 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
                     id,
                     key = taskKey,
                     title = id,
-                    state = TaskStates.AutoReview,
+                    state = lane,
                     order = 1,
                     agent = "codex",
                     cliType = "codex",
@@ -1063,6 +1176,21 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         attribution = "automatic",
         confidence = 1,
     };
+
+    private sealed class CollectingLogger<T>(List<string> entries) : ILogger<T>
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            lock (entries) entries.Add(formatter(state, exception));
+        }
+    }
 
     private sealed record SeededCard(
         string Id,

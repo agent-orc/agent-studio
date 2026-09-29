@@ -1511,6 +1511,98 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         Assert.False(queue.Reader.TryRead(out _), "a refused continuation must not publish");
     }
 
+    /// <summary>
+    /// AGT-2936 code-quality: a refused publication fence is routine
+    /// supersession, not an integration failure. With failure intervention
+    /// enabled, the cleanly rolled-back refusal raises no operator intervention.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_RefusedPublicationFence_RaisesNoFailureIntervention()
+    {
+        var repo = SeedRepo("run-fence-no-intervention");
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "checkout -q -b task/48");
+        File.WriteAllText(Path.Combine(repo, "task.txt"), "task work");
+        Commit(repo, "feat: task work");
+        RunGit(repo, "checkout -q develop");
+        var before = RunGit(repo, "rev-parse refs/heads/develop").Out.Trim();
+
+        var watchPath = Path.Combine(_tempDir, "run-fence-no-intervention-jobs");
+        foreach (var state in TaskStates.All) Directory.CreateDirectory(Path.Combine(watchPath, state));
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["WatchPaths:0:Name"] = "Fixture",
+            ["WatchPaths:0:Path"] = watchPath,
+            ["WatchPaths:0:RootPath"] = repo,
+            ["WatchPaths:0:RepositoryPath"] = repo,
+            ["TaskRepository"] = Path.Combine(_tempDir, "run-fence-no-intervention-store"),
+        }).Build();
+        var scanner = new TaskScannerService(
+            config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
+        var mutations = new TaskMutationService(
+            scanner,
+            new ClientIdentityStore(config, NullLogger<ClientIdentityStore>.Instance),
+            new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance),
+            new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance),
+            NullLogger<TaskMutationService>.Instance,
+            timeline);
+        var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
+        settings.SetPipelineStep("Fixture", PipelineCatalogue.FailureInterventionStepId,
+            new PipelineStepSetting { Enabled = true });
+        var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
+        var pipeline = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var classified = 0;
+        var interventions = new FailureInterventionService(
+            mutations, scanner, timeline, new OrchestratorLog(NullLogger<OrchestratorLog>.Instance),
+            NullLogger<FailureInterventionService>.Instance,
+            new RuntimePromptService(config, NullLogger<RuntimePromptService>.Instance),
+            projectSettings: settings, pipelineLog: pipeline)
+        {
+            AmbiguousClassifier = _ =>
+            {
+                classified++;
+                return Task.FromResult(new FailureClassificationResult(
+                    "integration", "integration-error", "fingerprint-48", "signature", false, "test"));
+            },
+        };
+        var folder = Path.Combine(watchPath, TaskStates.AutoReview, "48");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(
+            Path.Combine(folder, "task.json"),
+            JsonSerializer.Serialize(
+                new
+                {
+                    id = "48",
+                    key = "AGT-48",
+                    title = "48",
+                    state = TaskStates.AutoReview,
+                    order = 1,
+                    agent = "codex",
+                    cliType = "codex",
+                    mode = TaskModes.Coding,
+                    projectName = "Fixture",
+                    ownerClientId = DefaultClientIdentity.Id,
+                },
+                new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
+        File.WriteAllText(Path.Combine(folder, "prompt.md"), "Implement 48.\n");
+        pipeline.Begin(folder, PipelineCatalogue.Standard, "Fixture", "48");
+        Assert.NotNull(scanner.FindJob("48", watchPath));
+        var runner = new MergeIntoDevelopRunner(
+            git, pipeline, NullLogger<MergeIntoDevelopRunner>.Instance,
+            projectSettings: settings, taskScanner: scanner, failureInterventions: interventions);
+
+        var outcome = await runner.RunAsync(
+            "Fixture", "48", folder, watchPath, "develop", CancellationToken.None,
+            publicationFence: _ => false);
+
+        Assert.StartsWith(MergeIntoDevelopRunner.SupersededReviewGenerationError, outcome.Error);
+        Assert.Equal(before, RunGit(repo, "rev-parse refs/heads/develop").Out.Trim());
+        Assert.Equal(0, classified);
+        Assert.DoesNotContain(scanner.ScanAllJobs(), task => task.Title.StartsWith("Intervention:", StringComparison.Ordinal));
+    }
+
     [Fact]
     public async Task RunAsync_AdmittedPublicationFence_PublishesInsideTheFence()
     {

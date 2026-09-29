@@ -31,19 +31,6 @@ public sealed class RemotePipelineReviewEvidenceProjector
         _settings = settings;
     }
 
-    public Task ProjectAsync(
-        TaskInfo task,
-        ReviewAttemptDto review,
-        Contract.ReviewReportRequest report,
-        string evidenceFile,
-        DateTime receivedAt,
-        CancellationToken ct)
-    {
-        ct.ThrowIfCancellationRequested();
-        Project(task, review, report, evidenceFile, receivedAt);
-        return Task.CompletedTask;
-    }
-
     /// <summary>
     /// Synchronous so the evidence worker can apply the task-level projection
     /// (aspect files, pipeline steps, timeline) inside the review-generation
