@@ -472,8 +472,11 @@ export class TaskDetailComponent implements OnDestroy {
     }
   });
 
+  private dbgLast: unknown = null;
   private detailEffect = effect(() => {
     const d = this.detail();
+    console.log('DBGFX', d === this.dbgLast ? 'same-detail' : 'new-detail', d.info === (this.dbgLast as TaskDetail | null)?.info ? 'same-info' : 'new-info');
+    this.dbgLast = d;
     const isJobSwitch = this.currentJobKey !== d.info.taskKey;
     this.currentJobKey = d.info.taskKey;
     // Keep GitPaneService in sync with the open job; resets internal
