@@ -302,6 +302,13 @@ public sealed class DurableHandoffRecoveryTests : IDisposable
         var recovery = new DurableHandoffRecovery(options, client, _ => { });
 
         await recovery.RecoverAllAsync(default);
+        if (!artifactUploadWasAcknowledged)
+        {
+            // A completed run can reopen its artifact-only outbox without
+            // trying to renew the completed lease or executing coding again.
+            DurableRunOutbox.Open(Path.Combine(_root, "outbox"), authority)
+                .RecordHandoffState("artifact-replay");
+        }
         await recovery.RecoverAllAsync(default);
 
         var envelope = Assert.IsType<ImmutableResultEnvelope>(handler.LastEnvelope);
@@ -311,7 +318,7 @@ public sealed class DurableHandoffRecoveryTests : IDisposable
         Assert.Equal(1, handler.HandoffCalls);
         Assert.Equal(1, handler.CompletionCalls);
         Assert.Equal(1, handler.RenewalCalls);
-        Assert.Equal(artifactUploadWasAcknowledged ? 0 : 1, handler.ArtifactCalls);
+        Assert.Equal(artifactUploadWasAcknowledged ? 0 : 2, handler.ArtifactCalls);
         Assert.Equal(0, handler.CodingProcessCalls);
 
         var reader = Path.Combine(_root, "read-only-reconstruction");
