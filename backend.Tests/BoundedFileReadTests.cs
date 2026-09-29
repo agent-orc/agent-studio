@@ -160,6 +160,37 @@ public sealed class BoundedFileReadTests : IDisposable
         Assert.Equal(whole.Length <= maxChars ? whole : whole[^maxChars..], tail);
     }
 
+    public static TheoryData<string, int> BomEncodedTails() => new()
+    {
+        { "utf-16le", 5 }, { "utf-16le", 64 }, { "utf-16le", 16_001 },
+        { "utf-16be", 5 }, { "utf-16be", 16_001 },
+        { "utf-32le", 7 }, { "utf-32le", 16_001 },
+        { "utf-32be", 7 }, { "utf-32be", 16_001 },
+    };
+
+    [Theory]
+    [MemberData(nameof(BomEncodedTails))]
+    public void ReadTailChars_BomEncodedLargeFile_MatchesTheSuffixOfTheWholeFileRead(string encodingName, int maxChars)
+    {
+        // Odd prefix length and astral characters put the byte window start
+        // off the code-unit grid and inside surrogate pairs (AGT-2991 review).
+        Encoding encoding = encodingName switch
+        {
+            "utf-16le" => new UnicodeEncoding(bigEndian: false, byteOrderMark: true),
+            "utf-16be" => new UnicodeEncoding(bigEndian: true, byteOrderMark: true),
+            "utf-32le" => new UTF32Encoding(bigEndian: false, byteOrderMark: true),
+            _ => new UTF32Encoding(bigEndian: true, byteOrderMark: true),
+        };
+        var path = Path.Combine(_dir, "review.md");
+        File.WriteAllText(path, "#\n" + string.Concat(Enumerable.Repeat("résumé \U0001F600 ✓ line\n", 5_000)), encoding);
+        var whole = File.ReadAllText(path);
+        Assert.True(new FileInfo(path).Length > maxChars * 4L);
+
+        var tail = BoundedFileRead.ReadTailChars(path, maxChars);
+
+        Assert.Equal(whole[^maxChars..], tail);
+    }
+
     [Fact]
     public void ReadTailChars_ShortFile_ReturnsWholeFileWithoutBom()
     {

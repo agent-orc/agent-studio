@@ -126,30 +126,73 @@ public static class BoundedFileRead
     /// <summary>
     /// Returns the last <paramref name="maxChars"/> characters of the file,
     /// the same value as <c>File.ReadAllText(path)[^maxChars..]</c> for a
-    /// longer file, while reading at most four bytes per character.
+    /// longer file, while reading at most four bytes per character. Like
+    /// <see cref="File.ReadAllText(string)"/>, a UTF-16 or UTF-32 byte-order
+    /// mark selects the encoding; the tail window is then aligned to that
+    /// encoding's code units so it never starts inside one.
     /// </summary>
     public static string ReadTailChars(string path, int maxChars)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxChars);
         var maxBytes = checked(maxChars * 4);
         using var stream = OpenShared(path);
-        string text;
         if (stream.Length <= maxBytes)
         {
             var whole = ReadUpTo(stream, maxBytes);
-            text = Decode(whole, whole.Length);
+            return Suffix(Decode(whole, whole.Length), maxChars);
+        }
+
+        var (bomLength, unitBytes, bigEndian) = DetectBom(ReadUpTo(stream, 4));
+        // UTF-16 needs two bytes per char; UTF-8 and UTF-32 at most four.
+        var windowBytes = unitBytes == 2 ? checked(maxChars * 2) : maxBytes;
+        var windowStart = stream.Length - windowBytes;
+        windowStart -= (windowStart - bomLength) % unitBytes;
+        stream.Seek(windowStart, SeekOrigin.Begin);
+        var window = ReadUpTo(stream, (int)(stream.Length - windowStart));
+
+        string text;
+        if (unitBytes == 2)
+        {
+            // Decode code units directly so a surrogate pair cut by the window
+            // keeps its low half, exactly as the whole-file suffix does.
+            var chars = new char[window.Length / 2];
+            for (var i = 0; i < chars.Length; i++)
+                chars[i] = bigEndian
+                    ? (char)((window[2 * i] << 8) | window[2 * i + 1])
+                    : (char)(window[2 * i] | (window[2 * i + 1] << 8));
+            text = new string(chars);
+        }
+        else if (unitBytes == 4)
+        {
+            text = new UTF32Encoding(bigEndian, byteOrderMark: false).GetString(window);
         }
         else
         {
-            stream.Seek(-maxBytes, SeekOrigin.End);
-            var window = ReadUpTo(stream, maxBytes);
             // Skip the continuation bytes of a sequence cut by the window start.
             var start = 0;
             while (start < window.Length && start < 3 && (window[start] & 0xC0) == 0x80) start++;
             text = Encoding.UTF8.GetString(window, start, window.Length - start);
         }
-        return text.Length <= maxChars ? text : text[^maxChars..];
+        return Suffix(text, maxChars);
     }
+
+    private static string Suffix(string text, int maxChars) =>
+        text.Length <= maxChars ? text : text[^maxChars..];
+
+    /// <summary>
+    /// Byte-order mark detection matching <see cref="StreamReader"/>: returns
+    /// the mark length, the code-unit width, and the byte order. Files without
+    /// a mark are UTF-8, the <see cref="File.ReadAllText(string)"/> default.
+    /// </summary>
+    private static (int BomLength, int UnitBytes, bool BigEndian) DetectBom(byte[] head) => head switch
+    {
+        [0xFF, 0xFE, 0x00, 0x00, ..] => (4, 4, false),
+        [0x00, 0x00, 0xFE, 0xFF, ..] => (4, 4, true),
+        [0xFF, 0xFE, ..] => (2, 2, false),
+        [0xFE, 0xFF, ..] => (2, 2, true),
+        [0xEF, 0xBB, 0xBF, ..] => (3, 1, false),
+        _ => (0, 1, false),
+    };
 
     /// <summary>
     /// Reads at most <paramref name="maxBytes"/> bytes from the start of the
