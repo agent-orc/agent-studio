@@ -4,6 +4,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
 import type { UsageCostProjection } from '../../models/usage-cockpit.model';
 import { buildCostChipView } from '../../usage-chip.util';
+import { injectUsageClock } from '../../usage-clock';
 
 /**
  * Today's workspace cost chip (HUC-S2): the USD token-ledger estimate from
@@ -22,13 +23,18 @@ import { buildCostChipView } from '../../usage-chip.util';
 export class UsageCostChipComponent {
   /** Cost projection; `null` while the cockpit snapshot loads. */
   readonly cost = input<UsageCostProjection | null>(null);
-  /** Reference time for staleness, in epoch milliseconds. */
-  readonly now = input<number>(Date.now());
+  /**
+   * Reference time for staleness, in epoch milliseconds. Without it the chip
+   * follows its own clock, so a snapshot that ages past its TTL turns stale.
+   */
+  readonly now = input<number | null>(null);
   readonly expanded = input(false);
   /** Id of the detail dialog this chip opens. */
   readonly controls = input<string | null>(null);
 
   readonly activate = output<void>();
 
-  readonly view = computed(() => buildCostChipView(this.cost(), this.now()));
+  private readonly clock = injectUsageClock();
+
+  readonly view = computed(() => buildCostChipView(this.cost(), this.now() ?? this.clock()));
 }

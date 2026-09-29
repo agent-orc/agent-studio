@@ -103,6 +103,12 @@ function isSecondaryModelWindow(label: string): boolean {
   return label.includes('spark');
 }
 
+/** Provider wording for a five-hour window; decides both the session match and the `5H` tag. */
+function isFiveHour(label: string): boolean {
+  const l = label.toLowerCase();
+  return l.includes('5h') || l.includes('5-hour') || l.includes('five-hour');
+}
+
 /** The provider window that plays the weekly or current-session role. */
 export function findWindow(windows: readonly UsageCliWindow[], kind: UsageWindowKind): UsageCliWindow | null {
   const candidates = windows.filter(w => !isSecondaryModelWindow(w.label.toLowerCase()));
@@ -110,15 +116,7 @@ export function findWindow(windows: readonly UsageCliWindow[], kind: UsageWindow
     const weekly = candidates.filter(w => w.label.toLowerCase().includes('week'));
     return weekly.find(w => w.label.toLowerCase().includes('all')) ?? weekly[0] ?? null;
   }
-  return candidates.find(w => {
-    const l = w.label.toLowerCase();
-    return l.includes('5h') || l.includes('5-hour') || l.includes('session');
-  }) ?? null;
-}
-
-function isFiveHour(label: string): boolean {
-  const l = label.toLowerCase();
-  return l.includes('5h') || l.includes('5-hour') || l.includes('five-hour');
+  return candidates.find(w => isFiveHour(w.label) || w.label.toLowerCase().includes('session')) ?? null;
 }
 
 export interface UsageWindowView {
@@ -267,7 +265,6 @@ export function buildCliChipView(
 
 export interface UsageCostChipView {
   state: UsageChipState;
-  stateLabel: string | null;
   /** Visible amount; `N/A` when unknown, empty while loading. */
   value: string;
   exact: string | null;
@@ -282,7 +279,7 @@ export interface UsageCostChipView {
 export function buildCostChipView(cost: UsageCostProjection | null, now: number): UsageCostChipView {
   if (!cost) {
     return {
-      state: 'loading', stateLabel: 'Loading', value: '', exact: null,
+      state: 'loading', value: '', exact: null,
       ariaLabel: "Today's cost, loading. Open cost detail.",
       detail: "Today's cost: loading",
     };
@@ -312,7 +309,6 @@ export function buildCostChipView(cost: UsageCostProjection | null, now: number)
   const spokenValue = unknown ? 'unavailable' : `${exact} USD ledger estimate`;
   return {
     state,
-    stateLabel,
     value: unknown ? NOT_AVAILABLE : formatUsdCompact(cost.todayUsd) ?? NOT_AVAILABLE,
     exact: unknown ? null : exact,
     ariaLabel: `Today's cost, ${spokenValue}.${stateClause ? ` ${stateClause}` : ''} Open cost detail.`,

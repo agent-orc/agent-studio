@@ -1,10 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TestBed } from '@angular/core/testing';
-import { provideZonelessChangeDetection, type Type } from '@angular/core';
+import { provideZonelessChangeDetection } from '@angular/core';
 
 import type { UsageCli } from '../../models/usage-cockpit.model';
-import { UsageCostChipComponent } from '../usage-cost-chip/usage-cost-chip';
-import { UsageSlotChipComponent } from '../usage-slot-chip/usage-slot-chip';
 import { UsageCliChipComponent } from './usage-cli-chip';
 
 const NOW = Date.parse('2026-09-25T14:58:00Z');
@@ -20,21 +18,23 @@ const codex: UsageCli = {
   availability: { status: 'complete', observedAt: '2026-09-25T14:55:00Z', ttlSeconds: 600 },
 };
 
-async function mount<T>(type: Type<T>, inputs: Record<string, unknown>) {
+async function mount(inputs: Record<string, unknown>) {
   await TestBed.configureTestingModule({
-    imports: [type],
+    imports: [UsageCliChipComponent],
     providers: [provideZonelessChangeDetection()],
   }).compileComponents();
-  const fixture = TestBed.createComponent(type);
+  const fixture = TestBed.createComponent(UsageCliChipComponent);
   for (const [key, value] of Object.entries(inputs)) fixture.componentRef.setInput(key, value);
   fixture.detectChanges();
   await fixture.whenStable();
   return fixture;
 }
 
-describe('usage chips render one native button', () => {
-  it('CLI chip is a single dialog trigger with its full accessible name', async () => {
-    const fixture = await mount(UsageCliChipComponent, {
+describe('UsageCliChipComponent', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('is a single dialog trigger with its full accessible name', async () => {
+    const fixture = await mount({
       cliId: 'codex', cli: codex, timeZone: 'Europe/Berlin', now: NOW, expanded: true, controls: 'usage-detail',
     });
     const host = fixture.nativeElement as HTMLElement;
@@ -53,30 +53,39 @@ describe('usage chips render one native button', () => {
     expect(parts).toEqual(['Codex', 'WK', '15%', '5H', '32%']);
   });
 
-  it('CLI chip emits its id on activation', async () => {
-    const fixture = await mount(UsageCliChipComponent, { cliId: 'codex', cli: codex, now: NOW });
+  it('emits its id on activation', async () => {
+    const fixture = await mount({ cliId: 'codex', cli: codex, now: NOW });
     const emitted: string[] = [];
     fixture.componentInstance.activate.subscribe(id => emitted.push(id));
     (fixture.nativeElement as HTMLElement).querySelector('button')!.click();
     expect(emitted).toEqual(['codex']);
   });
 
-  it('loading chips render no digits', async () => {
-    const cliFixture = await mount(UsageCliChipComponent, { cliId: 'codex', cli: null, now: NOW });
-    expect((cliFixture.nativeElement as HTMLElement).textContent).not.toMatch(/\d/);
-    TestBed.resetTestingModule();
-    const costFixture = await mount(UsageCostChipComponent, { cost: null, now: NOW });
-    expect((costFixture.nativeElement as HTMLElement).textContent).not.toMatch(/\d/);
+  it('renders no digits while loading', async () => {
+    const fixture = await mount({ cliId: 'codex', cli: null, now: NOW });
+    expect((fixture.nativeElement as HTMLElement).textContent).not.toMatch(/\d/);
   });
 
-  it('slot chip is an in-place disclosure with the shared marker first', async () => {
-    const fixture = await mount(UsageSlotChipComponent, {
-      slots: [{ name: 'remote', occupied: 2, capacity: 3, availability: { status: 'complete', observedAt: null, ttlSeconds: null } }],
-      expanded: false,
-    });
+  it('turns stale on its own once the TTL elapses when the host passes no reference time', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    vi.setSystemTime(Date.parse('2026-09-25T14:56:00Z'));
+    const fixture = await mount({ cliId: 'codex', cli: codex });
     const button = (fixture.nativeElement as HTMLElement).querySelector('button')!;
-    expect(button.firstElementChild?.tagName.toLowerCase()).toBe('app-disclosure-marker');
-    expect(button.getAttribute('aria-expanded')).toBe('false');
-    expect(button.hasAttribute('aria-haspopup')).toBe(false);
+    expect(button.dataset['state']).toBe('normal');
+
+    vi.advanceTimersByTime(10 * 60_000);
+    fixture.detectChanges();
+    expect(button.dataset['state']).toBe('stale');
+
+    fixture.destroy();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('uses the host reference time instead of its own clock when one is passed', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    vi.setSystemTime(Date.parse('2026-09-25T16:00:00Z'));
+    const fixture = await mount({ cliId: 'codex', cli: codex, now: NOW });
+    const button = (fixture.nativeElement as HTMLElement).querySelector('button')!;
+    expect(button.dataset['state']).toBe('normal');
   });
 });

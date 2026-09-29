@@ -93,6 +93,15 @@ describe('CLI chip view', () => {
     expect(buildCliChipView('codex', cli({ windows }), ZONE, NOW).session.tag).toBe('Session');
   });
 
+  it('finds the session window with the same five-hour wording that picks the 5H tag', () => {
+    for (const label of ['5h', '5-hour', 'Five-hour window', 'Current session']) {
+      const windows = [cli().windows[0], { ...cli().windows[1], label }];
+      const view = buildCliChipView('codex', cli({ windows }), ZONE, NOW);
+      expect(view.session, label).toMatchObject({ value: '32%', reported: true });
+      expect(view.session.tag, label).toBe(label === 'Current session' ? 'Session' : '5H');
+    }
+  });
+
   it('keeps values above 100 and fractional percentages exact', () => {
     const windows = [{ ...cli().windows[0], usedPct: 104.25 }, { ...cli().windows[1], usedPct: 7.5 }];
     const view = buildCliChipView('codex', cli({ windows }), ZONE, NOW);
@@ -176,6 +185,11 @@ describe('cost chip view', () => {
   it('labels partial coverage and stale ledger snapshots', () => {
     expect(buildCostChipView(cost({ coverage: { status: 'partial', observedAt: '2026-09-25T14:57:00Z', ttlSeconds: 60 } }), NOW).state).toBe('partial');
     expect(buildCostChipView(cost({ coverage: { status: 'complete', observedAt: '2026-09-25T14:00:00Z', ttlSeconds: 60 } }), NOW).state).toBe('stale');
+  });
+
+  it('exposes only the fields the cost chip template renders', () => {
+    expect(Object.keys(buildCostChipView(cost(), NOW)).sort()).toEqual(['ariaLabel', 'detail', 'exact', 'state', 'value']);
+    expect(Object.keys(buildCostChipView(null, NOW)).sort()).toEqual(['ariaLabel', 'detail', 'exact', 'state', 'value']);
   });
 
   it('reports loading without $0.00', () => {

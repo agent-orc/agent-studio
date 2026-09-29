@@ -4,6 +4,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
 import type { UsageCli } from '../../models/usage-cockpit.model';
 import { buildCliChipView } from '../../usage-chip.util';
+import { injectUsageClock } from '../../usage-clock';
 
 /**
  * One CLI usage chip (HUC-S2): the CLI name with its weekly and
@@ -26,13 +27,18 @@ export class UsageCliChipComponent {
   readonly cli = input<UsageCli | null>(null);
   /** Workspace IANA zone for reset and update times (UTC is shown alongside). */
   readonly timeZone = input<string | null>(null);
-  /** Reference time for staleness, in epoch milliseconds. */
-  readonly now = input<number>(Date.now());
+  /**
+   * Reference time for staleness, in epoch milliseconds. Without it the chip
+   * follows its own clock, so a snapshot that ages past its TTL turns stale.
+   */
+  readonly now = input<number | null>(null);
   readonly expanded = input(false);
   /** Id of the detail dialog this chip opens. */
   readonly controls = input<string | null>(null);
 
   readonly activate = output<string>();
 
-  readonly view = computed(() => buildCliChipView(this.cliId(), this.cli(), this.timeZone(), this.now()));
+  private readonly clock = injectUsageClock();
+
+  readonly view = computed(() => buildCliChipView(this.cliId(), this.cli(), this.timeZone(), this.now() ?? this.clock()));
 }

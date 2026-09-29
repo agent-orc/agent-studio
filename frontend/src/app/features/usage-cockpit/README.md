@@ -34,6 +34,9 @@ Imports via `from './features/usage-cockpit'`. See [`index.ts`](./index.ts).
   (cost only) partial coverage. Each state changes the accessible name and
   shows a clock or question mark; values are muted, never recoloured as
   alarms. Quota warning, provider limited and budget crossed are HUC-S5.
+- Staleness is measured against the host's `now` input; without it each chip
+  follows its own 30-second clock (`usage-clock.ts`), so a snapshot that ages
+  past its TTL turns stale on screen without a new projection.
 - Times use the workspace IANA zone with the UTC equivalent alongside.
 - Chips emit `activate`; the host owns the dialog or pool region and
   passes `expanded` and `controls` back.
