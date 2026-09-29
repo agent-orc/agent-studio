@@ -935,6 +935,78 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
             Git(_repo, ["merge-base", "--is-ancestor", card.DeliverySha, "develop"], allowFailure: true));
     }
 
+    /// <summary>
+    /// AGT-2995, the QS-106 shape: the integration failed with a typed Error,
+    /// the card was parked in Human Review, the cause was repaired, and an
+    /// operator moved the card back to Auto Review. The post-processing pass
+    /// must re-run the integration decision - not complete the old transition
+    /// and park the card again with the same stale verdict.
+    /// </summary>
+    [Fact]
+    public async Task An_operator_move_out_of_an_integration_park_reruns_the_integration()
+    {
+        var seeded = Build();
+        var card = SeedPassedDelivery(seeded, "operator-move");
+        RemoteDeliverySettlementStore.Write(card.FolderPath, Settlement(card, shouldIntegrate: true));
+
+        // origin/develop and local develop diverge: the first integration
+        // cannot synchronize its branch.
+        var other = Path.Combine(_root, "other");
+        Git(_root, "clone", "-q", "-b", "develop", _origin, other);
+        Git(other, "config", "user.email", "other@example.com");
+        Git(other, "config", "user.name", "Other");
+        File.WriteAllText(Path.Combine(other, "remote.txt"), "remote\n");
+        Git(other, "add", "-A");
+        Git(other, "commit", "-q", "-m", "chore: remote-only develop work");
+        Git(other, "push", "-q", "origin", "develop");
+        File.WriteAllText(Path.Combine(_repo, "local.txt"), "local\n");
+        Git(_repo, "add", "-A");
+        Git(_repo, "commit", "-q", "-m", "chore: local-only develop work");
+
+        var first = await seeded.Resume.RunOnceAsync("delivery");
+        Assert.Equal(1, first.Integrated);
+        var parked = seeded.Scanner.FindJob(card.Id, _watchPath)!;
+        Assert.Equal(TaskStates.HumanReview, parked.State);
+        Assert.Equal("integration: branch-sync-failed", parked.ParkedBlocker?.Reason);
+        Assert.Equal(
+            RemoteDeliverySettlementStage.LaneSettled,
+            RemoteDeliverySettlementStore.Read(parked.FolderPath)!.Stage);
+
+        // The operator repairs the branch and moves the card out of the park.
+        Git(_repo, "fetch", "-q", "origin");
+        Git(_repo, "reset", "-q", "--hard", "origin/develop");
+        var moved = await seeded.Transitions.MoveAsync(
+            card.Id, TaskStates.AutoReview, _watchPath, cause: "operator");
+        Assert.Equal(MoveJobStatus.Success, moved.Status);
+
+        var restarted = Build();
+        var classified = await restarted.Orchestrator.ProcessCardAsync(
+            _root, Project, card.Id, _watchPath, CancellationToken.None);
+        Assert.Equal(PostProcessingCardStatus.Deferred, classified.Status);
+        Assert.Equal(PostProcessingCardResult.AwaitingDeliveryIntegration, classified.Reason);
+
+        var request = new AutoReviewPostProcessingRequest(
+            Project, card.Id, _watchPath, DateTime.UtcNow, "deferral-retry", Attempt: 1);
+        var settledOutcome = await restarted.Worker.ResumeDeliveryIfOwedAsync(
+            request, classified, CancellationToken.None);
+
+        Assert.Equal(PostProcessingCardStatus.Decided, settledOutcome.Status);
+        Assert.EndsWith(AutoReviewResumePolicy.Reasons.OperatorReentry, settledOutcome.Reason, StringComparison.Ordinal);
+        var settled = restarted.Scanner.FindJob(card.Id, _watchPath)!;
+        Assert.Equal(TaskStates.HumanReview, settled.State);
+        Assert.Equal(
+            0,
+            Git(_repo, ["merge-base", "--is-ancestor", card.DeliverySha, "develop"], allowFailure: true));
+        Assert.False(
+            settled.ParkedBlocker?.Reason?.StartsWith(RemoteDeliveryParkReason.Prefix, StringComparison.Ordinal) ?? false,
+            $"stale park reason re-applied: {settled.ParkedBlocker?.Reason}");
+        var record = RemoteDeliverySettlementStore.Read(settled.FolderPath)!;
+        Assert.Equal(nameof(MergeIntoIntegrationOutcome.Merged), record.IntegrationOutcome);
+        Assert.Null(record.IntegrationDetail);
+        // Still the one review the subject earned: nothing was re-reviewed.
+        Assert.Single(restarted.Authority.GetTaskProjection(card.TaskKey).ReviewAttempts);
+    }
+
     private static RemoteDeliverySettlementRecord Settlement(SeededCard card, bool shouldIntegrate) => new()
     {
         TaskKey = card.TaskKey,
@@ -1162,7 +1234,7 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
             reviewExecutorRegistry: null,
             deliveryResume: resume);
 
-        return new Stack(scanner, authority, integration, pipeline, timeline, resume, orchestrator, worker);
+        return new Stack(scanner, authority, integration, pipeline, timeline, resume, orchestrator, worker, transitions);
     }
 
     private static object CommitRecord(string sha) => new
@@ -1207,7 +1279,8 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         TimelineLog Timeline,
         AutoReviewDeliveryResumeService Resume,
         ReviewDecisionOrchestrator Orchestrator,
-        AutoReviewPostProcessingWorker Worker);
+        AutoReviewPostProcessingWorker Worker,
+        TaskTransitionService Transitions);
 
     private static string Git(string cwd, params string[] args)
     {
