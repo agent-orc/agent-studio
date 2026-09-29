@@ -47,8 +47,13 @@ export interface DecisionBadgeView {
   open: boolean;
   /** `Decision` while pending, `Decided` once settled. */
   label: string;
-  /** Resolved decider name shown next to the badge. */
+  /** Resolved name of the assigned decider. */
   decider: string;
+  /**
+   * Resolved name of who recorded the decision; null while open. Falls back to
+   * the assigned decider when the record carries no `decidedBy`.
+   */
+  decidedBy: string | null;
   tooltip: string;
 }
 
@@ -57,12 +62,13 @@ export function buildDecisionBadge(job: TaskInfo, lookup?: DeciderNameLookup): D
   if (!isDecisionCard(job) || !job.decision) return null;
   const open = isDecisionOpen(job.decision);
   const decider = deciderName(job.decision.decider, lookup);
+  const decidedBy = open ? null : deciderName(job.decision.decidedBy?.trim() || job.decision.decider, lookup);
   const blocks = job.decision.dependants?.length ?? 0;
   const tooltip = open
     ? `Decision card: waiting for ${decider} to choose an option.`
       + (blocks > 0 ? ` Blocks ${job.decision.dependants!.join(', ')}.` : '')
-    : `Decision card: decided by ${deciderName(job.decision.decidedBy, lookup) || decider}.`;
-  return { open, label: open ? 'Decision' : 'Decided', decider, tooltip };
+    : `Decision card: decided by ${decidedBy}.`;
+  return { open, label: open ? 'Decision' : 'Decided', decider, decidedBy, tooltip };
 }
 
 /**

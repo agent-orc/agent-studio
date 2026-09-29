@@ -43,7 +43,7 @@ function job(d: DecisionContent | null = decision(), kind: TaskInfo['kind'] = 'd
 
 async function mount(info: TaskInfo, taskStub: Partial<TaskService> = {}, readOnly = false) {
   const notifications = { success: vi.fn(), warning: vi.fn(), info: vi.fn() };
-  const navigation = { openReference: vi.fn(() => true) };
+  const navigation = { openReferenceOrNotify: vi.fn(() => true) };
   await TestBed.configureTestingModule({
     imports: [DecisionCardPanelComponent],
     providers: [
@@ -170,6 +170,52 @@ describe('DecisionCardPanelComponent (AGT-2795)', () => {
     expect(history).toContain('first call');
   });
 
+  it('keeps typed text and the recorded decision when a poll refreshes the same card', async () => {
+    const decided = decision({ status: 'decided', chosenOptionId: 'a', decidedBy: 'alice', decidedAt: '2026-09-25T07:52:00Z' });
+    const decideCard = vi.fn(() => of({ decision: decided, targetState: '6-completed' }));
+    const { fixture, q, qa } = await mount(job(), { decideCard } as unknown as Partial<TaskService>);
+    const refresh = async (title: string) => {
+      // A poll hands over a fresh TaskInfo and decision object for the same card and status.
+      fixture.componentRef.setInput('job', { ...job(), title });
+      fixture.detectChanges();
+      await fixture.whenStable();
+    };
+
+    typeInto(q('decision-card-rationale-input'), 'Half typed');
+    fixture.detectChanges();
+    await refresh('Renamed');
+    expect(fixture.componentInstance.rationale()).toBe('Half typed');
+    expect((q('decision-card-rationale-input') as HTMLTextAreaElement).value).toBe('Half typed');
+
+    qa('decision-card-choose')[0].click();
+    fixture.detectChanges();
+    // The reload has not landed yet: a stale poll still says pending.
+    await refresh('Stale poll');
+    expect(q('decision-card-receipt')).not.toBeNull();
+    expect(q('decision-card-decided-by')?.textContent).toContain('Alice');
+    expect(qa('decision-card-choose')).toHaveLength(0);
+  });
+
+  it('clears typed text when another card or a new decision state arrives', async () => {
+    const { fixture, q } = await mount(job());
+    const input = () => q('decision-card-rationale-input') as HTMLTextAreaElement;
+
+    typeInto(input(), 'Meant for the first card');
+    fixture.detectChanges();
+    fixture.componentRef.setInput('job', { ...job(), id: 'other-card', taskKey: 'agt::other-card' });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(fixture.componentInstance.rationale()).toBe('');
+    expect(input().value).toBe('');
+
+    typeInto(input(), 'Typed before the reopen landed');
+    fixture.detectChanges();
+    fixture.componentRef.setInput('job', job(decision({ status: 'requested' })));
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(fixture.componentInstance.rationale()).toBe('');
+  });
+
   it('disables Choose in the read-only public demo', async () => {
     const { qa } = await mount(job(), {}, true);
     expect(qa('decision-card-choose').every((b) => (b as HTMLButtonElement).disabled)).toBe(true);
@@ -179,6 +225,6 @@ describe('DecisionCardPanelComponent (AGT-2795)', () => {
     const { fixture, host, navigation } = await mount(job());
     (host.querySelector('[data-testid="decision-card-dependants"] button') as HTMLButtonElement).click();
     fixture.detectChanges();
-    expect(navigation.openReference).toHaveBeenCalledWith('AGT-2793');
+    expect(navigation.openReferenceOrNotify).toHaveBeenCalledWith('AGT-2793');
   });
 });

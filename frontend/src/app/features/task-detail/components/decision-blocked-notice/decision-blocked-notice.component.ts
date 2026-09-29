@@ -1,7 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 import type { TaskInfo } from '../../../../models/task.model';
 import { decisionBlockers } from '../../../../models/decision-card-presentation';
-import { NotificationService } from '../../../../services/notification.service';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
 
 interface BlockingDecision {
@@ -23,7 +22,6 @@ interface BlockingDecision {
 })
 export class DecisionBlockedNoticeComponent {
   private readonly taskNavigation = inject(TaskReferenceNavigationService);
-  private readonly notifications = inject(NotificationService);
 
   readonly job = input.required<TaskInfo>();
 
@@ -36,8 +34,6 @@ export class DecisionBlockedNoticeComponent {
   });
 
   open(key: string): void {
-    if (!this.taskNavigation.openReference(key)) {
-      this.notifications.info(`${key} is not loaded in the current workspace view.`);
-    }
+    this.taskNavigation.openReferenceOrNotify(key);
   }
 }

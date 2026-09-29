@@ -56,15 +56,19 @@ describe('TaskCardComponent decision cards (AGT-2795)', () => {
   });
 
   it('calms to a Decided badge naming who decided once settled', async () => {
+    // The assigned decider and the person who decided differ on purpose: the
+    // chip must name `decidedBy`, not the assignment.
     const fixture = await mount(makeJob({
       kind: 'decision',
       state: '6-completed',
-      decision: decision({ status: 'decided', chosenOptionId: 'a', decidedBy: 'operator' }),
+      decision: decision({ status: 'decided', chosenOptionId: 'a', decider: 'operator', decidedBy: 'reviewer-7' }),
     }));
     const badge = q(fixture, 'task-card-decision-badge');
     expect(badge?.textContent?.trim()).toBe('Decided');
     expect(badge?.getAttribute('data-open')).toBe('false');
-    expect(q(fixture, 'task-card-decider')?.textContent).toContain('Decided by: Operator');
+    const chip = q(fixture, 'task-card-decider')?.textContent ?? '';
+    expect(chip).toContain('Decided by: Robin Reviewer');
+    expect(chip).not.toContain('Operator');
   });
 
   it('renders no decision badge on an ordinary task', async () => {

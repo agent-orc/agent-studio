@@ -7,6 +7,7 @@ import {
   isDecisionCard,
   isDecisionOpen,
   isDecisionOverdue,
+  recommendedOption,
 } from '../../../../models/decision-card-presentation';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
 import { ClientService } from '../../../../services/client.service';
@@ -78,11 +79,15 @@ export class DecisionCardPanelComponent {
     return decision ? isDecisionOverdue(decision) : false;
   });
   readonly dueLabel = computed(() => formatDateTimeUtc(this.decision()?.dueDate));
+  readonly recommended = computed<DecisionOption | null>(() => {
+    const decision = this.decision();
+    return decision ? recommendedOption(decision) : null;
+  });
   readonly chosen = computed<DecisionOption | null>(() => {
     const decision = this.decision();
     return decision ? chosenOption(decision) : null;
   });
-  readonly decidedBy = computed(() => deciderName(this.decision()?.decidedBy ?? this.decision()?.decider, this.lookup));
+  readonly decidedBy = computed(() => deciderName(this.decision()?.decidedBy?.trim() || this.decision()?.decider, this.lookup));
   readonly decidedAt = computed(() => formatDateTimeUtc(this.decision()?.decidedAt));
   readonly dependants = computed(() => this.decision()?.dependants ?? []);
 
@@ -110,9 +115,16 @@ export class DecisionCardPanelComponent {
     }).reverse();
   });
 
+  /**
+   * Which card and which decision state the panel shows. A string, so a poll
+   * that hands over a fresh `TaskInfo` for the same card and status compares
+   * equal and does not wipe typed text or the server response held above.
+   */
+  private readonly cardState = computed(() =>
+    `${this.job().taskKey}|${(this.job().decision?.status ?? '').trim().toLowerCase()}`);
+
   private readonly resetOnCardChange = effect(() => {
-    void this.job().taskKey;
-    void this.job().decision?.status;
+    this.cardState();
     this.override.set(null);
     this.rationale.set('');
     this.pendingOptionId.set(null);
@@ -122,8 +134,7 @@ export class DecisionCardPanelComponent {
   });
 
   isRecommended(option: DecisionOption): boolean {
-    const id = this.decision()?.recommendedOptionId?.trim().toLowerCase();
-    return !!id && option.id.trim().toLowerCase() === id;
+    return this.recommended()?.id === option.id;
   }
 
   isChosen(option: DecisionOption): boolean {
@@ -194,9 +205,7 @@ export class DecisionCardPanelComponent {
 
   openDependant(key: string, event: MouseEvent): void {
     event.preventDefault();
-    if (!this.taskNavigation.openReference(key)) {
-      this.notifications.info(`${key} is not loaded in the current workspace view.`);
-    }
+    this.taskNavigation.openReferenceOrNotify(key);
   }
 }
 

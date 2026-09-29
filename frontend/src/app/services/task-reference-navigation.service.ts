@@ -1,6 +1,7 @@
 import { Injectable, computed, inject } from '@angular/core';
 import type { MarkdownTaskReference } from 'coding-agent-chat/markdown';
 import type { TaskInfo } from '../models/task.model';
+import { NotificationService } from './notification.service';
 import { TaskService } from './task.service';
 // These two services are imported from their concrete module paths rather than
 // the feature barrels, which is why the cross-feature barrel lint rule is
@@ -22,6 +23,7 @@ export class TaskReferenceNavigationService {
   private readonly tasks = inject(TaskService);
   private readonly selection = inject(TaskSelectionService);
   private readonly tabs = inject(StudioTabStateService);
+  private readonly notifications = inject(NotificationService);
 
   private readonly jobsByTaskKey = computed(() => {
     const map = new Map<string, TaskInfo>();
@@ -65,6 +67,13 @@ export class TaskReferenceNavigationService {
     if (!wanted) return false;
     const match = this.markdownReferences().find((item) => item.label.toUpperCase() === wanted);
     return this.openTaskKey(match?.taskKey);
+  }
+
+  /** {@link openReference}, telling the user when the referenced task is not loaded. */
+  openReferenceOrNotify(label: string): boolean {
+    if (this.openReference(label)) return true;
+    this.notifications.info(`${label} is not loaded in the current workspace view.`);
+    return false;
   }
 
   private currentJobs(): readonly TaskInfo[] {

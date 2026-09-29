@@ -1,6 +1,6 @@
 @if (badge(); as db) {
   <span class="decision-chip decision-chip--decider" data-testid="task-card-decider"
-        [attr.data-open]="db.open" [cacTooltip]="db.tooltip">{{ db.open ? 'Decider' : 'Decided by' }}: {{ db.decider }}</span>
+        [attr.data-open]="db.open" [cacTooltip]="db.tooltip">{{ db.open ? 'Decider: ' + db.decider : 'Decided by: ' + db.decidedBy }}</span>
 }
 @for (key of blockers(); track key) {
   <button type="button"

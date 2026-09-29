@@ -9,6 +9,7 @@ import {
   isDecisionOpen,
   isDecisionOverdue,
   openDecisionCards,
+  recommendedOption,
 } from './decision-card-presentation';
 import type { DecisionContent, TaskInfo } from './task.model';
 
@@ -53,9 +54,27 @@ describe('decision-card-presentation (AGT-2795)', () => {
     const open = buildDecisionBadge(job({ kind: 'decision', decision: decision() }))!;
     expect(open).toMatchObject({ open: true, label: 'Decision', decider: 'Operator' });
     expect(open.tooltip).toContain('Blocks AGT-2793');
+    expect(open.decidedBy).toBeNull();
     const settled = buildDecisionBadge(job({ kind: 'decision', decision: decision({ status: 'decided', decidedBy: 'role:lead' }) }))!;
-    expect(settled).toMatchObject({ open: false, label: 'Decided' });
+    expect(settled).toMatchObject({ open: false, label: 'Decided', decider: 'Operator', decidedBy: 'Lead' });
     expect(settled.tooltip).toContain('decided by Lead');
+  });
+
+  it('falls back to the assigned decider when a settled record names nobody', () => {
+    for (const decidedBy of [null, undefined, '', '  ']) {
+      const settled = buildDecisionBadge(job({
+        kind: 'decision',
+        decision: decision({ status: 'decided', decider: 'role:lead', decidedBy }),
+      }))!;
+      expect(settled.decidedBy).toBe('Lead');
+      expect(settled.tooltip).toBe('Decision card: decided by Lead.');
+    }
+  });
+
+  it('finds the recommended option case-insensitively', () => {
+    expect(recommendedOption(decision({ recommendedOptionId: ' A ' }))?.id).toBe('a');
+    expect(recommendedOption(decision({ recommendedOptionId: 'z' }))).toBeNull();
+    expect(recommendedOption(decision({ recommendedOptionId: null }))).toBeNull();
   });
 
   it('takes blockers from blockedBy and falls back to pendingDecision waits-on edges', () => {

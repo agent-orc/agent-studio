@@ -3,15 +3,13 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import type { TaskInfo } from '../../../../models/task.model';
 import { buildDecisionBadge, decisionBlockReason, decisionBlockers } from '../../../../models/decision-card-presentation';
 import { ClientService } from '../../../../services/client.service';
-import { NotificationService } from '../../../../services/notification.service';
-import { TaskService } from '../../../../services/task.service';
-import { TaskSelectionService } from '../../../task-detail/runtime';
-import { resolveDependencyTarget } from '../task-card/task-card-view-model';
+import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
 
 /**
  * AGT-2795: the decision chips in a board card's badge row. On a decision card
- * it names the decider; on a card waiting on a pending decision it renders one
- * "blocked by AGT-nnnn" link per blocker that opens the decision card.
+ * it names the decider (or, once settled, who decided); on a card waiting on a
+ * pending decision it renders one "blocked by AGT-nnnn" link per blocker that
+ * opens the decision card.
  */
 @Component({
   selector: 'app-task-card-decision-chips',
@@ -23,9 +21,7 @@ import { resolveDependencyTarget } from '../task-card/task-card-view-model';
 })
 export class TaskCardDecisionChipsComponent {
   private readonly clients = inject(ClientService);
-  private readonly tasks = inject(TaskService);
-  private readonly selection = inject(TaskSelectionService);
-  private readonly notifications = inject(NotificationService);
+  private readonly taskNavigation = inject(TaskReferenceNavigationService);
 
   readonly job = input.required<TaskInfo>();
 
@@ -37,15 +33,6 @@ export class TaskCardDecisionChipsComponent {
   open(key: string, event: MouseEvent): void {
     event.preventDefault();
     event.stopPropagation();
-    const edge = this.job().waitsOn?.items.find((item) => item.key.toUpperCase() === key.toUpperCase());
-    const target = resolveDependencyTarget({
-      glyph: '', label: '', tone: 'open', tooltip: '', targetKey: key,
-      targetJobId: edge?.targetJobId ?? null, targetWatchPath: edge?.targetWatchPath ?? null,
-    }, this.tasks.jobs());
-    if (target) {
-      this.selection.openDetail(target);
-      return;
-    }
-    this.notifications.info(`${key} is not loaded in the current workspace view.`);
+    this.taskNavigation.openReferenceOrNotify(key);
   }
 }

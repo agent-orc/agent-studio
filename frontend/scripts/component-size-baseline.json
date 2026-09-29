@@ -27,8 +27,8 @@
     "src/app/features/board/components/task-card/task-card.component.ts": {
       "typeScript": 584,
       "template": 488,
-      "styles": 1726,
-      "total": 2782
+      "styles": 1596,
+      "total": 2668
     },
     "src/app/features/board/components/task-column/task-column.ts": {
       "typeScript": 839,
@@ -119,7 +119,7 @@
       "total": 964
     },
     "src/app/features/studio-shell/components/explorer-workspace-tree/explorer-workspace-tree.component.ts": {
-      "typeScript": 508,
+      "typeScript": 475,
       "template": 279,
       "styles": 186,
       "total": 940
@@ -139,8 +139,8 @@
     "src/app/features/task-detail/components/detail-header/detail-header.component.ts": {
       "typeScript": 495,
       "template": 217,
-      "styles": 308,
-      "total": 1011
+      "styles": 255,
+      "total": 967
     },
     "src/app/features/task-detail/components/git-pane/git-pane/git-pane.component.ts": {
       "typeScript": 541,
@@ -163,7 +163,7 @@
     "src/app/features/task-detail/task-detail.ts": {
       "typeScript": 1548,
       "template": 225,
-      "styles": 1284,
+      "styles": 1259,
       "total": 3032
     },
     "src/app/features/tokens/components/workspace-token-timeline/workspace-token-timeline.ts": {

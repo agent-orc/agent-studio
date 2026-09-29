@@ -2,25 +2,22 @@ import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { describe, expect, it, vi } from 'vitest';
 import { DecisionBlockedNoticeComponent } from './decision-blocked-notice.component';
-import { NotificationService } from '../../../../services/notification.service';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
 import type { TaskInfo } from '../../../../models/task.model';
 
-async function mount(info: Partial<TaskInfo>, opened = true) {
-  const navigation = { openReference: vi.fn(() => opened) };
-  const notifications = { info: vi.fn() };
+async function mount(info: Partial<TaskInfo>) {
+  const navigation = { openReferenceOrNotify: vi.fn(() => true) };
   await TestBed.configureTestingModule({
     imports: [DecisionBlockedNoticeComponent],
     providers: [
       provideZonelessChangeDetection(),
       { provide: TaskReferenceNavigationService, useValue: navigation },
-      { provide: NotificationService, useValue: notifications },
     ],
   }).compileComponents();
   const fixture = TestBed.createComponent(DecisionBlockedNoticeComponent);
   fixture.componentRef.setInput('job', { id: 'dep', kind: 'task', ...info } as TaskInfo);
   fixture.detectChanges();
-  return { fixture, host: fixture.nativeElement as HTMLElement, navigation, notifications };
+  return { fixture, host: fixture.nativeElement as HTMLElement, navigation };
 }
 
 describe('DecisionBlockedNoticeComponent (AGT-2795)', () => {
@@ -45,12 +42,7 @@ describe('DecisionBlockedNoticeComponent (AGT-2795)', () => {
     expect(link.textContent?.trim()).toBe('AGT-2792');
     link.click();
     fixture.detectChanges();
-    expect(navigation.openReference).toHaveBeenCalledWith('AGT-2792');
-  });
-
-  it('says so when the decision card is not loaded', async () => {
-    const { host, notifications } = await mount({ blockedBy: ['AGT-9'] }, false);
-    (host.querySelector('[data-testid="decision-blocked-link"]') as HTMLButtonElement).click();
-    expect(notifications.info).toHaveBeenCalledWith(expect.stringContaining('AGT-9'));
+    // The shared open path also explains a card that is not loaded.
+    expect(navigation.openReferenceOrNotify).toHaveBeenCalledWith('AGT-2792');
   });
 });
