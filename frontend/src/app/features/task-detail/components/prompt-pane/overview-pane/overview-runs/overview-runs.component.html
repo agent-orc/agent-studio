@@ -53,7 +53,11 @@
 
             <span class="overview-runs__fact">
               <span class="overview-runs__label">Trigger</span>
-              <span data-testid="overview-run-trigger">{{ row.trigger }}</span>
+              @if (row.reportHref; as reportHref) {
+                <a [href]="reportHref" target="_blank" rel="noopener" data-testid="overview-run-trigger">{{ row.trigger }}</a>
+              } @else {
+                <span data-testid="overview-run-trigger">{{ row.trigger }}</span>
+              }
             </span>
 
             <span class="overview-runs__fact">

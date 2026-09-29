@@ -34,6 +34,14 @@ state.
 
 ## Key Code
 
+`runner/WorkstationProfile.cs` and
+[workstation runner-host setup](../../operations/setup/workstation-runner-host.md)
+adapt the same `agent-host` binary for a Windows operator workstation. Its
+named local roots and required tools are checked again before worker creation;
+preview links are bounded result artifacts. The Connector remains the browser
+edge, and the native host manager owns installation and service lifecycle. The
+Task Server remains the sole claim, lease, and report authority.
+
 ### Claimable gate host and Task API
 
 `RUNNER_ROLE=gate` starts `RemoteGateDaemon` as a polling Agent Host service.
@@ -227,6 +235,25 @@ rollout decision.
   and thinking level on the session event; remote claims also persist their
   fenced Attempt id. Every new `RunRecord` carries those values independently
   of optional CLI init frames or token summaries.
+  Every new row also carries `trigger`, `triggeredBy`, `triggerReason`, and
+  `triggerSource`. The trigger is the business cause and never changes because
+  a CLI session was resumed, reconstructed, or cleared. Its closed vocabulary
+  is `initial`, `operator-continue`, `review-finding`, `review-concern`,
+  `integration-recovery`, `gate-failure`, `timeout-continuation`,
+  `recovery-after-crash`, `restart`, `replan`, and `dependency-release`.
+  `/continue` accepts an optional reason and records the authenticated user or
+  client id. A queued continuation saves its actor and reason in
+  `pending-intent.json` across both admission queueing and a busy runner slot;
+  local pickup and remote claim use those saved values. Other remote claims
+  record `runner <id>` unless a durable pipeline cause such as a review concern
+  owns the pickup. Both paths resolve queued intent provenance through
+  `PendingIntentTriggerPolicy`: crash/provider reasons record
+  `recovery-after-crash`, gate reasons record `gate-failure`, and both name
+  `pipeline` as the actor. Timeout/salvage reasons name `watchdog`; explicit
+  operator continuations retain their saved caller and reason. An open review
+  fix round takes precedence over queued intent classification on remote claims.
+  Legacy rows have null provenance;
+  readers show `not recorded` and never guess from `kind`.
 - `backend/Services/Runner/OrchestratorChatLog.cs`: typed orchestrator messages
   written into `logs/cli-output.log`.
 - `backend/Features/Tasks/CliOutputLogFile.cs` and
@@ -532,6 +559,29 @@ rollout decision.
   reopens renewal and final-write delivery, restores the coding runner badge,
   and projects leased ReviewAttempts back into Auto Review activity. Omitted,
   mismatched, terminal, or superseded records are never reopened.
+- `RemoteRunStopRequestStore` (AGT-2935): the monolith Task Server writes an
+  attempt and fence scoped stop command under
+  `<TaskRepository>/.metadata/remote-run-stop-requests.json` before
+  `POST /api/tasks/{jobId}/stop` returns 202. The response includes the command
+  id, target attempt and fence, reason, expiry, and requested state. An optional
+  `commandId` query parameter makes retries idempotent; reusing it with different
+  input returns 409. `GET /api/tasks/{jobId}/stop/{commandId}` reads the durable
+  requested, observed, or terminal receipt. Only a granted renewal for the
+  matching attempt and fence can observe the command and receive the directive;
+  the directive carries the command id and fence for runner attribution.
+  The stop route rechecks the held generation after writing the receipt and
+  retires a command if a successor acquired during that write. A late old
+  command or acquire callback cannot replace or retire a newer-fence stop.
+  `observed` records that the server included it in a granted renewal response;
+  a lost response does not consume it, so the next renewal repeats the command.
+  Settlement, release, supersession, or expiry retires it. A temporary route
+  outage leaves the request pending until renewal resumes within the command's
+  one-day expiry; authority expiry and the runner's salvage and `Stopped`
+  completion policy remain separate. Park and dependency hold affect admission,
+  not the active worker. The standalone Task Server steering action from I1
+  likewise allows `queue` and `park` only without an active lease. This stop
+  receipt path serves the current monolith API; the standalone v1 lease wire
+  reserves a stop directive but does not yet expose an active-stop command.
 - `backend/Features/Clients/ClientDeletionPolicy.cs` (AGT-2748): the pure
   eligibility decision for permanently deleting a retired client identity,
   shared by `DELETE /api/clients/{id}/permanent` and the bulk

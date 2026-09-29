@@ -1939,6 +1939,41 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Equal("Held", b.Outcome);
     }
 
+    [Theory]
+    [InlineData("provider-crash", RunTriggers.RecoveryAfterCrash)]
+    [InlineData("gate-failure", RunTriggers.GateFailure)]
+    public async Task Daemon_claim_records_queued_recovery_trigger_without_a_cli_session(
+        string savedReason, string expectedTrigger)
+    {
+        SeedTask(TaskStates.Ready, TaskKey, "Queued recovery", "Prompt.");
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://example.invalid/agent-studio.git");
+        var mutations = factory.Services.GetRequiredService<TaskMutationService>();
+        Assert.NotNull(mutations.SavePendingIntent(
+            TaskKey, ContinueModes.Continue, "Resume the saved work.", savedReason,
+            activeJobId: null, watchPath: _watchPath));
+
+        var claim = await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+            RunnerId, ProjectName, "coding-host", 4242, "codex",
+            IdempotencyKey: "queued-recovery-claim"));
+
+        Assert.Equal(RClaimStatus.Claimed, claim.Status);
+        var session = Assert.Single(File.ReadLines(Path.Combine(
+                _watchPath, TaskStates.Progress, TaskKey, "logs", "session-events.jsonl"))
+            .Select(line => JsonSerializer.Deserialize<SessionEvent>(line, ApiJson))
+            .OfType<SessionEvent>());
+        Assert.Equal("start", session.Kind);
+        Assert.Equal(expectedTrigger, session.Trigger);
+        Assert.Equal("pipeline", session.TriggeredBy);
+        Assert.Contains(savedReason, session.TriggerReason, StringComparison.Ordinal);
+        Assert.Contains($"reason={savedReason}", session.TriggerSource, StringComparison.Ordinal);
+        Assert.Contains("Resume the saved work.", session.TriggerSource, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Daemon_claim_only_returns_server_assigned_remote_capable_project()
     {
@@ -2019,6 +2054,10 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                 .OfType<SessionEvent>());
         Assert.Equal("gpt-5.6-sol", sessionEvent.Model);
         Assert.Equal("xhigh", sessionEvent.ThinkingLevel);
+        Assert.Equal(RunTriggers.Initial, sessionEvent.Trigger);
+        Assert.Equal($"runner {RunnerId}", sessionEvent.TriggeredBy);
+        Assert.Equal("Remote runner claimed the initial task run.", sessionEvent.TriggerReason);
+        Assert.Contains(claim.Lease.AttemptId, sessionEvent.TriggerSource, StringComparison.Ordinal);
 
         await AdvertiseCodingCapabilitiesAsync(
             http,
@@ -3883,6 +3922,9 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         if (OperatingSystem.IsWindows()) return;
         const string reviewRunnerId = "review-runner-pipeline-parity";
         var origin = await SeedOriginAsync();
+        // The claim resolves the project's develop integration line while this
+        // fixture uses main for the result ref.
+        await GitAsync(origin, "branch", "develop", "main");
         var resultSha = (await GitAsync(origin, "rev-parse", "refs/heads/main")).StdOut.Trim();
         var fakeCodex = Path.Combine(_workspace, "fake-review-codex.sh");
         await File.WriteAllTextAsync(fakeCodex, """
@@ -4004,7 +4046,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                 evidence.Verdicts,
                 claim.Lease.AuthorityEpoch),
             CancellationToken.None);
-        Assert.Equal("Pass", report.Outcome);
+        Assert.True(string.Equals("Pass", report.Outcome, StringComparison.Ordinal),
+            JsonSerializer.Serialize(report));
 
         var humanFolder = Path.Combine(_watchPath, TaskStates.HumanReview, TaskKey);
         Assert.True(Directory.Exists(humanFolder));
@@ -4069,6 +4112,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "MachineBound")]
     public async Task Review_daemon_restart_adopts_six_in_flight_workers_without_losing_or_repeating_commands()
     {
         const string reviewRunnerId = "review-runner-restart";
@@ -4913,8 +4957,56 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         return new LocalGitResult(process.ExitCode, stdout, stderr);
     }
 
+    [Theory]
+    [InlineData("RemoteAspectVerdict", "Infra crash recovery loses pending state", false)]
+    [InlineData("RemoteAspectVerdict", "The product returns no parseable verdict when input is valid", false)]
+    [InlineData("review:unparseable", "Reviewer unavailable.", true)]
+    [InlineData("ReviewInfra", "Reviewer unavailable.", true)]
+    public async Task Monolith_v1_review_plane_routes_by_explicit_infrastructure_classification(
+        string classification, string summary, bool infrastructure)
+    {
+        const string reviewer = "review-classification";
+        const string instance = "review-classification-host:4243";
+        SeedTask(TaskStates.AutoReview, TaskKey, "Aspect classification", "Build and verify.");
+        var now = DateTime.UtcNow;
+        using var factory = BuildFactory(authorityNow: () => now);
+        using var http = factory.CreateClient();
+        SeedReviewAttempt(factory.Services, includeResultEnvelope: true);
+        await RegisterReviewExecutorAsync(http, reviewer, instance);
+        using var client = new RClient(http, reviewer, usesDurableTaskServer: true);
+        var claim = await client.ClaimReviewAsync(
+            new Contract.ReviewClaimRequest(reviewer, instance, 120), CancellationToken.None);
+        Assert.Equal("claimed", claim.Status);
+        var request = PassingV1ReviewReport(claim, "classification-report") with
+        {
+            Outcome = "ProductFailure",
+            Verdicts = [new Contract.ReviewVerdictDto(
+                "code-quality", "block", classification, summary,
+                "backend/Features/Runner/ProjectRunner.cs", "Preserve pending state.")],
+        };
+
+        var response = await client.ReportReviewAsync(claim.Attempt!.AttemptId, request, CancellationToken.None);
+
+        Assert.Equal(infrastructure ? TaskStates.Escalated : TaskStates.Ready, response.TaskState);
+        var task = factory.Services.GetRequiredService<TaskScannerService>().FindJob(TaskKey, _watchPath)!;
+        var followUp = Path.Combine(task.FolderPath, "orchestrator-follow-up.md");
+        var attempt = factory.Services.GetRequiredService<AttemptAuthorityService>()
+            .GetReview(claim.Attempt.AttemptId)!;
+        Assert.Equal(infrastructure ? ReviewTerminalOutcome.InfrastructureFailure : ReviewTerminalOutcome.ProductFailure, attempt.Outcome);
+        if (infrastructure)
+        {
+            Assert.Equal("AspectVerdictUnparseable", attempt.FailureClassification);
+            Assert.False(File.Exists(followUp));
+        }
+        else
+        {
+            Assert.Contains(summary, File.ReadAllText(followUp));
+            Assert.Equal(RunTriggers.ReviewFinding, ReviewConcernRoundStore.Read(task.FolderPath)!.RoundKind);
+        }
+    }
+
     [Fact]
-    public async Task Monolith_v1_review_plane_claims_and_accepts_fenced_grade_end_to_end()
+    public async Task Monolith_v1_review_plane_runs_one_concern_fix_round_then_accepts_pass_end_to_end()
     {
         const string resultSha = "589c462f589c462f589c462f589c462f589c462f";
         const string baseSha = "4136f00d4136f00d4136f00d4136f00d4136f00d";
@@ -4973,6 +5065,15 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                 resultSha),
             ArtifactManifestDigest: artifactDigest), ct);
         Assert.Equal(TaskStates.AutoReview, completion!.TargetState);
+        var codingRelease = await coding.ReleaseLeaseAsync(new RRelease(
+            TaskKey,
+            lease.Lease.LeaseId,
+            lease.Lease.FencingToken,
+            RunnerId,
+            lease.Lease.AttemptId,
+            lease.Lease.AuthorityEpoch,
+            "v1-review-plane-coding-release"), ct);
+        Assert.Equal("Released", codingRelease.Outcome);
 
         var compatibility = await http.PostAsJsonAsync(
             "/api/v1/protocol/compatibility",
@@ -5035,10 +5136,10 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             reviewInstance,
             claim.Lease.LeaseId,
             claim.Lease.Fence,
-            "v1-review-grade",
+            "v1-review-concern",
             "Pass",
             null,
-            "Focused .NET gate passed.",
+            "Code quality found one actionable concern.",
             new Contract.ReviewWorkspaceProofDto(
                 claim.Subject.RepositoryId,
                 resultSha,
@@ -5059,39 +5160,161 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                 new Dictionary<string, string>()),
             [],
             [],
-            [new Contract.ReviewVerdictDto("build-tests", "pass", "GatePassed", "Focused gate passed.")],
+            [new Contract.ReviewVerdictDto(
+                "code-quality",
+                "concerns",
+                "RemoteAspectVerdict",
+                "Dead assertion in backend.Tests/FooTests.cs.",
+                "backend.Tests/FooTests.cs",
+                "Remove the dead assertion.")],
             claim.Lease.AuthorityEpoch);
-        var report = await reviewClient.ReportReviewAsync(
+        var concernReport = await reviewClient.ReportReviewAsync(
             claim.Attempt.AttemptId,
             reportRequest,
             ct);
-        Assert.Equal("Pass", report.Outcome);
-        Assert.Equal(TaskStates.HumanReview, report.TaskState);
-        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.HumanReview, TaskKey)));
+        Assert.Equal("Pass", concernReport.Outcome);
+        Assert.Equal(TaskStates.Ready, concernReport.TaskState);
+        var readyFolder = Path.Combine(_watchPath, TaskStates.Ready, TaskKey);
+        Assert.True(Directory.Exists(readyFolder));
+        var followUp = await File.ReadAllTextAsync(
+            Path.Combine(readyFolder, "orchestrator-follow-up.md"), ct);
+        Assert.Contains("Review concern fix round", followUp);
+        Assert.Contains("Remove the dead assertion.", followUp);
+        var usedRound = Assert.IsType<ReviewConcernRoundLedger>(
+            ReviewConcernRoundStore.Read(readyFolder));
+        Assert.Equal(1, usedRound.Used);
+        Assert.True(usedRound.StillOpen);
 
         var duplicate = await reviewClient.ReportReviewAsync(
             claim.Attempt.AttemptId,
             reportRequest,
             ct);
-        Assert.Equal(report.ReportId, duplicate.ReportId);
+        Assert.Equal(concernReport.ReportId, duplicate.ReportId);
 
         var reportedAttempt = await http.GetFromJsonAsync<Contract.ReviewAttemptDto>(
             $"/api/v1/reviews/attempts/{claim.Attempt.AttemptId}",
             ct);
         Assert.Equal("Pass", reportedAttempt!.Outcome);
 
-        var cleanup = await reviewClient.CleanupReviewAsync(
+        var firstCleanup = await reviewClient.CleanupReviewAsync(
             claim.Attempt.AttemptId,
             new Contract.ReviewCleanupRequest(
                 reviewRunnerId,
                 reviewInstance,
                 claim.Lease.LeaseId,
                 claim.Lease.Fence,
-                "v1-review-cleanup",
+                "v1-review-concern-cleanup",
                 true,
                 AuthorityEpoch: claim.Lease.AuthorityEpoch),
             ct);
-        Assert.Equal("cleaned", cleanup.Status);
+        Assert.Equal("cleaned", firstCleanup.Status);
+
+        // Run the continuation through the remote coding claim path. This is
+        // intentionally a fresh lease with no resumable CLI session: trigger
+        // provenance must still say review-concern rather than initial.
+        using var continuationHttp = factory.CreateClient();
+        using var continuationCoding = new RClient(continuationHttp, RunnerId);
+        await RegisterCodingRunnerAsync(continuationCoding, continuationHttp, ct);
+        await AssignRemoteAsync(continuationHttp);
+        await AddRepositoryUrlAsync(
+            continuationHttp,
+            "https://example.invalid/agent-studio.git");
+        var continuationClaim = await ClaimWithSuccessfulPreflightAsync(
+            continuationCoding,
+            new RClaim(
+                RunnerId,
+                ProjectName,
+                "coding-host",
+                4242,
+                "codex",
+                IdempotencyKey: "v1-review-concern-fix-claim"));
+        Assert.Equal(RClaimStatus.Claimed, continuationClaim.Status);
+        Assert.False(string.IsNullOrWhiteSpace(continuationClaim.TaskKey));
+        Assert.NotNull(continuationClaim.Lease);
+        var continuationLease = continuationClaim.Lease!;
+        var authoritativeRun = factory.Services
+            .GetRequiredService<AttemptAuthorityService>()
+            .GetRun(continuationLease.AttemptId!);
+        Assert.NotNull(authoritativeRun);
+        Assert.Equal(authoritativeRun!.TaskKey, continuationClaim.TaskKey);
+        var claimedFolder = Assert.Single(Directory.GetDirectories(
+            _watchPath, TaskKey, SearchOption.AllDirectories));
+        Assert.Equal(TaskStates.Progress, Directory.GetParent(claimedFolder)!.Name);
+        var sessions = File.ReadAllLines(TaskPaths.SessionEventsLog(claimedFolder))
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .Select(line => JsonSerializer.Deserialize<SessionEvent>(line, ApiJson))
+            .OfType<SessionEvent>()
+            .ToList();
+        var concernRun = Assert.Single(sessions, item =>
+            string.Equals(item.RunAttemptId, continuationLease.AttemptId, StringComparison.Ordinal));
+        Assert.Equal(RunTriggers.ReviewConcern, concernRun.Trigger);
+        Assert.Equal("pipeline", concernRun.TriggeredBy);
+        Assert.Contains(claim.Attempt!.AttemptId, concernRun.TriggerSource, StringComparison.Ordinal);
+
+        var secondCompletion = await continuationCoding.CompleteRunAsync(new RRemoteComplete(
+            continuationClaim.TaskKey!,
+            continuationLease.LeaseId,
+            continuationLease.FencingToken,
+            RunnerId,
+            "Done",
+            ResultSha: resultSha,
+            AttemptChainId: continuationLease.LeaseId,
+            Repository: "https://example.invalid/agent-studio.git",
+            AttemptId: continuationLease.AttemptId,
+            AuthorityEpoch: continuationLease.AuthorityEpoch,
+            IdempotencyKey: "v1-review-concern-fix-completion",
+            BaseSha: baseSha,
+            ImmutableResultRef: Contract.FencedGitRefs.ImmutableResult(
+                continuationLease.AttemptId!,
+                continuationLease.FencingToken,
+                resultSha),
+            ArtifactManifestDigest: artifactDigest), ct);
+        Assert.Equal(TaskStates.AutoReview, secondCompletion!.TargetState);
+
+        var secondClaim = await reviewClient.ClaimReviewAsync(
+            new Contract.ReviewClaimRequest(reviewRunnerId, reviewInstance, 120),
+            ct);
+        Assert.Equal("claimed", secondClaim.Status);
+        Assert.Equal(secondCompletion.ReviewAttemptId, secondClaim.Attempt!.AttemptId);
+        var passRequest = PassingV1ReviewReport(secondClaim, "v1-review-pass") with
+        {
+            Summary = "The concern is fixed and the scoped review passed.",
+            Verdicts =
+            [
+                new Contract.ReviewVerdictDto(
+                    "code-quality",
+                    "pass",
+                    "RemoteAspectVerdict",
+                    "The dead assertion is gone.",
+                    "backend.Tests/FooTests.cs",
+                    "none"),
+            ],
+        };
+        var passReport = await reviewClient.ReportReviewAsync(
+            secondClaim.Attempt.AttemptId,
+            passRequest,
+            ct);
+        Assert.Equal("Pass", passReport.Outcome);
+        Assert.Equal(TaskStates.HumanReview, passReport.TaskState);
+        var humanFolder = Path.Combine(_watchPath, TaskStates.HumanReview, TaskKey);
+        Assert.True(Directory.Exists(humanFolder));
+        var settledRound = Assert.IsType<ReviewConcernRoundLedger>(
+            ReviewConcernRoundStore.Read(humanFolder));
+        Assert.Equal(1, settledRound.Used);
+        Assert.False(settledRound.StillOpen);
+
+        var secondCleanup = await reviewClient.CleanupReviewAsync(
+            secondClaim.Attempt.AttemptId,
+            new Contract.ReviewCleanupRequest(
+                reviewRunnerId,
+                reviewInstance,
+                secondClaim.Lease!.LeaseId,
+                secondClaim.Lease.Fence,
+                "v1-review-pass-cleanup",
+                true,
+                AuthorityEpoch: secondClaim.Lease.AuthorityEpoch),
+            ct);
+        Assert.Equal("cleaned", secondCleanup.Status);
 
         var handoff = await http.GetFromJsonAsync<Contract.ResultHandoffDto>(
             $"/api/v1/runs/{lease.Lease.AttemptId}/result-handoff",

@@ -94,7 +94,9 @@ function runScript(cmd: 'start' | 'stop' | 'status'): { code: number; stdout: st
       } : {}),
     },
     encoding: 'utf8',
-    timeout: 60_000,
+    // api.sh already allows a 180-second cold compile. Keep the fixture's
+    // synchronous launcher budget aligned so it does not kill a healthy boot.
+    timeout: 180_000,
   });
   return {
     code: result.status ?? 1,

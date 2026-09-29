@@ -89,6 +89,7 @@ public sealed class ParkedCardEndpointsTests : IDisposable
                         ["WatchPaths:0:Name"] = ProjectName,
                         ["WatchPaths:0:Path"] = _watchPath,
                         ["WatchPaths:0:RootPath"] = _watchPath,
+                        ["DeliveryChain:Guarded"] = "false",
                     });
                 });
             });

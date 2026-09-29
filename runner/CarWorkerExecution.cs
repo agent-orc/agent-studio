@@ -179,6 +179,7 @@ internal static class CarWorkerExecution
             // The agent's own build/test/lint must resolve against the caches
             // repository preparation restored into for this run (TE-52).
             PreparationCacheEnvironment.Apply(extraEnvironment, spec.Environment);
+            WorkerEdgeCredentialBoundary.RemoveFrom(extraEnvironment);
 
             var request = new CliRunRequest
             {

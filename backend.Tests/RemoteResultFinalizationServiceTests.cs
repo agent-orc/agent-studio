@@ -242,10 +242,12 @@ public sealed class RemoteResultFinalizationServiceTests : IDisposable
 
                 - Result: Success
                 - Case: bugfix
+                - Duration: unknown
 
                 ## Overview
 
-                - The delivered remote result kept its acknowledgement.
+                - Problem: A cancelled summary must not lose the delivered result.
+                - Solution: The delivered remote result kept its acknowledgement.
 
                 ## What Was Done
 
