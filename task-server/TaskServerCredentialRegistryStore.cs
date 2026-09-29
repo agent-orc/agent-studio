@@ -83,12 +83,10 @@ public sealed partial class TaskServerStore
                 throw new TaskServerConflictException("stale-credential-instance", "Current host registration has not transferred this credential source.");
             else if (request.ObservedAt <= observedAt)
                 throw new TaskServerConflictException("stale-credential-observation", "A newer credential observation is already stored.");
-            else if (string.Equals(record.Generation, generation, StringComparison.Ordinal))
-            {
-                if (!string.Equals(instance, request.SourceInstanceId, StringComparison.Ordinal))
-                    throw new TaskServerConflictException("stale-credential-instance", "Another host instance owns this credential generation.");
-            }
-            else if (!string.Equals(record.Supersedes, generation, StringComparison.Ordinal))
+            // A restarted daemon keeps the native store, so an authorized
+            // handoff may refresh the unchanged generation.
+            else if (!string.Equals(record.Generation, generation, StringComparison.Ordinal) &&
+                !string.Equals(record.Supersedes, generation, StringComparison.Ordinal))
                 throw new TaskServerConflictException("stale-credential-generation", "New credential generation must supersede the current one.");
 
             if (instance is not null && !string.Equals(instance, request.SourceInstanceId, StringComparison.Ordinal))

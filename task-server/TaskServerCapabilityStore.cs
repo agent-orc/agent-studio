@@ -72,6 +72,7 @@ public sealed partial class TaskServerStore
             if (advertisedAt > UtcNow.AddMinutes(2))
                 throw new ArgumentException("Capability advertisement time is too far in the future.");
             var freshUntil = advertisedAt.AddSeconds(request.FreshForSeconds);
+            var carriesCredentialObservation = request.SchemaVersion != CapabilityProtocol.LegacySchemaVersion;
             var now = Iso(UtcNow);
             foreach (var capability in request.Capabilities)
             {
@@ -194,14 +195,14 @@ public sealed partial class TaskServerStore
                     ("$evidence_id", capability.EvidenceId),
                     ("$evidence_excerpt", capability.EvidenceExcerpt),
                     ("$supported_models", capability.SupportedModels is null ? null : JsonSerializer.Serialize(capability.SupportedModels)),
-                    ("$credential_generation", request.SchemaVersion == 2 ? capability.CredentialGeneration : null),
-                    ("$credential_observed", request.SchemaVersion == 2 && capability.CredentialObservedAt is { } observed ? Iso(observed.ToUniversalTime()) : null),
-                    ("$last_real_success", request.SchemaVersion == 2 && capability.LastRealSuccessAt is { } success ? Iso(success.ToUniversalTime()) : null),
-                    ("$expiry_provenance", request.SchemaVersion == 2 ? capability.ExpiryProvenance : null),
-                    ("$access_expires", request.SchemaVersion == 2 && capability.AccessTokenExpiresAt is { } access ? Iso(access.ToUniversalTime()) : null),
-                    ("$effective_source", request.SchemaVersion == 2 ? capability.EffectiveSource : null),
-                    ("$native_shadowed", request.SchemaVersion == 2 && capability.NativeFileShadowed is { } shadowed ? shadowed ? 1 : 0 : null),
-                    ("$evidence_refs", request.SchemaVersion == 2 && capability.EvidenceRefs is not null ? JsonSerializer.Serialize(capability.EvidenceRefs) : null),
+                    ("$credential_generation", carriesCredentialObservation ? capability.CredentialGeneration : null),
+                    ("$credential_observed", carriesCredentialObservation && capability.CredentialObservedAt is { } observed ? Iso(observed.ToUniversalTime()) : null),
+                    ("$last_real_success", carriesCredentialObservation && capability.LastRealSuccessAt is { } success ? Iso(success.ToUniversalTime()) : null),
+                    ("$expiry_provenance", carriesCredentialObservation ? capability.ExpiryProvenance : null),
+                    ("$access_expires", carriesCredentialObservation && capability.AccessTokenExpiresAt is { } access ? Iso(access.ToUniversalTime()) : null),
+                    ("$effective_source", carriesCredentialObservation ? capability.EffectiveSource : null),
+                    ("$native_shadowed", carriesCredentialObservation && capability.NativeFileShadowed is { } shadowed ? shadowed ? 1 : 0 : null),
+                    ("$evidence_refs", carriesCredentialObservation && capability.EvidenceRefs is not null ? JsonSerializer.Serialize(capability.EvidenceRefs) : null),
                     ("$instance", request.InstanceId),
                     ("$advertised", Iso(advertisedAt)),
                     ("$fresh", Iso(freshUntil)),

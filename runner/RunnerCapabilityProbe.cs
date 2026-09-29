@@ -953,12 +953,9 @@ public sealed class ProviderAuthProbe
             lock (_sync)
             {
                 if (_observed.TryGetValue(cliBinary, out var last))
-                {
-                    var observed = last.Status with { LastRealSuccessAt = _clock() };
-                    _observed[cliBinary] = last with { Status = observed };
-                    return observed;
-                }
+                    _observed[cliBinary] = last with { Status = last.Status with { LastRealSuccessAt = _clock() } };
             }
+            // Current() still owns expired-limit and TTL re-probes.
             return Current(cliBinary);
         }
         if (operatorStopped || signal is not null || hostShutdown)

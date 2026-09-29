@@ -87,6 +87,31 @@ public sealed class CredentialRegistryTests
     }
 
     [Fact]
+    public async Task Restarted_instance_refreshes_an_unchanged_generation_after_handoff()
+    {
+        using var temp = new TempDirectory();
+        var now = new DateTimeOffset(2026, 9, 26, 12, 0, 0, TimeSpan.Zero);
+        var store = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
+            new ManualTimeProvider(now));
+        await store.InitializeAsync();
+        await RegisterSourceAsync(store, "instance-a");
+        var record = Fixture("claude_native_login");
+        await store.UpsertCredentialRegistryAsync(new(record, "instance-a", null, now.UtcDateTime), "test", default);
+
+        // A daemon restart keeps the native store, so the generation is unchanged.
+        await RegisterSourceAsync(store, "instance-b");
+        await store.UpsertCredentialRegistryAsync(new(record, "instance-b", record.Generation,
+            now.AddSeconds(30).UtcDateTime), "test", default);
+        await store.UpsertCredentialRegistryAsync(new(record, "instance-b", record.Generation,
+            now.AddSeconds(60).UtcDateTime), "test", default);
+
+        var stale = await Assert.ThrowsAsync<TaskServerConflictException>(() => store.UpsertCredentialRegistryAsync(
+            new(record, "instance-a", record.Generation, now.AddSeconds(90).UtcDateTime), "test", default));
+        Assert.Equal("stale-credential-instance", stale.Code);
+        Assert.Equal(record.Generation, Assert.Single(await store.ListCredentialRegistryAsync(default)).Generation);
+    }
+
+    [Fact]
     public async Task Unregistered_instance_cannot_take_over_a_credential_generation()
     {
         using var temp = new TempDirectory();

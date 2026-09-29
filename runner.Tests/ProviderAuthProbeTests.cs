@@ -535,6 +535,25 @@ public sealed class ProviderAuthProbeTests
     }
 
     [Fact]
+    public async Task Successful_run_after_an_expired_limit_still_forces_auth_reprobe()
+    {
+        var now = new DateTimeOffset(2026, 9, 18, 10, 0, 0, TimeSpan.Zero);
+        var probe = Probe(Answers(0, "Logged in"), clock: () => now);
+        await probe.RefreshAsync("claude", CancellationToken.None);
+        probe.RecordProcessResult(
+            "claude",
+            new ProcessResult(1, "", "usage limit reached; resets at 2026-09-18T10:01:00Z"),
+            evidenceId: "run-expiring");
+
+        now = now.AddMinutes(2);
+        var afterRun = probe.RecordProcessResult("claude", new ProcessResult(0, "done", ""));
+
+        Assert.Equal(ProviderAuthProbe.Degraded, afterRun.Status);
+        Assert.Equal(now, afterRun.LastRealSuccessAt);
+        await WaitUntil(() => probe.Current("claude").Status == ProviderAuthProbe.Ready);
+    }
+
+    [Fact]
     public async Task Apply_patch_tool_failure_does_not_change_available_capability()
     {
         const string toolError = "ERROR codex_core::tools::router: error=apply_patch verification failed: "

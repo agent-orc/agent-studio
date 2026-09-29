@@ -347,7 +347,9 @@ current active instance. Transferring a credential to a different instance
 requires that the new instance is registered on the same host and the previous
 instance is no longer current. The previous instance is retained as retired
 metadata for that credential and cannot regain ownership by re-registering.
-A generation change alone cannot transfer
+Because a daemon restart keeps the native store, the new instance may take over
+with the same generation as well as with a superseding one. A generation change
+alone cannot transfer
 ownership. Hosts without a registered runner can update only from the instance
 that created the record. The management principal is required; secret values, token
 hashes and credential-bearing URLs are never accepted. The host or CLI retains
