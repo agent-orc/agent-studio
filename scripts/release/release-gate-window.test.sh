@@ -277,6 +277,44 @@ record_has "$state" 'gate-exit=signal-INT'
 record_has "$state" 'quotas-restored=restored'
 printf '%s\n' 'gate window signal path with a dead output reader passed'
 
+# Late signal: a SIGTERM that arrives after the gate was reaped but before the
+# helper exits must still end the helper with the signal exit code, not be
+# parked as a "launch in progress" signal and swallowed. The load source is a
+# FIFO so the helper blocks on the gate-end load read, a point that is
+# provably after child_pid was cleared.
+state=$(new_state signal-after-gate)
+rm -f "$state/loadavg"
+mkfifo "$state/loadavg"
+feed_load() {
+  timeout 10 bash -c 'printf "3.10 2.00 1.00 1/100 1\n" > "$1"' _ "$state/loadavg"
+}
+exec_helper "$state" true > "$state/out.log" 2>&1 &
+helper_pid=$!
+feed_load || fail 'late-signal scenario never read the load before the gate'
+# gate-duration-seconds is recorded after the gate is reaped and child_pid is
+# cleared, immediately before the gate-end load read that blocks on the FIFO.
+for _ in $(seq 1 100); do
+  grep -q '^gate-duration-seconds=' "$state/record.env" 2>/dev/null && break
+  sleep 0.1
+done
+grep -q '^gate-duration-seconds=' "$state/record.env" || fail 'late-signal scenario gate never finished'
+kill -TERM "$helper_pid"
+# Serve every further load read until the helper exits, however many it takes.
+# A write can race a reader that is just closing the FIFO; ignore that EPIPE.
+(trap '' PIPE; set +e; while :; do printf '3.10 2.00 1.00 1/100 1\n' > "$state/loadavg"; done) 2>/dev/null &
+feeder_pid=$!
+set +e
+wait "$helper_pid"
+rc=$?
+set -e
+{ kill -KILL "$feeder_pid"; wait "$feeder_pid"; } 2>/dev/null || true
+expect_eq "$rc" 143 "SIGTERM after the gate finished is not swallowed: $(cat "$state/out.log")"
+expect_eq "$(grep '^gate-exit=' "$state/record.env" | tail -n 1)" 'gate-exit=signal-TERM' \
+  'late SIGTERM is the recorded gate exit'
+assert_restored "$state"
+record_has "$state" 'quotas-restored=restored'
+printf '%s\n' 'gate window late signal after the gate passed'
+
 # Hot host: the helper waits a bounded time for the window, then proceeds.
 state=$(new_state hot)
 printf '40.00 30.00 20.00 1/100 1\n' > "$state/loadavg"
