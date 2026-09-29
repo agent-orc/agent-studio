@@ -696,7 +696,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 && !string.IsNullOrWhiteSpace(request.JobId))
             {
                 completed = await DiagnoseGateFailureAsync(
-                    request, repositoryPath, completed, profile, changedFiles,
+                    request, repositoryPath, workspace, completed, profile, changedFiles,
                     timeout, infrastructureTimeout, ct).ConfigureAwait(false);
             }
 
@@ -828,6 +828,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
     private async Task<BuildTestGateResult> DiagnoseGateFailureAsync(
         BuildTestGateRequest request,
         string repositoryPath,
+        string? workspaceRoot,
         BuildTestGateResult original,
         BuildProfile? profile,
         IReadOnlyList<string>? changedFiles,
@@ -835,7 +836,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         TimeSpan infrastructureTimeout,
         CancellationToken ct)
     {
-        var fingerprint = DiagnosticFingerprint(original);
+        var fingerprint = DiagnosticFingerprint(original, workspaceRoot, _preparationCacheRoot);
         var baselineSha = await ResolveDiagnosticBaselineAsync(
             repositoryPath, request.ExpectedSha, request.IntegrationRef,
             infrastructureTimeout, ct).ConfigureAwait(false);
@@ -876,10 +877,10 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
             historyAvailable ? fingerprint : null,
             baseline is null ? null : baseline.Verdict == BuildTestGateVerdict.Ok,
             baseline is { Verdict: BuildTestGateVerdict.Fail }
-                ? DiagnosticFingerprint(baseline) : null,
+                ? DiagnosticFingerprint(baseline, null, _preparationCacheRoot) : null,
             clean is null ? null : clean.Verdict == BuildTestGateVerdict.Ok,
             clean is { Verdict: BuildTestGateVerdict.Fail }
-                ? DiagnosticFingerprint(clean) : null,
+                ? DiagnosticFingerprint(clean, null, _preparationCacheRoot) : null,
             otherCards,
             prior));
         diagnosis = diagnosis with
@@ -912,7 +913,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         if (baseline is { Verdict: BuildTestGateVerdict.Fail })
             _logger.LogWarning(
                 "build_test_gate_baseline_red job_id={JobId} baseline_sha={BaselineSha} fingerprint={Fingerprint}",
-                request.JobId, baselineSha, DiagnosticFingerprint(baseline));
+                request.JobId, baselineSha, DiagnosticFingerprint(baseline, null, _preparationCacheRoot));
         if (diagnosis.Classification == DeliveryFailureDiagnosis.Environment)
             EvacuateGateFailureState(original, request);
 
@@ -1084,19 +1085,48 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         }
     }
 
-    internal static string DiagnosticFingerprint(BuildTestGateResult result)
+    /// <summary>
+    /// Identity of a red gate run for the diagnosis contract (AGT-2916). Parsed
+    /// test names identify the failure on their own; a build, lint or
+    /// preparation failure is identified by its diagnostic lines through the
+    /// same <see cref="FailureOutputNormalizer"/> the review executor uses,
+    /// after the gate's per-run workspace, dependency-cache and temp paths are
+    /// collapsed. The first run and the clean repeat of one failure therefore
+    /// share a fingerprint.
+    /// </summary>
+    internal static string DiagnosticFingerprint(
+        BuildTestGateResult result, string? workspaceRoot = null, string? preparationCacheRoot = null)
     {
         var failed = result.Processes.LastOrDefault(process =>
             process.ExitCode != 0 || process.TimedOut || process.LaunchError is not null);
         if (failed is null) return Fingerprint(BuildTestGateFailureKind.Code, result.Reason);
         var output = failed.StandardOutput + "\n" + failed.StandardError;
         var tests = GateFlakyRerunPolicy.ParseFailedTests(output);
+        var roots = DiagnosticPathRoots(failed, workspaceRoot, preparationCacheRoot ?? PreparationCacheRoot);
         var normalized = tests.Count > 0
-            ? string.Join("\n", tests)
-            : output.Replace(failed.WorkingDirectory, "<workspace>", StringComparison.OrdinalIgnoreCase);
+            ? string.Join("\n", tests.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
+            : FailureOutputNormalizer.Identity(FailureOutputNormalizer.ReplaceRoots(output, roots), failed.ExitCode);
         return Fingerprint(BuildTestGateFailureKind.Code,
-            $"{failed.Phase}\n{failed.Command}\nexit={failed.ExitCode}\n{normalized}");
+            $"{failed.Phase}\n{FailureOutputNormalizer.ReplaceRoots(failed.Command, roots)}\nexit={failed.ExitCode}\n{normalized}");
     }
+
+    /// <summary>
+    /// The exact-subject lease and the clean-repeat clone are one directory
+    /// below <see cref="ReviewWorkspaceRoot"/>; a diagnostic side restores into
+    /// its own <c>diagnostics/&lt;guid&gt;</c> preparation cache.
+    /// </summary>
+    private static FailureOutputNormalizer.PathRoot[] DiagnosticPathRoots(
+        BuildTestGateProcessEvidence failed, string? workspaceRoot, string preparationCacheRoot)
+        =>
+        [
+            new(Path.Combine(preparationCacheRoot, "diagnostics"), "<dependency-cache>", WithRunSegment: true),
+            new(preparationCacheRoot, "<dependency-cache>"),
+            new(NpmCachePath, "<npm-cache>"),
+            new(ReviewWorkspaceRoot, "<workspace>", WithRunSegment: true),
+            new(workspaceRoot ?? string.Empty, "<workspace>"),
+            new(failed.WorkingDirectory, "<working-directory>"),
+            new(Path.GetTempPath(), "<tmp>"),
+        ];
 
     private void EvacuateGateFailureState(BuildTestGateResult result, BuildTestGateRequest request)
     {

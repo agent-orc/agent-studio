@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentRunner;
 
@@ -10,7 +11,7 @@ namespace AgentRunner;
 /// the baseline and the Task Server history by this value, so it must not
 /// carry anything that differs between two runs of the same failure.
 /// </summary>
-internal static partial class ReviewFailureFingerprint
+internal static class ReviewFailureFingerprint
 {
     internal const string Prefix = "review:";
 
@@ -35,17 +36,8 @@ internal static partial class ReviewFailureFingerprint
     }
 
     internal static string OutputIdentity(string attemptRoot, ProcessResult process)
-    {
-        var lines = NormalizePaths(attemptRoot, process.StdOut + "\n" + process.StdErr)
-            .Split('\n')
-            .Where(line => DiagnosticLine().IsMatch(line))
-            .Select(line => Whitespace().Replace(StripTimings(line), " ").Trim().ToLowerInvariant())
-            .Where(line => line.Length > 0)
-            .Distinct(StringComparer.Ordinal)
-            .Order(StringComparer.Ordinal)
-            .ToArray();
-        return lines.Length > 0 ? string.Join("\n", lines) : $"exit:{process.ExitCode}";
-    }
+        => FailureOutputNormalizer.Identity(
+            NormalizePaths(attemptRoot, process.StdOut + "\n" + process.StdErr), process.ExitCode);
 
     /// <summary>
     /// The candidate runs in <c>repository</c>, the clean repeat in
@@ -68,26 +60,4 @@ internal static partial class ReviewFailureFingerprint
             "<dependency-cache>", RegexOptions.IgnoreCase);
         return Regex.Replace(output, root, "<attempt>", RegexOptions.IgnoreCase);
     }
-
-    private static string StripTimings(string line)
-    {
-        line = IsoTimestamp().Replace(line, "<time>");
-        line = ClockTime().Replace(line, "<time>");
-        return Duration().Replace(line, "<duration>");
-    }
-
-    [GeneratedRegex(@"\b(?:error|errors|fatal|failed|failure|exception)\b|npm err!", RegexOptions.IgnoreCase)]
-    private static partial Regex DiagnosticLine();
-
-    [GeneratedRegex(@"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?")]
-    private static partial Regex IsoTimestamp();
-
-    [GeneratedRegex(@"\b\d{1,2}:\d{2}:\d{2}(?:[.,]\d+)?\b")]
-    private static partial Regex ClockTime();
-
-    [GeneratedRegex(@"\b\d+(?:[.,]\d+)?\s?(?:ms|s|sec|secs|seconds|m|min|mins|minutes)\b", RegexOptions.IgnoreCase)]
-    private static partial Regex Duration();
-
-    [GeneratedRegex(@"\s+")]
-    private static partial Regex Whitespace();
 }
