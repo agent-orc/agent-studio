@@ -842,6 +842,24 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Equal(400, tokenSummary.GetProperty("InputTokens").GetInt64());
         Assert.Equal(300, tokenSummary.GetProperty("OutputTokens").GetInt64());
         Assert.Equal(800, tokenSummary.GetProperty("CacheReadTokens").GetInt64());
+        // AGT-2986: the receipt row carries the executing runner and CLI, and
+        // the workspace timeline aggregates it next to local usage.
+        var receiptCall = Assert.Single(tokenSummary.GetProperty("Entries").EnumerateArray().ToList());
+        Assert.Equal(RunnerId, receiptCall.GetProperty("Host").GetString());
+        Assert.Equal("codex", receiptCall.GetProperty("CliType").GetString());
+        // The window ends at the start of the current bucket, so evaluate it
+        // one bucket later to include the usage frame ingested just now.
+        var timeline = factory.Services.GetRequiredService<ITokenAggregator>()
+            .WorkspaceTimeline(
+                [("Token Economy", teWatchPath)],
+                windowHours: 24,
+                bucketMinutes: 60,
+                nowUtc: DateTime.UtcNow.AddHours(1));
+        var timelineProject = Assert.Single(timeline.Projects);
+        Assert.Equal(1500, timelineProject.Total);
+        Assert.Equal(400, timelineProject.Input);
+        Assert.Equal(800, timelineProject.CacheRead);
+        Assert.Equal(RunnerId, Assert.Single(timeline.Models).Host);
 
         var evidence = factory.Services
             .GetRequiredService<TestRunService>()

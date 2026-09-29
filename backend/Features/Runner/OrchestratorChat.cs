@@ -480,6 +480,7 @@ public class OrchestratorChatService
     private readonly StartupExecutionAdmission? _executionAdmission;
     private readonly QuotaAdmissionService? _quotaAdmission;
     private readonly QuotaAdmissionRecorder? _quotaAdmissionRecorder;
+    private readonly AgentMessageBusBridge? _bus;
 
     /// <summary>
     /// Serializes local session resumes. Remote turns use independent host
@@ -507,7 +508,8 @@ public class OrchestratorChatService
         StartupExecutionAdmission? executionAdmission = null,
         QuotaAdmissionService? quotaAdmission = null,
         QuotaAdmissionRecorder? quotaAdmissionRecorder = null,
-        OrchestratorWorkbenchPromptContextComposer? workbenchPromptContext = null)
+        OrchestratorWorkbenchPromptContextComposer? workbenchPromptContext = null,
+        AgentMessageBusBridge? bus = null)
     {
         _chat = chat;
         _runner = runner;
@@ -527,6 +529,7 @@ public class OrchestratorChatService
         _quotaAdmission = quotaAdmission;
         _quotaAdmissionRecorder = quotaAdmissionRecorder;
         _workbenchPromptContext = workbenchPromptContext;
+        _bus = bus;
     }
 
     public List<OrchestratorChatTurn> Read(string watchPath) => _chat.Read(watchPath);
@@ -622,6 +625,8 @@ public class OrchestratorChatService
             OrchestratorDecisionResult result;
             RemoteChatWorkResult? remoteResult = null;
             string? executionNote = null;
+            var usageHost = TokenUsageHost.Local;
+            var usageThinking = thinkingLevel;
             try
             {
                 var fullPrompt = prompt;
@@ -674,6 +679,8 @@ public class OrchestratorChatService
                                 requestedModel,
                                 quotaPlan?.IsFallback == true ? quotaPlan.Reason : null).ConfigureAwait(false);
                             remoteResult = remote;
+                            usageHost = remoteRoute.RunnerId;
+                            usageThinking = effectiveThinking;
                             result = new OrchestratorDecisionResult(
                                 remote.Success,
                                 remote.ReplyText,
@@ -691,6 +698,7 @@ public class OrchestratorChatService
                         catch (RemoteChatHostUnreachableException unreachable)
                         {
                             fallbackQueuedAt = unreachable.QueuedAt;
+                            usageThinking = effectiveThinking;
                             await SessionGate.WaitAsync(ct);
                             try
                             {
@@ -778,6 +786,7 @@ public class OrchestratorChatService
                     ContextReceipt = contextReceipt
                 };
                 await AppendTurnAsync(projectName, watchPath, context, failure, ct).ConfigureAwait(false);
+                await RecordChatUsageAsync(projectName, result, usageHost, usageThinking, failure.FinishedAt ?? DateTime.UtcNow).ConfigureAwait(false);
                 return failure;
             }
 
@@ -796,6 +805,7 @@ public class OrchestratorChatService
                 ContextReceipt = contextReceipt
             };
             await AppendTurnAsync(projectName, watchPath, context, reply, ct).ConfigureAwait(false);
+            await RecordChatUsageAsync(projectName, result, usageHost, usageThinking, reply.FinishedAt ?? DateTime.UtcNow).ConfigureAwait(false);
             return reply;
         }
         finally
@@ -803,6 +813,72 @@ public class OrchestratorChatService
             if (holdsSessionGate)
                 SessionGate.Release();
         }
+    }
+
+    /// <summary>
+    /// Writes the turn's usage into the project token ledger (AGT-2986). The
+    /// chat store keeps the transcript; the ledger is what the workspace
+    /// timeline and project surfaces aggregate. Remote turns carry the runner
+    /// id as host; local and fallback turns carry <c>local</c>.
+    /// The write is awaited so the turn returns only once its usage is in the
+    /// ledger. It runs without the caller's token because the tokens are
+    /// already spent, and a lost row is logged instead of failing a reply
+    /// whose transcript is already persisted.
+    /// </summary>
+    private async Task RecordChatUsageAsync(
+        string projectName,
+        OrchestratorDecisionResult result,
+        string host,
+        string? thinkingLevel,
+        DateTime finishedAt)
+    {
+        var entry = BuildChatUsage(result, host, thinkingLevel);
+        if (_bus is null || entry is null) return;
+        var recorded = false;
+        Exception? error = null;
+        try
+        {
+            recorded = await _bus.EmitTokenUsageAsync(
+                projectName,
+                jobId: null,
+                AgentMessageBusBridge.ParticipantOrchestratorFor(projectName),
+                OrchestratorChatUsageTopic,
+                entry,
+                createdAt: finishedAt,
+                ct: CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            error = ex;
+        }
+        if (!recorded)
+        {
+            _logger.LogWarning(error,
+                "[orchestrator-chat] usage row was not recorded for project {Project} (host={Host}, model={Model})",
+                projectName, entry.Host, entry.Model);
+        }
+    }
+
+    /// <summary>Bus topic of orchestrator chat usage rows.</summary>
+    public const string OrchestratorChatUsageTopic = "orchestrator-chat";
+
+    internal static OrchestratorTokenUsage? BuildChatUsage(
+        OrchestratorDecisionResult result,
+        string host,
+        string? thinkingLevel)
+    {
+        var usage = result.TokenUsage;
+        if (usage is null) return null;
+        if ((long)usage.InputTokens + usage.OutputTokens + usage.CacheReadTokens + usage.CacheCreationTokens <= 0)
+            return null;
+        var model = string.IsNullOrWhiteSpace(usage.Model) ? result.Model : usage.Model;
+        return usage with
+        {
+            Model = TokenModelDisplay.StoredId(model),
+            CliType = string.IsNullOrWhiteSpace(result.CliType) ? CliTypes.Codex : result.CliType.Trim().ToLowerInvariant(),
+            Host = string.IsNullOrWhiteSpace(host) ? TokenUsageHost.Local : host.Trim(),
+            ThinkingLevel = string.IsNullOrWhiteSpace(usage.ThinkingLevel) ? thinkingLevel : usage.ThinkingLevel,
+        };
     }
 
     private Task AppendTurnAsync(

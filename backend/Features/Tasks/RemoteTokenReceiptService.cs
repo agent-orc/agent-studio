@@ -60,6 +60,12 @@ public sealed class RemoteTokenReceiptService
                 .Where(line => line.Timestamp >= from && line.Timestamp <= through)
                 .ToList();
         }
+        // Ledger dimensions the timeline breaks down by (AGT-2986). The run's
+        // session event is the durable record of what the attempt resolved;
+        // the card fields are the fallback for attempts without one.
+        var cliType = NormalizeCli(run?.Cli ?? task.CliType ?? task.Agent);
+        var thinkingLevel = FirstNonBlank(run?.ThinkingLevel, task.ThinkingLevel);
+        var host = FirstNonBlank(runnerId, run?.ExecutionLocation?.RunnerId) ?? TokenUsageHost.UnrecordedRemote;
         var entries = new List<OrchestratorLogEntry>();
         foreach (var line in lines.Where(line =>
                      string.Equals(line.Stream, "stdout", StringComparison.OrdinalIgnoreCase)))
@@ -83,7 +89,7 @@ public sealed class RemoteTokenReceiptService
                             ? "Remote coding-agent token usage (model mismatch)."
                             : "Remote coding-agent token usage.",
                         JobId = task.Id,
-                        ParticipantId = $"agent:remote-runner:{runAttemptId}",
+                        ParticipantId = $"{TokenUsageHost.RemoteRunnerParticipantPrefix}{runAttemptId}",
                         TokenUsage = new OrchestratorTokenUsage
                         {
                             // Observed usage is authoritative. Never replace it
@@ -96,6 +102,9 @@ public sealed class RemoteTokenReceiptService
                             CacheReadTokens = SafeInt(usage.CacheRead),
                             CacheCreationTokens = SafeInt(usage.CacheWrite),
                             InputIncludesCached = usage.InputIncludesCached,
+                            ThinkingLevel = thinkingLevel,
+                            CliType = cliType,
+                            Host = host,
                         },
                     });
                 }
@@ -131,6 +140,12 @@ public sealed class RemoteTokenReceiptService
 
         return new RemoteTokenReceiptResult(true, entries.Count, null, summary.TotalTokens);
     }
+
+    private static string? FirstNonBlank(params string?[] values)
+        => values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim();
+
+    private static string? NormalizeCli(string? cli)
+        => string.IsNullOrWhiteSpace(cli) ? null : cli.Trim().ToLowerInvariant();
 
     private static int SafeInt(long value)
     {

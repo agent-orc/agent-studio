@@ -3,9 +3,14 @@
 namespace AgentStudio.Tokens;
 
 /// <summary>
-/// Phase-4 bus-backed read path for the workspace tokens timeline
-/// (<c>GET /api/workspace/tokens</c>). For every (project, watchPath)
-/// pair, queries the bus for that project's <c>kind=token-usage</c>
+/// Read path for the workspace tokens timeline
+/// (<c>GET /api/workspace/tokens/timeline</c>). In production every project
+/// reads the merged usage ledger (bus history plus durable task receipts,
+/// see <see cref="BuildFromLedger"/>), so remote runner completions, remote
+/// review attempts, and chat turns count alongside local runs (AGT-2986).
+/// The bus-only projection below remains for the parity fixtures: for every
+/// (project, watchPath) pair it queries the bus for that project's
+/// <c>kind=token-usage</c>
 /// messages across <b>every</b> participant (coding-agent runs, supporting
 /// analysis loops, and orchestrator meta-turns), converts them into
 /// transient <see cref="OrchestratorLogEntry"/> records, and folds them
@@ -37,16 +42,25 @@ public sealed class BusBackedWorkspaceTimelineReader
 {
     private readonly AgentMessageBusStore _store;
     private readonly IConfiguration _config;
+    private readonly BusBackedProjectTokenUsageReader? _ledger;
 
-    public BusBackedWorkspaceTimelineReader(AgentMessageBusStore store, IConfiguration config)
+    public BusBackedWorkspaceTimelineReader(
+        AgentMessageBusStore store,
+        IConfiguration config,
+        BusBackedProjectTokenUsageReader? ledger = null)
     {
         _store = store;
         _config = config;
+        _ledger = ledger;
     }
 
     /// <summary>
     /// Build the workspace timeline view across every supplied project.
-    /// Returns an empty timeline when the workspace root is not configured.
+    /// With the project ledger wired (production), every project reads the
+    /// same deduplicated union of bus history and durable task receipts that
+    /// the project and card surfaces read, so remote runner usage is part of
+    /// the timeline (AGT-2986). Without it (parity fixtures) the reader
+    /// falls back to the bus-only projection.
     /// </summary>
     public TokenTimeline Build(
         IEnumerable<(string Name, string WatchPath)> projects,
@@ -54,6 +68,9 @@ public sealed class BusBackedWorkspaceTimelineReader
         int bucketMinutes,
         DateTime? nowUtc = null)
     {
+        if (_ledger is not null)
+            return BuildFromLedger(_ledger, projects, windowHours, bucketMinutes, nowUtc);
+
         var workspace = _config["TaskRepository"];
         if (string.IsNullOrWhiteSpace(workspace))
         {
@@ -94,6 +111,68 @@ public sealed class BusBackedWorkspaceTimelineReader
         }
 
         return WorkspaceTokensTimelineService.BuildFromEntries(perProjectEntries, windowStart, windowEnd, b);
+    }
+
+    /// <summary>
+    /// Ledger read path: one merged snapshot per project (bus history plus
+    /// task receipts, deduplicated by canonical token identity), folded by
+    /// the shared bucketer. Per-project read health rolls up into
+    /// <see cref="TokenTimeline.Freshness"/> so a failed source reads as
+    /// partial instead of an unexplained zero.
+    /// </summary>
+    internal static TokenTimeline BuildFromLedger(
+        BusBackedProjectTokenUsageReader ledger,
+        IEnumerable<(string Name, string WatchPath)> projects,
+        int windowHours,
+        int bucketMinutes,
+        DateTime? nowUtc = null)
+    {
+        var (windowStart, windowEnd, b) = ResolveWindow(windowHours, bucketMinutes, nowUtc);
+        var perProjectEntries = new List<(string Project, IReadOnlyList<OrchestratorLogEntry> Entries)>();
+        var freshness = new List<ProjectTokenDataFreshness>();
+        foreach (var (name, watchPath) in projects)
+        {
+            var snapshot = ledger.LoadSnapshot(name, watchPath);
+            perProjectEntries.Add((name, snapshot.Entries));
+            freshness.Add(snapshot.Freshness);
+        }
+
+        return WorkspaceTokensTimelineService.BuildFromEntries(perProjectEntries, windowStart, windowEnd, b) with
+        {
+            Freshness = CombineFreshness(freshness),
+        };
+    }
+
+    internal static ProjectTokenDataFreshness CombineFreshness(IReadOnlyList<ProjectTokenDataFreshness> projects)
+    {
+        if (projects.Count == 0) return ProjectTokenDataFreshness.Empty;
+        var status = projects.All(p => p.Status == "unavailable")
+            ? "unavailable"
+            : projects.Any(p => p.Status != "complete") ? "partial" : "complete";
+        var warnings = projects
+            .Select(p => p.Warning)
+            .Where(w => !string.IsNullOrWhiteSpace(w))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        return new ProjectTokenDataFreshness
+        {
+            Status = status,
+            AsOf = projects
+                .Select(p => p.AsOf)
+                .Where(a => !string.IsNullOrWhiteSpace(a))
+                .Max(StringComparer.Ordinal),
+            Warning = warnings.Count == 0 ? null : string.Join(" ", warnings),
+            Sources = projects.SelectMany(p => p.Sources).Distinct(StringComparer.Ordinal).ToList(),
+        };
+    }
+
+    private static (DateTime Start, DateTime End, int BucketMinutes) ResolveWindow(
+        int windowHours, int bucketMinutes, DateTime? nowUtc)
+    {
+        var w = WorkspaceTokensTimelineService.ResolveWindowHours(windowHours);
+        var b = WorkspaceTokensTimelineService.ResolveBucketMinutes(bucketMinutes);
+        var windowEnd = AlignDown(nowUtc ?? DateTime.UtcNow, b);
+        return (windowEnd.AddHours(-w), windowEnd, b);
     }
 
     private static DateTime AlignDown(DateTime ts, int bucketMinutes)
