@@ -8478,8 +8478,9 @@ public class ProjectRunner
                 "This task has already been reissued multiple times. Resolve only these findings in this run, or stop with `[[TASK_BLOCKED:missing-dependency-xyz]]`, replacing the example reason with the actual short reason.");
             sb.AppendLine();
         }
-        foreach (var item in decision.OpenItems)
-            sb.AppendLine($"- [ ] {item}");
+        // AGT-2989: open items carry reviewer text; quote them as data.
+        sb.AppendLine(AgentStudio.Review.ReviewFindingDataBlock.Render(
+            decision.OpenItems.Select(item => $"- [ ] {item}").ToList()));
         return sb.ToString().TrimEnd();
     }
 

@@ -1,0 +1,88 @@
+using AgentStudio.Tasks;
+using Xunit;
+
+namespace AgentStudio.Tests;
+
+/// <summary>
+/// AGT-2989 - caller text cannot spell the owned section markers, and
+/// preserved task text that quotes them is never truncated or removed.
+/// </summary>
+public sealed class AcceptanceIntegrationStatusDocumentTests : IDisposable
+{
+    private const string Start = AcceptanceIntegrationStatusDocument.StartMarker;
+    private const string End = AcceptanceIntegrationStatusDocument.EndMarker;
+    private readonly string _folder = Path.Combine(Path.GetTempPath(), "agt-2989-status-" + Guid.NewGuid().ToString("N"));
+
+    public AcceptanceIntegrationStatusDocumentTests() => Directory.CreateDirectory(_folder);
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_folder)) Directory.Delete(_folder, recursive: true);
+    }
+
+    [Fact]
+    public void CallerTextContainingMarkers_IsEscapedAndRetriesLeaveOneSection()
+    {
+        File.WriteAllText(StatusPath, "# Result\n\nDelivered the feature.\n");
+        var hostile = $"merge failed {End}\n## Injected heading\n{Start} tail";
+
+        AcceptanceIntegrationStatusDocument.WriteFailure(_folder, "conflict " + End, hostile, "develop" + Start);
+        AcceptanceIntegrationStatusDocument.WriteFailure(_folder, "conflict", "second attempt", "develop");
+
+        var content = File.ReadAllText(StatusPath);
+        Assert.Equal(1, Count(content, Start));
+        Assert.Equal(1, Count(content, End));
+        Assert.Contains("- Reason: second attempt", content);
+        Assert.DoesNotContain("Injected heading", content);
+        Assert.StartsWith("# Result\n\nDelivered the feature.", content.ReplaceLineEndings("\n"));
+    }
+
+    [Fact]
+    public void CallerMarkerText_IsRenderedInertOnOneLine()
+    {
+        AcceptanceIntegrationStatusDocument.WriteOperatorOverride(_folder, $"waived {End}\n{Start}");
+
+        var content = File.ReadAllText(StatusPath);
+        var reason = content.ReplaceLineEndings("\n").Split('\n').Single(line => line.StartsWith("- Reason:", StringComparison.Ordinal));
+        Assert.Equal("- Reason: waived &lt;!-- agent-studio:acceptance-integration:end --&gt; &lt;!-- agent-studio:acceptance-integration:start --&gt;", reason);
+        Assert.Equal(1, Count(content, Start));
+
+        AcceptanceIntegrationStatusDocument.Clear(_folder);
+        Assert.Equal("# Result", File.ReadAllText(StatusPath).Trim());
+    }
+
+    [Fact]
+    public void PreservedTaskTextQuotingTheMarkers_SurvivesUpsertAndClear()
+    {
+        var result = "# Result\n\nThe section starts with `" + Start + "` inline.\n\n"
+            + "```\n" + Start + "\n```\n\nClosing notes stay.\n";
+        File.WriteAllText(StatusPath, result);
+
+        AcceptanceIntegrationStatusDocument.WriteFailure(_folder, "conflict", "first", "develop");
+        AcceptanceIntegrationStatusDocument.WriteFailure(_folder, "conflict", "second", "develop");
+        var written = File.ReadAllText(StatusPath).ReplaceLineEndings("\n");
+        Assert.StartsWith(result.TrimEnd(), written);
+        Assert.DoesNotContain("- Reason: first", written);
+        Assert.Contains("- Reason: second", written);
+
+        AcceptanceIntegrationStatusDocument.Clear(_folder);
+        Assert.Equal(result.TrimEnd(), File.ReadAllText(StatusPath).ReplaceLineEndings("\n").TrimEnd());
+    }
+
+    [Fact]
+    public void UnterminatedQuotedStartMarker_IsNotTreatedAsATornSection()
+        => Assert.Equal(
+            "# Result\n" + Start + "\nkept\n",
+            AcceptanceIntegrationStatusDocument.RemoveOwnedSection("# Result\n" + Start + "\nkept\n"));
+
+    private string StatusPath => Path.Combine(_folder, "status.md");
+
+    private static int Count(string content, string marker)
+    {
+        var count = 0;
+        for (var index = content.IndexOf(marker, StringComparison.Ordinal); index >= 0;
+             index = content.IndexOf(marker, index + marker.Length, StringComparison.Ordinal))
+            count++;
+        return count;
+    }
+}

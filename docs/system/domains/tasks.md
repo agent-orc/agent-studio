@@ -1,6 +1,6 @@
 # Tasks Domain Map
 
-Version: 2026-09-27
+Version: 2026-09-29
 Status: System-of-record map for task storage, lanes, and API mutation changes.
 
 Use this when a change touches job folders, lane states, task metadata,
@@ -495,6 +495,11 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   obligation before any lane mutation. It binds the current RunAttempt, review
   epoch, failure evidence, result ref and SHA, branch, conflict paths, round
   count, hold state, operator route and the safe merge-into-delivery route.
+  The idempotency key and evidence fingerprint hash length-prefixed fields
+  (`AgentStudio.Shared.CanonicalFields`, AGT-2989), so a failure reason or
+  path containing a newline cannot alias another conflict. Obligations written
+  before AGT-2989 keep their old file name; the one-automatic-round-per-epoch
+  timeline check still holds across the key change.
   Operator recovery writes the same
   projection and records a manual action. The rail may queue only one automatic
   round per review epoch; later recoverable conflicts in that epoch remain
