@@ -177,6 +177,10 @@ public sealed class RemoteRunnerDaemonWorkerLossTests : IDisposable
                     true,
                     lease),
                 "/api/runner/logs" => new LogIngestResponse(lease.TaskKey, 0),
+                "/api/runner/artifacts/limits" => new ArtifactTransferLimitsResponse(
+                    25L * 1024 * 1024,
+                    18L * 1024 * 1024,
+                    100L * 1024 * 1024),
                 "/api/runner/lease/release" => Release(),
                 _ when path == $"/api/tasks/{lease.TaskKey}/files/prompt.md" => null,
                 _ => throw new InvalidOperationException(

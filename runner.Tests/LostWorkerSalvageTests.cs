@@ -372,6 +372,12 @@ public sealed class LostWorkerSalvageTests : IDisposable
                 case "/api/runner/logs":
                     response = new LogIngestResponse(lease.TaskKey, 0);
                     break;
+                case "/api/runner/artifacts/limits":
+                    response = new ArtifactTransferLimitsResponse(
+                        25L * 1024 * 1024,
+                        18L * 1024 * 1024,
+                        100L * 1024 * 1024);
+                    break;
                 case "/api/runner/lease/release":
                     response = await ObserveReleaseAsync(request, cancellationToken);
                     break;

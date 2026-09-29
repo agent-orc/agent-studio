@@ -292,6 +292,10 @@ public sealed class CodingDaemonRestartTests : IDisposable
                 "/api/runner/claim" => Claim(),
                 "/api/runner/lease/renew" => Renew(body),
                 "/api/runner/logs" => AcceptLogs(body),
+                "/api/runner/artifacts/limits" => new ArtifactTransferLimitsResponse(
+                    25L * 1024 * 1024,
+                    18L * 1024 * 1024,
+                    100L * 1024 * 1024),
                 "/api/runner/artifacts" => new ArtifactIngestResponse(
                     initialLease.TaskKey,
                     0,
