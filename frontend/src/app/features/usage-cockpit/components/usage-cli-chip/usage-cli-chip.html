@@ -1,0 +1,34 @@
+@let v = view();
+<button type="button"
+        class="usage-cli-chip"
+        [attr.data-testid]="'usage-cli-chip-' + v.cliId"
+        [attr.data-state]="v.state"
+        aria-haspopup="dialog"
+        [attr.aria-expanded]="expanded()"
+        [attr.aria-controls]="controls()"
+        [attr.aria-label]="v.ariaLabel"
+        [cacTooltip]="v.detail"
+        (click)="activate.emit(v.cliId)">
+  <span class="usage-cli-chip__body">
+    <span class="usage-cli-chip__name">{{ v.name }}</span>
+    @if (v.state === 'loading') {
+      <span class="usage-cli-chip__placeholder" aria-hidden="true"></span>
+    } @else if (v.state === 'unknown') {
+      <span class="usage-cli-chip__value usage-cli-chip__value--muted" data-testid="usage-cli-chip-unavailable">{{ v.stateLabel }}</span>
+    } @else {
+      @for (w of [v.weekly, v.session]; track w.kind) {
+        <span class="usage-cli-chip__window" [attr.data-window]="w.kind">
+          <span class="usage-cli-chip__tag">{{ w.tag }}</span>
+          <span class="usage-cli-chip__value"
+                [class.usage-cli-chip__value--muted]="!w.reported || v.state !== 'normal'"
+                [attr.data-testid]="'usage-cli-chip-' + v.cliId + '-' + w.kind">{{ w.value }}</span>
+        </span>
+      }
+    }
+    @if (v.state === 'stale') {
+      <span class="usage-cli-chip__mark" aria-hidden="true"><app-studio-icon name="clock" [size]="14" /></span>
+    } @else if (v.state === 'suspicious') {
+      <span class="usage-cli-chip__mark" aria-hidden="true"><app-studio-icon name="help" [size]="14" /></span>
+    }
+  </span>
+</button>

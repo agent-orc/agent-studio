@@ -1,0 +1,24 @@
+@let v = view();
+<button type="button"
+        class="usage-slot-chip"
+        data-testid="usage-slot-chip"
+        [attr.data-state]="v.state"
+        [attr.aria-expanded]="expanded()"
+        [attr.aria-controls]="controls()"
+        [attr.aria-label]="v.ariaLabel"
+        (click)="activate.emit()">
+  <app-disclosure-marker [open]="expanded()" />
+  <span class="usage-slot-chip__body">
+    <span class="usage-slot-chip__label">Slots</span>
+    @if (v.state === 'loading') {
+      <span class="usage-slot-chip__placeholder" aria-hidden="true"></span>
+    }
+    @for (pool of v.pools; track pool.name) {
+      <span class="usage-slot-chip__sep" aria-hidden="true">·</span>
+      <span class="usage-slot-chip__pool" [attr.data-testid]="'usage-slot-chip-' + pool.name">
+        <span class="usage-slot-chip__tag">{{ pool.name }}</span>
+        <span class="usage-slot-chip__value" [class.usage-slot-chip__value--muted]="pool.value === 'N/A'">{{ pool.value }}</span>
+      </span>
+    }
+  </span>
+</button>
