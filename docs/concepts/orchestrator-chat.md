@@ -482,7 +482,9 @@ That slice gives the user a durable conversation and visible context before the 
 
 Assistant turns now carry the executing model and effort, provider thread or
 session id, host, queued/started/finished times, normalized token counts, and
-TokenEconomy cost with its catalogue version. Queue time is measured from
+TokenEconomy cost with its catalogue version. This applies to every context
+kind: project, task, and Dossier (`workbench:`) sessions share one send path,
+and a Dossier turn stores its metadata in its own isolated transcript. Queue time is measured from
 enqueue until claim; run time is measured from claim until completion. Local
 turns use the workstation host and the local session gate. Missing provider
 fields remain absent rather than becoming zero. Workspace visibility defaults

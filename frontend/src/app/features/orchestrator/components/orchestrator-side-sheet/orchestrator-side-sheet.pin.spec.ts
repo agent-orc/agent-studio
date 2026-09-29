@@ -32,12 +32,15 @@ describe('OrchestratorSideSheetComponent · navigation context + pin', () => {
 
   // AGT-2970: the chat usage header reads the project's chat-metadata default.
   // Whether the header has rendered yet depends on scheduling, so flush any
-  // pending read without requiring one.
+  // pending read without requiring one. A read for an earlier project can only
+  // remain as a request the header cancelled on the project switch.
   function flushChatMetadataDefault(http: HttpTestingController, project: string) {
-    const requests = http.match(`/api/projects/${encodeURIComponent(project)}/chat-metadata`);
-    for (const request of requests.filter(pending => !pending.cancelled)) {
+    const current = `/api/projects/${encodeURIComponent(project)}/chat-metadata`;
+    const requests = http.match(request => /^\/api\/projects\/[^/]+\/chat-metadata$/.test(request.url));
+    for (const request of requests) {
       expect(request.request.method).toBe('GET');
-      request.flush({ chatMetadataEnabled: true });
+      if (request.request.url !== current) expect(request.cancelled).toBe(true);
+      else if (!request.cancelled) request.flush({ chatMetadataEnabled: true });
     }
   }
 
@@ -104,6 +107,9 @@ describe('OrchestratorSideSheetComponent · navigation context + pin', () => {
     const route = '/api/runner/task:Quality%20Studio/QS-54/orchestrator-chat';
 
     c.activeProject.set('stale-project');
+    // Render the usage header for the stale project first (the ordering a slow
+    // full-suite run produces) so its superseded chat-metadata read is covered.
+    await fixture.whenStable();
     fixture.componentRef.setInput('composerContext', {
       project: 'Quality Studio',
       surface: 'Task',
