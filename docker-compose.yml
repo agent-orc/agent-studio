@@ -23,6 +23,7 @@ x-task-server: &task-server
     BOOTSTRAP_RUNNER_AUTH_TOKEN_FILE: /run/agent-studio-secrets/runner_token
     BOOTSTRAP_REVIEW_RUNNER_ID: distributed-review-runner
     BOOTSTRAP_REVIEW_RUNNER_AUTH_TOKEN_FILE: /run/agent-studio-secrets/review_runner_token
+    OWNER_BOOTSTRAP_CODE_FILE: /run/agent-studio-secrets/owner_bootstrap_code
   volumes:
     - store:/var/lib/agent-orchestrator/store
     - backup:/var/lib/agent-orchestrator/backup

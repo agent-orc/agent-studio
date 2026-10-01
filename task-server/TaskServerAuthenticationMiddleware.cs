@@ -70,7 +70,11 @@ public sealed class TaskServerAuthenticationMiddleware(
 
     private static bool IsOpenPath(PathString path)
         => path.Equals("/api/v1/protocol", StringComparison.OrdinalIgnoreCase)
-           || path.Equals("/api/v1/protocol/compatibility", StringComparison.OrdinalIgnoreCase);
+           || path.Equals("/api/v1/protocol/compatibility", StringComparison.OrdinalIgnoreCase)
+           // I05: a host verifies the installation and exchanges its one-time
+           // enrolment code before it holds any principal credential.
+           || path.Equals("/api/v1/installation", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/api/v1/enrolments/exchange", StringComparison.OrdinalIgnoreCase);
 
     private static string? ReadBearer(HttpRequest request)
     {

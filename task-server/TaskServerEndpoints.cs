@@ -923,6 +923,9 @@ public static class TaskServerEndpoints
         StudioAuthenticationException studioAuth => Results.Json(
             new ApiError(studioAuth.Code, studioAuth.Message),
             statusCode: StatusCodes.Status401Unauthorized),
+        StudioAuthorizationException studioRole => Results.Json(
+            new ApiError(studioRole.Code, studioRole.Message),
+            statusCode: StatusCodes.Status403Forbidden),
         ArtifactArchivedException archived => Results.Json(
             new ApiError(
                 "artifact-archived",

@@ -34,9 +34,12 @@ public sealed partial class TaskServerStore
     // rollback, and terminal supersession state.
     // 23 adds bounded opaque operation permits, always checked against live leases.
     // 24 adds versioned project placement and admission receipts.
+    // 25 adds the installation identity, owner recovery codes, one-time
+    // service enrolments, and canonical project repository registrations
+    // with per-host probe receipts (I05).
     // The migration block is idempotent; the number guards downgrades from
     // binaries that do not know this state.
-    public const int CurrentSchemaVersion = 24;
+    public const int CurrentSchemaVersion = 25;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -3941,6 +3944,7 @@ public sealed partial class TaskServerStore
             """, ct);
         await ApplyWorkbenchContextMigrationAsync(connection, ct);
         await ApplyOperationsPrincipalMigrationAsync(connection, ct);
+        await ApplyIdentityBootstrapMigrationAsync(connection, ct);
         await SetMetaAsync(connection, null, "schema_version", CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture), ct);
     }
 

@@ -31,11 +31,13 @@ public static class StudioEndpoints
         auth.MapGet("/status", async (HttpContext context, TaskServerStore store, CancellationToken ct)
             => await TaskServerEndpoints.InvokeAsync(() => store.GetStudioAuthStatusAsync(StudioSessionToken(context), ct)));
 
-        auth.MapPost("/bootstrap", async (HttpContext context, StudioBootstrapRequest request, TaskServerStore store, CancellationToken ct) =>
+        auth.MapPost("/bootstrap", async (
+            HttpContext context, StudioBootstrapRequest request, TaskServerStore store,
+            TaskServerBootstrapOptions bootstrap, CancellationToken ct) =>
         {
             try
             {
-                var session = await store.BootstrapStudioAuthAsync(request, ct);
+                var session = await store.BootstrapStudioAuthAsync(request, bootstrap.RequiresAuthentication, ct);
                 SetStudioSessionCookies(context, session.SessionToken, session.CsrfToken);
                 return Results.Json(session, statusCode: StatusCodes.Status201Created);
             }
@@ -234,11 +236,11 @@ public static class StudioEndpoints
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
     }
 
-    private static string? StudioSessionToken(HttpContext context)
+    internal static string? StudioSessionToken(HttpContext context)
         => context.Request.Headers["X-Studio-Session-Token"].FirstOrDefault()
            ?? context.Request.Cookies["ts-studio-session"];
 
-    private static void SetStudioSessionCookies(HttpContext context, string sessionToken, string csrfToken)
+    internal static void SetStudioSessionCookies(HttpContext context, string sessionToken, string csrfToken)
     {
         var secure = context.Request.IsHttps;
         context.Response.Cookies.Append("ts-studio-session", sessionToken, new CookieOptions
