@@ -1,0 +1,305 @@
+using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using AgentStudio.TaskServer;
+using AgentStudio.TaskServer.Contracts;
+using AgentStudio.TaskServer.Recovery;
+using Microsoft.Extensions.Options;
+using Xunit;
+using Xunit.Abstractions;
+
+namespace TaskServer.Tests;
+
+/// <summary>
+/// Empty-target recovery rehearsal (Dossier AGT-W63 D7 option A, I07). The source authority stands in for
+/// production and is never restored over; every target starts from an empty directory and only the copy.
+/// </summary>
+public sealed class RecoveryDrillTests(ITestOutputHelper output)
+{
+    private const string RunnerPrincipal = "runner:runner-full";
+
+    [Fact]
+    public async Task Empty_target_rebuilds_from_the_retained_set_and_resumes_behind_the_gate()
+    {
+        using var temp = new TempDirectory("recovery-drill");
+        var drill = await CaptureAsync(temp.Path);
+
+        // A write the old authority accepts after capture: lost on restore, and later replayed by its host.
+        await drill.Source.CreateTaskAsync(drill.ProjectId, new CreateTaskRequest("After capture", State: "2-ready"), "test", default);
+        var lostClaim = await drill.Source.ClaimAsync(new ClaimRequest("runner-full", "runner-full:1"), "test", default);
+        drill.Clock.Advance(TimeSpan.FromSeconds(90));
+        var lossAt = drill.Clock.GetUtcNow().UtcDateTime;
+
+        var targetDirectory = Path.Combine(temp.Path, "target");
+        var target = Store(targetDirectory, drill.Clock);
+        var workflow = Workflow(target, targetDirectory, drill.Clock);
+        var restoreTimer = Stopwatch.StartNew();
+        var restored = await workflow.RestoreToEmptyAsync(drill.CopyRoot, null, lossAt, "drill", default);
+        restoreTimer.Stop();
+
+        Assert.True(restored.Restored, restored.Message);
+        Assert.All(restored.Receipt!.Comparisons, item => Assert.True(item.Matches, $"{item.Subject}: {item.Expected} != {item.Actual}"));
+        Assert.Contains(restored.Receipt.Comparisons, item => item.Subject.StartsWith("cold ", StringComparison.Ordinal));
+        Assert.DoesNotContain(restored.Report.Findings, item => item.Code.StartsWith("git-", StringComparison.Ordinal));
+        Assert.Equal(90, restored.Receipt.MeasuredRecoveryPointSeconds);
+        Assert.Equal(TaskServerMode.Maintenance, target.Mode);
+        Assert.Equal(drill.Source.ServerId, target.ServerId);
+
+        // A fresh process on the restored store, as the CLI would run it.
+        target = Store(targetDirectory, drill.Clock);
+        await target.InitializeAsync();
+        workflow = Workflow(target, targetDirectory, drill.Clock);
+        var (blocked, _) = await workflow.ResumeAsync(false, false, true, null, "drill", default);
+        Assert.Contains(blocked.Blockers, item => item.Code == "old-writer-open");
+        Assert.Contains(blocked.Blockers, item => item.Code == "stale-hosts-unfenced");
+
+        Assert.NotNull(await target.AuthenticatePrincipalAsync(drill.OldRunnerCredential, default));
+        drill.Clock.Advance(TimeSpan.FromSeconds(1));
+        Assert.Equal(1, await workflow.FenceHostsAsync("drill", default));
+        Assert.Null(await target.AuthenticatePrincipalAsync(drill.OldRunnerCredential, default));
+
+        drill.Clock.Advance(TimeSpan.FromSeconds(1));
+        var reenrolled = await workflow.ReenrolHostAsync(RunnerPrincipal, "drill", default);
+        Assert.NotNull(await target.AuthenticatePrincipalAsync(reenrolled.Credential, default));
+
+        drill.Clock.Advance(TimeSpan.FromSeconds(30));
+        var (decision, receipt) = await workflow.ResumeAsync(true, false, false, null, "drill", default);
+        Assert.True(decision.Allowed, string.Join("; ", decision.Blockers.Select(item => item.Code)));
+        Assert.Equal(TaskServerMode.Normal, target.Mode);
+        Assert.Equal(32, receipt!.MeasuredRecoveryTimeSeconds);
+
+        // Obsolete replay: the old host reports the run the lost authority leased after capture.
+        var replay = await Assert.ThrowsAnyAsync<Exception>(() => target.CompleteRunAsync(lostClaim.Run!.RunId, new CompleteRunRequest(
+            "runner-full", "runner-full:1", lostClaim.Lease!.LeaseId, lostClaim.Lease.Fence,
+            ExecutionOutcomeKind.LaunchFailure.ToString(), IdempotencyKey: "lost-completion", Sequence: 1), "runner-full", default));
+        output.WriteLine($"obsolete replay rejected: {replay.GetType().Name}: {replay.Message}");
+        Assert.True(replay is KeyNotFoundException or TaskServerConflictException or InvalidOperationException, replay.ToString());
+
+        // Reconnect one host with a new instance and finish a canary.
+        await target.RegisterRunnerAsync("runner-full",
+            new RegisterRunnerRequest("runner-full", "host-full", "runner-full:2", "1.0.0", TaskServerProtocol.Current,
+                [ReviewCapabilities.CodingExecutor]), "runner-full", default);
+        var canaryTask = await target.CreateTaskAsync(drill.ProjectId, new CreateTaskRequest("Recovery canary", State: "2-ready"), "drill", default);
+        var canary = await target.ClaimAsync(new ClaimRequest("runner-full", "runner-full:2"), "runner-full", default);
+        Assert.Equal(canaryTask.TaskId, canary.Task!.TaskId);
+        var canaryBytes = Encoding.UTF8.GetBytes("recovery canary\n");
+        await target.IngestArtifactAsync(canary.Run!.RunId, new ArtifactIngestRequest(
+            "art-recovery-canary", "logs/canary.log", "text/plain", Convert.ToBase64String(canaryBytes),
+            Convert.ToHexStringLower(SHA256.HashData(canaryBytes)), "canary-ingest", canary.Lease!.Fence), "runner-full", default);
+        await target.ReleaseLeaseAsync(canary.Run.RunId,
+            new LeaseReleaseRequest("runner-full", "runner-full:2", canary.Lease.LeaseId, canary.Lease.Fence, "completed"), "runner-full", default);
+
+        // Production state is untouched by the rehearsal.
+        Assert.Equal(TaskServerMode.Normal, drill.Source.Mode);
+        Assert.Equal(drill.SourceTaskCount + 1, (await drill.Source.ReadLiveRecoveryFactsAsync(default)).TaskCount);
+
+        var report = new
+        {
+            schema = "agent-studio.recovery-drill-report/v1",
+            manifest = receipt.ManifestId,
+            setSha256 = receipt.SetSha256,
+            comparisons = receipt.Comparisons.Count,
+            measuredRecoveryPointSeconds = receipt.MeasuredRecoveryPointSeconds,
+            measuredRecoveryPointBasis = "drill clock: loss instant minus manifest capture time",
+            measuredRecoveryTimeSeconds = receipt.MeasuredRecoveryTimeSeconds,
+            measuredRecoveryTimeBasis = "drill clock: loss instant to resume gate release, including scripted operator steps",
+            wallClockRestoreSeconds = Math.Round(restoreTimer.Elapsed.TotalSeconds, 3),
+            lostWritesAfterCapture = 1,
+            canaryRun = canary.Run.RunId,
+        };
+        var text = JsonSerializer.Serialize(report, RecoveryJson.Options);
+        output.WriteLine(text);
+        if (Environment.GetEnvironmentVariable("RECOVERY_DRILL_REPORT") is { Length: > 0 } reportPath)
+            await File.WriteAllTextAsync(reportPath, text);
+    }
+
+    public static TheoryData<string, string> Faults => new()
+    {
+        { "missing-cold-payload", "restore-refused" },
+        { "incomplete-set", "restore-refused" },
+        { "corrupted-hash", "restore-refused" },
+        { "schema-mismatch", "restore-refused" },
+        { "git-origin-unavailable", "resume-blocked" },
+        { "client-credentials-lost", "resume-blocked" },
+    };
+
+    [Theory]
+    [MemberData(nameof(Faults))]
+    public async Task Injected_fault_yields_specific_guidance_and_never_touches_production(string fault, string effect)
+    {
+        using var temp = new TempDirectory("recovery-fault");
+        var drill = await CaptureAsync(temp.Path);
+        var set = Path.Combine(drill.CopyRoot, RecoveryWorkflow.SetDirectory);
+        string? bundleOverride = null;
+        switch (fault)
+        {
+            case "missing-cold-payload":
+                File.Delete(Directory.EnumerateFiles(Path.Combine(set, "cold"), "*", SearchOption.AllDirectories).Single());
+                break;
+            case "incomplete-set":
+                File.Delete(Path.Combine(set, "complete.json"));
+                break;
+            case "corrupted-hash":
+                await File.AppendAllTextAsync(Path.Combine(set, "export", "tasks.jsonl"), "{}\n");
+                break;
+            case "schema-mismatch":
+                var manifestPath = Path.Combine(drill.CopyRoot, RecoveryWorkflow.ManifestFile);
+                var node = JsonNode.Parse(await File.ReadAllTextAsync(manifestPath))!;
+                node["store"]!["schemaVersion"] = TaskServerStore.CurrentSchemaVersion + 1;
+                await File.WriteAllTextAsync(manifestPath, node.ToJsonString());
+                break;
+            case "git-origin-unavailable":
+                Directory.Move(drill.Origin, drill.Origin + ".offline");
+                break;
+            case "client-credentials-lost":
+                bundleOverride = Path.Combine(temp.Path, "lost-secrets.age");
+                break;
+        }
+
+        var targetDirectory = Path.Combine(temp.Path, "target");
+        var target = Store(targetDirectory, drill.Clock);
+        var result = await Workflow(target, targetDirectory, drill.Clock)
+            .RestoreToEmptyAsync(drill.CopyRoot, bundleOverride, null, "drill", default);
+        var finding = Assert.Single(result.Report.Findings, item => item.Code == fault);
+        output.WriteLine($"{fault}: {finding.Guidance}");
+        Assert.False(string.IsNullOrWhiteSpace(finding.Guidance));
+
+        if (effect == "restore-refused")
+        {
+            Assert.False(result.Restored);
+            Assert.Equal(RecoveryFindingSeverity.BlocksRestore, finding.Severity);
+            Assert.False(Directory.Exists(targetDirectory) && Directory.EnumerateFileSystemEntries(targetDirectory).Any());
+        }
+        else
+        {
+            Assert.True(result.Restored, result.Message);
+            Assert.Equal(RecoveryFindingSeverity.BlocksResume, finding.Severity);
+            target = Store(targetDirectory, drill.Clock);
+            await target.InitializeAsync();
+            var workflow = Workflow(target, targetDirectory, drill.Clock);
+            drill.Clock.Advance(TimeSpan.FromSeconds(1));
+            await workflow.FenceHostsAsync("drill", default);
+            var (decision, _) = await workflow.ResumeAsync(true, false, false, bundleOverride, "drill", default);
+            Assert.False(decision.Allowed);
+            Assert.Equal(TaskServerMode.Maintenance, target.Mode);
+            if (fault == "git-origin-unavailable") Assert.Contains(decision.Blockers, item => item.Code == fault);
+            else Assert.Contains(decision.Blockers, item => item.Code == "secret-bundle-missing");
+        }
+
+        Assert.Equal(TaskServerMode.Normal, drill.Source.Mode);
+        Assert.Equal(drill.SourceTaskCount, (await drill.Source.ReadLiveRecoveryFactsAsync(default)).TaskCount);
+    }
+
+    [Fact]
+    public async Task Copy_and_restore_refuse_non_empty_targets()
+    {
+        using var temp = new TempDirectory("recovery-nonempty");
+        var drill = await CaptureAsync(temp.Path);
+        var source = Workflow(drill.Source, drill.SourceDirectory, drill.Clock);
+        await Assert.ThrowsAsync<IOException>(() => source.CopyAsync(drill.BackupId, Path.GetDirectoryName(drill.CopyRoot)!, default));
+
+        var targetDirectory = Path.Combine(temp.Path, "occupied");
+        Directory.CreateDirectory(targetDirectory);
+        await File.WriteAllTextAsync(Path.Combine(targetDirectory, "keep.txt"), "existing");
+        var target = Store(targetDirectory, drill.Clock);
+        await Assert.ThrowsAsync<IOException>(() =>
+            Workflow(target, targetDirectory, drill.Clock).RestoreToEmptyAsync(drill.CopyRoot, null, null, "drill", default));
+        Assert.Equal("existing", await File.ReadAllTextAsync(Path.Combine(targetDirectory, "keep.txt")));
+    }
+
+    private sealed record Drill(
+        TaskServerStore Source,
+        string SourceDirectory,
+        ManualTimeProvider Clock,
+        string ProjectId,
+        string BackupId,
+        string CopyRoot,
+        string Origin,
+        string OldRunnerCredential,
+        int SourceTaskCount);
+
+    private static async Task<Drill> CaptureAsync(string root)
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.Parse("2026-01-01T00:00:00Z"));
+        var sourceDirectory = Path.Combine(root, "source");
+        var source = Store(sourceDirectory, clock);
+        await source.InitializeAsync();
+
+        var workspace = await source.CreateWorkspaceAsync(new CreateWorkspaceRequest("Recovery"), "test", default);
+        var project = await source.CreateProjectAsync(new CreateProjectRequest(workspace.WorkspaceId, "Recovery", "RCV"), "test", default);
+        await source.CreateTaskAsync(project.ProjectId, new CreateTaskRequest("Archived task", State: "2-ready"), "test", default);
+        var runner = await source.CreatePrincipalAsync(
+            new CreatePrincipalRequest(RunnerPrincipal, TaskServerPrincipalKinds.Runner, RunnerId: "runner-full"), "test", default);
+        await source.RegisterRunnerAsync("runner-full",
+            new RegisterRunnerRequest("runner-full", "host-full", "runner-full:1", "1.0.0", TaskServerProtocol.Current,
+                [ReviewCapabilities.CodingExecutor]), "test", default);
+        var claim = await source.ClaimAsync(new ClaimRequest("runner-full", "runner-full:1"), "test", default);
+        var bytes = Encoding.UTF8.GetBytes(string.Concat(Enumerable.Repeat("recovery drill log\n", 40)));
+        await source.IngestArtifactAsync(claim.Run!.RunId, new ArtifactIngestRequest(
+            "art-recovery-cold", "logs/cli-output.log", "text/plain", Convert.ToBase64String(bytes),
+            Convert.ToHexStringLower(SHA256.HashData(bytes)), "recovery-ingest", claim.Lease!.Fence), "runner-full", default);
+        await source.UpdateTaskAsync(project.ProjectId, claim.Task!.TaskId,
+            new UpdateTaskRequest(null, null, "7-archive", claim.Task.Version), "test", default);
+        await source.ReleaseLeaseAsync(claim.Run.RunId,
+            new LeaseReleaseRequest("runner-full", "runner-full:1", claim.Lease.LeaseId, claim.Lease.Fence, "completed"), "test", default);
+        clock.Advance(TimeSpan.FromDays(31));
+        Assert.Equal(1, (await source.ApplyRetentionRunAsync(new RunRetentionRequest(), "test", default)).AppliedActions);
+        await source.CreateTaskAsync(project.ProjectId, new CreateTaskRequest("Open task", State: "1-backlog"), "test", default);
+
+        var origin = Path.Combine(root, "origin.git");
+        var work = Path.Combine(root, "work");
+        Git(root, "init", "--bare", "-b", "main", origin);
+        Git(root, "init", "-b", "main", work);
+        await File.WriteAllTextAsync(Path.Combine(work, "README.md"), "recovery drill\n");
+        Git(work, "add", ".");
+        Git(work, "-c", "user.name=drill", "-c", "user.email=drill@example.invalid", "commit", "-m", "canonical");
+        Git(work, "push", origin, "main");
+
+        var bundle = Path.Combine(root, "offhost", "secrets.age");
+        Directory.CreateDirectory(Path.GetDirectoryName(bundle)!);
+        await File.WriteAllTextAsync(bundle, "age-encrypted-placeholder");
+        var custody = new RecoveryCustodyDeclaration(
+            "inst_drill",
+            [new("compose environment", Path.Combine(root, "compose.env"), RecoveryCredentialCustody.SecretBundle, null)],
+            new(bundle, "age", "administrator"),
+            [new(RunnerPrincipal, RecoveryCredentialCustody.SecretBundle)],
+            [new("recovery-repo", origin, ["refs/heads/main"])]);
+
+        var workflow = Workflow(source, sourceDirectory, clock);
+        var manifest = await workflow.CaptureAsync(custody, "drill", default);
+        Assert.Equal(RecoveryManifest.CurrentSchema, manifest.Schema);
+        Assert.Equal(1, manifest.ColdEvidence.PayloadCount);
+        Assert.Equal(2, manifest.Identities.TaskCount);
+        Assert.Equal(40, Assert.Single(Assert.Single(manifest.Repositories).SampledRefs).Sha.Length);
+        Assert.Equal(RecoveryCredentialCustody.SecretBundle, Assert.Single(manifest.SecretCustody.Clients).Custody);
+        Assert.NotEmpty(manifest.RebuildableCaches);
+
+        var receipt = await workflow.CopyAsync(manifest.DataSet.BackupId, Path.Combine(root, "offhost"), default);
+        Assert.Empty(receipt.Warnings);
+        return new Drill(source, sourceDirectory, clock, project.ProjectId, manifest.DataSet.BackupId, receipt.Destination, origin,
+            runner.Credential, manifest.Identities.TaskCount);
+    }
+
+    private static RecoveryWorkflow Workflow(TaskServerStore store, string directory, TimeProvider clock)
+        => new(store, Options(directory), new OriginRefProbe(Http), clock);
+
+    private static readonly HttpClient Http = new();
+
+    private static TaskServerOptions Options(string directory) => new() { DataDirectory = directory };
+
+    private static TaskServerStore Store(string directory, TimeProvider clock)
+        => new(Microsoft.Extensions.Options.Options.Create(Options(directory)), clock);
+
+    private static void Git(string workingDirectory, params string[] arguments)
+    {
+        var start = new ProcessStartInfo("git") { WorkingDirectory = workingDirectory, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var argument in arguments) start.ArgumentList.Add(argument);
+        using var process = Process.Start(start)!;
+        var error = process.StandardError.ReadToEnd();
+        process.StandardOutput.ReadToEnd();
+        process.WaitForExit();
+        Assert.True(process.ExitCode == 0, $"git {string.Join(' ', arguments)} failed: {error}");
+    }
+}

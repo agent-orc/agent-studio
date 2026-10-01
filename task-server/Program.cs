@@ -1,5 +1,7 @@
 using AgentStudio.TaskServer;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.TaskServer.Recovery;
+using Microsoft.Extensions.Options;
 using System.Text.Json;
 
 TaskServerCommandLine command;
@@ -180,6 +182,10 @@ if (command.Kind == TaskServerCommandKind.FullBackup)
         return 1;
     }
 }
+
+if (command.Kind == TaskServerCommandKind.Recovery)
+    return await RecoveryCommand.RunAsync(
+        command.Recovery!, store, app.Services.GetRequiredService<IOptions<TaskServerOptions>>().Value, default);
 
 await store.InitializeAsync(app.Lifetime.ApplicationStopping);
 var bootstrap = app.Services.GetRequiredService<TaskServerBootstrapOptions>();

@@ -11,6 +11,14 @@ public enum TaskServerCommandKind
     FullBackup,
     Inventory,
     Import,
+    Recovery,
+}
+
+/// <summary>Installation recovery set workflow; options are validated per operation by the runner.</summary>
+public sealed record RecoveryCommandLine(string Operation, IReadOnlyDictionary<string, string> Options, IReadOnlySet<string> Flags)
+{
+    public string? Option(string name) => Options.TryGetValue(name, out var value) ? value : null;
+    public bool Flag(string name) => Flags.Contains(name);
 }
 
 public sealed record FullBackupCommandLine(string Operation, string? BackupId, bool Json);
@@ -36,8 +44,21 @@ public sealed record TaskServerCommandLine(
     TaskServerMode? Mode,
     string[] HostArguments,
     RetentionCommandLine? Retention = null,
-    FullBackupCommandLine? FullBackup = null)
+    FullBackupCommandLine? FullBackup = null,
+    RecoveryCommandLine? Recovery = null)
 {
+    public const string RecoveryUsage = """
+        Usage:
+          task-server recovery capture [--custody <custody.json>] [host options]
+          task-server recovery copy --backup <backup-id> --to <off-host-directory> [host options]
+          task-server recovery verify --from <copy-directory> [--secret-bundle <path>] [--git-refs <origins.json>] [--no-git]
+          task-server recovery restore --from <copy-directory> [--secret-bundle <path>] [--loss-at <utc>] [host options]
+          task-server recovery fence-hosts [host options]
+          task-server recovery reenrol --principal <runner-principal> --credential-out <file> [host options]
+          task-server recovery resume [--check-only] [--old-writer-closed] [--obligations-retained] [--secret-bundle <path>] [host options]
+        """;
+
+
     public const string RetentionUsage = """
         Usage:
           task-server retention plan --workspace <path> [--policy <file|default>] [--archive <path>] [--project <project>] [--task <key>] [--json]
@@ -63,6 +84,8 @@ public sealed record TaskServerCommandLine(
             return new TaskServerCommandLine(TaskServerCommandKind.Version, null, null, null, null, null, []);
         if (args.Length > 0 && string.Equals(args[0], "retention", StringComparison.OrdinalIgnoreCase))
             return ParseRetention(args);
+        if (args.Length > 0 && string.Equals(args[0], "recovery", StringComparison.OrdinalIgnoreCase))
+            return ParseRecovery(args);
         if (args.Length == 0 || !IsCommand(args[0]))
             return new TaskServerCommandLine(TaskServerCommandKind.Serve, null, null, null, null, null, args);
 
@@ -195,6 +218,47 @@ public sealed record TaskServerCommandLine(
             throw new ArgumentException("retention restore-full requires --workspace as the empty destination.");
         return new TaskServerCommandLine(TaskServerCommandKind.Retention, null, null, null, null, null, [],
             new RetentionCommandLine(operation, workspace, policy, archive, project, task, output, json, store, confirmColdDelete));
+    }
+
+    private static readonly HashSet<string> RecoveryOperations = new(StringComparer.Ordinal)
+        { "help", "capture", "copy", "verify", "restore", "fence-hosts", "reenrol", "resume" };
+    private static readonly HashSet<string> RecoveryValueOptions = new(StringComparer.Ordinal)
+        { "--custody", "--backup", "--to", "--from", "--secret-bundle", "--loss-at", "--principal", "--credential-out", "--git-refs" };
+    private static readonly HashSet<string> RecoveryFlags = new(StringComparer.Ordinal)
+        { "--no-git", "--check-only", "--old-writer-closed", "--obligations-retained" };
+
+    private static TaskServerCommandLine ParseRecovery(string[] args)
+    {
+        var operation = args.Length < 2 || args[1] is "--help" or "-h" ? "help" : args[1].ToLowerInvariant();
+        if (!RecoveryOperations.Contains(operation))
+            throw new ArgumentException($"Unknown recovery operation '{args[1]}'.");
+        var options = new Dictionary<string, string>(StringComparer.Ordinal);
+        var flags = new HashSet<string>(StringComparer.Ordinal);
+        var hostArguments = new List<string>();
+        for (var index = 2; index < args.Length; index++)
+        {
+            var name = args[index].ToLowerInvariant();
+            if (RecoveryFlags.Contains(name)) { flags.Add(name); continue; }
+            if (RecoveryValueOptions.Contains(name))
+            {
+                if (index + 1 >= args.Length || args[index + 1].StartsWith("--", StringComparison.Ordinal))
+                    throw new ArgumentException($"recovery {operation} {name} requires a value.");
+                options[name] = args[++index];
+                continue;
+            }
+            hostArguments.Add(args[index]);
+        }
+        string[] required = operation switch
+        {
+            "copy" => ["--backup", "--to"],
+            "verify" or "restore" => ["--from"],
+            "reenrol" => ["--principal", "--credential-out"],
+            _ => [],
+        };
+        foreach (var name in required.Where(name => !options.ContainsKey(name)))
+            throw new ArgumentException($"recovery {operation} requires {name}.");
+        return new TaskServerCommandLine(TaskServerCommandKind.Recovery, null, null, null, null, null, hostArguments.ToArray(),
+            Recovery: new RecoveryCommandLine(operation, options, flags));
     }
 
     private static bool IsCommand(string value)
