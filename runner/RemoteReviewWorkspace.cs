@@ -1930,7 +1930,7 @@ public sealed class RemoteReviewWorkspace
     }
 
     private static string AppendReviewMaterial(string prompt, string reviewMaterial)
-        => prompt.TrimEnd() + Environment.NewLine + Environment.NewLine + reviewMaterial;
+        => prompt.TrimEnd() + PromptText.NewLine + PromptText.NewLine + reviewMaterial;
 
     private static string RenderReviewMaterial(
         string integrationRef,
@@ -1945,33 +1945,33 @@ public sealed class RemoteReviewWorkspace
         bool truncated)
     {
         var text = new StringBuilder();
-        text.AppendLine("## Authoritative delivery review material");
-        text.AppendLine();
-        text.AppendLine($"- Integration ref: `{integrationRef}` (freshly fetched)");
-        text.AppendLine($"- Merge base: `{baselineSha}`");
-        text.AppendLine($"- Delivery Result-SHA: `{resultSha}`");
-        text.AppendLine($"- Changed files: {totalFiles}");
-        text.AppendLine();
-        text.AppendLine("### Changed-file list");
-        text.AppendLine();
-        if (changedFiles.Count == 0) text.AppendLine("_No changed files._");
-        else foreach (var file in changedFiles) text.Append("- `").Append(file).AppendLine("`");
-        text.AppendLine();
-        text.AppendLine("### Unified diff");
-        text.AppendLine();
-        text.AppendLine("```diff");
-        foreach (var line in diffLines) text.AppendLine(line);
-        text.AppendLine("```");
+        text.AppendLf("## Authoritative delivery review material");
+        text.AppendLf();
+        text.AppendLf($"- Integration ref: `{integrationRef}` (freshly fetched)");
+        text.AppendLf($"- Merge base: `{baselineSha}`");
+        text.AppendLf($"- Delivery Result-SHA: `{resultSha}`");
+        text.AppendLf($"- Changed files: {totalFiles}");
+        text.AppendLf();
+        text.AppendLf("### Changed-file list");
+        text.AppendLf();
+        if (changedFiles.Count == 0) text.AppendLf("_No changed files._");
+        else foreach (var file in changedFiles) text.Append("- `").Append(file).AppendLf("`");
+        text.AppendLf();
+        text.AppendLf("### Unified diff");
+        text.AppendLf();
+        text.AppendLf("```diff");
+        foreach (var line in diffLines) text.AppendLf(line);
+        text.AppendLf("```");
         if (truncated)
         {
-            text.AppendLine();
+            text.AppendLf();
             text.Append("[[REVIEW_DIFF_TRUNCATED: diff truncated at ")
                 .Append(Math.Min(totalFiles, maximumFiles)).Append(" files/")
                 .Append(diffLines.Count).Append(" lines; delivery has ")
                 .Append(totalFiles).Append(" changed files/")
                 .Append(totalDiffLines).Append(" diff lines; budget ")
                 .Append(maximumFiles).Append(" files/")
-                .Append(maximumLines).AppendLine(" lines.]]");
+                .Append(maximumLines).AppendLf(" lines.]]");
         }
         return text.ToString();
     }

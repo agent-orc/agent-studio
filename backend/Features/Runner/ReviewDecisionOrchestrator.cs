@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.Prompts;
 
 namespace AgentStudio.Runner;
 
@@ -6504,17 +6505,17 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     internal static string BuildBranchDiffSummary(string baseBranch, string taskBranch, IReadOnlyList<GitCommitInfo> commits)
     {
         var sb = new StringBuilder();
-        sb.AppendLine($"Task branch `{taskBranch}` vs base `{baseBranch}`: {commits.Count} commit(s) ahead.");
-        sb.AppendLine($"Total files changed: {commits.Sum(c => c.FilesChanged)}; lines +{commits.Sum(c => c.Added)}/-{commits.Sum(c => c.Removed)}.");
-        sb.AppendLine();
-        sb.AppendLine("Per commit (newest first):");
+        sb.AppendLf($"Task branch `{taskBranch}` vs base `{baseBranch}`: {commits.Count} commit(s) ahead.");
+        sb.AppendLf($"Total files changed: {commits.Sum(c => c.FilesChanged)}; lines +{commits.Sum(c => c.Added)}/-{commits.Sum(c => c.Removed)}.");
+        sb.AppendLf();
+        sb.AppendLf("Per commit (newest first):");
         foreach (var c in commits)
         {
             var subject = string.IsNullOrWhiteSpace(c.Subject) ? "(no subject)" : c.Subject;
-            sb.AppendLine($"- {c.ShortSha} {subject} ({c.FilesChanged} files, +{c.Added}, -{c.Removed})");
+            sb.AppendLf($"- {c.ShortSha} {subject} ({c.FilesChanged} files, +{c.Added}, -{c.Removed})");
         }
-        sb.AppendLine();
-        sb.AppendLine("These branch commits are attributed to the task even when the current run's working diff is empty (post-squash/merge or steer follow-up). Do NOT treat an empty working diff as missing work when this range is non-empty.");
+        sb.AppendLf();
+        sb.AppendLf("These branch commits are attributed to the task even when the current run's working diff is empty (post-squash/merge or steer follow-up). Do NOT treat an empty working diff as missing work when this range is non-empty.");
         return sb.ToString().TrimEnd();
     }
 
@@ -6598,27 +6599,27 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             // something to chew on.
             var c = legacyAutoCommit;
             var sb0 = new StringBuilder();
-            sb0.AppendLine($"Commit: {c.ShortSha}");
+            sb0.AppendLf($"Commit: {c.ShortSha}");
             if (!string.IsNullOrWhiteSpace(c.Message))
             {
                 var firstLine = c.Message.Split('\n', 2)[0].Trim();
-                if (firstLine.Length > 0) sb0.AppendLine($"Subject: {firstLine}");
+                if (firstLine.Length > 0) sb0.AppendLf($"Subject: {firstLine}");
             }
-            sb0.AppendLine($"Files changed: {c.FilesChanged}");
+            sb0.AppendLf($"Files changed: {c.FilesChanged}");
             return sb0.ToString();
         }
 
         var sb = new StringBuilder();
-        sb.AppendLine($"Commits attributed to this task: {aggregate.Count}");
-        sb.AppendLine($"Total files changed (sum across commits; a file touched twice counts twice): {aggregate.TotalFilesChanged}");
-        sb.AppendLine($"Total lines added: {aggregate.TotalAdded}");
-        sb.AppendLine($"Total lines removed: {aggregate.TotalRemoved}");
-        sb.AppendLine();
-        sb.AppendLine("Per commit (newest first):");
+        sb.AppendLf($"Commits attributed to this task: {aggregate.Count}");
+        sb.AppendLf($"Total files changed (sum across commits; a file touched twice counts twice): {aggregate.TotalFilesChanged}");
+        sb.AppendLf($"Total lines added: {aggregate.TotalAdded}");
+        sb.AppendLf($"Total lines removed: {aggregate.TotalRemoved}");
+        sb.AppendLf();
+        sb.AppendLf("Per commit (newest first):");
         foreach (var c in aggregate.Commits)
         {
             var subject = string.IsNullOrWhiteSpace(c.Subject) ? "(no subject)" : c.Subject;
-            sb.AppendLine($"- {c.ShortSha} {subject} ({c.FilesChanged} files, +{c.Added}, -{c.Removed})");
+            sb.AppendLf($"- {c.ShortSha} {subject} ({c.FilesChanged} files, +{c.Added}, -{c.Removed})");
         }
 
         // Defensive: commits exist and touch files, but no +/- line counts
@@ -6630,8 +6631,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // real change (ASS-770).
         if (aggregate.TotalAdded == 0 && aggregate.TotalRemoved == 0 && aggregate.TotalFilesChanged > 0)
         {
-            sb.AppendLine();
-            sb.AppendLine("Note: per-line +/- counts could not be computed for these commits (line stats were not cached and git could not re-derive them). The file counts above are authoritative and confirm real changes - do NOT treat the zero line totals as missing, empty, or corrupted work.");
+            sb.AppendLf();
+            sb.AppendLf("Note: per-line +/- counts could not be computed for these commits (line stats were not cached and git could not re-derive them). The file counts above are authoritative and confirm real changes - do NOT treat the zero line totals as missing, empty, or corrupted work.");
         }
         return sb.ToString();
     }
