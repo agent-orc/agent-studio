@@ -73,6 +73,48 @@ update attempts to restart the installed version. Run
 `agent-studio-setup uninstall` to stop and remove containers while retaining
 the data volumes; add `--purge` to remove the volumes and installer files.
 
+## Installation journeys, preflight, and re-runs
+
+`agent-studio-setup` is one installer for four journeys. `--journey` selects
+the installer mode:
+
+| Journey | Mode | Purpose |
+| --- | --- | --- |
+| `one-box` | `studio` | Whole system on one machine; a workstation is a placement |
+| `join-host` | `agent-host` | Add a runner host to the existing Task Server |
+| `attach-studio` | `connector` | Attach Studio to a remote Task Server |
+| `relocate-authority` | `control-plane` | Move Task Server and engine to an always-on box |
+
+Each run prints the journey's facts first: prerequisites, storage, release
+pin, human identity, project origin, first runner and budgets. It then prints
+the checkpoints the journey must reach. Run `agent-studio-setup preflight
+--journey NAME [--server-url URL] [--backup-path PATH]` to check a host
+without changing it. Install runs the same checks first. A failed check names
+its recovery action; for example `wsl --install`, `wg-quick up wg0`, the
+private CA certificate, or `chmod 600` for a token file. Checks that the
+journey does not need report `n/a`. On Windows, execution runs in Linux
+containers under Docker Desktop with WSL 2. The host advertises `linux-x64`.
+There is no native Windows execution exemption from AGT-W51.
+
+The installer writes an owner-only `installation.json` manifest. It records
+the installation id, release pin, principal names, project origin, first
+runner and budgets, and never secrets. Re-running install keeps the id,
+principals and data. An interrupted install resumes when you rerun it with the
+same release. A different release needs `update` or `rollback`, and the
+installer rejects a downgrade over preserved data. Token and join-token files
+must be owner-only; the installer does not accept secrets as arguments or in
+answer files. `uninstall` keeps data and the manifest, so a later install
+keeps the same installation id. Only `--purge` deletes them.
+`checkpoints.jsonl` records every observed installer checkpoint with its host
+and version provenance.
+
+`relocate-authority` requires `--recovery-checkpoint BACKUP_ID`. That backup
+must be verified and its restore rehearsed into an empty target. The journey
+also requires `--authority-frozen`, which you pass once the current Task
+Server is in Maintenance with every attempt resolved. The workspace then
+moves through the existing restore contract, not as a new installation
+identity.
+
 ## Native installation without Docker
 
 `--target native` installs services instead of containers. It is the path for

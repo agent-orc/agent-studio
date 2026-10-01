@@ -35,7 +35,7 @@ internal sealed record ProductCommand(
 {
     private static readonly HashSet<string> FlagOptions = new(StringComparer.Ordinal)
     {
-        "--unattended", "--purge", "--dry-run", "--uninstall", "--offline",
+        "--unattended", "--purge", "--dry-run", "--uninstall", "--offline", "--authority-frozen",
         "--help", "-h", "--version",
     };
 
@@ -43,6 +43,7 @@ internal sealed record ProductCommand(
     {
         "--mode", "--target", "--answer-file", "--release-version", "--release-dir",
         "--install-dir", "--ui-port", "--server-url", "--join-token-file", "--token-file",
+        "--journey", "--recovery-checkpoint", "--backup-path",
     };
 
     // Options only the delegated Linux flows understand. They are forwarded
@@ -54,7 +55,7 @@ internal sealed record ProductCommand(
         "--max-parallelism",
     };
 
-    private static readonly string[] Verbs = ["update", "rollback", "uninstall"];
+    private static readonly string[] Verbs = ["update", "rollback", "uninstall", "preflight"];
 
     public bool Has(string flag) => Flags.Contains(flag);
 
@@ -107,6 +108,14 @@ internal sealed record ProductCommand(
             else values[option] = args[index];
         }
         if (flags.Contains("--uninstall")) verb = "uninstall";
+        if (values.TryGetValue("--journey", out var journeyName))
+        {
+            var journeyMode = JourneyPolicy.ModeFor(JourneyPolicy.Parse(journeyName));
+            if (values.TryGetValue("--mode", out var explicitMode)
+                && NormalizeMode(explicitMode, false) != journeyMode)
+                throw new ArgumentException($"--journey {journeyName} installs --mode {journeyMode}, not --mode {explicitMode}.");
+            values["--mode"] = journeyMode;
+        }
         if (flags.Contains("--purge") && verb != "uninstall")
             throw new ArgumentException("--purge requires uninstall or --uninstall.");
         return new ProductCommand(verb, values, flags, passthrough);
