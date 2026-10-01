@@ -10,7 +10,7 @@ using Xunit;
 
 namespace TaskServer.Tests;
 
-public sealed class TaskServerStoreTests
+public sealed partial class TaskServerStoreTests
 {
     [Fact]
     public async Task Follow_up_is_reserved_on_claim_and_consumed_only_after_worker_start_acknowledgement()

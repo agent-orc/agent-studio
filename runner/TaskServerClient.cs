@@ -299,9 +299,19 @@ public sealed class TaskServerClient : IDisposable
     internal async Task<bool> ReRegisterAttemptAsync(
         Contract.RunnerActiveAttempt attempt,
         CancellationToken ct)
+        => await ReAdoptAttemptAsync(attempt, ct) is not null;
+
+    /// <summary>
+    /// Re-registers one positively present attempt and returns the server's
+    /// adoption only when it was accepted. The adoption expiry is a new server
+    /// confirmation for the exact attempt identity, never an offline renewal.
+    /// </summary>
+    internal async Task<Contract.RunnerAttemptAdoption?> ReAdoptAttemptAsync(
+        Contract.RunnerActiveAttempt attempt,
+        CancellationToken ct)
     {
         if (_options is null || (!_useV1 && !_supportsCapabilityAdvertisement))
-            return false;
+            return null;
         _registrationAdoptions.TryRemove(attempt.AttemptId, out _);
         _ = await RegisterAsync(
             _options.RunnerName,
@@ -309,7 +319,9 @@ public sealed class TaskServerClient : IDisposable
             ct,
             [attempt]);
         return _registrationAdoptions.TryGetValue(attempt.AttemptId, out var adoption)
-               && string.Equals(adoption.Status, "adopted", StringComparison.Ordinal);
+               && string.Equals(adoption.Status, "adopted", StringComparison.Ordinal)
+            ? adoption
+            : null;
     }
 
     internal Contract.RunnerActiveAttempt CodingAttemptFor(RunLeaseInfoDto lease)
