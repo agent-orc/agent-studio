@@ -210,6 +210,22 @@ the decision is pending. Deciding only releases that dependency gate. Applying
 the choice to prompts or creating implementation cards belongs to the separate
 apply delivery.
 
+## Task Server failure fingerprint API
+
+The Task Server owns append-only fingerprint observations. All three routes use
+Bearer principal authentication on `/api/v1`:
+
+| Route | Scope | Request and response |
+|---|---|---|
+| `GET /api/v1/failure-fingerprints` | `tasks:read` | Optional `fingerprint` exact-match string and `sinceUtc` UTC timestamp query parameters. Returns an array of `FailureFingerprintHistoryDto` summaries. Gate and review reporters use `sinceUtc` for the previous 24 hours. |
+| `POST /api/v1/failure-fingerprints` | Any of `reviews:write`, `runs:write`, or `tasks:write` | JSON `RecordFailureFingerprintRequest` with nonempty `fingerprint`, `cardKey`, `executor`, `source`, and idempotent `reportKey`. Returns `201` with the updated `FailureFingerprintHistoryDto`. Reusing a report key with different evidence is rejected. |
+| `GET /api/v1/management/failure-fingerprints` | `management` | The same optional query parameters and summary array as the reporter read route. This is the management read surface; there is no UI. |
+
+Each summary has `fingerprint`, `firstSeen`, `lastSeen`, `count`, distinct
+`executors`, and distinct `cardKeys`. A `sinceUtc` filter applies to events
+before aggregation, so all summary fields describe that window. The POST
+source identifies the reporter, currently `gate` or `review`.
+
 ## Result history
 
 `status.md` is the current Result. Lane moves, review requeues, runner
@@ -1076,7 +1092,10 @@ as `acceptance-rail-run`.
   attempts for the task; it does not reset with Studio or Engine restart.
   Consecutive Remote Review decisions with the same blocking aspect,
   classification, and summary escalate with that reason after two rounds by
-  default, even when the broader reissue budget remains.
+  default, even when the broader reissue budget remains. The AGT-2916 diagnosis
+  contract limits both this anti-churn rule and the reissue counter to confirmed
+  `product` failures. Environment, intermittent, first-occurrence, and uncited
+  reviewer concerns do not charge a card.
 - Human Review accepts an already integrated delivery. Post Processing does
   not infer human acceptance or move directly to `6-completed`.
 - Archive is server guarded for every move path. A non-integrated delivery is

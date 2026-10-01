@@ -63,6 +63,19 @@ public static class ReviewFailureAttributionPolicy
         ReviewCommandEvidenceDto evidence)
     {
         if (!Failed(evidence)) return ReviewFailureOwner.None;
+        // AGT-2916: a diagnosed failure is owned by its diagnosis, the same
+        // mapping the Task Server grades with. The candidate evidence keeps the
+        // first (failed) run even when the clean repeat cleared it, so only a
+        // confirmed product failure may charge the delivery. Without a measured
+        // baseline the diagnosis proves nothing and the fail-closed rule holds.
+        if (evidence.Diagnosis is { } diagnosis
+            && !string.IsNullOrWhiteSpace(evidence.BaselineSha)
+            && evidence.BaselineExitCode is not null)
+            return diagnosis.ChargesCard
+                ? ReviewFailureOwner.Delivery
+                : evidence.BaselineExitCode != 0
+                    ? ReviewFailureOwner.IntegrationBranch
+                    : ReviewFailureOwner.Tolerated;
         if (planned?.CompareToBaseline != true) return ReviewFailureOwner.Delivery;
         return Attribute(
             commandFailed: true,
