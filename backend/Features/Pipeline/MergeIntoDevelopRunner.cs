@@ -453,22 +453,19 @@ public sealed class MergeIntoDevelopRunner
                     : _git.GetBranchTip(repoRoot, _git.IntegrationLineRef(repoRoot, branch));
                 pushBranch = branch;
             }
-            if (pushBranch is not null
-                && !MaybeEnqueueIntegrationPush(
+            // AGT-2996: only the integration push worker publishes the result
+            // and releases it to the developer checkout. Without a push worker
+            // (push step disabled, or no queue wired) the result stays on the
+            // integration lane and the checkout's branch is not moved.
+            if (pushBranch is not null)
+                MaybeEnqueueIntegrationPush(
                     project,
                     jobId,
                     jobFolderPath,
                     watchPath,
                     pushBranch,
                     approvedPushSha,
-                    pipelineType)
-                && !string.IsNullOrWhiteSpace(approvedPushSha))
-            {
-                // AGT-2996: no push worker will publish this result (the push
-                // step is disabled, or no queue is wired), so nothing later can
-                // release it. The gate has passed; the checkout follows now.
-                ReleaseToDeveloperCheckout(developerRoot, pushBranch, approvedPushSha!);
-            }
+                    pipelineType);
 
             return result;
         }
@@ -1366,22 +1363,21 @@ public sealed class MergeIntoDevelopRunner
     /// (the unit-test fixtures) - <see cref="Run"/> then stays merge-only and a
     /// test drives <see cref="PushIntegrationBranchAsync"/> directly. Never
     /// throws: the merge has already landed and the push is best-effort.
-    /// Returns whether a push worker is going to handle the result, which is
-    /// also what later releases it to the developer checkout. A closed queue
-    /// still counts: the restart backstop owns that push.
+    /// The push worker is also what later releases the result to the developer
+    /// checkout; a closed queue leaves that to the restart backstop.
     /// </summary>
-    private bool MaybeEnqueueIntegrationPush(
+    private void MaybeEnqueueIntegrationPush(
         string project, string jobId, string jobFolderPath, string? watchPath, string integrationBranch,
         string? approvedSha,
         string pipelineType)
     {
-        if (_pushQueue == null) return false;
+        if (_pushQueue == null) return;
         if (!IntegrationPushEnabled(project, pipelineType))
         {
             _logger.LogInformation(
                 "merge-into-develop push disabled for project={Project} job={JobId}; leaving origin unchanged",
                 project, jobId);
-            return false;
+            return;
         }
 
         var enqueued = _pushQueue.Enqueue(new IntegrationPushRequest(
@@ -1394,27 +1390,6 @@ public sealed class MergeIntoDevelopRunner
             _logger.LogWarning(
                 "merge-into-develop push enqueue failed (queue closed) for project={Project} job={JobId}",
                 project, jobId);
-        return true;
-    }
-
-    /// <summary>
-    /// AGT-2996: moves the developer checkout's local branch (and, for a
-    /// release target with a develop line, develop as well) to a gated result
-    /// that no push worker will publish. Best-effort: the result stays on the
-    /// integration lane, so a checkout that cannot follow is only logged.
-    /// </summary>
-    private void ReleaseToDeveloperCheckout(string developerRoot, string branch, string approvedSha)
-    {
-        try
-        {
-            if (IsReleaseBranch(branch) && HasDevelopLine(developerRoot))
-                _git.ReleaseIntegrationBranchToCheckout(developerRoot, "develop", approvedSha);
-            _git.ReleaseIntegrationBranchToCheckout(developerRoot, branch, approvedSha);
-        }
-        catch (Exception ex)
-        {
-            SilentCatch.Note(ex, "MergeIntoDevelopRunner: releasing the result to the developer checkout is best-effort");
-        }
     }
 
     /// <summary>

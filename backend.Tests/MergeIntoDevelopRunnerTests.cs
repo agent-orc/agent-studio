@@ -49,6 +49,7 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         File.WriteAllText(Path.Combine(repo, "task.txt"), "task work");
         Commit(repo, "feat: task work");
         RunGit(repo, "checkout -q develop");
+        var developBefore = RunGit(repo, "rev-parse develop").Out.Trim();
 
         var (git, log) = Build(repo);
         var jobFolder = BeginRun(log, repo, jobId: "20");
@@ -57,7 +58,11 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         var outcome = runner.Run("Fixture", "20", jobFolder, repo, "develop");
 
         Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
-        Assert.Equal(0, RunGit(repo, "rev-parse --verify develop^2").Code); // merge commit
+        // AGT-2996: the merge commit lands on the integration lane; the
+        // developer checkout's develop waits for the push worker.
+        Assert.Equal(0, RunGit(repo, $"rev-parse --verify {LaneRef("develop")}^2").Code); // merge commit
+        Assert.Equal(outcome.MergedSha, Lane(repo, "develop"));
+        Assert.Equal(developBefore, RunGit(repo, "rev-parse develop").Out.Trim());
 
         var step = ReadMergeStep(log, jobFolder);
         Assert.NotNull(step);
@@ -92,8 +97,8 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         var outcome = runner.Run("Fixture", "2832", jobFolder, repo, "develop");
 
         Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
-        Assert.Equal(0, RunGit(repo, "rev-parse --verify develop^2").Code);
-        Assert.Equal(0, RunGit(repo, "merge-base --is-ancestor task/2832 develop").Code);
+        Assert.Equal(0, RunGit(repo, $"rev-parse --verify {LaneRef("develop")}^2").Code);
+        Assert.Equal(0, RunGit(repo, $"merge-base --is-ancestor task/2832 {LaneRef("develop")}").Code);
         Assert.Equal("work in progress", File.ReadAllText(Path.Combine(repo, "README.md")));
         Assert.Equal("untracked scratch notes", File.ReadAllText(Path.Combine(repo, "notes.md")));
 
@@ -171,7 +176,10 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         var outcome = runner.Run("Fixture", "2832-overlap", jobFolder, repo, "develop");
 
         Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
-        Assert.Equal(outcome.MergedSha, RunGit(repo, "rev-parse develop").Out.Trim());
+        // AGT-2996: the lane advances; the checkout's develop and its
+        // working tree stay as the developer left them until the push worker.
+        Assert.Equal(outcome.MergedSha, Lane(repo, "develop"));
+        Assert.NotEqual(outcome.MergedSha, RunGit(repo, "rev-parse develop").Out.Trim());
         Assert.Equal("local experiment", File.ReadAllText(Path.Combine(repo, "README.md")));
     }
 
@@ -260,7 +268,8 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
 
         Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
         Assert.NotEqual(resultSha, RunGit(repo, "rev-parse main").Out.Trim());
-        Assert.Equal(0, RunGit(repo, $"merge-base --is-ancestor {resultSha} develop").Code);
+        Assert.Equal(0, RunGit(repo, $"merge-base --is-ancestor {resultSha} {LaneRef("develop")}").Code);
+        Assert.NotEqual(resultSha, Lane(repo, "main"));
     }
 
     [Fact]
@@ -366,7 +375,8 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
         Assert.Equal(taskSha, outcome.MergedSha);
         Assert.NotEqual(mainBefore, taskSha);
-        Assert.Equal(taskSha, RunGit(repo, "rev-parse main").Out.Trim());
+        Assert.Equal(taskSha, Lane(repo, "main"));
+        Assert.Equal(mainBefore, RunGit(repo, "rev-parse main").Out.Trim());
         Assert.True(HasTag(repo, "pre-main-suite-ran"), "the declared full-suite test command must run before main advances");
 
         var evidencePath = Assert.Single(
@@ -421,9 +431,9 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
             },
             () =>
             {
-                var candidate = RunGit(repo, "rev-parse develop").Out.Trim();
+                var candidate = Lane(repo, "develop");
                 candidateWasDescendantOfMain =
-                    RunGit(repo, $"merge-base --is-ancestor main {candidate}").Code == 0;
+                    RunGit(repo, $"merge-base --is-ancestor {LaneRef("main")} {candidate}").Code == 0;
             });
         var runner = new MergeIntoDevelopRunner(
             git,
@@ -441,13 +451,15 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
             "main",
             CancellationToken.None);
 
-        var developTip = RunGit(repo, "rev-parse develop").Out.Trim();
-        var mainTip = RunGit(repo, "rev-parse main").Out.Trim();
+        var developTip = Lane(repo, "develop");
+        var mainTip = Lane(repo, "main");
         Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
         Assert.Equal(developTip, outcome.MergedSha);
         Assert.Equal(developTip, mainTip);
         Assert.NotEqual(taskSha, developTip);
-        Assert.Equal(0, RunGit(repo, $"merge-base --is-ancestor {taskSha} develop").Code);
+        Assert.Equal(0, RunGit(repo, $"merge-base --is-ancestor {taskSha} {developTip}").Code);
+        // AGT-2996: the developer checkout's main waits for the push worker.
+        Assert.Equal(mainBefore, RunGit(repo, "rev-parse main").Out.Trim());
         Assert.Equal(0, RunGit(repo, $"merge-base --is-ancestor {mainBefore} {developTip}").Code);
         Assert.True(candidateWasDescendantOfMain);
         Assert.Equal(developTip, gateRunner.Request!.ExpectedSha);
@@ -522,6 +534,7 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         RunGit(repo, "checkout -q main");
         File.WriteAllText(Path.Combine(repo, "mainline.txt"), "independent mainline work");
         Commit(repo, "feat: mainline moved on");
+        var mainBefore = RunGit(repo, "rev-parse main").Out.Trim();
 
         var (git, log, settings) = BuildWithSettings(repo);
         settings.SetBuildProfile("Fixture", new BuildProfile
@@ -549,10 +562,12 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         Assert.Empty(outcome.RebasedCommits);
         Assert.False(HasTag(repo, "pre-main-suite-ran"),
             "a docs-only delivery must not run the full suite");
-        // The docs delivery landed on main as a merge commit.
-        Assert.Equal(0, RunGit(repo, "rev-parse --verify main^2").Code);
-        Assert.Equal(taskSha, RunGit(repo, "rev-parse main^2").Out.Trim());
-        Assert.Equal(0, RunGit(repo, $"merge-base --is-ancestor {taskSha} main").Code);
+        // The docs delivery landed on the main integration lane as a merge
+        // commit; the checkout's main waits for the push worker (AGT-2996).
+        Assert.Equal(0, RunGit(repo, $"rev-parse --verify {LaneRef("main")}^2").Code);
+        Assert.Equal(taskSha, RunGit(repo, $"rev-parse {LaneRef("main")}^2").Out.Trim());
+        Assert.Equal(0, RunGit(repo, $"merge-base --is-ancestor {taskSha} {LaneRef("main")}").Code);
+        Assert.Equal(mainBefore, RunGit(repo, "rev-parse main").Out.Trim());
 
         var evidencePath = Assert.Single(
             Directory.GetFiles(Path.Combine(jobFolder, "post-steps"), "pre-main-test-gate-*.log"));
@@ -623,6 +638,7 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         RunGit(repo, "checkout -q main");
         RunGit(repo, $"branch -D {deliveryRef}");
         RunGit(repo, $"update-ref -d refs/remotes/origin/{deliveryRef}");
+        var mainBefore = RunGit(repo, "rev-parse main").Out.Trim();
 
         var (git, log, settings) = BuildWithSettings(repo);
         var gateRunner = new CapturingBuildTestGateRunner(new BuildTestGateResult(
@@ -674,7 +690,8 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
 
         Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
         Assert.Equal(resultSha, outcome.MergedSha);
-        Assert.Equal(resultSha, RunGit(repo, "rev-parse main").Out.Trim());
+        Assert.Equal(resultSha, Lane(repo, "main"));
+        Assert.Equal(mainBefore, RunGit(repo, "rev-parse main").Out.Trim());
         Assert.False(git.BranchExists(repo, WorktreeTaskLifecycle.BranchFor("remote-main")));
         Assert.Equal(resultSha, gateRunner.Request!.ExpectedSha);
     }
@@ -742,7 +759,10 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
 
         Assert.Equal(MergeIntoIntegrationOutcome.AlreadyMerged, outcome.Outcome);
         Assert.Equal(0, gateRunner.Invocations);
-        Assert.Equal(resultSha, RunGit(repo, "rev-parse main").Out.Trim());
+        // AGT-2996: the lane follows origin; the stale local main is left to
+        // the push worker's release, not moved by the merge step.
+        Assert.Equal(resultSha, Lane(repo, "main"));
+        Assert.Equal(staleMain, RunGit(repo, "rev-parse main").Out.Trim());
         Assert.Equal(resultSha, RunGit(repo, "rev-parse origin/main").Out.Trim());
         var step = ReadMergeStep(log, jobFolder);
         Assert.NotNull(step);
@@ -1722,6 +1742,36 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
 
         Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
         Assert.False(queue.Reader.TryRead(out _), "no push must be enqueued when the push step is disabled");
+    }
+
+    /// <summary>
+    /// AGT-2996: with the push step disabled, nothing publishes the merge, so
+    /// the developer checkout's local develop must stay at its pre-merge tip.
+    /// The green merge lives only on the Studio integration lane.
+    /// </summary>
+    [Fact]
+    public void Run_MergedButPushDisabled_LeavesCheckoutDevelopAtPreMergeTip()
+    {
+        var repo = SeedRepo("run-disabled-checkout");
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "checkout -q -b task/41-checkout");
+        File.WriteAllText(Path.Combine(repo, "task.txt"), "task work");
+        Commit(repo, "feat: task work");
+        RunGit(repo, "checkout -q develop");
+        var developBefore = RunGit(repo, "rev-parse refs/heads/develop").Out.Trim();
+
+        var (git, log, settings) = BuildWithSettings(repo);
+        settings.SetPipelineStep("Fixture", PipelineCatalogue.MergeIntoDevelopPushStepId, new PipelineStepSetting { Enabled = false });
+        var jobFolder = BeginRun(log, repo, jobId: "41-checkout");
+        var runner = new MergeIntoDevelopRunner(
+            git, log, NullLogger<MergeIntoDevelopRunner>.Instance, projectSettings: settings);
+
+        var outcome = runner.Run("Fixture", "41-checkout", jobFolder, repo, "develop");
+
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
+        Assert.NotEqual(developBefore, outcome.MergedSha);
+        Assert.Equal(outcome.MergedSha, Lane(repo, "develop"));
+        Assert.Equal(developBefore, RunGit(repo, "rev-parse refs/heads/develop").Out.Trim());
     }
 
     [Fact]
@@ -2855,6 +2905,12 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         RunGit(cwd, "add -A");
         RunGit(cwd, $"commit -q -m \"{message}\"");
     }
+
+    /// <summary>AGT-2996: the Studio-owned integration lane ref name for a branch.</summary>
+    private static string LaneRef(string branch) => GitService.IntegrationLaneRef(branch);
+
+    private static string Lane(string repo, string branch) =>
+        RunGit(repo, $"rev-parse {LaneRef(branch)}").Out.Trim();
 
     private static (string Out, string Err, int Code) RunGit(string cwd, string args)
     {

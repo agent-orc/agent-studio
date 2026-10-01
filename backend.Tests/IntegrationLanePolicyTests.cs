@@ -43,6 +43,10 @@ public sealed class IntegrationLanePolicyTests
     // Someone committed on the checkout's branch: never touched.
     [InlineData("local", "origin", false, false, false, DeveloperCheckoutReleaseAction.LocalAhead)]
     [InlineData("local", null, false, false, false, DeveloperCheckoutReleaseAction.LocalAhead)]
+    // Committed on top of the published SHA before release ran: still ahead of origin, warned.
+    [InlineData("local", "origin", true, false, false, DeveloperCheckoutReleaseAction.LocalAhead)]
+    // No origin: the local branch is the publication, so containing it is enough.
+    [InlineData("local", null, true, false, false, DeveloperCheckoutReleaseAction.AlreadyContains)]
     // On origin already, just on another line than the published result.
     [InlineData("local", "origin", false, false, true, DeveloperCheckoutReleaseAction.NotFastForward)]
     public void DecideRelease_OnlyFastForwardsAndNeverOverCheckoutCommits(

@@ -94,13 +94,18 @@ public static class IntegrationLanePolicy
     public static DeveloperCheckoutReleaseAction DecideRelease(DeveloperCheckoutReleaseState state)
     {
         if (string.IsNullOrWhiteSpace(state.LocalTip)) return DeveloperCheckoutReleaseAction.NoLocalBranch;
+        // A local tip origin does not contain was committed in this checkout,
+        // even when it already sits on top of the published SHA; it must be
+        // reported before AlreadyContains can hide it.
+        var hasOrigin = !string.IsNullOrWhiteSpace(state.OriginTip);
+        if (hasOrigin && !state.OriginContainsLocal && !state.PublishedContainsLocal)
+            return DeveloperCheckoutReleaseAction.LocalAhead;
         if (state.LocalContainsPublished) return DeveloperCheckoutReleaseAction.AlreadyContains;
         if (state.PublishedContainsLocal) return DeveloperCheckoutReleaseAction.FastForward;
         // The local branch carries commits the published result does not. Only
         // commits that exist on origin are someone else's publication; anything
         // else was committed in this checkout and is not Studio's to move.
-        if (string.IsNullOrWhiteSpace(state.OriginTip) || !state.OriginContainsLocal)
-            return DeveloperCheckoutReleaseAction.LocalAhead;
+        if (!hasOrigin) return DeveloperCheckoutReleaseAction.LocalAhead;
         return DeveloperCheckoutReleaseAction.NotFastForward;
     }
 }
