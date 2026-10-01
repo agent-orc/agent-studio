@@ -85,6 +85,18 @@ public static class TaskServerEndpoints
         api.MapPost("/projects", async (HttpContext context, CreateProjectRequest request, TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.CreateProjectAsync(request, Actor(context), ct), StatusCodes.Status201Created))
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
+        api.MapGet("/projects/{projectId}/placement", async (
+            string projectId, TaskServerStore store, CancellationToken ct)
+            => await InvokeNullableAsync(() => store.GetProjectPlacementAsync(projectId, ct)));
+        api.MapGet("/projects/{projectId}/placement/admissions", async (
+            string projectId, TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.ListProjectPlacementAdmissionsAsync(projectId, ct)));
+        api.MapPut("/projects/{projectId}/placement", async (
+            HttpContext context, string projectId, UpdateProjectPlacementRequest request,
+            TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.UpdateProjectPlacementAsync(
+                projectId, request, Actor(context), ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
 
         var orchestratorContexts = api.MapGroup("/orchestrator-contexts");
         orchestratorContexts.MapGet("", async (
