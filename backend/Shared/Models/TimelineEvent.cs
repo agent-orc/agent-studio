@@ -434,6 +434,14 @@ public static class TimelineEventKinds
     /// </summary>
     public const string ReviewInfrastructureRetryScheduled = "review_infrastructure_retry_scheduled";
     /// <summary>
+    /// AGT-W57: the fleet-wide cause breaker parked this card behind a cause
+    /// card instead of retrying or escalating it. Details carry the cause key,
+    /// the fingerprint and its parts, and the threshold numbers.
+    /// </summary>
+    public const string CauseBreakerWaiting = "cause_breaker_waiting";
+    /// <summary>AGT-W57: the cause breaker closed and released this card with a freshly planned review.</summary>
+    public const string CauseBreakerReleased = "cause_breaker_released";
+    /// <summary>
     /// AGT-2863: the Remote Review verdict on this card was produced by a
     /// detached worker running an older agent-host release than the daemon that
     /// reported it, because a review-daemon restart adopts running workers

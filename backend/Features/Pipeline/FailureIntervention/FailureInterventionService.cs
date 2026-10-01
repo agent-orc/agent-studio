@@ -110,14 +110,38 @@ public sealed class FailureInterventionService
         var classification = FailureInterventionPolicy.Classify(evidence)
             ?? await ClassifyAmbiguousAsync(origin, evidence, ct);
         ct.ThrowIfCancellationRequested();
+        return Raise(origin, evidence, classification, origin.WatchPath);
+    }
 
+    /// <summary>
+    /// AGT-W57 cause breaker: raises or extends the one cause card of an open
+    /// breaker. <paramref name="classification"/> carries the breaker's
+    /// fleet-wide fingerprint, so the ledger dedupes on it, and
+    /// <paramref name="ledgerWatchPath"/> is the project that already holds the
+    /// cause card, so a card from another project attaches to it instead of
+    /// opening a second one.
+    /// </summary>
+    public FailureInterventionResult RaiseCause(
+        TaskInfo origin,
+        FailureCommandEvidence evidence,
+        FailureClassificationResult classification,
+        string? ledgerWatchPath = null)
+        => Raise(origin, evidence, classification,
+            string.IsNullOrWhiteSpace(ledgerWatchPath) ? origin.WatchPath : ledgerWatchPath);
+
+    private FailureInterventionResult Raise(
+        TaskInfo origin,
+        FailureCommandEvidence evidence,
+        FailureClassificationResult classification,
+        string ledgerWatchPath)
+    {
         lock (_gate)
         {
             var now = _time.GetUtcNow().UtcDateTime;
-            var records = Read(origin.WatchPath);
+            var records = Read(ledgerWatchPath);
             var existing = records.FirstOrDefault(item =>
                 string.Equals(item.Fingerprint, classification.Fingerprint, StringComparison.OrdinalIgnoreCase)
-                && IsOpen(item, origin.WatchPath));
+                && IsOpen(item, ledgerWatchPath));
             var originKey = origin.Key ?? origin.Id;
             var created = existing is null;
             FailureInterventionRecord intervention;
@@ -128,14 +152,14 @@ public sealed class FailureInterventionService
                 var taskId = _mutations.CreateJob(new CreateTaskRequest
                 {
                     Title = $"Intervention: {ShortTitle(classification)}",
-                    WatchPath = origin.WatchPath,
+                    WatchPath = ledgerWatchPath,
                     PromptMarkdown = prompt,
                     TargetState = TaskStates.Preparation,
                     CreationSource = TimelineActors.Orchestrator,
                     CreatedBy = "Orchestrator",
                     TaskType = TaskTypes.Bug,
                 }) ?? throw new InvalidOperationException("The orchestrator could not create the intervention task.");
-                var followUp = _scanner.FindJob(taskId, origin.WatchPath)
+                var followUp = _scanner.FindJob(taskId, ledgerWatchPath)
                     ?? throw new InvalidOperationException("The created intervention task could not be resolved.");
                 intervention = new FailureInterventionRecord
                 {
@@ -170,7 +194,7 @@ public sealed class FailureInterventionService
                         : existing.FirstFailureAt,
                 };
                 records[records.IndexOf(existing)] = intervention;
-                var followUp = _scanner.FindJob(existing.FollowUpTaskId, origin.WatchPath);
+                var followUp = _scanner.FindJob(existing.FollowUpTaskId, ledgerWatchPath);
                 if (followUp is not null)
                 {
                     UpdateFollowUpReferences(followUp, intervention.AffectedCards);
@@ -179,7 +203,7 @@ public sealed class FailureInterventionService
             }
 
             UpdateOriginReferences(origin, intervention.FollowUpKey);
-            Write(origin.WatchPath, records);
+            Write(ledgerWatchPath, records);
             RecordSurfaces(origin, intervention, created);
             RecordPipelineStep(origin, intervention);
             return new FailureInterventionResult(intervention, created,
@@ -394,6 +418,7 @@ Keep every affected origin in `references.followUpOf`. Resolve the underlying to
         => c.FailureClass switch
         {
             "ReviewInfra/ToolUnavailable" => "review toolchain unavailable",
+            "ReviewInfra/PreparationFailed" => "review preparation failed",
             "gate/MissingSource" => "gate source unavailable",
             "gate/build-gate-failed" => "build gate failed",
             "integration/configuration" => "integration unavailable",

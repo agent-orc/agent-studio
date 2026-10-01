@@ -87,6 +87,11 @@ public record TaskInfo
     /// </summary>
     public QuotaWaitStatus? QuotaWait { get; init; }
     /// <summary>
+    /// AGT-W57: the card waits on a cause card opened by the fleet-wide cause
+    /// breaker. Read from the durable <c>cause-wait.json</c> marker.
+    /// </summary>
+    public CauseWaitStatus? CauseWait { get; init; }
+    /// <summary>
     /// Card kind: <c>task</c> (default, a runnable unit of work) or <c>epic</c>
     /// (a container grouping sub-tasks under one overarching goal). An epic is
     /// not code-executed itself; only its sub-tasks run through the pipeline.

@@ -1,0 +1,11 @@
+@if (badge(); as causeWait) {
+  <button type="button"
+          class="cause-wait-pill"
+          [cacTooltip]="causeWait.tooltip"
+          [attr.data-cause-key]="causeWait.causeKey"
+          data-testid="task-card-cause-wait"
+          (click)="navigate($event)">
+    <span aria-hidden="true">◴</span>
+    {{ causeWait.label }}
+  </button>
+}

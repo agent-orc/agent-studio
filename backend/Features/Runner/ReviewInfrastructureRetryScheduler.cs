@@ -169,36 +169,19 @@ public sealed class ReviewInfrastructureRetryScheduler : BackgroundService
             return false;
         }
 
-        Contract.ReviewPlanDto? retryPlan = null;
-        if (ReviewInfrastructureRetryPlanPolicy.RequiresRebuild(review.FailureClassification))
+        // AGT-W57: a card parked behind an open cause breaker gets no
+        // successor here; the breaker releases it when the cause closes.
+        var causeWait = CauseWaitMarker.TryRead(task.FolderPath, _logger);
+        if (causeWait is { Probe: false })
         {
-            var project = _projects.FindByStorageLocation(task.WatchPath)
-                          ?? _projects.FindByIdOrDisplayName(task.ProjectName);
-            var taskSettings = _settings.Get(task.ProjectName);
-            var integrationRef = V1ReviewPlaneEndpoints
-                .ResolveBaselineBranch(task, project, _settings).IntegrationRef;
-            var repositoryPath = _git.ResolveRepoRootForWatchPath(task.WatchPath) ?? project?.RepositoryPath;
-            retryPlan = _remoteReviewPlans.Build(
-                task,
-                repositoryPath,
-                taskSettings,
-                integrationRef,
-                review.Subject.ExpectedResultSha);
+            _authority.ClearScheduledReviewInfrastructureRetry(item.AttemptId);
+            _logger.LogInformation(
+                "review-infrastructure-retry-withheld attempt={AttemptId} task={TaskKey} cause={CauseKey} fingerprint={Fingerprint}",
+                item.AttemptId, item.TaskKey, causeWait.CauseKey, causeWait.Fingerprint);
+            return false;
         }
 
-        var created = _lifecycle.CreateReviewAttemptInAutoReview(task, new CreateReviewAttemptRequest(
-            review.TaskKey,
-            review.RepositoryId,
-            review.Subject.ExpectedResultSha,
-            review.SourceRunAttemptId,
-            review.Subject.TaskRequirementsHash,
-            review.Subject.ReviewPolicyHash,
-            review.Subject.EvidenceDigestInputs,
-            $"review-infra-retry:{item.AttemptId}",
-            review.AttemptId,
-            review.Subject.RepositoryUrl,
-            review.Subject.ResultRef,
-            retryPlan));
+        var created = CreateFreshSuccessor(review, task, $"review-infra-retry:{item.AttemptId}");
 
         if (!created.Accepted)
         {
@@ -221,6 +204,44 @@ public sealed class ReviewInfrastructureRetryScheduler : BackgroundService
             item.RetryNumber,
             item.RetryBudget);
         return true;
+    }
+
+    /// <summary>
+    /// Mints the successor of a terminal ReviewInfra attempt with a plan built
+    /// from the CURRENT project settings (AGT-W57 §5 E1). A frozen plan kept
+    /// asking for a withdrawn review model for 59 attempts; planning afresh on
+    /// every attempt means a corrected setting costs exactly one attempt. The
+    /// immutable ReviewSubject identity (result SHA, requirements, policy,
+    /// evidence) is unchanged; only the execution plan is renewed.
+    /// </summary>
+    public AttemptWriteResult CreateFreshSuccessor(ReviewAttemptDto review, TaskInfo task, string deliveryKey)
+    {
+        var project = _projects.FindByStorageLocation(task.WatchPath)
+                      ?? _projects.FindByIdOrDisplayName(task.ProjectName);
+        var taskSettings = _settings.Get(task.ProjectName);
+        var integrationRef = V1ReviewPlaneEndpoints
+            .ResolveBaselineBranch(task, project, _settings).IntegrationRef;
+        var repositoryPath = _git.ResolveRepoRootForWatchPath(task.WatchPath) ?? project?.RepositoryPath;
+        var plan = _remoteReviewPlans.Build(
+            task,
+            repositoryPath,
+            taskSettings,
+            integrationRef,
+            review.Subject.ExpectedResultSha);
+
+        return _lifecycle.CreateReviewAttemptInAutoReview(task, new CreateReviewAttemptRequest(
+            review.TaskKey,
+            review.RepositoryId,
+            review.Subject.ExpectedResultSha,
+            review.SourceRunAttemptId,
+            review.Subject.TaskRequirementsHash,
+            review.Subject.ReviewPolicyHash,
+            review.Subject.EvidenceDigestInputs,
+            deliveryKey,
+            review.AttemptId,
+            review.Subject.RepositoryUrl,
+            review.Subject.ResultRef,
+            plan));
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
