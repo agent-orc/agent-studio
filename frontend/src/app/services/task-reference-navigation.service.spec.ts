@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import type { TaskInfo } from '../models/task.model';
 import { TaskSelectionService } from '../features/task-detail/state/task-selection.service';
 import { StudioTabStateService } from '../features/studio-shell/services/studio-tab-state.service';
+import { NotificationService } from './notification.service';
 import { TaskService } from './task.service';
 import { TaskReferenceNavigationService } from './task-reference-navigation.service';
 
@@ -37,12 +38,14 @@ describe('TaskReferenceNavigationService', () => {
     const jobsSignal = signal(jobs);
     const openedTabs: unknown[] = [];
     const openedDetails: TaskInfo[] = [];
+    const notices: string[] = [];
 
     const injector = Injector.create({
       providers: [
         { provide: TaskService, useValue: { jobs: jobsSignal } },
         { provide: StudioTabStateService, useValue: { open: (tab: unknown) => openedTabs.push(tab) } },
         { provide: TaskSelectionService, useValue: { openDetail: (job: TaskInfo) => openedDetails.push(job) } },
+        { provide: NotificationService, useValue: { info: (message: string) => notices.push(message) } },
       ],
     });
 
@@ -54,6 +57,7 @@ describe('TaskReferenceNavigationService', () => {
       jobsSignal,
       openedTabs,
       openedDetails,
+      notices,
     };
   }
 
@@ -101,5 +105,18 @@ describe('TaskReferenceNavigationService', () => {
 
     expect(openedTabs).toEqual([]);
     expect(openedDetails).toEqual([]);
+  });
+
+  it('opens a display key without a notice and explains a key that is not loaded', () => {
+    const known = task({ taskKey: 'C:/Projects/demo::decide-1', key: 'AGT-2792' });
+    const { service, openedDetails, notices } = setup([known]);
+
+    expect(service.openReferenceOrNotify('agt-2792')).toBe(true);
+    expect(openedDetails).toEqual([known]);
+    expect(notices).toEqual([]);
+
+    expect(service.openReferenceOrNotify('AGT-9')).toBe(false);
+    expect(openedDetails).toEqual([known]);
+    expect(notices).toEqual(['AGT-9 is not loaded in the current workspace view.']);
   });
 });

@@ -240,3 +240,50 @@ describe('DetailHeaderComponent (smoke)', () => {
     expect(cmp.primaryAwaitingGit()).toBe(false);
   });
 });
+
+// AGT-2795: the lane guard refuses Ready / In Progress while a pending decision
+// blocks the card, and keeps a decision card itself out of every runner lane.
+// The move controls say so up front instead of failing on click.
+describe('DetailHeaderComponent decision block (AGT-2795)', () => {
+  async function mount(info: TaskInfo) {
+    await TestBed.configureTestingModule({
+      imports: [DetailHeaderComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(DetailHeaderComponent);
+    fixture.componentRef.setInput('info', info);
+    fixture.detectChanges();
+    return fixture;
+  }
+
+  it('disables Promote to Ready on a card blocked by a pending decision and explains why', async () => {
+    const fixture = await mount({ ...taskInfo, state: '1-preparation', blockedBy: ['AGT-2792'] });
+    const cmp = fixture.componentInstance;
+    expect(cmp.triagePrimary()?.id).toBe('promote-ready');
+    expect(cmp.primaryTooltip()).toContain('Blocked by pending decision AGT-2792');
+    const button: HTMLButtonElement = fixture.nativeElement.querySelector('[data-testid="triage-action-promote-ready"]');
+    expect(button.disabled).toBe(true);
+
+    let emitted = 0;
+    cmp.triageAction.subscribe(() => emitted++);
+    cmp.onPrimaryClick();
+    expect(emitted).toBe(0);
+
+    const backlog = cmp.triageMenuItems().find((item) => item.kind === 'row' && item.id === 'send-to-backlog');
+    expect(backlog && backlog.kind === 'row' && backlog.disabled).toBe(false);
+  });
+
+  it('keeps a pending decision card out of Ready and Delivered with the guard reason', async () => {
+    const fixture = await mount({
+      ...taskInfo,
+      state: '1-preparation',
+      kind: 'decision',
+      decision: { question: 'q', options: [], decider: 'operator', status: 'pending' },
+    });
+    const cmp = fixture.componentInstance;
+    expect(cmp.primaryTooltip()).toContain('never enter a runner lane');
+    const delivered = cmp.triageMenuItems().find((item) => item.kind === 'row' && item.id === 'move-to-completed');
+    expect(delivered?.kind === 'row' && delivered.disabled).toBe(true);
+    expect(delivered?.kind === 'row' && delivered.tooltip).toContain('Choose an option first');
+  });
+});

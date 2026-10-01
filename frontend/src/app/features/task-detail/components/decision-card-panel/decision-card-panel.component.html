@@ -1,0 +1,162 @@
+@if (show()) {
+  @if (decision(); as d) {
+    <section class="decision-card"
+             data-testid="decision-card-panel"
+             [attr.data-open]="open()"
+             aria-labelledby="decision-card-question">
+      <header class="decision-card__header">
+        <span class="decision-card__kind">Decision</span>
+        <span class="decision-card__stage" data-testid="decision-card-stage">
+          <i aria-hidden="true"></i>{{ open() ? 'Waiting for the decider' : 'Decided' }}
+        </span>
+        <span class="decision-card__meta" data-testid="decision-card-decider">
+          Decider <strong>{{ decider() }}</strong>
+        </span>
+        @if (d.dueDate && open()) {
+          <span class="decision-card__meta decision-card__num"
+                data-testid="decision-card-due"
+                [attr.data-overdue]="overdue()">{{ overdue() ? 'Overdue since' : 'Due' }} {{ dueLabel() }}</span>
+        }
+      </header>
+
+      <h3 id="decision-card-question" class="decision-card__question" data-testid="decision-card-question">{{ d.question }}</h3>
+
+      @if (d.recommendationReason) {
+        <p class="decision-card__recommendation" data-testid="decision-card-recommendation-reason">
+          <strong>Recommendation:</strong> {{ d.recommendationReason }}
+        </p>
+      }
+
+      @if (dependants().length > 0) {
+        <p class="decision-card__blocks" data-testid="decision-card-dependants">
+          <span>{{ open() ? 'Blocks' : 'Unblocked' }}</span>
+          @for (key of dependants(); track key) {
+            <button type="button" class="decision-card__link" (click)="openDependant(key, $event)">{{ key }}</button>
+          }
+        </p>
+      }
+
+      @if (open()) {
+        @if (d.reopenNote) {
+          <p class="decision-card__notice" data-testid="decision-card-reopen-note">Reopened: {{ d.reopenNote }}</p>
+        }
+        <label class="decision-card__rationale">
+          <span>Rationale <em>optional, recorded with your choice</em></span>
+          <textarea rows="2"
+                    maxlength="2000"
+                    data-testid="decision-card-rationale-input"
+                    placeholder="One sentence on why"
+                    [value]="rationale()"
+                    [disabled]="busy() || readOnly()"
+                    (input)="updateRationale($event)"></textarea>
+        </label>
+      }
+
+      <ol class="decision-card__options">
+        @for (option of d.options; track option.id) {
+          <li class="decision-card__option"
+              data-testid="decision-card-option"
+              [attr.data-option]="option.id"
+              [attr.data-recommended]="isRecommended(option)"
+              [attr.data-chosen]="isChosen(option)">
+            <div class="decision-card__option-head">
+              <span class="decision-card__option-id">{{ option.id }}</span>
+              <strong class="decision-card__option-label">{{ option.label }}</strong>
+              @if (isRecommended(option)) {
+                <span class="decision-card__tag" data-testid="decision-card-recommended">Recommended</span>
+              }
+              @if (isChosen(option)) {
+                <span class="decision-card__tag decision-card__tag--chosen" data-testid="decision-card-chosen">Chosen</span>
+              }
+              @if (open()) {
+                <button type="button"
+                        class="decision-card__choose"
+                        data-testid="decision-card-choose"
+                        [attr.data-option]="option.id"
+                        [attr.aria-label]="'Choose ' + option.id + ': ' + option.label"
+                        [disabled]="busy() || readOnly()"
+                        [appPendingButton]="pendingOptionId() === option.id"
+                        pendingLabel="Recording…"
+                        (click)="choose(option)">Choose</button>
+              }
+            </div>
+            @if (option.consequences || option.effort || option.risk) {
+              <dl class="decision-card__facets">
+                @if (option.consequences) {
+                  <div><dt>Consequences</dt><dd>{{ option.consequences }}</dd></div>
+                }
+                @if (option.effort) {
+                  <div><dt>Effort</dt><dd>{{ option.effort }}</dd></div>
+                }
+                @if (option.risk) {
+                  <div><dt>Risk</dt><dd>{{ option.risk }}</dd></div>
+                }
+              </dl>
+            }
+          </li>
+        }
+      </ol>
+
+      @if (!open()) {
+        <div class="decision-card__receipt" data-testid="decision-card-receipt">
+          <span>
+            <strong>Decided: {{ chosen()?.id ?? d.chosenOptionId }}@if (chosen(); as c) { · {{ c.label }}}</strong>
+            · <span data-testid="decision-card-decided-by">{{ decidedBy() }}</span>
+            · <span class="decision-card__num" data-testid="decision-card-decided-at">{{ decidedAt() }}</span>
+          </span>
+          <span class="decision-card__receipt-note" data-testid="decision-card-rationale">
+            {{ d.rationale || 'No rationale recorded.' }}
+          </span>
+          @if (recordHref(); as href) {
+            <a class="decision-card__record" data-testid="decision-card-record-link" [href]="href">Decision record · {{ recordPath() }}</a>
+          }
+        </div>
+
+        @if (reopening()) {
+          <form class="decision-card__reopen" (submit)="$event.preventDefault(); confirmReopen()">
+            <label>
+              <span>Why reopen? The note is kept in the record.</span>
+              <textarea rows="2"
+                        maxlength="2000"
+                        data-testid="decision-card-reopen-note-input"
+                        [value]="reopenNote()"
+                        [disabled]="busy()"
+                        (input)="updateReopenNote($event)"></textarea>
+            </label>
+            <div class="decision-card__actions">
+              <button type="button" [disabled]="busy()" (click)="cancelReopen()">Cancel</button>
+              <button type="submit"
+                      class="decision-card__primary"
+                      data-testid="decision-card-reopen-confirm"
+                      [disabled]="!reopenNote().trim() || busy()"
+                      [appPendingButton]="reopenPending()"
+                      pendingLabel="Reopening…">Reopen decision</button>
+            </div>
+          </form>
+        } @else if (!readOnly()) {
+          <div class="decision-card__actions">
+            <button type="button" data-testid="decision-card-reopen" (click)="beginReopen()">Reopen…</button>
+          </div>
+        }
+      }
+
+      @if (history().length > 0) {
+        <ol class="decision-card__history" data-testid="decision-card-history" aria-label="Decision history">
+          @for (row of history(); track $index) {
+            <li>
+              <strong>{{ row.label }}</strong> · {{ row.actor }} · <span class="decision-card__num">{{ row.at }}</span>
+              @if (row.text) { <span class="decision-card__history-text">{{ row.text }}</span> }
+            </li>
+          }
+        </ol>
+      }
+
+      @if (readOnly()) {
+        <p class="decision-card__notice" role="status">Decisions are disabled in the read-only public demo.</p>
+      }
+      @if (error(); as message) {
+        <p class="decision-card__error" role="alert" data-testid="decision-card-error">{{ message }}</p>
+      }
+    </section>
+  }
+}
