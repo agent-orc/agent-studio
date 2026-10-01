@@ -4,6 +4,7 @@ using AgentStudio.TaskServer.Contracts;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
+using AgentStudio.TestSupport;
 
 namespace AgentStudio.Tests;
 
@@ -1002,16 +1003,7 @@ public sealed class ProjectPreparationTests : IDisposable
     }
 
     private static string FindRepositoryRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null)
-        {
-            if (File.Exists(Path.Combine(directory.FullName, "agent-taskboard.sln")))
-                return directory.FullName;
-            directory = directory.Parent;
-        }
-        throw new DirectoryNotFoundException("Agent Studio repository root was not found.");
-    }
+        => RepositoryRoot.Find();
 
     private static async Task<string> RunGitAsync(string workingDirectory, params string[] arguments)
     {

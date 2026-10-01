@@ -38,27 +38,35 @@ public static class RemoteRunPrompt
         }
 
         var composed = taskPrompt.TrimEnd()
-            + Environment.NewLine + Environment.NewLine
-            + "---" + Environment.NewLine + Environment.NewLine
+            + PromptText.NewLine + PromptText.NewLine
+            + "---" + PromptText.NewLine + PromptText.NewLine
             + block;
         return new ClaimedFollowUpApplication(
             composed,
             composed.Contains(block, StringComparison.Ordinal) ? followUp : null);
     }
 
+    /// <summary>
+    /// A durable spec written by a Windows runner before prompts were composed
+    /// with LF carries the block with CRLF; it still counts as delivered.
+    /// </summary>
     internal static bool ContainsClaimedFollowUp(
         string prompt,
         AgentStudio.TaskServer.Contracts.FollowUpDeliveryDto followUp)
-        => prompt.Contains(ClaimedFollowUpBlock(followUp), StringComparison.Ordinal);
+    {
+        var block = ClaimedFollowUpBlock(followUp);
+        return prompt.Contains(block, StringComparison.Ordinal)
+               || prompt.Contains(block.Replace("\n", "\r\n", StringComparison.Ordinal), StringComparison.Ordinal);
+    }
 
     private static string ClaimedFollowUpBlock(
         AgentStudio.TaskServer.Contracts.FollowUpDeliveryDto followUp)
     {
         var marker = ClaimedFollowUpMarker(followUp);
-        return $"<!-- {marker} -->" + Environment.NewLine
-            + $"## Follow-up for this run ({followUp.Mode})" + Environment.NewLine + Environment.NewLine
-            + followUp.Prompt + Environment.NewLine
-            + $"<!-- /{marker} -->" + Environment.NewLine;
+        return $"<!-- {marker} -->" + PromptText.NewLine
+            + $"## Follow-up for this run ({followUp.Mode})" + PromptText.NewLine + PromptText.NewLine
+            + followUp.Prompt + PromptText.NewLine
+            + $"<!-- /{marker} -->" + PromptText.NewLine;
     }
 
     private static string ClaimedFollowUpMarker(
@@ -106,7 +114,7 @@ public static class RemoteRunPrompt
         ArgumentNullException.ThrowIfNull(taskPrompt);
         var framingBlock = string.IsNullOrWhiteSpace(modeFraming)
             ? string.Empty
-            : modeFraming.Trim() + Environment.NewLine + Environment.NewLine;
+            : modeFraming.Trim() + PromptText.NewLine + PromptText.NewLine;
         var resultsBlock = string.IsNullOrWhiteSpace(resultsDirectory)
             ? string.Empty
             : "Run context: result files (reports, screenshots, evidence - e.g. `results/report.html`) must be "
@@ -120,12 +128,12 @@ public static class RemoteRunPrompt
                     + $"and all result files at or below {ArtifactTransferPolicy.FormatMb(artifactLimits.MaxTotalBytes)} MB total. "
                     + "Playwright traces and videos are not kept unless the task explicitly asks for them; "
                     + "do not copy node_modules or bin/obj output into results.")
-              + Environment.NewLine + Environment.NewLine;
-        return taskPrompt.TrimEnd() + Environment.NewLine + Environment.NewLine
-            + "---" + Environment.NewLine + Environment.NewLine
+              + PromptText.NewLine + PromptText.NewLine;
+        return taskPrompt.TrimEnd() + PromptText.NewLine + PromptText.NewLine
+            + "---" + PromptText.NewLine + PromptText.NewLine
             + framingBlock
             + resultsBlock
-            + CompletionProtocol + Environment.NewLine;
+            + CompletionProtocol + PromptText.NewLine;
     }
 }
 

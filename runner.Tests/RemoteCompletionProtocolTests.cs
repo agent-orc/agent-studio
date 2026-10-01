@@ -142,7 +142,10 @@ public sealed class RemoteCompletionProtocolTests
         Assert.Contains("Replace the example reason", prompt);
         Assert.DoesNotContain("<reason>", prompt);
         Assert.Contains("[[TASK_NOOP]]", prompt);
-        Assert.EndsWith(Environment.NewLine, prompt);
+        // Prompts are composed with LF on every host (PromptText); a CRLF here
+        // would make the Windows prompt differ from the Linux one.
+        Assert.EndsWith("\n", prompt);
+        Assert.DoesNotContain("\r", prompt);
     }
 
     [Fact]

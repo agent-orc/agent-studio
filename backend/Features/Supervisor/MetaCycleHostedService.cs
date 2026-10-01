@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using AgentStudio.Prompts;
 
 namespace AgentStudio.Supervisor;
 
@@ -820,27 +821,27 @@ public sealed class MetaCycleHostedService : BackgroundService
     private static string BuildFollowUpPrompt(string project, MetaCycleReport report)
     {
         var sb = new System.Text.StringBuilder();
-        sb.AppendLine("# Meta-cycle follow-up");
-        sb.AppendLine();
-        sb.AppendLine($"The orchestrator meta-cycle for **{project}** flagged this batch as **{report.Verdict}**.");
-        sb.AppendLine();
-        sb.AppendLine($"- Cycle id: `{report.CycleId}`");
-        sb.AppendLine($"- Started: {report.StartedAt:u}");
-        sb.AppendLine($"- Action: `{report.Action.Kind}` (reason: `{report.Action.Reason}`)");
-        sb.AppendLine();
-        sb.AppendLine("## Findings");
+        sb.AppendLf("# Meta-cycle follow-up");
+        sb.AppendLf();
+        sb.AppendLf($"The orchestrator meta-cycle for **{project}** flagged this batch as **{report.Verdict}**.");
+        sb.AppendLf();
+        sb.AppendLf($"- Cycle id: `{report.CycleId}`");
+        sb.AppendLf($"- Started: {report.StartedAt:u}");
+        sb.AppendLf($"- Action: `{report.Action.Kind}` (reason: `{report.Action.Reason}`)");
+        sb.AppendLf();
+        sb.AppendLf("## Findings");
         foreach (var f in report.Findings)
         {
-            sb.AppendLine($"- **{f.Severity}** `{f.Topic}` - {f.Message}");
+            sb.AppendLf($"- **{f.Severity}** `{f.Topic}` - {f.Message}");
         }
-        sb.AppendLine();
-        sb.AppendLine("## What to do");
-        sb.AppendLine();
-        sb.AppendLine("Review the findings above and decide whether they reflect a real problem or a false positive. The meta-cycle does not act on this task automatically; a human must move it to `2-ready` after deciding the right scope.");
-        sb.AppendLine();
-        sb.AppendLine("If the meta-cycle was wrong, capture why so the rules can be tightened.");
-        sb.AppendLine();
-        sb.AppendLine("If the meta-cycle was right, scope the fix and queue it as a separate task; this folder records the trigger.");
+        sb.AppendLf();
+        sb.AppendLf("## What to do");
+        sb.AppendLf();
+        sb.AppendLf("Review the findings above and decide whether they reflect a real problem or a false positive. The meta-cycle does not act on this task automatically; a human must move it to `2-ready` after deciding the right scope.");
+        sb.AppendLf();
+        sb.AppendLf("If the meta-cycle was wrong, capture why so the rules can be tightened.");
+        sb.AppendLf();
+        sb.AppendLf("If the meta-cycle was right, scope the fix and queue it as a separate task; this folder records the trigger.");
         return sb.ToString();
     }
 

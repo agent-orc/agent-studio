@@ -5,6 +5,7 @@ using System.Text.Json;
 using AgentStudio.Docs;
 using AgentStudio.Pipeline;
 using AgentStudio.Projects;
+using AgentStudio.Prompts;
 
 namespace AgentStudio.Runner;
 
@@ -227,10 +228,10 @@ public sealed class PromptEnrichmentService
     public static string RenderLaunchContext(IntakeEnrichmentManifest manifest)
     {
         var builder = new StringBuilder();
-        builder.AppendLine("## Prompt enrichment");
-        builder.AppendLine();
-        builder.AppendLine("> Appended by the task server before CLI spawn. The authored prompt above is unchanged.");
-        builder.AppendLine();
+        builder.AppendLf("## Prompt enrichment");
+        builder.AppendLf();
+        builder.AppendLf("> Appended by the task server before CLI spawn. The authored prompt above is unchanged.");
+        builder.AppendLf();
         foreach (var constraint in manifest.Constraints)
             builder.Append(IntakeRunner.RenderConstraintMarkdown(constraint));
         return builder.ToString().TrimEnd();
