@@ -218,3 +218,16 @@ test('AGT-W49 links the journey and the AGT-2905 bus Dossier and leaves D1 to D4
   assert.match(html, />Workstation host adapter</);
   assert.equal(/^(?:<{7}|={7}|>{7})/m.test(html), false, 'no merge markers');
 });
+
+test('the Dossier keeps the develop-side AGT-2942 log after the 1 October merge', () => {
+  const html = read(canonicalEntry);
+  assert.equal(/^(?:<{7}|={7}|>{7})/m.test(html), false, 'no merge markers');
+  const log = between(html, '<!-- agent-studio:implementation-log:start -->', '<!-- agent-studio:implementation-log:end -->');
+  // AGT-2942 edited the pre-move path; rename detection carried those entries here.
+  assert.match(log, /AGT-2942, I01 one-box wiring in progress/);
+  assert.match(log, /29 September 2026 · AGT-2942 evidence correction and compose cleanup/);
+  assert.match(log, /AGT-2951 prepared publication of AGT-W63/);
+  assert.match(html, /Canonical concept entrypoint: <code>docs\/operations\/deployment-story\/index\.html<\/code>/);
+  const decisions = between(html, '<section id="open-decisions"', '</section>');
+  assert.equal((decisions.match(/data-decision-id="D\d"/g) ?? []).length, 8);
+});
