@@ -31,18 +31,38 @@ public sealed partial class TaskServerStore
             session is null ? null : ToStudioAuthUserDto(session.Value.User));
     }
 
-    public async Task<StudioAuthSessionDto> BootstrapStudioAuthAsync(StudioBootstrapRequest request, CancellationToken ct)
+    public async Task<StudioOwnerBootstrapSessionDto> BootstrapStudioAuthAsync(
+        StudioBootstrapRequest request, bool requiresBootstrapCode, CancellationToken ct)
     {
         var username = RequireStudioUsername(request.Username);
         var password = RequireStudioPassword(request.Password);
-        StudioAuthSessionDto? result = null;
+        StudioOwnerBootstrapSessionDto? result = null;
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
             var existing = Convert.ToInt64(await ScalarAsync(
                 connection, "SELECT count(*) FROM studio_users;", ct, transaction));
-            if (existing > 0)
-                throw new TaskServerConflictException(
-                    "studio-already-bootstrapped", "The studio owner account has already been created.");
+            var armedHash = await ReadMetaAsync(connection, transaction, OwnerBootstrapCodeHashKey, ct);
+            var presented = string.IsNullOrWhiteSpace(request.BootstrapCode) ? null : request.BootstrapCode.Trim();
+            var decision = OwnerBootstrapPolicy.DecideAdmit(
+                existing > 0,
+                requiresBootstrapCode,
+                armedHash,
+                presented is not null && armedHash is not null && FixedTimeEqualsHex(HashOneTimeSecret(presented), armedHash),
+                presented is not null);
+            switch (decision)
+            {
+                case OwnerBootstrapPolicy.AdmitDecision.AlreadyBootstrapped:
+                    throw new TaskServerConflictException(
+                        "studio-already-bootstrapped", "The studio owner account has already been created.");
+                case OwnerBootstrapPolicy.AdmitDecision.CodeRequired:
+                    throw new StudioAuthenticationException(
+                        "owner-bootstrap-code-required",
+                        "Owner bootstrap requires the one-time code from the installation host.");
+                case OwnerBootstrapPolicy.AdmitDecision.CodeNotArmed:
+                case OwnerBootstrapPolicy.AdmitDecision.CodeInvalid:
+                    throw new StudioAuthenticationException(
+                        "owner-bootstrap-code-invalid", "The owner bootstrap code is not valid for this installation.");
+            }
 
             var userId = StableOrGeneratedId(null, "usr");
             var now = Iso(UtcNow);
@@ -55,14 +75,18 @@ public sealed partial class TaskServerStore
                 """, ct, transaction,
                 ("$id", userId), ("$username", username), ("$display", displayName),
                 ("$role", StudioUserRoles.Owner), ("$hash", HashStudioPassword(password)), ("$now", now));
+            // Bootstrap closes for good: the armed code is consumed with the owner insert.
+            await ExecuteAsync(connection, "DELETE FROM meta WHERE key = $key;", ct, transaction,
+                ("$key", OwnerBootstrapCodeHashKey));
+            var recoveryCode = await ReplaceRecoveryCodeAsync(connection, transaction, userId, ct);
             await AuditAsync(connection, transaction, userId, "studio-user.bootstrapped", "studio-user", userId,
-                JsonSerializer.Serialize(new { username }), ct);
+                JsonSerializer.Serialize(new { username, bootstrapCode = presented is not null }), ct);
 
             var user = new StudioUserRow(userId, username, displayName, StudioUserRoles.Owner,
                 string.Empty, [], false, false, Parse(now), Parse(now));
             var (token, csrf) = await CreateStudioSessionAsync(connection, transaction, userId, ct);
-            result = new StudioAuthSessionDto(
-                token, csrf, new StudioAuthStatusDto(false, true, ToStudioAuthUserDto(user)));
+            result = new StudioOwnerBootstrapSessionDto(
+                token, csrf, new StudioAuthStatusDto(false, true, ToStudioAuthUserDto(user)), recoveryCode);
         }, ct);
         return result!;
     }

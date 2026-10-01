@@ -180,6 +180,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | CLI frame compatibility and capture corpus | [cli/frame-compatibility-matrix.md](../system/cli/frame-compatibility-matrix.md) |
 | Getting started (new install, step by step) | [operations/setup/getting-started.md](../operations/setup/getting-started.md) |
 | Docker one-box install and operations | [operations/setup/docker.md](../operations/setup/docker.md) |
+| Identity and project bootstrap: first owner, recovery, host enrolment, project registration and repository probe (standalone Task Server, I05) | [operations/setup/identity-and-project-bootstrap.md](../operations/setup/identity-and-project-bootstrap.md) |
 | Installation connectivity manifest, resolved ports and single RunnerLinks owner (I04) | [operations/setup/connectivity-manifest.md](../operations/setup/connectivity-manifest.md) |
 | Contributor source-build setup | [operations/setup/contributor-setup.md](../operations/setup/contributor-setup.md) |
 | Preparation, isolation, and orchestrator setup | [operations/setup/preparation-isolation-orchestrator.md](../operations/setup/preparation-isolation-orchestrator.md) |

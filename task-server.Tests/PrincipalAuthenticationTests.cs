@@ -290,8 +290,12 @@ public sealed class PrincipalAuthenticationTests
         var unscoped = factory.Services.GetRequiredService<EndpointDataSource>().Endpoints
             .OfType<RouteEndpoint>()
             .Where(endpoint => endpoint.RoutePattern.RawText?.StartsWith("/api/v1", StringComparison.Ordinal) == true)
+            // I05: installation identity and one-time enrolment exchange are
+            // deliberately open; the enrolment code is the only credential.
             .Where(endpoint => endpoint.RoutePattern.RawText is not "/api/v1/protocol"
-                               and not "/api/v1/protocol/compatibility")
+                               and not "/api/v1/protocol/compatibility"
+                               and not "/api/v1/installation"
+                               and not "/api/v1/enrolments/exchange")
             .Where(endpoint => endpoint.Metadata.GetOrderedMetadata<TaskServerScopeMetadata>().Count == 0)
             .Select(endpoint => endpoint.RoutePattern.RawText)
             .ToArray();
