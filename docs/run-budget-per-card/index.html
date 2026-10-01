@@ -1,0 +1,663 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Run budget per card | Concept Dossier</title>
+  <style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #7c7a74;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main,
+    .article {
+      width: min(70ch, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 0 0 80px;
+    }
+    header.page {
+      margin-bottom: 12px;
+      padding: 48px 0 28px;
+      border-bottom: 1px solid var(--article-line);
+    }
+    h1,
+    h2,
+    h3,
+    h4,
+    .kicker,
+    .meta,
+    .number,
+    nav,
+    table,
+    figcaption,
+    .box,
+    .callout,
+    .evidence-figure,
+    .variant-grid,
+    .evidence-list {
+      font-family: var(--article-sans);
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      margin: 56px 0 10px;
+      font-size: 1.55rem;
+      line-height: 1.25;
+    }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker,
+    .number {
+      margin: 0 0 12px;
+      color: var(--article-faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code {
+      padding: 0.08em 0.34em;
+      border-radius: 4px;
+      background: var(--article-surface-strong);
+      font: 0.84em/1.5 var(--article-mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    pre code { padding: 0; background: transparent; }
+    ul,
+    ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+    th,
+    td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box,
+    .callout {
+      margin: 24px 0;
+      padding: 18px 22px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+    .box.accent,
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .box.good,
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .box.warn,
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .box.bad,
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    figure { margin: 30px 0; }
+    figure > img,
+    figure > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .evidence-figure { margin-top: 38px; margin-bottom: 38px; }
+    .evidence-captures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+      gap: 12px;
+    }
+    .evidence-capture {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    .evidence-capture > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .capture-theme,
+    .figure-annotation {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--article-line);
+      border-radius: 999px;
+      background: var(--article-surface);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      line-height: 1.35;
+    }
+    .capture-theme {
+      top: 10px;
+      left: 10px;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+    .figure-annotation {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(28ch, calc(100% - 24px));
+      padding: 5px 10px;
+      border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line));
+      background: var(--article-link-soft);
+      color: var(--article-link);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .figure-claim { display: block; color: var(--article-ink); font-size: 0.84rem; }
+    .figure-as-of {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 14px;
+      margin-top: 6px;
+      color: var(--article-faint);
+      font-size: 0.72rem;
+    }
+    .breakout,
+    .media-breakout {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .variant-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0; }
+    .variant {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    .variant h3 { margin: 0 0 8px; }
+    .variant img,
+    .variant svg { display: block; width: 100%; height: auto; margin-top: 12px; }
+    [data-document-pattern="ui"] .variant-grid {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    [data-document-pattern="ui"] .mockup { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--article-line);
+      border-radius: 9px;
+      background: var(--article-surface);
+      color: var(--article-ink);
+      text-decoration: none;
+    }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .dim { color: var(--article-muted); }
+
+    @media (max-width: 760px) {
+      main,
+      .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout,
+      .media-breakout,
+      [data-document-pattern="ui"] .variant-grid,
+      [data-document-pattern="ui"] .mockup { width: calc(100vw - 20px); }
+      [data-document-pattern="ui"] .variant-grid { grid-template-columns: 1fr; }
+      .evidence { grid-template-columns: 1fr; }
+      .evidence-captures { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+
+    /* Dossier-local chart and sketch classes. They only reference the template tokens above. */
+    .chart text { font-family: var(--article-sans); font-size: 12px; fill: var(--article-muted); }
+    .chart .t-strong { fill: var(--article-ink); font-weight: 650; }
+    .chart .t-small { font-size: 11px; fill: var(--article-faint); }
+    .chart .t-bad { fill: var(--article-bad); font-weight: 650; }
+    .chart .t-good { fill: var(--article-good); font-weight: 650; }
+    .chart .t-link { fill: var(--article-link); font-weight: 650; }
+    .chart .axis { stroke: var(--article-line); stroke-width: 1; }
+    .chart .grid { stroke: var(--article-line); stroke-width: 1; stroke-dasharray: 2 4; }
+    .chart .limit { stroke: var(--article-ink); stroke-width: 1.5; stroke-dasharray: 5 4; }
+    .chart .event { stroke: var(--article-muted); stroke-width: 1; stroke-dasharray: 3 3; }
+    .chart .bar-bad { fill: var(--article-bad); }
+    .chart .bar-good { fill: var(--article-good); }
+    .chart .seg-verify { fill: var(--article-link); }
+    .chart .seg-rest { fill: var(--article-surface-strong); stroke: var(--article-faint); stroke-width: 1; }
+    .chart .soft { fill: var(--article-warn-soft); stroke: var(--article-warn); stroke-width: 1; }
+    .chart .panel { fill: var(--article-surface); stroke: var(--article-line); stroke-width: 1; }
+    .chart .row { fill: var(--article-paper); stroke: var(--article-line); stroke-width: 1; }
+    .chart .badge-bad { fill: var(--article-bad-soft); stroke: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); }
+    .chart .badge-good { fill: var(--article-good-soft); stroke: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); }
+    .chart .badge-link { fill: var(--article-link-soft); stroke: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); }
+    .chart .btn { fill: var(--article-paper); stroke: var(--article-line); stroke-width: 1; }
+    .chart .btn-primary { fill: var(--article-link-soft); stroke: var(--article-link); stroke-width: 1; }
+    .chart .flow { stroke: var(--article-muted); stroke-width: 1.5; fill: none; }
+    .chart .dot-bad { fill: var(--article-bad); }
+    .chart .dot-good { fill: var(--article-good); }
+    .num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+    td.num, th.num { text-align: right; }
+  </style>
+</head>
+<body>
+<main class="article">
+  <header class="page">
+    <p class="kicker">Concept · Runner</p>
+    <h1>Run budget per card</h1>
+    <p class="lede">A single host-wide 90-minute run timeout ended AGT-2955 four times on 28 and 29 September. The salvage kept every line of work each time, but the next round kept nothing else: not the session, not the verification it had already done, not the diagnosis it was in the middle of. This Dossier analyses those rounds and proposes a per-card run budget with a soft checkpoint, a same-session continuation from the salvage, and an operator decision at the third exhaustion.</p>
+    <div class="meta">
+      <span><b>Pattern</b> concept</span>
+      <span><b>Status</b> decision-pending</span>
+      <span><b>Phase</b> decision-ready</span>
+      <span><b>Source card</b> AGT-2998</span>
+      <span><b>Evidence card</b> AGT-2955</span>
+      <span><b>As of</b> <time datetime="2026-09-29">29 September 2026</time>, develop <code>01a0506b5</code></span>
+    </div>
+  </header>
+
+  <section id="situation">
+    <h2><span class="number">01</span> Situation</h2>
+    <p>Every coding round on the remote runner gets the same wall-clock limit, <code>RUNNER_RUN_TIMEOUT_SECONDS</code>. The code default is 3600; the production host sets 5400 in <code>/etc/agent-runner/runner.env</code>. The limit is read once per host in <code>runner/RunnerOptions.cs</code> and handed to every worker by <code>DurableAgentProcess</code>. There is no card-level or project-level value. The only per-run override that exists today is the 300-second ceiling of a mechanical same-session resume.</p>
+    <p>When the limit is hit, the runner kills the CLI, commits the worktree as <code>wip(runner): salvage before teardown - outcome Unknown</code>, pushes it as <code>agent-studio/salvage/&lt;runner&gt;/&lt;card&gt;/&lt;run&gt;/fence-&lt;n&gt;/&lt;sha&gt;</code>, and reports a non-terminal outcome. AGT-2861 added one automatic continuation round per delivery generation (<code>RunTimeoutSalvageContinuationPolicy.MaxAutomaticContinuationRounds = 1</code>). That round:</p>
+    <ul>
+      <li>starts on the integration branch, not on the salvage. The prompt tells the agent to fetch the salvage ref and rebase it itself (<code>RunContinuationCause.Timeout</code> leaves <code>StartsFromSalvage</code> false);</li>
+      <li>pins a clean CLI context. The code comment says a salvaged worktree "leaves no resumable session behind";</li>
+      <li>appends a <code>## STEER</code> note to <code>prompt.md</code>, so the prompt grows with every round.</li>
+    </ul>
+    <p>A second timeout in the same generation escalates to <code>5e-escalated</code>, and the reason names the salvage. An operator requeue then starts a fresh round with the same 90 minutes. The agent is never told that it has a limit. None of the five AGT-2955 transcripts mentions the time left.</p>
+  </section>
+
+  <section id="salvage-analysis">
+    <h2><span class="number">02</span> Salvage analysis</h2>
+    <p>AGT-2955 left six salvage refs on <code>origin</code> (fences 1, 3, 4, 6, 7 and 8) and five coding-session transcripts on the runner host, in the card's clean-context store. The transcripts cover fences 3, 4, 6, 7 and 8. Fence 1 ended with outcome <code>Done</code> on 28 September at 15:55, and its transcript is no longer on the host. Fences 2 and 5 left no salvage ref and no transcript. The card counts five timeouts. The host evidence confirms four rounds killed at the limit (fences 3, 6, 7 and 8); the fifth could not be attributed from this host.</p>
+
+    <figure class="media-breakout">
+      <svg class="chart" viewBox="0 0 1120 330" role="img" aria-labelledby="timeline-title timeline-desc">
+        <title id="timeline-title">AGT-2955 coding rounds, 28 September 22:00 to 29 September 12:00 local time</title>
+        <desc id="timeline-desc">Five horizontal bars on a 14-hour axis. Four rounds (fences 3, 6, 7 and 8) run for about 90 minutes each and end at the limit. Fence 4, the automatic continuation, ends after 29 minutes with a delivery. Two operator redeliveries, at 07:11 and 09:42, precede fences 7 and 8.</desc>
+        <line class="axis" x1="260" y1="36" x2="1100" y2="36"/>
+        <g>
+          <line class="grid" x1="260" y1="36" x2="260" y2="292"/><text x="260" y="26" text-anchor="middle">22:00</text>
+          <line class="grid" x1="380" y1="36" x2="380" y2="292"/><text x="380" y="26" text-anchor="middle">00:00</text>
+          <line class="grid" x1="500" y1="36" x2="500" y2="292"/><text x="500" y="26" text-anchor="middle">02:00</text>
+          <line class="grid" x1="620" y1="36" x2="620" y2="292"/><text x="620" y="26" text-anchor="middle">04:00</text>
+          <line class="grid" x1="740" y1="36" x2="740" y2="292"/><text x="740" y="26" text-anchor="middle">06:00</text>
+          <line class="grid" x1="860" y1="36" x2="860" y2="292"/><text x="860" y="26" text-anchor="middle">08:00</text>
+          <line class="grid" x1="980" y1="36" x2="980" y2="292"/><text x="980" y="26" text-anchor="middle">10:00</text>
+          <line class="grid" x1="1100" y1="36" x2="1100" y2="292"/><text x="1096" y="26" text-anchor="end">12:00</text>
+        </g>
+        <g>
+          <text class="t-strong" x="0" y="64">Fence 3 · review fix round</text>
+          <text x="0" y="81">killed at limit · +1,192 −549 salvaged</text>
+          <rect class="bar-bad" x="266" y="60" width="90" height="14" rx="4"><title>Fence 3, 22:06 to 23:36, killed at the 90-minute limit</title></rect>
+
+          <text class="t-strong" x="0" y="112">Fence 4 · automatic continuation</text>
+          <text x="0" y="129">delivered after 29 min · +32 −10</text>
+          <rect class="bar-good" x="361" y="108" width="29" height="14" rx="4"><title>Fence 4, 23:41 to 00:10, delivered</title></rect>
+
+          <text class="t-strong" x="0" y="160">Fence 6 · targeted fix round</text>
+          <text x="0" y="177">killed at limit · +294 −38, +67 uncommitted</text>
+          <rect class="bar-bad" x="698" y="156" width="91" height="14" rx="4"><title>Fence 6, 05:18 to 06:49, killed at the 90-minute limit</title></rect>
+
+          <text class="t-strong" x="0" y="208">Fence 7 · operator redelivery</text>
+          <text x="0" y="225">killed at limit · no new change</text>
+          <rect class="bar-bad" x="842" y="204" width="91" height="14" rx="4"><title>Fence 7, 07:42 to 09:13, killed at the 90-minute limit</title></rect>
+
+          <text class="t-strong" x="0" y="256">Fence 8 · operator redelivery</text>
+          <text x="0" y="273">killed at limit · no new change</text>
+          <rect class="bar-bad" x="997" y="252" width="91" height="14" rx="4"><title>Fence 8, 10:17 to 11:48, killed at the 90-minute limit</title></rect>
+        </g>
+        <g>
+          <line class="event" x1="811" y1="40" x2="811" y2="292"/>
+          <line class="event" x1="962" y1="40" x2="962" y2="292"/>
+          <text class="t-small" x="807" y="312" text-anchor="end">operator redelivery 07:11</text>
+          <text class="t-small" x="966" y="312">operator redelivery 09:42</text>
+        </g>
+      </svg>
+      <figcaption>Round windows come from the first and last event of each session transcript and from the push time of each salvage ref. Line counts come from the diff each round added to its salvage chain. Bar colour repeats the outcome that is written next to it.</figcaption>
+    </figure>
+
+    <table>
+      <thead>
+        <tr><th>Fence</th><th>Trigger in the prompt</th><th class="num">Minutes</th><th>What the round did</th><th>Survived into the next round</th><th>How the next round continued</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>3</td><td>Review fix round</td><td class="num">86</td><td>Reworked selection and prefetch; verification was running when the kill came (a <code>dotnet build</code> call had no result).</td><td>All of it: uncommitted +1,192 −549 over 33 files became salvage <code>76da6a8</code>.</td><td>Fence 4 rebased the salvage by hand and found "the salvaged round had already fixed every finding".</td></tr>
+        <tr><td>4</td><td>AGT-2861 automatic continuation (<code>## STEER</code>)</td><td class="num">29</td><td>Rebase, build, unit tests, lint, one fix commit, delivery.</td><td>All of it: commit <code>9451717</code> (+32 −10).</td><td>Review raised the same blocking finding again, which led to a targeted fix round.</td></tr>
+        <tr><td>6</td><td>Targeted fix round</td><td class="num">89</td><td>Wrote failing tests, fixed the service, committed at 06:45, then chased a Playwright timeout: 46,420 failed <code>/output</code> requests. Killed while it was adding debug instrumentation.</td><td>Files: commit +294 −38 and an uncommitted e2e spec change. The storm diagnosis did not survive.</td><td>Escalated (the one continuation was spent). The operator redelivered with the note "failed for infrastructure reasons, not your delivery".</td></tr>
+        <tr><td>7</td><td>Operator redelivery</td><td class="num">86</td><td>8 min of build, then about 70 min waiting for the full backend, runner, task-server and frontend suites at load 27 on 12 cores. It diagnosed a runner test that fails when <code>CLAUDE_CONFIG_DIR</code> leaks, and was killed while starting the evidence specs.</td><td>Nothing new. Its salvage adds back fence 6's spec change, byte-identical, and nothing else.</td><td>Escalated, then redelivered again at 09:42.</td></tr>
+        <tr><td>8</td><td>Operator redelivery</td><td class="num">90</td><td>Fast-forwarded to salvage <code>6cc50ad</code>, then rebuilt and reran every suite: 40 min in <code>dotnet test</code>, 15 min in Playwright. It diagnosed the same <code>CLAUDE_CONFIG_DIR</code> failure again and was killed waiting for an e2e rerun.</td><td>Nothing: the fence-8 ref points to the same commit as fence 7.</td><td>Card escalated at 11:48.</td></tr>
+      </tbody>
+    </table>
+
+    <figure class="media-breakout">
+      <svg class="chart" viewBox="0 0 1120 300" role="img" aria-labelledby="split-title split-desc">
+        <title id="split-title">Minutes per round spent inside build, test, lint and dev-server commands</title>
+        <desc id="split-desc">Stacked horizontal bars against a dashed 90-minute limit. Fence 3: 65 of 86 minutes. Fence 4: 24 of 29. Fence 6: 76 of 89. Fence 7: 84 of 86. Fence 8: 84 of 90.</desc>
+        <rect class="seg-verify" x="260" y="10" width="12" height="12" rx="2"/><text x="278" y="21">Build, test, lint and dev-server commands</text>
+        <rect class="seg-rest" x="560" y="10" width="12" height="12" rx="2"/><text x="578" y="21">Model turns and other tools</text>
+        <line class="limit" x1="980" y1="36" x2="980" y2="282"/><text class="t-strong" x="984" y="48">90-min limit</text>
+        <line class="axis" x1="260" y1="282" x2="1060" y2="282"/>
+        <text class="t-small" x="260" y="298" text-anchor="middle">0</text>
+        <text class="t-small" x="500" y="298" text-anchor="middle">30</text>
+        <text class="t-small" x="740" y="298" text-anchor="middle">60</text>
+        <text class="t-small" x="980" y="298" text-anchor="middle">90 min</text>
+        <g>
+          <text class="t-strong" x="0" y="72">Fence 3 · fix round</text>
+          <rect class="seg-verify" x="260" y="60" width="518" height="16" rx="4"><title>Fence 3: 64.8 of 86.0 minutes in build and test commands</title></rect>
+          <rect class="seg-rest" x="780" y="60" width="168" height="16" rx="4"><title>Fence 3: 21.2 minutes of model turns and other tools</title></rect>
+          <text class="t-small" x="0" y="88">65 of 86 min</text>
+
+          <text class="t-strong" x="0" y="120">Fence 4 · continuation</text>
+          <rect class="seg-verify" x="260" y="108" width="188" height="16" rx="4"><title>Fence 4: 23.5 of 29.0 minutes in build and test commands</title></rect>
+          <rect class="seg-rest" x="450" y="108" width="42" height="16" rx="4"><title>Fence 4: 5.5 minutes of model turns and other tools</title></rect>
+          <text class="t-small" x="0" y="136">24 of 29 min, delivered</text>
+
+          <text class="t-strong" x="0" y="168">Fence 6 · targeted fix</text>
+          <rect class="seg-verify" x="260" y="156" width="604" height="16" rx="4"><title>Fence 6: 75.5 of 89.4 minutes in build and test commands</title></rect>
+          <rect class="seg-rest" x="866" y="156" width="109" height="16" rx="4"><title>Fence 6: 13.9 minutes of model turns and other tools</title></rect>
+          <text class="t-small" x="0" y="184">76 of 89 min</text>
+
+          <text class="t-strong" x="0" y="216">Fence 7 · redelivery</text>
+          <rect class="seg-verify" x="260" y="204" width="673" height="16" rx="4"><title>Fence 7: 84.1 of 86.3 minutes in build and test commands</title></rect>
+          <rect class="seg-rest" x="935" y="204" width="16" height="16" rx="4"><title>Fence 7: 2.2 minutes of model turns and other tools</title></rect>
+          <text class="t-small" x="0" y="232">84 of 86 min, no new change</text>
+
+          <text class="t-strong" x="0" y="264">Fence 8 · redelivery</text>
+          <rect class="seg-verify" x="260" y="252" width="670" height="16" rx="4"><title>Fence 8: 83.7 of 90.0 minutes in build and test commands</title></rect>
+          <rect class="seg-rest" x="932" y="252" width="48" height="16" rx="4"><title>Fence 8: 6.3 minutes of model turns and other tools</title></rect>
+          <text class="t-small" x="0" y="280">84 of 90 min, no new change</text>
+        </g>
+      </svg>
+      <figcaption>Tool-call durations are measured from each <code>tool_use</code> to its <code>tool_result</code> in the session transcript. A command counts as verification when it builds, tests, lints, serves the frontend, or polls one of those jobs. In fences 3 and 6 that includes test-first work, so the share is an upper bound for those two rounds. In fences 7 and 8 it is plain re-verification.</figcaption>
+    </figure>
+
+    <h3>Findings</h3>
+    <ol>
+      <li><b>Files always survived.</b> Every salvage patch shows up again with the same <code>git patch-id</code> in every later chain: fence 1 in four later chains, fence 3 in three, fence 4 in two, fence 6's commit in one. The only thing missing later is fence 6's temporary debug spec and instrumentation: fence 7 re-applied the e2e spec change alone.</li>
+      <li><b>Continuing was the agent's job and depended on its prompt.</b> Every round started on the integration branch. Each agent found the salvage by searching refs and SHAs quoted in its prompt, then used <code>git cherry-pick</code> (fence 6), a rebase (fence 4) or <code>git merge --ff-only</code> (fence 8). It worked all three times, but nothing in the platform checked it.</li>
+      <li><b>The session never survived.</b> There were five sessions and none resumed an earlier one. Each re-read a prompt of 24,660 to 51,036 characters made of appended session notes, review reports and STEER blocks. All the transcripts were still on the host, so the claim that a salvaged run "leaves no resumable session behind" did not hold here.</li>
+      <li><b>Verification did not survive, and it used up the budget.</b> Fences 7 and 8 spent 84 of 86 and 84 of 90 minutes rebuilding and rerunning suites that had already passed on the same tree. <code>.agent-studio/project.yml</code> declares 24 minutes for the backend suite alone; at load 27 to 39 on 12 cores it took longer. Both rounds found the same <code>CLAUDE_CONFIG_DIR</code> test failure on their own. Neither reached the evidence specs.</li>
+      <li><b>In-flight diagnosis did not survive.</b> Fence 6 was killed while it was instrumenting a 46,420-request storm. The next prompt called the failure "infrastructure", and fence 7 never picked up the storm again.</li>
+      <li><b>Bounded continuation worked when it ran.</b> The one AGT-2861 round (fence 4) delivered in 29 minutes. The AGT-2861 case log also records continuations of AGT-2858 and AGT-2859 that delivered in 44 to 62 minutes.</li>
+      <li><b>The escalate-and-requeue loop has no brake.</b> Once the one continuation was spent, two operator redeliveries each bought another 90 minutes at the same budget and got the same result. Together they used 176 minutes of coding slot, and the product diff did not change.</li>
+    </ol>
+    <p>In total, the five rounds with transcripts used 380 minutes of coding slot and 608,168 output tokens. The two redeliveries account for 176 of those minutes and 49,283 of those tokens, and they produced no product change.</p>
+  </section>
+
+  <section data-document-section="alternatives" data-concept-section="alternatives" id="alternatives">
+    <h2><span class="number">03</span> Alternatives</h2>
+    <p>Each option is checked against the four failures above: lost session, lost verification, lost diagnosis, and a requeue loop with no brake.</p>
+    <div class="variant-grid">
+      <article class="variant">
+        <h3>A. Raise the host timeout</h3>
+        <p>Set <code>RUNNER_RUN_TIMEOUT_SECONDS</code> to 9000 (150 min) for every run. It is one line of config. It would probably have let fence 3 and fence 6 finish. But every stuck or looping run would also hold a coding slot for 150 minutes. The agent still gets no warning, the salvage still arrives without a checkpoint, and a requeue still starts from zero. This option changes when the problem appears; it does not remove it.</p>
+      </article>
+      <article class="variant">
+        <h3>B. Per-card budget only</h3>
+        <p>Resolve the limit from card, project and operator settings and pass it in the run spec. Heavy cards such as frontend work with e2e evidence get 150 minutes; everything else keeps 90. This is cheap and targeted, but a round that runs out still loses its session, its verification state and its diagnosis, and the escalation loop is unchanged.</p>
+      </article>
+      <article class="variant">
+        <h3>C. Budget, checkpoint and same-session continuation</h3>
+        <p>Option B plus three mechanisms. First, a soft limit at which the runner interrupts the CLI and resumes the same session for a bounded checkpoint turn. Second, a continuation round whose worktree is prepared on the salvage and which resumes the captured session when the continuation ledger allows it. Third, a per-delivery allowance of three budget exhaustions: automatic continuations need measurable progress, and the third exhaustion becomes an operator decision. This addresses all four failures. It needs the same-session resume gate lifted for this path, so it depends on the parity scenario the runner code defers to T2/T3.</p>
+      </article>
+      <article class="variant">
+        <h3>D. Take full-suite verification out of the round</h3>
+        <p>Tell the agent to run targeted tests only and leave the declared routine suites to the platform gate, which already caches verdicts by exact tree SHA. This would have saved most of fences 7 and 8 and costs no runner work. It does nothing for fence 3 or fence 6, where the time went into real test-first work, and it does not stop the requeue loop.</p>
+      </article>
+    </div>
+    <table>
+      <thead><tr><th>Failure seen in AGT-2955</th><th>A</th><th>B</th><th>C</th><th>D</th></tr></thead>
+      <tbody>
+        <tr><td>Session lost at the limit</td><td>later</td><td>later</td><td>solved</td><td>no</td></tr>
+        <tr><td>Verification state lost</td><td>no</td><td>no</td><td>solved (checkpoint ledger)</td><td>partly (gate cache)</td></tr>
+        <tr><td>In-flight diagnosis lost</td><td>no</td><td>no</td><td>solved (checkpoint turn)</td><td>no</td></tr>
+        <tr><td>Requeue loop without progress</td><td>no</td><td>no</td><td>solved (progress rule, operator decision)</td><td>no</td></tr>
+        <tr><td>Slot cost of a stuck run</td><td>higher for all</td><td>higher only where raised</td><td>bounded per delivery</td><td>unchanged</td></tr>
+        <tr><td>Implementation size</td><td>config</td><td>small</td><td>five slices</td><td>prompt and guidance</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section data-document-section="recommendation" data-concept-section="recommendation" id="recommendation">
+    <h2><span class="number">04</span> Recommendation</h2>
+    <div class="callout" data-tone="accent">
+      <h3>Recommended default: option C, with D's verification rule as part of the checkpoint contract</h3>
+      <p>A round should end with a checkpoint rather than a kill. The next round should start on the salvage in the same session. The platform, not the agent, should decide from measured progress whether another automatic round is worth its slot. The AGT-2955 evidence shows that the lost work is not files but context and verification, and only option C preserves both.</p>
+    </div>
+
+    <h3>Budget model</h3>
+    <figure class="media-breakout">
+      <svg class="chart" viewBox="0 0 1120 250" role="img" aria-labelledby="model-title model-desc">
+        <title id="model-title">Budget model: one round, and one delivery</title>
+        <desc id="model-desc">Top: a 90-minute round with the soft limit at 72 minutes, a checkpoint turn of up to 10 minutes, and the hard limit at 90 minutes. Bottom: up to three rounds per delivery, where each automatic continuation needs progress, followed by an operator decision to raise, cut or stop.</desc>
+        <text class="t-strong" x="0" y="40">One round</text>
+        <text class="t-small" x="0" y="56">budget B = 90 min</text>
+        <rect class="seg-rest" x="160" y="28" width="718" height="20" rx="4"><title>Working time, 0 to 72 minutes</title></rect>
+        <rect class="soft" x="882" y="28" width="98" height="20" rx="4"><title>Checkpoint turn, 72 to 82 minutes at most</title></rect>
+        <line class="limit" x1="1060" y1="18" x2="1060" y2="60"/>
+        <text x="164" y="72">work: plan, change, targeted tests</text>
+        <text class="t-strong" x="878" y="72" text-anchor="end">soft limit 0.8 B (72 min)</text>
+        <text x="878" y="88" text-anchor="end">checkpoint turn ≤ 10 min, same session</text>
+        <text class="t-strong" x="1056" y="72" text-anchor="end">hard limit B</text>
+        <text x="1056" y="88" text-anchor="end">salvage as today</text>
+
+        <text class="t-strong" x="0" y="160">One delivery</text>
+        <text class="t-small" x="0" y="176">3 budget exhaustions</text>
+        <rect class="row" x="160" y="140" width="190" height="44" rx="8"/>
+        <text class="t-strong" x="176" y="160">Round 1</text><text x="176" y="176">card budget</text>
+        <path class="flow" d="M350 162 H392 M384 156 L392 162 L384 168"/>
+        <rect class="row" x="394" y="140" width="210" height="44" rx="8"/>
+        <text class="t-strong" x="410" y="160">Round 2</text><text x="410" y="176">auto, same session</text>
+        <path class="flow" d="M604 162 H646 M638 156 L646 162 L638 168"/>
+        <rect class="row" x="648" y="140" width="210" height="44" rx="8"/>
+        <text class="t-strong" x="664" y="160">Round 3</text><text x="664" y="176">auto, same session</text>
+        <path class="flow" d="M858 162 H900 M892 156 L900 162 L892 168"/>
+        <rect class="badge-bad" x="902" y="140" width="218" height="44" rx="8"/>
+        <text class="t-bad" x="918" y="160">Operator decision</text><text x="918" y="176">raise · cut · stop</text>
+        <text class="t-small" x="394" y="206">each automatic round requires progress in the round before it;</text>
+        <text class="t-small" x="394" y="222">a round without progress goes straight to the operator decision</text>
+      </svg>
+      <figcaption>Proposal. The 0.8 factor, the 10-minute checkpoint ceiling and the allowance of three exhaustions are the recommended defaults from the open decisions below.</figcaption>
+    </figure>
+    <ul>
+      <li><b>Run budget.</b> This is the wall-clock limit of one round. It is resolved in this order: an operator override on the card (audited, with a scope of "next round" or "this delivery"), then the card's <code>runBudgetMinutes</code>, then the project's default, then the host's <code>RUNNER_RUN_TIMEOUT_SECONDS</code>. The result is clamped to a host ceiling, <code>RUNNER_RUN_BUDGET_MAX_SECONDS</code> (default 14400). It travels in <code>RunSpecDto</code> and reaches <code>DurableAgentProcess</code> through the <code>timeoutSeconds</code> parameter it already has. The runner logs the effective budget and its source.</li>
+      <li><b>Soft limit.</b> At 0.8 of the budget, and never later than 10 minutes before the hard limit, the runner interrupts the CLI and resumes the same session with a fixed checkpoint prompt. The checkpoint turn is capped at 10 minutes. In it, the agent stops new work and writes <code>results/checkpoint.md</code>: what is done, what is verified (command, result, and the tree SHA it ran on), the diagnosis in progress, and the next step. The runner types the round <code>BudgetCheckpoint</code> and salvages. If the CLI cannot resume, the prompt carries the deadline from the start and the hard limit salvages as it does today; the round is then typed <code>BudgetExhausted</code>.</li>
+      <li><b>Continuation.</b> The worktree is prepared on the salvage commit through <code>ContinuationBaseStore</code>, as worker-loss rounds already are, so the agent no longer cherry-picks. The session resumes when the continuation ledger admits it: same provider, worktree path, clean-context identity and captured session present, and total tokens under the ceiling. Otherwise the round starts clean, with the original card prompt plus <code>checkpoint.md</code> as the handoff instead of the stack of STEER notes.</li>
+      <li><b>Verification rule.</b> A continuation round reruns only commands whose inputs changed since the tree SHA recorded in the checkpoint, plus targeted tests for what it touches. The declared routine suites are left to the platform gate, whose verdict cache is keyed by exact tree SHA.</li>
+      <li><b>Progress.</b> A round made progress if its salvage tree differs from its start tree, or if its checkpoint records a passing verification on a tree that had not been verified before. Fence 8 (same commit, no new verification) had none.</li>
+    </ul>
+
+    <h3>Operator decision at the third exhaustion</h3>
+    <p>Budget exhaustions (<code>BudgetCheckpoint</code> or <code>BudgetExhausted</code>) are counted per card per delivery. The counter resets only when a delivery is accepted, or when an operator decision changes the budget or the scope. A plain requeue does not reset it, and neither does the night-shift infrastructure redelivery. Automation that redelivers after infrastructure failures must skip cards escalated for budget.</p>
+    <p>The card escalates to <code>5e-escalated</code> with a typed gate item <code>run-budget-decision</code> in three cases: at the third exhaustion, after an automatic round with no progress, or after a checkpoint turn that wrote no checkpoint. The gate offers three actions:</p>
+    <ol>
+      <li><b>Raise the budget:</b> 120, 150, 180 or 240 minutes, for the next round or for the rest of the delivery. The allowance grows by one round.</li>
+      <li><b>Cut smaller:</b> deliver the verified partial state named in the checkpoint as this card's scope, and create follow-up cards from its remaining steps through the Task API.</li>
+      <li><b>Stop:</b> park or archive the card. The salvage ref and SHA stay in the reason.</li>
+    </ol>
+    <p>Retrying with an unchanged budget stays possible through <code>/continue</code>, but it needs a reason, is recorded as <code>budget-retry-unchanged</code>, and counts as an exhaustion. The gate also shows a rule-based suggestion with its numbers. If at least 60 % of the last round was spent in build and test commands, it suggests <em>raise</em>. If the diff keeps growing and the checkpoint lists more than three remaining steps, it suggests <em>cut</em>. After two rounds without progress, it suggests <em>stop and re-plan</em>.</p>
+
+    <h3>What the card shows</h3>
+    <figure class="media-breakout">
+      <svg class="chart" viewBox="0 0 1120 370" role="img" aria-labelledby="sketch-title sketch-desc">
+        <title id="sketch-title">Proposal sketch of the run budget section on the card</title>
+        <desc id="sketch-desc">A panel titled Run budget with a badge reading Operator decision required. A summary line gives the budget per round, its source, three of three exhaustions and the time used. A table lists four rounds with trigger, minutes, outcome, progress and salvage. A next-step line suggests raising the budget, followed by three buttons: Raise to 150 min, Cut smaller, and Stop.</desc>
+        <rect class="panel" x="10" y="10" width="1100" height="350" rx="10"/>
+        <text class="t-strong" x="34" y="46" style="font-size:15px">Run budget</text>
+        <rect class="badge-bad" x="886" y="28" width="200" height="26" rx="13"/>
+        <text class="t-bad" x="986" y="46" text-anchor="middle">Operator decision required</text>
+        <text x="34" y="74">90 min per round · source: host default · 3 of 3 budget exhaustions in this delivery · 4 h 50 min used</text>
+        <line class="axis" x1="34" y1="92" x2="1086" y2="92"/>
+        <g>
+          <text class="t-small" x="34" y="112">ROUND</text><text class="t-small" x="104" y="112">TRIGGER</text><text class="t-small" x="330" y="112" text-anchor="end">MIN</text><text class="t-small" x="360" y="112">OUTCOME</text><text class="t-small" x="560" y="112">PROGRESS</text><text class="t-small" x="930" y="112">SALVAGE</text>
+          <line class="axis" x1="34" y1="122" x2="1086" y2="122"/>
+          <text x="34" y="146">1</text><text x="104" y="146">review fix round</text><text x="330" y="146" text-anchor="end">86</text><circle class="dot-bad" cx="366" cy="142" r="4"/><text x="378" y="146">budget exhausted</text><text x="560" y="146">+1,192 −549 · 33 files</text><text x="930" y="146">76da6a8</text>
+          <text x="34" y="174">2</text><text x="104" y="174">automatic continuation</text><text x="330" y="174" text-anchor="end">29</text><circle class="dot-good" cx="366" cy="170" r="4"/><text x="378" y="174">delivered</text><text x="560" y="174">+32 −10 · build, unit, lint verified</text><text x="930" y="174">9451717</text>
+          <text x="34" y="202">3</text><text x="104" y="202">targeted fix round</text><text x="330" y="202" text-anchor="end">89</text><circle class="dot-bad" cx="366" cy="198" r="4"/><text x="378" y="202">budget exhausted</text><text x="560" y="202">+294 −38 · checkpoint: request storm open</text><text x="930" y="202">2a2fb5b</text>
+          <text x="34" y="230">4</text><text x="104" y="230">operator redelivery</text><text x="330" y="230" text-anchor="end">86</text><circle class="dot-bad" cx="366" cy="226" r="4"/><text x="378" y="230">budget exhausted</text><text x="560" y="230">no progress · 84 of 86 min in build and test</text><text x="930" y="230">6cc50ad</text>
+          <line class="axis" x1="34" y1="248" x2="1086" y2="248"/>
+        </g>
+        <text class="t-strong" x="34" y="278">Next step</text>
+        <text x="120" y="278">Suggested: raise the budget. 84 of 86 min of the last round ran build and test commands, and the round made no new change.</text>
+        <rect class="btn-primary" x="34" y="300" width="170" height="36" rx="8"/><text class="t-link" x="119" y="323" text-anchor="middle">Raise to 150 min</text>
+        <rect class="btn" x="216" y="300" width="140" height="36" rx="8"/><text class="t-strong" x="286" y="323" text-anchor="middle">Cut smaller</text>
+        <rect class="btn" x="368" y="300" width="100" height="36" rx="8"/><text class="t-strong" x="418" y="323" text-anchor="middle">Stop</text>
+      </svg>
+      <figcaption>Proposal sketch, not a product capture. It shows how the proposed section would have presented AGT-2955 after fence 7, where the proposed rules would have stopped the loop. It uses round data from the transcripts and salvage refs. The checkpoint wording in round 3 and the progress wording are illustrative. Status is shown by a dot plus a label and a tinted badge, never by a coloured edge.</figcaption>
+    </figure>
+    <p>The section belongs on the card detail, next to the run history. It shows the budget per round and where that value comes from; the exhaustions used out of the allowance; the total minutes in this delivery; one row per round with trigger, minutes, typed outcome, progress (diff size and newly verified commands) and a copyable salvage SHA; and one next-step line. The next step reads "Automatic continuation 2 of 3 queued, same session", "Operator decision required", or "Within budget".</p>
+
+    <h3>Expected effect on AGT-2955 (inferred)</h3>
+    <p>With these rules, fence 3 would have written a checkpoint at 72 minutes, including the pending build. Fence 4 would have resumed that session; it took 29 minutes even without the session. Fence 6's checkpoint would have recorded the storm diagnosis, and its continuation would have resumed that diagnosis instead of re-verifying. A continuation with no progress would have gone to the operator after at most one wasted round instead of two, together with the verification-share evidence that supports raising the budget.</p>
+  </section>
+
+  <section data-document-section="evidence" data-concept-section="evidence" id="evidence">
+    <h2><span class="number">05</span> Evidence</h2>
+    <p>This Dossier makes no claim about what a product surface renders today, so it contains no screenshot. The card section above is marked as a proposal sketch. The card-surface implementation slice must supply light and dark Playwright captures of the real section. A timeout-escalated card with salvage history does not exist in the pinned demo store, and this concept must not fabricate one.</p>
+    <div class="evidence-list">
+      <a class="evidence" href="#evidence-salvage-refs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="evidence-salvage-refs">Six AGT-2955 salvage refs and their chains</b><small><code>origin/agent-studio/salvage/agent-runner-01/AGT-2955/run_*/fence-{1,3,4,6,7,8}/*</code>. Push times come from the ref logs: 15:55, 23:36, 00:10, 06:49, 09:13 and 11:48. <code>git patch-id --stable</code> matches for every carried commit. Fences 7 and 8 point to <code>6cc50adb7</code>.</small></span></a>
+      <a class="evidence" href="#evidence-transcripts"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="evidence-transcripts">Five coding-session transcripts</b><small>These are in the runner host's clean-context store under <code>projects/-home-agent-runner-work-PROJ-002-worktrees-AGT-2955/</code>. Sessions <code>1561c0ff</code>, <code>9e06d566</code>, <code>bfb3f4be</code>, <code>a9563c5d</code> and <code>6186a5e8</code> give start, end, tool-call durations, token usage, prompt headings, the agents' own salvage commands, and load average notes (27 and 39 on 12 cores).</small></span></a>
+      <a class="evidence" href="#evidence-code"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="evidence-code">Current timeout and continuation code</b><small><code>runner/RunnerOptions.cs</code> (<code>RUNNER_RUN_TIMEOUT_SECONDS</code>, default 3600); <code>runner/DurableAgentProcess.cs</code> (<code>timeoutSeconds ?? options.RunTimeoutSeconds</code>); <code>backend/Features/Runner/RunTimeoutSalvageContinuation.cs</code> (one automatic round, clean context, <code>StartsFromSalvage</code> false for timeouts); <code>runner/RemoteTaskRunner.cs</code> (same-session resume gated on <code>RUNNER_CLI_RESUME_ARGS</code>, unset in production); <code>contracts/TaskServer.Contracts/MechanicalSessionContinuation.cs</code> (ledger admission and the 300 s and 1,211,213-token ceilings).</small></span></a>
+      <a class="evidence" href="#evidence-host"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="evidence-host">Host configuration and declared suite durations</b><small><code>/etc/agent-runner/runner.env</code> sets <code>RUNNER_RUN_TIMEOUT_SECONDS=5400</code>. <code>.agent-studio/project.yml</code> declares backend-routine at 1440 s, runner at 90 s, task-server at 150 s, frontend-unit at 180 s and frontend-e2e at 900 s.</small></span></a>
+      <a class="evidence" href="#evidence-prior"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="evidence-prior">Earlier timeout cases</b><small>In <code>docs/concepts/orchestrator-drive-to-conclusion.html</code>, case <code>AGT-2861</code> records AGT-2858 and AGT-2859 killed at 90 minutes with about 1,000 and 290 salvaged lines, and continuation rounds that delivered in 44 to 62 minutes.</small></span></a>
+      <a class="evidence" href="#evidence-inference"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b id="evidence-inference">Verification, not coding, used up the late rounds</b><small>Fences 7 and 8 spent 84 of 86 and 84 of 90 minutes inside build and test commands and added no product change. The first finding of each was a failure the previous round had already diagnosed. The share is an upper bound for fences 3 and 6, because test-first work is counted too.</small></span></a>
+      <a class="evidence" href="#evidence-fifth"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b id="evidence-fifth">Fifth timeout not attributable on this host</b><small>The card reports five timeouts. Four are proven here. Fences 2 and 5 left no ref or transcript on the host, and fence 1 ended <code>Done</code>. The analysis does not depend on the fifth.</small></span></a>
+      <a class="evidence" href="#evidence-proposal"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b id="evidence-proposal">Budget model, checkpoint turn and operator gate</b><small>Everything under Recommendation is a proposal. Numbers such as 0.8, 10 min, three exhaustions and 60 % are defaults to be confirmed under Open decisions.</small></span></a>
+    </div>
+  </section>
+
+  <section data-document-section="open-decisions" data-concept-section="open-decisions" id="open-decisions">
+    <h2><span class="number">06</span> Open decisions</h2>
+    <p>Each decision has a recommended working option. Implementation slices use that option unless an operator decision selects another.</p>
+    <table>
+      <thead><tr><th>Decision</th><th>Options</th><th>Recommended</th></tr></thead>
+      <tbody>
+        <tr><td>1. Who may raise the budget, and how far</td><td>(a) operator only; (b) card up to a project cap, operator up to the host ceiling; (c) anyone up to the host ceiling</td><td><b>(b)</b>. The default stays 90 min. A card may ask for up to 150 min without an operator. The operator may set up to 240 min, which is the host ceiling.</td></tr>
+        <tr><td>2. Where the soft limit sits and how it reaches the agent</td><td>(a) deadline in the prompt only; (b) runner interrupt plus a same-session checkpoint turn; (c) provider hooks that inject a message</td><td><b>(b) at 0.8 B</b>, and at least 10 min before the hard limit, with the checkpoint turn capped at 10 min. (a) is always added as a fallback. (c) is rejected because it is provider-specific.</td></tr>
+        <tr><td>3. Context of a continuation round</td><td>(a) always clean with a handoff; (b) same session when the ledger admits it, otherwise clean with a handoff; (c) always the same session</td><td><b>(b)</b>. The worktree always starts on the salvage. The handoff is the card prompt plus <code>checkpoint.md</code>, not the accumulated STEER notes.</td></tr>
+        <tr><td>4. When exhaustion becomes an operator decision</td><td>(a) second exhaustion; (b) third exhaustion, or earlier after a round without progress; (c) never automatic, budget minutes only</td><td><b>(b)</b>. Count per card per delivery. Only an accepted delivery or an operator decision that changes budget or scope resets the count.</td></tr>
+        <tr><td>5. Verification inside continuation rounds</td><td>(a) unchanged; (b) targeted tests plus the checkpoint ledger, with routine suites left to the gate; (c) no verification in the round</td><td><b>(b)</b>. The agent reruns only what changed since the verified tree SHA.</td></tr>
+        <tr><td>6. Where the project default lives</td><td>(a) <code>.agent-studio/project.yml</code>; (b) project settings in the application</td><td><b>(b)</b>. The budget is operator policy. <code>project.yml</code> suite durations are shown as a sizing hint only.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- agent-studio:implementation-section:start -->
+  <section id="implementation" data-document-section="implementation">
+    <h2><span class="number">07</span> Implementation</h2>
+    <p>Five independently reviewable slices, defined in <code>workbench.json</code> <code>implementationTasks</code>. RB-S1 and RB-S2 can run in parallel. RB-S3 needs RB-S2. RB-S4 needs RB-S1 and RB-S3. RB-S5 needs RB-S1 and RB-S4.</p>
+    <table>
+      <thead><tr><th>Slice</th><th>Scope</th></tr></thead>
+      <tbody>
+        <tr><td>RB-S1</td><td>Budget ledger per card and delivery: typed exhaustions, progress fact, counter that ignores plain requeues, API projection.</td></tr>
+        <tr><td>RB-S2</td><td>Budget resolution and transport: card, project, operator and host sources, host ceiling, <code>RunSpecDto</code> field, runner log line.</td></tr>
+        <tr><td>RB-S3</td><td>Soft limit and checkpoint turn in the runner: interrupt, same-session resume, <code>checkpoint.md</code> contract, <code>BudgetCheckpoint</code> outcome, fallback.</td></tr>
+        <tr><td>RB-S4</td><td>Continuation from salvage in the same session: salvage base for budget rounds, ledger admission, handoff prompt, progress-gated automatic rounds.</td></tr>
+        <tr><td>RB-S5</td><td>Operator decision gate and card section: <code>run-budget-decision</code> gate item, raise, cut and stop actions, redelivery exclusion, card section in both themes.</td></tr>
+      </tbody>
+    </table>
+    <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+    </ol>
+  </section>
+  <!-- agent-studio:implementation-section:end -->
+</main>
+</body>
+</html>

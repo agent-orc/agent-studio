@@ -23,10 +23,11 @@ process next to the browser on a single operator's machine - see
 [Remote Task Server with local Agent Studio](../remote-task-server-local-studio.md).
 It is not a general Docker Compose network service:
 
-- `ConnectorOptions.Load` (`backend/Features/Connector/ConnectorOptions.cs:27-36`)
-  throws unless `Connector:Authority` equals exactly `[::1]:5031` and
-  `Connector:StudioOrigin` equals exactly `http://[::1]:4011` - both are
-  effectively constants, not configuration.
+- `ConnectorOptions.Load` (`backend/Features/Connector/ConnectorOptions.cs`)
+  throws unless `Connector:Authority` equals exactly `[::1]:5031`. Since
+  AGT-2984 the Studio origin is an allowlist, but only of loopback origins
+  (default `http://localhost:4011` and `http://[::1]:4011`); a LAN or host
+  name origin is still refused at startup.
 - The route-ownership dossier's own Security section is explicit: "bind only
   `[::1]:5031`... Do not bind IPv4 wildcard, IPv6 wildcard, LAN, or Docker
   Desktop default interfaces," and unsafe requests are rejected unless their
@@ -85,3 +86,10 @@ principal credentials in a persistent named volume without operator token
 handling. The source-built path is the verified install path for this checkout;
 the published-image path is checked after release. See
 [Docker operations](./docker.md) for the commands and the route coverage limit.
+
+The reconciled installation also starts a separate review host principal. The
+Studio API compatibility process rejects non-versioned `/api/*` routes while
+Task Server proxy mode is configured, so it cannot write a second task store.
+The browser's versioned routes go through the BFF with an exact Origin
+allowlist. LAN exposure uses the optional HTTPS edge; the Connector's fixed
+loopback settings have not changed.

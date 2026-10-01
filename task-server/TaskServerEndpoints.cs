@@ -33,6 +33,34 @@ public static class TaskServerEndpoints
                 reason);
             return supported ? Results.Ok(response) : Results.Json(response, statusCode: StatusCodes.Status426UpgradeRequired);
         });
+        // Authenticated attach handshake of the loopback Studio connector: it
+        // proves the stored credential is a Studio principal and negotiates the
+        // /api/v1 and Studio hub versions before any Studio request is forwarded.
+        api.MapPost("/protocol/attach", (
+            HttpContext context,
+            ProtocolAttachRequest request,
+            TaskServerStore store,
+            TaskServerBootstrapOptions bootstrap) =>
+        {
+            var server = store.Status().Protocol;
+            var principal = context.TaskServerPrincipal();
+            var decision = StudioAttachPolicy.Decide(
+                request,
+                principal?.Kind,
+                bootstrap.RequiresAuthentication,
+                server,
+                TaskServerHubProtocol.StudioRange());
+            var response = new ProtocolAttachResponse(
+                decision.Attached,
+                decision.Code,
+                server,
+                decision.ApiProtocol,
+                decision.HubProtocol,
+                decision.Attached ? TaskServerHubProtocol.StudioHubPath : null,
+                principal?.PrincipalId,
+                decision.Reason);
+            return Results.Json(response, statusCode: decision.StatusCode);
+        });
         api.MapGet("/artifact-limits", (IOptions<TaskServerOptions> configured) =>
         {
             var options = configured.Value;
@@ -56,6 +84,18 @@ public static class TaskServerEndpoints
             => await InvokeAsync(() => store.ListProjectsAsync(workspaceId, ct)));
         api.MapPost("/projects", async (HttpContext context, CreateProjectRequest request, TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.CreateProjectAsync(request, Actor(context), ct), StatusCodes.Status201Created))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
+        api.MapGet("/projects/{projectId}/placement", async (
+            string projectId, TaskServerStore store, CancellationToken ct)
+            => await InvokeNullableAsync(() => store.GetProjectPlacementAsync(projectId, ct)));
+        api.MapGet("/projects/{projectId}/placement/admissions", async (
+            string projectId, TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.ListProjectPlacementAdmissionsAsync(projectId, ct)));
+        api.MapPut("/projects/{projectId}/placement", async (
+            HttpContext context, string projectId, UpdateProjectPlacementRequest request,
+            TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.UpdateProjectPlacementAsync(
+                projectId, request, Actor(context), ct)))
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
 
         var orchestratorContexts = api.MapGroup("/orchestrator-contexts");

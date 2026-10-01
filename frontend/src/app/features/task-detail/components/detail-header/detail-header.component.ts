@@ -24,6 +24,8 @@ import {
   mergeAcceptViewFor,
   overflowActionsFor,
   primaryActionFor,
+  triageDecisionRefusal,
+  triageDecisionRowState,
 } from '../../state/triage-actions.model';
 import type { LandedState } from '../../../git';
 import { buildThinkingLevelIndicator } from '../../../../services/thinking-level.util';
@@ -259,6 +261,9 @@ export class DetailHeaderComponent {
     const status = this.info().integration?.status;
     return this.triagePrimary()?.id === 'mark-done' && status !== 'integrated' && status !== 'not-applicable';
   });
+  /** AGT-2795: the decision lane guard's reason, shown instead of a failing click. */
+  readonly primaryDecisionRefusal = computed(() => triageDecisionRefusal(this.info(), this.triagePrimary()));
+
   /** Remaining lane actions + always-on Edit/Delete fallbacks. */
   readonly triageOverflow = computed<TriageButton[]>(() =>
     overflowActionsFor(this.info().state),
@@ -293,6 +298,7 @@ export class DetailHeaderComponent {
       label: b.label,
       danger: b.variant === 'danger',
       disabled,
+      ...triageDecisionRowState(this.info(), b),
     }));
     if (this.commitActionsAvailable()) {
       if (items.length > 0) items.push({ kind: 'separator' });
@@ -320,6 +326,8 @@ export class DetailHeaderComponent {
     if (!p) return '';
     if (this.primaryAwaitingGit()) return 'Checking git status — action available once loaded.';
     if (this.mutationsBlocked()) return 'Update in progress — actions paused.';
+    const refusal = this.primaryDecisionRefusal();
+    if (refusal) return refusal;
     const label = this.primaryLabel();
     if (this.triageActingId() === p.id) return `${label}…`;
     const merge = this.mergeAcceptView();
@@ -338,7 +346,7 @@ export class DetailHeaderComponent {
     if (!p) return;
     // Hold git-dependent primaries until the branch/merge status has loaded, so
     // Enter / click cannot trigger an acceptance while the label is still a guess.
-    if (this.primaryAwaitingGit() || this.primaryBlockedByIntegration()) return;
+    if (this.primaryAwaitingGit() || this.primaryBlockedByIntegration() || this.primaryDecisionRefusal()) return;
     this.emitTriage(p);
   }
 

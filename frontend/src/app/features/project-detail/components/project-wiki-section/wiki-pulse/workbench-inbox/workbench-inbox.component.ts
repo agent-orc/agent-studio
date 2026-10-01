@@ -8,6 +8,8 @@ import type {
   WorkbenchCatalogue,
   WorkbenchListItem,
 } from '../../../../../../models/project-docs.model';
+import type { DecisionInboxItem } from '../../../../../../models/decision-card-presentation';
+import { formatDateTimeUtc } from '../../../../../../services/format.util';
 
 interface LifecycleGroup {
   state: WikiLifecycleState | 'invalid';
@@ -36,6 +38,16 @@ export class WorkbenchInboxComponent {
   readonly catalogue = input<WorkbenchCatalogue | null>(null);
   readonly openPage = output<WikiLifecycleItem>();
   readonly openWorkbench = output<WorkbenchListItem>();
+  /**
+   * AGT-2795: pending decision cards of this project. They are listed first,
+   * beside the Dossier lifecycle, because each one blocks concrete work.
+   */
+  readonly decisionCards = input<readonly DecisionInboxItem[]>([]);
+  readonly openDecisionCard = output<DecisionInboxItem>();
+
+  readonly visible = computed(() => !!this.lifecycle() || this.decisionCards().length > 0);
+  /** Header total: every row the card lists (R3, sum of visible children). */
+  readonly total = computed(() => (this.lifecycle()?.count ?? 0) + this.decisionCards().length);
 
   readonly groups = computed<LifecycleGroup[]>(() => {
     const items = this.lifecycle()?.items ?? [];
@@ -59,6 +71,12 @@ export class WorkbenchInboxComponent {
   keyFor(item: WikiLifecycleItem): string | null {
     if (!item.workbenchId) return null;
     return this.catalogue()?.items.find(candidate => candidate.id === item.workbenchId)?.key ?? null;
+  }
+
+  decisionMeta(item: DecisionInboxItem): string {
+    const due = item.dueDate ? `${item.overdue ? 'overdue since' : 'due'} ${formatDateTimeUtc(item.dueDate)}` : null;
+    const blocks = item.blocks.length > 0 ? `blocks ${item.blocks.join(', ')}` : null;
+    return [`decider ${item.decider}`, due, blocks].filter(Boolean).join(' · ');
   }
 
   stateTone(state: string): string {

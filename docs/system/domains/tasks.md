@@ -77,6 +77,67 @@ or commit attribution.
 
 ## Entry Points
 
+### Runner host placement (AGT-2939, D11)
+
+The standalone Task Server stores an optional, versioned project placement at
+`GET/PUT /api/v1/projects/{projectId}/placement`. Its
+`requiredCapabilities` are fresh advertised capability keys, such as
+`platform:linux` or `toolchain:dotnet`. The same runner binary advertises
+`platform:linux` or `platform:windows` for coding and review roles. An
+optional `pinnedRunnerId` keeps work tied to one registered machine. A second
+host with matching capabilities and a project grant needs no task rewrite.
+Missing placement retains the previous claim behavior.
+
+The coding claim transaction checks the caller's authenticated runner and
+instance, host drain, fresh required capabilities, host project grant, available
+slots, central host ceiling, and the current capacity version acknowledgement.
+Registration and capability advertisement alone do not acknowledge capacity;
+the daemon must report the desired version and effective ceiling on a claim
+poll. For configured placement, CPU telemetry above the host's target load
+blocks admission. Each project is evaluated once per claim poll, and the ready
+scan stops at the first admissible task. The claim response carries
+`placementReason`: `matched` for configured placement, `legacy-routing` for a
+project without placement, or the last refusal when nothing is admitted. The
+successful claim audit records the placement version and reason.
+`GET /api/v1/projects/{projectId}/placement/admissions` reads each runner's
+last placement decision with its timestamp. The placement GET, runner
+capability snapshot, runtime capacity GET, and host admission projection
+provide the read side for selection, rejection, capacity, and drain.
+The host's coding and review registrations retain distinct role slot budgets.
+
+Configured placement defaults to one active coding lease per project. Its
+`maxParallelism` may only use slots authorized by the existing project
+`maxParallelism` setting; the effective limit is the smaller value. Active
+and `process-unknown` leases count against that limit, so an abruptly lost
+host cannot transfer live authority. Drain stops new claims while existing
+leases renew or settle. Removal follows drain and fenced authority expiry.
+Runner join requires a scoped principal and separate coding or review service
+identity. Retiring a host now records operator drain; permanent removal refuses
+while coding or review authority is active or process-unknown, then tombstones
+registration while preserving its audit rows. A removed host cannot re-register
+or revive under the old identity.
+The target topology is two or more Linux hosts, zero or at least two Windows
+hosts when Windows is required, and zero or more workstations; these are
+operator deployment targets, not hard-coded limits.
+
+The file-backed compatibility API also accepts `class:linux`,
+`class:windows`, or `class:macos` as a project's execution location through
+the existing project-settings mutation. These map to fresh `platform:*`
+capability advertisements during coding claim and direct lease acquisition.
+An ordinary runner ID remains an explicit pin. This preserves existing
+project-to-runner configuration while letting another matching host claim
+future cards without editing their task records. The daemon claim loop and
+the direct task-key lease share one project slot policy
+(`ProjectExecutionPolicy.EvaluateProjectSlot`). It limits class-placed
+projects, which many matching hosts share: it counts Progress cards per
+project and admits another only below that project's existing maxParallelism.
+A pinned project keeps its existing admission; its one host's slot ceiling
+bounds it, so the policy sets no project limit for it. A refused claim
+candidate records `project-concurrency-full`, and a refused direct lease
+returns `ProjectCapacityFull`. Class-placed projects do not seed a host's
+deprecated compatibility ceiling, because every matching host shares their
+project limit. A class-only host keeps the ceiling it declares.
+
 ### Engine steering boundary (AGT-2933, D5)
 
 The standalone Engine uses its scoped bearer principal to submit

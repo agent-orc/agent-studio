@@ -7,10 +7,15 @@ case "$role" in
     studio) principal=bootstrap-studio ;;
     engine) principal=bootstrap-engine ;;
     runner) principal=runner:distributed-runner ;;
-    *) echo 'usage: compose-rotate-credentials.sh studio|engine|runner' >&2; exit 64 ;;
+    review-runner) principal=runner:distributed-review-runner ;;
+    *) echo 'usage: compose-rotate-credentials.sh studio|engine|runner|review-runner' >&2; exit 64 ;;
 esac
 secret_dir=/run/agent-studio-secrets
-target="$secret_dir/${role}_token"
+if [ "$role" = review-runner ]; then
+    target="$secret_dir/review_runner_token"
+else
+    target="$secret_dir/${role}_token"
+fi
 test -s "$target" || { echo "Missing $role credential; start the stack first." >&2; exit 1; }
 response="$(mktemp "$secret_dir/.rotation-response.XXXXXXXX")"
 replacement="$(mktemp "$secret_dir/.${role}-replacement.XXXXXXXX")"
