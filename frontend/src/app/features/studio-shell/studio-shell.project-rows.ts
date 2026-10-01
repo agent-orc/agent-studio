@@ -4,11 +4,19 @@ import { projectIdentity } from '../../services/project-identity.util';
 import type { StructuredTooltip } from 'coding-agent-chat/shared';
 import { laneName } from '../../models/lane-presentation';
 import { TaskState } from '../../models/task.model';
+import { isDecisionCard, isDecisionOpen } from '../../models/decision-card-presentation';
 
 export interface ExplorerLaneCounts {
   ready: number;
   progress: number;
   humanReview: number;
+  /**
+   * AGT-2795: open decision cards waiting for their decider. Not a lane (they
+   * sit in Preparation), but active work waiting on a person, so the project
+   * number includes them and the Board row shows them as a fourth counter.
+   * Absent on older callers; read as zero.
+   */
+  decisions?: number;
 }
 
 /**
@@ -30,6 +38,11 @@ export const BOARD_LANE_COUNT_TOOLTIPS: Record<keyof ExplorerLaneCounts, Structu
   humanReview: {
     title: laneName(TaskState.HumanReview),
     body: 'Finished runs waiting for your review, including escalations that need a decision. Accept the work or send it back for another pass.',
+  },
+  // AGT-2795: not a lane; decision cards wait in Preparation for their decider.
+  decisions: {
+    title: 'Open decisions',
+    body: 'Decision cards waiting for their named decider. Open one to choose an option; the cards it blocks move again once it is decided.',
   },
 };
 
@@ -58,7 +71,9 @@ export function laneCountsFor(project: { laneCounts?: ExplorerLaneCounts }): Exp
 
 export function boardLaneCountsLabel(project: { laneCounts?: ExplorerLaneCounts }): string {
   const counts = laneCountsFor(project);
-  return `${counts.ready} ready, ${counts.progress} in progress, ${counts.humanReview} human review`;
+  const lanes = `${counts.ready} ready, ${counts.progress} in progress, ${counts.humanReview} human review`;
+  const decisions = counts.decisions ?? 0;
+  return decisions > 0 ? `${lanes}, ${decisions} open decision${decisions === 1 ? '' : 's'}` : lanes;
 }
 
 export function buildProjectSidebarRows(
@@ -96,6 +111,14 @@ export function buildProjectSidebarRows(
       // work sits in lanes that do not feed the active-work count (backlog,
       // completed, ...).
       const project = ensureProject(job.projectName ?? '');
+      if (isDecisionCard(job)) {
+        // A decision card never enters a runner lane; count it once, as an
+        // open decision, never also as lane work.
+        if (job.decision && isDecisionOpen(job.decision)) {
+          project.laneCounts.decisions = (project.laneCounts.decisions ?? 0) + 1;
+        }
+        continue;
+      }
       if (laneKey === 'ready'
           && job.pickupHold?.classification !== 'stalled'
           && job.pickupHold?.classification !== 'unsatisfiable') project.laneCounts.ready++;
@@ -112,17 +135,18 @@ export function buildProjectSidebarRows(
   return Array.from(projects.entries())
     .map(([name, project]) => {
       const id = projectIdentity(name);
-      const { ready, progress, humanReview } = project.laneCounts;
+      const { ready, progress, humanReview, decisions = 0 } = project.laneCounts;
       return {
         name,
         initial: id.initial,
         color: id.color,
         // The project number is "active work" and, by construction, the exact
-        // sum of the three board chips shown directly under it (invariant:
+        // sum of the board chips shown directly under it (three lanes plus
+        // open decisions) (invariant:
         // every aggregate equals the sum of its visible children). Backlog,
         // Delivered/Completed and Archive are intake / done - not running
         // work - so they count nowhere here.
-        totalJobs: ready + progress + humanReview,
+        totalJobs: ready + progress + humanReview + decisions,
         laneCounts: project.laneCounts,
         isActive: active === name,
       };

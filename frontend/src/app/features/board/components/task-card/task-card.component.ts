@@ -70,6 +70,8 @@ import { TestEvidenceStatusComponent } from '../../../test-evidence';
 import { CopyableTaskKeyComponent } from '../../../../components/copyable-task-key/copyable-task-key.component';
 import { CodexSignInDialogService, ClaudeSignInDialogService, ProviderAuthStatusService, modelCliVersionWaitReason, providerAuthWaitReason } from '../../../remote-hosts';
 import { laneName } from '../../../../models/lane-presentation';
+import { buildDecisionBadge, decisionBlockReason, decisionBlockers } from '../../../../models/decision-card-presentation';
+import { TaskCardDecisionChipsComponent } from '../task-card-decision-chips/task-card-decision-chips.component';
 import { FailureInterventionChipComponent } from '../failure-intervention-chip/failure-intervention-chip.component';
 import { BetterCandidateLinesComponent } from '../../../../components/better-candidate-lines/better-candidate-lines.component';
 // Shared clock keeps relative timestamps in lockstep without NG0100 changes.
@@ -80,7 +82,7 @@ if (typeof window !== 'undefined') {
 @Component({
   selector: 'app-task-card, app-job-card',
   standalone: true,
-  imports: [TooltipDirective, TaskStatusPopoverDirective, MenuComponent, StudioIconComponent, TokenPopoverDirective, TaskTokenUsagePopoverComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, ExecutionLocationBadgeComponent, IntegrationStatusBadgeComponent, ReviewDecisionBadgesComponent, PostProcessingActivityComponent, TestEvidenceStatusComponent, TaskLiveStatusComponent, TaskCardQuotaWaitComponent, CopyableTaskKeyComponent, FailureInterventionChipComponent, BetterCandidateLinesComponent, RemoteDispatchRejectionComponent],
+  imports: [TaskCardDecisionChipsComponent, TooltipDirective, TaskStatusPopoverDirective, MenuComponent, StudioIconComponent, TokenPopoverDirective, TaskTokenUsagePopoverComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, ExecutionLocationBadgeComponent, IntegrationStatusBadgeComponent, ReviewDecisionBadgesComponent, PostProcessingActivityComponent, TestEvidenceStatusComponent, TaskLiveStatusComponent, TaskCardQuotaWaitComponent, CopyableTaskKeyComponent, FailureInterventionChipComponent, BetterCandidateLinesComponent, RemoteDispatchRejectionComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './task-card.component.html',
   styleUrl: './task-card.component.scss',
@@ -140,6 +142,9 @@ export class TaskCardComponent implements OnInit, OnDestroy {
    * glance. See {@link buildModeBadge}.
    */
   readonly modeBadge = computed(() => buildModeBadge(this.job().mode));
+  /** AGT-2795: decision kind badge (title) and the Pick next block explanation. */
+  readonly decisionBadge = computed(() => buildDecisionBadge(this.job(), (id) => this.clients.byId().get(id)?.displayName));
+  readonly decisionBlockTooltip = computed(() => decisionBlockReason(decisionBlockers(this.job())));
 
   readonly tagChips = computed(() => buildTagChips(this.job().tags, this.tagRegistry.byId(), this.job().state));
 
@@ -156,6 +161,11 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   onPickNextClick(event: Event) {
     event.stopPropagation();
     if (this.mutationsBlocked()) return;
+    const blocked = this.decisionBlockTooltip();
+    if (blocked) {
+      this.notifications.info(blocked);
+      return;
+    }
     this.pickNextRequested.emit(this.job());
   }
   readonly ownerChip = computed(() => {

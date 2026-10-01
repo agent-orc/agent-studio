@@ -283,6 +283,97 @@ public sealed class RemoteDeliveryIntegrationCoordinatorTests
         Assert.Equal(1, Volatile.Read(ref calls));
     }
 
+    [Fact]
+    public async Task Queued_delivery_from_superseded_review_never_starts_integration()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = new List<string>();
+        var current = true;
+        var coordinator = new RemoteDeliveryIntegrationCoordinator(
+            async request =>
+            {
+                calls.Add(request.JobId);
+                if (request.JobId == "first")
+                {
+                    entered.TrySetResult();
+                    await release.Task;
+                }
+                return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Merged,
+                    mergedSha: new string('a', 40));
+            },
+            NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance,
+            isCurrentReview: request => request.ReviewAttemptId is null || current);
+
+        var first = coordinator.EnqueueAsync(Request("first", 1));
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var stale = coordinator.EnqueueAsync(Request("second", 2) with
+        {
+            ReviewAttemptId = "review-old",
+        });
+        current = false;
+        release.TrySetResult();
+        await first.WaitAsync(TimeSpan.FromSeconds(5));
+        var skipped = await stale.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(["first"], calls);
+        Assert.Equal(MergeIntoIntegrationOutcome.Error, skipped.Outcome);
+        Assert.Equal("superseded-review-generation", skipped.Error);
+    }
+
+    /// <summary>
+    /// AGT-2936 code-quality: the merge runner's publication fence is the commit
+    /// point. A successor created after the fence admitted the publication must
+    /// not relabel the published merge as a superseded error.
+    /// </summary>
+    [Fact]
+    public async Task Successor_after_a_published_merge_keeps_the_true_merge_result()
+    {
+        var current = true;
+        var mergedSha = new string('a', 40);
+        var coordinator = new RemoteDeliveryIntegrationCoordinator(
+            _ =>
+            {
+                current = false;
+                return Task.FromResult(MergeIntoIntegrationResult.Of(
+                    MergeIntoIntegrationOutcome.Merged, mergedSha: mergedSha));
+            },
+            NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance,
+            isCurrentReview: _ => current);
+
+        var result = await coordinator.EnqueueAsync(Request("published", 1) with { ReviewAttemptId = "review-old" })
+            .WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, result.Outcome);
+        Assert.Equal(mergedSha, result.MergedSha);
+    }
+
+    [Fact]
+    public async Task Superseded_conflict_starts_no_agent_round()
+    {
+        var current = true;
+        var rounds = 0;
+        var coordinator = new RemoteDeliveryIntegrationCoordinator(
+            _ =>
+            {
+                current = false;
+                return Task.FromResult(MergeIntoIntegrationResult.Conflicted(["a.txt"], "conflict"));
+            },
+            NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance,
+            startAgentRound: (_, _) =>
+            {
+                rounds++;
+                return Task.FromResult(new IntegrationAgentRoundStartResult(true, "started"));
+            },
+            isCurrentReview: _ => current);
+
+        var result = await coordinator.EnqueueAsync(Request("conflicted", 1) with { ReviewAttemptId = "review-old" })
+            .WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(MergeIntoIntegrationOutcome.Conflict, result.Outcome);
+        Assert.Equal(0, rounds);
+    }
+
     private static RemoteDeliveryIntegrationRequest Request(string jobId, int minute)
         => new(
             "project",

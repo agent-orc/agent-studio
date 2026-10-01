@@ -8,6 +8,7 @@ import { UndoController } from '../../../services/undo.service';
 import { TaskSelectionService } from '../../task-detail/state/task-selection.service';
 import { laneLabelFor } from '../../task-detail/state/triage-actions.model';
 import { NotificationService } from '../../../services/notification.service';
+import { decisionMoveRefusal } from '../../../models/decision-card-presentation';
 
 /**
  * Cycle 10b board-feature service: orchestrates the board's mutation
@@ -55,6 +56,13 @@ export class BoardMutationsService {
     // backend round-trip or a vanish-and-recover repaint.
     const moving = this.jobService.jobs().find((j) => j.id === event.jobId && j.watchPath === event.watchPath);
     if (moving && moving.state === event.targetState) return;
+    // AGT-2795: the decision lane guard refuses this move server-side; say
+    // why up front instead of painting the card and snapping it back.
+    const refusal = moving ? decisionMoveRefusal(moving, event.targetState) : null;
+    if (refusal) {
+      this.notifications.warning(refusal, 'Move refused');
+      return;
+    }
     const snapshot = this.jobService.applyOptimisticMove(event.jobId, event.watchPath, event.targetState, event.targetIndex);
     this.jobService.beginOptimisticPersist();
     this.jobService.moveJob(event.jobId, event.targetState, event.watchPath, event.targetIndex).subscribe({

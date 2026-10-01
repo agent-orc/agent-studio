@@ -712,7 +712,66 @@ public static class V1ReviewPlaneEndpoints
                     "Outcome must be Pass, ProductFailure, IntegrationBranchDefect, ReviewInfra, "
                     + "Inconclusive, or Cancellation."));
 
-            var settled = authority.SettleReview(new SettleReviewAttemptRequest(
+            // Prepare the canonical payload before the authority can become terminal.
+            // A killed process between SettleReview and any projection can then be
+            // recovered without accepting a second review or guessing a gate verdict.
+            var preparedTask = FindTask(scanner, currentReview.TaskKey);
+            if (preparedTask is null)
+                return Results.Json(new Contract.ApiError("task-not-found", "Review task was not found in the monolith store."),
+                    statusCode: StatusCodes.Status404NotFound);
+            var preparedHash = RemoteReviewSettlementJournal.Hash(request);
+            // Only an accepted report owns a journal; a replayed rejected key is
+            // answered by the authority like any other unaccepted report.
+            var replay = currentReview.Reports.Any(report => report.AuthorityStatus == AttemptWriteStatus.Accepted
+                && string.Equals(report.IdempotencyKey, request.IdempotencyKey, StringComparison.Ordinal));
+            if (replay)
+            {
+                var replayJournal = RemoteReviewSettlementJournal.Read(preparedTask.FolderPath, attemptId);
+                if (replayJournal.Status == RemoteReviewSettlementReadStatus.Repair
+                    || replayJournal.Status == RemoteReviewSettlementReadStatus.Missing
+                       && !File.Exists(Path.Combine(preparedTask.FolderPath,
+                           RemoteReviewReportEvidence.EvidenceFileName(attemptId))))
+                    return Results.Json(new Contract.ApiError("review-settlement-repair-required",
+                        replayJournal.Reason ?? "The settled report has no recoverable journal or evidence."),
+                        statusCode: StatusCodes.Status503ServiceUnavailable);
+                if (replayJournal.Entry is { } prior && prior.ReportSha256 != preparedHash)
+                    return Results.Conflict(new Contract.ApiError("idempotency-conflict",
+                        "The review report key is bound to a different payload."));
+            }
+            RemoteDeliverySettlementRecord? preparedDelivery = null;
+            if (!replay && outcome != ReviewTerminalOutcome.InfrastructureFailure
+                && string.Equals(preparedTask.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
+            {
+                var sourceRun = authority.GetRun(currentReview.SourceRunAttemptId);
+                var plan = currentReview.Subject.Plan
+                    ?? ToSubject(currentReview, scanner, projects, settings, remoteReviewPlans, out _, out _).Plan;
+                // The authority settles the parsed outcome; the journaled decision
+                // carries that spelling, never the raw report string.
+                var decision = RemoteDeliveryIntegrationPolicy.Decide(
+                    HasSettledResultEnvelope(sourceRun), outcome.ToString(), plan, request.Verdicts);
+                var projectSettings = settings.Get(preparedTask.ProjectName);
+                var subject = ReviewSubjectStore.Read(preparedTask.FolderPath);
+                preparedDelivery = new RemoteDeliverySettlementRecord
+                {
+                    TaskKey = currentReview.TaskKey,
+                    ReviewAttemptId = attemptId,
+                    JournalRequired = true,
+                    Outcome = outcome.ToString(),
+                    ShouldIntegrate = decision.ShouldIntegrate,
+                    BuildTestGate = decision.BuildTestGate.ToString(),
+                    GateReason = decision.Reason,
+                    IntegrationBranch = TaskIntegrationBranch.Resolve(preparedTask, projectSettings.IntegrationBranch),
+                    IntegrationStrategy = projectSettings.IntegrationStrategy,
+                    PipelineType = PipelineTypes.Resolve(preparedTask),
+                    DeliveredAtUtc = subject?.CompletedAtUtc
+                        ?? (sourceRun?.TerminalAt is { } terminalAt
+                            ? new DateTimeOffset(DateTime.SpecifyKind(terminalAt, DateTimeKind.Utc))
+                            : DateTimeOffset.UtcNow),
+                    Stage = RemoteDeliverySettlementStage.IntegrationPending,
+                    RecordedAtUtc = DateTimeOffset.UtcNow,
+                };
+            }
+            var settleRequest = new SettleReviewAttemptRequest(
                 new AttemptWriteReference(
                     attemptId,
                     request.Fence,
@@ -721,7 +780,51 @@ public static class V1ReviewPlaneEndpoints
                 request.Workspace.ActualHead,
                 outcome,
                 request.FailureClassification,
-                request.Summary));
+                request.Summary);
+            AttemptWriteResult settled;
+            try
+            {
+                settled = replay
+                    ? authority.SettleReview(settleRequest)
+                    : RemoteReviewSettlementJournal.PrepareAndSettle(
+                        preparedTask.FolderPath,
+                        new RemoteReviewSettlementEntry
+                        {
+                            AttemptId = attemptId,
+                            TaskKey = currentReview.TaskKey,
+                            IdempotencyKey = request.IdempotencyKey,
+                            ReportSha256 = preparedHash,
+                            Report = request,
+                            Delivery = preparedDelivery,
+                            ReceivedAtUtc = DateTime.UtcNow,
+                        },
+                        () => authority.GetReview(attemptId)?.Reports
+                            .LastOrDefault(report => report.AuthorityStatus == AttemptWriteStatus.Accepted)
+                            ?.IdempotencyKey,
+                        () => authority.SettleReview(settleRequest));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                logger.LogError(ex, "review-settlement-journal-write-failed attempt={AttemptId}", attemptId);
+                return Results.Json(new Contract.ApiError("review-settlement-repair-required",
+                    "The review settlement journal could not be written."),
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+            // Only a journal bound to the accepted key may back the acknowledgement;
+            // an accepted report without it is a typed repair state, never a pass.
+            if (settled.Status == AttemptWriteStatus.Accepted
+                && RemoteReviewSettlementJournal.Read(preparedTask.FolderPath, attemptId).Entry?.IdempotencyKey
+                   != request.IdempotencyKey)
+            {
+                logger.LogError("review-settlement-repair-required attempt={AttemptId} reason=accepted-without-journal",
+                    attemptId);
+                return Results.Json(new Contract.ApiError("review-settlement-repair-required",
+                    "The accepted report has no matching settlement journal."),
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+            if (RemoteReviewSettlementJournal.IsIdempotencyConflict(settled))
+                return Results.Conflict(new Contract.ApiError("idempotency-conflict",
+                    "The review report key is bound to a different payload."));
             if (!settled.Accepted || settled.ReviewAttempt is null)
                 return AttemptError(settled);
 
@@ -738,17 +841,21 @@ public static class V1ReviewPlaneEndpoints
                     StringComparison.Ordinal))
                 ?.ReceivedAt
                 ?? DateTime.UtcNow;
-            var payload = JsonSerializer.Serialize(request, Json);
-            var reportHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload)))
-                .ToLowerInvariant();
+            var reportHash = preparedHash;
 
-            // Fast idempotent replay (AGT-2762): the durable ledger already holds
-            // this delivery's settlement, so answer Duplicate without touching
-            // git or the task folder - the original delivery's evidence
-            // projection already ran or is queued, and repeating it would only
-            // redo the same I/O for no new information.
+            // The authority already settled this delivery. Requeue unfinished
+            // journaled evidence, then return without repeating integration.
             if (settled.Status == AttemptWriteStatus.Duplicate)
             {
+                // A replay can arrive after settlement but before the volatile
+                // evidence handoff. The durable journal remains the recovery owner.
+                if (RemoteReviewSettlementJournal.Read(task.FolderPath, attemptId).Entry is
+                    { EvidenceComplete: false, RepairReason: null } pending
+                    && pending.NextEvidenceAttemptUtc <= DateTime.UtcNow)
+                    evidenceQueue.Enqueue(new RemoteReviewEvidenceProjectionRequest(
+                        attemptId, settled.ReviewAttempt.TaskKey, settled.ReviewAttempt, request,
+                        RemoteReviewReportEvidence.EvidenceFileName(attemptId), reportHash,
+                        receivedAt, DateTime.UtcNow));
                 logger.LogInformation(
                     "review-report-duplicate attempt={AttemptId} outcome={Outcome} roundTripMs={RoundTripMs}",
                     attemptId, request.Outcome, (long)reportStopwatch.Elapsed.TotalMilliseconds);
@@ -1234,11 +1341,16 @@ public static class V1ReviewPlaneEndpoints
                                             remoteReviewPlans,
                                             out _,
                                             out _).Plan;
-                var integrationDecision = RemoteDeliveryIntegrationPolicy.Decide(
-                    HasSettledResultEnvelope(sourceRun),
-                    settled.ReviewAttempt.Outcome?.ToString(),
-                    settledReviewPlan,
-                    request.Verdicts);
+                var integrationDecision = preparedDelivery is { } prepared
+                    ? new RemoteDeliveryIntegrationDecision(
+                        prepared.ShouldIntegrate,
+                        Enum.Parse<RemoteBuildTestGateClass>(prepared.BuildTestGate),
+                        prepared.GateReason)
+                    : RemoteDeliveryIntegrationPolicy.Decide(
+                        HasSettledResultEnvelope(sourceRun),
+                        settled.ReviewAttempt.Outcome?.ToString(),
+                        settledReviewPlan,
+                        request.Verdicts);
                 // Carried onto the Human Review lane row as the verdict's
                 // qualifier: the integration outcome behind the park.
                 string? integrationOutcome = null;
@@ -1265,13 +1377,16 @@ public static class V1ReviewPlaneEndpoints
                         task.Id,
                         task.FolderPath,
                         task.WatchPath,
-                        TaskIntegrationBranch.Resolve(task, projectSettings.IntegrationBranch),
-                        projectSettings.IntegrationStrategy,
-                        PipelineTypes.Resolve(task),
-                        subject?.CompletedAtUtc
-                        ?? (sourceRun?.TerminalAt is { } terminalAt
-                            ? new DateTimeOffset(DateTime.SpecifyKind(terminalAt, DateTimeKind.Utc))
-                            : DateTimeOffset.UtcNow));
+                        preparedDelivery?.IntegrationBranch
+                            ?? TaskIntegrationBranch.Resolve(task, projectSettings.IntegrationBranch),
+                        preparedDelivery?.IntegrationStrategy ?? projectSettings.IntegrationStrategy,
+                        preparedDelivery?.PipelineType ?? PipelineTypes.Resolve(task),
+                        preparedDelivery?.DeliveredAtUtc
+                            ?? subject?.CompletedAtUtc
+                            ?? (sourceRun?.TerminalAt is { } terminalAt
+                                ? new DateTimeOffset(DateTime.SpecifyKind(terminalAt, DateTimeKind.Utc))
+                                : DateTimeOffset.UtcNow),
+                        attemptId);
                     // AGT-2860: the durable resume point. Everything from here
                     // to the lane move lives in this request and dies with the
                     // process; the aspect verdicts that decided the gate live
@@ -1279,14 +1394,31 @@ public static class V1ReviewPlaneEndpoints
                     // before the first side effect is what lets a restarted
                     // backend finish the sequence instead of demanding a second
                     // 45-minute review of an already passed subject.
-                    RecordDeliverySettlement(
-                        task.FolderPath,
-                        settled.ReviewAttempt,
-                        integrationRequest,
-                        integrationDecision,
-                        logger);
+                    var existingSettlement = RemoteDeliverySettlementStore.Read(task.FolderPath);
+                    if (!RemoteDeliverySettlementStore.MatchesAttempt(existingSettlement, attemptId))
+                    {
+                        if (preparedDelivery is null)
+                            return Results.Json(new Contract.ApiError("review-settlement-repair-required",
+                                "The delivery decision is missing from the report journal."),
+                                statusCode: StatusCodes.Status503ServiceUnavailable);
+                        try { RemoteDeliverySettlementStore.Write(task.FolderPath, preparedDelivery); }
+                        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                        {
+                            logger.LogError(ex, "review-delivery-settlement-write-failed attempt={AttemptId}", attemptId);
+                            return Results.Json(new Contract.ApiError("review-settlement-repair-required",
+                                "The delivery settlement could not be written."),
+                                statusCode: StatusCodes.Status503ServiceUnavailable);
+                        }
+                    }
                     if (integrationDecision.ShouldIntegrate)
                     {
+                        if (authority.GetTaskProjection(settled.ReviewAttempt.TaskKey).CurrentReviewAttempt?.AttemptId
+                            != attemptId)
+                            return Results.Conflict(new Contract.ApiError("superseded-review-generation",
+                                "A successor review generation owns this task."));
+                        // The merge runner's publication fence is the commit point: a
+                        // published merge is recorded as such, and the lane move below
+                        // is what a successor still refuses.
                         var integrated = await remoteIntegration.EnqueueAsync(integrationRequest).ConfigureAwait(false);
                         integrationOutcome = integrated.Outcome.ToString();
                         integrationParkReason = integrated.AutomaticRecoveryDetail;
@@ -1308,6 +1440,10 @@ public static class V1ReviewPlaneEndpoints
 
                 if (string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
                 {
+                    if (authority.GetTaskProjection(settled.ReviewAttempt.TaskKey).CurrentReviewAttempt?.AttemptId
+                        != attemptId)
+                        return Results.Conflict(new Contract.ApiError("superseded-review-generation",
+                            "A successor review generation owns this task."));
                     var moved = await transitions.MoveAsync(
                         task.Id,
                         TaskStates.HumanReview,
@@ -1514,46 +1650,6 @@ public static class V1ReviewPlaneEndpoints
             "orchestrator-monolith",
             ["runner", "review-runner"],
             ["review-plane", "capability-advertisement"]);
-    }
-
-    /// <summary>
-    /// Persists the resume point for one passed Remote delivery. Best-effort by
-    /// design: the settled ReviewAttempt stays authoritative, so a sidecar the
-    /// disk refuses must never fail an accepted review report.
-    /// </summary>
-    private static void RecordDeliverySettlement(
-        string jobFolderPath,
-        ReviewAttemptDto review,
-        RemoteDeliveryIntegrationRequest request,
-        RemoteDeliveryIntegrationDecision decision,
-        ILogger logger)
-    {
-        try
-        {
-            RemoteDeliverySettlementStore.Write(jobFolderPath, new RemoteDeliverySettlementRecord
-            {
-                TaskKey = review.TaskKey,
-                ReviewAttemptId = review.AttemptId,
-                Outcome = review.Outcome?.ToString() ?? string.Empty,
-                ShouldIntegrate = decision.ShouldIntegrate,
-                BuildTestGate = decision.BuildTestGate.ToString(),
-                GateReason = decision.Reason,
-                IntegrationBranch = request.IntegrationBranch,
-                IntegrationStrategy = request.IntegrationStrategy,
-                PipelineType = request.PipelineType,
-                DeliveredAtUtc = request.DeliveredAtUtc,
-                Stage = RemoteDeliverySettlementStage.IntegrationPending,
-                RecordedAtUtc = DateTimeOffset.UtcNow,
-            });
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(
-                ex,
-                "remote-delivery-settlement-write-failed attempt={AttemptId} job={JobFolder}",
-                review.AttemptId,
-                jobFolderPath);
-        }
     }
 
     private static void AdvanceDeliverySettlement(
@@ -2341,7 +2437,7 @@ public static class V1ReviewPlaneEndpoints
         return string.Join('\n', lines).TrimEnd();
     }
 
-    private static bool TryOutcome(string value, out ReviewTerminalOutcome outcome)
+    internal static bool TryOutcome(string value, out ReviewTerminalOutcome outcome)
     {
         outcome = value.Trim().ToLowerInvariant() switch
         {

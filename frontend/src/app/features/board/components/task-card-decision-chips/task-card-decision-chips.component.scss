@@ -1,0 +1,37 @@
+// The chips flow as siblings of the other pills in the card's badge row.
+:host { display: contents; }
+
+// AGT-2795: same warn register as the card's decision kind badge; a decided
+// card calms to the muted tone (R4). No accent bar (R1).
+.decision-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--studio-card-pill-height);
+  padding: 0 var(--studio-card-pill-padding-x);
+  border: 1px solid color-mix(in srgb, var(--studio-accent-warn) 52%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--studio-accent-warn) 16%, var(--studio-bg-elevated));
+  color: var(--studio-accent-warn-strong);
+  font-family: inherit;
+  font-size: var(--studio-card-meta-size);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.decision-chip--decider {
+  background: transparent;
+  color: var(--studio-fg);
+
+  &[data-open='false'] {
+    border-color: color-mix(in srgb, var(--studio-fg-muted) 28%, transparent);
+    color: var(--studio-fg-muted);
+  }
+}
+
+.decision-chip--blocked-by {
+  cursor: pointer;
+
+  &:hover { background: color-mix(in srgb, var(--studio-accent-warn) 26%, var(--studio-bg-elevated)); }
+  &:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 1px; }
+}
