@@ -3,6 +3,7 @@ import { StudioIconComponent } from '../../../../../components/studio-icon/studi
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { WikiLifecycleItem, WikiNodeType, WikiPulse, WikiPulseDriftArea, WikiPulseFeedItem, WorkbenchListItem } from '../../../../../models/project-docs.model';
 import { WorkbenchInboxComponent } from './workbench-inbox/workbench-inbox.component';
+import type { DecisionInboxItem } from '../../../../../models/decision-card-presentation';
 
 /** What the parent needs to open a page from a Pulse row. */
 export interface WikiPulseOpenRequest {
@@ -40,9 +41,12 @@ const FEED_COMPACT_COUNT = 8;
 export class WikiPulseComponent {
   readonly pulse = input<WikiPulse | null>(null);
   readonly loading = input(false);
+  /** AGT-2795: pending decision cards listed beside the Dossier decisions. */
+  readonly decisionCards = input<readonly DecisionInboxItem[]>([]);
 
   readonly openPage = output<WikiPulseOpenRequest>();
   readonly openWorkbench = output<WorkbenchListItem>();
+  readonly openDecisionCard = output<DecisionInboxItem>();
 
   readonly feed = computed(() => this.pulse()?.feed ?? null);
   readonly inbox = computed(() => this.pulse()?.inbox ?? null);

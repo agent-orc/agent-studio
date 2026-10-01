@@ -4,6 +4,8 @@ Status: Phase A architecture delivered. Phase B slice B2 principal and scope
 hardening was implemented by AGT-2730 on 2026-09-07. Phase B slice B4
 (Windows fallback and switch tooling) was implemented by AGT-2735 on
 2026-09-09; see the [Windows fallback runbook](setup/windows-fallback-runbook.md).
+Gate 4 (connector security) was closed by AGT-2984 on 2026-09-29; see
+[Current cutover gates](#current-cutover-gates).
 The frozen-workspace rehearsal ran on 2026-09-25 and 2026-09-26. Its signed
 evidence is in the AGT-2737 task results and the rehearsal Task Server store
 at `/home/agent/rehearsal/agt2737-v2/overlay-store/migration-reports/agt2737-2026-09-26/rehearsal-evidence-2026-09-26.md`
@@ -127,10 +129,12 @@ credential and transport boundary, not a task authority. In remote mode it
 forwards to the WireGuard origin. In fallback mode it forwards to the Windows
 Task Server on a different loopback port.
 
-The current `studio-bff` is a useful starting point, but it only forwards
-`/api/v1` and does not yet cover the complete Studio API, authentication
-surface, or `/hubs` WebSocket path. Extending and testing that boundary is a
-cutover prerequisite.
+The connector is the OrchestratorApi connector profile
+(`OrchestratorApi__Profile=connector`, `backend/Features/Connector/`), decided
+by AGT-2731 and hardened for gate 4 by AGT-2984. `studio-bff` only forwards
+`/api/v1` and `/hubs` with a token file and has no Origin, CSRF, or protocol
+negotiation; it remains the legacy local-fallback forwarder, and
+`switch-upstream.ps1` refuses to point it at a remote upstream.
 
 ## Network design
 
@@ -275,7 +279,7 @@ production evidence must be attached before cutover:
    acceptance has no unowned request left. OrchestratorApi keeps serving those
    same versioned paths from its legacy handlers until cutover
    (`backend/Host/StudioV1LegacyRouteAlias.cs`), so the local and Stable
-   profiles behave as before. The other three bundles (259 operations) still
+   profiles behave as before. The other three bundles (261 operations) still
    call legacy `/api` paths and remain post-cutover work; see
    [Route inventory snapshot](#route-inventory-snapshot) below.
 2. **Current workspace migration acceptance, implementation delivered by B3.**
@@ -291,15 +295,65 @@ production evidence must be attached before cutover:
    `.github/workflows/release.yml`) with a version-matched Windows service
    installation for all three components and a cross-platform full-backup
    restore path; see the [Windows fallback runbook](setup/windows-fallback-runbook.md).
-4. **Connector security.** The local connector forwards `/api/v1` and `/hubs`
-   with its Studio credential and now has an atomic remote/local upstream
-   switch (`deploy/windows/fallback/switch-upstream.ps1`), but still needs
-   complete route coverage, Credential Manager integration, strict Origin
-   checks, CSRF, and protocol negotiation.
+4. **Connector security, closed by AGT-2984 on 2026-09-29.** The connector
+   profile now meets every gate-4 condition. Evidence is in the AGT-2984 task
+   results.
+   - **Credential storage.** The Studio credential is read only from Windows
+     Credential Manager (`Connector:CredentialTarget`, default
+     `AgentStudio/TaskServer/studio-robert-windows`, written by
+     `deploy/windows/studio-connector/set-studio-credential.ps1`). On Linux it
+     is read from an owner-only file (mode 0600 or 0400, no symbolic link;
+     `Connector:CredentialFile`). A credential value in configuration or an
+     environment variable (`Connector__BearerToken`, `TaskServer__AuthToken`,
+     `STUDIO_AUTH_TOKEN`, and similar) stops the boot. Angular never sees
+     the credential. The connector re-reads the store every
+     `Connector:CredentialRefreshSeconds` (default 5) and immediately after an
+     upstream 401. A changed value is proven by a fresh attach before use, so
+     overlap-and-prove rotation needs no restart. Each request snapshot carries
+     the credential together with the revision it was read under, and the
+     attach cache is keyed by that pair, so a handshake made with the old
+     value can never vouch for a value rotated in between.
+   - **Origin and CSRF.** Browser requests are accepted only from the loopback
+     Studio origins `http://localhost:4011` and `http://[::1]:4011`, or from
+     the validated loopback list in `Connector:StudioOrigins`. Mutations and
+     WebSocket upgrades from a foreign Origin, or without one, are refused.
+     Every mutation needs a live connector session and its CSRF token (cookie
+     plus `X-CSRF-Token`). A token is rejected with any other session, after
+     logout, after an upstream switch, and after the 12-hour session lifetime.
+     A same-origin read (`Sec-Fetch-Site: same-origin`) starts the session, so
+     Angular needs no connector-specific bootstrap. SignalR negotiate needs the
+     exact Origin and a session but no CSRF header, because it changes no
+     state. Every other hub POST needs CSRF.
+   - **Protocol negotiation.** The connector attaches through the new
+     authenticated `POST /api/v1/protocol/attach`. It offers its `/api/v1` and
+     Studio hub ranges. The Task Server answers with the highest common
+     version of each, the hub path (`/hubs/v1/studio`), and the principal.
+     Otherwise it refuses: a non-Studio credential, a range mismatch, or an
+     empty range, each with an operator-readable reason. The connector
+     re-checks the answer against its own ranges and route inventory.
+     Forwarded requests carry the negotiated version. Refusals are answered
+     `503 connector-attach-refused` with the reason and appear in `/readyz`.
+     Contract tests: `task-server.Tests/StudioAttachTests.cs` and
+     `backend.Tests/ConnectorSecurityPolicyTests.cs`.
+   - **Route coverage.** `ConnectorProfileTests.Every_task_server_owned_inventory_route_is_forwarded_to_its_target`
+     walks all 325 Task Server-owned operations in `routes.json` (309 when
+     AGT-2984 closed the gate; AGT-2983 added the versioned core-attach routes). It sends
+     each through the connector and asserts the upstream received it at its
+     approved target route with the Studio credential. The walk found, and
+     AGT-2984 fixed, a dropped project value for parameters embedded in a
+     literal segment (`workbench:{project}`).
+   - **Negative matrix.** `backend.Tests/ConnectorNegativeMatrixTests.cs`
+     runs absent bearer, invalid bearer, cross-origin, missing-Origin, CSRF
+     (missing, cross-session replay, replay after logout), and API and hub
+     protocol mismatch against a real `task-server.dll` in bearer mode.
+     `scripts/scenario.sh --target inproc --level full` writes the result as
+     `connector-negative-matrix.md` and `.json` into the deployment regression
+     scenario evidence bundle.
 
 No API listener may open on `wg0` until Studio route ownership is complete and
 the Task Server, Agent Host, Studio BFF, and connector authentication paths pass
-their negative tests.
+their negative tests. The connector's part of that condition is the negative
+matrix above; attach it from the release candidate's scenario evidence.
 
 ### Route inventory snapshot
 
@@ -308,7 +362,7 @@ is the generated source of truth; regenerate it with
 `node docs/studio-route-ownership/build-inventory.mjs --write` after any
 frontend `HttpClient`/`sessionFetch`/`EventSource`/SignalR call or backend
 `MapGroup("/api/...")` change, and a repository test fails on drift (see
-"Guard test" below). This snapshot is current as of 2026-09-29, regenerated
+"Guard test" below). This snapshot is current as of 2026-10-01, regenerated
 after AGT-2983 switched the core-attach call sites (earlier reconciliations:
 AGT-2731, AGT-2754 connector profile, AGT-2756 task detail and host control,
 AGT-2757 operations and insight, AGT-2758 administration and long tail,
@@ -316,23 +370,23 @@ AGT-2835):
 
 | Metric | Count |
 |---|---:|
-| Frontend operations (total) | 431 |
-| — `/api` operations | 430 |
+| Frontend operations (total) | 433 |
+| — `/api` operations | 432 |
 | — `/hubs` operations | 1 |
-| Classified `task-server` | 323 |
+| Classified `task-server` | 325 |
 | Classified `dev-seat` | 108 |
 | Classified `retired` | 0 |
 | Backend `/api` `MapGroup` groups | 31 |
 | Frontend operations already calling `/api/v1/*` or `/hubs/v1/*` | 64 |
 | — of which the standalone Task Server implements | 64 |
-| `task-server` operations still needing a v1 route (`d4bRoutesToAdd`) | 259 |
+| `task-server` operations still needing a v1 route (`d4bRoutesToAdd`) | 261 |
 | of which in the P0 `core-attach` bundle | 0 |
 
 Every frontend operation is classified (0 unclassified, 0 retired), which
-satisfies the "classify every Studio route" half of gate 1 above. The 259
+satisfies the "classify every Studio route" half of gate 1 above. The 261
 `must-add` operations are the remaining work, sized and bundled by
 `docs/studio-route-ownership/routes.json` `d4bEstimate.bundles`
-(`task-detail-and-hosts` 123, `operations-and-insight` 106,
+(`task-detail-and-hosts` 125, `operations-and-insight` 106,
 `administration-and-tail` 30). Release gate 1 does not require them before
 cutover: detached-Studio acceptance only needs the P0 **core-attach** bundle,
 which is now empty.
@@ -344,8 +398,11 @@ the same generator rules (7 `dev-seat`: the Git branch-sweep routes; 9
 `task-server`, all outside `core-attach`), and four further operations landed
 since then. The AGT-2983 fix round replaced the generator's single
 `orchestrator/context/{contextKey}` guess (2 operations) with the real
-per-shape routes (8 operations, see below), a net +6. The connector pins this
-inventory by checksum and by its 108/323 split (`ConnectorRouteInventory.cs`).
+per-shape routes (8 operations, see below), a net +6. The decision-card routes (`POST /api/tasks/{taskId}/decision` and
+`/decision/reopen`, P1 `task-server`, outside `core-attach`) added two more.
+The connector pins this inventory by checksum and by its 108/325 split (`ConnectorRouteInventory.cs`)
+and forwards exactly the classified inventory: an operation added later is
+not forwarded until it is classified and that checksum is updated with it.
 
 #### Operations still blocking cutover
 
@@ -400,7 +457,7 @@ Server before switching:
   (`task-server/Program.cs`). The connector now maps its hub proxy from the
   inventory path instead of a hard-coded `/hubs/jobs`.
 
-Still open and owned by the connector security card (gate 4): neither the
+Still open after gate 4 closed (AGT-2984 did not add it): neither the
 connector nor `studio-bff` relays the nested human Studio session
 (`X-Studio-Session-Token` or the `ts-studio-session` cookie), so
 change-password and logout reach the Task Server without a session. AGT-2983
@@ -703,7 +760,7 @@ concept.
 
 | Order | Slice | Acceptance result | Estimate |
 |---:|---|---|---:|
-| B1 | Studio route ownership and secure local connector | Full `/api` and `/hubs` matrix; remote task workflows pass; local-only dev-seat routes are explicit; connector keeps secrets out of Angular and enforces Origin and CSRF | 5 to 8 engineering days |
+| B1 | Studio route ownership and secure local connector | Full `/api` and `/hubs` matrix; remote task workflows pass; local-only dev-seat routes are explicit; connector keeps secrets out of Angular and enforces Origin and CSRF. Connector security (gate 4) closed by AGT-2984 on 2026-09-29; the Angular switch of the 27 core-attach operations to versioned routes closed by AGT-2983. | 5 to 8 engineering days |
 | B2 | Task Server principal and scope hardening | Implemented by AGT-2730: separate hash-only Studio, Engine, and per-Runner credentials; route scopes; hub auth boundary; rotation and revoke tests; `X-Client-Id` negative tests | Complete 2026-09-07 |
 | B3 | Current-workspace migration and evidence | Implemented by AGT-2732: `task.json` with `job.json` fallback; canonical per-project and per-state inventory; archive, events, pointer-only artifacts, Git and authority evidence; counted orphan ledger; Maintenance-only idempotent import; signed reports; mismatch stops; and backup/restore inventory-hash continuity. The Windows operator still performs the frozen rehearsal and production cutover and attaches both reports to D7. | Complete 2026-09-11; operator cutover evidence pending |
 | B4 | Windows fallback and switch tooling | Implemented by AGT-2735 on 2026-09-09: version-matched Windows service for all three components; cross-platform full-backup restore with a case-collision guard; warm standby pull; atomic connector profile switch; scripted reverse-tunnel drill in both directions with a measured sub-15-minute report; Windows CI coverage. The timed real-infrastructure rehearsal remains a B6 operator drill. | Complete 2026-09-09 |

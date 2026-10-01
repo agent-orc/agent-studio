@@ -23,22 +23,22 @@
     ]
   },
   "counts": {
-    "frontendOperations": 431,
-    "frontendApiOperations": 430,
+    "frontendOperations": 433,
+    "frontendApiOperations": 432,
     "frontendHubOperations": 1,
     "byClassification": {
-      "task-server": 323,
+      "task-server": 325,
       "dev-seat": 108,
       "retired": 0
     },
     "orchestratorApiMapGroups": 31,
     "frontendV1Operations": 64,
     "frontendV1OperationsExistingInStandaloneTaskServer": 64,
-    "d4bRoutesToAdd": 259
+    "d4bRoutesToAdd": 261
   },
   "d4bEstimate": {
     "method": "Each must-add route is sized S=1, M=2, L=3, XL=8 weighted route points. Six points equal one engineering day after shared foundations. Add 15 days for connector security, version negotiation, replayable WebSocket infrastructure, contract harnesses, and cutover controls.",
-    "weightedRoutePoints": 409,
+    "weightedRoutePoints": 413,
     "routeImplementationDays": 69,
     "sharedFoundationDays": 15,
     "baselineEngineeringDays": 84,
@@ -61,8 +61,8 @@
         "order": 2,
         "title": "Task detail and host control",
         "impact": "Task history, artifacts, pipeline detail, host policy, and workspace projections.",
-        "routeCount": 123,
-        "weightedRoutePoints": 202,
+        "routeCount": 125,
+        "weightedRoutePoints": 206,
         "routeIds": [
           "fe-048",
           "fe-049",
@@ -131,19 +131,19 @@
           "fe-290",
           "fe-291",
           "fe-292",
-          "fe-300",
-          "fe-301",
+          "fe-293",
+          "fe-294",
           "fe-302",
+          "fe-303",
           "fe-304",
-          "fe-305",
           "fe-306",
           "fe-307",
           "fe-308",
           "fe-309",
           "fe-310",
           "fe-311",
+          "fe-312",
           "fe-313",
-          "fe-314",
           "fe-315",
           "fe-316",
           "fe-317",
@@ -174,8 +174,8 @@
           "fe-342",
           "fe-343",
           "fe-344",
-          "fe-418",
-          "fe-419",
+          "fe-345",
+          "fe-346",
           "fe-420",
           "fe-421",
           "fe-422",
@@ -186,7 +186,9 @@
           "fe-427",
           "fe-428",
           "fe-429",
-          "fe-430"
+          "fe-430",
+          "fe-431",
+          "fe-432"
         ]
       },
       {
@@ -298,11 +300,11 @@
           "fe-257",
           "fe-258",
           "fe-259",
-          "fe-345",
-          "fe-346",
-          "fe-411",
-          "fe-412",
-          "fe-415"
+          "fe-347",
+          "fe-348",
+          "fe-413",
+          "fe-414",
+          "fe-417"
         ]
       },
       {
@@ -339,10 +341,10 @@
           "fe-245",
           "fe-246",
           "fe-247",
-          "fe-410",
-          "fe-413",
-          "fe-414",
-          "fe-416"
+          "fe-412",
+          "fe-415",
+          "fe-416",
+          "fe-418"
         ]
       }
     ]
@@ -1158,7 +1160,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/cli/{cliType}/models",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1913"
+        "frontend/src/app/services/task.service.ts:1936"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -1185,7 +1187,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/cli/{cliType}/session",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1942"
+        "frontend/src/app/services/task.service.ts:1965"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -1212,7 +1214,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/cli/{cliType}/session-detail",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1934"
+        "frontend/src/app/services/task.service.ts:1957"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -1239,7 +1241,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/cli/{cliType}/working-memory",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1962"
+        "frontend/src/app/services/task.service.ts:1985"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -1266,7 +1268,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/cli/{cliType}/working-memory",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1955"
+        "frontend/src/app/services/task.service.ts:1978"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -1293,7 +1295,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/cli/contracts",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1950"
+        "frontend/src/app/services/task.service.ts:1973"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -1374,7 +1376,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/cli/model-migrations",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1921"
+        "frontend/src/app/services/task.service.ts:1944"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -1795,7 +1797,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/cli/usage",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1925"
+        "frontend/src/app/services/task.service.ts:1948"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -2173,7 +2175,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/component-routing/resolve",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1054"
+        "frontend/src/app/services/task.service.ts:1055"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -2231,7 +2233,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/crash-recovery/pending",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2181"
+        "frontend/src/app/services/task.service.ts:2204"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -2262,7 +2264,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/crash-recovery/pending/{id}/commit",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2187"
+        "frontend/src/app/services/task.service.ts:2210"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -2293,7 +2295,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/crash-recovery/pending/{id}/dismiss",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2194"
+        "frontend/src/app/services/task.service.ts:2217"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -2760,7 +2762,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/epics",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2000"
+        "frontend/src/app/services/task.service.ts:2023"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -2797,7 +2799,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/epics/{epicId}",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2015"
+        "frontend/src/app/services/task.service.ts:2038"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -2834,7 +2836,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/epics/{epicId}/sub-tasks",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2027"
+        "frontend/src/app/services/task.service.ts:2050"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -2872,7 +2874,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/epics/completed/count",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2010"
+        "frontend/src/app/services/task.service.ts:2033"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -3362,7 +3364,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/orchestrator/context/workbench:{projectId}/{workbenchKey}",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2523"
+        "frontend/src/app/services/task.service.ts:2546"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -3389,7 +3391,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/orchestrator/context/workbench:{projectId}/{workbenchKey}/refresh",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2547"
+        "frontend/src/app/services/task.service.ts:2570"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -3505,7 +3507,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/auto-commit",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2391"
+        "frontend/src/app/services/task.service.ts:2414"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -3536,7 +3538,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/auto-push-strategy",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2442"
+        "frontend/src/app/services/task.service.ts:2465"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -3567,7 +3569,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/automatic-failure-continuations",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2405"
+        "frontend/src/app/services/task.service.ts:2428"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -3598,7 +3600,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/autonomy",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2457"
+        "frontend/src/app/services/task.service.ts:2480"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -3629,7 +3631,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/autonomy",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2464"
+        "frontend/src/app/services/task.service.ts:2487"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -3687,7 +3689,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/cli-context-mode",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2285"
+        "frontend/src/app/services/task.service.ts:2308"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -3718,7 +3720,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/cli-context-modes",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2272"
+        "frontend/src/app/services/task.service.ts:2295"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -3749,7 +3751,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/cli-mode",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2258"
+        "frontend/src/app/services/task.service.ts:2281"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -3780,7 +3782,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/cli-modes",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2244"
+        "frontend/src/app/services/task.service.ts:2267"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -3811,7 +3813,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/crash-recovery",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2398"
+        "frontend/src/app/services/task.service.ts:2421"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -3911,7 +3913,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/deployment/compile",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2606"
+        "frontend/src/app/services/task.service.ts:2629"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -3942,7 +3944,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/deployment/summary",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2593"
+        "frontend/src/app/services/task.service.ts:2616"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -4342,7 +4344,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/integration-gate-review-reuse",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2417"
+        "frontend/src/app/services/task.service.ts:2440"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -4373,7 +4375,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/lane-sort-strategies",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2298"
+        "frontend/src/app/services/task.service.ts:2321"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -4404,7 +4406,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/lane-sort-strategy",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2311"
+        "frontend/src/app/services/task.service.ts:2334"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -4466,7 +4468,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/orchestrator-model",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2449"
+        "frontend/src/app/services/task.service.ts:2472"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -4497,7 +4499,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/pipeline-health",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2334"
+        "frontend/src/app/services/task.service.ts:2357"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -4528,7 +4530,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/pipeline-step",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2367"
+        "frontend/src/app/services/task.service.ts:2390"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -4559,7 +4561,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/pipeline-step-order",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2380"
+        "frontend/src/app/services/task.service.ts:2403"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -4590,7 +4592,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/pipeline-steps/{stepId}/probe",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2340"
+        "frontend/src/app/services/task.service.ts:2363"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -4844,7 +4846,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/publish/{targetId}/panel",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2148"
+        "frontend/src/app/services/task.service.ts:2171"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -4875,7 +4877,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/publish/{targetId}/run",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2175"
+        "frontend/src/app/services/task.service.ts:2198"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -4906,7 +4908,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/publish/automation",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2154"
+        "frontend/src/app/services/task.service.ts:2177"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -4937,7 +4939,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/publish/package",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2161"
+        "frontend/src/app/services/task.service.ts:2184"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -4968,7 +4970,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/publish/website",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2168"
+        "frontend/src/app/services/task.service.ts:2191"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -4999,7 +5001,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/queue-health/repair",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2201"
+        "frontend/src/app/services/task.service.ts:2224"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -5092,7 +5094,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/regression-radar",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1813"
+        "frontend/src/app/services/task.service.ts:1836"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -5123,7 +5125,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/review-decisions-pending",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2106"
+        "frontend/src/app/services/task.service.ts:2129"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -5154,7 +5156,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/review-follow-up",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2432"
+        "frontend/src/app/services/task.service.ts:2455"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -5502,7 +5504,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/snapshot",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2142"
+        "frontend/src/app/services/task.service.ts:2165"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -5647,7 +5649,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/test-runs",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2600"
+        "frontend/src/app/services/task.service.ts:2623"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -5678,7 +5680,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/throughput",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2572"
+        "frontend/src/app/services/task.service.ts:2595"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -5715,7 +5717,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/token-usage/expensive",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2630"
+        "frontend/src/app/services/task.service.ts:2653"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -5752,7 +5754,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/token-usage/heatmap",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2618"
+        "frontend/src/app/services/task.service.ts:2641"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -5783,7 +5785,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/token-usage/job/{taskId}",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2641"
+        "frontend/src/app/services/task.service.ts:2664"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -5820,7 +5822,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/token-usage/pipeline-cost",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2653"
+        "frontend/src/app/services/task.service.ts:2676"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -5851,7 +5853,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/token-usage/summary",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2565"
+        "frontend/src/app/services/task.service.ts:2588"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -5888,7 +5890,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/visual-evidence",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2578"
+        "frontend/src/app/services/task.service.ts:2601"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -5919,7 +5921,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{project}/visual-evidence/{itemId}/acknowledge",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2585"
+        "frontend/src/app/services/task.service.ts:2608"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -6773,7 +6775,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{projectId}",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1021"
+        "frontend/src/app/services/task.service.ts:1022"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -6804,7 +6806,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{projectId}",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:947"
+        "frontend/src/app/services/task.service.ts:948"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -6835,7 +6837,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{projectId}/ownership-mappings/{mappingId}",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1063"
+        "frontend/src/app/services/task.service.ts:1064"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -6866,7 +6868,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/projects/{projectId}/url-suggestions",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:959"
+        "frontend/src/app/services/task.service.ts:960"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -6893,7 +6895,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{projectId}/urls",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:965"
+        "frontend/src/app/services/task.service.ts:966"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -6924,7 +6926,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{projectId}/urls/{urlId}",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:977"
+        "frontend/src/app/services/task.service.ts:978"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -6955,7 +6957,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/{projectId}/urls/{urlId}",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:971"
+        "frontend/src/app/services/task.service.ts:972"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -7013,7 +7015,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/projects/{projectId}/urls/{urlId}/diagnostic",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1001"
+        "frontend/src/app/services/task.service.ts:1002"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -7040,7 +7042,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/projects/{projectId}/urls/{urlId}/process",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:995"
+        "frontend/src/app/services/task.service.ts:996"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -7067,7 +7069,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/projects/{projectId}/urls/{urlId}/process",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:989"
+        "frontend/src/app/services/task.service.ts:990"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -7121,7 +7123,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/projects/{projectId}/urls/{urlId}/start",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:983"
+        "frontend/src/app/services/task.service.ts:984"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -7148,7 +7150,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/projects/{projectId}/urls/test",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1007"
+        "frontend/src/app/services/task.service.ts:1008"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -7182,7 +7184,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/projects/pipeline-catalogue",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2326"
+        "frontend/src/app/services/task.service.ts:2349"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -7215,7 +7217,7 @@
       "frontendEvidence": [
         "frontend/src/app/features/project-detail/components/execution-assignment-card/execution-assignment-card.ts:78",
         "frontend/src/app/features/project-detail/components/parallel-execution-card/parallel-execution-card.ts:39",
-        "frontend/src/app/services/task.service.ts:2211"
+        "frontend/src/app/services/task.service.ts:2234"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -7246,7 +7248,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/prompt/enhance",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2819"
+        "frontend/src/app/services/task.service.ts:2842"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -7277,7 +7279,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/runner/{contextKey}/orchestrator-chat",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2718"
+        "frontend/src/app/services/task.service.ts:2741"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -7308,7 +7310,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/runner/{contextKey}/orchestrator-chat",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2793"
+        "frontend/src/app/services/task.service.ts:2816"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -7339,7 +7341,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/runner/{project}/mode",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2841"
+        "frontend/src/app/services/task.service.ts:2864"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -7370,7 +7372,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/runner/{project}/orchestrator-log",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2087"
+        "frontend/src/app/services/task.service.ts:2110"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -7401,7 +7403,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/runner/{project}/orchestrator-log/override",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2834"
+        "frontend/src/app/services/task.service.ts:2857"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -7432,7 +7434,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/runner/{project}/orchestrator-session",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2476"
+        "frontend/src/app/services/task.service.ts:2499"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -7463,7 +7465,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/runner/{project}/pending-decisions",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2120"
+        "frontend/src/app/services/task.service.ts:2143"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -7494,7 +7496,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/runner/{project}/start",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2847"
+        "frontend/src/app/services/task.service.ts:2870"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -7525,7 +7527,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/runner/{project}/stop",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2851"
+        "frontend/src/app/services/task.service.ts:2874"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -7618,7 +7620,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/runner/global/orchestrator-session",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2488"
+        "frontend/src/app/services/task.service.ts:2511"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -7649,7 +7651,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/runner/orchestrator-feed",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2094"
+        "frontend/src/app/services/task.service.ts:2117"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -7680,7 +7682,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/runner/project-chat/status",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2724"
+        "frontend/src/app/services/task.service.ts:2747"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -7945,7 +7947,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/settings/cli",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:3049"
+        "frontend/src/app/services/task.service.ts:3072"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -7972,7 +7974,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/settings/cli",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:3053"
+        "frontend/src/app/services/task.service.ts:3076"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -7999,7 +8001,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/settings/cli/models",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2035"
+        "frontend/src/app/services/task.service.ts:2058"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -8026,7 +8028,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/settings/cli/test",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:3057"
+        "frontend/src/app/services/task.service.ts:3080"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -8053,7 +8055,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/settings/cli/token",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:3061"
+        "frontend/src/app/services/task.service.ts:3084"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -8309,7 +8311,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/tags",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1126"
+        "frontend/src/app/services/task.service.ts:1127"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -8340,7 +8342,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/tags",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1130"
+        "frontend/src/app/services/task.service.ts:1131"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -8371,7 +8373,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/tags/{id}",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1137"
+        "frontend/src/app/services/task.service.ts:1138"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -8402,7 +8404,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/tasks",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1050"
+        "frontend/src/app/services/task.service.ts:1051"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -8439,7 +8441,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/agent-work-detail",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1706"
+        "frontend/src/app/services/task.service.ts:1729"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -8476,7 +8478,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/agent-work-summary",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1692"
+        "frontend/src/app/services/task.service.ts:1715"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -8513,7 +8515,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/artifacts",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1376"
+        "frontend/src/app/services/task.service.ts:1399"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -8627,7 +8629,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/change-project",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1498"
+        "frontend/src/app/services/task.service.ts:1521"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -8732,7 +8734,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/claude/session-info",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1672"
+        "frontend/src/app/services/task.service.ts:1695"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -8769,7 +8771,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/cli-type",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1904"
+        "frontend/src/app/services/task.service.ts:1927"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -8806,7 +8808,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/code-review",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1285"
+        "frontend/src/app/services/task.service.ts:1308"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -8843,7 +8845,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/code-review/{fileName}",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1310"
+        "frontend/src/app/services/task.service.ts:1333"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -8880,7 +8882,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/code-review/list",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1256"
+        "frontend/src/app/services/task.service.ts:1279"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -8917,7 +8919,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/tasks/{taskId}/commit",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1575"
+        "frontend/src/app/services/task.service.ts:1598"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -8951,7 +8953,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/tasks/{taskId}/commit/diff",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1585"
+        "frontend/src/app/services/task.service.ts:1608"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -8985,7 +8987,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/tasks/{taskId}/commits/{sha}/diff",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1632"
+        "frontend/src/app/services/task.service.ts:1655"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -9019,7 +9021,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/tasks/{taskId}/commits/{sha}/file",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1657"
+        "frontend/src/app/services/task.service.ts:1680"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -9052,7 +9054,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/tasks/{taskId}/commits/{sha}/files",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1617"
+        "frontend/src/app/services/task.service.ts:1640"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -9086,7 +9088,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/tasks/{taskId}/commits/diff",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1605"
+        "frontend/src/app/services/task.service.ts:1628"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -9119,7 +9121,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/tasks/{taskId}/commits/files",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1593"
+        "frontend/src/app/services/task.service.ts:1616"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -9152,7 +9154,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/concept-dossier",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1117"
+        "frontend/src/app/services/task.service.ts:1118"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -9189,7 +9191,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/context-usage/refresh",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2046"
+        "frontend/src/app/services/task.service.ts:2069"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -9206,6 +9208,80 @@
     },
     {
       "id": "fe-286",
+      "method": "POST",
+      "path": "/api/tasks/{taskId}/decision",
+      "queryVariants": [
+        {
+          "kind": "none",
+          "query": ""
+        },
+        {
+          "kind": "optional-subset",
+          "keys": [
+            "watchPath"
+          ]
+        }
+      ],
+      "classification": "task-server",
+      "owningComponent": "Remote Task Server",
+      "frontendOwner": "Shared frontend services",
+      "v1Status": "must-add",
+      "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/decision",
+      "frontendEvidence": [
+        "frontend/src/app/services/task.service.ts:1203"
+      ],
+      "decisionEvidence": [
+        "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
+        "docs/concepts/distributed-agent-studio-target-architecture.md:110-115"
+      ],
+      "classificationReason": "The route exposes durable task, orchestration, identity, event, policy, artifact, or management state assigned to the Task Server by the target architecture.",
+      "ownershipCaveat": null,
+      "d4bPriority": "P1",
+      "estimate": {
+        "size": "M",
+        "weightedRoutePoints": 2,
+        "basis": "POST contract plus authorization, compatibility, and route-level tests"
+      }
+    },
+    {
+      "id": "fe-287",
+      "method": "POST",
+      "path": "/api/tasks/{taskId}/decision/reopen",
+      "queryVariants": [
+        {
+          "kind": "none",
+          "query": ""
+        },
+        {
+          "kind": "optional-subset",
+          "keys": [
+            "watchPath"
+          ]
+        }
+      ],
+      "classification": "task-server",
+      "owningComponent": "Remote Task Server",
+      "frontendOwner": "Shared frontend services",
+      "v1Status": "must-add",
+      "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/decision/reopen",
+      "frontendEvidence": [
+        "frontend/src/app/services/task.service.ts:1212"
+      ],
+      "decisionEvidence": [
+        "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
+        "docs/concepts/distributed-agent-studio-target-architecture.md:110-115"
+      ],
+      "classificationReason": "The route exposes durable task, orchestration, identity, event, policy, artifact, or management state assigned to the Task Server by the target architecture.",
+      "ownershipCaveat": null,
+      "d4bPriority": "P1",
+      "estimate": {
+        "size": "M",
+        "weightedRoutePoints": 2,
+        "basis": "POST contract plus authorization, compatibility, and route-level tests"
+      }
+    },
+    {
+      "id": "fe-288",
       "method": "GET",
       "path": "/api/tasks/{taskId}/delivery-claim",
       "queryVariants": [
@@ -9226,7 +9302,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/delivery-claim",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1566"
+        "frontend/src/app/services/task.service.ts:1589"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -9242,7 +9318,7 @@
       }
     },
     {
-      "id": "fe-287",
+      "id": "fe-289",
       "method": "GET",
       "path": "/api/tasks/{taskId}/dependents",
       "queryVariants": [
@@ -9264,7 +9340,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/dependents",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1217"
+        "frontend/src/app/services/task.service.ts:1240"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -9280,7 +9356,7 @@
       }
     },
     {
-      "id": "fe-288",
+      "id": "fe-290",
       "method": "PUT",
       "path": "/api/tasks/{taskId}/epic",
       "queryVariants": [
@@ -9301,7 +9377,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/epic",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1987"
+        "frontend/src/app/services/task.service.ts:2010"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -9317,7 +9393,7 @@
       }
     },
     {
-      "id": "fe-289",
+      "id": "fe-291",
       "method": "POST",
       "path": "/api/tasks/{taskId}/failure/continue",
       "queryVariants": [
@@ -9338,7 +9414,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/failure/continue",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:845"
+        "frontend/src/app/services/task.service.ts:846"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -9354,7 +9430,7 @@
       }
     },
     {
-      "id": "fe-290",
+      "id": "fe-292",
       "method": "PUT",
       "path": "/api/tasks/{taskId}/files/{fileName}",
       "queryVariants": [
@@ -9375,7 +9451,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/files/{fileName}",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1362"
+        "frontend/src/app/services/task.service.ts:1385"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -9391,7 +9467,7 @@
       }
     },
     {
-      "id": "fe-291",
+      "id": "fe-293",
       "method": "GET",
       "path": "/api/tasks/{taskId}/files/{path*}",
       "queryVariants": [
@@ -9416,7 +9492,7 @@
       "frontendEvidence": [
         "frontend/src/app/services/task.service.ts:1306",
         "frontend/src/app/services/task.service.ts:1324",
-        "frontend/src/app/services/task.service.ts:1389"
+        "frontend/src/app/services/task.service.ts:1412"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -9432,7 +9508,7 @@
       }
     },
     {
-      "id": "fe-292",
+      "id": "fe-294",
       "method": "GET",
       "path": "/api/tasks/{taskId}/files/{path*}/history",
       "queryVariants": [
@@ -9470,7 +9546,7 @@
       }
     },
     {
-      "id": "fe-293",
+      "id": "fe-295",
       "method": "POST",
       "path": "/api/tasks/{taskId}/git/commit",
       "queryVariants": [
@@ -9491,7 +9567,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/tasks/{taskId}/git/commit",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1531"
+        "frontend/src/app/services/task.service.ts:1554"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -9503,7 +9579,7 @@
       "estimate": null
     },
     {
-      "id": "fe-294",
+      "id": "fe-296",
       "method": "POST",
       "path": "/api/tasks/{taskId}/git/commit-accepted-evidence",
       "queryVariants": [
@@ -9536,7 +9612,7 @@
       "estimate": null
     },
     {
-      "id": "fe-295",
+      "id": "fe-297",
       "method": "GET",
       "path": "/api/tasks/{taskId}/git/diff",
       "queryVariants": [
@@ -9558,7 +9634,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/tasks/{taskId}/git/diff",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1527"
+        "frontend/src/app/services/task.service.ts:1550"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -9570,7 +9646,7 @@
       "estimate": null
     },
     {
-      "id": "fe-296",
+      "id": "fe-298",
       "method": "GET",
       "path": "/api/tasks/{taskId}/git/file",
       "queryVariants": [
@@ -9592,7 +9668,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/tasks/{taskId}/git/file",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1645"
+        "frontend/src/app/services/task.service.ts:1668"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -9604,7 +9680,7 @@
       "estimate": null
     },
     {
-      "id": "fe-297",
+      "id": "fe-299",
       "method": "POST",
       "path": "/api/tasks/{taskId}/git/generate-message",
       "queryVariants": [
@@ -9625,7 +9701,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/tasks/{taskId}/git/generate-message",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1539"
+        "frontend/src/app/services/task.service.ts:1562"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -9637,7 +9713,7 @@
       "estimate": null
     },
     {
-      "id": "fe-298",
+      "id": "fe-300",
       "method": "GET",
       "path": "/api/tasks/{taskId}/git/hygiene",
       "queryVariants": [
@@ -9670,7 +9746,7 @@
       "estimate": null
     },
     {
-      "id": "fe-299",
+      "id": "fe-301",
       "method": "GET",
       "path": "/api/tasks/{taskId}/git/status",
       "queryVariants": [
@@ -9691,7 +9767,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/tasks/{taskId}/git/status",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1514"
+        "frontend/src/app/services/task.service.ts:1537"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -9703,7 +9779,7 @@
       "estimate": null
     },
     {
-      "id": "fe-300",
+      "id": "fe-302",
       "method": "POST",
       "path": "/api/tasks/{taskId}/integration/rebase",
       "queryVariants": [
@@ -9724,7 +9800,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/integration/rebase",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:822"
+        "frontend/src/app/services/task.service.ts:823"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -9740,7 +9816,7 @@
       }
     },
     {
-      "id": "fe-301",
+      "id": "fe-303",
       "method": "POST",
       "path": "/api/tasks/{taskId}/integration/retry",
       "queryVariants": [
@@ -9761,7 +9837,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/integration/retry",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:836"
+        "frontend/src/app/services/task.service.ts:837"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -9777,7 +9853,7 @@
       }
     },
     {
-      "id": "fe-302",
+      "id": "fe-304",
       "method": "PUT",
       "path": "/api/tasks/{taskId}/model",
       "queryVariants": [
@@ -9798,7 +9874,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/model",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1886"
+        "frontend/src/app/services/task.service.ts:1909"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -9814,7 +9890,7 @@
       }
     },
     {
-      "id": "fe-303",
+      "id": "fe-305",
       "method": "POST",
       "path": "/api/tasks/{taskId}/open-in-vscode",
       "queryVariants": [
@@ -9835,7 +9911,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/tasks/{taskId}/open-in-vscode",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1664"
+        "frontend/src/app/services/task.service.ts:1687"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -9847,7 +9923,7 @@
       "estimate": null
     },
     {
-      "id": "fe-304",
+      "id": "fe-306",
       "method": "GET",
       "path": "/api/tasks/{taskId}/output",
       "queryVariants": [
@@ -9868,7 +9944,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/output",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2039"
+        "frontend/src/app/services/task.service.ts:2062"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -9884,7 +9960,7 @@
       }
     },
     {
-      "id": "fe-305",
+      "id": "fe-307",
       "method": "GET",
       "path": "/api/tasks/{taskId}/pipeline",
       "queryVariants": [
@@ -9905,7 +9981,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/pipeline",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1740"
+        "frontend/src/app/services/task.service.ts:1763"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -9921,7 +9997,7 @@
       }
     },
     {
-      "id": "fe-306",
+      "id": "fe-308",
       "method": "POST",
       "path": "/api/tasks/{taskId}/pipeline/steps/{stepId}/run",
       "queryVariants": [
@@ -9942,7 +10018,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/pipeline/steps/{stepId}/run",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1294"
+        "frontend/src/app/services/task.service.ts:1317"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -9958,7 +10034,7 @@
       }
     },
     {
-      "id": "fe-307",
+      "id": "fe-309",
       "method": "GET",
       "path": "/api/tasks/{taskId}/plan",
       "queryVariants": [
@@ -9979,7 +10055,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/plan",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1719"
+        "frontend/src/app/services/task.service.ts:1742"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -9995,7 +10071,7 @@
       }
     },
     {
-      "id": "fe-308",
+      "id": "fe-310",
       "method": "POST",
       "path": "/api/tasks/{taskId}/planning-closure",
       "queryVariants": [
@@ -10016,7 +10092,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/planning-closure",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1105"
+        "frontend/src/app/services/task.service.ts:1106"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -10032,7 +10108,7 @@
       }
     },
     {
-      "id": "fe-309",
+      "id": "fe-311",
       "method": "GET",
       "path": "/api/tasks/{taskId}/promote-concept",
       "queryVariants": [
@@ -10053,7 +10129,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/promote-concept",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1083"
+        "frontend/src/app/services/task.service.ts:1084"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -10069,7 +10145,7 @@
       }
     },
     {
-      "id": "fe-310",
+      "id": "fe-312",
       "method": "POST",
       "path": "/api/tasks/{taskId}/promote-concept",
       "queryVariants": [
@@ -10090,7 +10166,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/promote-concept",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1090"
+        "frontend/src/app/services/task.service.ts:1091"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -10106,7 +10182,7 @@
       }
     },
     {
-      "id": "fe-311",
+      "id": "fe-313",
       "method": "GET",
       "path": "/api/tasks/{taskId}/promote-to-coding",
       "queryVariants": [
@@ -10127,7 +10203,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/promote-to-coding",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1076"
+        "frontend/src/app/services/task.service.ts:1077"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -10143,7 +10219,7 @@
       }
     },
     {
-      "id": "fe-312",
+      "id": "fe-314",
       "method": "GET",
       "path": "/api/tasks/{taskId}/provenance",
       "queryVariants": [
@@ -10164,7 +10240,7 @@
       "v1Status": "not-applicable",
       "targetRoute": "/api/tasks/{taskId}/provenance",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1552"
+        "frontend/src/app/services/task.service.ts:1575"
       ],
       "decisionEvidence": [
         "docs/operations/remote-task-server-local-studio.md:99-106",
@@ -10176,7 +10252,7 @@
       "estimate": null
     },
     {
-      "id": "fe-313",
+      "id": "fe-315",
       "method": "PUT",
       "path": "/api/tasks/{taskId}/references",
       "queryVariants": [
@@ -10197,7 +10273,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/references",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1161"
+        "frontend/src/app/services/task.service.ts:1162"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -10213,7 +10289,7 @@
       }
     },
     {
-      "id": "fe-314",
+      "id": "fe-316",
       "method": "GET",
       "path": "/api/tasks/{taskId}/regression-radar",
       "queryVariants": [
@@ -10234,7 +10310,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/regression-radar",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1806"
+        "frontend/src/app/services/task.service.ts:1829"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -10250,7 +10326,7 @@
       }
     },
     {
-      "id": "fe-315",
+      "id": "fe-317",
       "method": "PUT",
       "path": "/api/tasks/{taskId}/release",
       "queryVariants": [
@@ -10271,7 +10347,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/release",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1198"
+        "frontend/src/app/services/task.service.ts:1221"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -10287,7 +10363,7 @@
       }
     },
     {
-      "id": "fe-316",
+      "id": "fe-318",
       "method": "GET",
       "path": "/api/tasks/{taskId}/result-history",
       "queryVariants": [
@@ -10308,7 +10384,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/result-history",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1419"
+        "frontend/src/app/services/task.service.ts:1442"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -10324,7 +10400,7 @@
       }
     },
     {
-      "id": "fe-317",
+      "id": "fe-319",
       "method": "GET",
       "path": "/api/tasks/{taskId}/result-history/{versionId}",
       "queryVariants": [
@@ -10345,7 +10421,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/result-history/{versionId}",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1427"
+        "frontend/src/app/services/task.service.ts:1450"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -10361,7 +10437,7 @@
       }
     },
     {
-      "id": "fe-318",
+      "id": "fe-320",
       "method": "GET",
       "path": "/api/tasks/{taskId}/results/{path*}",
       "queryVariants": [
@@ -10398,7 +10474,7 @@
       }
     },
     {
-      "id": "fe-319",
+      "id": "fe-321",
       "method": "POST",
       "path": "/api/tasks/{taskId}/review-evidence/{evidenceId}/acknowledge",
       "queryVariants": [
@@ -10419,7 +10495,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/review-evidence/{evidenceId}/acknowledge",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1327"
+        "frontend/src/app/services/task.service.ts:1350"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -10435,7 +10511,7 @@
       }
     },
     {
-      "id": "fe-320",
+      "id": "fe-322",
       "method": "POST",
       "path": "/api/tasks/{taskId}/review-evidence/{evidenceId}/follow-up",
       "queryVariants": [
@@ -10456,7 +10532,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/review-evidence/{evidenceId}/follow-up",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1346"
+        "frontend/src/app/services/task.service.ts:1369"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -10472,7 +10548,7 @@
       }
     },
     {
-      "id": "fe-321",
+      "id": "fe-323",
       "method": "GET",
       "path": "/api/tasks/{taskId}/review-projection",
       "queryVariants": [
@@ -10493,7 +10569,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/review-projection",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1269"
+        "frontend/src/app/services/task.service.ts:1292"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -10509,7 +10585,7 @@
       }
     },
     {
-      "id": "fe-322",
+      "id": "fe-324",
       "method": "GET",
       "path": "/api/tasks/{taskId}/runs",
       "queryVariants": [
@@ -10530,7 +10606,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/runs",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1727"
+        "frontend/src/app/services/task.service.ts:1750"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -10546,7 +10622,7 @@
       }
     },
     {
-      "id": "fe-323",
+      "id": "fe-325",
       "method": "GET",
       "path": "/api/tasks/{taskId}/runs/{runIndex}/commits",
       "queryVariants": [
@@ -10567,7 +10643,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/runs/{runIndex}/commits",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1775"
+        "frontend/src/app/services/task.service.ts:1798"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -10583,7 +10659,7 @@
       }
     },
     {
-      "id": "fe-324",
+      "id": "fe-326",
       "method": "GET",
       "path": "/api/tasks/{taskId}/runs/{runIndex}/context",
       "queryVariants": [
@@ -10604,7 +10680,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/runs/{runIndex}/context",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1799"
+        "frontend/src/app/services/task.service.ts:1822"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -10620,7 +10696,7 @@
       }
     },
     {
-      "id": "fe-325",
+      "id": "fe-327",
       "method": "GET",
       "path": "/api/tasks/{taskId}/runs/{runIndex}/diff",
       "queryVariants": [
@@ -10642,7 +10718,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/runs/{runIndex}/diff",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1791"
+        "frontend/src/app/services/task.service.ts:1814"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -10658,7 +10734,7 @@
       }
     },
     {
-      "id": "fe-326",
+      "id": "fe-328",
       "method": "GET",
       "path": "/api/tasks/{taskId}/runs/{runIndex}/files",
       "queryVariants": [
@@ -10679,7 +10755,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/runs/{runIndex}/files",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1783"
+        "frontend/src/app/services/task.service.ts:1806"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -10695,7 +10771,7 @@
       }
     },
     {
-      "id": "fe-327",
+      "id": "fe-329",
       "method": "GET",
       "path": "/api/tasks/{taskId}/screenshot",
       "queryVariants": [
@@ -10733,7 +10809,7 @@
       }
     },
     {
-      "id": "fe-328",
+      "id": "fe-330",
       "method": "GET",
       "path": "/api/tasks/{taskId}/screenshots",
       "queryVariants": [
@@ -10754,7 +10830,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/screenshots",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2668"
+        "frontend/src/app/services/task.service.ts:2691"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -10770,7 +10846,7 @@
       }
     },
     {
-      "id": "fe-329",
+      "id": "fe-331",
       "method": "GET",
       "path": "/api/tasks/{taskId}/session-events",
       "queryVariants": [
@@ -10791,7 +10867,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/session-events",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1680"
+        "frontend/src/app/services/task.service.ts:1703"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -10807,7 +10883,7 @@
       }
     },
     {
-      "id": "fe-330",
+      "id": "fe-332",
       "method": "GET",
       "path": "/api/tasks/{taskId}/step-prompts",
       "queryVariants": [
@@ -10828,7 +10904,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/step-prompts",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1754"
+        "frontend/src/app/services/task.service.ts:1777"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -10844,7 +10920,7 @@
       }
     },
     {
-      "id": "fe-331",
+      "id": "fe-333",
       "method": "POST",
       "path": "/api/tasks/{taskId}/summary/interim",
       "queryVariants": [
@@ -10865,7 +10941,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/summary/interim",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2068"
+        "frontend/src/app/services/task.service.ts:2091"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -10881,7 +10957,7 @@
       }
     },
     {
-      "id": "fe-332",
+      "id": "fe-334",
       "method": "POST",
       "path": "/api/tasks/{taskId}/summary/regenerate",
       "queryVariants": [
@@ -10902,7 +10978,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/summary/regenerate",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2054"
+        "frontend/src/app/services/task.service.ts:2077"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -10918,7 +10994,7 @@
       }
     },
     {
-      "id": "fe-333",
+      "id": "fe-335",
       "method": "PUT",
       "path": "/api/tasks/{taskId}/tags",
       "queryVariants": [
@@ -10939,7 +11015,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/tags",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1141"
+        "frontend/src/app/services/task.service.ts:1142"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -10955,7 +11031,7 @@
       }
     },
     {
-      "id": "fe-334",
+      "id": "fe-336",
       "method": "PUT",
       "path": "/api/tasks/{taskId}/task-type",
       "queryVariants": [
@@ -10976,7 +11052,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/task-type",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1354"
+        "frontend/src/app/services/task.service.ts:1377"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -10992,7 +11068,7 @@
       }
     },
     {
-      "id": "fe-335",
+      "id": "fe-337",
       "method": "PUT",
       "path": "/api/tasks/{taskId}/thinking-level",
       "queryVariants": [
@@ -11013,7 +11089,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/thinking-level",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1894"
+        "frontend/src/app/services/task.service.ts:1917"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -11029,7 +11105,7 @@
       }
     },
     {
-      "id": "fe-336",
+      "id": "fe-338",
       "method": "GET",
       "path": "/api/tasks/{taskId}/timeline",
       "queryVariants": [
@@ -11050,7 +11126,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/timeline",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1767"
+        "frontend/src/app/services/task.service.ts:1790"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -11066,7 +11142,7 @@
       }
     },
     {
-      "id": "fe-337",
+      "id": "fe-339",
       "method": "PUT",
       "path": "/api/tasks/{taskId}/title",
       "queryVariants": [
@@ -11087,7 +11163,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/title",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1974"
+        "frontend/src/app/services/task.service.ts:1997"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -11103,7 +11179,7 @@
       }
     },
     {
-      "id": "fe-338",
+      "id": "fe-340",
       "method": "PUT",
       "path": "/api/tasks/{taskId}/waits-on",
       "queryVariants": [
@@ -11124,7 +11200,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/waits-on",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1179"
+        "frontend/src/app/services/task.service.ts:1180"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -11140,7 +11216,7 @@
       }
     },
     {
-      "id": "fe-339",
+      "id": "fe-341",
       "method": "GET",
       "path": "/api/tasks/archive",
       "queryVariants": [
@@ -11165,69 +11241,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/tasks/archive",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:867"
-      ],
-      "decisionEvidence": [
-        "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
-        "docs/concepts/distributed-agent-studio-target-architecture.md:110-115"
-      ],
-      "classificationReason": "The route exposes durable task, orchestration, identity, event, policy, artifact, or management state assigned to the Task Server by the target architecture.",
-      "ownershipCaveat": null,
-      "d4bPriority": "P1",
-      "estimate": {
-        "size": "S",
-        "weightedRoutePoints": 1,
-        "basis": "GET contract plus authorization, compatibility, and route-level tests"
-      }
-    },
-    {
-      "id": "fe-340",
-      "method": "POST",
-      "path": "/api/tasks/batch-move",
-      "queryVariants": [
-        {
-          "kind": "none",
-          "query": ""
-        }
-      ],
-      "classification": "task-server",
-      "owningComponent": "Remote Task Server",
-      "frontendOwner": "Shared frontend services",
-      "v1Status": "must-add",
-      "targetRoute": "/api/v1/studio/tasks/batch-move",
-      "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:803"
-      ],
-      "decisionEvidence": [
-        "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
-        "docs/concepts/distributed-agent-studio-target-architecture.md:110-115"
-      ],
-      "classificationReason": "The route exposes durable task, orchestration, identity, event, policy, artifact, or management state assigned to the Task Server by the target architecture.",
-      "ownershipCaveat": null,
-      "d4bPriority": "P1",
-      "estimate": {
-        "size": "M",
-        "weightedRoutePoints": 2,
-        "basis": "POST contract plus authorization, compatibility, and route-level tests"
-      }
-    },
-    {
-      "id": "fe-341",
-      "method": "GET",
-      "path": "/api/tasks/batch-move/{batchId}",
-      "queryVariants": [
-        {
-          "kind": "none",
-          "query": ""
-        }
-      ],
-      "classification": "task-server",
-      "owningComponent": "Remote Task Server",
-      "frontendOwner": "Shared frontend services",
-      "v1Status": "must-add",
-      "targetRoute": "/api/v1/studio/tasks/batch-move/{batchId}",
-      "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:811"
+        "frontend/src/app/services/task.service.ts:868"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -11244,8 +11258,8 @@
     },
     {
       "id": "fe-342",
-      "method": "GET",
-      "path": "/api/tasks/code-review/defaults",
+      "method": "POST",
+      "path": "/api/tasks/batch-move",
       "queryVariants": [
         {
           "kind": "none",
@@ -11256,9 +11270,40 @@
       "owningComponent": "Remote Task Server",
       "frontendOwner": "Shared frontend services",
       "v1Status": "must-add",
-      "targetRoute": "/api/v1/studio/tasks/code-review/defaults",
+      "targetRoute": "/api/v1/studio/tasks/batch-move",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1247"
+        "frontend/src/app/services/task.service.ts:804"
+      ],
+      "decisionEvidence": [
+        "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
+        "docs/concepts/distributed-agent-studio-target-architecture.md:110-115"
+      ],
+      "classificationReason": "The route exposes durable task, orchestration, identity, event, policy, artifact, or management state assigned to the Task Server by the target architecture.",
+      "ownershipCaveat": null,
+      "d4bPriority": "P1",
+      "estimate": {
+        "size": "M",
+        "weightedRoutePoints": 2,
+        "basis": "POST contract plus authorization, compatibility, and route-level tests"
+      }
+    },
+    {
+      "id": "fe-343",
+      "method": "GET",
+      "path": "/api/tasks/batch-move/{batchId}",
+      "queryVariants": [
+        {
+          "kind": "none",
+          "query": ""
+        }
+      ],
+      "classification": "task-server",
+      "owningComponent": "Remote Task Server",
+      "frontendOwner": "Shared frontend services",
+      "v1Status": "must-add",
+      "targetRoute": "/api/v1/studio/tasks/batch-move/{batchId}",
+      "frontendEvidence": [
+        "frontend/src/app/services/task.service.ts:812"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -11274,7 +11319,38 @@
       }
     },
     {
-      "id": "fe-343",
+      "id": "fe-344",
+      "method": "GET",
+      "path": "/api/tasks/code-review/defaults",
+      "queryVariants": [
+        {
+          "kind": "none",
+          "query": ""
+        }
+      ],
+      "classification": "task-server",
+      "owningComponent": "Remote Task Server",
+      "frontendOwner": "Shared frontend services",
+      "v1Status": "must-add",
+      "targetRoute": "/api/v1/studio/tasks/code-review/defaults",
+      "frontendEvidence": [
+        "frontend/src/app/services/task.service.ts:1270"
+      ],
+      "decisionEvidence": [
+        "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
+        "docs/concepts/distributed-agent-studio-target-architecture.md:110-115"
+      ],
+      "classificationReason": "The route exposes durable task, orchestration, identity, event, policy, artifact, or management state assigned to the Task Server by the target architecture.",
+      "ownershipCaveat": null,
+      "d4bPriority": "P1",
+      "estimate": {
+        "size": "S",
+        "weightedRoutePoints": 1,
+        "basis": "GET contract plus authorization, compatibility, and route-level tests"
+      }
+    },
+    {
+      "id": "fe-345",
       "method": "POST",
       "path": "/api/tasks/reference-status",
       "queryVariants": [
@@ -11291,7 +11367,7 @@
       "frontendEvidence": [
         "frontend/src/app/features/task-detail/components/planning-spawn-panel/planning-spawn-panel.component.ts:103",
         "frontend/src/app/services/task-reference-microcard-hydrator.service.ts:24",
-        "frontend/src/app/services/task.service.ts:1232"
+        "frontend/src/app/services/task.service.ts:1255"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -11307,7 +11383,7 @@
       }
     },
     {
-      "id": "fe-344",
+      "id": "fe-346",
       "method": "POST",
       "path": "/api/tasks/reorder",
       "queryVariants": [
@@ -11322,7 +11398,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/tasks/reorder",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1481"
+        "frontend/src/app/services/task.service.ts:1504"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -11338,7 +11414,7 @@
       }
     },
     {
-      "id": "fe-345",
+      "id": "fe-347",
       "method": "POST",
       "path": "/api/title/generate",
       "queryVariants": [
@@ -11353,7 +11429,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/title/generate",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2809"
+        "frontend/src/app/services/task.service.ts:2832"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -11369,7 +11445,7 @@
       }
     },
     {
-      "id": "fe-346",
+      "id": "fe-348",
       "method": "POST",
       "path": "/api/token-pricing/calculate",
       "queryVariants": [
@@ -11400,7 +11476,7 @@
       }
     },
     {
-      "id": "fe-347",
+      "id": "fe-349",
       "method": "PUT",
       "path": "/api/v1/hosts/{hostId}/project-policy",
       "queryVariants": [
@@ -11427,7 +11503,7 @@
       "estimate": null
     },
     {
-      "id": "fe-348",
+      "id": "fe-350",
       "method": "PUT",
       "path": "/api/v1/hosts/{hostId}/runtime-capacity",
       "queryVariants": [
@@ -11454,7 +11530,7 @@
       "estimate": null
     },
     {
-      "id": "fe-349",
+      "id": "fe-351",
       "method": "GET",
       "path": "/api/v1/management/backups/full",
       "queryVariants": [
@@ -11481,7 +11557,7 @@
       "estimate": null
     },
     {
-      "id": "fe-350",
+      "id": "fe-352",
       "method": "POST",
       "path": "/api/v1/management/backups/full",
       "queryVariants": [
@@ -11508,7 +11584,7 @@
       "estimate": null
     },
     {
-      "id": "fe-351",
+      "id": "fe-353",
       "method": "POST",
       "path": "/api/v1/management/backups/full/{backupId}/restore",
       "queryVariants": [
@@ -11535,7 +11611,7 @@
       "estimate": null
     },
     {
-      "id": "fe-352",
+      "id": "fe-354",
       "method": "POST",
       "path": "/api/v1/management/backups/full/{backupId}/verify",
       "queryVariants": [
@@ -11562,7 +11638,7 @@
       "estimate": null
     },
     {
-      "id": "fe-353",
+      "id": "fe-355",
       "method": "POST",
       "path": "/api/v1/management/commands",
       "queryVariants": [
@@ -11589,7 +11665,7 @@
       "estimate": null
     },
     {
-      "id": "fe-354",
+      "id": "fe-356",
       "method": "GET",
       "path": "/api/v1/management/host-releases",
       "queryVariants": [
@@ -11616,7 +11692,7 @@
       "estimate": null
     },
     {
-      "id": "fe-355",
+      "id": "fe-357",
       "method": "GET",
       "path": "/api/v1/management/links",
       "queryVariants": [
@@ -11643,7 +11719,7 @@
       "estimate": null
     },
     {
-      "id": "fe-356",
+      "id": "fe-358",
       "method": "POST",
       "path": "/api/v1/management/links/{clientId}/{action}",
       "queryVariants": [
@@ -11670,7 +11746,7 @@
       "estimate": null
     },
     {
-      "id": "fe-357",
+      "id": "fe-359",
       "method": "POST",
       "path": "/api/v1/management/links/{clientId}/reconnect",
       "queryVariants": [
@@ -11697,7 +11773,7 @@
       "estimate": null
     },
     {
-      "id": "fe-358",
+      "id": "fe-360",
       "method": "GET",
       "path": "/api/v1/management/provider-refusals",
       "queryVariants": [
@@ -11730,7 +11806,7 @@
       "estimate": null
     },
     {
-      "id": "fe-359",
+      "id": "fe-361",
       "method": "GET",
       "path": "/api/v1/management/remote-hosts",
       "queryVariants": [
@@ -11759,7 +11835,7 @@
       "estimate": null
     },
     {
-      "id": "fe-360",
+      "id": "fe-362",
       "method": "POST",
       "path": "/api/v1/management/remote-hosts/{hostId}/claude-sign-in",
       "queryVariants": [
@@ -11786,7 +11862,7 @@
       "estimate": null
     },
     {
-      "id": "fe-361",
+      "id": "fe-363",
       "method": "GET",
       "path": "/api/v1/management/remote-hosts/{hostId}/claude-sign-in/{handle}",
       "queryVariants": [
@@ -11813,7 +11889,7 @@
       "estimate": null
     },
     {
-      "id": "fe-362",
+      "id": "fe-364",
       "method": "POST",
       "path": "/api/v1/management/remote-hosts/{hostId}/cli-update",
       "queryVariants": [
@@ -11840,7 +11916,7 @@
       "estimate": null
     },
     {
-      "id": "fe-363",
+      "id": "fe-365",
       "method": "POST",
       "path": "/api/v1/management/remote-hosts/{hostId}/cli-update/cancel",
       "queryVariants": [
@@ -11867,7 +11943,7 @@
       "estimate": null
     },
     {
-      "id": "fe-364",
+      "id": "fe-366",
       "method": "POST",
       "path": "/api/v1/management/remote-hosts/{hostId}/codex-sign-in",
       "queryVariants": [
@@ -11894,7 +11970,7 @@
       "estimate": null
     },
     {
-      "id": "fe-365",
+      "id": "fe-367",
       "method": "GET",
       "path": "/api/v1/management/remote-hosts/{hostId}/codex-sign-in/{handle}",
       "queryVariants": [
@@ -11921,7 +11997,7 @@
       "estimate": null
     },
     {
-      "id": "fe-366",
+      "id": "fe-368",
       "method": "POST",
       "path": "/api/v1/management/remote-hosts/provider-auth",
       "queryVariants": [
@@ -11948,7 +12024,7 @@
       "estimate": null
     },
     {
-      "id": "fe-367",
+      "id": "fe-369",
       "method": "POST",
       "path": "/api/v1/management/retention/apply",
       "queryVariants": [
@@ -11975,7 +12051,7 @@
       "estimate": null
     },
     {
-      "id": "fe-368",
+      "id": "fe-370",
       "method": "GET",
       "path": "/api/v1/management/retention/archive/{taskId}",
       "queryVariants": [
@@ -12002,7 +12078,7 @@
       "estimate": null
     },
     {
-      "id": "fe-369",
+      "id": "fe-371",
       "method": "POST",
       "path": "/api/v1/management/retention/archive/{taskId}/restore",
       "queryVariants": [
@@ -12029,7 +12105,7 @@
       "estimate": null
     },
     {
-      "id": "fe-370",
+      "id": "fe-372",
       "method": "POST",
       "path": "/api/v1/management/retention/plan",
       "queryVariants": [
@@ -12056,7 +12132,7 @@
       "estimate": null
     },
     {
-      "id": "fe-371",
+      "id": "fe-373",
       "method": "GET",
       "path": "/api/v1/management/retention/policy",
       "queryVariants": [
@@ -12083,7 +12159,7 @@
       "estimate": null
     },
     {
-      "id": "fe-372",
+      "id": "fe-374",
       "method": "PUT",
       "path": "/api/v1/management/retention/policy",
       "queryVariants": [
@@ -12110,7 +12186,7 @@
       "estimate": null
     },
     {
-      "id": "fe-373",
+      "id": "fe-375",
       "method": "DELETE",
       "path": "/api/v1/management/retention/policy/projects/{projectId}",
       "queryVariants": [
@@ -12137,7 +12213,7 @@
       "estimate": null
     },
     {
-      "id": "fe-374",
+      "id": "fe-376",
       "method": "GET",
       "path": "/api/v1/management/retention/policy/projects/{projectId}",
       "queryVariants": [
@@ -12164,7 +12240,7 @@
       "estimate": null
     },
     {
-      "id": "fe-375",
+      "id": "fe-377",
       "method": "PUT",
       "path": "/api/v1/management/retention/policy/projects/{projectId}",
       "queryVariants": [
@@ -12191,7 +12267,7 @@
       "estimate": null
     },
     {
-      "id": "fe-376",
+      "id": "fe-378",
       "method": "GET",
       "path": "/api/v1/management/retention/runs",
       "queryVariants": [
@@ -12218,7 +12294,7 @@
       "estimate": null
     },
     {
-      "id": "fe-377",
+      "id": "fe-379",
       "method": "GET",
       "path": "/api/v1/management/retention/runs/{runId}",
       "queryVariants": [
@@ -12245,7 +12321,7 @@
       "estimate": null
     },
     {
-      "id": "fe-378",
+      "id": "fe-380",
       "method": "GET",
       "path": "/api/v1/management/retention/schedule",
       "queryVariants": [
@@ -12272,7 +12348,7 @@
       "estimate": null
     },
     {
-      "id": "fe-379",
+      "id": "fe-381",
       "method": "GET",
       "path": "/api/v1/management/status",
       "queryVariants": [
@@ -12299,7 +12375,7 @@
       "estimate": null
     },
     {
-      "id": "fe-380",
+      "id": "fe-382",
       "method": "GET",
       "path": "/api/v1/projects",
       "queryVariants": [
@@ -12320,7 +12396,7 @@
       "v1Status": "exists",
       "targetRoute": "/api/v1/projects",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:895"
+        "frontend/src/app/services/task.service.ts:896"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -12332,7 +12408,7 @@
       "estimate": null
     },
     {
-      "id": "fe-381",
+      "id": "fe-383",
       "method": "POST",
       "path": "/api/v1/projects",
       "queryVariants": [
@@ -12347,7 +12423,7 @@
       "v1Status": "exists",
       "targetRoute": "/api/v1/projects",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:952"
+        "frontend/src/app/services/task.service.ts:953"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -12359,7 +12435,7 @@
       "estimate": null
     },
     {
-      "id": "fe-382",
+      "id": "fe-384",
       "method": "DELETE",
       "path": "/api/v1/projects/{projectId}/tasks/{taskId}",
       "queryVariants": [
@@ -12380,7 +12456,7 @@
       "v1Status": "exists",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1506"
+        "frontend/src/app/services/task.service.ts:1529"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -12392,7 +12468,7 @@
       "estimate": null
     },
     {
-      "id": "fe-383",
+      "id": "fe-385",
       "method": "GET",
       "path": "/api/v1/projects/{projectId}/tasks/{taskId}",
       "queryVariants": [
@@ -12414,8 +12490,8 @@
       "v1Status": "exists",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:745",
-        "frontend/src/app/services/task.service.ts:760"
+        "frontend/src/app/services/task.service.ts:746",
+        "frontend/src/app/services/task.service.ts:761"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -12427,7 +12503,7 @@
       "estimate": null
     },
     {
-      "id": "fe-384",
+      "id": "fe-386",
       "method": "POST",
       "path": "/api/v1/projects/{projectId}/tasks/{taskId}/continue",
       "queryVariants": [
@@ -12448,7 +12524,7 @@
       "v1Status": "exists",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/continue",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1878"
+        "frontend/src/app/services/task.service.ts:1901"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -12460,7 +12536,7 @@
       "estimate": null
     },
     {
-      "id": "fe-385",
+      "id": "fe-387",
       "method": "POST",
       "path": "/api/v1/projects/{projectId}/tasks/{taskId}/move",
       "queryVariants": [
@@ -12481,7 +12557,7 @@
       "v1Status": "exists",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/move",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:794"
+        "frontend/src/app/services/task.service.ts:795"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -12493,7 +12569,7 @@
       "estimate": null
     },
     {
-      "id": "fe-386",
+      "id": "fe-388",
       "method": "POST",
       "path": "/api/v1/projects/{projectId}/tasks/{taskId}/move-to-top",
       "queryVariants": [
@@ -12514,7 +12590,7 @@
       "v1Status": "exists",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/move-to-top",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1490"
+        "frontend/src/app/services/task.service.ts:1513"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -12526,7 +12602,7 @@
       "estimate": null
     },
     {
-      "id": "fe-387",
+      "id": "fe-389",
       "method": "POST",
       "path": "/api/v1/projects/{projectId}/tasks/{taskId}/start",
       "queryVariants": [
@@ -12547,7 +12623,7 @@
       "v1Status": "exists",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/start",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1824"
+        "frontend/src/app/services/task.service.ts:1847"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -12559,7 +12635,7 @@
       "estimate": null
     },
     {
-      "id": "fe-388",
+      "id": "fe-390",
       "method": "PUT",
       "path": "/api/v1/projects/{projectId}/tasks/{taskId}/state",
       "queryVariants": [
@@ -12580,7 +12656,7 @@
       "v1Status": "exists",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/state",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:770"
+        "frontend/src/app/services/task.service.ts:771"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -12592,7 +12668,7 @@
       "estimate": null
     },
     {
-      "id": "fe-389",
+      "id": "fe-391",
       "method": "POST",
       "path": "/api/v1/projects/{projectId}/tasks/{taskId}/stop",
       "queryVariants": [
@@ -12614,7 +12690,7 @@
       "v1Status": "exists",
       "targetRoute": "/api/v1/projects/{projectId}/tasks/{taskId}/stop",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1845"
+        "frontend/src/app/services/task.service.ts:1868"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -12626,7 +12702,7 @@
       "estimate": null
     },
     {
-      "id": "fe-390",
+      "id": "fe-392",
       "method": "POST",
       "path": "/api/v1/studio/auth/bootstrap",
       "queryVariants": [
@@ -12653,7 +12729,7 @@
       "estimate": null
     },
     {
-      "id": "fe-391",
+      "id": "fe-393",
       "method": "POST",
       "path": "/api/v1/studio/auth/change-password",
       "queryVariants": [
@@ -12680,7 +12756,7 @@
       "estimate": null
     },
     {
-      "id": "fe-392",
+      "id": "fe-394",
       "method": "POST",
       "path": "/api/v1/studio/auth/login",
       "queryVariants": [
@@ -12707,7 +12783,7 @@
       "estimate": null
     },
     {
-      "id": "fe-393",
+      "id": "fe-395",
       "method": "POST",
       "path": "/api/v1/studio/auth/logout",
       "queryVariants": [
@@ -12734,7 +12810,7 @@
       "estimate": null
     },
     {
-      "id": "fe-394",
+      "id": "fe-396",
       "method": "GET",
       "path": "/api/v1/studio/auth/status",
       "queryVariants": [
@@ -12761,7 +12837,7 @@
       "estimate": null
     },
     {
-      "id": "fe-395",
+      "id": "fe-397",
       "method": "GET",
       "path": "/api/v1/studio/board",
       "queryVariants": [
@@ -12782,7 +12858,7 @@
       "v1Status": "exists",
       "targetRoute": "/api/v1/studio/board",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:503"
+        "frontend/src/app/services/task.service.ts:504"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -12794,7 +12870,7 @@
       "estimate": null
     },
     {
-      "id": "fe-396",
+      "id": "fe-398",
       "method": "GET",
       "path": "/api/v1/studio/orchestrator/context/global",
       "queryVariants": [
@@ -12809,7 +12885,7 @@
       "v1Status": "exists",
       "targetRoute": "/api/v1/studio/orchestrator/context/global",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2515"
+        "frontend/src/app/services/task.service.ts:2538"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -12821,7 +12897,7 @@
       "estimate": null
     },
     {
-      "id": "fe-397",
+      "id": "fe-399",
       "method": "POST",
       "path": "/api/v1/studio/orchestrator/context/global/refresh",
       "queryVariants": [
@@ -12836,7 +12912,7 @@
       "v1Status": "exists",
       "targetRoute": "/api/v1/studio/orchestrator/context/global/refresh",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2539"
+        "frontend/src/app/services/task.service.ts:2562"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -12848,7 +12924,7 @@
       "estimate": null
     },
     {
-      "id": "fe-398",
+      "id": "fe-400",
       "method": "GET",
       "path": "/api/v1/studio/orchestrator/context/project:{projectId}",
       "queryVariants": [
@@ -12863,7 +12939,7 @@
       "v1Status": "exists",
       "targetRoute": "/api/v1/studio/orchestrator/context/project:{projectId}",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2517"
+        "frontend/src/app/services/task.service.ts:2540"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -12875,7 +12951,7 @@
       "estimate": null
     },
     {
-      "id": "fe-399",
+      "id": "fe-401",
       "method": "POST",
       "path": "/api/v1/studio/orchestrator/context/project:{projectId}/refresh",
       "queryVariants": [
@@ -12890,7 +12966,7 @@
       "v1Status": "exists",
       "targetRoute": "/api/v1/studio/orchestrator/context/project:{projectId}/refresh",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2541"
+        "frontend/src/app/services/task.service.ts:2564"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -12902,7 +12978,7 @@
       "estimate": null
     },
     {
-      "id": "fe-400",
+      "id": "fe-402",
       "method": "GET",
       "path": "/api/v1/studio/orchestrator/context/task:{projectId}/{taskKey}",
       "queryVariants": [
@@ -12917,7 +12993,7 @@
       "v1Status": "exists",
       "targetRoute": "/api/v1/studio/orchestrator/context/task:{projectId}/{taskKey}",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2520"
+        "frontend/src/app/services/task.service.ts:2543"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -12929,7 +13005,7 @@
       "estimate": null
     },
     {
-      "id": "fe-401",
+      "id": "fe-403",
       "method": "POST",
       "path": "/api/v1/studio/orchestrator/context/task:{projectId}/{taskKey}/refresh",
       "queryVariants": [
@@ -12944,7 +13020,7 @@
       "v1Status": "exists",
       "targetRoute": "/api/v1/studio/orchestrator/context/task:{projectId}/{taskKey}/refresh",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2544"
+        "frontend/src/app/services/task.service.ts:2567"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -12956,7 +13032,7 @@
       "estimate": null
     },
     {
-      "id": "fe-402",
+      "id": "fe-404",
       "method": "GET",
       "path": "/api/v1/studio/orchestrator/sessions",
       "queryVariants": [
@@ -12971,7 +13047,7 @@
       "v1Status": "exists",
       "targetRoute": "/api/v1/studio/orchestrator/sessions",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2494"
+        "frontend/src/app/services/task.service.ts:2517"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -12983,7 +13059,7 @@
       "estimate": null
     },
     {
-      "id": "fe-403",
+      "id": "fe-405",
       "method": "POST",
       "path": "/api/v1/studio/orchestrator/sessions/workbench:{project}/{workbenchKey}/turns",
       "queryVariants": [
@@ -13010,7 +13086,7 @@
       "estimate": null
     },
     {
-      "id": "fe-404",
+      "id": "fe-406",
       "method": "GET",
       "path": "/api/v1/studio/runner/{project}/orchestrator-chat",
       "queryVariants": [
@@ -13025,7 +13101,7 @@
       "v1Status": "exists",
       "targetRoute": "/api/v1/studio/runner/{project}/orchestrator-chat",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2703"
+        "frontend/src/app/services/task.service.ts:2726"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -13037,7 +13113,7 @@
       "estimate": null
     },
     {
-      "id": "fe-405",
+      "id": "fe-407",
       "method": "POST",
       "path": "/api/v1/studio/runner/{project}/orchestrator-chat",
       "queryVariants": [
@@ -13052,7 +13128,7 @@
       "v1Status": "exists",
       "targetRoute": "/api/v1/studio/runner/{project}/orchestrator-chat",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2758"
+        "frontend/src/app/services/task.service.ts:2781"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -13064,7 +13140,7 @@
       "estimate": null
     },
     {
-      "id": "fe-406",
+      "id": "fe-408",
       "method": "GET",
       "path": "/api/v1/studio/runner/{project}/orchestrator-chat/attachments/{fileName}",
       "queryVariants": [
@@ -13091,7 +13167,7 @@
       "estimate": null
     },
     {
-      "id": "fe-407",
+      "id": "fe-409",
       "method": "GET",
       "path": "/api/v1/studio/runner/status",
       "queryVariants": [
@@ -13106,7 +13182,7 @@
       "v1Status": "exists",
       "targetRoute": "/api/v1/studio/runner/status",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2077"
+        "frontend/src/app/services/task.service.ts:2100"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -13118,7 +13194,7 @@
       "estimate": null
     },
     {
-      "id": "fe-408",
+      "id": "fe-410",
       "method": "GET",
       "path": "/api/v1/workspaces",
       "queryVariants": [
@@ -13146,7 +13222,7 @@
       "targetRoute": "/api/v1/workspaces",
       "frontendEvidence": [
         "frontend/src/app/features/project-detail/components/project-settings-panel/project-settings-panel.component.ts:226",
-        "frontend/src/app/services/task.service.ts:883"
+        "frontend/src/app/services/task.service.ts:884"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -13158,7 +13234,7 @@
       "estimate": null
     },
     {
-      "id": "fe-409",
+      "id": "fe-411",
       "method": "POST",
       "path": "/api/v1/workspaces",
       "queryVariants": [
@@ -13173,7 +13249,7 @@
       "v1Status": "exists",
       "targetRoute": "/api/v1/workspaces",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:900"
+        "frontend/src/app/services/task.service.ts:901"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -13185,7 +13261,7 @@
       "estimate": null
     },
     {
-      "id": "fe-410",
+      "id": "fe-412",
       "method": "GET",
       "path": "/api/watch-paths",
       "queryVariants": [
@@ -13200,7 +13276,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/watch-paths",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:871"
+        "frontend/src/app/services/task.service.ts:872"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -13216,7 +13292,7 @@
       }
     },
     {
-      "id": "fe-411",
+      "id": "fe-413",
       "method": "POST",
       "path": "/api/watch-paths",
       "queryVariants": [
@@ -13231,7 +13307,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/watch-paths",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1033"
+        "frontend/src/app/services/task.service.ts:1034"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -13247,7 +13323,7 @@
       }
     },
     {
-      "id": "fe-412",
+      "id": "fe-414",
       "method": "DELETE",
       "path": "/api/watch-paths/{name}",
       "queryVariants": [
@@ -13262,7 +13338,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/watch-paths/{name}",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:1044"
+        "frontend/src/app/services/task.service.ts:1045"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -13278,7 +13354,7 @@
       }
     },
     {
-      "id": "fe-413",
+      "id": "fe-415",
       "method": "GET",
       "path": "/api/watcher/cases",
       "queryVariants": [
@@ -13312,7 +13388,7 @@
       }
     },
     {
-      "id": "fe-414",
+      "id": "fe-416",
       "method": "GET",
       "path": "/api/watcher/proposals",
       "queryVariants": [
@@ -13346,7 +13422,7 @@
       }
     },
     {
-      "id": "fe-415",
+      "id": "fe-417",
       "method": "POST",
       "path": "/api/watcher/proposals/{proposalId}/decision",
       "queryVariants": [
@@ -13377,7 +13453,7 @@
       }
     },
     {
-      "id": "fe-416",
+      "id": "fe-418",
       "method": "GET",
       "path": "/api/watcher/status",
       "queryVariants": [
@@ -13408,7 +13484,7 @@
       }
     },
     {
-      "id": "fe-417",
+      "id": "fe-419",
       "method": "GET",
       "path": "/api/workbenches",
       "queryVariants": [
@@ -13442,7 +13518,7 @@
       "estimate": null
     },
     {
-      "id": "fe-418",
+      "id": "fe-420",
       "method": "GET",
       "path": "/api/workspace/screenshots",
       "queryVariants": [
@@ -13464,7 +13540,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/workspace/screenshots",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2682"
+        "frontend/src/app/services/task.service.ts:2705"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -13480,7 +13556,7 @@
       }
     },
     {
-      "id": "fe-419",
+      "id": "fe-421",
       "method": "GET",
       "path": "/api/workspace/summary",
       "queryVariants": [
@@ -13501,7 +13577,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/workspace/summary",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:2695"
+        "frontend/src/app/services/task.service.ts:2718"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -13517,7 +13593,7 @@
       }
     },
     {
-      "id": "fe-420",
+      "id": "fe-422",
       "method": "GET",
       "path": "/api/workspace/tokens/expensive-jobs",
       "queryVariants": [
@@ -13554,7 +13630,7 @@
       }
     },
     {
-      "id": "fe-421",
+      "id": "fe-423",
       "method": "GET",
       "path": "/api/workspace/tokens/expensive-jobs/cached",
       "queryVariants": [
@@ -13585,7 +13661,7 @@
       }
     },
     {
-      "id": "fe-422",
+      "id": "fe-424",
       "method": "GET",
       "path": "/api/workspace/tokens/timeline",
       "queryVariants": [
@@ -13623,7 +13699,7 @@
       }
     },
     {
-      "id": "fe-423",
+      "id": "fe-425",
       "method": "GET",
       "path": "/api/workspace/tokens/timeline/cached",
       "queryVariants": [
@@ -13661,7 +13737,7 @@
       }
     },
     {
-      "id": "fe-424",
+      "id": "fe-426",
       "method": "DELETE",
       "path": "/api/workspaces/{id}",
       "queryVariants": [
@@ -13676,7 +13752,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/workspaces/{id}",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:922"
+        "frontend/src/app/services/task.service.ts:923"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -13692,7 +13768,7 @@
       }
     },
     {
-      "id": "fe-425",
+      "id": "fe-427",
       "method": "PUT",
       "path": "/api/workspaces/{id}",
       "queryVariants": [
@@ -13707,7 +13783,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/workspaces/{id}",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:906"
+        "frontend/src/app/services/task.service.ts:907"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -13723,7 +13799,7 @@
       }
     },
     {
-      "id": "fe-426",
+      "id": "fe-428",
       "method": "POST",
       "path": "/api/workspaces/{id}/reorder",
       "queryVariants": [
@@ -13738,7 +13814,7 @@
       "v1Status": "must-add",
       "targetRoute": "/api/v1/studio/workspaces/{id}/reorder",
       "frontendEvidence": [
-        "frontend/src/app/services/task.service.ts:911"
+        "frontend/src/app/services/task.service.ts:912"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
@@ -13754,7 +13830,7 @@
       }
     },
     {
-      "id": "fe-427",
+      "id": "fe-429",
       "method": "PUT",
       "path": "/api/workspaces/{workspaceId}/auto-apply-model-migrations",
       "queryVariants": [
@@ -13785,7 +13861,7 @@
       }
     },
     {
-      "id": "fe-428",
+      "id": "fe-430",
       "method": "PUT",
       "path": "/api/workspaces/{workspaceId}/autonomy",
       "queryVariants": [
@@ -13816,7 +13892,7 @@
       }
     },
     {
-      "id": "fe-429",
+      "id": "fe-431",
       "method": "PUT",
       "path": "/api/workspaces/{workspaceId}/orchestrator-model",
       "queryVariants": [
@@ -13847,7 +13923,7 @@
       }
     },
     {
-      "id": "fe-430",
+      "id": "fe-432",
       "method": "GET",
       "path": "/api/workspaces/{workspaceId}/settings",
       "queryVariants": [
@@ -13878,7 +13954,7 @@
       }
     },
     {
-      "id": "fe-431",
+      "id": "fe-433",
       "method": "WS",
       "path": "/hubs/v1/studio",
       "queryVariants": [
@@ -14091,7 +14167,7 @@
     {
       "id": "group-27",
       "path": "/api/tasks",
-      "frontendOperationCount": 82,
+      "frontendOperationCount": 84,
       "routeOwnership": "mixed",
       "evidence": "backend/Host/EndpointMapping.cs:23"
     },

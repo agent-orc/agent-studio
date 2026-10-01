@@ -179,8 +179,69 @@ export interface TaskDeliveryClaimAnswer {
   detail: string | null;
 }
 
-/** Card kind: `epic` is a container for sub-tasks; `task` is an ordinary card. */
-export type TaskKind = 'task' | 'epic';
+/**
+ * Card kind: `epic` is a container for sub-tasks; `task` is an ordinary card;
+ * `decision` (AGT-2795) is a decision request the named decider resolves by
+ * choosing an option. A decision card never enters a runner lane.
+ */
+export type TaskKind = 'task' | 'epic' | 'decision';
+
+/**
+ * Lifecycle of a decision card. Mirrors backend `DecisionStatuses`: the card
+ * status is `pending` or `decided`; `requested` is a legacy spelling of
+ * pending and `reopened` appears only on history entries.
+ */
+export type DecisionStatus = 'pending' | 'decided' | 'requested' | 'reopened';
+
+/** One choosable option on a decision card. Mirrors backend `DecisionOption`. */
+export interface DecisionOption {
+  id: string;
+  label: string;
+  consequences?: string | null;
+  effort?: string | null;
+  risk?: string | null;
+}
+
+/** Append-only decide / reopen entry. Mirrors backend `DecisionHistoryEntry`. */
+export interface DecisionHistoryEntry {
+  status: DecisionStatus;
+  optionId?: string | null;
+  rationale?: string | null;
+  actor: string;
+  at: string;
+  note?: string | null;
+}
+
+/**
+ * Structured content of a `decision` card. Mirrors backend `DecisionContent`:
+ * the question, options, recommendation, decider, due date, dependants, and
+ * the recorded choice once decided. `recordPath` is the project-wiki path of
+ * the decision record written on decide.
+ */
+export interface DecisionContent {
+  question: string;
+  options: DecisionOption[];
+  recommendedOptionId?: string | null;
+  recommendationReason?: string | null;
+  /** Client identity id, `role:<name>`, or `operator` (any operator). */
+  decider: string;
+  dueDate?: string | null;
+  dependants?: string[];
+  status: DecisionStatus;
+  chosenOptionId?: string | null;
+  rationale?: string | null;
+  decidedBy?: string | null;
+  decidedAt?: string | null;
+  reopenNote?: string | null;
+  recordPath?: string | null;
+  history?: DecisionHistoryEntry[];
+}
+
+/** Response of `POST /api/tasks/{id}/decision` and `/decision/reopen`. */
+export interface DecisionActionResponse {
+  decision: DecisionContent;
+  targetState: string;
+}
 
 /**
  * Task execution mode. Mirrors backend `TaskModes`. `coding` is the default
@@ -300,6 +361,8 @@ export interface WaitsOnItem {
   unsatisfiable?: boolean;
   /** One sentence naming why `unsatisfiable` is set. Empty when it is not. */
   unsatisfiableReason?: string;
+  /** AGT-2795: this unresolved edge waits on a pending decision card. */
+  pendingDecision?: boolean;
   targetJobId?: string | null;
   targetTitle?: string | null;
   targetState?: string | null;
@@ -519,6 +582,11 @@ export interface TaskInfo {
    * Older payloads may omit it, so callers treat absent as `coding`.
    */
   mode?: TaskMode;
+  /**
+   * AGT-2795: structured content of a `decision` card. Null / absent on every
+   * other kind. Mirrors backend `TaskInfo.Decision`.
+   */
+  decision?: DecisionContent | null;
   /** Explicit declaration that this card expects no delivery branch. */
   noBranchExpected?: boolean;
   requiresIntegration?: boolean | null;
@@ -658,6 +726,13 @@ export interface TaskInfo {
    * board card. Null/absent means "no dependencies".
    */
   waitsOn?: WaitsOnStatus | null;
+  /**
+   * AGT-2795: keys of pending decision cards this card depends on, computed
+   * from `dependsOn` on every read. Mirrors backend `TaskInfo.BlockedBy`; the
+   * claim guard refuses Ready / In Progress while it is non-empty. Distinct
+   * from the declarative `references.blockedBy` edge list.
+   */
+  blockedBy?: string[];
   /**
    * AGT-2818: why this card cannot be picked while it sits in a pickup lane.
    * Mirrors backend `TaskInfo.PickupHold`; null/absent means the card is

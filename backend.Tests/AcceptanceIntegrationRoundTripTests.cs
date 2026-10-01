@@ -163,7 +163,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             deps.Pipeline,
             deps.Timeline,
             AgentRounds(deps),
-            NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance);
+            NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance,
+            deps.Authority);
         var result = await coordinator.EnqueueAsync(new RemoteDeliveryIntegrationRequest(
             Project,
             autoReview.Id,
@@ -247,7 +248,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             deps.Pipeline,
             deps.Timeline,
             AgentRounds(deps),
-            NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance);
+            NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance,
+            deps.Authority);
         var reviewedSubject = ReviewSubjectStore.Read(autoReview.FolderPath)!;
 
         var immediate = await coordinator.EnqueueAsync(new RemoteDeliveryIntegrationRequest(
@@ -912,7 +914,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             deps.Pipeline,
             deps.Timeline,
             AgentRounds(deps),
-            NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance);
+            NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance,
+            deps.Authority);
         var immediate = await coordinator.EnqueueAsync(new RemoteDeliveryIntegrationRequest(
             Project,
             Slug,

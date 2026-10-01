@@ -3,60 +3,69 @@ namespace AgentStudio.Connector;
 public sealed class ConnectorSecurityMiddleware(
     RequestDelegate next,
     ConnectorOptions options,
-    ConnectorSessionStore sessions)
+    ConnectorSessionStore sessions,
+    ConnectorRouteInventory inventory)
 {
+    private const string SessionPath = "/connector/session";
+
+    // The Studio negotiates on the inventory's hub path (/hubs/v1/studio since
+    // AGT-2983), so the CSRF-free negotiate follows that path, not a literal.
+    private readonly PathString _hubNegotiatePath = inventory.TaskServerOperations
+        .Single(operation => operation.Method == "WS").Path.TrimEnd('/') + "/negotiate";
+
     private static readonly HashSet<string> SafeMethods = new(
         [HttpMethods.Get, HttpMethods.Head, HttpMethods.Options],
         StringComparer.OrdinalIgnoreCase);
 
     public async Task InvokeAsync(HttpContext context)
     {
-        if (!string.Equals(context.Request.Host.Value, options.Authority, StringComparison.Ordinal))
+        var request = context.Request;
+        var origin = request.Headers.Origin.FirstOrDefault();
+        var unsafeRequest = !SafeMethods.Contains(request.Method);
+        var surface = Classify(request);
+        var sessionValid = sessions.ValidateSession(request, out var session);
+        var facts = new ConnectorRequestFacts(
+            HostAllowed: string.Equals(request.Host.Value, options.Authority, StringComparison.Ordinal),
+            Origin: origin is null
+                ? ConnectorOriginFact.Absent
+                : options.IsStudioOrigin(origin) ? ConnectorOriginFact.Studio : ConnectorOriginFact.Foreign,
+            SameOriginFetch: string.Equals(
+                request.Headers["Sec-Fetch-Site"].FirstOrDefault(),
+                "same-origin",
+                StringComparison.OrdinalIgnoreCase),
+            Surface: surface,
+            UnsafeMethod: unsafeRequest,
+            WebSocketUpgrade: context.WebSockets.IsWebSocketRequest,
+            HubNegotiate: HttpMethods.IsPost(request.Method)
+                && request.Path.Equals(_hubNegotiatePath, StringComparison.OrdinalIgnoreCase),
+            SessionValid: sessionValid,
+            CsrfValid: sessionValid && unsafeRequest && sessions.ValidateCsrf(request, session));
+
+        var admission = ConnectorRequestPolicy.Decide(facts);
+        if (admission.Rejected)
         {
-            await RejectAsync(context, StatusCodes.Status400BadRequest, "connector-host-rejected");
+            await RejectAsync(context, admission.RejectStatus!.Value, admission.RejectCode!);
             return;
         }
-
-        var origin = context.Request.Headers.Origin.FirstOrDefault();
-        if (origin is not null && !string.Equals(origin, options.StudioOrigin, StringComparison.Ordinal))
-        {
-            await RejectAsync(context, StatusCodes.Status403Forbidden, "connector-origin-rejected");
-            return;
-        }
-
-        var sessionBootstrap = context.Request.Path == "/connector/session"
-            && HttpMethods.IsGet(context.Request.Method);
-        var livenessProbe = context.Request.Path == "/healthz" || context.Request.Path == "/readyz";
-        var protectedSurface = context.Request.Path.StartsWithSegments("/api")
-            || context.Request.Path.StartsWithSegments("/hubs")
-            || (context.Request.Path == "/connector/session" && !sessionBootstrap);
-        var unsafeRequest = !SafeMethods.Contains(context.Request.Method);
-        var websocketUpgrade = context.WebSockets.IsWebSocketRequest;
-
-        if ((unsafeRequest || websocketUpgrade || sessionBootstrap)
-            && !string.Equals(origin, options.StudioOrigin, StringComparison.Ordinal))
-        {
-            await RejectAsync(context, StatusCodes.Status403Forbidden, "connector-origin-required");
-            return;
-        }
-
-        if (protectedSurface && !livenessProbe)
-        {
-            if (!sessions.ValidateSession(context.Request, out var session))
-            {
-                await RejectAsync(context, StatusCodes.Status401Unauthorized, "connector-session-required");
-                return;
-            }
-            if (unsafeRequest && !sessions.ValidateCsrf(context.Request, session))
-            {
-                await RejectAsync(context, StatusCodes.Status403Forbidden, "connector-csrf-rejected");
-                return;
-            }
-        }
+        if (admission.IssueSession) sessions.Issue(context.Response);
 
         context.Response.Headers.CacheControl = "no-store";
         context.Response.Headers["X-Content-Type-Options"] = "nosniff";
         await next(context);
+    }
+
+    private static ConnectorSurface Classify(HttpRequest request)
+    {
+        if (request.Path == "/healthz" || request.Path == "/readyz") return ConnectorSurface.Liveness;
+        if (request.Path == SessionPath)
+        {
+            return HttpMethods.IsGet(request.Method) || HttpMethods.IsPost(request.Method)
+                ? ConnectorSurface.SessionBootstrap
+                : ConnectorSurface.SessionControl;
+        }
+        return request.Path.StartsWithSegments("/api") || request.Path.StartsWithSegments("/hubs")
+            ? ConnectorSurface.Protected
+            : ConnectorSurface.Other;
     }
 
     private static async Task RejectAsync(HttpContext context, int statusCode, string code)
@@ -72,7 +81,7 @@ public static class ConnectorSessionEndpoints
 {
     public static void MapConnectorSessionEndpoints(this WebApplication app)
     {
-        app.MapGet("/connector/session", (HttpResponse response, ConnectorSessionStore sessions) =>
+        app.MapMethods("/connector/session", [HttpMethods.Get, HttpMethods.Post], (HttpResponse response, ConnectorSessionStore sessions) =>
         {
             sessions.Issue(response);
             return Results.Ok(new { status = "issued" });

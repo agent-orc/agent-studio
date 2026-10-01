@@ -153,7 +153,7 @@ loops instead.
 | Group | Routes |
 |---|---|
 | Liveness | `GET /healthz`, `GET /readyz` |
-| Protocol | `GET /api/v1/protocol`, `POST /api/v1/protocol/compatibility` |
+| Protocol | `GET /api/v1/protocol`, `POST /api/v1/protocol/compatibility`, `POST /api/v1/protocol/attach` (authenticated Studio connector handshake) |
 | Resources | `GET|POST /api/v1/workspaces`, `GET|POST /api/v1/projects`, `GET|POST /api/v1/projects/{projectId}/tasks`, `GET|PUT /api/v1/projects/{projectId}/tasks/{taskIdentity}`, `GET .../attempts`, `GET .../history?after=` |
 | Orchestrator contexts | `GET|PUT|POST /api/v1/orchestrator-contexts/projects/{projectIdentity}[/tasks/{taskIdentity}][/turns]`, `POST .../legacy-import` |
 | Hosts | `GET|PUT /api/v1/hosts/{hostId}/runtime-capacity`, `GET|PUT /api/v1/hosts/{hostId}/project-policy` |
@@ -352,7 +352,7 @@ Control stays on HTTP with leases and fences, as described in
   AGT-2983 the 27 P0 core-attach operations call their `/api/v1` routes and
   `/hubs/v1/studio` (OrchestratorApi serves those paths from its legacy
   handlers until cutover, see `backend/Host/StudioV1LegacyRouteAlias.cs`);
-  the other 259 Task Server operations still call the legacy `/api/**`. The full route inventory, classification, and the connector
+  the other 261 Task Server operations still call the legacy `/api/**`. The full route inventory, classification, and the connector
   profile that forwards classified routes to the standalone Task Server are
   slice B1 (see [Studio route ownership](../../studio-route-ownership/index.html)).
   The P0 core-attach bundle now has real Task Server v1 handlers (AGT-2755, see
