@@ -248,7 +248,10 @@ public sealed partial class TaskServerStore
                 ct);
             if (!capabilityAdmission.Eligible)
             {
-                response = new ReviewClaimResponse("empty", Message: capabilityAdmission.Message);
+                response = new ReviewClaimResponse(
+                    "empty",
+                    Message: capabilityAdmission.Message,
+                    AdmissionReason: capabilityAdmission.Reason);
                 return;
             }
             if (request.AvailableSlots <= 0)
@@ -256,10 +259,26 @@ public sealed partial class TaskServerStore
                 response = new ReviewClaimResponse("empty", Message: "Review executor has no available slot.");
                 return;
             }
+            var envelopeAdmission = await EvaluateHostEnvelopeAsync(
+                connection,
+                transaction,
+                executor.HostId,
+                HostRoles.Review,
+                request.ExecutorId,
+                ct);
+            if (!envelopeAdmission.Admitted)
+            {
+                response = new ReviewClaimResponse(
+                    "empty",
+                    Message: envelopeAdmission.Message,
+                    AdmissionReason: envelopeAdmission.Reason);
+                return;
+            }
 
             ReviewAttemptDto? attempt = null;
             ReviewSubjectDto? subject = null;
             string? capabilityBlock = null;
+            string? capabilityBlockReason = null;
             var candidates = new List<(ReviewAttemptDto Attempt, ReviewSubjectDto Subject)>();
             await using (var command = Command(connection, """
                 SELECT a.id, a.subject_id, a.task_id, a.attempt_number, a.status,
@@ -310,6 +329,7 @@ public sealed partial class TaskServerStore
                 if (!candidateAdmission.Eligible)
                 {
                     capabilityBlock = candidateAdmission.Message;
+                    capabilityBlockReason = candidateAdmission.Reason;
                     continue;
                 }
                 attempt = candidate.Attempt;
@@ -323,7 +343,8 @@ public sealed partial class TaskServerStore
                 response = new ReviewClaimResponse(
                     "empty",
                     Message: capabilityBlock
-                             ?? "No eligible immutable review subject is queued for this host failure domain.");
+                             ?? "No eligible immutable review subject is queued for this host failure domain.",
+                    AdmissionReason: capabilityBlockReason);
                 return;
             }
 

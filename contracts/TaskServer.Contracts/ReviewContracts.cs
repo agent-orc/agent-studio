@@ -183,7 +183,8 @@ public sealed record ReviewClaimResponse(
     ReviewLeaseDto? Lease = null,
     string? Message = null,
     IReadOnlyList<string>? RequiredCapabilities = null,
-    IReadOnlyList<string>? CanaryCapabilities = null);
+    IReadOnlyList<string>? CanaryCapabilities = null,
+    string? AdmissionReason = null);
 
 public sealed record ReviewLeaseRenewRequest(
     string ExecutorId,
