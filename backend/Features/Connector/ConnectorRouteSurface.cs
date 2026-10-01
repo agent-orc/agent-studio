@@ -149,9 +149,12 @@ public static class ConnectorRouteSurface
                 generation = snapshot.Generation,
                 upstream = snapshot.MaskedName,
                 protocol = probe.Protocol,
+                hubProtocol = probe.HubProtocol,
+                serverVersion = probe.ServerVersion,
                 routeChecksum = inventory.RouteChecksum,
                 lastSuccessfulProbeAt = probe.SuccessfulAtUtc ?? upstream.LastSuccessfulProbeUtc,
                 failureCode = probe.FailureCode,
+                failureReason = probe.FailureReason,
             };
             return probe.Ready
                 ? Results.Ok(body)

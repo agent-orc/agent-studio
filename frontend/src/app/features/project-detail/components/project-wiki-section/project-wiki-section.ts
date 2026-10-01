@@ -98,6 +98,8 @@ import { wikiReadStoredExpandedIds, wikiSafeReportAnchor, wikiSafeViewerTab } fr
 import { WikiClassMeta, classificationBadges, classificationMeta } from './wiki-classification';
 import { withRouteSegment } from '../../../../services/url-hash.util';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
+import { ClientService } from '../../../../services/client.service';
+import { buildDecisionInboxItems, type DecisionInboxItem } from '../../../../models/decision-card-presentation';
 import {
   WikiLinkedElement,
   extractWikiLinkedElements,
@@ -223,6 +225,10 @@ export class ProjectWikiSectionComponent implements OnDestroy {
 
   readonly tree = signal<WikiTree | null>(null);
   readonly pulse = signal<WikiPulse | null>(null);
+  private readonly clients = inject(ClientService);
+  /** AGT-2795: this project's pending decision cards, listed in the pulse inbox. */
+  readonly decisionInbox = computed(() => buildDecisionInboxItems(
+    this.tasks.jobs(), this.projectName(), (id) => this.clients.byId().get(id)?.displayName));
   readonly pulseLoading = signal(false);
 
   // ---- Wiki grading maintenance run (AGT-2051) ----
@@ -649,6 +655,10 @@ export class ProjectWikiSectionComponent implements OnDestroy {
     const rel = this.openedRel();
     if (!rel) return;
     this.stars.toggle(this.projectName(), rel, this.openedTitle());
+  }
+
+  openDecisionCard(item: DecisionInboxItem): void {
+    if (!this.taskNavigation.openTaskKey(item.taskKey)) this.taskNavigation.openReference(item.key);
   }
 
   onPulseOpen(req: WikiPulseOpenRequest): void {

@@ -1,0 +1,717 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Merge gate economics | Concept dossier</title>
+  <style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #7c7a74;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main,
+    .article {
+      width: min(70ch, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 0 0 80px;
+    }
+    header.page {
+      margin-bottom: 12px;
+      padding: 48px 0 28px;
+      border-bottom: 1px solid var(--article-line);
+    }
+    h1,
+    h2,
+    h3,
+    h4,
+    .kicker,
+    .meta,
+    .number,
+    nav,
+    table,
+    figcaption,
+    .box,
+    .callout,
+    .evidence-figure,
+    .variant-grid,
+    .evidence-list {
+      font-family: var(--article-sans);
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      margin: 56px 0 10px;
+      font-size: 1.55rem;
+      line-height: 1.25;
+    }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker,
+    .number {
+      margin: 0 0 12px;
+      color: var(--article-faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code {
+      padding: 0.08em 0.34em;
+      border-radius: 4px;
+      background: var(--article-surface-strong);
+      font: 0.84em/1.5 var(--article-mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    pre code { padding: 0; background: transparent; }
+    ul,
+    ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+    th,
+    td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box,
+    .callout {
+      margin: 24px 0;
+      padding: 18px 22px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+    .box.accent,
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .box.good,
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .box.warn,
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .box.bad,
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    figure { margin: 30px 0; }
+    figure > img,
+    figure > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .evidence-figure { margin-top: 38px; margin-bottom: 38px; }
+    .evidence-captures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+      gap: 12px;
+    }
+    .evidence-capture {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    .evidence-capture > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .capture-theme,
+    .figure-annotation {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--article-line);
+      border-radius: 999px;
+      background: var(--article-surface);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      line-height: 1.35;
+    }
+    .capture-theme {
+      top: 10px;
+      left: 10px;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+    .figure-annotation {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(28ch, calc(100% - 24px));
+      padding: 5px 10px;
+      border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line));
+      background: var(--article-link-soft);
+      color: var(--article-link);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .figure-claim { display: block; color: var(--article-ink); font-size: 0.84rem; }
+    .figure-as-of {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 14px;
+      margin-top: 6px;
+      color: var(--article-faint);
+      font-size: 0.72rem;
+    }
+    .breakout,
+    .media-breakout {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .variant-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0; }
+    .variant {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    .variant h3 { margin: 0 0 8px; }
+    .variant img,
+    .variant svg { display: block; width: 100%; height: auto; margin-top: 12px; }
+    [data-document-pattern="ui"] .variant-grid {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    [data-document-pattern="ui"] .mockup { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--article-line);
+      border-radius: 9px;
+      background: var(--article-surface);
+      color: var(--article-ink);
+      text-decoration: none;
+    }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .dim { color: var(--article-muted); }
+
+    @media (max-width: 760px) {
+      main,
+      .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout,
+      .media-breakout,
+      [data-document-pattern="ui"] .variant-grid,
+      [data-document-pattern="ui"] .mockup { width: calc(100vw - 20px); }
+      [data-document-pattern="ui"] .variant-grid { grid-template-columns: 1fr; }
+      .evidence { grid-template-columns: 1fr; }
+      .evidence-captures { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+  
+    .dg-box rect, .dg-check rect { fill: var(--article-surface); stroke: var(--article-line); }
+    .dg-accent rect { fill: var(--article-link-soft); stroke: color-mix(in srgb, var(--article-link) 45%, var(--article-line)); }
+    .dg-kicker { fill: var(--article-faint); font: 700 11px var(--article-sans); letter-spacing: 0.08em; }
+    .dg-strong { fill: var(--article-ink); font: 650 15px var(--article-sans); }
+    .dg-text { fill: var(--article-muted); font: 13px var(--article-sans); }
+    .dg-bad { fill: var(--article-bad); font: 700 13px var(--article-sans); }
+    .dg-arrow { stroke: var(--article-faint); stroke-width: 2; fill: none; marker-end: none; }
+    .ch-band { fill: var(--article-surface-strong); }
+    .ch-grid path { stroke: var(--article-line); stroke-width: 1; }
+    .ch-axis text, .ch-note { fill: var(--article-faint); font: 12px var(--article-sans); }
+    .ch-axis text { text-anchor: middle; }
+    .ch-bar rect { fill: var(--article-link); }
+    .ch-bar rect:hover { fill: color-mix(in srgb, var(--article-link) 75%, var(--article-ink)); }
+    .ch-label text { fill: var(--article-ink); font: 13px var(--article-mono); }
+    .ch-value text { fill: var(--article-muted); font: 12px var(--article-sans); }
+    figure > svg text { font-family: var(--article-sans); }
+    .variant h4 { margin: 0 0 6px; }
+  </style>
+</head>
+<body>
+<main class="article">
+  <header class="page">
+    <p class="kicker">Concept dossier &middot; AGT-2997</p>
+    <h1>Merge gate economics</h1>
+    <p class="lede">Every Agent Studio merge into develop runs the full backend suite for about 42 minutes, one merge at a time across all projects. This Dossier explains why neither existing reuse mechanism fired in the eight gates of 28/29 September 2026. It then proposes a rule set that keeps the gate honest but cheap, with modelled gate time, the guard against a wrong disjointness judgement, and implementation cards.</p>
+    <div class="meta"><span><b>Pattern</b> concept</span><span><b>Status</b> decision-pending</span><span><b>Phase</b> decision-ready</span><span><b>Source</b> AGT-2997</span><span><b>Related</b> Gates Dossier AGT-W59</span><span><b>As of</b> develop <code>742936e0</code>, 29 September 2026</span></div>
+  </header>
+
+  <section id="summary">
+    <h2><span class="number">00</span> Summary</h2>
+    <p>The gate did not fire its shortcuts for three structural reasons. None of them was an unlucky coincidence.</p>
+    <ol>
+      <li><b>Review reuse needs an unchanged develop tip and the delivery's own tree.</b> The Remote Review tests the delivery commit on its own base, not merged onto the current tip. Reuse therefore applies only when develop has not moved since the delivery's base. In the eight gates, develop had moved by 5 to 10 merges each time.</li>
+      <li><b>The per-SHA verdict cache is keyed by the new merge commit</b> and lives on the Windows host only. The review on the runner host never writes to it, and every merge produces a SHA that has never been gated before.</li>
+      <li><b>Test selection falls back to the full suite.</b> No folder-to-test-project map is configured for this repository, so every code-touching merge runs all four test commands. Even with a map, the current rules would still run the full suite for seven of the eight merges, because each touched <code>docs/</code> or more than one module.</li>
+    </ol>
+    <p>The recommended rule set combines four changes, each defined in §04:</p>
+    <ul>
+      <li>reuse the review verdict when develop moved only by path-disjoint merges;</li>
+      <li>make impact selection union mapped projects instead of falling back to the full suite;</li>
+      <li>run a nightly full suite on develop that opens a cause card and suspends disjoint reuse when red;</li>
+      <li>serialise gates per project instead of per machine.</li>
+    </ul>
+    <p>On the eight logged merges this models to about 201 gate minutes instead of 348, a 42% cut, or 25 minutes per merge instead of 43.5. Across the stated input ranges the cut stays between 37% and 46%. Four merges would have been reused. The other four touched the same code files as develop and correctly keep a full or impact-selected run.</p>
+  </section>
+
+  <section id="mechanics">
+    <h2><span class="number">01</span> How the gate decides today</h2>
+    <p>Three independent mechanisms can shorten a develop integration gate. Each has a precise firing condition, and each one failed in the logged case for a reason visible in the code.</p>
+
+    <figure class="breakout">
+      <svg viewBox="0 0 1080 330" role="img" aria-labelledby="flow-title flow-desc">
+        <title id="flow-title">Path of the logged gate ebbaef7d through the three shortcut checks</title>
+        <desc id="flow-desc">The Remote Review tests delivery 1a93b533 on its base 4e6de49c. Develop then gains eight merges to tip c6673af8. The Windows merge creates commit ebbaef7d. The review-reuse check fails because the tip moved, the per-SHA cache misses because the merge SHA is new, and test selection falls back to the full suite because no folder map exists. The gate then runs in the single machine slot.</desc>
+        <g class="dg-box"><rect x="12" y="20" width="236" height="96" rx="10"/></g>
+        <text class="dg-kicker" x="28" y="44">RUNNER HOST</text>
+        <text class="dg-strong" x="28" y="68">Remote Review</text>
+        <text class="dg-text" x="28" y="90">tests delivery 1a93b533 on</text>
+        <text class="dg-text" x="28" y="108">its own base 4e6de49c</text>
+        <g class="dg-box"><rect x="284" y="20" width="236" height="96" rx="10"/></g>
+        <text class="dg-kicker" x="300" y="44">DEVELOP</text>
+        <text class="dg-strong" x="300" y="68">8 merges land</text>
+        <text class="dg-text" x="300" y="90">216 files, tip moves to</text>
+        <text class="dg-text" x="300" y="108">c6673af8</text>
+        <g class="dg-box"><rect x="556" y="20" width="236" height="96" rx="10"/></g>
+        <text class="dg-kicker" x="572" y="44">WINDOWS TASK SERVER</text>
+        <text class="dg-strong" x="572" y="68">--no-ff merge</text>
+        <text class="dg-text" x="572" y="90">new commit ebbaef7d,</text>
+        <text class="dg-text" x="572" y="108">new tree</text>
+        <g class="dg-box dg-accent"><rect x="828" y="20" width="240" height="96" rx="10"/></g>
+        <text class="dg-kicker" x="844" y="44">ONE SLOT, ALL PROJECTS</text>
+        <text class="dg-strong" x="844" y="68">Full suite, 41-46 min</text>
+        <text class="dg-text" x="844" y="90">backend.Tests dominates</text>
+        <text class="dg-text" x="844" y="108">(1,440 of 1,860 s declared)</text>
+        <path class="dg-arrow" d="M248 68 H280"/><path class="dg-arrow" d="M520 68 H552"/><path class="dg-arrow" d="M792 68 H824"/>
+        <g class="dg-check"><rect x="12" y="150" width="1056" height="50" rx="8"/></g>
+        <text class="dg-strong" x="28" y="181">1 Review reuse</text>
+        <text class="dg-text" x="200" y="181">needs pre-merge tip = reviewed tip and merge tree = delivery tree. Tip moved, tree differs.</text>
+        <text class="dg-bad" x="1052" y="181" text-anchor="end">full</text>
+        <g class="dg-check"><rect x="12" y="210" width="1056" height="50" rx="8"/></g>
+        <text class="dg-strong" x="28" y="241">2 Per-SHA cache</text>
+        <text class="dg-text" x="200" y="241">key = merge commit SHA + profile digest, Windows-local. A new merge SHA is never cached.</text>
+        <text class="dg-bad" x="1052" y="241" text-anchor="end">miss</text>
+        <g class="dg-check"><rect x="12" y="270" width="1056" height="50" rx="8"/></g>
+        <text class="dg-strong" x="28" y="301">3 Test scope</text>
+        <text class="dg-text" x="200" y="301">work-package level, but no folder map configured: deterministic-map-full-fallback.</text>
+        <text class="dg-bad" x="1052" y="301" text-anchor="end">full</text>
+      </svg>
+      <figcaption>The logged gate (review on <code>d8f11a5f</code>, gate on tip <code>c6673af8</code>) traced through the code on develop <code>742936e0</code>. SHAs are from <code>git log --first-parent</code> of develop.</figcaption>
+    </figure>
+
+    <h3>Review reuse (AGT-2839)</h3>
+    <p><code>IntegrationGateReusePolicy.Decide</code> reuses the Remote Review verdict for tests and lint, while the compile step still runs. It requires every one of these conditions:</p>
+    <ul>
+      <li>the review outcome is Pass with a passed build/test gate;</li>
+      <li>no conflict resolution and no mechanical replay;</li>
+      <li>the same integration branch;</li>
+      <li>the reviewed delivery is an ancestor of the merge result;</li>
+      <li>the pre-merge develop tip equals the tip the review captured before its commands;</li>
+      <li>the merge result tree equals the tested tree.</li>
+    </ul>
+    <p>The tested tree is the tree of the delivery commit itself: the review checks out <code>ExpectedResultSha</code> and records <code>HEAD^{tree}</code>. Together the last two conditions mean reuse fires only when the delivery already contained the current develop tip, and nothing merged in between.</p>
+    <p>The log line <code>reviewReuse=full ... reason=develop moved since the review: tip is c6673af8, the review verified d8f11a5f</code> is condition five failing. Condition six would have failed as well: delivery <code>1a93b533</code> is based on <code>4e6de49c</code>, from 16:18 the previous afternoon.</p>
+
+    <h3>Per-SHA gate verdict cache</h3>
+    <p><code>GateResultCache</code> stores executed Ok, Warn and Fail verdicts under <code>%LocalAppData%/agentstudio/gate-results/&lt;project&gt;/</code>. The key is the exact tested commit SHA plus a profile digest. The digest covers:</p>
+    <ul>
+      <li>gate id and pipeline definition version;</li>
+      <li>toolchain identity and profile fingerprint;</li>
+      <li>required test level and lane;</li>
+      <li>the changed-file list and the commands.</li>
+    </ul>
+    <p>A hit needs the same commit SHA and the same digest. That is realistic only for:</p>
+    <ul>
+      <li>a re-gate of the same merge commit, such as a restored environment-failure candidate or an <code>AlreadyMerged</code> recovery;</li>
+      <li>a repeated promotion of the same develop tip.</li>
+    </ul>
+    <p>The cache never helps a first gate of a new merge, for three reasons:</p>
+    <ul>
+      <li>Every develop merge is a new <code>--no-ff</code> commit.</li>
+      <li>Its changed-path list is computed against the new pre-merge tip, so the digest differs too.</li>
+      <li>The runner-host review never writes to this cache: no code under <code>runner/</code> or <code>task-server/</code> references it, and the toolchain identity is host-specific.</li>
+    </ul>
+
+    <h3>Test selection</h3>
+    <p><code>PreDevelopBuildGate</code> asks for <code>work-package</code> whenever the merge touches .NET or <code>frontend/</code>. <code>DeterministicTestScope</code> then falls back to the full suite in each of these cases:</p>
+    <ul>
+      <li>the folder-to-test-project map is missing;</li>
+      <li>a changed path is unmapped;</li>
+      <li>a mapped row lists no test project;</li>
+      <li>the change spans more than one module.</li>
+    </ul>
+    <p>This repository configures no map, so the logged <code>test-level=full; selected=4</code> is the documented fallback: all four commands from <code>.agent-studio/project.yml</code>. Selection granularity is a whole test command. The class-slice planner exists but the gate does not use it, so a one-line backend change and a 60-file change cost the same 7,700 tests.</p>
+    <div class="callout" data-tone="warn">
+      <h3>What <code>full-suite=not-run; omitted=3</code> means</h3>
+      <p>In the develop code, <code>CompleteAudit</code> counts a test command as omitted only when the sequential command loop never reached it. The loop stops at the first blocking failure or timeout; a green flaky re-run lets it continue. With the full plan (build, then backend, runner, task-server and frontend tests), <code>omitted=3</code> means the gate ended at <code>backend.Tests</code>. Runner, task-server and frontend tests never ran.</p>
+      <p>A green run records <code>full-suite=map-fallback-and-run</code> instead. Either the logged gate was red or out of budget at the backend step, or the Windows host runs an older build with different audit semantics. The verdict header of those logs decides which; see Open decisions, Q0.</p>
+    </div>
+
+    <h3>Gate slots</h3>
+    <p>Two locks serialise the gates, and both span every project:</p>
+    <ul>
+      <li><code>MergeIntoDevelopRunner</code> is a singleton that holds one <code>SemaphoreSlim(1,1)</code> around merge, gate and rollback for all projects.</li>
+      <li>Inside it, <code>BuildTestGateRunner</code> takes a process semaphore plus the machine-wide file lock <code>agentstudio-build-test-gate.lock</code>.</li>
+    </ul>
+    <p>The Task Server's remote gate claim also admits one live gate attempt per host. No setting raises any of these limits. A Quality Studio or Token Economy merge that arrives during an Agent Studio gate therefore waits for it.</p>
+  </section>
+
+  <section id="night">
+    <h2><span class="number">02</span> The eight gates of 28/29 September</h2>
+    <p>The first-parent history of develop shows exactly eight merges between 20:22 and 05:00. <code>d8f11a5f</code> and <code>c6673af8</code> from the gate log are among them.</p>
+    <p>For each merge the table lists four measurements:</p>
+    <ul>
+      <li>the delivery's merge base;</li>
+      <li>how far develop had moved beyond it, which is everything the review never tested;</li>
+      <li>the files that both sides changed, after excluding gate-inert paths (§04);</li>
+      <li>the test commands the delivery can reach through the <code>ProjectReference</code> graph.</li>
+    </ul>
+    <p>Gate durations per merge are not available on this host, so every current gate is shown as the stated 41 to 46 minutes.</p>
+    <table>
+      <thead><tr><th>Merge</th><th>Time</th><th>Delivery base</th><th>Develop since base</th><th>Shared gate-relevant files</th><th>Reachable test commands</th><th>Rule outcome</th></tr></thead>
+      <tbody>
+        <tr><td><code>0e2b0f8d</code></td><td>20:22</td><td><code>6759fe30</code></td><td>5 merges, 42 files</td><td>4 (<code>runner/LeaseHeartbeat.cs</code>, <code>runner/TaskServerClient.cs</code>, ...)</td><td>backend, runner, task-server</td><td>impact selection</td></tr>
+        <tr><td><code>d8f11a5f</code></td><td>21:28</td><td><code>38ef4b3b</code></td><td>5 merges, 49 files</td><td>2 (<code>backend/Features/Tasks/LeaseEndpoints.cs</code>, ...)</td><td>all four</td><td>impact selection</td></tr>
+        <tr><td><code>aebb45b6</code></td><td>22:23</td><td><code>38ef4b3b</code></td><td>6 merges, 107 files</td><td>3 (<code>V1ReviewPlaneEndpoints.cs</code>, <code>task.model.ts</code>, ...)</td><td>backend, frontend</td><td>impact selection</td></tr>
+        <tr><td><code>65b268d5</code></td><td>23:17</td><td><code>38ef4b3b</code></td><td>7 merges, 169 files</td><td>none (2 docs only)</td><td>backend</td><td>disjoint reuse</td></tr>
+        <tr><td><code>9154dbd1</code></td><td>00:24</td><td><code>38ef4b3b</code></td><td>8 merges, 177 files</td><td>none (2 docs only)</td><td>all four</td><td>disjoint reuse</td></tr>
+        <tr><td><code>c6673af8</code></td><td>01:33</td><td><code>38ef4b3b</code></td><td>9 merges, 223 files</td><td>none</td><td>backend</td><td>disjoint reuse</td></tr>
+        <tr><td><code>ebbaef7d</code></td><td>02:56</td><td><code>4e6de49c</code></td><td>8 merges, 216 files</td><td>none (<code>release.yml</code> and 2 docs, all gate-inert)</td><td>none (<code>setup/</code> is not in the gate)</td><td>disjoint reuse</td></tr>
+        <tr><td><code>2272ce8c</code></td><td>05:00</td><td><code>4e6de49c</code></td><td>10 merges, 241 files</td><td>5 (<code>backend/Host/Program.cs</code>, <code>task-server/Program.cs</code>, ...)</td><td>backend, runner, task-server</td><td>impact selection</td></tr>
+      </tbody>
+    </table>
+    <p>Three observations follow from the table:</p>
+    <ul>
+      <li><b>More than one merge each time.</b> The card's premise, that only one unrelated merge separated review and gate, understates the drift. Measured from the delivery's base, develop had moved by 5 to 10 merges in every case. With serialised gates of about 45 minutes and a review 60 to 90 minutes earlier, an exact-tip rule cannot fire during a busy night.</li>
+      <li><b>File-level disjointness depends on gate-inert paths.</b> Without the inert list, the one fully known case (<code>ebbaef7d</code>) would not be disjoint, because both sides edited <code>.github/workflows/release.yml</code> and <code>docs/start/README.md</code>. No gate test reads either file from the real repository; the tests that mention <code>release.yml</code> write their own fixtures.</li>
+      <li><b>The gate is both too broad and incomplete.</b> <code>ebbaef7d</code> changed only <code>setup/</code>, <code>deploy/</code>, <code>scripts/release/</code> and docs. The gate ran 7,700 backend tests that cannot reach those paths, and zero of the <code>setup.Tests</code> that can. <code>setup.Tests</code>, <code>operations-server.Tests</code>, <code>orchestrator-engine.Tests</code> and <code>retention.Tests</code> are not in <code>project.yml</code> at all. They run only in the promotion gate.</li>
+    </ul>
+  </section>
+
+  <section id="alternatives" data-concept-section="alternatives" data-document-section="alternatives">
+    <h2><span class="number">03</span> Alternatives</h2>
+    <p>Four independent axes. Each option is judged on what it saves on the eight logged merges and on what it can let through.</p>
+
+    <h3>Axis A: when the review verdict may stand in for the gate</h3>
+    <div class="variant-grid">
+      <article class="variant"><h4>A1 &middot; Exact tip only (today)</h4><p>Reuse only when develop has not moved since the delivery's base. It is safe by construction. It fired for none of the eight merges and cannot fire on a busy night.</p></article>
+      <article class="variant"><h4>A2 &middot; Path-disjoint movement (recommended)</h4><p>Reuse when develop moved only through gate-green merges whose gate-relevant paths are disjoint from the delivery's, and neither side touched a global input. The gate still compiles the merge result and runs the repo-contract slice. It fires for 4 of 8 merges. It can miss a semantic interaction through unchanged code, and the nightly guard covers that residual.</p></article>
+      <article class="variant"><h4>A3 &middot; Project-reach disjoint</h4><p>As A2, but also runs every test command that both sides can reach through the project graph. The residual risk is lower, but backend.Tests references <code>runner/</code> and <code>contracts/</code>, so the command runs in 3 of the 4 reuse cases and the saving on those four merges falls from about 136 to about 53 minutes.</p></article>
+      <article class="variant"><h4>A4 &middot; Rebase before review</h4><p>Refresh every delivery onto the current tip before review, so that A1 fires. Develop moves about hourly, so the refresh would have to happen minutes before the gate. That moves the cost into re-reviews rather than removing it.</p></article>
+    </div>
+
+    <h3>Axis B: which tests a non-reused gate runs</h3>
+    <div class="variant-grid">
+      <article class="variant"><h4>B1 &middot; Full suite (effective today)</h4><p>All four commands on every code-touching merge, because no map is configured.</p></article>
+      <article class="variant"><h4>B2 &middot; Generated project map with union (recommended)</h4><p>Derive the folder-to-test-command map from the <code>.csproj</code> <code>ProjectReference</code> graph and <code>frontend/</code>, instead of maintaining it by hand. Declare gate-inert rows that select nothing and do not count as a module. Take the union of mapped commands across modules instead of falling back. Keep the full fallback for global inputs, unmapped paths and a stale map. Add the missing test projects as map-only commands. This saves little on this night, 3 to 5 minutes on three merges, because backend.Tests is reachable from most paths. It makes the gate complete for <code>setup/</code> and similar paths.</p></article>
+      <article class="variant"><h4>B3 &middot; Coverage-derived class map</h4><p>Record per-test coverage in the nightly full run and select backend test classes that cover the changed files. This is the only lever that shrinks backend.Tests itself. It needs a measured miss rate before it may gate. Deferred.</p></article>
+      <article class="variant"><h4>B4 &middot; Model-based selection</h4><p>Rejected on 25 July 2026 and recorded in AGT-W59 §5. It spends tokens to save CPU. Not reopened here.</p></article>
+    </div>
+
+    <h3>Axis C: when the full suite runs anyway</h3>
+    <div class="variant-grid">
+      <article class="variant"><h4>C1 &middot; Promotion only (today)</h4><p>The operator-run promotion gate is the only full solution-wide run. Nothing watches develop between promotions.</p></article>
+      <article class="variant"><h4>C2 &middot; Nightly on develop, plus a reuse budget (recommended)</h4><p>One scheduled full run per day on the exact develop tip, using the promotion gate command set. When red, it opens a cause card listing the merges since the last green run, and suspends disjoint reuse for the project. Separately, a reuse budget forces a full gate after 6 consecutive reused merges or 24 hours without a green full run.</p></article>
+      <article class="variant"><h4>C3 &middot; Every Nth gate full</h4><p>Simple, but it charges the full cost to an arbitrary delivery inside the merge queue, and it attributes a red result to that delivery even when an earlier one caused it.</p></article>
+    </div>
+
+    <h3>Axis D: how many gates run at once</h3>
+    <div class="variant-grid">
+      <article class="variant"><h4>D1 &middot; One slot for every project (today)</h4><p>Consistent, but a 42-minute Agent Studio gate blocks Quality Studio and Token Economy merges.</p></article>
+      <article class="variant"><h4>D2 &middot; Per-branch serialisation, host capacity 2 (recommended)</h4><p>Merge, gate and rollback stay serialised per (project, integration branch), which is the real consistency boundary. The machine lock becomes a counting semaphore with a configured host capacity, starting at 2. Queue wait across projects disappears. Two concurrent suites contend for CPU, which the metrics card must show before the capacity rises.</p></article>
+      <article class="variant"><h4>D3 &middot; Separate gate host</h4><p>The measured scale-out step already chosen in AGT-W59 D2. It composes with D2 and is not needed before the D2 measurement exists.</p></article>
+    </div>
+  </section>
+
+  <section id="recommendation" data-concept-section="recommendation" data-document-section="recommendation">
+    <h2><span class="number">04</span> Recommendation</h2>
+    <div class="callout" data-tone="accent">
+      <h3>Recommended default</h3>
+      <p>Adopt A2 + B2 + C2 + D2, in this order:</p>
+      <ol>
+        <li>metrics first;</li>
+        <li>the repo-contract slice and the inert-path declaration;</li>
+        <li>the nightly guard;</li>
+        <li>disjoint reuse;</li>
+        <li>impact union;</li>
+        <li>per-branch slots.</li>
+      </ol>
+      <p>The guard ships before the reuse widening, so that no merge is admitted on a disjointness judgement without a scheduled full run behind it.</p>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 720 300" role="img" aria-labelledby="ladder-title ladder-desc">
+        <title id="ladder-title">Proposed gate decision ladder</title>
+        <desc id="ladder-desc">Four rungs checked in order: exact tip means compile only; path-disjoint movement within the reuse budget means compile plus repo-contract slice; otherwise impact union of mapped test commands; global input, unmapped path or stale map means the full suite.</desc>
+        <g class="dg-box"><rect x="10" y="10" width="700" height="60" rx="10"/></g>
+        <text class="dg-strong" x="28" y="36">1 Exact tip and tree (today's rule)</text><text class="dg-text" x="28" y="56">compile only</text>
+        <g class="dg-box dg-accent"><rect x="10" y="82" width="700" height="60" rx="10"/></g>
+        <text class="dg-strong" x="28" y="108">2 Path-disjoint movement, within reuse budget, not suspended</text><text class="dg-text" x="28" y="128">compile + repo-contract slice (about 6% of backend tests)</text>
+        <g class="dg-box"><rect x="10" y="154" width="700" height="60" rx="10"/></g>
+        <text class="dg-strong" x="28" y="180">3 Otherwise: impact union from the generated project map</text><text class="dg-text" x="28" y="200">compile + union of reachable test commands + repo-contract slice</text>
+        <g class="dg-box"><rect x="10" y="226" width="700" height="60" rx="10"/></g>
+        <text class="dg-strong" x="28" y="252">4 Global input, unmapped path, stale map, budget exhausted</text><text class="dg-text" x="28" y="272">full suite (today's fallback)</text>
+      </svg>
+      <figcaption>Each gate takes the first rung whose conditions hold and records the rung and its reason in the receipt, next to today's <code>reviewReuse=</code> line.</figcaption>
+    </figure>
+
+    <h3>Rule set</h3>
+    <p><b>R1 Disjoint reuse.</b> Keep every existing AGT-2839 condition except the tip and tree equality. Replace those two with the following conditions:</p>
+    <ol type="a">
+      <li>Let <i>base</i> be the merge base of the reviewed delivery and the pre-merge tip. Every first-parent commit in <i>base</i>..tip is a platform merge with a green develop gate receipt, or a commit that itself passed a gate.</li>
+      <li>The delivery's changes (<i>base</i>..delivery) and develop's changes (<i>base</i>..tip) share no gate-relevant file.</li>
+      <li>Neither side touches a global input: <code>Directory.Build.*</code>, <code>Directory.Packages.props</code>, <code>global.json</code>, <code>NuGet.config</code>, <code>.nvmrc</code>, <code>.agent-studio/**</code>, <code>testsupport/**</code>, <code>tools/**</code>.</li>
+      <li>The review's command set covered the gate's full command set, proven by a matching verify-plan digest.</li>
+      <li>The project's reuse budget is not exhausted, and reuse is not suspended by a red nightly run.</li>
+    </ol>
+    <p>The gate then runs compile plus the repo-contract slice on the merge result and records <code>reviewReuse=disjoint</code> with the base, the develop range and the checked path counts.</p>
+    <p><b>R2 Gate-inert and repo-contract paths.</b> The repository declares gate-inert paths in <code>.agent-studio/project.yml</code>: <code>docs/**</code> except <code>docs/app/**</code>, <code>.github/**</code>, <code>deploy/**</code>, and root-level <code>*.md</code>. It also declares the repo-contract slice: test classes that read real repository files through a repo-root helper, tagged <code>Category=RepoContract</code>, which are about 359 of 6,319 backend test methods. An architecture test fails when a test locates the repository root without that tag. That keeps the inert list honest.</p>
+    <p><b>R3 Impact union.</b> Generate the folder map from the <code>ProjectReference</code> graph at gate time and pin it by digest. Treat gate-inert rows as selecting nothing. Union mapped commands across modules instead of falling back. Always add the repo-contract slice when a non-inert, non-code path changed. Keep the full fallback for global inputs, unmapped paths and a stale map. Add <code>setup.Tests</code>, <code>operations-server.Tests</code>, <code>orchestrator-engine.Tests</code> and <code>retention.Tests</code> as commands that run only when mapped.</p>
+    <p><b>R4 Scheduled full suite and reuse budget.</b></p>
+    <ul>
+      <li>Run the promotion command set once a day on the exact develop tip.</li>
+      <li>After 6 consecutive rung-2 merges, or 24 hours without a green full run on develop, the next gate takes rung 4.</li>
+      <li>A red nightly run opens one deduplicated cause card and sets <code>disjointReuseSuspended</code> until the next green full run.</li>
+    </ul>
+    <p><b>R5 Per-branch slots.</b> Replace the singleton merge lock with a lock keyed by (project, integration branch). Replace the machine-wide gate lock with a counting semaphore sized by <code>Gates:HostCapacity</code>, default 2. Keep rollback and push serialisation per branch.</p>
+
+    <h3>Expected gate time on the eight logged merges</h3>
+    <p>Model inputs:</p>
+    <ul>
+      <li>each current gate G = 43.5 minutes, the midpoint of the stated 41 to 46;</li>
+      <li>compile-only cost C = 8 minutes under load, an assumption;</li>
+      <li>test time G &minus; C, split by the <code>expectedDurationSeconds</code> in <code>project.yml</code>: backend 1,440 s, runner 90 s, task-server 150 s, frontend 180 s;</li>
+      <li>the repo-contract slice at 359/6,319 of backend test time.</li>
+    </ul>
+    <figure>
+      <svg viewBox="0 0 600 360" role="img" aria-labelledby="chart-title chart-desc">
+        <title id="chart-title">Modelled gate minutes per merge under the recommended rules</title>
+        <desc id="chart-desc">The observed band of 41 to 46 minutes applies to all eight merges today. Modelled: 0e2b0f8d 40.1, d8f11a5f 43.5, aebb45b6 38.9, 65b268d5 9.6, 9154dbd1 9.6, c6673af8 9.6, ebbaef7d 9.6, 2272ce8c 40.1 minutes.</desc>
+        <rect class="ch-band" x="416.1" y="16" width="30.5" height="292"/>
+        <text class="ch-note" x="431.3" y="330" text-anchor="middle">today 41-46</text>
+        <g class="ch-grid"><path d="M166 16 V308"/><path d="M227 16 V308"/><path d="M288 16 V308"/><path d="M349 16 V308"/><path d="M410 16 V308"/><path d="M471 16 V308"/></g>
+        <g class="ch-axis"><text x="166" y="350">0</text><text x="227" y="350">10</text><text x="288" y="350">20</text><text x="349" y="350">30</text><text x="410" y="350">40</text><text x="471" y="350">50 min</text></g>
+        <g class="ch-bar">
+          <rect x="166" y="22" width="244.6" height="22" rx="4"><title>0e2b0f8d 20:22 &middot; impact selection &middot; 40.1 min</title></rect>
+          <rect x="166" y="58" width="265.4" height="22" rx="4"><title>d8f11a5f 21:28 &middot; impact selection &middot; 43.5 min</title></rect>
+          <rect x="166" y="94" width="237.3" height="22" rx="4"><title>aebb45b6 22:23 &middot; impact selection &middot; 38.9 min</title></rect>
+          <rect x="166" y="130" width="58.6" height="22" rx="4"><title>65b268d5 23:17 &middot; disjoint reuse &middot; 9.6 min</title></rect>
+          <rect x="166" y="166" width="58.6" height="22" rx="4"><title>9154dbd1 00:24 &middot; disjoint reuse &middot; 9.6 min</title></rect>
+          <rect x="166" y="202" width="58.6" height="22" rx="4"><title>c6673af8 01:33 &middot; disjoint reuse &middot; 9.6 min</title></rect>
+          <rect x="166" y="238" width="58.6" height="22" rx="4"><title>ebbaef7d 02:56 &middot; disjoint reuse &middot; 9.6 min</title></rect>
+          <rect x="166" y="274" width="244.6" height="22" rx="4"><title>2272ce8c 05:00 &middot; impact selection &middot; 40.1 min</title></rect>
+        </g>
+        <g class="ch-label">
+          <text x="10" y="38">0e2b0f8d 20:22</text><text x="10" y="74">d8f11a5f 21:28</text><text x="10" y="110">aebb45b6 22:23</text><text x="10" y="146">65b268d5 23:17</text>
+          <text x="10" y="182">9154dbd1 00:24</text><text x="10" y="218">c6673af8 01:33</text><text x="10" y="254">ebbaef7d 02:56</text><text x="10" y="290">2272ce8c 05:00</text>
+        </g>
+        <g class="ch-value">
+          <text x="456" y="38">40.1 impact</text><text x="456" y="74">43.5 impact</text><text x="456" y="110">38.9 impact</text><text x="232" y="146">9.6 reuse</text>
+          <text x="232" y="182">9.6 reuse</text><text x="232" y="218">9.6 reuse</text><text x="232" y="254">9.6 reuse</text><text x="456" y="290">40.1 impact</text>
+        </g>
+      </svg>
+      <figcaption>Modelled minutes per merge (bars) against today's stated 41 to 46 minutes for every merge (shaded band). Hover a bar for its rule outcome. The table below is the same data.</figcaption>
+    </figure>
+    <table>
+      <thead><tr><th>Scenario</th><th>Gate minutes, 8 merges</th><th>Per merge</th><th>Change</th><th>Range (G 41-46, C 5-12)</th></tr></thead>
+      <tbody>
+        <tr><td>Today</td><td>348</td><td>43.5</td><td>&ndash;</td><td>328-368</td></tr>
+        <tr><td>Impact union only (B2)</td><td>287</td><td>35.9</td><td>&minus;18%</td><td>266-309</td></tr>
+        <tr><td>Disjoint reuse only (A2)</td><td>212</td><td>26.5</td><td>&minus;39%</td><td>190-238</td></tr>
+        <tr><td>Recommended (A2 + B2)</td><td><b>201</b></td><td><b>25.1</b></td><td><b>&minus;42%</b></td><td>179-227 (&minus;37% to &minus;46%)</td></tr>
+      </tbody>
+    </table>
+    <p><b>Queue effect.</b> The eight gates occupied the single slot for 348 of the 518 minutes between 20:22 and 05:00, a utilisation of 0.67. A deterministic-service queue model gives a mean wait of about 44 minutes for the next arriving merge of any project. At 25.1 minutes per gate, utilisation falls to 0.39 and the modelled wait to about 8 minutes. With per-branch slots (R5), a Quality Studio or Token Economy merge no longer waits for Agent Studio gates at all. It waits only for its own project's queue and pays the CPU contention of a second concurrent suite.</p>
+    <p><b>Relation to AGT-W59.</b> The operator decided on 25 September that the full suite runs once as the final batch gate (D1) and that host scale-out is measured (D2). The batch gate is not built. This rule set governs per-merge gates until it exists, and it stays valid inside it:</p>
+    <ul>
+      <li>disjoint reuse is per-member evidence;</li>
+      <li>the nightly run is the scheduled full evidence;</li>
+      <li>host capacity 2 is a measured step on one host, not a second host.</li>
+    </ul>
+    <p>The AGT-W59 per-SHA cache card proposes keying by tree SHA. On these merges that would not have helped either, because every merge result has a new tree.</p>
+  </section>
+
+  <section id="risks">
+    <h2><span class="number">05</span> Risks and the guard</h2>
+    <table>
+      <thead><tr><th>Risk</th><th>How it shows</th><th>Guard</th></tr></thead>
+      <tbody>
+        <tr><td>Wrong disjointness judgement: a semantic interaction through code neither side changed. For example, the delivery adds a call to a method whose behaviour a develop merge changed in another file.</td><td>develop is red while every gate was green.</td><td>The nightly full run on develop opens a cause card within 24 hours. The card lists the merges since the last green run, rung-2 merges first as suspects. Disjoint reuse is suspended for the project until the next green run. The reuse budget bounds the untested window to 6 merges.</td></tr>
+        <tr><td>Inert list rot: a test starts reading a gate-inert path from the real repository.</td><td>A doc or workflow edit breaks a test that the gate did not run.</td><td>An architecture test requires <code>Category=RepoContract</code> on every test that locates the repository root. The slice runs on every rung from 2 to 4.</td></tr>
+        <tr><td>Chained reuse: a develop merge admitted through reuse is itself the base of the next judgement.</td><td>Several unverified combinations accumulate.</td><td>Rule R1(a) requires a green gate receipt per intervening merge, and the reuse budget forces rung 4 after 6 reused merges or 24 hours.</td></tr>
+        <tr><td>Platform gap: the review runs on the Linux runner and the gate on Windows. Commit <code>6bf38f9f</code> on the same night fixed a Windows-only line-ending defect.</td><td>A Windows-only failure passes on reuse.</td><td>Compile still runs on Windows. This gap already exists under today's exact-tip reuse. A weekly Windows full run is proposed in Open decisions, Q4.</td></tr>
+        <tr><td>Review scope mismatch: the review ran fewer commands than the gate would.</td><td>Reuse stands on a partial verdict.</td><td>R1(d): the verify-plan digests must match, otherwise the gate takes rung 3.</td></tr>
+        <tr><td>CPU contention from two concurrent gates on the Windows host.</td><td>Longer gates, budget extensions, more flaky re-runs.</td><td>Start at capacity 2. The metrics card shows gate minutes and budget extensions per project. Return to 1 when p90 gate minutes rise by more than 25%.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="cards">
+    <h2><span class="number">06</span> Implementation cards</h2>
+    <p>Six independently reviewable slices, listed in <code>workbench.json</code> in delivery order. Card 1 lands first, so that every later card is judged against a measured baseline.</p>
+    <table>
+      <thead><tr><th>#</th><th>Card</th><th>Acceptance summary</th><th>Ops metric it moves</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>Gate economics metrics and Ops panel</td><td>One endpoint aggregates receipts per project: gate minutes, queue wait, rung, reuse token, and full-suite share. Its numbers match a hand count over fixture receipts. The panel shows both themes.</td><td>Baseline: gate minutes per merge (median, p90), reuse rate, queue wait p90</td></tr>
+        <tr><td>2</td><td>Repo-contract test slice and gate-inert declaration</td><td>All repo-root tests are tagged. The guard test fails on an untagged new one. The inert and global lists are parsed from <code>project.yml</code>.</td><td>Precondition for rung 2</td></tr>
+        <tr><td>3</td><td>Nightly develop full-suite guard</td><td>One run per day on the exact tip. A red run creates one deduplicated cause card with the suspect list and sets suspension. A green run clears it.</td><td>Days since last green full run, suspension state</td></tr>
+        <tr><td>4</td><td>Disjoint-movement review reuse</td><td>The policy table tests cover every R1 condition. The receipt records the rung and ranges. Replaying the eight logged merges yields 4 reuses.</td><td>Reuse rate target at least 40%; median gate minutes at most 25</td></tr>
+        <tr><td>5</td><td>Impact union from a generated project map</td><td>The map is generated from the <code>.csproj</code> graph. Union replaces the multi-module fallback. <code>setup/</code>-only merges run <code>setup.Tests</code>, not backend.Tests.</td><td>Full-suite share of gates</td></tr>
+        <tr><td>6</td><td>Per-branch gate slots with host capacity</td><td>Two projects gate concurrently. Same-branch merges stay serialised. Rollback semantics are unchanged. The capacity setting is visible.</td><td>Cross-project queue wait p90 at most 5 min</td></tr>
+      </tbody>
+    </table>
+    <p>The Ops panel defines its metrics exactly:</p>
+    <ul>
+      <li><b>Gate minutes per merge:</b> the receipt <code>durationMs</code> of the final develop gate per integrated task, excluding queue wait. Median and p90 over 7 and 30 days, per project and for all projects.</li>
+      <li><b>Reuse rate:</b> merges on rung 1 or 2 divided by all gated merges, split into exact and disjoint.</li>
+      <li><b>Queue wait:</b> <code>GateQueueWaitMs</code> plus the time spent waiting for the merge lock.</li>
+      <li><b>Full-suite share:</b> gates on rung 4 divided by all gates.</li>
+      <li><b>Guard state:</b> the result and SHA of the last nightly run, and whether reuse is suspended.</li>
+    </ul>
+  </section>
+
+  <section id="evidence" data-concept-section="evidence" data-document-section="evidence">
+    <h2><span class="number">07</span> Evidence</h2>
+    <p>Code facts are cited against develop <code>742936e0</code>. The history analysis ran <code>git diff --name-only</code> over the first-parent merges of develop, 28 September 20:00 to 29 September 06:00. The gate logs themselves are on the Windows Task Server and were not readable from the runner host, so per-gate durations come from the card. This Dossier makes no claim about a rendered product surface. The Ops panel is a proposal, and the absence of an Ops view is stated as a code fact, so it carries no screenshot.</p>
+    <div class="evidence-list">
+      <a class="evidence" href="#ev-reuse"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-reuse">Reuse requires the exact tip and the delivery tree</b><small><code>backend/Features/Pipeline/IntegrationGateReusePolicy.cs:149-165</code>; tip captured before commands at <code>runner/RemoteReviewWorkspace.cs:218-231</code>; tested tree is <code>HEAD^{tree}</code> of <code>ExpectedResultSha</code> at <code>runner/RemoteReviewWorkspace.cs:163-168</code>; inputs built at <code>backend/Features/Pipeline/MergeIntoDevelopRunner.cs:961-986</code>.</small></span></a>
+      <a class="evidence" href="#ev-cache"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-cache">Verdict cache is per commit SHA and host-local</b><small><code>backend/Features/Pipeline/GateResultCache.cs:43-49</code> (LocalApplicationData root), <code>:64-75</code> (SHA and digest match), <code>:137-159</code> (digest includes changed files and toolchain). <code>docs/system/domains/pipeline.md:32</code> and the Gates Dossier describe the key as a tree SHA; the code uses the commit SHA.</small></span></a>
+      <a class="evidence" href="#ev-scope"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-scope">Missing map, docs rows and module spans force the full suite</b><small><code>backend/Features/Pipeline/DeterministicTestScope.cs:33-35</code>, <code>:53-57</code>, <code>:78-82</code>, <code>:106-116</code>; level matrix at <code>backend/Features/Pipeline/PreDevelopBuildGate.cs:71-76</code>; commands and expected durations in <code>.agent-studio/project.yml</code>.</small></span></a>
+      <a class="evidence" href="#ev-omitted"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b id="ev-omitted"><code>omitted=3</code> means the gate stopped at backend.Tests</b><small><code>backend/Features/Pipeline/BuildTestGateRunner.cs:1104-1154</code> (audit reason and <code>CompleteAudit</code>) with the sequential loop at <code>:948-1000</code>. Holds for the develop code; the host build and the log verdict header are unverified.</small></span></a>
+      <a class="evidence" href="#ev-slots"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-slots">One slot across projects</b><small><code>backend/Features/Pipeline/MergeIntoDevelopRunner.cs:60</code> and <code>:166</code> (singleton merge lock), <code>backend/Features/Pipeline/BuildTestGateRunner.cs:269-271</code> (machine lock), <code>task-server/TaskServerGateStore.cs:220-229</code> (one live gate per host).</small></span></a>
+      <a class="evidence" href="#ev-history"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-history">Eight merges, 5 to 10 merges of drift, 4 path-disjoint</b><small>First-parent develop history <code>0e2b0f8d</code> to <code>2272ce8c</code>; overlap computed on <code>base..delivery</code> against <code>base..tip</code> with the §04 inert and global lists. No gate test reads the real <code>.github/</code> or <code>deploy/</code> files: <code>PublishTargetServiceTests</code> and <code>PublishActionServiceTests</code> write fixtures.</small></span></a>
+      <a class="evidence" href="#ev-reach"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-reach">Test reach from the project graph</b><small><code>backend.Tests</code> references backend, update-service, runner and testsupport; backend references TaskServer.Contracts, cli-hosting, retention and the analyzer. <code>setup.Tests</code> and four other test projects are not in <code>project.yml</code>. 33 backend test files (359 of 6,319 test methods) locate the repository root.</small></span></a>
+      <a class="evidence" href="#ev-sched"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-sched">No nightly run, no cause card, no Ops view</b><small>Only <code>task-server/RetentionSchedulerHostedService.cs</code> runs at a fixed hour (<code>TaskServerOptions.cs:35</code>). The nearest card mechanism is <code>FailureInterventionService.RaiseAsync</code> (<code>backend/Features/Pipeline/FailureIntervention/FailureInterventionService.cs:104-131</code>), fired only by a task's own failure. <code>studio-shell.types.ts:12</code> declares no ops tab. <code>GateResultCache.Report</code> already computes the same-SHA retest rate, but no screen shows it.</small></span></a>
+      <a class="evidence" href="#ev-model"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b id="ev-model">Gate-time model</b><small>Inputs: G 41-46 min (card), C 5-12 min (assumption; supporting point: <code>dotnet build agent-taskboard.sln --no-restore</code> took 568 s on the 12-core Linux runner host at load average 55 to 94 on 29 September, without the frontend build, which is inside the range but is not a Windows figure), test split by <code>expectedDurationSeconds</code>, repo-contract slice by test-method share. Card 1 replaces every assumed input with measured receipts.</small></span></a>
+    </div>
+  </section>
+
+  <section id="open-decisions" data-concept-section="open-decisions" data-document-section="open-decisions">
+    <h2><span class="number">08</span> Open decisions</h2>
+    <p>Each question carries a recommended working option. A promoted card uses it unless an operator decision records another.</p>
+    <table>
+      <thead><tr><th>Question</th><th>Options</th><th>Recommended</th></tr></thead>
+      <tbody>
+        <tr><td>Q0 Verdict of the logged gates</td><td>Read the verdict header of the eight <code>pre-develop-build-gate-N.log</code> files on the Windows host.</td><td>Card 1 reads them as its first baseline. The rules above hold either way. A red backend step would mean part of the 42 minutes was a failed run, not a green one.</td></tr>
+        <tr><td>Q1 Disjointness granularity</td><td>A2 file-level with inert and global lists; A3 project reach; A1 exact tip only</td><td><b>A2.</b> It fires for 4 of 8 merges. A3 keeps about 40% of the saving.</td></tr>
+        <tr><td>Q2 Gate content on reuse</td><td>compile + repo-contract slice; compile only; plus shared-reach commands</td><td><b>Compile + repo-contract slice.</b> It covers the only known path by which an inert-classified file reaches a test.</td></tr>
+        <tr><td>Q3 Reuse budget</td><td>6 merges or 24 hours; 3 merges; unbounded</td><td><b>6 merges or 24 hours</b>, whichever comes first. That matches roughly one night of traffic and the nightly cadence.</td></tr>
+        <tr><td>Q4 Where the nightly run executes</td><td>Linux runner host outside the Windows slot; Windows gate slot; promotion only</td><td><b>Runner host, daily at 07:00 Europe/Berlin</b>, on the exact develop tip. That is one of the two quietest develop hours from 15 to 29 September (4 of 185 merges; 09:00 had 3), and the result lands before the operator's day starts. Add a weekly Windows full run in the gate slot on Sunday at 06:00.</td></tr>
+        <tr><td>Q5 Response to a red nightly run</td><td>Cause card + suspend disjoint reuse; cause card only; block all merges</td><td><b>Cause card + suspension.</b> Merges keep flowing at rungs 3 and 4, so develop is not frozen.</td></tr>
+        <tr><td>Q6 Slot model</td><td>Per (project, branch) with host capacity 2; per project unbounded; keep one slot</td><td><b>Per branch, capacity 2</b>, reverting to 1 when p90 gate minutes rise by more than 25%.</td></tr>
+        <tr><td>Q7 Where the Ops metrics appear</td><td>Cross-project block plus a per-project row in the pipeline-health block; project hub only; report only</td><td><b>Cross-project block plus a per-project row</b>, because the slot is shared across projects and a per-project view hides the queue.</td></tr>
+        <tr><td>Q8 Class-level selection (B3)</td><td>Defer until the nightly run records coverage; start now</td><td><b>Defer.</b> Revisit when card 1 shows backend.Tests still dominating after the reuse rung.</td></tr>
+      </tbody>
+    </table>
+    <p class="dim">Scope note: this concept run may change only this Dossier directory, so the one-row entry in <code>docs/start/README.md</code> that repository rules ask for with a new document is left to the promotion of this Dossier. The two stale descriptions noted in Evidence (tree SHA as cache key; the class-slice comment in <code>PreDevelopBuildGate</code>) are likewise left to card 4.</p>
+  </section>
+
+  <!-- agent-studio:implementation-section:start -->
+  <section id="implementation" data-document-section="implementation">
+    <h2><span class="number">09</span> Implementation</h2>
+    <p>Delivery slices append their current implementation status here. Decision content above remains unchanged. Each slice is one <code>workbench.json</code> <code>implementationTasks</code> entry with a bounded <code>acceptanceScope</code>.</p>
+    <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+    </ol>
+  </section>
+  <!-- agent-studio:implementation-section:end -->
+</main>
+</body>
+</html>

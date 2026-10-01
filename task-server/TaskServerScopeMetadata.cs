@@ -2,7 +2,11 @@ using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.TaskServer;
 
-public sealed record TaskServerScopeMetadata(string Scope);
+public sealed record TaskServerScopeMetadata(string Scope, IReadOnlyList<string>? Alternatives = null)
+{
+    public bool Allows(IReadOnlySet<string> granted)
+        => granted.Contains(Scope) || (Alternatives?.Any(granted.Contains) ?? false);
+}
 
 public sealed record TaskServerPrincipal(
     string PrincipalId,
@@ -21,6 +25,12 @@ public static class TaskServerScopeExtensions
         this RouteHandlerBuilder builder,
         string scope)
         => builder.WithMetadata(new TaskServerScopeMetadata(scope));
+
+    public static RouteHandlerBuilder RequireAnyTaskServerScope(
+        this RouteHandlerBuilder builder,
+        string scope,
+        params string[] alternatives)
+        => builder.WithMetadata(new TaskServerScopeMetadata(scope, alternatives));
 
     public static TBuilder RequireTaskServerScope<TBuilder>(
         this TBuilder builder,

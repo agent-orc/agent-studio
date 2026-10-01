@@ -7,7 +7,8 @@ approved single-host exception to the dedicated-VM plan in
 
 The rehearsal used Docker Compose with the Task Server, Engine, backup sidecar,
 and TLS edge on the Runner host. The edge bound only to loopback. The Windows
-connector and live reverse tunnel were not changed. A host outage takes both
+connector and live reverse tunnel were not changed; the connector attach
+procedure below was added after gate 4 closed (AGT-2984). A host outage takes both
 Runner and control plane down. Revisit separate hosts with Dossier AGT-W49.
 
 ## Daily health
@@ -66,6 +67,101 @@ it did not exercise the Windows connector, reverse tunnel, or live Runner.
 Returning to the remote host after
 accepted local mutations requires a new freeze, inventory, backup, and import.
 
+## Studio connector attach
+
+The Windows Studio reaches this Task Server only through the hardened
+connector profile of the same release (gate 4, closed by AGT-2984). The
+connector is `OrchestratorApi.exe` with `OrchestratorApi__Profile=connector`.
+It listens only on `http://[::1]:5031`, accepts browser requests only from
+`http://localhost:4011` and `http://[::1]:4011`, and injects the Studio
+credential after the browser boundary. The legacy `agent-studio-bff.exe`
+forwarder must not attach a remote upstream, and `switch-upstream.ps1` refuses
+it. On the single host the connector reaches the loopback TLS edge through
+the existing supervised SSH link; WireGuard is not required.
+
+1. **Forward the edge.** On Windows, keep an SSH local forward from a loopback
+   port to the edge on `agent-runner-01`, for example
+   `ssh -N -L 127.0.0.1:18443:127.0.0.1:<edge-port> agent-runner-01`, under
+   the same supervision as the existing link. The connector validates the
+   edge certificate by name and pinned SHA-256. Map the certificate's host
+   name to `127.0.0.1` in the Windows hosts file, and use that name in the
+   base URL.
+2. **Issue or rotate the Studio credential.** List the principals with
+   `GET /api/v1/management/principals` and pick the one of kind `studio`.
+   Then call `POST /api/v1/management/principals/<studio-principal>/rotate`
+   with `{"overlapSeconds":300}`, as in
+   [Rotate and revoke principals](task-server.md#rotate-and-revoke-principals).
+   Redirect the one-time response to a protected file.
+3. **Store it in Credential Manager** as the Windows user who runs Studio:
+
+   ```powershell
+   .\deploy\windows\studio-connector\set-studio-credential.ps1 `
+       -FromFile C:\Users\<user>\studio-rotation.json -RemoveSourceFile
+   ```
+
+   Without `-FromFile`, the script prompts for the credential as a
+   SecureString. On a Linux connector, write the credential to the file named
+   by `Connector:CredentialFile` instead (default
+   `~/.config/agent-studio/studio-connector.credential`), for example
+   `install -m 600 /dev/null <file>` and then write the value. A group- or
+   world-readable file, or a symbolic link, is refused.
+4. **Configure the connector.** `C:\ProgramData\AgentOrchestrator\studio-connector.env`
+   holds no secret; the connector refuses to boot if a credential key is
+   present:
+
+   ```text
+   OrchestratorApi__Profile=connector
+   Connector__Upstream__Mode=remote
+   Connector__Upstream__BaseUrl=https://<edge-certificate-name>:18443
+   Connector__Upstream__TlsCertificateSha256=<edge certificate SHA-256>
+   Connector__Upstream__Generation=1
+   Connector__Upstream__MaskedName=single-host-task-server
+   Connector__CredentialTarget=AgentStudio/TaskServer/studio-robert-windows
+   ```
+
+5. **Register and start the connector** from a published OrchestratorApi
+   build of the same release. The task runs in the Studio user's interactive
+   session because an S4U session cannot read that user's Credential Manager:
+
+   ```powershell
+   .\deploy\windows\studio-connector\register-studio-connector.ps1 `
+       -InstallRoot C:\AgentOrchestrator\connector\<version> `
+       -ExecutableName OrchestratorApi.exe
+   ```
+
+6. **Prove the attach.** `GET http://[::1]:5031/readyz` must report
+   `"status":"ready"` with the expected `serverVersion`, `protocol`, and
+   `hubProtocol`. The connector also logs the attach result at startup. On
+   refusal, `failureCode` and `failureReason` name the cause:
+
+   | `failureCode` | Operator action |
+   |---|---|
+   | `credential-unavailable`, `credential-empty`, `credential-file-insecure` | Store the credential (step 3); fix the file mode on Linux. |
+   | `credential-rejected` | The Task Server returned 401. Store the current credential; it is re-read without a restart. |
+   | `credential-not-studio` | The stored credential is a Runner, Engine, or management principal. Store the Studio principal. |
+   | `protocol-incompatible`, `hub-protocol-incompatible`, `hub-path-mismatch`, `attach-unsupported` | Connector and Task Server releases differ. Install the matching release on both sides. |
+   | `upstream-not-ready`, `upstream-unavailable` | Check the SSH forward, the edge, and the Task Server `/readyz`. |
+
+7. **Prove the browser boundary.** Open Studio at `http://localhost:4011`.
+   Require a board read and one reversible mutation to succeed, and a
+   SignalR reconnect. Then revoke the previous Studio credential once the
+   overlap ends.
+
+Credential rotation later repeats steps 2, 3, and 6 without restarting the
+connector. To move between the remote and the Windows fallback upstream, use
+`deploy/windows/fallback/switch-upstream.ps1`. For a connector-profile env
+file it rewrites the `Connector__Upstream__*` keys and the credential target,
+bumps the generation, and gates on the connector's `/readyz` attach result.
+The fallback Task Server's Studio credential lives under its own target
+(default `AgentStudio/TaskServer/studio-robert-windows/local`).
+
+The connector negative-test matrix (absent and invalid bearer, cross-origin,
+missing Origin, CSRF, replayed token, API and hub protocol mismatch) is part
+of the deployment regression scenario evidence. Run
+`scripts/scenario.sh --target inproc --level full --report-dir <dir>` on the
+release candidate and attach `connector-negative-matrix.md` to the cutover
+report.
+
 ## Production cutover window
 
 The operator agent starts in the first 22:00 to 02:00 Europe/Berlin night
@@ -112,7 +208,7 @@ authority before the first mutation. Capture the response bodies and exit codes.
 | 15 to 25 min | Put Windows Task Server into `Maintenance` after the drain check. Stop scheduled mutations. Prove a write is refused, then make the final workspace commit and push. Record commit SHA, clean Git status, and remote ref SHA. |
 | 25 to 45 min | Produce final inventory, archive, Git bundle, hashes and file manifest. Transfer the frozen copy, including the measured evidence overlay, to `agent-runner-01`. Verify `git fsck`, refs, manifest, case collisions, and per-project and per-state counts. |
 | 45 to 60 min | Start the remote Task Server in `Maintenance`; inventory the staged source and require exact count and hash parity. Import once with the frozen migration ID. Save the pre-import backup ID and signed import report. Abort on every unexplained warning or mismatch. |
-| 60 to 70 min | Verify remote restore readiness, start Engine, switch the Studio connector to the remote loopback origin, then switch Runner registration. Disable the former Windows-origin tunnel only after the new supervised link is healthy. Keep admission closed. |
+| 60 to 70 min | Verify remote restore readiness, start Engine, switch the Studio connector to the remote loopback origin (see [Studio connector attach](#studio-connector-attach); require `/readyz` ready), then switch Runner registration. Disable the former Windows-origin tunnel only after the new supervised link is healthy. Keep admission closed. |
 | 70 to 85 min | Open remote admission. Check authenticated board read, reversible task mutation, SignalR reconnect, claim and renewal, artifact upload, completion, Engine post-steps, and Studio detach and reconnect. Require the Windows store to refuse a write throughout. |
 | 85 to 90 min | Sign the gate matrix and cutover report, record sole-writer evidence and recovery point, and leave the Windows fallback package and rollback path warm for the whole window. |
 
@@ -139,7 +235,8 @@ store after a remote mutation. A later forward switch after accepted Windows
 mutations requires a new freeze, inventory, backup, and import.
 
 Before scheduling, the operator agent must supply the workspace repository
-write credential, the supervised Windows connector path, a genuinely off-host
+write credential, the supervised Windows connector path (attached as in
+[Studio connector attach](#studio-connector-attach)), a genuinely off-host
 backup with Windows restore proof, a durable home for past evidence, and a
 decision for the 44 orphan images. The host outage limitation remains accepted
 for the single-operator setup and is revisited with Dossier AGT-W49.

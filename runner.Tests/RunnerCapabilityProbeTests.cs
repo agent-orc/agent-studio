@@ -45,6 +45,11 @@ public sealed class RunnerCapabilityProbeTests
         Assert.Contains(advertised, item => item.Key == GateCapabilities.BundleMaterialization);
         Assert.DoesNotContain(advertised, item => item.Key == CapabilityProtocol.ReviewExecutor);
         Assert.DoesNotContain(advertised, item => item.Key == CapabilityProtocol.CodingExecutor);
+        var operatingSystemClass = OperatingSystem.IsWindows() ? "windows"
+            : OperatingSystem.IsLinux() ? "linux"
+            : OperatingSystem.IsMacOS() ? "macos" : "other";
+        Assert.Contains(advertised, item => item.Key == $"platform:{operatingSystemClass}"
+                                           && item.Status == "ready");
     }
 
     [Fact]

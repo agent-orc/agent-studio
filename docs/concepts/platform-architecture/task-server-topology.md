@@ -153,7 +153,7 @@ loops instead.
 | Group | Routes |
 |---|---|
 | Liveness | `GET /healthz`, `GET /readyz` |
-| Protocol | `GET /api/v1/protocol`, `POST /api/v1/protocol/compatibility` |
+| Protocol | `GET /api/v1/protocol`, `POST /api/v1/protocol/compatibility`, `POST /api/v1/protocol/attach` (authenticated Studio connector handshake) |
 | Resources | `GET|POST /api/v1/workspaces`, `GET|POST /api/v1/projects`, `GET|POST /api/v1/projects/{projectId}/tasks`, `GET|PUT /api/v1/projects/{projectId}/tasks/{taskIdentity}`, `GET .../attempts`, `GET .../history?after=` |
 | Orchestrator contexts | `GET|PUT|POST /api/v1/orchestrator-contexts/projects/{projectIdentity}[/tasks/{taskIdentity}][/turns]`, `POST .../legacy-import` |
 | Hosts | `GET|PUT /api/v1/hosts/{hostId}/runtime-capacity`, `GET|PUT /api/v1/hosts/{hostId}/project-policy` |

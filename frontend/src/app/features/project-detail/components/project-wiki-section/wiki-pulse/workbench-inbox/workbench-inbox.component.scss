@@ -212,3 +212,16 @@
   color: var(--pwiki-paper-muted, var(--studio-fg-muted));
   font-size: 0.76rem;
 }
+
+// AGT-2795: an overdue decision names its wait in the warn register.
+.wbinbox__decision-meta {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wbinbox button[data-overdue='true'] .wbinbox__decision-meta {
+  color: var(--studio-accent-warn-strong);
+  font-weight: 700;
+}

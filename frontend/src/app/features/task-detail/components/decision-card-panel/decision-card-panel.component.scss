@@ -1,0 +1,286 @@
+:host { display: block; min-width: 0; }
+
+// AGT-2795: decision card call to action. Vocabulary follows the Dossier
+// decision panel (stage pill with a dot, receipt row, accent-3 primary
+// action). An open decision is an acute state and reads as a full warn tint;
+// a decided card is history and calms to the neutral surface (R1: no accent
+// bar, R4: acute signals only while acute).
+.decision-card {
+  display: grid;
+  gap: var(--studio-spacing-2);
+  margin: var(--studio-spacing-2) var(--studio-spacing-3);
+  padding: var(--studio-spacing-3) var(--studio-spacing-4);
+  border: 1px solid color-mix(in srgb, var(--studio-accent-warn) 42%, var(--studio-border));
+  border-radius: var(--studio-radius-md);
+  background: color-mix(in srgb, var(--studio-accent-warn) 7%, var(--studio-bg-elevated));
+  color: var(--studio-fg);
+  font-size: 0.8rem;
+
+  &[data-open='false'] {
+    border-color: var(--studio-border);
+    background: var(--studio-bg-elevated);
+  }
+}
+
+.decision-card__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--studio-spacing-2);
+  min-width: 0;
+}
+
+.decision-card__kind {
+  color: var(--studio-accent-warn-strong);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+
+  .decision-card[data-open='false'] & { color: var(--studio-fg-muted); }
+}
+
+.decision-card__stage {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--studio-spacing-1);
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--studio-accent-warn) 16%, transparent);
+  font-size: 0.68rem;
+  white-space: nowrap;
+
+  i {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--studio-accent-warn);
+  }
+
+  .decision-card[data-open='false'] & {
+    background: color-mix(in srgb, var(--studio-success) 10%, transparent);
+    i { background: var(--studio-success); }
+  }
+}
+
+.decision-card__meta {
+  color: var(--studio-fg-muted);
+  font-size: 0.72rem;
+
+  strong { color: var(--studio-fg-strong); }
+  &[data-overdue='true'] { color: var(--studio-accent-warn-strong); font-weight: 700; }
+}
+
+.decision-card__num { font-variant-numeric: tabular-nums; }
+
+.decision-card__question {
+  margin: 0;
+  color: var(--studio-fg-strong);
+  font-size: 0.95rem;
+  line-height: 1.35;
+}
+
+.decision-card__recommendation,
+.decision-card__blocks,
+.decision-card__notice,
+.decision-card__error {
+  margin: 0;
+  font-size: 0.75rem;
+}
+
+.decision-card__blocks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--studio-spacing-1);
+  color: var(--studio-fg-muted);
+}
+
+.decision-card__link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--studio-wiki-link);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.decision-card__rationale,
+.decision-card__reopen label {
+  display: grid;
+  gap: var(--studio-spacing-1);
+  font-size: 0.72rem;
+
+  em { color: var(--studio-fg-muted); font-style: normal; }
+}
+
+.decision-card textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--studio-spacing-2);
+  border: 1px solid var(--studio-border-strong);
+  border-radius: var(--studio-radius-sm);
+  background: var(--studio-bg-surface);
+  color: var(--studio-fg-strong);
+  font: inherit;
+  resize: vertical;
+}
+
+.decision-card__options {
+  display: grid;
+  gap: var(--studio-spacing-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.decision-card__option {
+  display: grid;
+  gap: var(--studio-spacing-1);
+  padding: var(--studio-spacing-2) var(--studio-spacing-3);
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius-sm);
+  background: var(--studio-bg-surface);
+
+  &[data-recommended='true'] {
+    border-color: color-mix(in srgb, var(--studio-accent-3) 55%, var(--studio-border));
+    background: color-mix(in srgb, var(--studio-accent-3) 7%, var(--studio-bg-surface));
+  }
+  &[data-chosen='true'] {
+    border-color: color-mix(in srgb, var(--studio-success) 55%, var(--studio-border));
+    background: color-mix(in srgb, var(--studio-success) 8%, var(--studio-bg-surface));
+  }
+}
+
+.decision-card__option-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--studio-spacing-2);
+  min-width: 0;
+}
+
+.decision-card__option-id {
+  color: var(--studio-fg-muted);
+  font: 700 0.72rem/1 var(--font-mono);
+}
+
+.decision-card__option-label {
+  flex: 1 1 12rem;
+  min-width: 0;
+  color: var(--studio-fg-strong);
+}
+
+.decision-card__tag {
+  padding: 0 var(--studio-spacing-2);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--studio-accent-3) 16%, transparent);
+  color: var(--studio-accent-3-strong);
+  font-size: 0.66rem;
+  font-weight: 700;
+  white-space: nowrap;
+
+  &--chosen {
+    background: color-mix(in srgb, var(--studio-success) 16%, transparent);
+    color: var(--studio-success);
+  }
+}
+
+.decision-card__facets {
+  display: grid;
+  gap: var(--studio-spacing-1);
+  margin: 0;
+
+  div { display: grid; grid-template-columns: 7rem minmax(0, 1fr); gap: var(--studio-spacing-2); }
+  dt { color: var(--studio-fg-muted); font-size: 0.7rem; }
+  dd { margin: 0; }
+}
+
+.decision-card button {
+  min-height: 28px;
+  padding: var(--studio-spacing-1) var(--studio-spacing-3);
+  border: 1px solid var(--studio-border-strong);
+  border-radius: var(--studio-radius-sm);
+  background: var(--studio-bg-surface);
+  color: var(--studio-fg-strong);
+  font: inherit;
+  cursor: pointer;
+}
+
+.decision-card .decision-card__link { min-height: 0; padding: 0; border: 0; background: transparent; color: var(--studio-wiki-link); }
+
+.decision-card .decision-card__choose,
+.decision-card .decision-card__primary {
+  border-color: var(--studio-accent-3);
+  background: color-mix(in srgb, var(--studio-accent-3) 16%, var(--studio-bg));
+}
+
+.decision-card button:disabled { cursor: not-allowed; opacity: 0.55; }
+.decision-card button:focus-visible,
+.decision-card textarea:focus-visible,
+.decision-card a:focus-visible {
+  outline: 2px solid var(--studio-accent-3);
+  outline-offset: 2px;
+}
+
+.decision-card__receipt {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--studio-spacing-1) var(--studio-spacing-2);
+  font-size: 0.75rem;
+}
+
+.decision-card__receipt-note { flex: 1 1 100%; }
+
+.decision-card__record {
+  flex: 1 1 100%;
+  color: var(--studio-wiki-link);
+}
+
+.decision-card__reopen {
+  display: grid;
+  gap: var(--studio-spacing-2);
+}
+
+.decision-card__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--studio-spacing-2);
+}
+
+.decision-card__history {
+  display: grid;
+  gap: var(--studio-spacing-1);
+  margin: 0;
+  padding: var(--studio-spacing-2) 0 0;
+  border-top: 1px solid var(--studio-border);
+  color: var(--studio-fg-muted);
+  font-size: 0.7rem;
+  list-style: none;
+}
+
+.decision-card__history-text { display: block; color: var(--studio-fg); }
+
+.decision-card__notice {
+  padding: var(--studio-spacing-2) var(--studio-spacing-3);
+  border-radius: var(--studio-radius-sm);
+  background: color-mix(in srgb, var(--studio-warn) 10%, transparent);
+}
+
+.decision-card__error {
+  padding: var(--studio-spacing-2) var(--studio-spacing-3);
+  border-radius: var(--studio-radius-sm);
+  background: color-mix(in srgb, var(--studio-error) 8%, transparent);
+  color: var(--studio-error);
+}
+
+@media (max-width: 700px) {
+  .decision-card { margin-inline: var(--studio-spacing-2); padding-inline: var(--studio-spacing-3); }
+  .decision-card__facets div { grid-template-columns: 1fr; gap: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .decision-card * { transition-duration: 0s !important; }
+}

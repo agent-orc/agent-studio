@@ -54,6 +54,8 @@ import {
   overflowActionsFor,
   primaryActionFor,
   mergeAcceptViewFor,
+  triageDecisionRefusal,
+  triageDecisionRowState,
   type MergeAcceptView,
   type TriageButton,
 } from './features/task-detail/runtime';
@@ -1262,6 +1264,11 @@ export class App implements OnInit, OnDestroy {
     const status = this.selectedJob()?.info.integration?.status;
     return status !== 'integrated' && status !== 'not-applicable';
   });
+  /** AGT-2795: the decision lane guard's refusal for the studio primary move. */
+  readonly studioPrimaryDecisionRefusal = computed(() => {
+    const sel = this.selectedJob();
+    return sel ? triageDecisionRefusal(sel.info, this.studioTriagePrimary()) : null;
+  });
   readonly studioTriageHasActions = computed(
     () => this.studioTriagePrimary() !== null || this.studioTriageOverflow().length > 0 || this.studioCommitActionsAvailable(),
   );
@@ -1291,9 +1298,11 @@ export class App implements OnInit, OnDestroy {
       primaryLabel: label,
       primaryTooltip: this.studioPrimaryAwaitingGit()
         ? 'Checking git status — action available once loaded.'
-        : `${this.studioMergeAcceptView()?.statusTooltip || label} (Enter)`,
+        : this.studioPrimaryDecisionRefusal()
+          ?? `${this.studioMergeAcceptView()?.statusTooltip || label} (Enter)`,
       awaitingGit: this.studioPrimaryAwaitingGit(),
       blockedByIntegration: this.studioPrimaryBlockedByIntegration(),
+      blockedByDecision: !!this.studioPrimaryDecisionRefusal(),
       actingId: this.studioTriageActingId(),
       menuItems: this.studioTriageMenuItems(),
     };
@@ -1314,12 +1323,14 @@ export class App implements OnInit, OnDestroy {
   }
   studioTriageMenuItems(): MenuItem[] {
     const blocked = this.updateClient.mutationsBlocked();
+    const info = this.selectedJob()?.info;
     const items = this.studioTriageOverflow().map<MenuItem>(b => ({
       kind: 'row',
       id: b.id,
       label: b.label,
       danger: b.variant === 'danger',
       disabled: blocked,
+      ...(info ? triageDecisionRowState(info, b) : {}),
     }));
     if (this.studioCommitActionsAvailable()) {
       if (items.length > 0) items.push({ kind: 'separator' });
@@ -1348,7 +1359,8 @@ export class App implements OnInit, OnDestroy {
     if (!sel || !p) return;
     // Hold git-dependent acceptance until the branch/merge status has loaded, so
     // a click cannot trigger a merge while the label is still a guess (AGT-2006).
-    if (this.studioPrimaryAwaitingGit() || this.studioPrimaryBlockedByIntegration()) return;
+    if (this.studioPrimaryAwaitingGit() || this.studioPrimaryBlockedByIntegration()
+      || this.studioPrimaryDecisionRefusal()) return;
     this.dispatchStudioTriage(sel.info, p);
   }
 

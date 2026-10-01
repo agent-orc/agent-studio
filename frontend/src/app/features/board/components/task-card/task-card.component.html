@@ -47,7 +47,8 @@
         <button type="button"
                 class="task-card__pick-next"
                 data-testid="task-card-pick-next"
-                [cacTooltip]="'Pick next — bump to the front of the runner queue'"
+                [attr.aria-disabled]="decisionBlockTooltip() ? 'true' : null"
+                [cacTooltip]="decisionBlockTooltip() || 'Pick next — bump to the front of the runner queue'"
                 aria-label="Pick next"
                 (click)="onPickNextClick($event)">
           <span class="task-card__pick-next-glyph" aria-hidden="true">⤴</span>
@@ -83,6 +84,10 @@
       <span class="task-card__subtask-chip" data-testid="task-card-subtask-chip"
             [cacTooltip]="'Sub-task of epic: ' + epicId">↳ epic</span>
     }
+    @if (decisionBadge(); as db) {
+      <span class="task-card__decision-badge" data-testid="task-card-decision-badge"
+            [attr.data-open]="db.open" [cacTooltip]="db.tooltip">{{ db.label }}</span>
+    }
     <span class="task-card__title-text" data-truncatable>{{ job().title || job().id }}</span>
     @if (compact()) {
       <span class="task-card__compact-time" [cacTooltip]="'Last activity: ' + relativeActivity()">{{ relativeActivity() }}</span>
@@ -112,6 +117,7 @@
         <span class="task-card__mode-glyph" aria-hidden="true">{{ mb.icon }}</span> {{ mb.label }}
       </span>
     }
+    <app-task-card-decision-chips [job]="job()" />
     @if (dependencyChip(); as dep) {
       <button type="button"
               class="task-card__waiting-pill"
