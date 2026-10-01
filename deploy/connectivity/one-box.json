@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "installationId": "replace-with-installation-id",
+  "revision": 1,
+  "mode": "one-box",
+  "package": "standalone-task-server",
+  "serverOrigin": "http://127.0.0.1:5071",
+  "browserOrigin": "http://127.0.0.1:4011",
+  "linkOwner": "none",
+  "enabledListeners": ["standalone-task-server", "studio-bff", "browser"],
+  "runners": [
+    { "runnerId": "agent-runner-01", "route": "loopback" }
+  ]
+}
