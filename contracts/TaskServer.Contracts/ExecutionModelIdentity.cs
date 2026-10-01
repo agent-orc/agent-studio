@@ -9,7 +9,7 @@ public static class ExecutionModelIdentity
     private static readonly IReadOnlyDictionary<string, string[]> AliasesByCanonical =
         new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
         {
-            ["claude-opus-5"] = ["claude-opus-5-5"],
+            ["claude-opus-5-5"] = ["claude-opus-5.5"],
             ["claude-fable-5-1"] = ["claude-fable-5.1"],
             ["claude-opus-4-8"] = ["claude-opus-4.8"],
             ["claude-opus-4-7"] = ["claude-opus-4.7"],
