@@ -37,13 +37,17 @@ public sealed class RemotePipelineReviewEvidenceProjector
     /// <summary>Receipt participant prefix for remote review attempt usage.</summary>
     public const string ReviewParticipantPrefix = "support:remote-review:";
 
-    public async Task ProjectAsync(
+    /// <summary>
+    /// Synchronous so the evidence worker can apply the task-level projection
+    /// (aspect files, pipeline steps, timeline) inside the review-generation
+    /// fence of <see cref="AttemptAuthorityService.TryApplyForCurrentReview"/>.
+    /// </summary>
+    public void Project(
         TaskInfo task,
         ReviewAttemptDto review,
         Contract.ReviewReportRequest report,
         string evidenceFile,
-        DateTime receivedAt,
-        CancellationToken ct)
+        DateTime receivedAt)
     {
         var settings = PipelineTypeSettings.ForTask(_settings.Get(task.ProjectName), task);
         var catalogue = ProjectPipelineOrder.Apply(PipelineCatalogue.ForTask(task), settings);
@@ -58,7 +62,7 @@ public sealed class RemotePipelineReviewEvidenceProjector
         foreach (var command in report.Commands.Where(command => command.Phase == "verification"))
         {
             if (Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind))
-                await ProjectAspectAsync(task, review, command, report, receivedAt, execution.Attempt, ct);
+                ProjectAspect(task, review, command, report, receivedAt, execution.Attempt);
         }
         foreach (var verdict in report.Verdicts.Where(verdict =>
                      !string.IsNullOrWhiteSpace(verdict.CarriedOverFrom)))
@@ -161,14 +165,13 @@ public sealed class RemotePipelineReviewEvidenceProjector
         });
     }
 
-    private async Task ProjectAspectAsync(
+    private void ProjectAspect(
         TaskInfo task,
         ReviewAttemptDto review,
         Contract.ReviewCommandEvidenceDto command,
         Contract.ReviewReportRequest report,
         DateTime receivedAt,
-        int pipelineAttempt,
-        CancellationToken ct)
+        int pipelineAttempt)
     {
         var aspectId = command.StepId.StartsWith("aspect-", StringComparison.OrdinalIgnoreCase)
             ? command.StepId["aspect-".Length..]
@@ -203,16 +206,14 @@ public sealed class RemotePipelineReviewEvidenceProjector
         };
         var markdownName = $"aspect-{aspectId}.md";
         var jsonName = $"aspect-{aspectId}.json";
-        await File.WriteAllTextAsync(
+        File.WriteAllText(
             Path.Combine(task.FolderPath, markdownName),
             AspectVerdictParsing.RenderReport(verdict, receivedAt),
-            new UTF8Encoding(false),
-            ct);
-        await File.WriteAllTextAsync(
+            new UTF8Encoding(false));
+        File.WriteAllText(
             Path.Combine(task.FolderPath, jsonName),
             AspectVerdictParsing.RenderJson(verdict, command.Model, receivedAt),
-            new UTF8Encoding(false),
-            ct);
+            new UTF8Encoding(false));
 
         var duration = Math.Max(0, (long)(command.FinishedAt - command.StartedAt).TotalMilliseconds);
         var generation = new FileGenerationMeta

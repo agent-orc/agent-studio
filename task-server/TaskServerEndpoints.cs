@@ -15,6 +15,28 @@ public static class TaskServerEndpoints
         var api = app.MapGroup("/api/v1")
             .RequireTaskServerScope(TaskServerScopes.TasksRead);
         api.MapGet("/protocol", (TaskServerStore store) => Results.Ok(store.Status().Protocol));
+        api.MapGet("/failure-fingerprints", async (
+            string? fingerprint, DateTime? sinceUtc, TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.ReadFailureFingerprintsAsync(fingerprint, sinceUtc, ct)));
+        api.MapGet("/management/failure-fingerprints", async (
+            string? fingerprint, DateTime? sinceUtc, TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.ReadFailureFingerprintsAsync(fingerprint, sinceUtc, ct)))
+            .RequireTaskServerScope(TaskServerScopes.Management);
+        api.MapPost("/failure-fingerprints", async (
+            HttpContext context, RecordFailureFingerprintRequest request,
+            TaskServerStore store, CancellationToken ct) =>
+        {
+            var scopes = context.TaskServerPrincipal()?.Scopes;
+            if (scopes is null || !(scopes.Contains(TaskServerScopes.ReviewsWrite)
+                                    || scopes.Contains(TaskServerScopes.RunsWrite)
+                                    || scopes.Contains(TaskServerScopes.TasksWrite)))
+                return Results.Forbid();
+            return await InvokeAsync(() => store.RecordFailureFingerprintAsync(request, ct),
+                StatusCodes.Status201Created);
+        }).RequireAnyTaskServerScope(
+            TaskServerScopes.ReviewsWrite,
+            TaskServerScopes.RunsWrite,
+            TaskServerScopes.TasksWrite);
         api.MapPost("/protocol/compatibility", (ProtocolCompatibilityRequest request, TaskServerStore store) =>
         {
             var supported = TaskServerProtocol.Supports(request.ProtocolVersion)
@@ -84,6 +106,18 @@ public static class TaskServerEndpoints
             => await InvokeAsync(() => store.ListProjectsAsync(workspaceId, ct)));
         api.MapPost("/projects", async (HttpContext context, CreateProjectRequest request, TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.CreateProjectAsync(request, Actor(context), ct), StatusCodes.Status201Created))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
+        api.MapGet("/projects/{projectId}/placement", async (
+            string projectId, TaskServerStore store, CancellationToken ct)
+            => await InvokeNullableAsync(() => store.GetProjectPlacementAsync(projectId, ct)));
+        api.MapGet("/projects/{projectId}/placement/admissions", async (
+            string projectId, TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.ListProjectPlacementAdmissionsAsync(projectId, ct)));
+        api.MapPut("/projects/{projectId}/placement", async (
+            HttpContext context, string projectId, UpdateProjectPlacementRequest request,
+            TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.UpdateProjectPlacementAsync(
+                projectId, request, Actor(context), ct)))
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
 
         var orchestratorContexts = api.MapGroup("/orchestrator-contexts");

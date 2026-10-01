@@ -39,6 +39,15 @@ public static class PickupModes
 public static class ExecutionLocations
 {
     public const string Local = "local";
+    public const string ClassPrefix = "class:";
+
+    public static string? RequiredClassCapability(string? location)
+    {
+        if (location is null || !location.StartsWith(ClassPrefix, StringComparison.OrdinalIgnoreCase))
+            return null;
+        var name = location[ClassPrefix.Length..].Trim().ToLowerInvariant();
+        return name.Length == 0 ? null : $"platform:{name}";
+    }
 
     public static string Normalize(string? value) =>
         string.IsNullOrWhiteSpace(value)
@@ -54,6 +63,39 @@ public static class ExecutionLocations
 /// </summary>
 public static class ProjectExecutionPolicy
 {
+    public static bool HasProjectSlot(int occupiedTasks, int maxParallelism)
+        => occupiedTasks < Math.Max(1, maxParallelism);
+
+    /// <summary>
+    /// In-progress, non-fixture tasks per project. The daemon claim loop and the
+    /// direct task-key lease both count here, so a class-placed project keeps one
+    /// concurrency limit whichever path and whichever matching host admits the run.
+    /// </summary>
+    public static IReadOnlyDictionary<string, int> ProjectOccupancy(
+        IEnumerable<TaskInfo> tasks, string? excludingTaskId = null)
+        => tasks
+            .Where(task => !task.Fixture
+                           && task.State == TaskStates.Progress
+                           && !string.Equals(task.Id, excludingTaskId, StringComparison.OrdinalIgnoreCase))
+            .GroupBy(task => task.ProjectName, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Only a class-placed project has a project limit: many hosts share it, so
+    /// no single host ceiling bounds it. A pinned project is served by one host
+    /// whose slot ceiling already bounds it, so it has no limit here (Limit null).
+    /// </summary>
+    public static ProjectSlotVerdict EvaluateProjectSlot(
+        IReadOnlyDictionary<string, int> occupancy, string projectName, ProjectSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        var occupied = occupancy.GetValueOrDefault(projectName);
+        if (ExecutionLocations.RequiredClassCapability(ResolveExecutionLocation(settings)) is null)
+            return new ProjectSlotVerdict(true, occupied, null);
+        var limit = Math.Max(1, settings.MaxParallelism);
+        return new ProjectSlotVerdict(HasProjectSlot(occupied, limit), occupied, limit);
+    }
+
     public static string ResolvePickupMode(ProjectSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
@@ -99,10 +141,15 @@ public static class ProjectExecutionPolicy
     public static bool IsLocalExecution(ProjectSettings settings) =>
         ResolveExecutionLocation(settings) == ExecutionLocations.Local;
 
+    /// <summary>
+    /// A class location offers work to remote runners for later capability
+    /// admission. This preliminary routing result is not a lease permit.
+    /// </summary>
     public static bool IsAssignedRemote(ProjectSettings settings, string? runnerId, string? runnerName = null)
     {
         var location = ResolveExecutionLocation(settings);
         if (location == ExecutionLocations.Local) return false;
+        if (ExecutionLocations.RequiredClassCapability(location) is not null) return true;
         return string.Equals(location, runnerId, StringComparison.OrdinalIgnoreCase)
                || string.Equals(location, runnerName, StringComparison.OrdinalIgnoreCase);
     }
@@ -152,4 +199,15 @@ public static class ProjectExecutionPolicy
         !string.IsNullOrWhiteSpace(value)
         && !string.Equals(value, ExecutionLocations.Local, StringComparison.OrdinalIgnoreCase)
         && !IsLegacyComposite(value);
+}
+
+/// <summary>
+/// Whether a project has a free run slot under its concurrency limit. A null
+/// limit means the project has none and host slots alone admit its runs.
+/// </summary>
+public sealed record ProjectSlotVerdict(bool HasSlot, int Occupied, int? Limit)
+{
+    public string Detail => Limit is { } limit
+        ? $"Project has {Occupied} active tasks and allows {limit}."
+        : $"Project has {Occupied} active tasks and no project limit.";
 }

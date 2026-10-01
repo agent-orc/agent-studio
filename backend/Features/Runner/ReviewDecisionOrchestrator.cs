@@ -4262,6 +4262,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         {
             AttemptChainId = subject.AttemptChainId,
             SubjectRef = subject.SubjectRef,
+            IntegrationRef = _git?.ResolveIntegrationBranch(
+                repoPath, _projectSettings?.Get(entry.Name)?.IntegrationBranch),
             Project = entry.Name,
             WatchPath = entry.Path,
             JobId = current.Id,
