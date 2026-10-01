@@ -620,9 +620,11 @@ public sealed partial class TaskServerStore
         var host = await ReadHostAdmissionAsync(connection, transaction, hostId, ct);
         if (host.AutomaticDrainAt is not null)
             return CapabilityAdmission.Blocked(
+                HostAdmissionReasons.HostDraining,
                 $"Host '{hostId}' is under automatic whole-host drain: {host.AutomaticDrainReason}.");
         if (host.OperatorDrainAt is not null)
             return CapabilityAdmission.Blocked(
+                HostAdmissionReasons.HostDraining,
                 $"Host '{hostId}' is under operator-requested whole-host drain: {host.OperatorDrainReason}.");
 
         var required = (requested ?? [])
@@ -636,17 +638,22 @@ public sealed partial class TaskServerStore
         {
             var capability = await ReadCapabilityRowAsync(connection, transaction, runnerId, key, ct);
             if (capability is null)
-                return CapabilityAdmission.Blocked($"Required capability '{key}' was not advertised.");
+                return CapabilityAdmission.Blocked(
+                    HostAdmissionReasons.ForCapability(key, HostAdmissionReasons.CapabilityMissing),
+                    $"Required capability '{key}' was not advertised.");
             if (capability.FreshUntil <= UtcNow)
                 return CapabilityAdmission.Blocked(
+                    HostAdmissionReasons.CapabilityStale,
                     $"Required capability '{key}' is stale since {capability.FreshUntil:O}.");
             if (!Claimable(capability.AdvertisedStatus))
                 return CapabilityAdmission.Blocked(
+                    HostAdmissionReasons.ForCapability(key, HostAdmissionReasons.CapabilityUnavailable),
                     CapabilityMismatchMessage(key, capability));
             if (capability.HealthState == CapabilityHealthStates.Draining)
             {
                 if (capability.CooldownUntil is null || capability.CooldownUntil > UtcNow)
                     return CapabilityAdmission.Blocked(
+                        HostAdmissionReasons.CapabilityDraining,
                         $"Required capability '{key}' is draining until {capability.CooldownUntil:O}.");
                 var history = AppendHistory(
                     capability.RecoveryHistory,
@@ -676,11 +683,12 @@ public sealed partial class TaskServerStore
             {
                 if (!string.IsNullOrWhiteSpace(capability.CanaryClaimId))
                     return CapabilityAdmission.Blocked(
+                        HostAdmissionReasons.CapabilityDraining,
                         $"Required capability '{key}' already has canary claim '{capability.CanaryClaimId}'.");
                 canaries.Add(key);
             }
         }
-        return new CapabilityAdmission(true, null, required, canaries);
+        return new CapabilityAdmission(true, null, required, canaries, null);
     }
 
     private static async Task ValidateCapabilityClaimCorrelationAsync(
@@ -1005,10 +1013,11 @@ public sealed partial class TaskServerStore
         bool Eligible,
         string? Message,
         IReadOnlyList<string> Required,
-        IReadOnlyList<string> Canaries)
+        IReadOnlyList<string> Canaries,
+        string? Reason)
     {
-        public static CapabilityAdmission Blocked(string message)
-            => new(false, message, [], []);
+        public static CapabilityAdmission Blocked(string reason, string message)
+            => new(false, message, [], [], reason);
     }
 
     private sealed record CapabilityRunner(

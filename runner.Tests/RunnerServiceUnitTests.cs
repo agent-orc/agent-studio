@@ -73,25 +73,23 @@ public sealed class RunnerServiceUnitTests
     }
 
     /// <summary>
-    /// Both roles derive the envelope from the same two slot numbers, so each
-    /// role environment file has to declare the other role's count. Its own
-    /// count stays RUNNER_MAX_PARALLELISM, which is what the sanctioned
-    /// parallelism helper changes; writing it twice would leave a stale number
-    /// behind after every raise.
+    /// Both roles derive the envelope from the same two slot numbers. AGT-W63
+    /// I03 writes both role files from one host envelope (a host record or the
+    /// slot flags), so each file declares both counts and its own
+    /// RUNNER_MAX_PARALLELISM from the same values; nothing is hard-coded.
     /// </summary>
     [Fact]
-    public void Onboarding_declares_the_peer_role_slot_count_for_the_envelope()
+    public void Onboarding_declares_both_role_slot_counts_from_one_envelope()
     {
         var content = File.ReadAllText(
             Path.Combine(RepoRoot(), "scripts", "remote-runner-onboard.sh"));
 
-        Assert.Contains("RUNNER_HOST_REVIEW_SLOTS=2", content, StringComparison.Ordinal);
-        Assert.Contains("RUNNER_HOST_CODING_SLOTS=2", content, StringComparison.Ordinal);
-        var codingBranch = content.IndexOf("if [[ \"$role\" == \"coding\" ]]; then", StringComparison.Ordinal);
-        Assert.InRange(
-            content.IndexOf("RUNNER_HOST_REVIEW_SLOTS=2", StringComparison.Ordinal),
-            codingBranch,
-            content.IndexOf("RUNNER_HOST_CODING_SLOTS=2", StringComparison.Ordinal));
+        Assert.Contains("printf 'RUNNER_HOST_CODING_SLOTS=%s\\n' \"$coding_slots\"", content, StringComparison.Ordinal);
+        Assert.Contains("printf 'RUNNER_HOST_REVIEW_SLOTS=%s\\n' \"$review_slots\"", content, StringComparison.Ordinal);
+        Assert.Contains("--coding-slots \"$coding_slots\"", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("RUNNER_MAX_PARALLELISM=2", content, StringComparison.Ordinal);
+        Assert.Contains("--host-record", content, StringComparison.Ordinal);
+        Assert.Contains("printf 'RUNNER_HOSTNAME=%s\\n' \"$host_id\"", content, StringComparison.Ordinal);
     }
 
     /// <summary>
