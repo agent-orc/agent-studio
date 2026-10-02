@@ -241,6 +241,21 @@ public sealed record BuildTestGateResult(
         ? ReviewFlakyQuarantine.Classification
         : null;
 
+    /// <summary>
+    /// AGT-W57 D4: failures of tests on the project's active quarantine list.
+    /// They did not count against the verdict and stay in the run report.
+    /// </summary>
+    public IReadOnlyList<TestQuarantineHit> QuarantinedFailures { get; init; } = [];
+
+    /// <summary>Entries of the quarantine file that were rejected and therefore quarantine nothing.</summary>
+    public IReadOnlyList<string> QuarantineIssues { get; init; } = [];
+
+    /// <summary>
+    /// AGT-W57 section 4: the guard-first step went red, so the full suite never
+    /// ran and the verdict came back after the guard step alone.
+    /// </summary>
+    public bool GuardViolation { get; init; }
+
     public ProjectPreparationManifest? PreparationManifest { get; init; }
     public IReadOnlyList<ProjectDefinitionIssue> ProjectDefinitionIssues { get; init; } = [];
 
@@ -1267,6 +1282,11 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         var ranFrontend = false;
         var flakyQuarantined = new List<string>();
         var retryPerformed = false;
+        var quarantine = TestQuarantineFile.Read(repositoryPath);
+        var quarantineDay = DateOnly.FromDateTime(DateTime.UtcNow);
+        var quarantined = new List<TestQuarantineHit>();
+        foreach (var issue in quarantine.Issues) output.AppendLine($"# test quarantine issue: {issue}");
+        commands = GuardFirstGatePlan.Apply(commands);
 
         foreach (var command in preparation)
         {
@@ -1374,6 +1394,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
             if (command.Ecosystem == VerifyEcosystem.Node) ranFrontend = true;
             else ranBackend = true;
             output.AppendLine($"# working directory: {workingDirectory}");
+            var guardStep = GuardFirstGatePlan.IsGuardStep(command);
+            if (guardStep) output.AppendLine("# guard-first step: architecture and guard tests before the full suite");
 
             var elapsedBefore = sw.Elapsed;
             var process = await RunShellAsync(
@@ -1403,6 +1425,23 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                         LastEvidence(process)));
                     output.AppendLine("# non-blocking finding: continuous test failure recorded separately");
                     continue;
+                }
+
+                // AGT-W57 D4: failures of actively quarantined tests do not
+                // block; they are recorded for the run and fleet reports.
+                if (kind == BuildTestGateFailureKind.Code && command.Kind == VerifyCommandKind.Test)
+                {
+                    var partition = TestQuarantinePolicy.Partition(
+                        GateFlakyRerunPolicy.ParseFailedTests($"{process.StandardOutput}\n{process.StandardError}"),
+                        quarantine.Entries,
+                        quarantineDay);
+                    quarantined.AddRange(partition.Ignored);
+                    foreach (var hit in partition.Ignored)
+                    {
+                        output.AppendLine(
+                            $"# test quarantine: {hit.Test} failed; quarantined by {hit.Card} until {hit.ExpiresOn:yyyy-MM-dd}, not blocking");
+                    }
+                    if (partition.AllQuarantined) continue;
                 }
 
                 // AGT-2853: one targeted re-run of exactly the failed tests, on
@@ -1451,9 +1490,10 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                     ? BuildTestGateVerdict.Warn
                     : BuildTestGateVerdict.Fail;
                 var reason = FailureReason(Describe(command), process);
+                if (guardStep) reason = $"guard violation, full suite not run: {reason}";
                 return WithFailure(new BuildTestGateResult(
                     verdict, process.ExitCode, sw.ElapsedMilliseconds, output.Text,
-                    reason, ranBackend, ranFrontend)
+                    QuarantineReason(reason, quarantined), ranBackend, ranFrontend)
                 {
                     Processes = evidence,
                     Findings = findings,
@@ -1462,6 +1502,9 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                     ViolatedBudget = process.ViolatedBudget,
                     RetryPerformed = retryPerformed,
                     FlakyQuarantinedFailures = flakyQuarantined,
+                    QuarantinedFailures = quarantined,
+                    QuarantineIssues = quarantine.Issues,
+                    GuardViolation = guardStep,
                 }, kind);
             }
         }
@@ -1473,7 +1516,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         return new BuildTestGateResult(
             findings.Count == 0 ? BuildTestGateVerdict.Ok : BuildTestGateVerdict.Warn,
             0, sw.ElapsedMilliseconds, output.Text,
-            FlakyReason(passedReason, flakyQuarantined),
+            QuarantineReason(FlakyReason(passedReason, flakyQuarantined), quarantined),
             ranBackend, ranFrontend)
         {
             Processes = evidence,
@@ -1481,8 +1524,21 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
             DependencyCache = dependencyCache,
             RetryPerformed = retryPerformed,
             FlakyQuarantinedFailures = flakyQuarantined,
+            QuarantinedFailures = quarantined,
+            QuarantineIssues = quarantine.Issues,
         };
     }
+
+    /// <summary>
+    /// Names the quarantined failures in the one-line reason so an ignored
+    /// failure is visible wherever the verdict is read.
+    /// </summary>
+    internal static string QuarantineReason(string reason, IReadOnlyList<TestQuarantineHit> quarantined)
+        => quarantined.Count == 0
+            ? reason
+            : $"{reason}; test-quarantine: " +
+              string.Join(", ", quarantined.Select(hit => $"{hit.Test} ({hit.Card}, until {hit.ExpiresOn:yyyy-MM-dd})")) +
+              " failed and did not block";
 
     /// <summary>
     /// Names the quarantined tests in the gate's own one-line reason so the
