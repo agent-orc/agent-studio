@@ -234,6 +234,11 @@ public static class IntegrationGateReceipts
             budget + "\n" +
             flaky + "\n" +
             preparationCacheRetry + "\n" +
+            $"guardViolation={result.GuardViolation.ToString().ToLowerInvariant()} testQuarantined=" +
+            (result.QuarantinedFailures.Count == 0
+                ? "none"
+                : string.Join(", ", result.QuarantinedFailures.Select(hit => $"{hit.Test}@{hit.Card}<={hit.ExpiresOn:yyyy-MM-dd}"))) +
+            "\n" +
             "--- dependency-cache-decision.json ---\n" +
             dependencyCacheDecision + "\n" +
             "--- dependency-cache.json ---\n" +

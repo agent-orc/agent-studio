@@ -230,7 +230,9 @@ sudo deploy/compose/control-plane/network/verify-no-public-listener.sh
 `configure-firewall.sh` resets `ufw` to default-deny inbound, then allows SSH,
 the WireGuard handshake (UDP 51820), and TCP 443 only on `wg0`. No rule
 permits 80, 443, 5030, 5031, or 5071 on the public interface.
-`verify-no-public-listener.sh` checks every listening socket for those ports
+`verify-no-public-listener.sh` checks every listening socket for those ports,
+plus 4011, 5039, 5072 and 15031 from the
+[connectivity manifest](connectivity-manifest.md) catalogue,
 with `ss` and fails if any is bound outside loopback or `wg0`; pass a public
 hostname or IP as its first argument, run from a separate machine (not
 `task-server-01` itself), to also prove a real connection from the public

@@ -1,0 +1,4 @@
+{
+  "_comment": "AGT-W57 D4: quarantined tests. Each entry needs test (fully qualified name), card and expiresOn (yyyy-MM-dd). Failures of an active entry do not block a delivery but stay in the gate report. After expiresOn the test is armed again; the owning card sets resolvedOn when it fixed the test. Do not delete entries: expired and resolved ones remain in the report.",
+  "tests": []
+}

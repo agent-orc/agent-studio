@@ -2368,7 +2368,11 @@ export interface ReviewProjectionView {
 
 export interface CrashRecoveryPending {
   id: string;
+  /** First dirty-file time, kept for historical display compatibility. */
   createdAt: string;
+  /** Timestamp and boot identity of this backend's recovery finding. */
+  detectedAt?: string;
+  bootId?: string;
   projectName: string;
   jobId: string | null;
   repoRoot: string;

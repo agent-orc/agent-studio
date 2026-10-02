@@ -293,6 +293,8 @@ public sealed class GateFlakyRerunBehaviorTests : IDisposable
         var attempts = ShellPath(Path.Combine(_root, "attempts.txt"));
         File.WriteAllText(FakeDotNet,
             "#!/bin/sh\n" +
+            // The guard-first step (AGT-W57) matches no guard test here.
+            "case \"$*\" in *Architecture*) exit 0;; esac\n" +
             $"echo \"$@\" >> \"{ShellPath(Invocations)}\"\n" +
             $"attempts=\"{attempts}\"\n" +
             "count=$(cat \"$attempts\" 2>/dev/null || echo 0)\n" +
