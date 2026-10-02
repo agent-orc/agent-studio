@@ -351,9 +351,7 @@ public sealed class RemoteReviewPlanBuilder
     private static string Read(string path, int maximumCharacters, string fallback)
     {
         if (!File.Exists(path)) return fallback;
-        var value = File.ReadAllText(path);
-        return value.Length <= maximumCharacters
-            ? value
-            : value[^maximumCharacters..];
+        // Only the tail is kept, so only the tail is read (AGT-2991).
+        return BoundedFileRead.ReadTailChars(path, maximumCharacters);
     }
 }
