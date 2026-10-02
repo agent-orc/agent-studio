@@ -10,7 +10,9 @@ namespace AgentStudio.Pipeline;
 /// window elapsed. All timing/commit logic lives in the batcher (virtual-time
 /// testable); this class only wires the channel, the boot pass, and the tick
 /// cadence, and it swallows every error so a git problem can never break the
-/// board or the transition that produced the evidence.
+/// board or the transition that produced the evidence. Swallowed is not silent:
+/// a flush failure that repeats for more than 15 minutes raises the
+/// <c>evidence-flush-stalled</c> pipeline health alarm (AGT-3000).
 /// </summary>
 public sealed class WorkspaceEvidenceWorker : BackgroundService
 {
@@ -20,6 +22,8 @@ public sealed class WorkspaceEvidenceWorker : BackgroundService
     private readonly IConfiguration _config;
     private readonly ILogger<WorkspaceEvidenceWorker> _logger;
     private readonly TimeProvider _time;
+    private readonly IEvidenceFlushAlarm? _alarm;
+    private readonly EvidenceFlushStallTracker _stalls = new();
 
     public WorkspaceEvidenceWorker(
         WorkspaceEvidenceQueue queue,
@@ -27,7 +31,8 @@ public sealed class WorkspaceEvidenceWorker : BackgroundService
         AgentStudio.Tasks.TaskScannerService scanner,
         IConfiguration config,
         ILogger<WorkspaceEvidenceWorker> logger,
-        TimeProvider? time = null)
+        TimeProvider? time = null,
+        IEvidenceFlushAlarm? alarm = null)
     {
         _queue = queue;
         _batcher = batcher;
@@ -35,6 +40,7 @@ public sealed class WorkspaceEvidenceWorker : BackgroundService
         _config = config;
         _logger = logger;
         _time = time ?? TimeProvider.System;
+        _alarm = alarm;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -66,6 +72,7 @@ public sealed class WorkspaceEvidenceWorker : BackgroundService
                             _logger.LogWarning(
                                 "workspace-evidence-flush-failed repo={Repo} error={Error}",
                                 flush.GitRoot, flush.Result.Error);
+                        ObserveStall(flush);
                     }
                 }
             }
@@ -123,6 +130,30 @@ public sealed class WorkspaceEvidenceWorker : BackgroundService
                 _logger.LogWarning(
                     "workspace-evidence-catchup-failed repo={Repo} error={Error}",
                     flush.GitRoot, flush.Result.Error);
+            ObserveStall(flush);
+        }
+    }
+
+    /// <summary>
+    /// Feeds one flush outcome to the stall tracker and forwards a stall or
+    /// recovery to the pipeline health alarm. The alarm sink de-duplicates, so
+    /// every failing tick past the threshold may report.
+    /// </summary>
+    internal void ObserveStall(WorkspaceEvidenceFlushResult flush)
+    {
+        var now = _time.GetUtcNow().UtcDateTime;
+        var (signal, stall) = _stalls.Observe(flush.GitRoot, flush.Result.Success, flush.Result.Error, now);
+        if (_alarm is null) return;
+        try
+        {
+            if (signal == EvidenceFlushStallSignal.Stalled && stall is not null)
+                _alarm.EvidenceFlushStalled(stall);
+            else if (signal == EvidenceFlushStallSignal.Recovered)
+                _alarm.EvidenceFlushRecovered(flush.GitRoot, now);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "workspace-evidence stall alarm failed repo={Repo}", flush.GitRoot);
         }
     }
 

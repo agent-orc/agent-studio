@@ -1,10 +1,12 @@
 export interface PipelineHealthAlert {
-  kind: 'gate-hanging' | 'systemic-gate-failure' | 'lane-drain-stalled' | string;
+  kind: 'gate-hanging' | 'systemic-gate-failure' | 'lane-drain-stalled' | 'evidence-flush-stalled' | string;
   severity: 'high' | string;
   summary: string;
   detail: string;
   detectedAtUtc: string;
   jobId?: string | null;
+  /** Git root of the workspace repository, set for `evidence-flush-stalled`. */
+  repository?: string | null;
 }
 
 export interface PipelineActiveGateHealth {
