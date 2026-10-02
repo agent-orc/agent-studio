@@ -16,7 +16,8 @@
 
 .studio {
   display: grid;
-  grid-template-rows: var(--studio-titlebar-h) 1fr auto;
+  // The header owns its rows: 44 + 40 px, 48 + 48 px on touch, 48 px on phone.
+  grid-template-rows: auto minmax(0, 1fr) auto;
   // Single-column track, but explicit minmax(0, 1fr) so the column does
   // NOT grow to the intrinsic min-content of its children. Without
   // this, the implicit `auto` single-column expanded to the
@@ -66,15 +67,9 @@
 // Titlebar
 // -------------------------------------------------------------------------
 .studio-titlebar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 10px;
-  background: var(--studio-bg-titlebar);
-  border-bottom: 1px solid var(--studio-border);
+  // Row geometry, surface and hairline belong to <app-usage-cockpit-header>
+  // (HUC-S4); this block only styles the projected navigation controls.
   user-select: none;
-  white-space: nowrap;
-  overflow: hidden;
 
   &__brand {
     display: flex;
@@ -219,6 +214,32 @@
       background: var(--studio-bg-hover);
       border-color: var(--studio-accent);
       color: var(--studio-fg-strong);
+    }
+  }
+
+  // Header targets (HUC-S4): 32 px on a fine pointer, 44 px on touch.
+  &__search,
+  &__chatbtn,
+  &__iconbtn,
+  .studio-pill--picker {
+    height: auto;
+    min-height: var(--studio-row-min-h-interactive-compact);
+  }
+
+  &__iconbtn {
+    min-width: var(--studio-row-min-h-interactive-compact);
+  }
+
+  @media (pointer: coarse) {
+    &__search,
+    &__chatbtn,
+    &__iconbtn,
+    .studio-pill--picker {
+      min-height: var(--studio-target-coarse-min);
+    }
+
+    &__iconbtn {
+      min-width: var(--studio-target-coarse-min);
     }
   }
 }

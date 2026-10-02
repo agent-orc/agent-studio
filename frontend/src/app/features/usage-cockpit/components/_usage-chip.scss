@@ -9,7 +9,8 @@
   display: inline-flex;
   flex: none;
   align-items: center;
-  min-height: var(--studio-row-min-h-interactive-compact);
+  // The header raises this to the 44 px target on phone and coarse pointers.
+  min-height: var(--usage-chip-min-h, var(--studio-row-min-h-interactive-compact));
   margin: 0;
   padding-block: 0;
   padding-inline: var(--studio-spacing-3);

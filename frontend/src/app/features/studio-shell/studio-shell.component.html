@@ -4,8 +4,21 @@
      data-testid="app-root"
      data-studio="root">
   <!-- ============ Titlebar ============ -->
-  <header class="studio-titlebar" data-testid="studio-titlebar">
-    <nav class="studio-titlebar__crumbs" aria-label="Breadcrumb" data-testid="studio-titlebar-crumbs">
+  <!-- Header usage cockpit (HUC-S4): the existing navigation row above the
+       usage row, one row on phone. Optional controls carry
+       `data-nav-inline-from`; below that tier they live in the text-only
+       More menu (`STUDIO_HEADER_NAV_ITEMS`). -->
+  <app-usage-cockpit-header #cockpitHeader
+                            class="studio-titlebar"
+                            data-testid="studio-titlebar"
+                            [snapshot]="headerCockpit.usage.snapshot()"
+                            [selectedCliId]="headerCockpit.selectedCli()"
+                            [defaultCliId]="headerCockpit.defaultCli()"
+                            [navItems]="headerCockpit.navItems"
+                            (navSelect)="headerCockpit.onNav($event, cockpitHeader)"
+                            (usageSelect)="headerCockpit.onUsage($event)">
+    <nav class="studio-titlebar__crumbs" aria-label="Breadcrumb" data-testid="studio-titlebar-crumbs"
+         data-nav-inline-from="desktop">
       @if (activeWorkspaceName(); as workspaceName) {
         <span class="studio-titlebar__crumb studio-titlebar__crumb--ws"
               data-testid="studio-titlebar-active-workspace">{{ workspaceName }}</span>
@@ -13,14 +26,14 @@
     </nav>
 
     @if (activeWorkspaceName()) {
-      <span class="studio-titlebar__separator">/</span>
+      <span class="studio-titlebar__separator" data-nav-inline-from="desktop">/</span>
     }
 
     <!-- Project picker: single combo carrying ONLY the active selection.
          Click opens a dropdown with "All projects" + each project. This
          replaces the legacy multi-pill row that suggested a multi-select
          filter; the title bar now shows exactly what is in scope. -->
-    <div class="studio-titlebar__picker" data-testid="studio-project-picker">
+    <div class="studio-titlebar__picker" data-testid="studio-project-picker" data-nav-inline-from="tablet">
       <button #studioPickerTrigger
               type="button"
               class="studio-pill studio-pill--picker"
@@ -65,7 +78,7 @@
       <app-menu
         [items]="projectPickerItems()"
         [open]="pickerOpen()"
-        [anchorEl]="studioPickerTrigger"
+        [anchorEl]="headerCockpit.pickerAnchor() ?? studioPickerTrigger"
         placement="below"
         testIdPrefix="studio-project-picker"
         ariaLabel="Project picker"
@@ -77,21 +90,18 @@
     <span class="studio-titlebar__spacer"></span>
 
     <button type="button" class="studio-titlebar__search" data-testid="studio-global-search-trigger"
+            data-nav-inline-from="tablet"
             cacTooltip="Search tasks, dossiers, wiki pages, commits, files (Ctrl+K)" (click)="globalSearchOpen.set(true)">
       <app-studio-icon name="search" [size]="13"></app-studio-icon>
-      <span class="studio-titlebar__search-label">Search tasks, dossiers, wiki pages, commits, files…</span>
-      <span class="studio-titlebar__kbd">Ctrl K</span>
+      <span class="studio-titlebar__search-label" data-nav-inline-from="desktop">Search tasks, dossiers, wiki pages, commits, files…</span>
+      <span class="studio-titlebar__kbd" data-nav-inline-from="desktop">Ctrl K</span>
     </button>
-
-    <app-global-search
-      [tasks]="globalSearchTasks()"
-      [open]="globalSearchOpen()"
-      (openChange)="globalSearchOpen.set($event)"></app-global-search>
 
     <div class="studio-titlebar__actions" data-testid="studio-titlebar-actions">
       <button type="button"
               class="studio-titlebar__chatbtn"
               data-testid="studio-titlebar-chat"
+              data-nav-inline-from="tablet"
               cacTooltip="Open project chat (orchestrator side sheet)"
               (click)="chatToggle.emit()">
         <app-studio-icon name="bot" [size]="14"></app-studio-icon>
@@ -99,15 +109,23 @@
       </button>
       <button type="button"
               class="studio-titlebar__iconbtn"
+              data-testid="studio-titlebar-theme"
+              data-nav-inline-from="desktop"
+              [attr.aria-label]="theme() === 'light' ? 'Switch to dark theme' : 'Switch to light theme'"
               [cacTooltip]="theme() === 'light' ? 'Switch to dark theme' : 'Switch to light theme'"
               (click)="toggleTheme()">
         <app-studio-icon [name]="theme() === 'light' ? 'moon' : 'sun'" [size]="14"></app-studio-icon>
       </button>
-      <button type="button" class="studio-titlebar__iconbtn" cacTooltip="Notifications">
+      <button type="button" class="studio-titlebar__iconbtn" cacTooltip="Notifications" aria-label="Notifications"
+              data-nav-inline-from="desktop">
         <app-studio-icon name="bell" [size]="14"></app-studio-icon>
       </button>
     </div>
-  </header>
+  </app-usage-cockpit-header>
+  <app-global-search
+    [tasks]="globalSearchTasks()"
+    [open]="globalSearchOpen()"
+    (openChange)="globalSearchOpen.set($event)"></app-global-search>
 
   <!-- ============ Body ============ -->
   <!-- Grid columns are conditional on `sidebarVisible()`: when the

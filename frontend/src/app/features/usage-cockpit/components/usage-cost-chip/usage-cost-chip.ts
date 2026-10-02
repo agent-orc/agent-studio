@@ -4,6 +4,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
 import type { UsageCostProjection } from '../../models/usage-cockpit.model';
 import { buildCostChipView } from '../../usage-chip.util';
+import type { UsageChipFit } from '../../usage-header-layout';
 import { injectUsageClock } from '../../usage-clock';
 
 /**
@@ -31,6 +32,12 @@ export class UsageCostChipComponent {
   readonly expanded = input(false);
   /** Id of the detail dialog this chip opens. */
   readonly controls = input<string | null>(null);
+
+  /**
+   * Header fit (HUC-S4). `compact` and narrower omit the visible USD suffix;
+   * `bare` also drops the visible Today label. The accessible name keeps both.
+   */
+  readonly fit = input<UsageChipFit>('full');
 
   readonly activate = output<void>();
 

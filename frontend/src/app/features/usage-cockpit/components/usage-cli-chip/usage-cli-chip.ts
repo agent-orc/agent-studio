@@ -4,6 +4,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
 import type { UsageCli } from '../../models/usage-cockpit.model';
 import { buildCliChipView } from '../../usage-chip.util';
+import { cliAbbreviation, type UsageChipFit } from '../../usage-header-layout';
 import { injectUsageClock } from '../../usage-clock';
 
 /**
@@ -36,9 +37,26 @@ export class UsageCliChipComponent {
   /** Id of the detail dialog this chip opens. */
   readonly controls = input<string | null>(null);
 
+  /**
+   * Header fit (HUC-S4). `compact` and narrower show the weekly window only;
+   * `abbreviated` shortens the provider; `bare` drops the visible tag. The
+   * accessible name always carries every window.
+   */
+  readonly fit = input<UsageChipFit>('full');
+
   readonly activate = output<string>();
 
   private readonly clock = injectUsageClock();
 
   readonly view = computed(() => buildCliChipView(this.cliId(), this.cli(), this.timeZone(), this.now() ?? this.clock()));
+
+  readonly visibleName = computed(() => {
+    const fit = this.fit();
+    return fit === 'abbreviated' || fit === 'bare' ? cliAbbreviation(this.view().cliId) : this.view().name;
+  });
+
+  readonly windows = computed(() => {
+    const v = this.view();
+    return this.fit() === 'full' ? [v.weekly, v.session] : [v.weekly];
+  });
 }

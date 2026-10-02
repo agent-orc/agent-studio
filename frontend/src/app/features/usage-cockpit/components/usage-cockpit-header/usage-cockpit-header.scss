@@ -1,0 +1,182 @@
+// Studio header with the usage cockpit (HUC-S4,
+// docs/header-usage-cockpit/index.html "Responsive layout" and "Visual
+// language"). Row heights are minima so large text grows a row instead of
+// clipping it. Nothing here scrolls, crops or ellipsises a value.
+
+:host {
+  --cockpit-gap: var(--studio-spacing-3);
+  --cockpit-gutter: var(--studio-spacing-4);
+
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(var(--studio-header-nav-h), auto) minmax(var(--studio-header-usage-h), auto);
+  grid-template-areas:
+    'nav more'
+    'usage usage';
+  min-width: 0;
+  background: var(--studio-bg-titlebar);
+  border-bottom: 1px solid var(--studio-border-strong);
+  color: var(--studio-text-primary);
+  font-family: var(--font-ui);
+  font-size: 13px;
+}
+
+.cockpit-header__nav {
+  grid-area: nav;
+  display: flex;
+  align-items: center;
+  gap: var(--studio-spacing-2);
+  min-width: 0;
+  padding-inline-start: var(--cockpit-gutter);
+}
+
+.cockpit-header__nav-content {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--studio-spacing-2);
+  min-width: 0;
+  // Overflow is measured, never shown: a nav that does not fit moves its
+  // optional destinations into More (collapse step 2).
+  overflow: hidden;
+  white-space: nowrap;
+
+  &[hidden] {
+    display: none;
+  }
+}
+
+.cockpit-header__wordmark {
+  flex: none;
+  color: var(--studio-text-primary);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.cockpit-header__usage {
+  grid-area: usage;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--studio-spacing-1) var(--cockpit-gap);
+  min-width: 0;
+  padding-block: 0;
+  padding-inline: var(--cockpit-gutter);
+  border-top: 1px solid var(--studio-border);
+}
+
+.cockpit-header__more {
+  grid-area: more;
+  display: flex;
+  align-items: center;
+  padding-inline-end: var(--studio-spacing-2);
+}
+
+@mixin text-control {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: var(--studio-spacing-1);
+  margin: 0;
+  padding-block: 0;
+  padding-inline: var(--studio-spacing-3);
+  border: 0;
+  border-radius: var(--studio-action-radius-sm);
+  background: transparent;
+  color: var(--studio-text-primary);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+
+  &:hover {
+    background: var(--studio-bg-hover);
+  }
+
+  &[aria-expanded='true'] {
+    background: var(--studio-bg-selected);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--studio-accent-strong);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    transition-duration: 0s;
+  }
+}
+
+.cockpit-header__details {
+  @include text-control;
+
+  min-height: var(--usage-chip-min-h, var(--studio-row-min-h-interactive-compact));
+  margin-inline-start: auto;
+}
+
+.cockpit-header__details-count {
+  color: var(--studio-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+// The overflow target stays 44 px at every width.
+.cockpit-header__more-trigger {
+  @include text-control;
+
+  min-width: var(--studio-target-coarse-min);
+  min-height: var(--studio-target-coarse-min);
+  padding-inline: 0;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.cockpit-header__measure {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+
+  > [data-measure] {
+    display: block;
+    width: max-content;
+  }
+}
+
+// Touch tablet and desktop: 48 + 48 px rows and 44 px targets.
+@media (pointer: coarse) {
+  :host([data-layout='rows']) {
+    --usage-chip-min-h: var(--studio-target-coarse-min);
+
+    grid-template-rows:
+      minmax(var(--studio-header-touch-row-h), auto)
+      minmax(var(--studio-header-touch-row-h), auto);
+  }
+}
+
+// Phone: one 48 px row, identity, primary weekly, today's cost, More.
+:host([data-layout='single']) {
+  --usage-chip-min-h: var(--studio-target-coarse-min);
+
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-rows: minmax(var(--studio-header-phone-h), auto);
+  grid-template-areas: 'nav usage more';
+
+  .cockpit-header__usage {
+    justify-content: flex-end;
+    padding-inline: var(--studio-spacing-2) 0;
+    border-top: 0;
+  }
+}
+
+// Optional destinations the current nav tier moves into More. `display: none`
+// also removes them from the focus order.
+:host([data-nav-tier='tablet']) ::ng-deep [data-nav-inline-from='desktop'],
+:host([data-nav-tier='phone']) ::ng-deep [data-nav-inline-from] {
+  display: none !important;
+}

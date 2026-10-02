@@ -507,6 +507,13 @@
   // ---------------------------------------------------------------------------
   --studio-activitybar-w: 48px;
   --studio-titlebar-h:    36px;
+  // Header usage cockpit (HUC-S4, docs/header-usage-cockpit/index.html
+  // "Responsive layout"). Row heights are minima; large text may grow them.
+  --studio-header-nav-h:        44px;
+  --studio-header-usage-h:      40px;
+  --studio-header-touch-row-h:  48px;
+  --studio-header-phone-h:      48px;
+  --studio-target-coarse-min:   44px;
   --studio-tabbar-h:      36px;
 
   // ---------------------------------------------------------------------------

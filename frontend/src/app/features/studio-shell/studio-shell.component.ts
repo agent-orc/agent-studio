@@ -14,6 +14,7 @@ import {
   viewChildren,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { StudioHeaderCockpit, UsageCockpitHeaderComponent } from './studio-shell.header-cockpit';
 import type { TaskInfo, RegistryWorkspaceListItem, RegistryProjectSummary, WatchPathEntry, RegistryProjectUrl } from '../../models/task.model';
 import type { WorkbenchListItem } from '../../models/project-docs.model';
 import { forkJoin } from 'rxjs';
@@ -102,7 +103,7 @@ function cliColorFor(cli: string): string {
 @Component({
   selector: 'app-studio-shell',
   standalone: true,
-  imports: [FormsModule, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent],
+  imports: [FormsModule, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, UsageCockpitHeaderComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   templateUrl: './studio-shell.component.html',
@@ -259,6 +260,7 @@ export class StudioShellComponent {
   readonly openOrchSettings = output<void>();
   /** Emits when the user toggles the auto-pickup mode for a project. */
   readonly toggleAuto = output<string>();
+  readonly headerCockpit = new StudioHeaderCockpit(this);
 
   /** Project picker dropdown open state. */
   readonly pickerOpen = signal(false);
@@ -364,7 +366,6 @@ export class StudioShellComponent {
     }
     return `Auto-pickup is paused for ${name} — click to enable.`;
   }
-
 
   /**
    * F47 / ADR-0042 — registry-backed workspace list rendered by the
@@ -1076,7 +1077,6 @@ export class StudioShellComponent {
     this.explorerWorkbenchState.collapseAll(this.projectRows().map(project => project.name));
     this.collapseAllVersion.update(version => version + 1);
   }
-
 
   /** Visible CLI types observed across the loaded jobs (for the CLI sidebar panel). */
   readonly cliRows = computed(() => {
