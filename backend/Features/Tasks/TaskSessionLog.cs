@@ -151,21 +151,20 @@ public class TaskSessionLog
             // older open row. Close it before appending so the durable log
             // never exposes two simultaneous open runs for one task.
             var path = TaskPaths.SessionEventsLog(jobFolder);
-            var events = ReadSessionEventsFromPath(path);
-            var predecessor = events.LastOrDefault();
-            if (predecessor is { FinishedAt: null })
+            if (File.Exists(path))
             {
-                var duration = evt.Ts >= predecessor.Ts
-                    ? (evt.Ts - predecessor.Ts).TotalSeconds
-                    : 0;
-                events[^1] = predecessor with
-                {
-                    FinishedAt = evt.Ts,
-                    Result = "superseded",
-                    Status = "superseded",
-                    DurationSeconds = duration,
-                };
-                WriteSessionEvents(path, events);
+                RewriteLatestSessionEvent(
+                    path,
+                    _ => true,
+                    predecessor => predecessor.FinishedAt is not null ? null : predecessor with
+                    {
+                        FinishedAt = evt.Ts,
+                        Result = "superseded",
+                        Status = "superseded",
+                        DurationSeconds = evt.Ts >= predecessor.Ts
+                            ? (evt.Ts - predecessor.Ts).TotalSeconds
+                            : 0,
+                    });
             }
 
             var line = JsonSerializer.Serialize(evt, SessionEventJsonOpts) + Environment.NewLine;
@@ -183,7 +182,7 @@ public class TaskSessionLog
     {
         if (!File.Exists(path)) return [];
         var result = new List<SessionEvent>();
-        foreach (var line in File.ReadAllLines(path))
+        foreach (var line in BoundedFileRead.ReadTailLines(path, BoundedFileRead.LedgerBytes))
         {
             if (string.IsNullOrWhiteSpace(line)) continue;
             try
@@ -200,10 +199,49 @@ public class TaskSessionLog
         return result;
     }
 
-    private static void WriteSessionEvents(string path, IEnumerable<SessionEvent> events)
+    /// <summary>
+    /// Rewrites the newest parseable row that satisfies
+    /// <paramref name="matches"/> with the result of <paramref name="mutate"/>;
+    /// a <c>null</c> result leaves the ledger unchanged. Only the newest
+    /// <see cref="BoundedFileRead.LedgerBytes"/> window is read and rewritten:
+    /// rows before it keep their bytes, so an oversized ledger still gets its
+    /// latest run closed or backfilled without being loaded whole or losing
+    /// its history (AGT-2991). Unparseable lines in the window are kept as-is.
+    /// </summary>
+    private static bool RewriteLatestSessionEvent(
+        string path,
+        Func<SessionEvent, bool> matches,
+        Func<SessionEvent, SessionEvent?> mutate)
     {
-        var lines = events.Select(item => JsonSerializer.Serialize(item, SessionEventJsonOpts));
-        File.WriteAllLines(path, lines, Encoding.UTF8);
+        var window = BoundedFileRead.ReadTailLineWindow(path, BoundedFileRead.LedgerBytes);
+        var lines = window.Lines;
+        for (var idx = lines.Count - 1; idx >= 0; idx--)
+        {
+            if (string.IsNullOrWhiteSpace(lines[idx])) continue;
+            SessionEvent? evt;
+            try { evt = JsonSerializer.Deserialize<SessionEvent>(lines[idx], TaskJsonFile.ReadOpts); }
+            catch { continue; }
+            if (evt is null || !matches(evt)) continue;
+
+            var updated = mutate(evt);
+            if (updated is null) return false;
+            lines[idx] = JsonSerializer.Serialize(updated, SessionEventJsonOpts);
+            if (window.Offset == 0)
+            {
+                File.WriteAllLines(path, lines, Encoding.UTF8);
+            }
+            else
+            {
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.Read);
+                stream.Seek(window.Offset, SeekOrigin.Begin);
+                var tail = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false).GetBytes(
+                    string.Concat(lines.Select(line => line + Environment.NewLine)));
+                stream.Write(tail);
+                stream.SetLength(stream.Position);
+            }
+            return true;
+        }
+        return false;
     }
 
     /// <summary>
@@ -316,22 +354,7 @@ public class TaskSessionLog
         if (!File.Exists(path)) return false;
         try
         {
-            var lines = File.ReadAllLines(path).ToList();
-            var idx = -1;
-            SessionEvent? evt = null;
-            for (var candidate = lines.Count - 1; candidate >= 0; candidate--)
-            {
-                if (string.IsNullOrWhiteSpace(lines[candidate])) continue;
-                try { evt = JsonSerializer.Deserialize<SessionEvent>(lines[candidate], TaskJsonFile.ReadOpts); }
-                catch { continue; }
-                if (evt is null || !matches(evt)) continue;
-                idx = candidate;
-                break;
-            }
-            if (idx < 0 || evt == null) return false;
-            lines[idx] = JsonSerializer.Serialize(mutate(evt), SessionEventJsonOpts);
-            File.WriteAllLines(path, lines, Encoding.UTF8);
-            return true;
+            return RewriteLatestSessionEvent(path, matches, mutate);
         }
         catch (Exception ex)
         {

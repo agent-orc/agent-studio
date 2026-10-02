@@ -240,6 +240,104 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
             stack.Scanner.ScanAllAutomationJobs(), 0).ManualInterventions);
     }
 
+    /// <summary>
+    /// AGT-2990: a runner may claim the card in the instant after it enters
+    /// Ready. The promotion succeeded, so the operator must be told it was
+    /// queued, and the receipt must already be on the card when it became
+    /// claimable rather than written into a folder that has since moved.
+    /// </summary>
+    [Fact]
+    public void ManualBounce_ClaimedRightAfterPromotion_IsQueuedWithItsReceiptFirst()
+    {
+        var notifier = new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance);
+        var stack = Build(shadowOnly: true, notifier: notifier);
+        var id = "manual-bounce-race";
+        SeedTask(stack, id, CreateUnintegratedDelivery(id), conflict: true);
+        var claim = ClaimOnFirstPromotion(stack, notifier, id);
+        var job = stack.Scanner.FindJob(id, _watchPath)!;
+        var status = stack.Integration.BuildLookup([job])[job.TaskKey];
+
+        var queued = stack.Recovery.Queue(job, status,
+            AcceptedIntegrationFailureCodes.MergeConflict,
+            TaskIntegrationRecoveryService.OperatorSource);
+
+        Assert.True(queued.Queued, queued.Error);
+        Assert.True(queued.Position > 0);
+        Assert.Equal(TaskStates.Ready, claim.StateWhenClaimable);
+        Assert.Equal("manual-queued", claim.ReceiptStateWhenClaimable);
+        Assert.True(claim.Claimed);
+        var claimed = stack.Scanner.FindJob(id, _watchPath)!;
+        Assert.Equal(TaskStates.Progress, claimed.State);
+        Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.Ready, id)));
+        var path = Assert.Single(Directory.GetFiles(
+            Path.Combine(claimed.FolderPath, "logs", "integration-bounce"), "*.json"));
+        Assert.Equal("manual-queued", IntegrationBounceObligationStore.Read(path)!.State);
+        Assert.Contains(stack.Timeline.ReadAll(claimed.FolderPath),
+            entry => entry.Kind == TimelineEventKinds.IntegrationRecoveryQueued);
+    }
+
+    /// <summary>
+    /// AGT-2990: the same race on the automatic rail used to be reported as a
+    /// failed bounce and the obligation was deferred to the operator although
+    /// the card had been queued and claimed.
+    /// </summary>
+    [Fact]
+    public async Task AutomaticBounce_ClaimedRightAfterPromotion_IsCountedAsQueued()
+    {
+        var notifier = new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance);
+        // The guarded delivery chain holds a non-integrated human-review card
+        // before the bounce path; the rail's own bounce is under test here.
+        var stack = Build(notifier: notifier, guardedDeliveryChain: false);
+        var id = "automatic-bounce-race";
+        SeedTask(stack, id, CreateUnintegratedDelivery(id), conflict: true);
+        var claim = ClaimOnFirstPromotion(stack, notifier, id);
+
+        var snapshot = await stack.Rail.RunOnceAsync();
+
+        Assert.True(claim.Claimed, Describe(stack, snapshot));
+        Assert.Equal(1, snapshot.Requeued);
+        Assert.Equal(0, snapshot.Failed);
+        var claimed = stack.Scanner.FindJob(id, _watchPath)!;
+        Assert.Equal(TaskStates.Progress, claimed.State);
+        var path = Assert.Single(Directory.GetFiles(
+            Path.Combine(claimed.FolderPath, "logs", "integration-bounce"), "*.json"));
+        var obligation = IntegrationBounceObligationStore.Read(path)!;
+        Assert.Equal("queued", obligation.State);
+        Assert.Equal("automatic", obligation.RouteDecision);
+    }
+
+    /// <summary>
+    /// Simulates a runner pickup: the first time the card is seen in Ready it
+    /// records what a claimant would observe, then moves it to Progress.
+    /// </summary>
+    private RaceClaim ClaimOnFirstPromotion(Stack stack, TaskChangeNotifier notifier, string id)
+    {
+        var claim = new RaceClaim();
+        notifier.JobsBulkChanged += () =>
+        {
+            if (claim.Claimed) return;
+            var ready = stack.Scanner.FindJob(id, _watchPath);
+            if (ready?.State != TaskStates.Ready) return;
+            claim.StateWhenClaimable = ready.State;
+            var directory = Path.Combine(ready.FolderPath, "logs", "integration-bounce");
+            claim.ReceiptStateWhenClaimable = Directory.Exists(directory)
+                ? Directory.GetFiles(directory, "*.json")
+                    .Select(IntegrationBounceObligationStore.Read)
+                    .SingleOrDefault()?.State
+                : null;
+            claim.Claimed = stack.States.MoveJob(id, TaskStates.Progress, _watchPath).Status
+                == MoveJobStatus.Success;
+        };
+        return claim;
+    }
+
+    private sealed class RaceClaim
+    {
+        public bool Claimed { get; set; }
+        public string? StateWhenClaimable { get; set; }
+        public string? ReceiptStateWhenClaimable { get; set; }
+    }
+
     [Fact]
     public async Task StaleAttempt_DoesNotCreateAnEligibleBounce()
     {
@@ -697,7 +795,9 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
         int maxInfrastructureRequeues = AcceptanceRailDefaults.MaxInfrastructureRequeues,
         bool shadowOnly = false,
         bool bounceEnabled = true,
-        bool projectBounceEnabled = true)
+        bool projectBounceEnabled = true,
+        TaskChangeNotifier? notifier = null,
+        bool guardedDeliveryChain = true)
     {
         var logs = new List<string>();
         var values = new Dictionary<string, string?>
@@ -707,6 +807,7 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
             ["WatchPaths:0:RootPath"] = _repo,
             ["WatchPaths:0:RepositoryPath"] = _repo,
             ["TaskRepository"] = _root,
+            ["DeliveryChain:Guarded"] = guardedDeliveryChain.ToString(),
             ["AcceptanceRail:Enabled"] = "true",
             ["IntegrationBounceRail:ShadowOnly"] = shadowOnly.ToString(),
             ["IntegrationBounceRail:Enabled"] = bounceEnabled.ToString(),
@@ -727,6 +828,7 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
         var states = new TaskStateMachine(
             scanner,
             new CollectingLogger<TaskStateMachine>(logs),
+            notifier: notifier,
             timeline: timeline);
         var mutations = new TaskMutationService(
             scanner,
@@ -778,7 +880,7 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
             configuration,
             new CollectingLogger<AcceptanceRailHostedService>(logs),
             new IntegrationGenerationReconcileSweep(mutations));
-        return new Stack(scanner, timeline, pipeline, integration, recovery, rail, logs);
+        return new Stack(scanner, timeline, pipeline, integration, recovery, rail, logs, states);
     }
 
     private string SeedTask(
@@ -927,7 +1029,8 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
         TaskIntegrationStatusService Integration,
         TaskIntegrationRecoveryService Recovery,
         AcceptanceRailHostedService Rail,
-        List<string> Logs);
+        List<string> Logs,
+        TaskStateMachine States);
 
     private sealed class CollectingLogger<T>(List<string> entries) : ILogger<T>
     {

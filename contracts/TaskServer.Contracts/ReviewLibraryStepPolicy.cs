@@ -135,6 +135,12 @@ public static class ReviewLibraryStepPolicy
         if (ContainsTool(invocation, "node") || ContainsTool(invocation, "npm")
             || ContainsTool(invocation, "npx")) capabilities.Add(CapabilityProtocol.Node);
         if (ContainsTool(invocation, "playwright")) capabilities.Add(CapabilityProtocol.Playwright);
+        // AGT-2981: the render scripts call `docker compose config` and node.
+        if (ComposeRenderGatePolicy.IsRenderInvocation(invocation))
+        {
+            capabilities.Add(CapabilityProtocol.ComposeRender);
+            capabilities.Add(CapabilityProtocol.Node);
+        }
     }
 
     private static bool ContainsTool(string invocation, string tool)
