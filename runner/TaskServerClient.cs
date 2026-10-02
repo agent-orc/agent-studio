@@ -938,6 +938,29 @@ public sealed class TaskServerClient : IDisposable
         return JsonSerializer.Deserialize<Contract.GateStatus>(detail, Json);
     }
 
+    /// <summary>Registered projects, used to map a card key prefix to its project (salvage retention).</summary>
+    public async Task<IReadOnlyList<Contract.ProjectDto>> ListProjectsAsync(CancellationToken ct)
+    {
+        using var response = await _http.GetAsync("/api/v1/projects", ct);
+        var detail = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            throw new TaskServerException((int)response.StatusCode, $"Project list failed: {Trim(detail)}");
+        return JsonSerializer.Deserialize<Contract.ProjectDto[]>(detail, TaskServerContractJson) ?? [];
+    }
+
+    /// <summary>One card's lifecycle state by project and key. Returns null on 404.</summary>
+    public async Task<Contract.TaskDto?> GetTaskAsync(string projectId, string taskKey, CancellationToken ct)
+    {
+        using var response = await _http.GetAsync(
+            $"/api/v1/projects/{Uri.EscapeDataString(projectId)}/tasks/{Uri.EscapeDataString(taskKey)}",
+            ct);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        var detail = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            throw new TaskServerException((int)response.StatusCode, $"Task lookup failed: {Trim(detail)}");
+        return JsonSerializer.Deserialize<Contract.TaskDto>(detail, TaskServerContractJson);
+    }
+
     public async Task<Contract.ReviewLeaseDto> RenewReviewLeaseAsync(
         string attemptId,
         Contract.ReviewLeaseRenewRequest request,

@@ -293,6 +293,57 @@ public class RunnerOptionsTests
         Assert.Equal(fingerprint, options.TlsServerCertificateSha256);
     }
 
+    [Fact]
+    public void Salvage_retention_defaults_to_apply_on_the_home_salvage_store()
+    {
+        using var environment = new EnvironmentVariableScope(
+            ("RUNNER_SALVAGE_DIR", null),
+            ("RUNNER_SALVAGE_RETENTION", null),
+            ("RUNNER_SALVAGE_RETENTION_DAYS", null),
+            ("RUNNER_SALVAGE_MAX_PER_CARD", null),
+            ("RUNNER_SALVAGE_SWEEP_HOURS", null));
+
+        var (options, _, _, _) = RunnerOptions.Parse(["--poll"]);
+
+        Assert.Equal(RunnerOptions.DefaultSalvageDir, options.SalvageDir);
+        Assert.Equal("apply", options.SalvageRetentionMode);
+        Assert.Equal(14, options.SalvageRetentionDays);
+        Assert.Equal(3, options.SalvageMaxPerCard);
+        Assert.Equal(6, options.SalvageSweepHours);
+        Assert.Equal(string.Empty, new RunnerOptions
+        {
+            ServerUrl = "http://localhost",
+            RunnerId = "r",
+            RunnerName = "r",
+            Hostname = "h",
+            BackendName = "b",
+            WorkDir = "w",
+            BaseBranch = "main",
+            CliBin = "c",
+            CliArgs = "",
+        }.SalvageDir);
+    }
+
+    [Fact]
+    public void Salvage_retention_settings_come_from_the_environment_and_reject_unknown_modes()
+    {
+        using var environment = new EnvironmentVariableScope(
+            ("RUNNER_SALVAGE_DIR", "/srv/salvage"),
+            ("RUNNER_SALVAGE_RETENTION", "Report"),
+            ("RUNNER_SALVAGE_RETENTION_DAYS", "30"),
+            ("RUNNER_SALVAGE_MAX_PER_CARD", "5"),
+            ("RUNNER_SALVAGE_SWEEP_HOURS", "12"));
+
+        var (options, _, _, _) = RunnerOptions.Parse(["--poll"]);
+
+        Assert.Equal("/srv/salvage", options.SalvageDir);
+        Assert.Equal("report", options.SalvageRetentionMode);
+        Assert.Equal(30, options.SalvageRetentionDays);
+        Assert.Equal(5, options.SalvageMaxPerCard);
+        Assert.Equal(12, options.SalvageSweepHours);
+        Assert.Throws<ArgumentException>(() => RunnerOptions.Parse(["--poll", "--salvage-retention", "purge"]));
+    }
+
     private sealed class TemporaryTokenFile : IDisposable
     {
         public string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "runner-token-" + Guid.NewGuid().ToString("N"));

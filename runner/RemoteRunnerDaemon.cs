@@ -311,6 +311,17 @@ public sealed class RemoteRunnerDaemon
         }
         var capabilityGeneration = DateTime.UtcNow.Ticks;
         var telemetry = new HostTelemetrySampler();
+        // AGT-2999: the coding host owns its salvage store. The sweep runs on its
+        // own timer so Git and Task Server lookups never delay the claim loop.
+        var salvage = _options.Role == "coding" && !string.IsNullOrWhiteSpace(_options.SalvageDir)
+            ? new SalvageRetentionSweeper(
+                _options,
+                new TaskServerSalvageCardDirectory(_client),
+                new GitSalvageRefStore(_options),
+                () => ActiveTaskKeys(inventory.Snapshot(), state),
+                _log)
+            : null;
+        var salvageSweep = salvage?.RunAsync(shutdown) ?? Task.CompletedTask;
         HostTelemetrySample? latestTelemetry = telemetry.SampleIfDue(
             active.Count,
             connectivity.Snapshot);
@@ -325,7 +336,7 @@ public sealed class RemoteRunnerDaemon
                         gitCapability.CanPushWorkflows,
                         gitCapability.Detail,
                         connectivity: connectivity.Snapshot),
-                    RunnerCapabilityProbe.Telemetry(latestTelemetry),
+                    RunnerCapabilityProbe.Telemetry(latestTelemetry, salvageStore: salvage?.Current),
                     capabilityGeneration,
                     ct);
             },
@@ -489,7 +500,7 @@ public sealed class RemoteRunnerDaemon
                                 gitCapability.CanPushWorkflows,
                                 gitCapability.Detail,
                                 connectivity: connectivity.Snapshot),
-                            RunnerCapabilityProbe.Telemetry(capabilityTelemetry),
+                            RunnerCapabilityProbe.Telemetry(capabilityTelemetry, salvageStore: salvage?.Current),
                             generation,
                             ct),
                         async ct =>
@@ -850,6 +861,7 @@ public sealed class RemoteRunnerDaemon
         if (codingHandoffs.Length > 0)
             await Task.WhenAll(codingHandoffs);
         await interactivePoll;
+        await salvageSweep;
         try { await interactiveChat.DrainAsync(); }
         catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { }
         catch (Exception ex) { _log($"interactive chat drain ended with error: {ex.Message}"); }
