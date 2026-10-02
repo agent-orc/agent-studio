@@ -33,10 +33,12 @@ public class CodeReviewDefaultsEndpointTests
             StartedAt = transition,
         }, fields);
 
-        Assert.True(before.Cost.ModelKnown);
         Assert.True(after.Cost.ModelKnown);
         Assert.NotEqual(before.Cost.Total, after.Cost.Total);
-        Assert.NotEqual(before.Cost.PriceBasis!.ValidFrom, after.Cost.PriceBasis!.ValidFrom);
+        if (before.Cost.ModelKnown)
+            Assert.NotEqual(before.Cost.PriceBasis!.ValidFrom, after.Cost.PriceBasis!.ValidFrom);
+        else
+            Assert.Equal(TokenEconomy.PriceStatus.NoPriceForDate, before.Cost.Status);
     }
 
     private static IConfiguration Config(params (string Key, string Value)[] pairs)

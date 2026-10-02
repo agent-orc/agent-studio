@@ -188,7 +188,11 @@ public class TaskScannerService : ITaskScanner
         if (!File.Exists(path)) return null;
         try
         {
-            using var manifest = JsonDocument.Parse(File.ReadAllText(path));
+            // Sidecars are re-read per task on every scan; an oversized one
+            // is treated like an unreadable one (AGT-2991).
+            var raw = BoundedFileRead.ReadAllTextOrNull(path, BoundedFileRead.SidecarBytes);
+            if (raw is null) return null;
+            using var manifest = JsonDocument.Parse(raw);
             return manifest.RootElement.TryGetProperty("restoredAt", out var restoredAt)
                    && restoredAt.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined
                 ? "hot-restored"
@@ -1238,8 +1242,15 @@ public class TaskScannerService : ITaskScanner
         if (!File.Exists(path)) return [];
         try
         {
-            var snapshot = JsonSerializer.Deserialize<LifecycleSnapshot>(
-                File.ReadAllText(path), TaskJsonFile.ReadOpts);
+            var raw = BoundedFileRead.ReadAllTextOrNull(path, BoundedFileRead.SidecarBytes);
+            if (raw is null)
+            {
+                _logger.LogWarning(
+                    "Skipping post-processing lifecycle checks from {Path}: file exceeds {MaxBytes} bytes",
+                    path, BoundedFileRead.SidecarBytes);
+                return [];
+            }
+            var snapshot = JsonSerializer.Deserialize<LifecycleSnapshot>(raw, TaskJsonFile.ReadOpts);
             return snapshot?.PostProcessingChecks ?? [];
         }
         catch (Exception ex)
@@ -1429,8 +1440,10 @@ public class TaskScannerService : ITaskScanner
         if (!File.Exists(path)) return null;
         try
         {
-            var raw = File.ReadAllText(path);
-            return JsonSerializer.Deserialize<PendingIntent>(raw, TaskJsonFile.ReadOpts);
+            // The draft carries a free-text operator prompt, so it gets the
+            // larger text cap rather than the sidecar cap (AGT-2991).
+            var raw = BoundedFileRead.ReadAllTextOrNull(path, BoundedFileRead.EvidenceTextBytes);
+            return raw is null ? null : JsonSerializer.Deserialize<PendingIntent>(raw, TaskJsonFile.ReadOpts);
         }
         catch
         {
@@ -1452,7 +1465,9 @@ public class TaskScannerService : ITaskScanner
         if (!File.Exists(path)) return null;
         try
         {
-            using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            var raw = BoundedFileRead.ReadAllTextOrNull(path, BoundedFileRead.SidecarBytes);
+            if (raw is null) return null;
+            using var doc = JsonDocument.Parse(raw);
             if (doc.RootElement.TryGetProperty("waitStartedAt", out var el)
                 && el.ValueKind == JsonValueKind.String
                 && el.TryGetDateTime(out var dt))

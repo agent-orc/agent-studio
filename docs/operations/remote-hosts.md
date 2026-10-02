@@ -175,6 +175,12 @@ RUNNER_MAX_PARALLELISM=2
 RUNNER_REQUIRED_CAPABILITIES=toolchain:dotnet,toolchain:node,toolchain:playwright
 ```
 
+A review or gate host that should take Compose-render gate steps
+(`toolchain:compose-render`) needs the Docker CLI with the compose plugin on
+the service PATH. The host advertises the key only while
+`docker compose version` exits 0. See the
+[Compose-render gate step](../system/domains/pipeline.md#compose-render-gate-step-agt-2981).
+
 Enable and verify the service:
 
 ```bash

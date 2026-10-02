@@ -52,6 +52,14 @@ case "$command" in
     config|build|up|down)
         exit 0
         ;;
+    exec)
+        case "$*" in
+            *studio_token) printf 'scenario-contract-studio-token\n' ;;
+            *engine_token) printf 'scenario-contract-engine-token\n' ;;
+            *runner_token) printf 'scenario-contract-runner-token\n' ;;
+            *) exit 2 ;;
+        esac
+        ;;
     images)
         printf 'sha256:scenario-task-server\n'
         ;;
@@ -120,17 +128,20 @@ scenario_compose_json="$(
     SCENARIO_STUDIO_BFF_IMAGE=scenario-contract-studio-bff:local \
     SCENARIO_ORCHESTRATOR_ENGINE_IMAGE=scenario-contract-engine:local \
     SCENARIO_AGENT_HOST_IMAGE=scenario-contract-agent-host:local \
-    DISTRIBUTED_STUDIO_TOKEN=scenario-contract-studio-token \
-    DISTRIBUTED_ENGINE_TOKEN=scenario-contract-engine-token \
-    DISTRIBUTED_RUNNER_TOKEN=scenario-contract-runner-token \
     docker compose \
         --project-name scenario-contract-rendered \
         --file "$repo_root/docker-compose.yml" \
         --file "$repo_root/testsupport/scenario/docker-compose.scenario.yml" \
-        --profile distributed \
-        --profile runner \
         config --format json
 )"
+
+# The one-box Compose file has no distributed or runner profile; the scenario
+# must neither hide its runner behind one nor select one that does not exist.
+if grep -En -- '--profile.{0,4}(distributed|runner)' \
+    "$repo_root/scripts/scenario.sh" "$repo_root/task-server.Tests/ScenarioContext.cs"; then
+    printf 'The scenario selects a Compose profile the one-box file does not define.\n' >&2
+    exit 1
+fi
 
 node -e '
 const config = JSON.parse(process.argv[1]);
@@ -161,9 +172,6 @@ for (const [serviceName, contract] of Object.entries(expected)) {
     throw new Error(`${serviceName} does not build ${contract.dockerfile}`);
   }
 }
-// The product stack generates its tokens in the bootstrap container; the
-// scenario injects known tokens as Compose secrets and every service must
-// read its token file from that mount, never from the bootstrap volume.
 const tokenFiles = {
   "task-server": {
     STUDIO_AUTH_TOKEN_FILE: "studio_token",
@@ -175,30 +183,17 @@ const tokenFiles = {
 };
 for (const [serviceName, files] of Object.entries(tokenFiles)) {
   const service = config.services[serviceName];
-  for (const [variable, source] of Object.entries(files)) {
-    const target = `/run/secrets/${source}`;
-    if (service.environment?.[variable] !== target) {
-      throw new Error(`${serviceName}/${variable} is ${service.environment?.[variable]}, expected ${target}`);
-    }
-    const secret = (service.secrets ?? []).find(candidate => candidate.source === source);
-    if (!secret || (secret.target ?? target) !== target) {
-      throw new Error(`${serviceName} does not mount the ${source} secret at ${target}`);
-    }
-    if (String(secret.uid) !== "10001" || String(secret.gid) !== "10001") {
-      throw new Error(`${serviceName}/${source} is not readable by UID/GID 10001`);
-    }
-    if (String(secret.mode) !== "0400") {
-      throw new Error(`${serviceName}/${source} mode is not 0400`);
+  const volume = service.volumes.find(volume => volume.target === "/run/agent-studio-secrets");
+  if (volume?.source !== "secrets" || !volume.read_only) {
+    throw new Error(`${serviceName} must read the Compose credential volume`);
+  }
+  for (const [variable, file] of Object.entries(files)) {
+    if (service.environment?.[variable] !== `/run/agent-studio-secrets/${file}`) {
+      throw new Error(`${serviceName}/${variable} must read its bootstrapped credential`);
     }
   }
 }
-for (const source of ["studio_token", "engine_token", "runner_token"]) {
-  const variable = `DISTRIBUTED_${source.split("_")[0].toUpperCase()}_TOKEN`;
-  if (config.secrets?.[source]?.environment !== variable) {
-    throw new Error(`secret ${source} is not injected from ${variable}`);
-  }
-}
-// Nothing the scenario starts may come from a published image.
+// Keep the upstream source-image boundary, including the one-shot bootstrap.
 for (const serviceName of ["bootstrap", "task-server", "studio-bff", "orchestrator-engine", "agent-host-distributed"]) {
   const image = config.services[serviceName]?.image ?? "";
   if (image === "" || image.startsWith("ghcr.io/")) {

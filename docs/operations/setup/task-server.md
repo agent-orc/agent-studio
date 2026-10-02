@@ -477,11 +477,11 @@ Each image is tagged three times: `v<version>` (matching the release's Git
 tag), `sha-<short-commit>` (the first 7 characters of the release commit), and
 `latest`. All three tags point at the same image content for that release; use
 the version tag for a normal upgrade, the SHA tag to pin an exact commit
-during a rollback rehearsal, and `latest` only for a first try or a
-non-production demo - `docker-compose.yml` and `.env.example` default
-`AGENT_STUDIO_VERSION` to `latest` so `docker compose up --wait` works before
-any version pin is chosen, but a tracked deployment should set
-`AGENT_STUDIO_VERSION` to an exact `v<version>` instead. Images build for
+during a rollback rehearsal, and `latest` only for a non-production demo.
+Root `docker-compose.yml` uses one `AGENT_STUDIO_VERSION` for every service
+and resolves its release images at `v<AGENT_STUDIO_VERSION>`. Confirm all six
+images exist at that compatible version before a published-image installation.
+Source-built `-dev` services are separate evidence. Images build for
 `linux/amd64`; `linux/arm64` is not yet published.
 
 Every image carries standard OCI labels -
@@ -540,24 +540,23 @@ docker run --rm -p 127.0.0.1:5071:5071 \
 ### `docker-compose.yml` profiles
 
 [`docker-compose.yml`](../../../docker-compose.yml) at the repository root
-composes these images into four profiles, copy [`.env.example`](../../../.env.example)
-to `.env` to override ports, the pinned `AGENT_STUDIO_VERSION`, and the
-`distributed` profile's bearer credentials:
+uses one pinned image set. Run `scripts/compose-distributed-bootstrap.sh` to
+create owner-only `.env`, `runner.env`, and four service credentials first:
 
 | Profile | Services | Purpose |
 |---|---|---|
-| (none) | `orchestrator-api`, `frontend` | The default install: a working Studio, pulling pinned images. See [Getting started](./getting-started.md). |
-| `runner` | adds `agent-host-coding`, `agent-host-review` | Coding/review Agent Hosts against `orchestrator-api`. |
-| `distributed` | `task-server`, `orchestrator-engine`, `studio-bff`, `agent-host-distributed`, plus the default two | The target architecture from [Distributed Agent Studio target architecture](../../concepts/distributed-agent-studio-target-architecture.md), previewed locally. |
-| `dev` | a `-dev` sibling of every service above | Builds from this checkout's Dockerfiles instead of pulling. This is the only place `build:` is wired in the compose file; name the exact `-dev` services you want (e.g. `docker compose --profile dev up --build orchestrator-api-dev frontend-dev`) rather than a bare `--profile dev up`, which also starts every profile-less default service and collides on their ports. |
+| (none) | `bootstrap`, `task-server`, `orchestrator-engine`, `studio-bff`, `orchestrator-api`, `web`, `agent-host-distributed` (coding), `agent-host-review-distributed` (review) | Transitional one-box baseline with one task authority. `orchestrator-api` is the compatibility API: it forwards only versioned `/api/v1` routes to the same Task Server, rejects every other `/api` route, and mounts no workspace or project store. See [Getting started](./getting-started.md) for route and acceptance limits. |
+| `ops` | `credential-manager` | One-shot credential rotation and revocation against the shared secrets volume. |
+| `edge` | `edge` | Caddy HTTPS listener for an explicit private-network origin; pair it with `STUDIO_ALLOWED_ORIGINS`. |
+| `dev` | a `-dev` sibling of every default and `ops` service | Builds from this checkout's Dockerfiles instead of pulling. This is the only place `build:` is wired in the compose file; name the exact `-dev` services you want (e.g. `docker compose --profile dev up --build task-server-dev web-dev`) rather than a bare `--profile dev up`, which also starts every profile-less default service and collides on their ports. |
 
 The disposable Compose topology explicitly sets
 `ENGINE_ALLOW_INSECURE_HTTP=1` and `RUNNER_ALLOW_INSECURE_HTTP=1` only for
 service-name traffic inside its private container network. Both opt-ins stay
 disabled by default. A remote Task Server URL must use HTTPS.
 
-`scripts/compose-smoke-test.sh` exercises all three non-dev topologies (default,
-`distributed`, and a Task-Server-registered agent-host) by building through the
+`scripts/compose-smoke-test.sh` exercises the one-box route boundary,
+compatibility guard and a Task-Server-registered agent-host by building through the
 `dev` profile, so CI proves the Dockerfiles on every commit without needing
 registry access.
 
@@ -577,6 +576,7 @@ settings.
 | `ENGINE_AUTH_TOKEN_FILE` | One-time bootstrap input for the initial Engine principal | Generated and written by packaged setup |
 | `STUDIO_AUTH_TOKEN`, `ENGINE_AUTH_TOKEN` | Direct bootstrap alternatives for ephemeral deployments | Unset |
 | `BOOTSTRAP_RUNNER_ID` and `BOOTSTRAP_RUNNER_AUTH_TOKEN(_FILE)` | Optional bound Runner bootstrap for deterministic Compose or topology harnesses | Unset |
+| `BOOTSTRAP_REVIEW_RUNNER_ID` and `BOOTSTRAP_REVIEW_RUNNER_AUTH_TOKEN(_FILE)` | Optional second bound Runner principal for the review host. Both values must be set together; the id and the credential must differ from the coding Runner's. Compose sets them from `review_runner_token`. | Unset |
 | `AUTH_TOKEN_FILE`, `AUTH_TOKEN` | Deprecated shared bearer input, mapped to the bootstrap Studio principal only | Unset |
 | `TaskServer:MinimumLeaseSeconds` | Lower clamp for Runner leases | `30` |
 | `TaskServer:MaximumLeaseSeconds` | Upper clamp for Runner leases | `600` |
@@ -611,6 +611,13 @@ for the Docker control-plane variables and the packaged installer prompts,
 and the
 [retention and archive dossier, §5](../retention-und-archiv/index.html#archiv-s3)
 for the full design rationale.
+
+The Studio BFF (`studio-bff`) reads two settings of its own:
+
+| Setting | Meaning | Default |
+|---|---|---|
+| `TaskServer:BaseUrl` | Task Server origin the BFF forwards `/api/v1` and `/hubs` to. Required. | None; startup fails |
+| `Studio:AllowedOrigins` (`STUDIO_ALLOWED_ORIGINS` in Compose) | Comma-separated browser origins. Each entry must be an exact `scheme://host[:port]` origin, either HTTPS or loopback HTTP; any other entry stops startup. A request with a foreign `Origin` gets 403 `studio-origin-rejected`, as does a POST, PUT, PATCH or DELETE without an `Origin`. | `http://127.0.0.1:4011,http://localhost:4011` |
 
 - Configure at most one direct value or file for each bootstrap principal.
 - `GET /api/v1/protocol` and `POST /api/v1/protocol/compatibility` remain open

@@ -53,10 +53,14 @@ async function stubWorkspace(
         user: null,
       });
     }
-    if (/\/api\/(?:tags|v1\/workspaces|clients|git\/summary|crash-recovery\/pending)\/?$/.test(requestPath)) body = '[]';
+    if (/\/api\/(?:tags|v1\/workspaces|v1\/projects|clients|git\/summary|crash-recovery\/pending)\/?$/.test(requestPath)) body = '[]';
     if (requestPath.startsWith('/api/bus/')) body = '[]';
     if (requestPath === '/api/v1/management/remote-hosts') body = '[]';
+    if (requestPath === '/api/v1/management/links') body = '[]';
     if (requestPath === '/api/v1/studio/runner/status') body = '{"projects":{}}';
+    if (/\/api\/projects\/[^/]+\/workbenches$/.test(requestPath)) {
+      body = JSON.stringify({ projectName: PROJECT, items: [] });
+    }
     if (requestPath === '/api/cli/quota') body = '{"snapshots":[]}';
     if (requestPath === '/api/epics') body = '[]';
     if (requestPath.startsWith('/api/tasks/archive')) body = '{"items":[],"total":0,"offset":0,"limit":50}';

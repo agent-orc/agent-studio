@@ -43,7 +43,14 @@ public sealed class WikiTaskCrossReferenceService
             if (!IsWikiPage(rel) || rel.EndsWith(".meta.json", StringComparison.OrdinalIgnoreCase)) continue;
             try
             {
-                var content = File.ReadAllText(fullPath);
+                // Every wiki page is inspected per task; an oversized page is
+                // skipped instead of loaded whole (AGT-2991).
+                if (!BoundedFileRead.TryReadAllText(fullPath, BoundedFileRead.EvidenceTextBytes, out var content))
+                {
+                    _logger.LogDebug("Skipped wiki page {Path} for task evidence: larger than {MaxBytes} bytes",
+                        fullPath, BoundedFileRead.EvidenceTextBytes);
+                    continue;
+                }
                 if (needles.Any(n => content.Contains(n!, StringComparison.OrdinalIgnoreCase))) candidates.Add(rel);
             }
             catch (IOException ex)

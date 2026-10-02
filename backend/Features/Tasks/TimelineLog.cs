@@ -90,9 +90,16 @@ public sealed class TimelineLog
     }
 
     /// <summary>
-    /// Read the full timeline for one job. Tolerant to torn / malformed
+    /// Read the timeline for one job. Tolerant to torn / malformed
     /// trailing lines (skipped silently) - same contract as
     /// <see cref="TaskSessionLog.ReadSessionEvents"/>.
+    /// <para>
+    /// The ledger has no size cap and many callers read it per card per
+    /// tick, so the read is bounded to the newest
+    /// <see cref="BoundedFileRead.LedgerBytes"/> (AGT-2991). A normal
+    /// timeline is a small fraction of that and is returned whole; a larger
+    /// one yields its newest complete events and a warning.
+    /// </para>
     /// </summary>
     public List<TimelineEvent> ReadAll(string jobFolderPath)
     {
@@ -100,7 +107,12 @@ public sealed class TimelineLog
         var path = TaskPaths.TimelineLog(jobFolderPath);
         if (!File.Exists(path)) return [];
         var result = new List<TimelineEvent>();
-        foreach (var line in File.ReadAllLines(path))
+        var lines = BoundedFileRead.ReadTailLines(path, BoundedFileRead.LedgerBytes, out var truncated);
+        if (truncated)
+            _logger.LogWarning(
+                "TimelineLog: {Path} exceeds {MaxBytes} bytes; reading the newest events only",
+                path, BoundedFileRead.LedgerBytes);
+        foreach (var line in lines)
         {
             if (string.IsNullOrWhiteSpace(line)) continue;
             try

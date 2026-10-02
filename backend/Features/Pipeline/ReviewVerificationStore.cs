@@ -57,6 +57,14 @@ public sealed record ReviewVerificationRecord
     /// <summary>One of <see cref="ReviewBuildTestGateClasses"/>.</summary>
     public string BuildTestGate { get; init; } = ReviewBuildTestGateClasses.Failed;
 
+    /// <summary>
+    /// Host requirements (capability keys) of the review plan's steps, e.g.
+    /// <c>toolchain:compose-render</c> (AGT-2981). A reused verdict covers
+    /// those steps, so the local gate does not repeat them on a host that
+    /// lacks the requirement. Empty for a record written before this field.
+    /// </summary>
+    public IReadOnlyList<string> VerifiedRequirements { get; init; } = [];
+
     public DateTimeOffset VerifiedAtUtc { get; init; }
 }
 
