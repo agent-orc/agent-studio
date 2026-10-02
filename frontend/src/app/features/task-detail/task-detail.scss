@@ -1228,6 +1228,24 @@
       .detail {
         padding: 18px;
       }
+      // HUC-S6 (AGT-2965): on phone the panes stack in reading order
+      // (overview facts, then protocol) and the panes region scrolls, so no
+      // pane is squeezed beside another or covers the task controls. The
+      // !important beats the inline flex weight the desktop splitter writes.
+      .detail__panes {
+        flex-direction: column;
+        overflow-y: auto;
+      }
+      .detail__panes .pane {
+        flex: 0 0 auto !important;
+        min-height: min(70vh, 560px);
+      }
+      .detail__panes .pane--protocol {
+        border-top: 1px solid var(--studio-border);
+      }
+      .detail__panes .pane__splitter {
+        display: none;
+      }
       .detail__header {
         flex-direction: column;
       }

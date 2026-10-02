@@ -8,13 +8,14 @@
 /* stylelint-disable scale-unlimited/declaration-strict-value */
 
     .column {
-      background: var(--column-bg, #181825);
-      // Slightly tighter than the previous 16 px so lane radius is
-      // in the same family as the inner cards (10 px) — premium UIs
-      // step radius by ~2-4 px between nesting levels rather than
-      // jumping by 6.
-      border-radius: 12px;
-      padding: var(--studio-spacing-4);
+      // HUC-S6 (AGT-2965): the lane is no longer a framed card around the
+      // task cards. Tasks align to the lane heading's inline start and the
+      // header's single bottom rule is the only separator, so a task never
+      // sits inside two nested frames.
+      background: transparent;
+      border-radius: 0;
+      padding-block: var(--studio-spacing-3);
+      padding-inline: 0;
       /*
        * Columns share whatever horizontal space the dashboard has left
        * after gaps and group padding. The 220px floor matches the
@@ -78,22 +79,26 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    .column__count {
+    // One count treatment for the lane total, review sub-groups and the
+    // collapsed rail (HUC-S6); the numbers come from --studio-count-* tokens.
+    @mixin count-badge {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      height: 20px;
-      min-width: 22px;
+      height: var(--studio-count-height);
+      min-width: var(--studio-count-min-width);
       box-sizing: border-box;
-      background: rgba(255,255,255,0.08);
-      border-radius: 10px;
-      padding: 0 8px;
-      font-size: var(--studio-lane-header-secondary-size);
+      background: var(--studio-count-bg);
+      color: var(--studio-count-fg);
+      border-radius: var(--studio-count-radius);
+      padding-inline: var(--studio-count-padding-inline);
+      font-size: var(--studio-count-size);
+      font-weight: 600;
       line-height: 1;
       font-variant-numeric: tabular-nums;
-      color: var(--studio-fg-dim, #94a3b8);
       flex-shrink: 0;
     }
+    .column__count { @include count-badge; }
     // F35: lane-header sort-strategy glyph. Dimmed so it reads as metadata,
     // not an action; brighter on the 'mixed' marker to flag the ambiguity.
     .column__sort-indicator {
@@ -156,48 +161,31 @@
     /* 4-review swim-lane subdivisions: orchestrator-decided cards visually
        separate from human-review cards so the user sees at a glance which
        cards the orchestrator already triaged. */
+    /* Review sub-groups are flat: a quiet heading with the shared count,
+       aligned to the lane heading, instead of a tinted frame per group. */
     .column__subsection {
       display: flex;
       flex-direction: column;
       gap: var(--studio-card-list-gap);
-      padding: var(--studio-spacing-3);
-      border-radius: 10px;
-      background: rgba(255, 255, 255, 0.02);
-      border: 1px solid rgba(255, 255, 255, 0.04);
+      padding: 0;
     }
-    .column__subsection--orchestrator {
-      background: rgba(139, 92, 246, 0.06);
-      border-color: rgba(139, 92, 246, 0.20);
-    }
-    .column__subsection--human {
-      background: rgba(56, 189, 248, 0.04);
-      border-color: rgba(56, 189, 248, 0.16);
+    .column__subsection + .column__subsection {
+      padding-top: var(--studio-spacing-3);
+      border-top: 1px solid var(--studio-border);
     }
     .column__subsection-title {
-      margin: 0 0 2px;
+      margin: 0;
       display: flex;
       align-items: center;
-      gap: 6px;
-      font-size: 11px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: #cbd5e1;
+      gap: var(--studio-spacing-2);
+      font-size: var(--studio-lane-header-secondary-size);
+      font-weight: 600;
+      color: var(--studio-fg-dim);
     }
-    .column__subsection--orchestrator .column__subsection-title { color: #c4b5fd; }
-    .column__subsection--human        .column__subsection-title { color: #7dd3fc; }
     .column__subsection-icon { font-size: 13px; line-height: 1; }
     .column__subsection-count {
+      @include count-badge;
       margin-left: auto;
-      background: rgba(255,255,255,0.08);
-      color: #cbd5e1;
-      border-radius: 10px;
-      padding: 1px 6px;
-      font-size: 10px;
-      font-weight: 700;
-      font-variant-numeric: tabular-nums;
-      min-width: 20px;
-      text-align: center;
     }
     /* The drop-zone occupies just 2px of layout space but extends its hit
        target via padding + negative margins, eating into the surrounding
@@ -398,14 +386,7 @@
     }
     .column-rail__icon { font-size: 16px; line-height: 1; }
     .column-rail__count {
-      background: var(--studio-bg-hover);
-      color: var(--studio-fg-dim);
-      border-radius: 10px;
-      padding-inline: var(--studio-spacing-2);
-      font-size: 11px;
-      font-weight: 700;
-      font-variant-numeric: tabular-nums;
-      min-width: 22px;
+      @include count-badge;
       text-align: center;
     }
     /* The vertical-rotated title is the only slot that can stretch — it
