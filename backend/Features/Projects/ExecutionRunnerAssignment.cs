@@ -11,6 +11,17 @@ public static class ExecutionRunnerAssignment
             || string.Equals(normalized, "local", StringComparison.OrdinalIgnoreCase))
             return null;
 
+        var classCapability = ExecutionLocations.RequiredClassCapability(normalized);
+        if (classCapability is not null)
+        {
+            var className = classCapability["platform:".Length..];
+            if (className is not ("linux" or "windows" or "macos"))
+                throw new ArgumentException(
+                    "executionRunner class must be linux, windows, or macos",
+                    nameof(value));
+            return ExecutionLocations.ClassPrefix + className;
+        }
+
         var identity = clients.Find(normalized);
         if (identity == null
             || identity.Kind == ClientIdentityKind.Retired

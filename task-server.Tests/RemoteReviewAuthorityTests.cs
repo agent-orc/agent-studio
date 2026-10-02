@@ -253,8 +253,21 @@ public sealed class RemoteReviewAuthorityTests
         {
             Commands = passing.Commands.Select(command =>
                 command.StepId == failedStep
-                    ? command with { ExitCode = 1 }
-                    : command).ToArray(),
+                    ? command with
+                    {
+                        ExitCode = 1,
+                        BaselineSha = new string('c', 40),
+                        BaselineExitCode = 0,
+                        Diagnosis = new DeliveryFailureDiagnosisResult(
+                            DeliveryFailureDiagnosis.Product, 1, ["clean repeat reproduced card-specific failure"]),
+                    }
+                    : command).Concat(
+                [passing.Commands[0] with
+                {
+                    ExitCode = 1,
+                    Phase = "clean-repeat",
+                    WorkspaceRole = "clean-repeat",
+                }]).ToArray(),
             Verdicts = passing.Verdicts.Select(verdict =>
                 verdict.Aspect == failedAspect
                     ? verdict with
@@ -290,9 +303,8 @@ public sealed class RemoteReviewAuthorityTests
         Assert.Equal(ResultSha, payload.ResultSha);
         Assert.Equal(report.ReportSha256, payload.ReviewReportSha256);
         Assert.Equal("ProductFailure", payload.ReviewOutcome);
-        Assert.Equal("failed", Assert.Single(
-            payload.Gates,
-            gate => gate.StepId == failedStep).Status);
+        Assert.Contains(payload.Gates,
+            gate => gate.StepId == failedStep && gate.Status == "failed");
 
         var engineClaim = await store.ClaimOrchestrationAsync(
             new OrchestrationClaimRequest(
@@ -1353,8 +1365,8 @@ public sealed class RemoteReviewAuthorityTests
     // defect, and only a failure name the merge base did not have is charged to
     // the card.
     [Theory]
-    [InlineData(false, "IntegrationBranchDefect")]
-    [InlineData(true, "ProductFailure")]
+    [InlineData(false, "ReviewInfra")]
+    [InlineData(true, "ReviewInfra")]
     public async Task Baseline_evidence_allows_only_pre_existing_nonzero_test_commands(
         bool hasNewFailure,
         string expectedOutcome)
@@ -1385,8 +1397,15 @@ public sealed class RemoteReviewAuthorityTests
                 BaselineExitCode = 1,
                 NewFailures = hasNewFailure ? ["Product.NewFailure"] : [],
                 PreExistingFailures = ["Product.ExistingFailure"],
-                RetryPerformed = hasNewFailure,
-            }).ToArray(),
+                RetryPerformed = true,
+                Diagnosis = new DeliveryFailureDiagnosisResult(
+                    DeliveryFailureDiagnosis.Environment, 1, ["integration baseline is red"]),
+            }).Concat([request.Commands[0] with
+            {
+                ExitCode = 1,
+                Phase = "clean-repeat",
+                WorkspaceRole = "clean-repeat",
+            }]).ToArray(),
             Verdicts =
             [
                 new ReviewVerdictDto(
@@ -1406,6 +1425,7 @@ public sealed class RemoteReviewAuthorityTests
             default);
 
         Assert.Equal(expectedOutcome, report.Outcome);
+        Assert.Equal(DeliveryFailureDiagnosis.Environment, report.FailureClassification);
     }
 
     /// <summary>
@@ -1416,7 +1436,7 @@ public sealed class RemoteReviewAuthorityTests
     /// only on the delivery is still the card's.
     /// </summary>
     [Theory]
-    [InlineData(1, "IntegrationBranchDefect")]
+    [InlineData(1, "ReviewInfra")]
     [InlineData(0, "ProductFailure")]
     public async Task A_lint_gate_failing_on_the_merge_base_is_an_integration_branch_defect(
         int baselineExitCode,
@@ -1449,7 +1469,18 @@ public sealed class RemoteReviewAuthorityTests
                 BaselineExitCode = baselineExitCode,
                 NewFailures = [],
                 PreExistingFailures = [],
-            }).ToArray(),
+                RetryPerformed = true,
+                Diagnosis = new DeliveryFailureDiagnosisResult(
+                    baselineExitCode == 0
+                        ? DeliveryFailureDiagnosis.Product
+                        : DeliveryFailureDiagnosis.Environment,
+                    1, ["baseline and clean repeat compared"]),
+            }).Concat([request.Commands[0] with
+            {
+                ExitCode = 1,
+                Phase = "clean-repeat",
+                WorkspaceRole = "clean-repeat",
+            }]).ToArray(),
             Verdicts =
             [
                 new ReviewVerdictDto(
@@ -1513,6 +1544,70 @@ public sealed class RemoteReviewAuthorityTests
 
         Assert.Equal("ReviewInfra", report.Outcome);
         Assert.Equal("BaselineEvidenceInvalid", report.FailureClassification);
+    }
+
+    /// <summary>
+    /// AGT-2916 review finding (2026-09-27): the runner keeps the failed first
+    /// candidate run as candidate evidence when the clean repeat passes. The
+    /// Task Server must admit that shape, record the diagnosis, and not charge.
+    /// </summary>
+    [Fact]
+    public async Task Failed_candidate_run_cleared_by_the_clean_repeat_is_diagnosed_and_not_charged()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var plan = new ReviewPlanDto(
+            [new ReviewCommandDto(
+                "verify-2",
+                "build-tests",
+                "dotnet",
+                ["test"],
+                CompareToBaseline: true)],
+            ["build-tests"],
+            IntegrationRef: "refs/heads/develop");
+        await SeedReviewSubjectAsync(store, plan: plan);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var claim = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        var request = PassingReport(claim);
+        request = request with
+        {
+            Outcome = "ReviewInfra",
+            Commands = request.Commands.Select(command => command with
+            {
+                ExitCode = 1,
+                BaselineSha = new string('c', 40),
+                BaselineExitCode = 0,
+                NewFailures = [],
+                PreExistingFailures = [],
+                RetryPerformed = true,
+                Diagnosis = new DeliveryFailureDiagnosisResult(
+                    DeliveryFailureDiagnosis.FirstOccurrence, 0.5, ["clean-repeat=green"]),
+            }).Concat([request.Commands[0] with
+            {
+                ExitCode = 0,
+                Phase = "clean-repeat",
+                WorkspaceRole = "clean-repeat",
+            }]).ToArray(),
+            Verdicts =
+            [
+                new ReviewVerdictDto(
+                    "build-tests",
+                    "pass",
+                    DeliveryFailureDiagnosis.FirstOccurrence,
+                    "clean-repeat=green; confidence=0.50")
+            ],
+        };
+
+        var report = await store.ReportReviewAsync(
+            claim.Attempt!.AttemptId,
+            request,
+            "review-a",
+            default);
+
+        Assert.Equal("ReviewInfra", report.Outcome);
+        Assert.Equal(DeliveryFailureDiagnosis.FirstOccurrence, report.FailureClassification);
     }
 
     [Fact]

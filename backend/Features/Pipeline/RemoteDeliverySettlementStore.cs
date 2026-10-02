@@ -49,6 +49,9 @@ public sealed record RemoteDeliverySettlementRecord
     /// <summary>ReviewAttempt whose settlement opened this delivery sequence.</summary>
     public string ReviewAttemptId { get; init; } = "";
 
+    /// <summary>New settlements require the canonical report journal for replay.</summary>
+    public bool JournalRequired { get; init; }
+
     /// <summary>Terminal review outcome, as the authority recorded it.</summary>
     public string Outcome { get; init; } = "";
 
@@ -83,9 +86,9 @@ public sealed record RemoteDeliverySettlementRecord
 
 /// <summary>
 /// Reads and writes <see cref="RemoteDeliverySettlementRecord"/> beside the task
-/// folder. Every write is atomic (temp file plus move) and best-effort at the
-/// call site: the settled ReviewAttempt stays authoritative, this sidecar only
-/// shortens the path back to a resumable state.
+/// folder. Every write is atomic (temp file plus move). The settled
+/// ReviewAttempt stays authoritative; new report workflows also journal the
+/// delivery decision so a missing sidecar can be reconstructed safely.
 /// </summary>
 public static class RemoteDeliverySettlementStore
 {

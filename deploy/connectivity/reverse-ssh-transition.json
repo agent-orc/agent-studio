@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "installationId": "replace-with-installation-id",
+  "revision": 1,
+  "mode": "reverse-ssh-transition",
+  "package": "legacy-backend",
+  "serverOrigin": "http://127.0.0.1:5031",
+  "browserOrigin": "http://127.0.0.1:4011",
+  "linkOwner": "tunnel-keeper",
+  "enabledListeners": ["legacy-api", "runner-tunnel", "browser"],
+  "runners": [
+    {
+      "runnerId": "agent-runner-01",
+      "route": "reverse-ssh",
+      "sshTarget": "agent-runner",
+      "knownHostsFile": "C:/ProgramData/AgentStudio/known_hosts.d/agent-runner",
+      "remotePort": 15031,
+      "backoffSeconds": [5, 10, 30, 60, 120],
+      "heartbeatTimeoutSeconds": 90
+    }
+  ]
+}

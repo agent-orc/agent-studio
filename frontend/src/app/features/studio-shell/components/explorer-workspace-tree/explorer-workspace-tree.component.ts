@@ -429,7 +429,10 @@ export class ExplorerWorkspaceTreeComponent {
       ? 'Drag onto a workspace folder to move this project there'
       : 'Not registered. Use + on the destination workspace to onboard this project before moving it.';
     const openTasks = p.totalJobs === 1 ? '1 open task' : `${p.totalJobs} open tasks`;
-    return [p.displayLabel, openTasks, this.autoPickupFor(p.name).tooltip, guidance].join('\n');
+    const decisions = p.laneCounts?.decisions ?? 0;
+    const openDecisions = decisions > 0 ? `${decisions} open decision${decisions === 1 ? '' : 's'}` : null;
+    return [p.displayLabel, openTasks, openDecisions, this.autoPickupFor(p.name).tooltip, guidance]
+      .filter((line): line is string => !!line).join('\n');
   }
 
   urlTooltip(p: ExplorerProjectNode, url: RegistryProjectUrl): string {

@@ -93,6 +93,18 @@ preserved reverse SSH tunnel and repoints `agent-runner-01` at
 `127.0.0.1:15031` over SSH. The script throws if the total elapsed time is
 not under 15 minutes; the report records the actual number either way.
 
+`switch-upstream.ps1` recognises two connector env files (AGT-2984). For the
+hardened connector profile (`OrchestratorApi__Profile=connector`) it rewrites
+`Connector__Upstream__*` and `Connector__CredentialTarget`, bumps the
+generation, and gates on the connector's `/readyz`. That endpoint is ready
+only after the attach handshake has proved the stored credential and a shared
+protocol version; a refusal reason is written to the switch log. For the
+legacy `agent-studio-bff.exe` env file that `install-fallback-profile.ps1`
+writes, it switches only to `Local` and refuses `Remote`, because that
+forwarder has no Origin, CSRF, or protocol negotiation. Before a reverse
+drill, attach the connector profile as in the
+[single-host connector attach procedure](single-host-task-server.md#studio-connector-attach).
+
 `run-reverse-drill.ps1` undoes exactly that (quiesces the local Task Server
 back to `Maintenance`, switches the connector back to `Remote`, repoints
 `agent-runner-01` back at the WireGuard origin, and disables the reverse

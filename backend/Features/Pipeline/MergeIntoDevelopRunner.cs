@@ -60,6 +60,9 @@ public sealed class MergeIntoDevelopRunner
     internal const string GateTimeoutConfigKey = "PostSteps:build-test-gate:TimeoutSeconds";
     private readonly SemaphoreSlim _mergeGate = new(1, 1);
     private readonly SemaphoreSlim _pushGate = new(1, 1);
+
+    /// <summary>Error prefix of an integration refused by a successor review generation.</summary>
+    public const string SupersededReviewGenerationError = "superseded-review-generation";
     private int _mergeGateUsers;
 
     public MergeIntoDevelopRunner(
@@ -155,7 +158,8 @@ public sealed class MergeIntoDevelopRunner
         string integrationBranch,
         CancellationToken ct,
         string integrationStrategy = IntegrationStrategies.DirectMerge,
-        string pipelineType = PipelineTypes.Task)
+        string pipelineType = PipelineTypes.Task,
+        Func<Action, bool>? publicationFence = null)
     {
         // Count both the active operation and serialized waiters. The external
         // stable watchdog uses this drain signal to avoid cutting the process
@@ -171,7 +175,7 @@ public sealed class MergeIntoDevelopRunner
             {
                 return await RunSerializedAsync(
                     project, jobId, jobFolderPath, watchPath,
-                    integrationBranch, integrationStrategy, pipelineType, ct).ConfigureAwait(false);
+                    integrationBranch, integrationStrategy, pipelineType, publicationFence, ct).ConfigureAwait(false);
             }
             finally
             {
@@ -198,6 +202,7 @@ public sealed class MergeIntoDevelopRunner
         string integrationBranch,
         string integrationStrategy,
         string pipelineType,
+        Func<Action, bool>? publicationFence,
         CancellationToken ct)
     {
         var startedAt = DateTime.UtcNow;
@@ -328,6 +333,19 @@ public sealed class MergeIntoDevelopRunner
                     mainIsAncestorOfDevelop: false);
             }
 
+            // The synchronized local tips a refused publication restores. Every
+            // local mutation below stays unpublished until the fence admits it.
+            var fenceAnchors = new Dictionary<string, string>(StringComparer.Ordinal);
+            if (publicationFence is not null && synchronized.Success)
+            {
+                foreach (var anchored in lineage?.Mode == ImmediateIntegrationLineageMode.DevelopThenMain
+                             ? new[] { branch, "develop" }
+                             : new[] { branch })
+                {
+                    if (_git.GetBranchTip(repoRoot, anchored) is { } tip) fenceAnchors[anchored] = tip;
+                }
+            }
+
             if (!synchronized.Success)
             {
                 result = MergeIntoIntegrationResult.Of(
@@ -436,18 +454,6 @@ public sealed class MergeIntoDevelopRunner
                     MergeIntoIntegrationOutcome.Error,
                     error: detail);
             }
-            _logger.LogInformation(
-                "merge-into-develop project={Project} job={JobId} delivery={Delivery} integration={Integration} strategy={Strategy} outcome={Outcome}",
-                project, jobId, taskBranch, branch, strategy, result.Outcome);
-            Record(jobFolderPath, project, jobId, branch, result, preMainResult, preDevelopResult, startedAt);
-            await MaybeRaiseInterventionAsync(project, jobId, watchPath, result,
-                preMainResult, preDevelopResult, startedAt, ct).ConfigureAwait(false);
-
-            // AGT-1999: once the accepted task is folded into the integration
-            // branch, push that branch to origin so integration is never only
-            // local. Offloaded to the background worker (the same "not on the
-            // request path" strategy as the completed-job workspace push), so the
-            // accept transition never awaits the network round-trip.
             if (pushBranch is null && result.Outcome.IsSuccessfulIntegration())
             {
                 // Pin the object the push may publish: the merge result this card's
@@ -461,7 +467,49 @@ public sealed class MergeIntoDevelopRunner
                     : _git.GetBranchTip(repoRoot, branch);
                 pushBranch = branch;
             }
-            if (pushBranch is not null)
+            // AGT-2936 (D8): publication is the commit point of a fenced
+            // continuation. The fence enqueues the push only while its review is
+            // still current; a successor refuses it and the unpublished local
+            // merge is rolled back to the synchronized anchors.
+            var pushDecidedByFence = false;
+            var supersededCleanly = false;
+            if (publicationFence is not null
+                && (pushBranch is not null || result.Outcome.IsSuccessfulIntegration()))
+            {
+                var admittedPushBranch = pushBranch;
+                var admittedPushSha = approvedPushSha;
+                if (!publicationFence(() =>
+                    {
+                        if (admittedPushBranch is not null)
+                            MaybeEnqueueIntegrationPush(
+                                project, jobId, jobFolderPath, watchPath,
+                                admittedPushBranch, admittedPushSha, pipelineType);
+                    }))
+                {
+                    result = RollBackSupersededPublication(repoRoot, fenceAnchors, out supersededCleanly);
+                    preMainResult = null;
+                    preDevelopResult = null;
+                }
+                pushDecidedByFence = true;
+            }
+            _logger.LogInformation(
+                "merge-into-develop project={Project} job={JobId} delivery={Delivery} integration={Integration} strategy={Strategy} outcome={Outcome}",
+                project, jobId, taskBranch, branch, strategy, result.Outcome);
+            Record(jobFolderPath, project, jobId, branch, result, preMainResult, preDevelopResult, startedAt);
+            // A cleanly rolled-back supersession is routine, not a failure; only
+            // a failed rollback needs the operator.
+            if (!supersededCleanly)
+            {
+                await MaybeRaiseInterventionAsync(project, jobId, watchPath, result,
+                    preMainResult, preDevelopResult, startedAt, ct).ConfigureAwait(false);
+            }
+
+            // AGT-1999: once the accepted task is folded into the integration
+            // branch, push that branch to origin so integration is never only
+            // local. Offloaded to the background worker (the same "not on the
+            // request path" strategy as the completed-job workspace push), so the
+            // accept transition never awaits the network round-trip.
+            if (!pushDecidedByFence && pushBranch is not null)
             {
                 MaybeEnqueueIntegrationPush(
                     project,
@@ -778,12 +826,12 @@ public sealed class MergeIntoDevelopRunner
         var changedPaths = string.IsNullOrWhiteSpace(preMergeTip)
             ? null
             : _git.ChangedPathsAgainstMergeBase(repoRoot, preMergeTip, gatedSha);
-        var gateApplies = PreDevelopBuildGate.AppliesTo(profile, changedPaths);
+        var gateApplies = PreDevelopBuildGate.AppliesTo(profile, changedPaths, repoRoot);
         if (!gateApplies && changedPaths is not null)
         {
             const string skipReason =
-                "the merge touches neither frontend/ nor managed sources and the project " +
-                "declares no build-profile build commands";
+                "the merge touches neither frontend/, managed sources, nor the Compose stack, " +
+                "and the project declares no build-profile build commands";
             _logger.LogInformation(
                 "merge-into-develop build gate skipped for project={Project} job={JobId} integration={Integration}: {Reason}",
                 project, jobId, integrationBranch, skipReason);
@@ -877,6 +925,7 @@ public sealed class MergeIntoDevelopRunner
                         JobFolderPath = jobFolderPath,
                         SubjectRef = integrationBranch,
                         TimeoutBudgetSource = preDevelopTimeoutSource,
+                        CoveredRequirements = reuse.Reused ? reuse.CoveredRequirements : [],
                     },
                     changedPaths,
                     profile,
@@ -1358,6 +1407,31 @@ public sealed class MergeIntoDevelopRunner
         string? PushBranch,
         string? ApprovedPushSha,
         bool MechanicalAttributionHandled);
+
+    /// <summary>
+    /// Restores the synchronized local tips after a successor review generation
+    /// refused publication. Nothing reached origin, so the rollback is local.
+    /// </summary>
+    private MergeIntoIntegrationResult RollBackSupersededPublication(
+        string repoRoot,
+        IReadOnlyDictionary<string, string> anchors,
+        out bool rolledBack)
+    {
+        var failures = new List<string>();
+        foreach (var (anchoredBranch, anchorSha) in anchors)
+        {
+            if (string.Equals(_git.GetBranchTip(repoRoot, anchoredBranch), anchorSha, StringComparison.OrdinalIgnoreCase))
+                continue;
+            var reset = _git.ResetIntegrationBranch(repoRoot, anchoredBranch, anchorSha);
+            if (!reset.Success) failures.Add($"{anchoredBranch}: {reset.Error ?? "reset failed"}");
+        }
+        rolledBack = failures.Count == 0;
+        return MergeIntoIntegrationResult.Of(
+            MergeIntoIntegrationOutcome.Error,
+            error: failures.Count == 0
+                ? $"{SupersededReviewGenerationError}: a successor review owns the task; the unpublished merge was rolled back and nothing was pushed."
+                : $"{SupersededReviewGenerationError}: a successor review owns the task and the unpublished merge rollback failed ({string.Join("; ", failures)}); manual repair is required.");
+    }
 
     /// <summary>
     /// Enqueues the integration-branch push onto the background

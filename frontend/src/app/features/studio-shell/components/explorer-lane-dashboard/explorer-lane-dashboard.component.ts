@@ -26,17 +26,19 @@ export class ExplorerLaneDashboardComponent {
 
   readonly label = (): string => boardLaneCountsLabel({ laneCounts: this.counts() });
 
+  readonly decisions = (): number => this.counts().decisions ?? 0;
+
   dots(): readonly (keyof ExplorerLaneCounts)[] {
     const counts = this.counts();
     const dots: (keyof ExplorerLaneCounts)[] = [];
-    for (const lane of ['ready', 'progress', 'humanReview'] as const) {
-      for (let i = 0; i < counts[lane] && dots.length < MAX_DOTS; i++) dots.push(lane);
+    for (const lane of ['decisions', 'ready', 'progress', 'humanReview'] as const) {
+      for (let i = 0; i < (counts[lane] ?? 0) && dots.length < MAX_DOTS; i++) dots.push(lane);
     }
     return dots;
   }
 
   overflow(): number {
     const counts = this.counts();
-    return Math.max(0, counts.ready + counts.progress + counts.humanReview - MAX_DOTS);
+    return Math.max(0, counts.ready + counts.progress + counts.humanReview + (counts.decisions ?? 0) - MAX_DOTS);
   }
 }

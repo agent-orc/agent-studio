@@ -257,7 +257,8 @@ public sealed record ReviewCommandEvidenceDto(
     /// run happened, which attributes any failure to the delivery.
     /// </summary>
     int? BaselineExitCode = null,
-    ReviewLibraryStepDto? LibraryStep = null);
+    ReviewLibraryStepDto? LibraryStep = null,
+    DeliveryFailureDiagnosisResult? Diagnosis = null);
 
 /// <summary>
 /// The one word every surface uses for a test failure that a targeted re-run
@@ -335,7 +336,8 @@ public sealed record ReviewWorkspaceProofDto(
     string ResourceNamespace,
     string? IntegrationRef = null,
     string? MergeBaseSha = null,
-    string? IntegrationTipSha = null);
+    string? IntegrationTipSha = null,
+    IReadOnlyList<string>? ChangedPaths = null);
 
 public sealed record ReviewEnvironmentDto(
     string HostId,
@@ -407,6 +409,7 @@ public sealed record ReviewVerdictDto(
     string Summary,
     string? EvidenceChecked = null,
     string? Missing = null,
+    DeliveryFailureDiagnosisResult? Diagnosis = null,
     string? CarriedOverFrom = null);
 
 /// <summary>

@@ -625,8 +625,8 @@ public sealed class ExecutionOutcomeAdapterTests
     }
 
     [Theory]
-    [InlineData("claude-opus-5-5", "claude-opus-5")]
-    [InlineData("claude-opus-5-5", "claude-opus-5-20260925")]
+    [InlineData("claude-opus-5.5", "claude-opus-5-5")]
+    [InlineData("claude-opus-5-5", "claude-opus-5-5-20260925")]
     [InlineData("claude-opus-4.8", "claude-opus-4-8")]
     [InlineData("claude-haiku-4.5", "claude-haiku-4-5-20251001")]
     public void Registry_alias_and_canonical_observation_are_equivalent(

@@ -127,7 +127,8 @@ public sealed class ReviewInfrastructureRetryScheduler : BackgroundService
             var integrationRef = V1ReviewPlaneEndpoints
                 .ResolveBaselineBranch(task, project, _settings).IntegrationRef;
             var repositoryPath = _git.ResolveRepoRootForWatchPath(task.WatchPath) ?? project?.RepositoryPath;
-            var plan = _remoteReviewPlans.Build(task, repositoryPath, taskSettings, integrationRef, run.ResultSha);
+            var plan = _remoteReviewPlans.Build(task, repositoryPath, taskSettings, integrationRef, run.ResultSha,
+                RemoteReviewPlanBuilder.DeliveryChangedFiles(_git, repositoryPath, integrationRef, run.ResultSha));
             var requirementsPath = Path.Combine(task.FolderPath, "prompt.md");
             var requirements = File.Exists(requirementsPath) ? File.ReadAllText(requirementsPath) : task.Id;
             var result = _lifecycle.CreateReviewAttemptInAutoReview(task, new CreateReviewAttemptRequest(
@@ -183,7 +184,9 @@ public sealed class ReviewInfrastructureRetryScheduler : BackgroundService
                 repositoryPath,
                 taskSettings,
                 integrationRef,
-                review.Subject.ExpectedResultSha);
+                review.Subject.ExpectedResultSha,
+                RemoteReviewPlanBuilder.DeliveryChangedFiles(
+                    _git, repositoryPath, integrationRef, review.Subject.ExpectedResultSha));
         }
 
         var created = _lifecycle.CreateReviewAttemptInAutoReview(task, new CreateReviewAttemptRequest(
