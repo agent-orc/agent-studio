@@ -52,6 +52,25 @@ public sealed class RunnerCapabilityProbeTests
                                            && item.Status == "ready");
     }
 
+    /// <summary>
+    /// AGT-2981: compose-render is advertised only when the compose plugin
+    /// answers, so a host with a bare docker binary never claims a render step.
+    /// </summary>
+    [Fact]
+    public void Compose_render_is_advertised_only_when_the_compose_plugin_answers()
+    {
+        var available = new List<AdvertisedCapabilityDto>();
+        RunnerCapabilityProbe.AddComposeRender(available, () => "2.40.3");
+        var capability = Assert.Single(available);
+        Assert.Equal(CapabilityProtocol.ComposeRender, capability.Key);
+        Assert.Equal("toolchain", capability.Category);
+        Assert.Equal("2.40.3", capability.Version);
+
+        var missing = new List<AdvertisedCapabilityDto>();
+        RunnerCapabilityProbe.AddComposeRender(missing, () => null);
+        Assert.Empty(missing);
+    }
+
     [Fact]
     public async Task Capability_snapshot_reports_cli_version_and_resolved_install_path()
     {

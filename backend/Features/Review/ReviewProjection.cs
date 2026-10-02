@@ -268,9 +268,11 @@ public static class ReviewProjectionReader
 
     private static LocalReviewAttemptFacts? ParseLocalAttempt(string path)
     {
-        string content;
-        try { content = File.ReadAllText(path); }
+        // An oversized results/ file is treated like an unreadable one (AGT-2991).
+        string? content;
+        try { content = BoundedFileRead.ReadAllTextOrNull(path, BoundedFileRead.EvidenceTextBytes); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+        if (content is null) return null;
 
         var frontmatter = AgentStudio.Cli.FrontmatterParser.Parse(content);
         if (!frontmatter.Ok) return null;

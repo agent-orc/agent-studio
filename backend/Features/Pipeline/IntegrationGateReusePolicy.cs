@@ -53,6 +53,13 @@ public sealed record IntegrationGateReuseDecision(
 {
     public bool Reused => State == IntegrationGateReuseState.Reused;
 
+    /// <summary>
+    /// Host requirements whose steps the reused Remote Review ran and passed
+    /// (AGT-2981), e.g. the Compose render on a host that can run it. Empty
+    /// unless <see cref="Reused"/>.
+    /// </summary>
+    public IReadOnlyList<string> CoveredRequirements { get; init; } = [];
+
     /// <summary>Stable token for the gate-evidence header and logs.</summary>
     public string Token => Reused ? "reused" : "full";
 }
@@ -168,7 +175,10 @@ public static class IntegrationGateReusePolicy
             IntegrationGateReuseState.Reused,
             $"the Remote Review verified {Short(review.ResultSha)} on the unchanged {target} tip "
             + $"{Short(review.IntegrationTipSha)} with tested tree {Short(review.TestedTreeSha)}; only the compile step runs on the merge result",
-            review.AttemptId);
+            review.AttemptId)
+        {
+            CoveredRequirements = review.VerifiedRequirements,
+        };
     }
 
     private static IntegrationGateReuseDecision Full(string reason, string? attemptId = null)
