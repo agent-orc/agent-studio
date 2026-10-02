@@ -43,5 +43,12 @@
         </div>
       </section>
     </div>
+    @for (stall of evidenceFlushStalls(); track stall.repository ?? stall.detail) {
+      <section class="ph__stall" data-testid="pipeline-health-evidence-flush" [attr.data-repository]="stall.repository">
+        <span class="ph__label">Workspace evidence flush</span>
+        <strong>{{ stall.summary }}</strong>
+        <small>{{ stall.detail }}</small>
+      </section>
+    }
   </section>
 }
