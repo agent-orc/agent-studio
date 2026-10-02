@@ -1,4 +1,5 @@
-import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, OnDestroy, OnInit, computed, inject, input, output, signal } from '@angular/core';
+import { describeLedgerScope, ledgerScopeFromHash } from '../../../usage-cockpit';
 import type { CliType } from '../../../../models/task.model';
 import { CliUsageStore } from '../../services/cli-usage.store';
 import { CliUsageDetailComponent } from '../cli-usage-detail/cli-usage-detail';
@@ -40,6 +41,19 @@ export class TokenUsageSectionComponent implements OnInit, OnDestroy {
    *  project's Settings when a "By project" usage row is clicked. */
   readonly openProjectSettings = output<string>();
 
+  /**
+   * Workspace and local-calendar range carried by a usage-detail ledger link
+   * (HUC-S3). Shown as one line so the scope survives the navigation; `null`
+   * when the page was opened without one.
+   */
+  readonly ledgerScope = signal<string | null>(readLedgerScope());
+
+  constructor() {
+    const onHash = () => this.ledgerScope.set(readLedgerScope());
+    window.addEventListener('hashchange', onHash);
+    inject(DestroyRef).onDestroy(() => window.removeEventListener('hashchange', onHash));
+  }
+
   ngOnInit(): void {
     this.usage.startDetail();
   }
@@ -51,4 +65,9 @@ export class TokenUsageSectionComponent implements OnInit, OnDestroy {
   refreshOne(event: { cliType: CliType; event: Event }): void {
     this.usage.refreshOne(event.cliType);
   }
+}
+
+function readLedgerScope(): string | null {
+  const scope = ledgerScopeFromHash(window.location.hash);
+  return scope ? describeLedgerScope(scope) : null;
 }

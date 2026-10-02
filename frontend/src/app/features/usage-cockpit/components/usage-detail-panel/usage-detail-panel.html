@@ -1,0 +1,263 @@
+@let v = view();
+<div class="usage-detail" data-testid="usage-detail-panel">
+  <nav class="usage-detail__jump" aria-label="Usage sections">
+    @for (cli of v.clis; track cli.cliId) {
+      <a class="usage-detail__jump-link"
+         [href]="'#' + sectionId(cliFocus(cli.cliId))"
+         [attr.aria-current]="isSelected(cliFocus(cli.cliId)) ? 'location' : null"
+         [attr.data-testid]="'usage-detail-jump-' + cli.cliId"
+         (click)="$event.preventDefault(); jumpTo(cliFocus(cli.cliId))">{{ cli.name }}</a>
+    }
+    <a class="usage-detail__jump-link"
+       [href]="'#' + sectionId(costFocus)"
+       [attr.aria-current]="isSelected(costFocus) ? 'location' : null"
+       data-testid="usage-detail-jump-cost"
+       (click)="$event.preventDefault(); jumpTo(costFocus)">Cost</a>
+  </nav>
+
+  @for (cli of v.clis; track cli.cliId) {
+    <section class="usage-detail__section"
+             [id]="sectionId(cliFocus(cli.cliId))"
+             [attr.data-testid]="'usage-detail-cli-' + cli.cliId"
+             [attr.aria-labelledby]="sectionId(cliFocus(cli.cliId)) + '-title'">
+      <h3 class="usage-detail__title" tabindex="-1" [id]="sectionId(cliFocus(cli.cliId)) + '-title'">
+        {{ cli.name }}@if (cli.plan) {<span class="usage-detail__muted"> ({{ cli.plan }})</span>}
+      </h3>
+      <p class="usage-detail__meta">
+        @if (cli.stateLabel) {
+          <span class="usage-detail__badge" [attr.data-state]="cli.state" data-testid="usage-detail-cli-state">{{ cli.stateLabel }}</span>
+          @if (cli.stateReason) { <span>{{ cli.stateReason }}</span> }
+        }
+        @if (cli.updated; as u) {
+          <span>Updated <time [attr.datetime]="u.iso">{{ u.local }}</time> <span class="usage-detail__utc">({{ u.utc }})</span></span>
+        } @else {
+          <span>Never updated</span>
+        }
+        @if (cli.source) { <span class="usage-detail__muted">Source {{ cli.source }}</span> }
+      </p>
+
+      <table class="usage-detail__table" [attr.data-testid]="'usage-detail-windows-' + cli.cliId">
+        <caption class="usage-detail__caption">Quota windows, percentage used</caption>
+        <thead>
+          <tr><th scope="col">Window</th><th scope="col" class="usage-detail__num">Used</th><th scope="col">Resets ({{ v.timeZone }})</th><th scope="col">UTC</th></tr>
+        </thead>
+        <tbody>
+          @for (w of cli.windows; track w.id) {
+            <tr [attr.data-window-id]="w.id">
+              <th scope="row">{{ w.label }}</th>
+              <td class="usage-detail__num" [class.usage-detail__muted]="!w.reported">{{ w.value }}</td>
+              <td>
+                @if (w.reset; as r) {
+                  <time [attr.datetime]="r.iso" data-testid="usage-detail-reset-local">{{ r.local }}</time>
+                  @if (w.countdown) { <span class="usage-detail__muted">{{ w.countdown }}</span> }
+                } @else {
+                  <span class="usage-detail__muted">{{ w.resetLabel ?? 'Not reported' }}</span>
+                }
+              </td>
+              <td>
+                @if (w.reset; as r) {
+                  <time [attr.datetime]="r.iso" data-testid="usage-detail-reset-utc">{{ r.utc }}</time>
+                } @else {
+                  <span class="usage-detail__muted">Not reported</span>
+                }
+              </td>
+            </tr>
+            @if (w.suspiciousReason) {
+              <tr><td colspan="4" class="usage-detail__note">Unverified: {{ w.suspiciousReason }}</td></tr>
+            }
+          } @empty {
+            <tr><td colspan="4" class="usage-detail__muted">No quota window reported</td></tr>
+          }
+        </tbody>
+      </table>
+
+      <h4 class="usage-detail__subtitle">Models in active runs</h4>
+      @if (cli.modelGroups.length === 0) {
+        <p class="usage-detail__muted">No active runs on {{ cli.name }}.</p>
+      } @else {
+        <ul class="usage-detail__groups" [attr.data-testid]="'usage-detail-models-' + cli.cliId">
+          @for (g of cli.modelGroups; track g.key) {
+            <li class="usage-detail__group" data-testid="usage-detail-model-group">
+              <p class="usage-detail__group-head">
+                <span [class.usage-detail__muted]="!g.modelKnown" data-testid="usage-detail-model">{{ g.model }}</span>
+                <span class="usage-detail__muted">reasoning</span>
+                <span [class.usage-detail__muted]="!g.reasoningKnown" data-testid="usage-detail-reasoning">{{ g.reasoning }}</span>
+                <span class="usage-detail__muted">{{ g.runs.length }} {{ g.runs.length === 1 ? 'run' : 'runs' }}</span>
+              </p>
+              <ul class="usage-detail__runs">
+                @for (r of g.runs; track r.id) {
+                  <li [attr.data-run-id]="r.id">
+                    <span class="usage-detail__key">{{ r.taskKey }}</span>
+                    <span class="usage-detail__muted">{{ r.projectName }}</span>
+                    @if (r.configuredDifference) {
+                      <span class="usage-detail__route" data-testid="usage-detail-route-diff">{{ r.configuredDifference }}</span>
+                    }
+                    @if (r.fallbackReason) {
+                      <span class="usage-detail__muted">{{ r.fallbackReason }}</span>
+                    }
+                  </li>
+                }
+              </ul>
+            </li>
+          }
+        </ul>
+      }
+      <p class="usage-detail__muted">Quota is reported per CLI account. It is not divided between models.</p>
+
+      <p class="usage-detail__links">
+        @if (cli.ledgerHref) {
+          <a [href]="cli.ledgerHref" [attr.data-testid]="'usage-detail-cli-ledger-' + cli.cliId">Open {{ cli.name }} token ledger, this week</a>
+        }
+        <a [href]="cliManagementHref" data-testid="usage-detail-manage-clis">Manage CLIs</a>
+      </p>
+    </section>
+  }
+
+  @if (v.unknownCliGroups.length > 0) {
+    <section class="usage-detail__section" data-testid="usage-detail-unknown-cli">
+      <h3 class="usage-detail__title" tabindex="-1">Runs without a reported CLI</h3>
+      <ul class="usage-detail__groups">
+        @for (g of v.unknownCliGroups; track g.key) {
+          <li class="usage-detail__group">
+            <p class="usage-detail__group-head">
+              <span [class.usage-detail__muted]="!g.modelKnown">{{ g.model }}</span>
+              <span class="usage-detail__muted">reasoning</span>
+              <span [class.usage-detail__muted]="!g.reasoningKnown">{{ g.reasoning }}</span>
+            </p>
+            <ul class="usage-detail__runs">
+              @for (r of g.runs; track r.id) {
+                <li><span class="usage-detail__key">{{ r.taskKey }}</span> <span class="usage-detail__muted">{{ r.projectName }}</span></li>
+              }
+            </ul>
+          </li>
+        }
+      </ul>
+    </section>
+  }
+
+  @let c = v.cost;
+  <section class="usage-detail__section"
+           [id]="sectionId(costFocus)"
+           data-testid="usage-detail-cost"
+           [attr.aria-labelledby]="sectionId(costFocus) + '-title'">
+    <h3 class="usage-detail__title" tabindex="-1" [id]="sectionId(costFocus) + '-title'">Cost, USD token-ledger estimate</h3>
+    <p class="usage-detail__meta">
+      @if (c.stateLabel) {
+        <span class="usage-detail__badge" [attr.data-state]="c.state" data-testid="usage-detail-cost-state">{{ c.stateLabel }}</span>
+        @if (c.coverageReason) { <span>{{ c.coverageReason }}</span> }
+      } @else {
+        <span>Coverage complete</span>
+      }
+      @if (c.latestReceipt; as r) {
+        <span>Latest receipt <time [attr.datetime]="r.iso">{{ r.local }}</time> <span class="usage-detail__utc">({{ r.utc }})</span></span>
+      }
+    </p>
+
+    <dl class="usage-detail__totals">
+      <div>
+        <dt>Today</dt>
+        <dd class="usage-detail__num" data-testid="usage-detail-today">{{ c.today }}</dd>
+        @if (c.dayStart; as s) {
+          <dd class="usage-detail__muted">From <time [attr.datetime]="s.iso">{{ s.local }}</time> {{ c.timeZone }}</dd>
+          <dd class="usage-detail__utc" data-testid="usage-detail-day-utc">{{ s.utc }} to {{ c.dayEnd?.utc }}</dd>
+        }
+        @if (c.budgetDaily) { <dd class="usage-detail__muted">Budget {{ c.budgetDaily }}, {{ c.budgetDailyRemaining }}</dd> }
+      </div>
+      <div>
+        <dt>This week</dt>
+        <dd class="usage-detail__num" data-testid="usage-detail-week">{{ c.week }}</dd>
+        @if (c.weekStart; as s) {
+          <dd class="usage-detail__muted">From <time [attr.datetime]="s.iso">{{ s.local }}</time> {{ c.timeZone }}</dd>
+          <dd class="usage-detail__utc" data-testid="usage-detail-week-utc">{{ s.utc }} to {{ c.weekEnd?.utc }}</dd>
+        }
+        @if (c.budgetWeekly) { <dd class="usage-detail__muted">Budget {{ c.budgetWeekly }}, {{ c.budgetWeeklyRemaining }}</dd> }
+      </div>
+    </dl>
+
+    <table class="usage-detail__table" data-testid="usage-detail-projects">
+      <caption class="usage-detail__caption">Cost by project, including unattributed spend</caption>
+      <thead>
+        <tr><th scope="col">Project</th><th scope="col" class="usage-detail__num">Today</th><th scope="col" class="usage-detail__num">This week</th></tr>
+      </thead>
+      <tbody>
+        @for (p of c.projects; track p.key) {
+          <tr [attr.data-project]="p.key" data-testid="usage-detail-project-row">
+            <th scope="row">
+              <a [href]="p.todayHref" [attr.aria-label]="'Open token ledger for ' + p.name + ', today'">{{ p.name }}</a>
+              @if (p.coverageLabel) { <span class="usage-detail__badge" data-state="partial">{{ p.coverageLabel }}</span> }
+            </th>
+            <td class="usage-detail__num" data-testid="usage-detail-project-today">{{ p.today }}</td>
+            <td class="usage-detail__num" data-testid="usage-detail-project-week">{{ p.week }}</td>
+          </tr>
+        } @empty {
+          <tr><td colspan="3" class="usage-detail__muted">No project spend recorded</td></tr>
+        }
+        @if (c.reconcile.todayRemainder || c.reconcile.weekRemainder) {
+          <tr data-testid="usage-detail-rounding-row">
+            <th scope="row" class="usage-detail__muted">Rounding</th>
+            <td class="usage-detail__num usage-detail__muted">{{ c.reconcile.todayRemainder ?? '$0.00' }}</td>
+            <td class="usage-detail__num usage-detail__muted">{{ c.reconcile.weekRemainder ?? '$0.00' }}</td>
+          </tr>
+        }
+      </tbody>
+      <tfoot>
+        <tr data-testid="usage-detail-total-row">
+          <th scope="row">Total</th>
+          <td class="usage-detail__num">{{ c.today }}</td>
+          <td class="usage-detail__num">{{ c.week }}</td>
+        </tr>
+      </tfoot>
+    </table>
+    @if (!c.reconcile.complete) {
+      <p class="usage-detail__note" data-testid="usage-detail-reconcile-partial">Some amounts are unavailable, so the rows may not add up to the total.</p>
+    }
+
+    <h4 class="usage-detail__subtitle">Live runs</h4>
+    <p class="usage-detail__muted">Live spend is part of the totals above, not added to them.</p>
+    @if (c.liveRuns.length === 0) {
+      <p class="usage-detail__muted">No active runs.</p>
+    } @else {
+      <table class="usage-detail__table" data-testid="usage-detail-live-runs">
+        <caption class="usage-detail__caption">Active runs with provisional spend</caption>
+        <thead>
+          <tr><th scope="col">Task</th><th scope="col">CLI</th><th scope="col">Started</th><th scope="col" class="usage-detail__num">Spend so far</th><th scope="col">Totals</th></tr>
+        </thead>
+        <tbody>
+          @for (r of c.liveRuns; track r.id) {
+            <tr [attr.data-run-id]="r.id" data-testid="usage-detail-live-run">
+              <th scope="row"><span class="usage-detail__key">{{ r.taskKey }}</span> <span class="usage-detail__muted">{{ r.projectName }}</span></th>
+              <td [class.usage-detail__muted]="r.cliName === 'Unknown'">{{ r.cliName }}</td>
+              <td>
+                @if (r.started; as s) {
+                  <time [attr.datetime]="s.iso">{{ s.local }}</time> <span class="usage-detail__utc">({{ s.utc }})</span>
+                } @else { <span class="usage-detail__muted">Not reported</span> }
+              </td>
+              <td class="usage-detail__num" [class.usage-detail__muted]="r.pending">{{ r.spend }}</td>
+              <td><span class="usage-detail__badge" [attr.data-state]="r.included ? 'normal' : 'partial'" data-testid="usage-detail-included">{{ r.inclusion }}</span></td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    }
+
+    <h4 class="usage-detail__subtitle">Slots</h4>
+    <p class="usage-detail__muted">Each pool is counted on its own; the counters are not additive.</p>
+    <ul class="usage-detail__slots" data-testid="usage-detail-slots">
+      @for (s of c.slots; track s.name) {
+        <li [attr.data-pool]="s.name">
+          <span class="usage-detail__key">{{ s.name }}</span>
+          <span class="usage-detail__num">{{ s.value }}</span>
+          <span class="usage-detail__muted">{{ s.meaning }}</span>
+        </li>
+      } @empty {
+        <li class="usage-detail__muted">No slot pools reported</li>
+      }
+    </ul>
+
+    <p class="usage-detail__muted">Pricing {{ c.pricingVersion }}</p>
+    <p class="usage-detail__links">
+      <a [href]="c.todayLedgerHref" data-testid="usage-detail-ledger-today">Open token ledger, today</a>
+      <a [href]="c.weekLedgerHref" data-testid="usage-detail-ledger-week">Open token ledger, this week</a>
+    </p>
+  </section>
+</div>

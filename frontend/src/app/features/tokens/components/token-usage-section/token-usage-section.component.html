@@ -20,6 +20,9 @@
   </aside>
 
   <div class="token-usage__page">
+  @if (ledgerScope(); as scope) {
+    <p class="token-usage__scope" data-testid="token-usage-ledger-scope">Opened from usage. {{ scope }}</p>
+  }
   @if (page() === 'workspace') {
     <header class="token-usage__page-head">
       <span class="token-usage__eyebrow">Workspace level</span>
