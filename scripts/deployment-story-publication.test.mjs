@@ -9,6 +9,7 @@
 //   node --test scripts/deployment-story-publication.test.mjs
 
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
@@ -230,4 +231,32 @@ test('the Dossier keeps the develop-side AGT-2942 log after the 1 October merge'
   assert.match(html, /Canonical concept entrypoint: <code>docs\/operations\/deployment-story\/index\.html<\/code>/);
   const decisions = between(html, '<section id="open-decisions"', '</section>');
   assert.equal((decisions.match(/data-decision-id="D\d"/g) ?? []).length, 8);
+});
+
+// Every implementation card appends its entry just before the end marker. The
+// AGT-2951 entries once sat there too, so each such card that landed first
+// left this move with a merge-into-develop conflict (29 September, 1 and 3
+// October). They now open the log, which leaves that append point free.
+test('a later implementation entry appended to the log merges without conflict', () => {
+  const start = '<!-- agent-studio:implementation-log:start -->';
+  const end = '<!-- agent-studio:implementation-log:end -->';
+  const html = read(canonicalEntry);
+  const entries = between(html, start, end).slice(start.length).split('\n').filter(Boolean);
+  const own = entries.map((line, i) => (/AGT-2951|^<p>27 September 2026 · /.test(line) ? i : -1)).filter((i) => i >= 0);
+  assert.deepEqual(own, own.map((_, i) => i), 'AGT-2951 entries open the log as one block');
+  assert.ok(own.length >= 7 && own.length < entries.length, 'other cards keep their entries after the block');
+
+  const dir = mkdtempSync(join(tmpdir(), 'deployment-story-merge-'));
+  try {
+    const base = html.replace(entries.slice(0, own.length).map((l) => `${l}\n`).join(''), '');
+    assert.notEqual(base, html);
+    const sibling = '<p><b>4 October 2026 · AGT-9999 later slice.</b> Appended by another card.</p>';
+    const files = { ours: html, base, theirs: base.replace(end, `${sibling}\n${end}`) };
+    for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
+    const merged = execFileSync('git', ['merge-file', '-p', 'ours', 'base', 'theirs'],
+      { cwd: dir, encoding: 'utf8', windowsHide: true });
+    assert.equal(merged, html.replace(end, `${sibling}\n${end}`));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
