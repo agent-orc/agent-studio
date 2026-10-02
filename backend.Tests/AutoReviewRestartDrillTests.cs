@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 
 using Microsoft.Extensions.Logging.Abstractions;
+using Contract = AgentStudio.TaskServer.Contracts;
 
 using Xunit;
 
@@ -90,6 +91,613 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
 
         var settlement = RemoteDeliverySettlementStore.Read(moved.FolderPath)!;
         Assert.Equal(RemoteDeliverySettlementStage.LaneSettled, settlement.Stage);
+    }
+
+    [Fact]
+    public async Task Settled_report_without_sidecar_restores_delivery_and_pending_evidence_after_restart()
+    {
+        var seeded = Build();
+        var card = SeedPassedDelivery(seeded, "journal-window");
+        var entry = JournalEntry(card, seeded) with { Delivery = Settlement(card, shouldIntegrate: true) };
+        RemoteReviewSettlementJournal.Write(card.FolderPath, entry);
+        Assert.Equal(RemoteReviewSettlementReadStatus.Ready,
+            RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId).Status);
+
+        var restarted = Build();
+        var queue = new RemoteReviewEvidenceProjectionQueue();
+        var reconciler = new RemoteReviewSettlementReconciler(
+            restarted.Scanner, restarted.Authority, queue, restarted.Resume,
+            NullLogger<RemoteReviewSettlementReconciler>.Instance);
+        var task = restarted.Scanner.FindJob(card.Id, _watchPath)!;
+        Assert.Equal(RemoteReviewSettlementReconcileStatus.PendingEvidence, reconciler.Reconcile(task));
+        Assert.NotNull(RemoteDeliverySettlementStore.Read(card.FolderPath));
+        Assert.True(queue.Reader.TryRead(out var pending));
+        Assert.Equal(card.ReviewAttemptId, pending.AttemptId);
+        Assert.Equal(RemoteReviewSettlementReconcileStatus.PendingEvidence, reconciler.Reconcile(task));
+        Assert.False(queue.Reader.TryRead(out _));
+
+        var resumed = await restarted.Resume.RunOnceAsync("journal-restart-drill");
+        Assert.Equal(1, resumed.Integrated);
+        Assert.Equal(TaskStates.HumanReview, restarted.Scanner.FindJob(card.Id, _watchPath)!.State);
+        Assert.Single(restarted.Authority.GetTaskProjection(card.TaskKey).ReviewAttempts);
+    }
+
+    [Fact]
+    public void Corrupt_or_missing_journal_reports_repair_without_integrating()
+    {
+        var seeded = Build();
+        var card = SeedPassedDelivery(seeded, "journal-repair");
+        var restarted = Build();
+        var reconciler = new RemoteReviewSettlementReconciler(
+            restarted.Scanner, restarted.Authority, new RemoteReviewEvidenceProjectionQueue(), restarted.Resume,
+            NullLogger<RemoteReviewSettlementReconciler>.Instance);
+        var task = restarted.Scanner.FindJob(card.Id, _watchPath)!;
+        Assert.Equal(RemoteReviewSettlementReconcileStatus.Repair, reconciler.Reconcile(task));
+        Directory.CreateDirectory(Path.GetDirectoryName(
+            RemoteReviewSettlementJournal.PathFor(card.FolderPath, card.ReviewAttemptId))!);
+        File.WriteAllText(RemoteReviewSettlementJournal.PathFor(card.FolderPath, card.ReviewAttemptId), "{ broken");
+        Assert.Equal(RemoteReviewSettlementReconcileStatus.Repair, reconciler.Reconcile(task));
+        Assert.Null(RemoteDeliverySettlementStore.Read(card.FolderPath));
+    }
+
+    [Fact]
+    public void Successor_review_prevents_old_journal_from_restoring_delivery()
+    {
+        var seeded = Build();
+        var card = SeedPassedDelivery(seeded, "journal-stale");
+        var entry = JournalEntry(card, seeded) with { Delivery = Settlement(card, shouldIntegrate: true) };
+        RemoteReviewSettlementJournal.Write(card.FolderPath, entry);
+        var old = seeded.Authority.GetReview(card.ReviewAttemptId)!;
+        var successor = seeded.Authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            card.TaskKey, old.Subject.RepositoryId, card.DeliverySha, old.SourceRunAttemptId,
+            "req", "policy", [], "successor-review"));
+        Assert.True(successor.Accepted);
+
+        var restarted = Build();
+        var queue = new RemoteReviewEvidenceProjectionQueue();
+        var reconciler = new RemoteReviewSettlementReconciler(
+            restarted.Scanner, restarted.Authority, queue, restarted.Resume,
+            NullLogger<RemoteReviewSettlementReconciler>.Instance);
+        Assert.Equal(RemoteReviewSettlementReconcileStatus.PendingAuthority,
+            reconciler.Reconcile(restarted.Scanner.FindJob(card.Id, _watchPath)!));
+        Assert.Null(RemoteDeliverySettlementStore.Read(card.FolderPath));
+        Assert.False(queue.Reader.TryRead(out _));
+    }
+
+    [Fact]
+    public void Replayed_report_key_keeps_one_canonical_payload()
+    {
+        var seeded = Build();
+        var card = SeedPassedDelivery(seeded, "journal-duplicate");
+        var entry = JournalEntry(card, seeded) with { Delivery = Settlement(card, shouldIntegrate: true) };
+        var current = seeded.Authority.GetReview(card.ReviewAttemptId)!;
+        Assert.True(RemoteReviewSettlementPolicy.MatchesAcceptedReview(entry, current));
+        Assert.False(RemoteReviewSettlementPolicy.MatchesAcceptedReview(
+            entry with { AttemptId = "review_stale" }, current));
+        Assert.False(RemoteReviewSettlementPolicy.MatchesAcceptedReview(
+            entry with { IdempotencyKey = "other-key" }, current));
+        Assert.False(RemoteReviewSettlementPolicy.MatchesAcceptedReview(
+            entry with { Report = entry.Report with
+                { Workspace = entry.Report.Workspace with { ActualHead = new string('b', 40) } } }, current));
+        RemoteReviewSettlementJournal.Write(card.FolderPath, entry);
+        var acceptedKey = () => seeded.Authority.GetReview(card.ReviewAttemptId)!.Reports
+            .LastOrDefault(report => report.AuthorityStatus == AttemptWriteStatus.Accepted)?.IdempotencyKey;
+        var settleCalls = 0;
+        AttemptWriteResult CountedSettle()
+        {
+            settleCalls++;
+            return new AttemptWriteResult(AttemptWriteStatus.Duplicate, card.ReviewAttemptId);
+        }
+        var changed = entry.Report with { Summary = "Different verdict detail." };
+        // The accepted key owns the journal. A changed payload under it is an
+        // idempotency conflict even when it raced past the endpoint's replay
+        // check; the authority would only answer Duplicate for its key.
+        var conflict = RemoteReviewSettlementJournal.PrepareAndSettle(card.FolderPath,
+            entry with { Report = changed, ReportSha256 = RemoteReviewSettlementJournal.Hash(changed) },
+            acceptedKey, CountedSettle);
+        Assert.True(RemoteReviewSettlementJournal.IsIdempotencyConflict(conflict));
+        Assert.False(conflict.Accepted);
+        Assert.Equal(0, settleCalls);
+        // Any other key is answered by the authority and never rebinds the journal.
+        var otherKey = RemoteReviewSettlementJournal.PrepareAndSettle(card.FolderPath,
+            entry with
+            {
+                IdempotencyKey = "other-key",
+                Report = changed with { IdempotencyKey = "other-key" },
+                ReportSha256 = RemoteReviewSettlementJournal.Hash(changed with { IdempotencyKey = "other-key" }),
+            },
+            acceptedKey, CountedSettle);
+        Assert.False(RemoteReviewSettlementJournal.IsIdempotencyConflict(otherKey));
+        Assert.Equal(1, settleCalls);
+        // The same payload under the accepted key stays an ordinary duplicate.
+        var replay = RemoteReviewSettlementJournal.PrepareAndSettle(card.FolderPath, entry, acceptedKey, CountedSettle);
+        Assert.Equal(AttemptWriteStatus.Duplicate, replay.Status);
+        Assert.Equal(2, settleCalls);
+        Assert.Equal(entry.ReportSha256,
+            RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId).Entry!.ReportSha256);
+        var path = RemoteReviewSettlementJournal.PathFor(card.FolderPath, card.ReviewAttemptId);
+        File.WriteAllText(path, File.ReadAllText(path).Replace(
+            "\"shouldIntegrate\": true", "\"shouldIntegrate\": false", StringComparison.Ordinal));
+        Assert.Equal(RemoteReviewSettlementReadStatus.Repair,
+            RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId).Status);
+    }
+
+    [Fact]
+    public async Task Restart_after_integration_before_lane_move_uses_the_journaled_generation()
+    {
+        var seeded = Build();
+        var card = SeedPassedDelivery(seeded, "journal-lane");
+        var delivery = Settlement(card, shouldIntegrate: true) with
+        {
+            JournalRequired = true,
+            Stage = RemoteDeliverySettlementStage.IntegrationSettled,
+            IntegrationOutcome = MergeIntoIntegrationOutcome.Merged.ToString(),
+        };
+        RemoteReviewSettlementJournal.Write(card.FolderPath, JournalEntry(card, seeded) with { Delivery = delivery });
+        RemoteDeliverySettlementStore.Write(card.FolderPath, delivery);
+        Git(_repo, "merge", "-q", "--no-ff", "-m", "chore: publish journal-lane", "task/journal-lane");
+        Git(_repo, "push", "-q", "origin", "develop");
+        Git(_repo, "fetch", "-q", "origin");
+        var publishedTip = Git(_repo, "rev-parse", "develop");
+
+        var restarted = Build();
+        var resumed = await restarted.Resume.RunOnceAsync("journal-lane-restart");
+        Assert.Equal(1, resumed.Completed);
+        Assert.Equal(TaskStates.HumanReview, restarted.Scanner.FindJob(card.Id, _watchPath)!.State);
+        Assert.Equal(publishedTip, Git(_repo, "rev-parse", "develop"));
+    }
+
+    /// <summary>
+    /// Code-quality finding of AGT-2936: a report the authority refuses (here a
+    /// lost fence race) must not leave a journal that binds the attempt to its
+    /// payload. A later valid report with a corrected payload settles normally,
+    /// and so does one after a process death between journal and settlement.
+    /// </summary>
+    [Fact]
+    public void Rejected_or_interrupted_settlement_never_blocks_a_later_valid_report()
+    {
+        var stack = Build();
+        var card = SeedPassedDelivery(stack, "journal-rejected", settleReview: false);
+        var claimed = stack.Authority.ClaimReview(
+            card.ReviewAttemptId, "reviewer", "review-host", 60, "review-claim-journal-rejected").ReviewAttempt!;
+        var acceptedKey = () => stack.Authority.GetReview(card.ReviewAttemptId)!.Reports
+            .LastOrDefault(report => report.AuthorityStatus == AttemptWriteStatus.Accepted)?.IdempotencyKey;
+        AttemptWriteResult Settle(RemoteReviewSettlementEntry entry, long fence) =>
+            RemoteReviewSettlementJournal.PrepareAndSettle(card.FolderPath, entry, acceptedKey,
+                () => stack.Authority.SettleReview(new SettleReviewAttemptRequest(
+                    new AttemptWriteReference(claimed.AttemptId, fence, claimed.AuthorityEpoch, entry.IdempotencyKey),
+                    card.DeliverySha,
+                    ReviewTerminalOutcome.Pass,
+                    Reason: entry.Report.Summary)));
+        RemoteReviewSettlementEntry Keyed(string key, string summary)
+        {
+            var report = JournalEntry(card, stack).Report with { IdempotencyKey = key, Summary = summary };
+            return JournalEntry(card, stack) with
+            {
+                IdempotencyKey = key,
+                Report = report,
+                ReportSha256 = RemoteReviewSettlementJournal.Hash(report),
+            };
+        }
+
+        var lost = Settle(Keyed("report-lost-fence", "First payload."), claimed.LastFence + 7);
+        Assert.Equal(AttemptWriteStatus.StaleFence, lost.Status);
+        Assert.Equal(RemoteReviewSettlementReadStatus.Missing,
+            RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId).Status);
+
+        // Process death between the journal write and the authority settlement.
+        RemoteReviewSettlementJournal.Write(card.FolderPath, Keyed("report-interrupted", "Interrupted payload."));
+        var reconciler = new RemoteReviewSettlementReconciler(
+            stack.Scanner, stack.Authority, new RemoteReviewEvidenceProjectionQueue(), stack.Resume,
+            NullLogger<RemoteReviewSettlementReconciler>.Instance);
+        Assert.Equal(RemoteReviewSettlementReconcileStatus.PendingAuthority,
+            reconciler.Reconcile(stack.Scanner.FindJob(card.Id, _watchPath)!));
+
+        var corrected = Keyed("report-corrected", "Corrected payload.");
+        var accepted = Settle(corrected, claimed.LastFence);
+        Assert.Equal(AttemptWriteStatus.Accepted, accepted.Status);
+        var journal = RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId);
+        Assert.Equal(RemoteReviewSettlementReadStatus.Ready, journal.Status);
+        Assert.Equal(corrected.ReportSha256, journal.Entry!.ReportSha256);
+        Assert.True(RemoteReviewSettlementPolicy.MatchesAcceptedReview(
+            journal.Entry, stack.Authority.GetReview(card.ReviewAttemptId)));
+
+        // After acceptance a late loser is refused and leaves the owned journal intact.
+        Assert.False(Settle(Keyed("report-late", "Late payload."), claimed.LastFence).Accepted);
+        Assert.Equal(corrected.ReportSha256,
+            RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId).Entry!.ReportSha256);
+    }
+
+    [Fact]
+    public void Reconciler_releases_an_orphan_journal_once_the_attempt_is_terminal_without_acceptance()
+    {
+        var stack = Build();
+        var card = SeedPassedDelivery(stack, "journal-orphan", settleReview: false);
+        var claimed = stack.Authority.ClaimReview(
+            card.ReviewAttemptId, "reviewer", "review-host", 60, "review-claim-journal-orphan").ReviewAttempt!;
+        RemoteReviewSettlementJournal.Write(card.FolderPath, JournalEntry(card, stack));
+        // The subject mismatch terminates the attempt without an accepted report.
+        var mismatch = stack.Authority.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(claimed.AttemptId, claimed.LastFence, claimed.AuthorityEpoch, "report-mismatch"),
+            new string('c', 40),
+            ReviewTerminalOutcome.Pass,
+            Reason: "Wrong head."));
+        Assert.Equal(AttemptWriteStatus.SubjectMismatch, mismatch.Status);
+
+        var reconciler = new RemoteReviewSettlementReconciler(
+            stack.Scanner, stack.Authority, new RemoteReviewEvidenceProjectionQueue(), stack.Resume,
+            NullLogger<RemoteReviewSettlementReconciler>.Instance);
+        Assert.Equal(RemoteReviewSettlementReconcileStatus.NoWork,
+            reconciler.Reconcile(stack.Scanner.FindJob(card.Id, _watchPath)!));
+        Assert.Equal(RemoteReviewSettlementReadStatus.Missing,
+            RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId).Status);
+    }
+
+    /// <summary>
+    /// AGT-2936 code-quality: the journal gate is per attempt. A slow settlement
+    /// of one review still serializes its own attempt but never stalls another.
+    /// </summary>
+    [Fact]
+    public async Task Journal_gate_serializes_one_attempt_without_blocking_another()
+    {
+        var stack = Build();
+        var card = SeedPassedDelivery(stack, "journal-gate", settleReview: false);
+        var entry = JournalEntry(card, stack);
+        var folderA = Path.Combine(_root, "journal-gate-a");
+        var folderB = Path.Combine(_root, "journal-gate-b");
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        AttemptWriteResult Accepted(string attemptId) => new(AttemptWriteStatus.Accepted, attemptId);
+
+        var slow = Task.Run(() => RemoteReviewSettlementJournal.PrepareAndSettle(
+            folderA, entry with { AttemptId = "review_gate_a" }, () => null, () =>
+            {
+                entered.Set();
+                release.Wait(TimeSpan.FromSeconds(30));
+                return Accepted("review_gate_a");
+            }));
+        Assert.True(entered.Wait(TimeSpan.FromSeconds(10)));
+        Task<AttemptWriteResult> sameAttempt;
+        try
+        {
+            var other = Task.Run(() => RemoteReviewSettlementJournal.PrepareAndSettle(
+                folderB, entry with { AttemptId = "review_gate_b" }, () => null, () => Accepted("review_gate_b")));
+            Assert.Same(other, await Task.WhenAny(other, Task.Delay(TimeSpan.FromSeconds(10))));
+            Assert.Equal(AttemptWriteStatus.Accepted, (await other).Status);
+
+            sameAttempt = Task.Run(() => RemoteReviewSettlementJournal.PrepareAndSettle(
+                folderA, entry with { AttemptId = "review_gate_a" }, () => null, () => Accepted("review_gate_a")));
+            Assert.NotSame(sameAttempt, await Task.WhenAny(sameAttempt, Task.Delay(TimeSpan.FromMilliseconds(300))));
+        }
+        finally
+        {
+            release.Set();
+        }
+        Assert.Equal(AttemptWriteStatus.Accepted, (await slow).Status);
+        Assert.Equal(AttemptWriteStatus.Accepted, (await sameAttempt.WaitAsync(TimeSpan.FromSeconds(10))).Status);
+    }
+
+    /// <summary>
+    /// AGT-2936 code-quality: an unrecoverable card is reported once per review
+    /// generation, not on every 30-second tick.
+    /// </summary>
+    [Fact]
+    public async Task Reconciler_reports_a_repair_once_per_review_generation()
+    {
+        var seeded = Build();
+        var card = SeedPassedDelivery(seeded, "journal-repair-once");
+        var restarted = Build();
+        var entries = new List<string>();
+        var reconciler = new RemoteReviewSettlementReconciler(
+            restarted.Scanner, restarted.Authority, new RemoteReviewEvidenceProjectionQueue(), restarted.Resume,
+            new CollectingLogger<RemoteReviewSettlementReconciler>(entries));
+
+        await reconciler.RunOnceAsync();
+        await reconciler.RunOnceAsync();
+        await reconciler.RunOnceAsync();
+
+        Assert.Single(entries, entry => entry.Contains("remote-review-settlement-repair-required", StringComparison.Ordinal)
+            && entry.Contains(card.TaskKey, StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// AGT-2936 code-quality: an archived card has no lane continuation. Once
+    /// its current review reconciled to a settled status, ordinary ticks skip it
+    /// instead of re-reading its folder; a new review generation re-admits it.
+    /// </summary>
+    [Fact]
+    public async Task Reconciler_skips_a_settled_archived_card_on_ordinary_ticks()
+    {
+        var stack = Build();
+        var card = SeedPassedDelivery(stack, "journal-archived", lane: TaskStates.Archive);
+        RemoteReviewSettlementJournal.Write(card.FolderPath, JournalEntry(card, stack) with { EvidenceComplete = true });
+        var evidence = Path.Combine(card.FolderPath, RemoteReviewReportEvidence.EvidenceFileName(card.ReviewAttemptId));
+        File.WriteAllText(evidence, "{}");
+        var entries = new List<string>();
+        var reconciler = new RemoteReviewSettlementReconciler(
+            stack.Scanner, stack.Authority, new RemoteReviewEvidenceProjectionQueue(), stack.Resume,
+            new CollectingLogger<RemoteReviewSettlementReconciler>(entries));
+        Assert.Equal(RemoteReviewSettlementReconcileStatus.Complete,
+            reconciler.Reconcile(stack.Scanner.FindJob(card.Id, _watchPath)!));
+
+        await reconciler.RunOnceAsync();
+        // Re-reading the folder now would report a repair; a settled archived
+        // card is not re-read.
+        File.Delete(evidence);
+        await reconciler.RunOnceAsync();
+        Assert.DoesNotContain(entries, entry => entry.Contains(card.TaskKey, StringComparison.Ordinal));
+
+        // A fresh process reconciles the whole archive once at startup.
+        var restarted = new RemoteReviewSettlementReconciler(
+            stack.Scanner, stack.Authority, new RemoteReviewEvidenceProjectionQueue(), stack.Resume,
+            new CollectingLogger<RemoteReviewSettlementReconciler>(entries));
+        await restarted.RunOnceAsync();
+        Assert.Single(entries, entry => entry.Contains(card.TaskKey, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Generation_fence_orders_every_continuation_against_successor_creation()
+    {
+        var stack = Build();
+        var card = SeedPassedDelivery(stack, "journal-fence");
+        var applied = 0;
+        Assert.True(stack.Authority.TryApplyForCurrentReview(card.ReviewAttemptId, () => applied++));
+        var old = stack.Authority.GetReview(card.ReviewAttemptId)!;
+        Assert.True(stack.Authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            card.TaskKey, old.Subject.RepositoryId, card.DeliverySha, old.SourceRunAttemptId,
+            "req", "policy", [], "successor-fence")).Accepted);
+        Assert.False(stack.Authority.TryApplyForCurrentReview(card.ReviewAttemptId, () => applied++));
+        Assert.False(stack.Authority.TryApplyForCurrentReview("review_missing", () => applied++));
+        Assert.Equal(1, applied);
+    }
+
+    /// <summary>
+    /// Requirement-fit finding of AGT-2936: a successor created while the
+    /// evidence worker is between its generation check and the task projection
+    /// must stop the stale projection from applying, and the journal stays
+    /// unfinished instead of claiming completion.
+    /// </summary>
+    [Fact]
+    public async Task Successor_created_during_evidence_projection_prevents_the_stale_projection()
+    {
+        var stack = Build();
+        var card = SeedPassedDelivery(stack, "journal-evidence-race");
+        var entry = JournalEntry(card, stack);
+        RemoteReviewSettlementJournal.Write(card.FolderPath, entry);
+        var projector = new RemotePipelineReviewEvidenceProjector(
+            stack.Pipeline,
+            stack.Timeline,
+            new FileGenerationIndex(NullLogger<FileGenerationIndex>.Instance),
+            new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance,
+                new ConfigurationBuilder().Build()));
+        var worker = new RemoteReviewEvidenceProjectionWorker(
+            new RemoteReviewEvidenceProjectionQueue(), stack.Scanner, stack.Authority, projector,
+            NullLogger<RemoteReviewEvidenceProjectionWorker>.Instance);
+        var old = stack.Authority.GetReview(card.ReviewAttemptId)!;
+        worker.BeforeFencedProjection = () => Assert.True(stack.Authority.CreateReviewAttempt(
+            new CreateReviewAttemptRequest(card.TaskKey, old.Subject.RepositoryId, card.DeliverySha,
+                old.SourceRunAttemptId, "req", "policy", [], "successor-during-evidence")).Accepted);
+        var timelineBefore = TimelineLength(card.FolderPath);
+
+        await worker.ProcessAsync(new RemoteReviewEvidenceProjectionRequest(
+            card.ReviewAttemptId, card.TaskKey, old, entry.Report,
+            RemoteReviewReportEvidence.EvidenceFileName(card.ReviewAttemptId), entry.ReportSha256,
+            DateTime.UtcNow, DateTime.UtcNow), CancellationToken.None);
+
+        Assert.NotEqual(card.ReviewAttemptId,
+            stack.Authority.GetTaskProjection(card.TaskKey).CurrentReviewAttempt!.AttemptId);
+        Assert.Equal(timelineBefore, TimelineLength(card.FolderPath));
+        Assert.False(RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId).Entry!.EvidenceComplete);
+    }
+
+    /// <summary>
+    /// Code-quality concern of AGT-2936: the continuation's disk I/O ran under the
+    /// global authority gate. It now holds only the task's continuation gate, so
+    /// unrelated authority calls proceed while a successor for the same task still
+    /// waits until the continuation has applied.
+    /// </summary>
+    [Fact]
+    public void Continuation_runs_outside_the_global_authority_gate_and_still_fences_the_successor()
+    {
+        var stack = Build();
+        var card = SeedPassedDelivery(stack, "journal-fence-io");
+        var old = stack.Authority.GetReview(card.ReviewAttemptId)!;
+        Task<AttemptWriteResult>? successor = null;
+        var readDuringApply = false;
+        var successorHeldBack = false;
+
+        Assert.True(stack.Authority.TryApplyForCurrentReview(card.ReviewAttemptId, () =>
+        {
+            readDuringApply = Task.Run(() => stack.Authority.GetTaskProjection("AGT-unrelated"))
+                .Wait(TimeSpan.FromSeconds(10));
+            successor = Task.Run(() => stack.Authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
+                card.TaskKey, old.Subject.RepositoryId, card.DeliverySha, old.SourceRunAttemptId,
+                "req", "policy", [], "successor-during-apply")));
+            successorHeldBack = !successor.Wait(TimeSpan.FromMilliseconds(500));
+        }));
+
+        Assert.True(readDuringApply);
+        Assert.True(successorHeldBack);
+        Assert.True(successor!.Wait(TimeSpan.FromSeconds(10)));
+        Assert.True(successor.Result.Accepted);
+        Assert.False(stack.Authority.TryApplyForCurrentReview(card.ReviewAttemptId, () => { }));
+    }
+
+    /// <summary>
+    /// Code-quality concerns of AGT-2936: the unused journal constant, the
+    /// off-by-one exhaustion and the retry delay and log keyed off the volatile
+    /// request counter. The journaled failure count now drives all of them, so a
+    /// restarted worker keeps the same backoff and grants MaxRetries retries.
+    /// </summary>
+    [Fact]
+    public async Task Evidence_retry_uses_the_journaled_failure_count_for_delay_and_exhaustion()
+    {
+        var stack = Build();
+        var card = SeedPassedDelivery(stack, "journal-evidence-retry");
+        var entry = JournalEntry(card, stack) with
+        {
+            EvidenceFailures = RemoteReviewEvidenceProjectionWorker.MaxRetries - 1,
+        };
+        RemoteReviewSettlementJournal.Write(card.FolderPath, entry);
+        var worker = EvidenceWorker(stack);
+        var retries = new List<int>();
+        worker.RetryDelayOverride = retry =>
+        {
+            retries.Add(retry);
+            return TimeSpan.FromMinutes(30);
+        };
+        worker.BeforeFencedProjection = () => throw new IOException("disk full");
+
+        // A fresh request after a restart starts its volatile counter at zero.
+        await worker.ProcessAsync(EvidenceRequest(card, stack, entry), CancellationToken.None);
+        var retried = RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId).Entry!;
+        Assert.Equal(RemoteReviewEvidenceProjectionWorker.MaxRetries, retried.EvidenceFailures);
+        Assert.Null(retried.RepairReason);
+        Assert.Equal([RemoteReviewEvidenceProjectionWorker.MaxRetries - 1], retries);
+        Assert.True(retried.NextEvidenceAttemptUtc > DateTime.UtcNow.AddMinutes(20));
+
+        await worker.ProcessAsync(EvidenceRequest(card, stack, retried), CancellationToken.None);
+        var exhausted = RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId).Entry!;
+        Assert.Equal(RemoteReviewEvidenceProjectionWorker.MaxRetries + 1, exhausted.EvidenceFailures);
+        Assert.Equal("review-evidence-projection-exhausted", exhausted.RepairReason);
+        Assert.Single(retries);
+    }
+
+    /// <summary>
+    /// Code-quality concern of AGT-2936: the worker retried every exception. Only
+    /// transient I/O is retried; a defect becomes a typed repair at once.
+    /// </summary>
+    [Fact]
+    public async Task Non_transient_evidence_failure_is_a_typed_repair_without_retry()
+    {
+        var stack = Build();
+        var card = SeedPassedDelivery(stack, "journal-evidence-defect");
+        var entry = JournalEntry(card, stack);
+        RemoteReviewSettlementJournal.Write(card.FolderPath, entry);
+        var worker = EvidenceWorker(stack);
+        var retries = 0;
+        worker.RetryDelayOverride = _ =>
+        {
+            retries++;
+            return TimeSpan.FromMinutes(30);
+        };
+        worker.BeforeFencedProjection = () => throw new InvalidOperationException("projection defect");
+
+        await worker.ProcessAsync(EvidenceRequest(card, stack, entry), CancellationToken.None);
+
+        var failed = RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId).Entry!;
+        Assert.Equal(1, failed.EvidenceFailures);
+        Assert.Equal("review-evidence-projection-failed", failed.RepairReason);
+        Assert.Equal(0, retries);
+        var reconciler = new RemoteReviewSettlementReconciler(
+            stack.Scanner, stack.Authority, new RemoteReviewEvidenceProjectionQueue(), stack.Resume,
+            NullLogger<RemoteReviewSettlementReconciler>.Instance);
+        Assert.Equal(RemoteReviewSettlementReconcileStatus.Repair,
+            reconciler.Reconcile(stack.Scanner.FindJob(card.Id, _watchPath)!));
+    }
+
+    /// <summary>
+    /// Code-quality concern of AGT-2936: the journaled delivery decision took the
+    /// raw report spelling. It carries the outcome the authority settles, and a
+    /// journal with any other spelling is a typed repair.
+    /// </summary>
+    [Fact]
+    public void Journaled_delivery_carries_the_authority_outcome_not_the_report_spelling()
+    {
+        var stack = Build();
+        var card = SeedPassedDelivery(stack, "journal-outcome");
+        var report = JournalEntry(card, stack).Report with { Outcome = " pass" };
+        var entry = JournalEntry(card, stack) with
+        {
+            Report = report,
+            ReportSha256 = RemoteReviewSettlementJournal.Hash(report),
+            Delivery = Settlement(card, shouldIntegrate: true),
+        };
+
+        RemoteReviewSettlementJournal.Write(card.FolderPath, entry);
+        Assert.Equal(RemoteReviewSettlementReadStatus.Ready,
+            RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId).Status);
+
+        foreach (var spelling in new[] { " pass", nameof(ReviewTerminalOutcome.ProductFailure) })
+        {
+            RemoteReviewSettlementJournal.Write(card.FolderPath, entry with
+            {
+                Delivery = entry.Delivery! with { Outcome = spelling },
+            });
+            Assert.Equal(RemoteReviewSettlementReadStatus.Repair,
+                RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId).Status);
+        }
+    }
+
+    /// <summary>
+    /// Code-quality concern of AGT-2936: the resume service and the reconciler
+    /// each restored the delivery sidecar. Both now use one policy.
+    /// </summary>
+    [Fact]
+    public void Journaled_delivery_restores_the_sidecar_only_for_an_auto_review_card_without_one()
+    {
+        var stack = Build();
+        var card = SeedPassedDelivery(stack, "journal-restore");
+        var entry = JournalEntry(card, stack) with { Delivery = Settlement(card, shouldIntegrate: true) };
+        var task = stack.Scanner.FindJob(card.Id, _watchPath)!;
+
+        Assert.False(RemoteReviewSettlementPolicy.RestoreDeliverySidecar(task with { State = TaskStates.HumanReview }, entry));
+        Assert.Null(RemoteDeliverySettlementStore.Read(card.FolderPath));
+        Assert.False(RemoteReviewSettlementPolicy.RestoreDeliverySidecar(task, entry with { Delivery = null }));
+        Assert.True(RemoteReviewSettlementPolicy.RestoreDeliverySidecar(task, entry));
+        Assert.True(RemoteDeliverySettlementStore.MatchesAttempt(
+            RemoteDeliverySettlementStore.Read(card.FolderPath), card.ReviewAttemptId));
+        Assert.False(RemoteReviewSettlementPolicy.RestoreDeliverySidecar(task, entry));
+    }
+
+    private static RemoteReviewEvidenceProjectionWorker EvidenceWorker(Stack stack)
+        => new(
+            new RemoteReviewEvidenceProjectionQueue(),
+            stack.Scanner,
+            stack.Authority,
+            new RemotePipelineReviewEvidenceProjector(
+                stack.Pipeline,
+                stack.Timeline,
+                new FileGenerationIndex(NullLogger<FileGenerationIndex>.Instance),
+                new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance,
+                    new ConfigurationBuilder().Build())),
+            NullLogger<RemoteReviewEvidenceProjectionWorker>.Instance);
+
+    private static RemoteReviewEvidenceProjectionRequest EvidenceRequest(
+        SeededCard card,
+        Stack stack,
+        RemoteReviewSettlementEntry entry)
+        => new(
+            card.ReviewAttemptId, card.TaskKey, stack.Authority.GetReview(card.ReviewAttemptId)!, entry.Report,
+            RemoteReviewReportEvidence.EvidenceFileName(card.ReviewAttemptId), entry.ReportSha256,
+            DateTime.UtcNow, DateTime.UtcNow);
+
+    private static int TimelineLength(string folder)
+    {
+        var path = Path.Combine(folder, "logs", "timeline.jsonl");
+        return File.Exists(path) ? File.ReadAllLines(path).Length : 0;
+    }
+
+    private static RemoteReviewSettlementEntry JournalEntry(SeededCard card, Stack stack)
+    {
+        var review = stack.Authority.GetReview(card.ReviewAttemptId)!;
+        var report = new Contract.ReviewReportRequest(
+            "reviewer", "instance", "lease", review.LastFence, "review-settle-" + card.Id,
+            "Pass", null, "All aspects passed.",
+            new Contract.ReviewWorkspaceProofDto(review.Subject.RepositoryId, card.DeliverySha,
+                card.DeliverySha, new string('a', 40), false, false, "workspace", "namespace"),
+            new Contract.ReviewEnvironmentDto("review-host", "reviewer", "instance", "linux", "x64",
+                "10.0", new Dictionary<string, string>(), new Dictionary<string, string>()),
+            [], [], [], review.AuthorityEpoch);
+        return new RemoteReviewSettlementEntry
+        {
+            AttemptId = card.ReviewAttemptId,
+            TaskKey = card.TaskKey,
+            IdempotencyKey = report.IdempotencyKey,
+            ReportSha256 = RemoteReviewSettlementJournal.Hash(report),
+            Report = report,
+            ReceivedAtUtc = DateTime.UtcNow,
+        };
     }
 
     /// <summary>
@@ -358,7 +966,11 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
     /// whose canonical ReviewAttempt has settled Pass - the durable state the
     /// backend had for AGT-2855 at 08:39.
     /// </summary>
-    private SeededCard SeedPassedDelivery(Stack stack, string id, bool settleReview = true)
+    private SeededCard SeedPassedDelivery(
+        Stack stack,
+        string id,
+        bool settleReview = true,
+        string lane = TaskStates.AutoReview)
     {
         Git(_repo, "checkout", "-q", "-b", "task/" + id, "develop");
         File.WriteAllText(Path.Combine(_repo, id + ".txt"), id + "\n");
@@ -368,7 +980,7 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         Git(_repo, "checkout", "-q", "develop");
 
         var taskKey = "AGT-" + id;
-        var folder = Path.Combine(_watchPath, TaskStates.AutoReview, id);
+        var folder = Path.Combine(_watchPath, lane, id);
         Directory.CreateDirectory(folder);
         File.WriteAllText(
             Path.Combine(folder, "task.json"),
@@ -378,7 +990,7 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
                     id,
                     key = taskKey,
                     title = id,
-                    state = TaskStates.AutoReview,
+                    state = lane,
                     order = 1,
                     agent = "codex",
                     cliType = "codex",
@@ -564,6 +1176,21 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         attribution = "automatic",
         confidence = 1,
     };
+
+    private sealed class CollectingLogger<T>(List<string> entries) : ILogger<T>
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            lock (entries) entries.Add(formatter(state, exception));
+        }
+    }
 
     private sealed record SeededCard(
         string Id,

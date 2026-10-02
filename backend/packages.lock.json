@@ -2,6 +2,12 @@
   "version": 1,
   "dependencies": {
     "net10.0": {
+      "AngleSharp": {
+        "type": "Direct",
+        "requested": "[1.7.2, )",
+        "resolved": "1.7.2",
+        "contentHash": "r1rb5Qo/0KPzmP0nbSiXPDVfh4Ctu0B+y1RyyUq73g4sgAmEW7q10RDyTq2ZsILwtO9O2LAvMrUles7eD4zz1g=="
+      },
       "CodingAgentRunner": {
         "type": "Direct",
         "requested": "[0.7.0, 0.7.0]",
@@ -10,12 +16,12 @@
       },
       "HtmlSanitizer": {
         "type": "Direct",
-        "requested": "[9.0.892, )",
-        "resolved": "9.0.892",
-        "contentHash": "zdkMmpNCjTkxna8Y+jmPIFm2st+HjHrf32yNElFYwe7L4GmDm+mdKR6TzDyf6ewJ0RUUz84D4IkHNgrwGi4VbQ==",
+        "requested": "[9.2.1039, )",
+        "resolved": "9.2.1039",
+        "contentHash": "PKxy1hYknAij8YlHCC2a9GSqzUd4bh3IvY+abJBvOH1FKcZpbyafEHtdFcXQBt12Y7hNPkNEOP6Qa7uKNSs/yA==",
         "dependencies": {
-          "AngleSharp": "[0.17.1]",
-          "AngleSharp.Css": "[0.17.0]"
+          "AngleSharp": "1.7.2",
+          "AngleSharp.Css": "1.0.2"
         }
       },
       "Markdig": {
@@ -97,21 +103,16 @@
       },
       "TokenEconomy": {
         "type": "Direct",
-        "requested": "[0.3.4, 0.3.4]",
-        "resolved": "0.3.4",
-        "contentHash": "8kxLaMnZvdzgiHcZ3Rv6GkK9h51voEA1dAmvXIY+CmoAGHp/EthA8QAR23dEYL+r1PQOgf+j87/SHEIoW3lLVQ=="
-      },
-      "AngleSharp": {
-        "type": "Transitive",
-        "resolved": "0.17.1",
-        "contentHash": "5MPI4bbixlwxb0W/smOMeIR+QlxMy5/5jD+WnIAw4pBC+7AhLPe5bS3cLgQMJyvd6q0A48sG+uYOt/ep406GLA=="
+        "requested": "[0.3.5, 0.3.5]",
+        "resolved": "0.3.5",
+        "contentHash": "Ikq6ahhuR5vJCpPi7AINQte51LNCvHF/WL6BGNQAmu92SMN+/zqrMCM7bOba1Ru1XtQsu8/BJbvZE3lYha//Mg=="
       },
       "AngleSharp.Css": {
         "type": "Transitive",
-        "resolved": "0.17.0",
-        "contentHash": "bg0AcugmX6BFEi/DHG61QrwRU8iuiX4H8LZehdIzYdqOM/dgb3BsCTzNIcc1XADn4+xfQEdVwJYTSwUxroL4vg==",
+        "resolved": "1.0.2",
+        "contentHash": "XeBxh0h/73+MWFsGfeMwiK7xbzAK3YeHFdUIrMH1P90amIrDFD/vUDIrPlF3CixqaMH5MRIUvT6Ux+2zvhJ3SA==",
         "dependencies": {
-          "AngleSharp": "[0.17.0, 0.18.0)"
+          "AngleSharp": "[1.5.0, 2.0.0)"
         }
       },
       "Microsoft.Data.Sqlite.Core": {

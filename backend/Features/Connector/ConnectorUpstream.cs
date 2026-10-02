@@ -9,21 +9,36 @@ using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Connector;
 
+/// <summary>
+/// One upstream as a request sees it. <see cref="CredentialRevision"/> is the
+/// provider revision <see cref="Credential"/> was read under; the attach cache
+/// is keyed by it, so a successful handshake only vouches for the exact
+/// credential that performed it.
+/// </summary>
 public sealed record ConnectorUpstreamSnapshot(
     string Mode,
     Uri BaseUri,
     string? TlsCertificateSha256,
     ConnectorCredential? Credential,
+    long CredentialRevision,
     int MinimumProtocol,
     int MaximumProtocol,
     long Generation,
     string MaskedName);
 
+/// <summary>
+/// Result of one attach handshake against the upstream Task Server. A ready
+/// probe carries the negotiated <c>/api/v1</c> and Studio hub versions; a
+/// refused probe carries a stable code and an operator-readable reason.
+/// </summary>
 public sealed record ConnectorUpstreamProbe(
     bool Ready,
     string? FailureCode,
     int Protocol,
-    DateTimeOffset? SuccessfulAtUtc);
+    DateTimeOffset? SuccessfulAtUtc,
+    string? FailureReason = null,
+    int? HubProtocol = null,
+    string? ServerVersion = null);
 
 public sealed record ConnectorUpstreamSwitchEvidence(
     bool ExactVersionRestoreVerified,
@@ -43,6 +58,7 @@ public interface IConnectorUpstreamTransport
         Uri uri,
         IReadOnlyList<string> subProtocols,
         string? clientId,
+        int apiProtocol,
         CancellationToken cancellationToken);
 }
 
@@ -55,7 +71,8 @@ public sealed class ConnectorUpstreamTransport : IConnectorUpstreamTransport, ID
         HttpRequestMessage request,
         CancellationToken cancellationToken)
     {
-        AddConnectorHeaders(request.Headers, snapshot);
+        if (request.Headers.Authorization is null)
+            AddConnectorHeaders(request.Headers, snapshot, TaskServerProtocol.Current);
         var client = _clients.GetOrAdd(snapshot.Generation, _ => CreateClient(snapshot));
         return client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
     }
@@ -65,16 +82,15 @@ public sealed class ConnectorUpstreamTransport : IConnectorUpstreamTransport, ID
         Uri uri,
         IReadOnlyList<string> subProtocols,
         string? clientId,
+        int apiProtocol,
         CancellationToken cancellationToken)
     {
         if (snapshot.Credential is null)
             throw new InvalidOperationException("The Studio credential is not loaded.");
         var socket = new ClientWebSocket();
         socket.Options.SetRequestHeader("Authorization", $"Bearer {snapshot.Credential.Bearer}");
-        socket.Options.SetRequestHeader(TaskServerProtocol.HeaderName, TaskServerProtocol.Current.ToString());
-        socket.Options.SetRequestHeader(
-            TaskServerProtocol.ClientVersionHeaderName,
-            typeof(ConnectorUpstreamTransport).Assembly.GetName().Version?.ToString(3) ?? "unknown");
+        socket.Options.SetRequestHeader(TaskServerProtocol.HeaderName, apiProtocol.ToString());
+        socket.Options.SetRequestHeader(TaskServerProtocol.ClientVersionHeaderName, ConnectorVersion);
         if (!string.IsNullOrWhiteSpace(clientId))
             socket.Options.SetRequestHeader("X-Client-Id", clientId);
         foreach (var protocol in subProtocols) socket.Options.AddSubProtocol(protocol);
@@ -101,7 +117,13 @@ public sealed class ConnectorUpstreamTransport : IConnectorUpstreamTransport, ID
         _clients.Clear();
     }
 
-    internal static void AddConnectorHeaders(HttpRequestHeaders headers, ConnectorUpstreamSnapshot snapshot)
+    internal static string ConnectorVersion
+        => typeof(ConnectorUpstreamTransport).Assembly.GetName().Version?.ToString(3) ?? "unknown";
+
+    internal static void AddConnectorHeaders(
+        HttpRequestHeaders headers,
+        ConnectorUpstreamSnapshot snapshot,
+        int apiProtocol)
     {
         if (snapshot.Credential is null)
             throw new InvalidOperationException("The Studio credential is not loaded.");
@@ -109,10 +131,8 @@ public sealed class ConnectorUpstreamTransport : IConnectorUpstreamTransport, ID
         headers.Remove(TaskServerProtocol.HeaderName);
         headers.Remove(TaskServerProtocol.ClientVersionHeaderName);
         headers.Authorization = new AuthenticationHeaderValue("Bearer", snapshot.Credential.Bearer);
-        headers.TryAddWithoutValidation(TaskServerProtocol.HeaderName, TaskServerProtocol.Current.ToString());
-        headers.TryAddWithoutValidation(
-            TaskServerProtocol.ClientVersionHeaderName,
-            typeof(ConnectorUpstreamTransport).Assembly.GetName().Version?.ToString(3) ?? "unknown");
+        headers.TryAddWithoutValidation(TaskServerProtocol.HeaderName, apiProtocol.ToString());
+        headers.TryAddWithoutValidation(TaskServerProtocol.ClientVersionHeaderName, ConnectorVersion);
     }
 
     private static HttpClient CreateClient(ConnectorUpstreamSnapshot snapshot)
@@ -152,76 +172,176 @@ public sealed class ConnectorUpstreamTransport : IConnectorUpstreamTransport, ID
 
 public sealed class ConnectorUpstreamManager
 {
+    /// <summary>How long a successful attach is trusted before the next request renegotiates.</summary>
+    internal static readonly TimeSpan AttachedRecheckInterval = TimeSpan.FromSeconds(60);
+    /// <summary>How long a refused attach is reported before the next request retries the handshake.</summary>
+    internal static readonly TimeSpan RefusedRecheckInterval = TimeSpan.FromSeconds(2);
+
+    private readonly ConnectorCredentialProvider _credentials;
     private readonly IConnectorUpstreamTransport _transport;
     private readonly ConnectorSessionStore _sessions;
+    private readonly ConnectorProtocolRange _protocols;
+    private readonly string _expectedHubPath;
+    private readonly TimeProvider _time;
+    private readonly SemaphoreSlim _attachGate = new(1, 1);
     private ConnectorUpstreamSnapshot _current;
+    private CachedAttachment? _attachment;
     private long _lastSuccessfulProbeUnixMilliseconds;
 
     public ConnectorUpstreamManager(
         ConnectorOptions options,
-        IConnectorCredentialSource credentials,
+        ConnectorCredentialProvider credentials,
         IConnectorUpstreamTransport transport,
-        ConnectorSessionStore sessions)
+        ConnectorSessionStore sessions,
+        ConnectorProtocolRange protocols,
+        ConnectorRouteInventory inventory,
+        TimeProvider time)
     {
+        _credentials = credentials;
         _transport = transport;
         _sessions = sessions;
-        var credential = credentials.Load(options).Credential;
+        _protocols = protocols;
+        _time = time;
+        _expectedHubPath = inventory.TaskServerOperations.Single(operation => operation.Method == "WS").TargetRoute;
+        var credential = credentials.CurrentState();
         _current = new ConnectorUpstreamSnapshot(
             options.UpstreamMode,
             options.UpstreamBaseUri,
             options.TlsCertificateSha256,
-            credential,
-            TaskServerProtocol.MinimumSupported,
-            TaskServerProtocol.MaximumSupported,
+            credential.Result.Credential,
+            credential.Revision,
+            protocols.MinimumApi,
+            protocols.MaximumApi,
             options.Generation,
             options.MaskedUpstreamName);
     }
 
-    public ConnectorUpstreamSnapshot Capture() => Volatile.Read(ref _current);
+    /// <summary>
+    /// The current upstream with the current credential. A rotated credential
+    /// replaces the snapshot's credential and its revision together; the
+    /// upstream itself changes only through <see cref="TrySwitchAsync"/>.
+    /// </summary>
+    public ConnectorUpstreamSnapshot Capture()
+    {
+        while (true)
+        {
+            var observed = Volatile.Read(ref _current);
+            var credential = _credentials.CurrentState();
+            if (observed.CredentialRevision == credential.Revision) return observed;
+            var refreshed = observed with
+            {
+                Credential = credential.Result.Credential,
+                CredentialRevision = credential.Revision,
+            };
+            if (ReferenceEquals(Interlocked.CompareExchange(ref _current, refreshed, observed), observed))
+                return refreshed;
+        }
+    }
+
+    /// <summary>
+    /// The attach gate every forwarded request passes. A successful handshake
+    /// is reused for <see cref="AttachedRecheckInterval"/> as long as neither
+    /// the upstream generation nor the credential changed. The key comes from
+    /// the snapshot, never from the provider: a rotation between
+    /// <see cref="Capture"/> and this call must not file the old credential's
+    /// handshake under the new credential's revision.
+    /// </summary>
+    public async Task<ConnectorUpstreamProbe> EnsureAttachedAsync(
+        ConnectorUpstreamSnapshot snapshot,
+        CancellationToken cancellationToken)
+    {
+        var key = AttachmentKey.For(snapshot);
+        if (TryFreshAttachment(key) is { } fresh) return fresh;
+
+        await _attachGate.WaitAsync(cancellationToken);
+        try
+        {
+            if (TryFreshAttachment(key) is { } raced) return raced;
+            var probe = await ProbeAsync(snapshot, cancellationToken);
+            Volatile.Write(ref _attachment, new CachedAttachment(key, probe, _time.GetUtcNow()));
+            return probe;
+        }
+        finally
+        {
+            _attachGate.Release();
+        }
+    }
+
+    /// <summary>The upstream refused the Studio credential: re-read it and renegotiate on the next request.</summary>
+    public void ReportCredentialRejected()
+    {
+        _credentials.Invalidate();
+        InvalidateAttachment();
+    }
+
+    /// <summary>The upstream answered a protocol rejection: renegotiate on the next request.</summary>
+    public void InvalidateAttachment() => Volatile.Write(ref _attachment, null);
 
     public async Task<ConnectorUpstreamProbe> ProbeAsync(
         ConnectorUpstreamSnapshot snapshot,
         CancellationToken cancellationToken)
     {
         if (snapshot.Credential is null)
-            return new ConnectorUpstreamProbe(false, "credential-unavailable", TaskServerProtocol.Current, null);
+        {
+            var loaded = _credentials.Current();
+            return Refused(
+                loaded.FailureCode ?? ConnectorCredentialFailureCodes.Unavailable,
+                loaded.FailureMessage ?? "The Studio credential is not available.");
+        }
         try
         {
             using var readiness = new HttpRequestMessage(HttpMethod.Get, new Uri(snapshot.BaseUri, "readyz"));
-            ConnectorUpstreamTransport.AddConnectorHeaders(readiness.Headers, snapshot);
+            ConnectorUpstreamTransport.AddConnectorHeaders(readiness.Headers, snapshot, TaskServerProtocol.Current);
             using var readyResponse = await _transport.SendAsync(snapshot, readiness, cancellationToken);
             if (!readyResponse.IsSuccessStatusCode)
-                return new ConnectorUpstreamProbe(false, "upstream-not-ready", TaskServerProtocol.Current, null);
-
-            using var compatibility = new HttpRequestMessage(
-                HttpMethod.Post,
-                new Uri(snapshot.BaseUri, "api/v1/protocol/compatibility"))
             {
-                Content = JsonContent.Create(new ProtocolCompatibilityRequest(
-                    "studio",
-                    typeof(ConnectorUpstreamManager).Assembly.GetName().Version?.ToString(3) ?? "unknown",
-                    TaskServerProtocol.Current)),
-            };
-            ConnectorUpstreamTransport.AddConnectorHeaders(compatibility.Headers, snapshot);
-            using var compatibilityResponse = await _transport.SendAsync(snapshot, compatibility, cancellationToken);
-            if (!compatibilityResponse.IsSuccessStatusCode)
-                return new ConnectorUpstreamProbe(false, "protocol-incompatible", TaskServerProtocol.Current, null);
-            var response = await compatibilityResponse.Content.ReadFromJsonAsync<ProtocolCompatibilityResponse>(cancellationToken);
-            if (response is null || !response.Supported
-                || response.Server.MinimumSupported > snapshot.MaximumProtocol
-                || response.Server.MaximumSupported < snapshot.MinimumProtocol)
-                return new ConnectorUpstreamProbe(false, "protocol-incompatible", TaskServerProtocol.Current, null);
+                return Refused(
+                    ConnectorAttachFailureCodes.UpstreamNotReady,
+                    $"The {snapshot.MaskedName} answered readiness with HTTP {(int)readyResponse.StatusCode}; its authority is not restored yet.");
+            }
 
-            var successfulAt = DateTimeOffset.UtcNow;
+            using var attach = new HttpRequestMessage(HttpMethod.Post, new Uri(snapshot.BaseUri, "api/v1/protocol/attach"))
+            {
+                Content = JsonContent.Create(new ProtocolAttachRequest(
+                    TaskServerProtocol.StudioClientKind,
+                    ConnectorUpstreamTransport.ConnectorVersion,
+                    snapshot.MinimumProtocol,
+                    snapshot.MaximumProtocol,
+                    _protocols.MinimumHub,
+                    _protocols.MaximumHub)),
+            };
+            ConnectorUpstreamTransport.AddConnectorHeaders(attach.Headers, snapshot, snapshot.MaximumProtocol);
+            using var attachResponse = await _transport.SendAsync(snapshot, attach, cancellationToken);
+            var negotiation = await ReadAttachResponseAsync(attachResponse, cancellationToken);
+            var decision = ConnectorAttachPolicy.Evaluate(
+                _protocols with { MinimumApi = snapshot.MinimumProtocol, MaximumApi = snapshot.MaximumProtocol },
+                (int)attachResponse.StatusCode,
+                negotiation,
+                _expectedHubPath);
+            if (!decision.Attached)
+            {
+                if (decision.FailureCode == ConnectorAttachFailureCodes.CredentialRejected) _credentials.Invalidate();
+                return Refused(decision.FailureCode!, decision.FailureReason!, decision.ServerVersion);
+            }
+
+            var successfulAt = _time.GetUtcNow();
             Volatile.Write(ref _lastSuccessfulProbeUnixMilliseconds, successfulAt.ToUnixTimeMilliseconds());
-            return new ConnectorUpstreamProbe(true, null, TaskServerProtocol.Current, successfulAt);
+            return new ConnectorUpstreamProbe(
+                true,
+                null,
+                decision.ApiProtocol!.Value,
+                successfulAt,
+                HubProtocol: decision.HubProtocol,
+                ServerVersion: decision.ServerVersion);
         }
         catch (Exception exception) when (exception is HttpRequestException
                                           or OperationCanceledException
-                                          or InvalidOperationException
-                                          or JsonException)
+                                          or InvalidOperationException)
         {
-            return new ConnectorUpstreamProbe(false, "upstream-unavailable", TaskServerProtocol.Current, null);
+            return Refused(
+                ConnectorAttachFailureCodes.UpstreamUnavailable,
+                $"The connector could not reach the {snapshot.MaskedName} ({exception.GetType().Name}). " +
+                "Check the SSH forward or WireGuard link and Connector:Upstream:BaseUrl.");
         }
     }
 
@@ -244,6 +364,9 @@ public sealed class ConnectorUpstreamManager
         if (!ReferenceEquals(Interlocked.CompareExchange(ref _current, candidate, observed), observed))
             return new ConnectorUpstreamSwitchResult(false, "generation-changed", Capture().Generation);
 
+        Volatile.Write(
+            ref _attachment,
+            new CachedAttachment(AttachmentKey.For(candidate), probe, _time.GetUtcNow()));
         _sessions.RotateAll();
         return new ConnectorUpstreamSwitchResult(true, null, candidate.Generation);
     }
@@ -256,4 +379,39 @@ public sealed class ConnectorUpstreamManager
             return value == 0 ? null : DateTimeOffset.FromUnixTimeMilliseconds(value);
         }
     }
+
+    private ConnectorUpstreamProbe? TryFreshAttachment(AttachmentKey key)
+    {
+        var cached = Volatile.Read(ref _attachment);
+        if (cached is null || cached.Key != key) return null;
+        var ttl = cached.Probe.Ready ? AttachedRecheckInterval : RefusedRecheckInterval;
+        return _time.GetUtcNow() - cached.CheckedAtUtc < ttl ? cached.Probe : null;
+    }
+
+    private static async Task<ProtocolAttachResponse?> ReadAttachResponseAsync(
+        HttpResponseMessage response,
+        CancellationToken cancellationToken)
+    {
+        if (response.Content.Headers.ContentType?.MediaType?.Contains("json", StringComparison.OrdinalIgnoreCase) != true)
+            return null;
+        try
+        {
+            return await response.Content.ReadFromJsonAsync<ProtocolAttachResponse>(cancellationToken);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static ConnectorUpstreamProbe Refused(string code, string reason, string? serverVersion = null)
+        => new(false, code, TaskServerProtocol.Current, null, reason, ServerVersion: serverVersion);
+
+    private readonly record struct AttachmentKey(long Generation, long CredentialRevision)
+    {
+        public static AttachmentKey For(ConnectorUpstreamSnapshot snapshot)
+            => new(snapshot.Generation, snapshot.CredentialRevision);
+    }
+
+    private sealed record CachedAttachment(AttachmentKey Key, ConnectorUpstreamProbe Probe, DateTimeOffset CheckedAtUtc);
 }

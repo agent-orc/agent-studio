@@ -123,6 +123,52 @@ public class DeliveryClaimSweepPolicyTests
         Assert.DoesNotContain(DeliveryClaimFindings.UnmarkedReplacedDelivery, assessment.Findings);
     }
 
+    /// <summary>
+    /// AGT-2990: a contained zero-file lifecycle marker delivered nothing. It
+    /// must not count as the card's contained delivery, so it neither earns
+    /// the card an integration record nor turns the uncontained delivery
+    /// beside it into an "unmarked replaced" sibling.
+    /// </summary>
+    [Fact]
+    public void AContainedLifecycleMarkerIsNotAContainedDelivery()
+    {
+        var assessment = DeliveryClaimSweepPolicy.Assess(Card(
+            [
+                Commit("1111111", contained: false),
+                Commit("2222222", contained: true, carriesFiles: false),
+            ],
+            IntegrationStatuses.Pending,
+            hasRecord: false));
+
+        Assert.Equal(DeliveryClaimClasses.UnintegratedDelivery, assessment.Class);
+        Assert.Contains(DeliveryClaimFindings.UnintegratedDelivery, assessment.Findings);
+        Assert.DoesNotContain(DeliveryClaimFindings.MissingIntegrationRecord, assessment.Findings);
+        Assert.DoesNotContain(DeliveryClaimFindings.UnmarkedReplacedDelivery, assessment.Findings);
+        Assert.False(assessment.Repairs.HasWork);
+    }
+
+    /// <summary>
+    /// AGT-2990: the <c>next-attempt</c> placeholder on a contained marker is
+    /// not a shipped delivery's stale cache, so no repair is proposed for it.
+    /// </summary>
+    [Fact]
+    public void AContainedLifecycleMarkerWithAPlaceholderProposesNoRepair()
+    {
+        var assessment = DeliveryClaimSweepPolicy.Assess(Card(
+            [
+                Commit("3333333", contained: false, CommitSupersessionStates.ReplacementPending),
+                Commit("4444444", contained: true, CommitSupersessionStates.ReplacementPending,
+                    carriesFiles: false),
+            ],
+            IntegrationStatuses.Pending,
+            hasRecord: false));
+
+        Assert.DoesNotContain(DeliveryClaimFindings.StalePendingSupersession, assessment.Findings);
+        Assert.DoesNotContain(DeliveryClaimFindings.MissingIntegrationRecord, assessment.Findings);
+        Assert.False(assessment.Repairs.AppendIntegrationRecord);
+        Assert.False(assessment.Repairs.ClearPendingSupersession);
+    }
+
     [Fact]
     public void ConceptCardWithoutCommitsAndWithADossierIsClean()
     {

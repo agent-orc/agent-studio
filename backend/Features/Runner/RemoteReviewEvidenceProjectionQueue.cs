@@ -94,8 +94,8 @@ public sealed class RemoteReviewEvidenceProjectionTelemetry
 /// markdown, aspect files, tool-gate pipeline step, and timeline entries
 /// (<see cref="RemoteReviewReportEvidence"/> and
 /// <see cref="RemotePipelineReviewEvidenceProjector"/>). The report endpoint
-/// enqueues this immediately after settling the attempt authority so the HTTP
-/// response does not wait on task-folder I/O (AGT-2762).
+/// enqueues this after settling the attempt authority and lane work. The
+/// journal retains the payload when the process dies before this handoff.
 /// </summary>
 public sealed record RemoteReviewEvidenceProjectionRequest(
     string AttemptId,
@@ -114,13 +114,12 @@ public interface IRemoteReviewEvidenceProjectionQueue
 }
 
 /// <summary>
-/// Durable-enough hand-off from the report endpoint to the evidence-projection
-/// worker. The settlement itself already persisted the fenced outcome; this
-/// queue only defers the slower task-folder write so the endpoint can
-/// acknowledge within the runner's report timeout regardless of host load.
+/// Volatile fast handoff to the evidence worker. Pending work lives in
+/// RemoteReviewSettlementJournal and is re-enqueued after a restart.
 /// </summary>
 public sealed class RemoteReviewEvidenceProjectionQueue : IRemoteReviewEvidenceProjectionQueue
 {
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _pending = new();
     private readonly Channel<RemoteReviewEvidenceProjectionRequest> _channel =
         Channel.CreateUnbounded<RemoteReviewEvidenceProjectionRequest>(new UnboundedChannelOptions
         {
@@ -133,7 +132,12 @@ public sealed class RemoteReviewEvidenceProjectionQueue : IRemoteReviewEvidenceP
     public ChannelReader<RemoteReviewEvidenceProjectionRequest> Reader => _channel.Reader;
 
     public void Enqueue(RemoteReviewEvidenceProjectionRequest request)
-        => _channel.Writer.TryWrite(request);
+    {
+        if (_pending.TryAdd(request.AttemptId, 0) && !_channel.Writer.TryWrite(request))
+            _pending.TryRemove(request.AttemptId, out _);
+    }
+
+    public void Release(string attemptId) => _pending.TryRemove(attemptId, out _);
 }
 
 /// <summary>
@@ -158,20 +162,26 @@ public sealed class RemoteReviewEvidenceProjectionWorker : BackgroundService
 
     private readonly RemoteReviewEvidenceProjectionQueue _queue;
     private readonly TaskScannerService _scanner;
+    private readonly AttemptAuthorityService _authority;
     private readonly RemotePipelineReviewEvidenceProjector _projector;
     private readonly ILogger<RemoteReviewEvidenceProjectionWorker> _logger;
 
     /// <summary>Test seam: replaces the retry backoff so tests do not wait out the real schedule. Null in production.</summary>
     internal Func<int, TimeSpan>? RetryDelayOverride { get; set; }
 
+    /// <summary>Test seam: runs after the evidence write, before the generation fence.</summary>
+    internal Action? BeforeFencedProjection { get; set; }
+
     public RemoteReviewEvidenceProjectionWorker(
         RemoteReviewEvidenceProjectionQueue queue,
         TaskScannerService scanner,
+        AttemptAuthorityService authority,
         RemotePipelineReviewEvidenceProjector projector,
         ILogger<RemoteReviewEvidenceProjectionWorker> logger)
     {
         _queue = queue;
         _scanner = scanner;
+        _authority = authority;
         _projector = projector;
         _logger = logger;
     }
@@ -204,6 +214,7 @@ public sealed class RemoteReviewEvidenceProjectionWorker : BackgroundService
                         "remote-review-evidence-projection-worker-task-failed attempt={AttemptId}",
                         request.AttemptId);
                 }
+                finally { _queue.Release(request.AttemptId); }
             }
         }
         catch (OperationCanceledException ex) when (stoppingToken.IsCancellationRequested)
@@ -227,24 +238,48 @@ public sealed class RemoteReviewEvidenceProjectionWorker : BackgroundService
             return;
         }
 
+        var journal = RemoteReviewSettlementJournal.Read(task.FolderPath, request.AttemptId);
+        if (journal.Status != RemoteReviewSettlementReadStatus.Ready || journal.Entry is null)
+        {
+            _logger.LogWarning("remote-review-settlement-repair-required attempt={AttemptId} reason={Reason}",
+                request.AttemptId, journal.Reason ?? "missing-review-settlement-journal");
+            return;
+        }
+        var entry = journal.Entry;
+        var current = _authority.GetTaskProjection(entry.TaskKey).CurrentReviewAttempt;
+        if (current is null || !RemoteReviewSettlementPolicy.MatchesAcceptedReview(entry, current))
+            return;
+        if (entry.EvidenceComplete || entry.RepairReason is not null) return;
+
         var sw = Stopwatch.StartNew();
         try
         {
             var evidenceFile = await RemoteReviewReportEvidence.WriteAsync(
                 task.FolderPath,
                 request.AttemptId,
-                request.Review.Subject.SubjectId,
-                request.Report,
-                request.ReportSha256,
+                current.Subject.SubjectId,
+                entry.Report,
+                entry.ReportSha256,
                 request.ReceivedAt,
                 ct);
-            await _projector.ProjectAsync(
-                task,
-                request.Review,
-                request.Report,
-                evidenceFile,
-                request.ReceivedAt,
-                ct);
+            // The attempt-named evidence file above is inert history. The shared
+            // task projection is applied inside the generation fence, so a
+            // successor created during this work is never overwritten.
+            ct.ThrowIfCancellationRequested();
+            BeforeFencedProjection?.Invoke();
+            if (!_authority.TryApplyForCurrentReview(current.AttemptId, () => _projector.Project(
+                    task,
+                    current,
+                    entry.Report,
+                    evidenceFile,
+                    request.ReceivedAt)))
+            {
+                _logger.LogInformation(
+                    "remote-review-evidence-projection-superseded attempt={AttemptId} task={TaskKey}",
+                    request.AttemptId, request.TaskKey);
+                return;
+            }
+            RemoteReviewSettlementJournal.Write(task.FolderPath, entry with { EvidenceComplete = true });
             sw.Stop();
             _queue.Telemetry.RecordCompletion(DateTime.UtcNow, sw.Elapsed, succeeded: true);
             var queueWaitMs = (long)Math.Max(0, (DateTime.UtcNow - request.EnqueuedAtUtc).TotalMilliseconds);
@@ -259,31 +294,44 @@ public sealed class RemoteReviewEvidenceProjectionWorker : BackgroundService
                     request.AttemptId, request.TaskKey, sw.ElapsedMilliseconds);
             }
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (IsTransient(exception) && !ct.IsCancellationRequested)
         {
             sw.Stop();
             _queue.Telemetry.RecordCompletion(DateTime.UtcNow, sw.Elapsed, succeeded: false);
-            if (request.Attempt >= MaxRetries)
+            // The journaled failure count survives a restart, so it alone drives
+            // the backoff, the log and exhaustion: MaxRetries retries follow the
+            // first failed pass.
+            var failures = entry.EvidenceFailures + 1;
+            var retryAttempt = failures - 1;
+            var exhausted = retryAttempt >= MaxRetries;
+            var delay = exhausted
+                ? TimeSpan.Zero
+                : RetryDelayOverride?.Invoke(retryAttempt) ?? RetryDelay(retryAttempt);
+            RemoteReviewSettlementJournal.Write(task.FolderPath, entry with
+            {
+                EvidenceFailures = failures,
+                NextEvidenceAttemptUtc = DateTime.UtcNow.Add(delay),
+                RepairReason = exhausted ? "review-evidence-projection-exhausted" : null,
+            });
+            if (exhausted)
             {
                 _logger.LogWarning(
                     exception,
                     "remote-review-evidence-projection-exhausted attempt={AttemptId} task={TaskKey} attempts={Attempts}",
-                    request.AttemptId, request.TaskKey, request.Attempt);
+                    request.AttemptId, request.TaskKey, failures);
                 return;
             }
-
-            var delay = RetryDelayOverride?.Invoke(request.Attempt) ?? RetryDelay(request.Attempt);
             _logger.LogWarning(
                 exception,
                 "remote-review-evidence-projection-retry attempt={AttemptId} task={TaskKey} "
                 + "retryAttempt={RetryAttempt} retryInMs={RetryInMs}",
-                request.AttemptId, request.TaskKey, request.Attempt, (long)delay.TotalMilliseconds);
+                request.AttemptId, request.TaskKey, retryAttempt, (long)delay.TotalMilliseconds);
             _ = Task.Run(async () =>
             {
                 try
                 {
                     await Task.Delay(delay, CancellationToken.None);
-                    _queue.Enqueue(request with { Attempt = request.Attempt + 1, EnqueuedAtUtc = DateTime.UtcNow });
+                    _queue.Enqueue(request with { Attempt = failures, EnqueuedAtUtc = DateTime.UtcNow });
                 }
                 catch (Exception retryException)
                 {
@@ -294,5 +342,25 @@ public sealed class RemoteReviewEvidenceProjectionWorker : BackgroundService
                 }
             }, CancellationToken.None);
         }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // A defect does not heal on retry. Record the typed repair instead of
+            // leaving the journal pending for the reconciler to replay forever.
+            sw.Stop();
+            _queue.Telemetry.RecordCompletion(DateTime.UtcNow, sw.Elapsed, succeeded: false);
+            RemoteReviewSettlementJournal.Write(task.FolderPath, entry with
+            {
+                EvidenceFailures = entry.EvidenceFailures + 1,
+                RepairReason = "review-evidence-projection-failed",
+            });
+            _logger.LogError(
+                exception,
+                "remote-review-evidence-projection-failed attempt={AttemptId} task={TaskKey}",
+                request.AttemptId, request.TaskKey);
+        }
     }
+
+    /// <summary>Failures a later pass can outlive: disk, permission and timeout faults.</summary>
+    private static bool IsTransient(Exception exception)
+        => exception is IOException or UnauthorizedAccessException or OperationCanceledException;
 }

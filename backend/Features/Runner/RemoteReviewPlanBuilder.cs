@@ -31,17 +31,25 @@ public sealed class RemoteReviewPlanBuilder
         _configuration = configuration;
     }
 
+    /// <param name="changedFiles">
+    /// The delivery's paths against its merge base, when known. A diff that
+    /// can change the Compose stack adds the Compose-render steps, whose host
+    /// requirement routes the review to an executor that can render Compose
+    /// (AGT-2981). Null keeps the diff-independent plan.
+    /// </param>
     public Contract.ReviewPlanDto Build(
         TaskInfo? task,
         string? repositoryPath,
         ProjectSettings? projectSettings,
         string? integrationRef,
-        string? expectedResultSha = null)
+        string? expectedResultSha = null,
+        IReadOnlyList<string>? changedFiles = null)
     {
         var toolPlan = V1ReviewPlaneEndpoints.FallbackPlan(
             repositoryPath,
             projectSettings?.BuildProfile,
-            integrationRef);
+            integrationRef,
+            changedFiles);
         if (task is null || TaskModes.IsReportOnly(task.Mode))
             return toolPlan;
 
@@ -281,6 +289,24 @@ public sealed class RemoteReviewPlanBuilder
         }
     }
 
+    /// <summary>
+    /// The delivery's changed paths against its merge base with
+    /// <paramref name="baseRef"/>, or null when the Studio checkout cannot
+    /// compute them. A null diff leaves the Compose render to the pre-develop
+    /// gate, which derives it from the exact merge result and fails closed on
+    /// a host that cannot render.
+    /// </summary>
+    public static IReadOnlyList<string>? DeliveryChangedFiles(
+        AgentStudio.Git.GitService git,
+        string? repositoryPath,
+        string? baseRef,
+        string? resultSha)
+        => string.IsNullOrWhiteSpace(repositoryPath)
+           || string.IsNullOrWhiteSpace(baseRef)
+           || string.IsNullOrWhiteSpace(resultSha)
+            ? null
+            : git.ChangedPathsAgainstMergeBase(repositoryPath, baseRef, resultSha);
+
     private IReadOnlySet<string> ConfiguredAspectIds()
     {
         var section = _configuration.GetSection("ReviewDecisionOrchestrator:AspectRunners");
@@ -325,9 +351,7 @@ public sealed class RemoteReviewPlanBuilder
     private static string Read(string path, int maximumCharacters, string fallback)
     {
         if (!File.Exists(path)) return fallback;
-        var value = File.ReadAllText(path);
-        return value.Length <= maximumCharacters
-            ? value
-            : value[^maximumCharacters..];
+        // Only the tail is kept, so only the tail is read (AGT-2991).
+        return BoundedFileRead.ReadTailChars(path, maximumCharacters);
     }
 }

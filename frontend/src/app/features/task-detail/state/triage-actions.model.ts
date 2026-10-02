@@ -14,6 +14,7 @@ import { TaskState } from '../../../models/task.model';
 import type { TaskDeliveryClaimAnswer, TaskInfo } from '../../../models/task.model';
 import type { LandedState } from '../../../features/git';
 import { LANE_PRESENTATIONS, laneName } from '../../../models/lane-presentation';
+import { decisionMoveRefusal } from '../../../models/decision-card-presentation';
 
 export type TriageActionIntent =
   | { kind: 'move'; targetState: string }
@@ -329,6 +330,22 @@ export function mergeAcceptViewFor(
       ? `This task's work is already merged into develop at ${mergeSha}. Accept moves the card to Delivered; no merge is triggered.`
       : "This task's work is already merged into develop. Accept moves the card to Delivered; no merge is triggered.",
   };
+}
+
+/**
+ * AGT-2795: why the decision lane guard would refuse this triage move for
+ * `job`, or null. Shared by the detail header and the studio tab strip so
+ * both disable the control with the backend's reason instead of a 4xx.
+ */
+export function triageDecisionRefusal(job: TaskInfo, button: TriageButton | null): string | null {
+  if (!button || button.intent.kind !== 'move') return null;
+  return decisionMoveRefusal(job, button.intent.targetState);
+}
+
+/** Menu row fields for a triage button the decision guard refuses. */
+export function triageDecisionRowState(job: TaskInfo, button: TriageButton): { disabled?: true; tooltip?: string } {
+  const refusal = triageDecisionRefusal(job, button);
+  return refusal ? { disabled: true, tooltip: refusal } : {};
 }
 
 /**

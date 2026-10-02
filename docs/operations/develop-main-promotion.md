@@ -130,6 +130,117 @@ Machine-bound suites remain separately scheduled evidence and are never hidden
 inside the normal green result. The promotion gate excludes them explicitly,
 matching the repository test contract and release workflow.
 
+## Gate capacity window
+
+The train runs on a runner host next to the coding and review units. On
+27 September 2026 (release 0.9.3, trains `release/20260927-103354Z` and
+`release/20260927-112445Z` on agent-runner-01) a busy fleet drove the load
+average to 40 to 114 on 12 cores: `OrchestratorApi.Tests` took 42 instead of 9
+minutes and the deadline-bounded deployment regression scenario failed twice
+without a defect. Its step budgets are part of the deployment contract and are
+not raised to hide an oversubscribed host. Instead the train reserves capacity
+for its gate (AGT-2982).
+
+[release-gate-window.sh](../../scripts/release/release-gate-window.sh) wraps the
+full gate and, on every `--execute` run:
+
+1. records the current `CPUQuota` of `agent-runner.service` and
+   `agent-runner-review.service` (`systemctl show -p CPUQuotaPerSecUSec`);
+2. sets a runtime train-window quota with
+   `sudo -n /usr/bin/systemctl set-property --runtime <unit> CPUQuota=<N>%`.
+   By default the window leaves `RELEASE_GATE_RESERVED_CORES=5` cores to the
+   gate and splits the rest two sevenths to coding and five sevenths to
+   review, each at least one core. On 12 cores that is `200%` coding and `500%`
+   review, the same window the operator applied by hand on 27 September.
+   `RELEASE_GATE_CODING_QUOTA` and `RELEASE_GATE_REVIEW_QUOTA` override the
+   values. The window never raises a unit above its recorded quota;
+3. refuses to start hot: when the 1-minute load is above
+   `RELEASE_GATE_MAX_LOAD_FACTOR` (default `2`) times the core count, it polls
+   every `RELEASE_GATE_POLL_SECONDS` (default `15`) for at most
+   `RELEASE_GATE_SETTLE_SECONDS` (default `300`) while the throttle takes
+   effect, then starts the gate regardless and logs that it started hot;
+4. runs the gate in its own process group and measures the load at its start
+   and end and its duration; and
+5. restores the recorded quotas from a trap on every exit path: a green or red
+   gate, a helper error, and `INT`, `TERM`, or `HUP`. On a signal the helper
+   first stops the whole gate process group, not only its immediate child: it
+   sends `SIGTERM` to the group, sends `SIGKILL` to whatever is still alive
+   after `RELEASE_GATE_STOP_GRACE_SECONDS` (default `30`), and restores the
+   quotas only once no process of the group remains, so no orphaned test or
+   build process keeps running at full runner load. An unlimited unit is
+   restored with the empty `CPUQuota=` reset.
+
+`RELEASE_GATE_WINDOW` selects the policy: `auto` (default) applies the window
+when the units are loaded and, when a quota cannot be set (for example the
+sudoers rule is missing), rolls back what it applied, logs a warning, and runs
+the gate unthrottled. `required` refuses to run the gate instead; the train
+then records `status=blocked-gate-window`, `gate=not-run`, and leaves `main`
+unchanged. `off` never touches the units but still records the load evidence.
+A host without the runner units records `mode=skipped`.
+
+While the window is active the review daemon sees the lower role `cpu.max`, so
+its claim clamp (`floor(role quota cores / 2)`) admits fewer review workers
+instead of starving admitted ones. Running workers keep going at reduced
+speed. The restore writes the recorded value back as a runtime property: the
+effective quota is the pre-train value, and the runtime drop-in below
+`/run/systemd/system.control/` disappears at the next reboot. If onboarding
+changes a persistent role quota before then, remove
+`/run/systemd/system.control/<unit>.d/50-CPUQuota.conf` and run
+`systemctl daemon-reload` as root, or reboot, so the runtime value does not
+shadow the new persistent one.
+
+### Sudoers rule
+
+The host sudoers policy
+[deploy/agent-host/sudoers.d/agent-runner](../../deploy/agent-host/sudoers.d/agent-runner)
+grants the service account exactly this call shape, installed by
+`sudo ./scripts/harden-agent-runner-host.sh --apply`:
+
+```sudoers
+Cmnd_Alias AGENT_RELEASE_GATE_WINDOW = \
+    /usr/bin/systemctl ^set-property --runtime agent-runner[.]service CPUQuota\=([1-9][0-9]{0\,5}%)?$, \
+    /usr/bin/systemctl ^set-property --runtime agent-runner-review[.]service CPUQuota\=([1-9][0-9]{0\,5}%)?$
+```
+
+The argument regular expression needs sudo 1.9.10 or newer (Ubuntu 24.04 ships
+1.9.15). It admits only a runtime `CPUQuota` of a whole percentage, or the empty
+reset, on the two runner units: no persistent change, no other property, and no
+other unit. A regular expression is required because the restore writes back
+whatever quota onboarding derived for the host, which an enumerated list cannot
+cover. Verify the rule from the operator account with `sudo -n -l`. Agent CLIs
+run with `NoNewPrivileges=true` and cannot use it.
+
+### Why a quota window and not a priority slice
+
+The card allowed a dedicated systemd slice with a `CPUWeight` well above the
+runner units instead. The quota window was chosen because:
+
+- `CPUWeight` only arbitrates between sibling cgroups. The operator runs the
+  train from a login session in `user.slice`, while the runner units live in
+  `system.slice`. A high-weight slice below `user.slice` competes only with
+  other user sessions; to outrank the runner units the gate would have to run
+  as a system unit, which means granting `systemd-run` through sudo. That is an
+  arbitrary root command, far wider than two runtime `CPUQuota` assignments.
+- A weight shares CPU under contention but does not shed load. A quota also
+  lowers the review daemon's admission clamp, so fewer review workers start
+  instead of many starving ones tripping their no-CPU-progress and silence
+  watchdogs.
+- The quota window is exactly the manual mitigation that worked on
+  27 September, now automated with a restore on every exit path.
+
+### Evidence
+
+`gate-window.env` in the evidence directory is the helper's raw record.
+`promotion-record.json` carries the attributed fields: `hostLoadAtGateStart`,
+`hostLoadAtGateEnd`, and `gateDurationSeconds` (numbers, `null` when the gate
+did not run), `appliedQuotas` (per unit, the recorded and applied `CPUQuota`),
+and `gateWindow` (`mode`, `cpuCount`, `reservedCores`, `loadThreshold`,
+`loadBeforeWait`, `loadWaitSeconds`, `quotasRestored`, `gateExit`). A slow or
+red gate with a high `hostLoadAtGateStart` or `loadWaitSeconds` at the bound
+points to host load rather than a defect. `quotasRestored=failed` is also
+logged as a warning in `promotion.log`; restore the recorded values from
+`appliedQuotas` by hand in that case.
+
 ## Release marker and evidence
 
 The annotated `release/<UTC timestamp>` tag is a promotion marker. It is not a
@@ -142,7 +253,8 @@ By default the command writes evidence beneath Git's local
 `promotion-results` path. Set `PROMOTION_EVIDENCE_DIR` or pass
 `--evidence-dir` to use an operator-owned durable location. The record includes
 the start `develop`, previous `main`, exact candidate, required ancestor,
-gate-script blob, gate result, tag, and atomic-push result. Logs include the full
+gate-script blob, gate result, tag, atomic-push result, and the gate capacity
+window evidence described above. Logs include the full
 gate output, tag creation output, and remote push response. A tag or push
 failure after a passed gate writes `status=blocked-tag` or
 `status=blocked-push`, retains `gate=passed`, and records the command error so
@@ -189,6 +301,10 @@ condition and a later cron tick retries. The watcher never changes task state.
 
 ## Failure and recovery
 
+- Gate failure on a loaded host: compare `hostLoadAtGateStart`,
+  `hostLoadAtGateEnd`, and `gateDurationSeconds` with a quiet run before
+  debugging the failing test. Confirm `gateWindow.mode=applied`; `unavailable`
+  means the sudoers rule is missing and the gate ran unthrottled.
 - Candidate-ancestry or gate failure: inspect the evidence, converge the branch
   if needed, fetch the new tips, and start a new run. A `develop` advance alone
   does not invalidate a gated candidate.

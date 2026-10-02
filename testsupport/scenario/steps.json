@@ -34,7 +34,7 @@
       "title": "Run with the fake CLI",
       "level": "smoke",
       "description": "The runner drives the fake coding CLI, which reports the fixture's known-passing and known-failing checks, commits, and pushes.",
-      "expectedOutcome": "The task reaches 4-auto-review with an immutable result handoff, a new commit lands on the seeded repository's default branch, and the run's evidence artifacts include a results log naming both checks. In Compose, Studio BFF stays stopped during the run."
+      "expectedOutcome": "The task reaches 4-auto-review with an immutable result handoff, a new commit lands on the seeded repository's immutable result ref, and the run's evidence artifacts include a results log naming both checks. In Compose, Studio BFF stays stopped during the run."
     },
     {
       "id": "run-coding-attempt-legacy-plane",
@@ -47,8 +47,8 @@
       "id": "auto-review",
       "title": "Auto-review",
       "level": "smoke",
-      "description": "A review subject is opened against the completed run, claimed, reported as passing, and cleaned up, queuing an orchestration run that is settled to completion.",
-      "expectedOutcome": "The same task reaches 5-human-review while Studio BFF remains stopped in Compose."
+      "description": "The real review executor materializes and checks the completed coding run, reports and cleans up. After Pass, a supervised fixture publisher fast-forwards canonical main to the reviewed SHA and verifies the remote ref.",
+      "expectedOutcome": "The same task reaches 5-human-review and the canonical fixture ref equals the reviewed SHA while Studio BFF remains stopped in Compose."
     },
     {
       "id": "orchestrator-chat-turn",

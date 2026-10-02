@@ -304,6 +304,7 @@
       opacity: 0;
       transition: opacity 0.15s, background 0.15s, color 0.15s, border-color 0.15s;
     }
+    .task-card__pick-next[aria-disabled='true'] { cursor: not-allowed; }
     .task-card__pick-next-glyph { font-size: 13px; line-height: 1; }
     .task-card__pick-next-label {
       overflow: hidden;
@@ -392,6 +393,33 @@
       margin-right: 4px;
       user-select: none;
       white-space: nowrap;
+    }
+    // AGT-2795: decision kind badge. A pending decision waits on a person, an
+    // acute state, so it reads in the warn register as a full tint (R1: no
+    // accent bar); a decided card is history and calms to the muted tone (R4).
+    // Distinct from the AGT-2803 tag chips, which classify rather than type.
+    .task-card__decision-badge {
+      display: inline-block;
+      min-height: var(--studio-card-pill-height);
+      padding: 0 var(--studio-card-pill-padding-x);
+      border: 1px solid color-mix(in srgb, var(--studio-accent-warn) 52%, transparent);
+      border-radius: 3px;
+      background: color-mix(in srgb, var(--studio-accent-warn) 16%, var(--studio-bg-elevated));
+      color: var(--studio-accent-warn-strong);
+      font-size: var(--studio-card-meta-size);
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      vertical-align: middle;
+      margin-right: var(--studio-spacing-1);
+      user-select: none;
+      white-space: nowrap;
+
+      &[data-open='false'] {
+        border-color: color-mix(in srgb, var(--studio-fg-muted) 28%, transparent);
+        background: color-mix(in srgb, var(--studio-fg-muted) 10%, transparent);
+        color: var(--studio-fg-muted);
+      }
     }
     .task-card__subtask-chip {
       display: inline-block;

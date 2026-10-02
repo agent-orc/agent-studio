@@ -18,7 +18,8 @@
     "src/app/features/task-detail/components/prompt-pane/pipeline-token-usage/pipeline-token-usage.component.html",
     "src/app/features/task-detail/components/parked-blocker/parked-blocker.component.html",
     "src/app/features/task-detail/components/protocol-pane/previous-results-control/previous-results-control.component.html",
-    "src/app/features/task-detail/components/protocol-pane/protocol-verdict-banner/protocol-verdict-banner.component.html"
+    "src/app/features/task-detail/components/protocol-pane/protocol-verdict-banner/protocol-verdict-banner.component.html",
+    "src/app/features/usage-cockpit/components/usage-slot-chip/usage-slot-chip.html"
   ],
   "documented": {
     "src/app/components/cli-model-selector/cli-model-selector.component.html": {
@@ -228,6 +229,14 @@
     "src/app/features/tokens/components/usage-hover-panel/usage-hover-panel.html": {
       "kind": "popup-trigger",
       "reason": "The status-bar Chat usage button opens a fixed floating panel; it does not expand content in place."
+    },
+    "src/app/features/usage-cockpit/components/usage-cli-chip/usage-cli-chip.html": {
+      "kind": "popup-trigger",
+      "reason": "CLI usage chip. It opens the usage detail as an anchored popover or phone sheet; the value chip is the affordance."
+    },
+    "src/app/features/usage-cockpit/components/usage-cost-chip/usage-cost-chip.html": {
+      "kind": "popup-trigger",
+      "reason": "Today's cost chip. It opens the cost detail as an anchored popover or phone sheet; the value chip is the affordance."
     }
   }
 }
