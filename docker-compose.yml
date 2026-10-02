@@ -21,6 +21,8 @@ x-task-server: &task-server
     ENGINE_AUTH_TOKEN_FILE: /run/agent-studio-secrets/engine_token
     BOOTSTRAP_RUNNER_ID: distributed-runner
     BOOTSTRAP_RUNNER_AUTH_TOKEN_FILE: /run/agent-studio-secrets/runner_token
+    BOOTSTRAP_REVIEW_RUNNER_ID: distributed-review-runner
+    BOOTSTRAP_REVIEW_RUNNER_AUTH_TOKEN_FILE: /run/agent-studio-secrets/review_runner_token
   volumes:
     - store:/var/lib/agent-orchestrator/store
     - backup:/var/lib/agent-orchestrator/backup
@@ -58,9 +60,12 @@ x-engine: &engine
 
 x-bff: &bff
   restart: unless-stopped
+  ports:
+    - "127.0.0.1:${STUDIO_BFF_PORT:-5072}:5072"
   environment:
     TaskServer__BaseUrl: http://task-server:5071
     TaskServer__AuthTokenFile: /run/agent-studio-secrets/studio_token
+    Studio__AllowedOrigins: ${STUDIO_ALLOWED_ORIGINS:-http://127.0.0.1:4011,http://localhost:4011}
   volumes:
     - secrets:/run/agent-studio-secrets:ro
   networks: [control]
@@ -74,15 +79,14 @@ x-bff: &bff
     start_period: 10s
   logging: *bounded-logs
 
+# Compatibility routes may read Task Server but never retain a second
+# workspace or project store.
 x-api: &api
   restart: unless-stopped
   environment:
-    TaskRepository: /data/workspace
     TaskServer__BaseUrl: http://task-server:5071
     TaskServer__AuthTokenFile: /run/agent-studio-secrets/studio_token
   volumes:
-    - workspace:/data/workspace
-    - projects:/data/projects
     - secrets:/run/agent-studio-secrets:ro
   networks: [control]
   mem_limit: 2g
@@ -98,7 +102,7 @@ x-api: &api
 x-web: &web
   restart: unless-stopped
   ports:
-    - "${STUDIO_UI_BIND:-127.0.0.1}:${STUDIO_UI_PORT:-4011}:8080"
+    - "127.0.0.1:${STUDIO_UI_PORT:-4011}:8080"
   environment:
     STUDIO_API_UPSTREAM: orchestrator-api:5031
     STUDIO_BFF_UPSTREAM: studio-bff:5072
@@ -113,19 +117,28 @@ x-web: &web
     start_period: 5s
   logging: *bounded-logs
 
+# Settings every runner role shares; each role adds its server, identity and
+# principal on top.
+x-runner-environment: &runner-environment
+  RUNNER_ALLOW_INSECURE_HTTP: "1"
+  RUNNER_GIT_REMOTE: ${RUNNER_GIT_REMOTE:-}
+  RUNNER_GIT_PUSH_REMOTE: ${RUNNER_GIT_PUSH_REMOTE:-}
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: credential.helper
+  GIT_CONFIG_VALUE_0: store --file=/home/runner/.git-credentials
+
 x-runner: &runner
   restart: unless-stopped
+  env_file:
+    - path: ./runner.env
+      required: false
   environment:
+    <<: *runner-environment
     RUNNER_SERVER_URL: http://task-server:5071
     RUNNER_ID: distributed-runner
     RUNNER_NAME: distributed-runner
-    RUNNER_ALLOW_INSECURE_HTTP: "1"
+    RUNNER_ROLE: coding
     RUNNER_AUTH_TOKEN_FILE: /run/agent-studio-secrets/runner_token
-    RUNNER_GIT_REMOTE: ${RUNNER_GIT_REMOTE:-}
-    RUNNER_GIT_PUSH_REMOTE: ${RUNNER_GIT_PUSH_REMOTE:-}
-    GIT_CONFIG_COUNT: "1"
-    GIT_CONFIG_KEY_0: credential.helper
-    GIT_CONFIG_VALUE_0: store --file=/home/runner/.git-credentials
   volumes:
     - runner-workspaces:/var/lib/agent-host
     - secrets:/run/agent-studio-secrets:ro
@@ -212,6 +225,19 @@ services:
     depends_on:
       task-server: {condition: service_healthy}
 
+  agent-host-review-distributed:
+    <<: *runner
+    image: ghcr.io/agent-orc/agent-host:v${AGENT_STUDIO_VERSION:-0.9.1}
+    environment:
+      <<: *runner-environment
+      RUNNER_SERVER_URL: http://task-server:5071
+      RUNNER_ID: distributed-review-runner
+      RUNNER_NAME: distributed-review-runner
+      RUNNER_ROLE: review
+      RUNNER_AUTH_TOKEN_FILE: /run/agent-studio-secrets/review_runner_token
+    depends_on:
+      task-server: {condition: service_healthy}
+
   edge:
     image: caddy:${CADDY_VERSION:-2.10-alpine}
     profiles: [edge]
@@ -290,6 +316,7 @@ services:
     environment:
       TaskServer__BaseUrl: http://task-server-dev:5071
       TaskServer__AuthTokenFile: /run/agent-studio-secrets/studio_token
+      Studio__AllowedOrigins: ${STUDIO_ALLOWED_ORIGINS:-http://127.0.0.1:4011,http://localhost:4011}
     depends_on:
       task-server-dev: {condition: service_healthy}
     profiles: [dev]
@@ -297,8 +324,9 @@ services:
   orchestrator-api-dev:
     <<: *api
     build: {context: ., dockerfile: backend/Dockerfile, args: {VERSION: "${AGENT_STUDIO_VERSION:-0.0.0-dev}"}}
+    volumes:
+      - secrets:/run/agent-studio-secrets:ro
     environment:
-      TaskRepository: /data/workspace
       TaskServer__BaseUrl: http://task-server-dev:5071
       TaskServer__AuthTokenFile: /run/agent-studio-secrets/studio_token
     depends_on:
@@ -320,16 +348,26 @@ services:
     <<: *runner
     build: {context: ., dockerfile: runner/Dockerfile, args: {VERSION: "${AGENT_STUDIO_VERSION:-0.0.0-dev}"}}
     environment:
+      <<: *runner-environment
       RUNNER_SERVER_URL: http://task-server-dev:5071
       RUNNER_ID: distributed-runner
       RUNNER_NAME: distributed-runner
-      RUNNER_ALLOW_INSECURE_HTTP: "1"
+      RUNNER_ROLE: coding
       RUNNER_AUTH_TOKEN_FILE: /run/agent-studio-secrets/runner_token
-      RUNNER_GIT_REMOTE: ${RUNNER_GIT_REMOTE:-}
-      RUNNER_GIT_PUSH_REMOTE: ${RUNNER_GIT_PUSH_REMOTE:-}
-      GIT_CONFIG_COUNT: "1"
-      GIT_CONFIG_KEY_0: credential.helper
-      GIT_CONFIG_VALUE_0: store --file=/home/runner/.git-credentials
+    depends_on:
+      task-server-dev: {condition: service_healthy}
+    profiles: [dev]
+
+  agent-host-review-distributed-dev:
+    <<: *runner
+    build: {context: ., dockerfile: runner/Dockerfile, args: {VERSION: "${AGENT_STUDIO_VERSION:-0.0.0-dev}"}}
+    environment:
+      <<: *runner-environment
+      RUNNER_SERVER_URL: http://task-server-dev:5071
+      RUNNER_ID: distributed-review-runner
+      RUNNER_NAME: distributed-review-runner
+      RUNNER_ROLE: review
+      RUNNER_AUTH_TOKEN_FILE: /run/agent-studio-secrets/review_runner_token
     depends_on:
       task-server-dev: {condition: service_healthy}
     profiles: [dev]

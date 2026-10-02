@@ -129,6 +129,7 @@ internal static class RunnerCapabilityProbe
         AddToolchain(list, CapabilityProtocol.DotNet, "dotnet");
         AddToolchain(list, CapabilityProtocol.Node, "node");
         AddToolchain(list, CapabilityProtocol.Playwright, "playwright");
+        AddComposeRender(list, ComposeRenderVersion);
         return list;
     }
 
@@ -281,6 +282,78 @@ internal static class RunnerCapabilityProbe
         if (capabilities.Any(capability => capability.Key == key)) return;
         if (!OnPath(executable)) return;
         capabilities.Add(Capability(key, "toolchain", ToolVersion(executable), executable));
+    }
+
+    /// <summary>
+    /// AGT-2981: advertise <see cref="CapabilityProtocol.ComposeRender"/> only
+    /// when <c>docker compose version</c> answers. A bare <c>docker</c> on PATH
+    /// does not prove the compose plugin that <c>docker compose config</c>
+    /// needs; no daemon is contacted.
+    /// </summary>
+    internal static void AddComposeRender(
+        ICollection<AdvertisedCapabilityDto> capabilities,
+        Func<string?> composeVersion)
+    {
+        var version = composeVersion();
+        if (version is null) return;
+        capabilities.Add(Capability(
+            CapabilityProtocol.ComposeRender, "toolchain", version, "docker compose"));
+    }
+
+    private static readonly TimeSpan ComposeRenderProbeTtl = TimeSpan.FromMinutes(10);
+    private static (DateTime ObservedAt, string? Version)? _composeRenderProbe;
+
+    /// <summary>
+    /// The compose plugin version, or null when this host cannot render
+    /// Compose. Cached for ten minutes so a heartbeat does not spawn Docker.
+    /// </summary>
+    private static string? ComposeRenderVersion()
+    {
+        var cached = _composeRenderProbe;
+        if (cached is { } hit && DateTime.UtcNow - hit.ObservedAt < ComposeRenderProbeTtl)
+            return hit.Version;
+        var version = ProbeComposeVersion();
+        _composeRenderProbe = (DateTime.UtcNow, version);
+        return version;
+    }
+
+    private static string? ProbeComposeVersion()
+    {
+        var docker = ResolveExecutable("docker");
+        if (docker is null) return null;
+        try
+        {
+            using var process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = docker,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true,
+                }
+            };
+            process.StartInfo.ArgumentList.Add("compose");
+            process.StartInfo.ArgumentList.Add("version");
+            process.StartInfo.ArgumentList.Add("--short");
+            if (!process.Start()) return null;
+            var stdout = process.StandardOutput.ReadToEndAsync();
+            var stderr = process.StandardError.ReadToEndAsync();
+            if (!process.WaitForExit(10_000))
+            {
+                try { process.Kill(entireProcessTree: true); } catch { }
+                return null;
+            }
+            Task.WaitAll([stdout, stderr], 1_000);
+            if (process.ExitCode != 0) return null;
+            var version = stdout.Result.Trim();
+            return version.Length == 0 ? "available" : version;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static void AddCodingCliCapabilities(

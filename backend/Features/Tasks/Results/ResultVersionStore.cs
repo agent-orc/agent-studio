@@ -94,8 +94,15 @@ public sealed class ResultVersionStore
         {
             try
             {
-                var metadata = JsonSerializer.Deserialize<ResultHistoryVersion>(
-                    File.ReadAllText(metadataPath), Json);
+                // Version metadata is a small sidecar; one oversized file in
+                // the history tree is skipped like an invalid one (AGT-2991).
+                var raw = BoundedFileRead.ReadAllTextOrNull(metadataPath, BoundedFileRead.SidecarBytes);
+                if (raw is null)
+                {
+                    _logger.LogDebug("result-history: ignored oversized metadata {Path}", metadataPath);
+                    continue;
+                }
+                var metadata = JsonSerializer.Deserialize<ResultHistoryVersion>(raw, Json);
                 if (metadata is null) continue;
                 var versionDir = Path.GetDirectoryName(metadataPath)!;
                 var statusPath = Path.Combine(versionDir, "status.md");

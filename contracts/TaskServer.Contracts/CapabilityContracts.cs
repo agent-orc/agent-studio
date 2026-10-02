@@ -16,6 +16,13 @@ public static class CapabilityProtocol
     public const string DotNet = "toolchain:dotnet";
     public const string Node = "toolchain:node";
     public const string Playwright = "toolchain:playwright";
+
+    /// <summary>
+    /// The host can render the Compose stack: a Docker CLI with the compose
+    /// plugin answers <c>docker compose version</c>. No Docker daemon is
+    /// implied. Required by the Compose-render gate step (AGT-2981).
+    /// </summary>
+    public const string ComposeRender = "toolchain:compose-render";
     public const string Vision = "review:vision";
     public const string Disk = "host:disk";
     public const string TaskServerConnectivity = "task-server:connectivity";

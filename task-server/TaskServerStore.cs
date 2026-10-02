@@ -33,11 +33,12 @@ public sealed partial class TaskServerStore
     // 22 adds transactional queued-follow-up claim, start acknowledgement,
     // rollback, and terminal supersession state.
     // 23 adds bounded opaque operation permits, always checked against live leases.
-    // 24 adds the host-owned, metadata-only credential registry and typed
+    // 24 adds versioned project placement and admission receipts.
+    // 25 adds the host-owned, metadata-only credential registry and typed
     // provider capability observation fields.
     // The migration block is idempotent; the number guards downgrades from
     // binaries that do not know this state.
-    public const int CurrentSchemaVersion = 24;
+    public const int CurrentSchemaVersion = 25;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -657,6 +658,13 @@ public sealed partial class TaskServerStore
         List<TaskServerOperationalEvent> operationalEvents = [];
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
+            var removedAt = await ScalarAsync(connection, """
+                SELECT permanently_deleted_at FROM studio_host_lifecycle
+                 WHERE host_id = $host;
+                """, ct, transaction, ("$host", request.HostId));
+            if (removedAt is not null and not DBNull)
+                throw new TaskServerConflictException(
+                    "host-removed", "A removed host cannot register a new runner instance.");
             var existingCapabilitiesJson = Convert.ToString(
                 await ScalarAsync(
                     connection,
@@ -1321,6 +1329,7 @@ public sealed partial class TaskServerStore
                     Message: capabilityAdmission.Message,
                     ReconciliationActions: reconciliationActions,
                     RuntimeCapacity: runtimeCapacity,
+                    PlacementReason: "host-capability-unavailable",
                     ReprobeCapabilities: capabilityAdmission.Required
                         .Where(key => key.StartsWith("provider-auth:", StringComparison.Ordinal))
                         .ToArray());
@@ -1332,7 +1341,8 @@ public sealed partial class TaskServerStore
                     "empty",
                     Message: "Runner has no available execution slot.",
                     ReconciliationActions: reconciliationActions,
-                    RuntimeCapacity: runtimeCapacity);
+                    RuntimeCapacity: runtimeCapacity,
+                    PlacementReason: "host-slots-unavailable");
                 return;
             }
             var occupiedHostSlots = await CountOccupiedHostSlotsAsync(
@@ -1347,36 +1357,80 @@ public sealed partial class TaskServerStore
                     Message:
                         $"Host runtime capacity is full ({occupiedHostSlots}/{runtimeCapacity.MaxParallelism}).",
                     ReconciliationActions: reconciliationActions,
-                    RuntimeCapacity: runtimeCapacity);
+                    RuntimeCapacity: runtimeCapacity,
+                    PlacementReason: "host-capacity-full");
                 return;
             }
 
-            TaskDto? task;
-            await using (var command = Command(connection, """
-                SELECT t.id, t.project_id, t.task_key, t.title, t.state, t.version, t.created_at, t.updated_at, t.body,
-                       t.archive_state, t.archived_at
-                  FROM tasks t
-                 WHERE t.state = '2-ready'
-                   AND NOT EXISTS (
-                       SELECT 1 FROM leases l
-                        WHERE l.task_id = t.id AND l.status IN ('active', 'process-unknown'))
-                   AND (
-                       NOT EXISTS (
-                           SELECT 1 FROM host_project_policies policy
-                            WHERE policy.host_id = $host)
-                       OR EXISTS (
-                           SELECT 1 FROM host_project_policies policy
-                            WHERE policy.host_id = $host
-                              AND policy.allow_all_projects = 1)
-                       OR EXISTS (
-                           SELECT 1 FROM host_allowed_projects allowed
-                            WHERE allowed.host_id = $host
-                              AND allowed.project_id = t.project_id))
-                 ORDER BY t.created_at, t.task_key
-                 LIMIT 1;
-                """, transaction, ("$host", capabilityRunner.HostId)))
-            await using (var reader = await command.ExecuteReaderAsync(ct))
-                task = await reader.ReadAsync(ct) ? ReadTask(reader) : null;
+            var telemetryJson = Convert.ToString(await ScalarAsync(connection, """
+                SELECT payload_json FROM runner_telemetry_latest
+                 WHERE runner_id = $runner AND observed_at > $fresh;
+                """, ct, transaction,
+                ("$runner", request.RunnerId),
+                ("$fresh", Iso(UtcNow.AddMinutes(-2)))), CultureInfo.InvariantCulture);
+            var cpuPercent = string.IsNullOrWhiteSpace(telemetryJson)
+                ? null
+                : JsonSerializer.Deserialize<HostTelemetrySnapshotDto>(telemetryJson)?.CpuPercent;
+            var hostAdmission = capabilityAdmission;
+            async Task<ClaimPlacementVerdict> EvaluateProjectAsync(string projectId)
+            {
+                var placement = await ReadProjectPlacementAsync(connection, transaction, projectId, ct);
+                if (placement is null)
+                    return new ClaimPlacementVerdict(
+                        projectId, ProjectPlacementReasons.LegacyRouting, null, hostAdmission);
+                var occupied = await CountProjectLeasesAsync(connection, transaction, projectId, ct);
+                var configuredParallelism = Convert.ToInt32(await ScalarAsync(connection, """
+                    SELECT COALESCE(max_parallelism, 1)
+                      FROM studio_project_settings WHERE project_id = $project;
+                    """, ct, transaction, ("$project", projectId)) ?? 1,
+                    CultureInfo.InvariantCulture);
+                var refusal = ProjectPlacementAdmissionPolicy.Refusal(
+                    placement,
+                    request.RunnerId,
+                    occupied,
+                    Math.Min(placement.MaxParallelism, Math.Clamp(configuredParallelism, 1, 256)),
+                    adoption.ConfirmsDesired,
+                    cpuPercent,
+                    runtimeCapacity.TargetLoadPercent);
+                if (refusal is not null)
+                    return new ClaimPlacementVerdict(projectId, refusal, placement, null);
+                var required = (request.RequiredCapabilities ?? [])
+                    .Concat(placement.RequiredCapabilities)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+                var candidateAdmission = await EvaluateCapabilityAdmissionAsync(
+                    connection, transaction, request.RunnerId,
+                    capabilityRunner.HostId, required, ct);
+                return candidateAdmission.Eligible
+                    ? new ClaimPlacementVerdict(
+                        projectId, ProjectPlacementReasons.Matched, placement, candidateAdmission)
+                    : new ClaimPlacementVerdict(
+                        projectId,
+                        "placement-capability-unavailable: " + candidateAdmission.Message,
+                        placement,
+                        null);
+            }
+
+            // Each project is evaluated once per poll, and the ready scan stops
+            // at the first admissible task, so refused projects cost one
+            // evaluation and one admission receipt rather than one per task.
+            var verdicts = new List<ClaimPlacementVerdict>();
+            var (task, selected) = await ProjectPlacementSelection.SelectAsync(
+                ReadClaimableTasksAsync(connection, transaction, capabilityRunner.HostId, ct),
+                async projectId =>
+                {
+                    var verdict = await EvaluateProjectAsync(projectId);
+                    verdicts.Add(verdict);
+                    return verdict;
+                },
+                verdict => verdict.Admission is not null);
+            foreach (var verdict in verdicts.Where(verdict => verdict.Placement is not null))
+                await RecordProjectPlacementAdmissionAsync(
+                    connection, transaction, verdict.ProjectId, request.RunnerId, verdict.Reason, ct);
+            var selectedPlacement = selected?.Placement;
+            var placementReason = selected?.Reason
+                                  ?? verdicts.LastOrDefault()?.Reason
+                                  ?? ProjectPlacementReasons.NoAdmissibleTask;
 
             if (task is null)
             {
@@ -1384,9 +1438,11 @@ public sealed partial class TaskServerStore
                     "empty",
                     Message: "No admissible task is ready.",
                     ReconciliationActions: reconciliationActions,
-                    RuntimeCapacity: runtimeCapacity);
+                    RuntimeCapacity: runtimeCapacity,
+                    PlacementReason: placementReason);
                 return;
             }
+            capabilityAdmission = selected!.Admission!;
 
             var providerContinuation = await ReadProviderFallbackForClaimAsync(
                 connection, transaction, task, ct);
@@ -1458,6 +1514,8 @@ public sealed partial class TaskServerStore
                     request.InstanceId,
                     fence,
                     hostProjectPolicyVersion = hostProjectPolicy?.Version,
+                    placementVersion = selectedPlacement?.Version,
+                    placementReason,
                 }), ct);
 
             var run = new RunDto(runId, task.TaskId, "running", request.RunnerId, fence, now, now, null);
@@ -1477,7 +1535,8 @@ public sealed partial class TaskServerStore
                 PreviousSession: previousSession,
                 MechanicalDelta: mechanicalDelta,
                 MechanicalFreshRoute: mechanicalFreshRoute,
-                FollowUp: followUp);
+                FollowUp: followUp,
+                PlacementReason: placementReason);
         }, ct);
         return response!;
     }
@@ -3243,6 +3302,21 @@ public sealed partial class TaskServerStore
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS project_placements(
+                project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+                required_capabilities_json TEXT NOT NULL,
+                pinned_runner_id TEXT,
+                max_parallelism INTEGER NOT NULL CHECK(max_parallelism BETWEEN 1 AND 256),
+                version INTEGER NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS project_placement_admissions(
+                project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                runner_id TEXT NOT NULL REFERENCES runners(id) ON DELETE CASCADE,
+                reason TEXT NOT NULL,
+                observed_at TEXT NOT NULL,
+                PRIMARY KEY(project_id, runner_id)
+            );
             CREATE TABLE IF NOT EXISTS orchestrator_contexts(
                 context_key TEXT PRIMARY KEY,
                 kind TEXT NOT NULL CHECK(kind IN ('project', 'task', 'workbench')),
@@ -3881,6 +3955,7 @@ public sealed partial class TaskServerStore
             """, ct, ("$version", CurrentSchemaVersion), ("$now", Iso(UtcNow)));
         await ApplyReviewMigrationAsync(connection, ct);
         await ApplyGateMigrationAsync(connection, ct);
+        await ApplyFailureFingerprintMigrationAsync(connection, ct);
         // Studio route-ownership P1 "task detail and hosts" bundle
         // (docs/studio-route-ownership/index.html): each group below owns a
         // disjoint set of new tables and touches no other group's schema.
