@@ -3237,17 +3237,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             "Fix exactly the actionable concerns below and nothing else. Preserve unrelated behavior. Run the relevant deterministic verification, then end with [[TASK_DONE]].",
             "",
         };
-        foreach (var finding in findings)
-        {
-            lines.Add($"## {finding.Aspect}");
-            lines.Add("");
-            lines.Add($"- Summary: {finding.Summary}");
-            if (!string.IsNullOrWhiteSpace(finding.EvidenceChecked))
-                lines.Add($"- Evidence checked: {finding.EvidenceChecked}");
-            if (!string.IsNullOrWhiteSpace(finding.Finding))
-                lines.Add($"- Finding: {finding.Finding}");
-            lines.Add("");
-        }
+        lines.Add(AgentStudio.Review.ReviewFindingDataBlock.RenderAspectFindings(findings));
         return string.Join('\n', lines).TrimEnd();
     }
 
