@@ -13,6 +13,9 @@ namespace AgentStudio.Host;
 /// check, and handler sees the request it always did. Nothing else under
 /// <c>/api/v1</c> is touched: the local v1 owners or the standalone proxy keep
 /// it. The connector profile never runs this middleware.
+/// When a standalone Task Server is configured it owns all task data and the
+/// legacy <c>/api</c> handlers are closed, so only the hub alias applies and
+/// every versioned core-attach request is forwarded by the plane proxy.
 /// </summary>
 public static class StudioV1LegacyRouteAlias
 {
@@ -45,10 +48,21 @@ public static class StudioV1LegacyRouteAlias
         return null;
     }
 
-    public static IApplicationBuilder UseStudioV1LegacyRouteAlias(this IApplicationBuilder app)
+    /// <summary>
+    /// <see cref="Resolve(string, string)"/> for a host profile. With a
+    /// standalone Task Server the versioned <c>/api</c> shapes stay versioned
+    /// so the plane proxy forwards them; the hub has no proxy and stays local.
+    /// </summary>
+    public static LegacyTarget? Resolve(string method, string path, bool standaloneTaskServer)
+        => Resolve(method, path) is { } target
+           && !(standaloneTaskServer && target.Path.StartsWith("/api/", StringComparison.Ordinal))
+            ? target
+            : null;
+
+    public static IApplicationBuilder UseStudioV1LegacyRouteAlias(this IApplicationBuilder app, bool standaloneTaskServer)
         => app.Use((context, next) =>
         {
-            if (Resolve(context.Request.Method, context.Request.Path.Value ?? string.Empty) is { } target)
+            if (Resolve(context.Request.Method, context.Request.Path.Value ?? string.Empty, standaloneTaskServer) is { } target)
             {
                 context.Request.Path = new PathString(target.Path);
                 if (target.Project is not null && !context.Request.Query.ContainsKey("project"))

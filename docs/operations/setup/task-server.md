@@ -836,10 +836,12 @@ Since AGT-2983 Angular calls exactly these paths (and `/hubs/v1/studio` for
 live updates) instead of their legacy `/api` equivalents. The `{projectId}`
 segment of the task routes accepts a project id, a project name (matched
 case-insensitively, an exact id wins), or the unscoped token below.
-OrchestratorApi answers the same versioned paths from its legacy handlers
-until cutover (`backend/Host/StudioV1LegacyRouteAlias.cs`), in both the local
-profile and the transitional `TaskServer:BaseUrl` proxy profile, so Stable
-keeps its current board and task wire shapes.
+In the local profile OrchestratorApi answers the same versioned paths from
+its legacy handlers until cutover (`backend/Host/StudioV1LegacyRouteAlias.cs`),
+so the board and task wire shapes stay as they were. In the transitional
+`TaskServer:BaseUrl` proxy profile the legacy `/api` handlers are closed, so
+the plane proxy forwards these versioned paths to the standalone Task Server;
+only `/hubs/v1/studio` is still aliased onto the local `/hubs/jobs` hub.
 
 A human Studio session (`ts-studio-session` / `ts-studio-csrf` cookies, or the
 `X-Studio-Session-Token` header) is a second, nested identity layer above the

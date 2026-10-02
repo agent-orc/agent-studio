@@ -13,10 +13,11 @@ namespace AgentStudio.Tests;
 
 /// <summary>
 /// AGT-2983 moved the Studio's core-attach calls onto their versioned Task
-/// Server routes. OrchestratorApi keeps serving exactly those method and path
-/// shapes from its legacy handlers (local monolith and Stable's transitional
-/// proxy profile alike) and leaves every other <c>/api/v1</c> route to its
-/// v1 owner.
+/// Server routes. The local monolith keeps serving exactly those method and
+/// path shapes from its legacy handlers and leaves every other <c>/api/v1</c>
+/// route to its v1 owner. With a standalone Task Server the legacy handlers are
+/// closed, so the plane proxy forwards the versioned shapes and only the hub
+/// alias stays local.
 /// </summary>
 [Collection(WebApplicationFactorySerialCollection.Name)]
 public sealed class StudioV1LegacyRouteAliasTests : IDisposable
@@ -88,6 +89,26 @@ public sealed class StudioV1LegacyRouteAliasTests : IDisposable
     public void Every_other_route_is_left_to_its_owner(string method, string path)
         => Assert.Null(StudioV1LegacyRouteAlias.Resolve(method, path));
 
+    [Theory]
+    [InlineData("GET", "/api/v1/studio/auth/status")]
+    [InlineData("GET", "/api/v1/studio/board")]
+    [InlineData("GET", "/api/v1/projects")]
+    [InlineData("GET", "/api/v1/projects/-/tasks/AGT-1")]
+    [InlineData("POST", "/api/v1/projects/-/tasks/AGT-1/start")]
+    [InlineData("GET", "/api/v1/studio/orchestrator/context/task:PROJ/AGT-1")]
+    [InlineData("GET", "/api/v1/studio/runner/status")]
+    public void Standalone_task_server_keeps_versioned_api_shapes_for_the_plane_proxy(string method, string path)
+    {
+        Assert.NotNull(StudioV1LegacyRouteAlias.Resolve(method, path, standaloneTaskServer: false));
+        Assert.Null(StudioV1LegacyRouteAlias.Resolve(method, path, standaloneTaskServer: true));
+    }
+
+    [Theory]
+    [InlineData("GET", "/hubs/v1/studio", "/hubs/jobs")]
+    [InlineData("POST", "/hubs/v1/studio/negotiate", "/hubs/jobs/negotiate")]
+    public void Standalone_task_server_still_aliases_the_local_hub(string method, string path, string legacy)
+        => Assert.Equal(legacy, StudioV1LegacyRouteAlias.Resolve(method, path, standaloneTaskServer: true)?.Path);
+
     [Fact]
     public async Task Local_profile_serves_the_versioned_core_attach_paths_from_the_legacy_handlers()
     {
@@ -126,19 +147,27 @@ public sealed class StudioV1LegacyRouteAliasTests : IDisposable
     }
 
     [Fact]
-    public async Task Proxy_profile_keeps_core_attach_local_and_forwards_every_other_v1_route()
+    public async Task Proxy_profile_forwards_core_attach_v1_routes_to_the_standalone_task_server()
     {
         var upstream = new RecordingUpstream();
         using var factory = BuildFactory(taskServerBaseUrl: "http://task-server.invalid", upstream);
         using var browser = CreateClient(factory);
 
-        Assert.Equal(HttpStatusCode.OK, (await browser.GetAsync("/api/v1/studio/board")).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await browser.GetAsync("/api/v1/studio/auth/status")).StatusCode);
-        Assert.DoesNotContain(upstream.Paths, path => path.Contains("/studio/", StringComparison.Ordinal));
+        foreach (var path in new[]
+                 {
+                     "/api/v1/studio/board",
+                     "/api/v1/studio/auth/status",
+                     "/api/v1/projects/-/tasks/AGT-1",
+                     "/api/v1/studio/runner/status",
+                     "/api/v1/protocol",
+                 })
+        {
+            Assert.Equal(HttpStatusCode.OK, (await browser.GetAsync(path)).StatusCode);
+            Assert.Contains(path, upstream.Paths);
+        }
 
-        var proxied = await browser.GetAsync("/api/v1/protocol");
-        Assert.Equal(HttpStatusCode.OK, proxied.StatusCode);
-        Assert.Contains("/api/v1/protocol", upstream.Paths);
+        // The legacy handlers stay closed behind a standalone Task Server.
+        Assert.Equal(HttpStatusCode.NotFound, (await browser.GetAsync("/api/tasks/grouped")).StatusCode);
     }
 
     private static async Task AssertSameBodyAsync(HttpClient client, string versioned, string legacy)

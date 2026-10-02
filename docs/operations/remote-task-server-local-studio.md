@@ -276,10 +276,12 @@ production evidence must be attached before cutover:
    the seven task lifecycle verbs and the single-task read, orchestrator
    context, sessions and chat, runner status, and the live-update hub) now
    call their versioned Task Server routes from Angular, so detached-Studio
-   acceptance has no unowned request left. OrchestratorApi keeps serving those
-   same versioned paths from its legacy handlers until cutover
-   (`backend/Host/StudioV1LegacyRouteAlias.cs`), so the local and Stable
-   profiles behave as before. The other three bundles (261 operations) still
+   acceptance has no unowned request left. The local OrchestratorApi profile
+   keeps serving those same versioned paths from its legacy handlers until
+   cutover (`backend/Host/StudioV1LegacyRouteAlias.cs`); with
+   `TaskServer:BaseUrl` set the legacy `/api` handlers are closed and the plane
+   proxy forwards the versioned paths to the standalone Task Server, while
+   `/hubs/v1/studio` stays on the local hub. The other three bundles (261 operations) still
    call legacy `/api` paths and remain post-cutover work; see
    [Route inventory snapshot](#route-inventory-snapshot) below.
 2. **Current workspace migration acceptance, implementation delivered by B3.**

@@ -46,6 +46,9 @@ public sealed class StudioCoreAttachBffTopologyTests
 
         using var studio = new HttpClient { BaseAddress = new Uri(studioUrl), Timeout = TimeSpan.FromSeconds(10) };
         studio.DefaultRequestHeaders.Add("X-Client-Id", "studio-core-attach-bff");
+        // The BFF rejects unsafe /api/v1 and hub calls without an allowed
+        // browser Origin; the Studio UI's default origin is allowed.
+        studio.DefaultRequestHeaders.Add("Origin", "http://localhost:4011");
 
         // Auth x5.
         var status = await ReadAsync<StudioAuthStatusDto>(await studio.GetAsync("/api/v1/studio/auth/status"));
