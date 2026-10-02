@@ -428,6 +428,53 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         Assert.Null(Ownership(member.Key));
     }
 
+    [Fact]
+    public async Task Batch_deferred_settlement_journals_no_delivery_so_recovery_leaves_the_member_to_the_batch()
+    {
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        http.DefaultRequestHeaders.Add("X-Client-Id", ReviewRunnerId);
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "DOC-SETTLE", "docs/pilot.md", settleReview: false);
+        await RegisterReviewExecutorAsync(http);
+        var claimed = await http.PostAsJsonAsync(
+            $"/api/v1/runners/{ReviewRunnerId}/review-claims",
+            new Contract.ReviewClaimRequest(ReviewRunnerId, ReviewInstance, 300, AvailableSlots: 1));
+        claimed.EnsureSuccessStatusCode();
+        var claim = (await claimed.Content.ReadFromJsonAsync<Contract.ReviewClaimResponse>())!;
+        Assert.Equal(member.ReviewAttemptId, claim.Attempt!.AttemptId);
+
+        var response = await http.PostAsJsonAsync(
+            $"/api/v1/reviews/attempts/{claim.Attempt.AttemptId}/report",
+            PassingReport(claim, "batch-doc-settle-pass"));
+
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.True(response.IsSuccessStatusCode, body);
+        var pending = Assert.Single(factory.Services.GetRequiredService<BatchGateStore>().ListPending());
+        Assert.Equal(member.ReviewAttemptId, pending.ReviewAttemptId);
+        var folder = Path.Combine(_watchPath, TaskStates.AutoReview, member.Key);
+        var entry = RemoteReviewSettlementJournal.Read(folder, member.ReviewAttemptId).Entry;
+        Assert.NotNull(entry);
+        Assert.Null(entry!.Delivery);
+        Assert.True(RemoteReviewSettlementPolicy.IsBatchDeferredPass(entry));
+
+        // A restart replays the journal: neither the reconciler nor Auto Review
+        // resume may integrate the member or settle it as a failed delivery gate.
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        scanner.InvalidateCache();
+        var task = scanner.FindJob(member.Key, _watchPath)!;
+        var resume = factory.Services.GetRequiredService<AutoReviewDeliveryResumeService>();
+        var reconciler = new RemoteReviewSettlementReconciler(scanner,
+            factory.Services.GetRequiredService<AttemptAuthorityService>(),
+            new RemoteReviewEvidenceProjectionQueue(), resume,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<RemoteReviewSettlementReconciler>.Instance);
+        Assert.NotEqual(RemoteReviewSettlementReconcileStatus.Repair, reconciler.Reconcile(task));
+        Assert.Null(RemoteDeliverySettlementStore.Read(folder));
+        var resumed = await resume.ResumeAsync(task, "test");
+        Assert.Equal(AutoReviewResumeAction.None, resumed.Action);
+        AssertLane(member.Key, TaskStates.AutoReview);
+    }
+
     private sealed record SeededMember(string Key, string RunAttemptId, string ReviewAttemptId, string ResultSha);
 
     private SeededMember SeedMember(WebApplicationFactory<Program> factory, string key,
