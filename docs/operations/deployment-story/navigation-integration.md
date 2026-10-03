@@ -40,6 +40,6 @@ This concept-Dossier operation writes both AGT-2906 `status.md` and
 `results/deliverables.md`. Read both back using
 `GET /api/tasks/AGT-2906/files/status.md?project=PROJ-002` and
 `GET /api/tasks/AGT-2906/files/results/deliverables.md?project=PROJ-002`.
-The AGT-2951 delivery report for this run records this request as an operator
-follow-up. This operation is not a completed API update. Do not create a second
-Dossier or assign a new key.
+The request has returned HTTP 400 while the managed repository lacks the
+published path. Retry it after integration and verify both task files. This is
+not a completed API update. Do not create a second Dossier or assign a new key.
