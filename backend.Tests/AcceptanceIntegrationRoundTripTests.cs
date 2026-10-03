@@ -1893,6 +1893,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Equal(IntegrationVerificationStates.Unverified, before.Verification?.State);
         Assert.False(IntegrationVerificationStates.PermitsCompletion(before.Verification));
         Assert.Equal(deliverySha, before.Verification?.Sha);
+        Assert.Equal(AcceptedIntegrationRecoveryAction.Retry,
+            deps.Integration.ResolveAcceptedIntegrationRecovery(completed, before).Action);
 
         var backstop = new AcceptedIntegrationBackstopHostedService(
             deps.Scanner,
@@ -1976,6 +1978,9 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Contains("differs", stale?.Reason);
         Assert.False(IntegrationVerificationStates.PermitsCompletion(
             stale));
+        Assert.Equal(AcceptedIntegrationRecoveryAction.Retry,
+            deps.Integration.ResolveAcceptedIntegrationRecovery(before,
+                deps.Integration.BuildLookup([before])[before.TaskKey]).Action);
         var backstop = new AcceptedIntegrationBackstopHostedService(
             deps.Scanner,
             deps.Settings,

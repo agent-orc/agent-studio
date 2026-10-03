@@ -424,8 +424,15 @@ pure `IntegrationVerificationPolicy`
 3. **No evidence**: the lane writes `integrated-unverified` with the SHA and the
    reason to `integration-verification.json`, then runs the gate **once** on the
    current branch tip. The work line runs the pre-develop gate over the
-   delivery's own diff plus the tip's last merge; the release line runs the
-   mandatory full suite. The per-SHA gate cache answers when that exact tip was
+   delivery's own diff plus the tip's last merge; when the review subject is
+   missing, the lane derives the delivery range from the merge that brought it
+   onto the branch and the Git diffs of every attributed card commit. Without a
+   fenced subject, it also selects the repository's existing stack entry points
+   for a conservative gate. If no trustworthy range
+   or gate scope can be derived, the card stays unverified. A later docs-only
+   tip cannot make an earlier code delivery `NotApplicable`. The release line
+   runs the mandatory full suite. The per-SHA gate cache answers when that
+   exact tip was
    already gated. "No gate applies" is written as an explicit `NotApplicable`
    receipt.
 4. **Green**: the card completes and the record says `integrated-verified`.

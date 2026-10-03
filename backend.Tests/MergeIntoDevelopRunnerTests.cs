@@ -935,6 +935,9 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         Assert.Equal(PipelineStepStatus.Passed, step!.Status);
         Assert.Equal("already-on-integration-branch", step.Verdict);
         Assert.Contains(deliveredSha[..7], step.VerdictSummary);
+        var verification = IntegrationVerificationStore.Read(jobFolder);
+        Assert.Equal(IntegrationVerificationStates.Verified, verification?.State);
+        Assert.Equal(nameof(BuildTestGateVerdict.NotApplicable), verification?.GateVerdict);
     }
 
     [Fact]
@@ -1856,6 +1859,46 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         Assert.Equal(
             2,
             Directory.GetFiles(evidenceDir, "pre-develop-build-gate-*.log").Length);
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task RunAsync_ContainedCodeDeliveryWithoutReviewSubject_LaterDocsTipStillRunsGate()
+    {
+        var repo = SeedRepo("contained-code-before-docs-tip");
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "checkout -q -b task/delivery-range");
+        Directory.CreateDirectory(Path.Combine(repo, "backend"));
+        File.WriteAllText(Path.Combine(repo, "backend", "Rule.cs"), "public class Rule {}\n");
+        Commit(repo, "feat: delivered code");
+        Directory.CreateDirectory(Path.Combine(repo, "docs"));
+        File.WriteAllText(Path.Combine(repo, "docs", "delivery.md"), "delivery notes\n");
+        Commit(repo, "docs: describe delivered code");
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "merge -q --no-ff -m \"chore: merge without a gate\" task/delivery-range");
+        File.WriteAllText(Path.Combine(repo, "docs", "later.md"), "later notes\n");
+        Commit(repo, "docs: advance the integration tip");
+        var tip = RunGit(repo, "rev-parse develop").Out.Trim();
+
+        var (git, log, settings) = BuildWithSettings(repo);
+        var gateRunner = new CapturingBuildTestGateRunner(new BuildTestGateResult(
+            BuildTestGateVerdict.Ok, 0, 20, string.Empty, "code delivery gate passed", true, false));
+        var jobFolder = BeginRun(log, repo, jobId: "delivery-range");
+        Assert.Null(ReviewSubjectStore.Read(jobFolder));
+        var runner = new MergeIntoDevelopRunner(
+            git, log, NullLogger<MergeIntoDevelopRunner>.Instance,
+            projectSettings: settings,
+            preDevelopBuildGate: new PreDevelopBuildGate(gateRunner));
+
+        var outcome = await runner.RunAsync(
+            "Fixture", "delivery-range", jobFolder, repo, "develop", CancellationToken.None);
+
+        Assert.Equal(MergeIntoIntegrationOutcome.AlreadyMerged, outcome.Outcome);
+        Assert.Equal(1, gateRunner.Invocations);
+        Assert.Equal(tip, gateRunner.Request!.ExpectedSha);
+        Assert.Contains("backend/Rule.cs", gateRunner.ChangedFiles!);
+        Assert.Equal(IntegrationVerificationStates.Verified,
+            IntegrationVerificationStore.Read(jobFolder)?.State);
     }
 
     /// <summary>

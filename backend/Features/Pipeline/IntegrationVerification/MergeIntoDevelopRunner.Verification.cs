@@ -112,8 +112,10 @@ public sealed partial class MergeIntoDevelopRunner
     /// <summary>
     /// The single gate run on the current tip. The release line keeps its
     /// mandatory full suite; the work line runs the pre-develop gate over the
-    /// delivery's own diff plus the tip's last merge, so neither a later docs
-    /// commit nor an unrelated merge on top can shrink it to nothing.
+    /// delivery's own diff plus the tip's last commit. When the review subject
+    /// is absent, the containing merge supplies the delivery range; existing
+    /// stack entry points keep a mutable ref or later docs-only tip from
+    /// shrinking the gate scope to nothing.
     /// </summary>
     private async Task<BuildTestGateResult> RunVerificationGateAsync(
         string project,
@@ -147,7 +149,12 @@ public sealed partial class MergeIntoDevelopRunner
         }
 
         var profile = BuildProfileFor(project);
-        var changedPaths = VerificationChangedPaths(repoRoot, jobFolderPath, sha);
+        var changedPaths = VerificationChangedPaths(repoRoot, jobId, jobFolderPath, sha);
+        // An exact delivery range is unavailable for some fast-forwarded
+        // histories. Declared build commands still provide a real gate on the
+        // current tip; only a history with no gate scope must fail unresolved.
+        if (changedPaths is null && VerifyCommandPlanner.HasProfileBuildCommands(profile))
+            changedPaths = [];
         if (changedPaths is null)
         {
             return new BuildTestGateResult(
@@ -205,19 +212,69 @@ public sealed partial class MergeIntoDevelopRunner
             CancellationToken.None).ConfigureAwait(false);
     }
 
-    private IReadOnlyList<string>? VerificationChangedPaths(string repoRoot, string jobFolderPath, string sha)
+    private IReadOnlyList<string>? VerificationChangedPaths(
+        string repoRoot, string jobId, string jobFolderPath, string sha)
     {
         var firstParent = _git.GetFirstParent(repoRoot, sha);
         var tipPaths = firstParent is null
             ? null
             : _git.ChangedPathsAgainstMergeBase(repoRoot, firstParent, sha);
         var subject = ReviewSubjectStore.Read(jobFolderPath);
-        var deliveryPaths = subject is not null
+        IReadOnlyList<string>? deliveryPaths = subject is not null
                             && ReviewSubjectStore.IsValidResultSha(subject.BaseSha)
                             && ReviewSubjectStore.IsValidResultSha(subject.ResultSha)
             ? _git.ChangedPathsAgainstMergeBase(repoRoot, subject.BaseSha!, subject.ResultSha!)
             : null;
-        if (tipPaths is null && deliveryPaths is null) return null;
+        if (deliveryPaths is null)
+        {
+            var delivery = DeliveryRefResolver.Resolve(jobId, jobFolderPath);
+            var deliverySha = _git.GetBranchTip(repoRoot, delivery.Ref)
+                ?? _git.GetBranchTip(repoRoot, "origin/" + delivery.Ref)
+                ?? delivery.ExpectedResultSha;
+            if (ReviewSubjectStore.IsValidResultSha(deliverySha))
+                deliveryPaths = _git.ChangedPathsForContainedDelivery(repoRoot, sha, deliverySha!);
+        }
+        // The card can name a commit chain even when its source ref has gone
+        // or advanced. Derive every attributed commit's paths from Git, never
+        // from the card's cached file list or only its newest commit.
+        var attributed = DeliveryRefResolver.AttributedCommitShas(jobFolderPath);
+        if (attributed.Count > 0)
+        {
+            var commitPaths = new List<string>();
+            var complete = true;
+            foreach (var commitSha in attributed)
+            {
+                var parent = _git.GetFirstParent(repoRoot, commitSha);
+                var paths = parent is not null && _git.IsAncestor(repoRoot, commitSha, sha)
+                    ? _git.ChangedPathsAgainstMergeBase(repoRoot, parent, commitSha)
+                    : null;
+                if (paths is null)
+                {
+                    complete = false;
+                    break;
+                }
+                commitPaths.AddRange(paths);
+            }
+            if (complete)
+                deliveryPaths = (deliveryPaths ?? []).Concat(commitPaths)
+                    .Distinct(StringComparer.Ordinal).ToList();
+        }
+        if (subject is null || deliveryPaths is null)
+        {
+            // Without a fenced subject, even a readable delivery ref may have
+            // advanced since this card's delivery. Include existing stack
+            // entry points so a later docs-only ref cannot write a false
+            // NotApplicable receipt for earlier code.
+            var anchors = Directory.EnumerateFiles(repoRoot, "*.sln", SearchOption.TopDirectoryOnly)
+                .Concat(Directory.EnumerateFiles(repoRoot, "*.slnx", SearchOption.TopDirectoryOnly))
+                .Select(path => Path.GetRelativePath(repoRoot, path).Replace('\\', '/'))
+                .ToList();
+            if (File.Exists(Path.Combine(repoRoot, "frontend", "package.json")))
+                anchors.Add("frontend/package.json");
+            if (deliveryPaths is null && anchors.Count == 0) return null;
+            deliveryPaths = (deliveryPaths ?? []).Concat(anchors).ToList();
+        }
+        if (tipPaths is null) return deliveryPaths;
         return (tipPaths ?? []).Concat(deliveryPaths ?? [])
             .Distinct(StringComparer.Ordinal)
             .Order(StringComparer.Ordinal)
