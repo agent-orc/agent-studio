@@ -6,6 +6,16 @@ namespace AgentStudio.Tasks;
 /// <summary>
 /// Owns the bounded acceptance-integration section in status.md. The markers
 /// allow retries to replace stale reasons while preserving the task result.
+/// <para>
+/// AGT-2989: caller text (outcome, branch, reason) can carry anything a Git
+/// failure or an operator typed, including the section markers themselves.
+/// Every caller value is escaped so it cannot open or close an HTML comment,
+/// and the markers are matched only as whole lines, so neither caller text
+/// nor an agent-written task result above the section can make a later
+/// upsert truncate the document. Removal requires the owned heading and the
+/// writer's field layout, even when task text follows the section. Quoted
+/// marker pairs outside that layout remain task text.
+/// </para>
 /// </summary>
 public static class AcceptanceIntegrationStatusDocument
 {
@@ -81,13 +91,64 @@ public static class AcceptanceIntegrationStatusDocument
         }
     }
 
-    private static string RemoveOwnedSection(string content)
+    internal static string RemoveOwnedSection(string content)
     {
-        var start = content.IndexOf(StartMarker, StringComparison.Ordinal);
-        if (start < 0) return content;
-        var end = content.IndexOf(EndMarker, start, StringComparison.Ordinal);
-        if (end < 0) return content[..start];
-        return content.Remove(start, end + EndMarker.Length - start);
+        // Task text may be appended after the owned section, including a
+        // quoted marker pair. Search past quotes and require the writer's body.
+        for (var start = LastMarkerLine(content, StartMarker); start >= 0;
+             start = start == 0 ? -1 : LastMarkerLine(content[..start], StartMarker))
+        {
+            var bodyStart = start + StartMarker.Length;
+            if (bodyStart < content.Length && content[bodyStart] == '\r') bodyStart++;
+            if (bodyStart >= content.Length || content[bodyStart] != '\n') continue;
+            bodyStart++;
+
+            var end = MarkerLine(content, EndMarker, bodyStart);
+            if (end < 0 || !IsOwnedBody(content[bodyStart..end])) continue;
+            return content.Remove(start, end + EndMarker.Length - start);
+        }
+        return content;
+    }
+
+    private static bool IsOwnedBody(string body)
+    {
+        var lines = body.ReplaceLineEndings("\n").Split('\n');
+        return lines.Length == 8
+            && lines[0] == "## Acceptance integration"
+            && lines[1].Length == 0
+            && lines[2].StartsWith("- Outcome: `", StringComparison.Ordinal)
+            && lines[3].StartsWith("- Lane: `", StringComparison.Ordinal)
+            && (lines[4].StartsWith("- Integration branch: `", StringComparison.Ordinal)
+                || lines[4] == "- Integration: explicitly waived by the operator")
+            && lines[5].StartsWith("- Reason: ", StringComparison.Ordinal)
+            && lines[6].StartsWith("- Recorded at: `", StringComparison.Ordinal)
+            && lines[7].Length == 0;
+    }
+
+    private static int MarkerLine(string content, string marker, int from)
+    {
+        for (var index = content.IndexOf(marker, from, StringComparison.Ordinal);
+             index >= 0;
+             index = content.IndexOf(marker, index + 1, StringComparison.Ordinal))
+            if (IsWholeLine(content, index, marker.Length)) return index;
+        return -1;
+    }
+
+    private static int LastMarkerLine(string content, string marker)
+    {
+        for (var index = content.LastIndexOf(marker, StringComparison.Ordinal);
+             index >= 0;
+             index = index == 0 ? -1 : content.LastIndexOf(marker, index - 1, StringComparison.Ordinal))
+            if (IsWholeLine(content, index, marker.Length)) return index;
+        return -1;
+    }
+
+    private static bool IsWholeLine(string content, int index, int length)
+    {
+        var startsLine = index == 0 || content[index - 1] == '\n';
+        var after = index + length;
+        var endsLine = after == content.Length || content[after] is '\r' or '\n';
+        return startsLine && endsLine;
     }
 
     private static void ReplaceAtomically(string path, string content)
@@ -104,11 +165,17 @@ public static class AcceptanceIntegrationStatusDocument
         }
     }
 
-    private static string SingleLine(string? value, string fallback = "")
+    /// <summary>
+    /// Folds caller text onto one line and escapes HTML comment delimiters, so
+    /// a value can neither start a new line nor spell a section marker.
+    /// </summary>
+    internal static string SingleLine(string? value, string fallback = "")
     {
         var normalized = (value ?? string.Empty)
             .Replace('\r', ' ')
             .Replace('\n', ' ')
+            .Replace("<!--", "&lt;!--", StringComparison.Ordinal)
+            .Replace("-->", "--&gt;", StringComparison.Ordinal)
             .Trim();
         return normalized.Length == 0 ? fallback : normalized;
     }
