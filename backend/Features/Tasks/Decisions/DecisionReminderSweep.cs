@@ -8,8 +8,9 @@ public sealed record DecisionReminder(string JobId, string Key, DateTime DueAt, 
 /// (Dossier decision-cards D5=A, default three days). Each reminder posts an
 /// inbox entry (the decision's wiki record, listed as "wants review" in the
 /// workbench inbox) and an activity feed line naming the blocked cards, and
-/// stamps <see cref="DecisionContent.RemindedAt"/> so the pending cycle is
-/// reminded only once. The sweep never moves a card.
+/// stamps <see cref="DecisionContent.RemindedAt"/> after the inbox write succeeds
+/// so the pending cycle is reminded once and failed writes remain retryable.
+/// The sweep never moves a card.
 /// </summary>
 public sealed class DecisionReminderSweep
 {
@@ -95,19 +96,21 @@ public sealed class DecisionReminderSweep
         IReadOnlyList<string> blocked, DateTime now)
     {
         var reminded = decision with { RemindedAt = now };
-        if (!_mutations.SetDecisionContent(card.Id, reminded, card.WatchPath))
-        {
-            _logger.LogWarning("decision-reminder-stamp-failed job={JobId}", card.Id);
-            return false;
-        }
-
         var path = $"{WikiProducerTargets.DecisionsFolder}/{key}.md";
         var inbox = _records.Write(card.ProjectName, path, new DecisionRecord(key, card.Title, reminded)
         {
             Reminder = new DecisionReminderNotice(dueAt, now, blocked, Actor),
         });
         if (!inbox.Success)
+        {
             _logger.LogWarning("decision-reminder-inbox-failed job={JobId} error={Error}", card.Id, inbox.Error);
+            return false;
+        }
+        if (!_mutations.SetDecisionContent(card.Id, reminded, card.WatchPath))
+        {
+            _logger.LogWarning("decision-reminder-stamp-failed job={JobId}", card.Id);
+            return false;
+        }
 
         var names = blocked.Count == 0 ? "no recorded cards" : string.Join(", ", blocked);
         var summary = $"Decision overdue: {key} waits on {DeciderName(decision)} since {dueAt:yyyy-MM-dd}; blocks {names}";
@@ -121,7 +124,7 @@ public sealed class DecisionReminderSweep
             JobId = card.Id,
         });
         _timeline.Append(card.FolderPath, TimelineEventKinds.DecisionReminded, TimelineActors.Orchestrator,
-            summary: summary, payloadRef: inbox.Success ? path : null,
+            summary: summary, payloadRef: path,
             details: new()
             {
                 ["dueAt"] = dueAt.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'"),
