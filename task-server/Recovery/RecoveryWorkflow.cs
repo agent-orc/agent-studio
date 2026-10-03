@@ -470,6 +470,12 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
         var facts = await store.ReadRecoveryResumeFactsAsync(
             receipt?.HostsFencedAt ?? receipt?.RestoreCompletedAt ?? DateTime.MaxValue,
             receipt is not null, oldWriterClosed, obligationsRetained, findings, ct);
+        facts = facts with
+        {
+            IdentityComparisonsPassed = receipt?.Comparisons is { Count: > 0 } comparisons
+                                        && comparisons.All(item => item.Matches &&
+                                            string.Equals(item.Expected, item.Actual, StringComparison.Ordinal)),
+        };
         var decision = RecoveryResumePolicy.Decide(facts);
         if (!decision.Allowed || checkOnly || receipt is null) return (decision, receipt);
 

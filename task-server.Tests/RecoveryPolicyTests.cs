@@ -77,11 +77,12 @@ public sealed class RecoveryPolicyTests
         Assert.Contains("Install release 1.0.0 (schema 25)", finding.Guidance, StringComparison.Ordinal);
     }
 
-    private static RecoveryResumeFacts Ready() => new(TaskServerMode.Maintenance, true, 0, true, [], [], false, []);
+    private static RecoveryResumeFacts Ready() => new(TaskServerMode.Maintenance, true, 0, true, [], [], false, [], true);
 
     public static TheoryData<string, Func<RecoveryResumeFacts, RecoveryResumeFacts>> ResumeBlocks => new()
     {
         { "no-recovery-restore", facts => facts with { RestoredFromRecoverySet = false } },
+        { "identity-comparison-failed", facts => facts with { IdentityComparisonsPassed = false } },
         { "maintenance-required", facts => facts with { Mode = TaskServerMode.Normal } },
         { "attempts-unresolved", facts => facts with { UnresolvedAttempts = 1 } },
         { "old-writer-open", facts => facts with { OldWriterClosedAttested = false } },

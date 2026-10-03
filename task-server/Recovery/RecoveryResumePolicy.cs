@@ -11,7 +11,8 @@ public sealed record RecoveryResumeFacts(
     IReadOnlyList<string> StaleRunnerPrincipals,
     IReadOnlyList<RecoveryHostObligation> LiveObligations,
     bool ObligationsRetainedAttested,
-    IReadOnlyList<RecoveryFinding> OpenSetFindings);
+    IReadOnlyList<RecoveryFinding> OpenSetFindings,
+    bool IdentityComparisonsPassed = false);
 
 public sealed record RecoveryResumeBlocker(string Code, string Subject, string Guidance);
 
@@ -33,6 +34,9 @@ public static class RecoveryResumePolicy
         if (!facts.RestoredFromRecoverySet)
             blockers.Add(new("no-recovery-restore", "restore receipt",
                 "This store has no recovery restore receipt. Resume applies only to a target restored with `task-server recovery restore`."));
+        if (facts.RestoredFromRecoverySet && !facts.IdentityComparisonsPassed)
+            blockers.Add(new("identity-comparison-failed", "restore receipt",
+                "The restored server, schema, tasks, projects, workspaces or cold evidence did not match the manifest. Inspect the receipt comparisons and restore a verified set to an empty target before resuming."));
         if (facts.Mode != TaskServerMode.Maintenance)
             blockers.Add(new("maintenance-required", facts.Mode.ToString(),
                 "A restored authority stays in Maintenance until this gate passes. Return it to Maintenance and run the check again."));

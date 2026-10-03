@@ -259,8 +259,12 @@ Backup policy before cutover:
 - one restore-verified copy staged for the Windows fallback.
 
 After cutover, the Task Server backup timer creates integrity-checked SQLite
-backups and sends them to separate off-host storage. The maximum planned
-recovery point is five minutes. The exact interval is accepted only after a
+backups and sends them to separate off-host storage. Its five-minute setting is
+a capture interval, not an achieved recovery point. The recovery point depends
+on the age of the newest verified off-host full set at loss time and must be
+measured in a restore rehearsal using the
+[installation recovery workflow](./setup/installation-recovery.md). The timer's
+SQLite snapshot does not include cold payloads. The exact interval is accepted only after a
 load and restore rehearsal shows it does not disrupt lease renewal or
 completion. The Windows standby regularly receives and verifies the newest
 backup but never opens it while the remote server is authoritative.

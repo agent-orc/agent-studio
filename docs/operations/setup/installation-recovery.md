@@ -132,6 +132,7 @@ only writer. Pass the same store settings as the service (`STORE_PATH`,
    `task-server recovery resume --old-writer-closed [--obligations-retained]`.
    The gate requires all of the following:
    - a recovery restore receipt;
+   - every recorded restore identity and cold evidence comparison passed;
    - `Maintenance` mode;
    - no `active` or `process-unknown` attempt;
    - the attestation that the previous authority is stopped (one writer);
@@ -141,8 +142,9 @@ only writer. Pass the same store settings as the service (`STORE_PATH`,
    - for each pending host obligation, either reconciliation or the
      attestation that the host's outbox and salvage are kept.
 8. **Reconnect and canary.** Start the service. Reconnect the re-enrolled host
-   with a new instance id; its old run leases are not accepted. Run one canary
-   task, then reopen admission for further hosts one at a time.
+   with a new instance id; its old run leases are not accepted. Complete one
+   canary run, verify its terminal success and published Git ref, then reopen
+   admission for further hosts one at a time.
 
 ## Failure guidance
 
@@ -152,6 +154,7 @@ only writer. Pass the same store settings as the service (`STORE_PATH`,
 | `corrupted-hash` | Restore refused | Discard the copy and fetch another off-host copy whose receipt shows the same set digest. Never edit `inventory.json`. |
 | `missing-cold-payload` | Restore refused | Copy the payload from another verified copy with the same set digest, or capture again while the source archive still holds it. |
 | `schema-mismatch` | Restore refused | Install the release named in the guidance on the empty target, restore, verify, and only then upgrade. |
+| `identity-comparison-failed` | Resume blocked | Read the failed comparisons in `recovery-restore-receipt.json`; restore a verified set to a new empty target. Do not override the receipt. |
 | `manifest-missing` / `manifest-unsupported` | Restore refused | Copy again with `recovery copy`, or use the release that captured the set. |
 | `git-origin-unavailable` | Resume blocked | Restore network access or the origin credential, or declare a verified mirror. Stay in `Maintenance` until the refs verify. |
 | `git-ref-missing` / `git-origin-undeclared` | Resume blocked | Publish the recorded commit from host salvage, or declare the origin, then verify again. |
@@ -165,21 +168,23 @@ only writer. Pass the same store settings as the service (`STORE_PATH`,
 host under a fresh temporary root. It seeds a source authority through the
 HTTP API, captures and copies the set, writes once more after capture, and
 records the loss instant. It then restores to an empty data directory, fences
-hosts, passes the resume gate, serves the restored store and creates a canary
-task. The report gives the measured recovery point (loss instant minus capture
-time), the measured recovery time to the canary, the identity comparisons and
+hosts, passes the resume gate, serves the restored store and completes a canary
+run with a published immutable Git ref. The report gives the measured recovery
+point (loss instant minus capture time), the measured recovery time to the
+completed canary, the identity comparisons and
 the tasks lost after capture. `RecoveryDrillTests` in `task-server.Tests` runs
 the full sequence in process. It covers cold evidence, a bare Git origin with
 sampled refs, credential fencing, obsolete-replay rejection, re-enrolment and
-a canary lease. It also injects each fault in the table above, and asserts
+a completed canary run with an immutable result handoff. It also injects each fault in the table above, and asserts
 that production state is unchanged and that a refused restore leaves the
 target empty.
 
 Report recovery objectives only from such measurements. The 300-second backup
 timer in [control-plane-docker.md](./control-plane-docker.md#backup-and-restore)
-is a capture interval, not an achieved recovery point. The worst-case recovery
-point is that interval plus the age of the newest verified off-host copy at
-the time of the loss.
+is a capture interval, not an achieved recovery point. At loss time, the
+recovery point is the age of the newest verified off-host set, measured from
+its capture time. A prospective upper bound must also account for copy and
+verification lag and any missed captures.
 
 ## Limits
 

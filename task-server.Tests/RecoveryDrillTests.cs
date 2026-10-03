@@ -20,6 +20,38 @@ public sealed class RecoveryDrillTests(ITestOutputHelper output)
 {
     private const string RunnerPrincipal = "runner:runner-full";
 
+    [Theory]
+    [InlineData("failed")]
+    [InlineData("missing")]
+    [InlineData("inconsistent")]
+    public async Task Resume_rejects_failed_or_missing_identity_comparisons(string comparisonFault)
+    {
+        using var temp = new TempDirectory("recovery-identity-gate");
+        var drill = await CaptureAsync(temp.Path);
+        var targetDirectory = Path.Combine(temp.Path, "target");
+        var target = Store(targetDirectory, drill.Clock);
+        var workflow = Workflow(target, targetDirectory, drill.Clock);
+        var restored = await workflow.RestoreToEmptyAsync(drill.CopyRoot, null, null, "drill", default);
+        Assert.True(restored.Restored, restored.Message);
+
+        var comparisons = comparisonFault == "missing"
+            ? []
+            : restored.Receipt!.Comparisons.Select((item, index) => index == 0
+                ? comparisonFault == "failed" ? item with { Matches = false } : item with { Actual = "wrong" }
+                : item).ToArray();
+        var receipt = restored.Receipt! with { Comparisons = comparisons };
+        await File.WriteAllTextAsync(Path.Combine(targetDirectory, RecoveryRestoreReceipt.FileName),
+            JsonSerializer.Serialize(receipt, RecoveryJson.Options));
+
+        target = Store(targetDirectory, drill.Clock);
+        await target.InitializeAsync();
+        workflow = Workflow(target, targetDirectory, drill.Clock);
+        await workflow.FenceHostsAsync("drill", default);
+        var (decision, _) = await workflow.ResumeAsync(true, false, false, null, "drill", default);
+        Assert.Contains(decision.Blockers, item => item.Code == "identity-comparison-failed");
+        Assert.Equal(TaskServerMode.Maintenance, target.Mode);
+    }
+
     [Fact]
     public async Task Empty_target_rebuilds_from_the_retained_set_and_resumes_behind_the_gate()
     {
@@ -88,8 +120,27 @@ public sealed class RecoveryDrillTests(ITestOutputHelper output)
         await target.IngestArtifactAsync(canary.Run!.RunId, new ArtifactIngestRequest(
             "art-recovery-canary", "logs/canary.log", "text/plain", Convert.ToBase64String(canaryBytes),
             Convert.ToHexStringLower(SHA256.HashData(canaryBytes)), "canary-ingest", canary.Lease!.Fence), "runner-full", default);
-        await target.ReleaseLeaseAsync(canary.Run.RunId,
-            new LeaseReleaseRequest("runner-full", "runner-full:2", canary.Lease.LeaseId, canary.Lease.Fence, "completed"), "runner-full", default);
+        var work = Path.Combine(temp.Path, "work");
+        var baseSha = Git(work, "rev-parse", "HEAD").Trim();
+        await File.WriteAllTextAsync(Path.Combine(work, "CANARY.md"), "recovered authority completed a canary\n");
+        Git(work, "add", "CANARY.md");
+        Git(work, "-c", "user.name=drill", "-c", "user.email=drill@example.invalid", "commit", "-m", "recovery canary");
+        var resultSha = Git(work, "rev-parse", "HEAD").Trim();
+        var resultRef = FencedGitRefs.ImmutableResult(canary.Run.RunId, canary.Lease.Fence, resultSha);
+        Git(work, "push", drill.Origin, $"HEAD:{resultRef}");
+        var envelope = new ImmutableResultEnvelope("recovery-repo", canary.Run.RunId, baseSha, resultSha,
+            resultRef, null, Convert.ToHexStringLower(SHA256.HashData(canaryBytes)));
+        var digest = ResultEnvelopeDigest.Compute(envelope);
+        await target.AcknowledgeResultHandoffAsync(canary.Run.RunId, new ResultHandoffRequest(
+            "runner-full", "runner-full:2", canary.Lease.LeaseId, canary.Lease.Fence, 1,
+            $"handoff:{canary.Run.RunId}", digest, envelope), "runner-full", default);
+        var completedCanary = await target.CompleteRunAsync(canary.Run.RunId, new CompleteRunRequest(
+            "runner-full", "runner-full:2", canary.Lease.LeaseId, canary.Lease.Fence, "success",
+            "Recovery canary published.", digest, $"completion:{canary.Run.RunId}", 2), "runner-full", default);
+        Assert.Equal("success", completedCanary.Status);
+        Assert.NotNull(completedCanary.FinishedAt);
+        Assert.Equal(resultSha, completedCanary.ResultSha);
+        Assert.Equal(resultSha, (await new OriginRefProbe(Http).ListRemoteAsync(drill.Origin, default))![resultRef]);
 
         // Production state is untouched by the rehearsal.
         Assert.Equal(TaskServerMode.Normal, drill.Source.Mode);
@@ -108,6 +159,10 @@ public sealed class RecoveryDrillTests(ITestOutputHelper output)
             wallClockRestoreSeconds = Math.Round(restoreTimer.Elapsed.TotalSeconds, 3),
             lostWritesAfterCapture = 1,
             canaryRun = canary.Run.RunId,
+            canaryStatus = completedCanary.Status,
+            canaryFinishedAt = completedCanary.FinishedAt,
+            canaryResultRef = resultRef,
+            canaryResultSha = resultSha,
         };
         var text = JsonSerializer.Serialize(report, RecoveryJson.Options);
         output.WriteLine(text);
@@ -292,14 +347,15 @@ public sealed class RecoveryDrillTests(ITestOutputHelper output)
     private static TaskServerStore Store(string directory, TimeProvider clock)
         => new(Microsoft.Extensions.Options.Options.Create(Options(directory)), clock);
 
-    private static void Git(string workingDirectory, params string[] arguments)
+    private static string Git(string workingDirectory, params string[] arguments)
     {
         var start = new ProcessStartInfo("git") { WorkingDirectory = workingDirectory, RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         using var process = Process.Start(start)!;
         var error = process.StandardError.ReadToEnd();
-        process.StandardOutput.ReadToEnd();
+        var output = process.StandardOutput.ReadToEnd();
         process.WaitForExit();
         Assert.True(process.ExitCode == 0, $"git {string.Join(' ', arguments)} failed: {error}");
+        return output;
     }
 }
