@@ -236,7 +236,7 @@ public sealed partial class TaskServerStore
                 version,
                 _serverId,
                 ["studio", "runner", "review-runner", TaskServerProtocol.EngineClientKind, "management"],
-                ["coding-plane", "review-plane", "orchestration-plane", "host-orchestrator", "management-plane", "credential-observation-v2"],
+                ["coding-plane", "review-plane", "orchestration-plane", "host-orchestrator", "management-plane", "credential-observation-v2", "credential-registry-github-v1"],
                 [TaskServerHubProtocol.StudioRange()]),
             _startedAt,
             _outboxBacklog,
