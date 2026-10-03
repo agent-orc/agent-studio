@@ -1,8 +1,11 @@
+using System.Text.Json.Serialization;
+
 namespace AgentStudio.TaskServer.Contracts;
 
 public static class CapabilityProtocol
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
+    public const int LegacySchemaVersion = 1;
 
     public const string CodingExecutor = "executor:coding";
     public const string ReviewExecutor = "executor:review";
@@ -13,6 +16,13 @@ public static class CapabilityProtocol
     public const string DotNet = "toolchain:dotnet";
     public const string Node = "toolchain:node";
     public const string Playwright = "toolchain:playwright";
+
+    /// <summary>
+    /// The host can render the Compose stack: a Docker CLI with the compose
+    /// plugin answers <c>docker compose version</c>. No Docker daemon is
+    /// implied. Required by the Compose-render gate step (AGT-2981).
+    /// </summary>
+    public const string ComposeRender = "toolchain:compose-render";
     public const string Vision = "review:vision";
     public const string Disk = "host:disk";
     public const string TaskServerConnectivity = "task-server:connectivity";
@@ -54,7 +64,28 @@ public sealed record AdvertisedCapabilityDto(
     DateTime? CredentialModifiedAt = null,
     string? EvidenceId = null,
     string? EvidenceExcerpt = null,
-    IReadOnlyList<string>? SupportedModels = null);
+    IReadOnlyList<string>? SupportedModels = null,
+    string? CredentialGeneration = null,
+    DateTime? CredentialObservedAt = null,
+    DateTime? LastRealSuccessAt = null,
+    string? ExpiryProvenance = null,
+    DateTime? AccessTokenExpiresAt = null,
+    string? EffectiveSource = null,
+    bool? NativeFileShadowed = null,
+    IReadOnlyList<string>? EvidenceRefs = null)
+{
+    // Keep the previous in-process constructor available during rolling
+    // upgrades. Rich fields are negotiated on the HTTP wire separately.
+    [JsonConstructor]
+    public AdvertisedCapabilityDto(
+        string key, string category, string status, string? version, string? identity,
+        string? detail, string? signal, DateTime? expiresAt, DateTime? limitedUntil,
+        DateTime? credentialModifiedAt, string? evidenceId, string? evidenceExcerpt,
+        IReadOnlyList<string>? supportedModels)
+        : this(key, category, status, version, identity, detail, signal, expiresAt,
+            limitedUntil, credentialModifiedAt, evidenceId, evidenceExcerpt, supportedModels,
+            null, null, null, null, null, null, null, null) { }
+}
 
 public sealed record CapabilityAdvertisementRequest(
     string RunnerId,
@@ -65,7 +96,17 @@ public sealed record CapabilityAdvertisementRequest(
     long Generation,
     IReadOnlyList<AdvertisedCapabilityDto> Capabilities,
     HostTelemetrySnapshotDto? Telemetry = null,
-    RunnerReleaseIdentityDto? Release = null);
+    RunnerReleaseIdentityDto? Release = null,
+    int? CredentialHealthVersion = null)
+{
+    [JsonConstructor]
+    public CapabilityAdvertisementRequest(
+        string runnerId, string instanceId, int schemaVersion, DateTime advertisedAt,
+        int freshForSeconds, long generation, IReadOnlyList<AdvertisedCapabilityDto> capabilities,
+        HostTelemetrySnapshotDto? telemetry, RunnerReleaseIdentityDto? release)
+        : this(runnerId, instanceId, schemaVersion, advertisedAt, freshForSeconds,
+            generation, capabilities, telemetry, release, null) { }
+}
 
 public sealed record HostTelemetrySnapshotDto(
     DateTime ObservedAt,
@@ -165,7 +206,32 @@ public sealed record CapabilityHealthDto(
     DateTime? CredentialModifiedAt = null,
     string? EvidenceId = null,
     string? EvidenceExcerpt = null,
-    IReadOnlyList<string>? SupportedModels = null);
+    IReadOnlyList<string>? SupportedModels = null,
+    string? CredentialGeneration = null,
+    DateTime? CredentialObservedAt = null,
+    DateTime? LastRealSuccessAt = null,
+    string? ExpiryProvenance = null,
+    DateTime? AccessTokenExpiresAt = null,
+    string? EffectiveSource = null,
+    bool? NativeFileShadowed = null,
+    IReadOnlyList<string>? EvidenceRefs = null)
+{
+    [JsonConstructor]
+    public CapabilityHealthDto(
+        string key, string category, string advertisedStatus, string healthState,
+        string? reason, DateTime advertisedAt, DateTime freshUntil, bool isFresh,
+        DateTime? firstFailureAt, DateTime? lastFailureAt, DateTime? cooldownUntil,
+        string? canaryClaimId, int consecutiveFailures, string? version, string? identity,
+        string? detail, IReadOnlyList<string> affectedClaims,
+        IReadOnlyList<CapabilityRecoveryEventDto> recoveryHistory, string? signal,
+        DateTime? expiresAt, DateTime? limitedUntil, DateTime? credentialModifiedAt,
+        string? evidenceId, string? evidenceExcerpt, IReadOnlyList<string>? supportedModels)
+        : this(key, category, advertisedStatus, healthState, reason, advertisedAt, freshUntil,
+            isFresh, firstFailureAt, lastFailureAt, cooldownUntil, canaryClaimId,
+            consecutiveFailures, version, identity, detail, affectedClaims, recoveryHistory,
+            signal, expiresAt, limitedUntil, credentialModifiedAt, evidenceId,
+            evidenceExcerpt, supportedModels, null, null, null, null, null, null, null, null) { }
+}
 
 /// <summary>One CLI installation observed by a runner capability probe.</summary>
 public sealed record InstalledCliDto(

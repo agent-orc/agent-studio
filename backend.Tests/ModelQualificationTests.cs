@@ -25,7 +25,7 @@ public sealed class ModelQualificationTests
 
         var result = service.Qualify(task, "Add a bounded settings panel.", Catalogue, []);
 
-        Assert.Equal("2026-09-18", result.PolicyVersion);
+        Assert.Equal("2026-09-25", result.PolicyVersion);
         Assert.Equal("terra-medium", result.PolicyTier);
         Assert.Equal("gpt-5.6-terra", result.RecommendedModel);
         Assert.Equal("medium", result.RecommendedThinkingLevel);

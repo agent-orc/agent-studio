@@ -39,6 +39,7 @@ public static class LeaseEndpoints
             ProjectSettingsService settings,
             AgentStudio.Registry.ProjectRegistry projects,
             RunLeaseService leases,
+            AgentStudio.Runner.V1ReviewExecutorRegistry capabilityRegistry,
             RemoteRunStopRequestStore stops,
             RunnerIdentity identity,
             CancellationToken ct) =>
@@ -59,6 +60,24 @@ public static class LeaseEndpoints
                             "ProjectDenied", false, null,
                             "The Runner is not assigned to this project's execution location."), statusCode: StatusCodes.Status403Forbidden);
                 }
+                var taskProjectSettings = settings.Get(task.ProjectName);
+                var classCapability = ExecutionLocations.RequiredClassCapability(
+                    ProjectExecutionPolicy.ResolveExecutionLocation(taskProjectSettings));
+                if (classCapability is not null
+                    && !capabilityRegistry.EvaluateCodingAdmission(
+                        req.RunnerId, req.LeaseInstanceId,
+                        [CapabilityProtocol.CodingExecutor, classCapability]).Eligible)
+                    return Results.Json(new RunLeaseResponse(
+                        "ProjectDenied", false, null,
+                        $"Runner lacks a fresh {classCapability} capability for this project."),
+                        statusCode: StatusCodes.Status403Forbidden);
+                var projectSlot = ProjectExecutionPolicy.EvaluateProjectSlot(
+                    ProjectExecutionPolicy.ProjectOccupancy(scanner.ScanAllJobs(), excludingTaskId: task.Id),
+                    task.ProjectName,
+                    taskProjectSettings);
+                if (!projectSlot.HasSlot)
+                    return Results.Conflict(new RunLeaseResponse(
+                        "ProjectCapacityFull", false, null, projectSlot.Detail));
                 var project = projects.FindByStorageLocation(task.WatchPath)
                               ?? projects.FindByIdOrDisplayName(task.ProjectName);
                 var repository = RemoteProjectRepositoryResolver.Resolve(
@@ -725,6 +744,7 @@ public static class LeaseEndpoints
                     })
                     .OrderBy(t => t.Order)
                     .ThenBy(t => t.CreatedAt);
+                var occupiedByProject = ProjectExecutionPolicy.ProjectOccupancy(liveSnapshot);
 
                 TaskInfo? candidate = null;
                 QuotaAdmissionPlan? candidateQuotaPlan = null;
@@ -737,6 +757,13 @@ public static class LeaseEndpoints
                 foreach (var task in eligible)
                 {
                     var taskProjectSettings = settings.Get(task.ProjectName);
+                    var projectSlot = ProjectExecutionPolicy.EvaluateProjectSlot(
+                        occupiedByProject, task.ProjectName, taskProjectSettings);
+                    if (!projectSlot.HasSlot)
+                    {
+                        RecordRejection(task, "project-concurrency-full", projectSlot.Detail);
+                        continue;
+                    }
                     var buildProfileGate = BuildProfileGate.Evaluate(taskProjectSettings.BuildProfile);
                     if (!buildProfileGate.AllowsPickup)
                     {
@@ -808,6 +835,9 @@ public static class LeaseEndpoints
                         continue;
                     }
                     var requiredCapabilities = (req.RequiredCapabilities ?? [])
+                        .Concat(ExecutionLocations.RequiredClassCapability(
+                            ProjectExecutionPolicy.ResolveExecutionLocation(taskProjectSettings)) is { } hostClass
+                            ? [hostClass] : Array.Empty<string>())
                         .Append(CapabilityProtocol.CodingExecutor)
                         .Append(CapabilityProtocol.CliExecution(cliType))
                         .Append(CapabilityProtocol.ProviderAuthentication(cliType))
@@ -1791,7 +1821,12 @@ public static class LeaseEndpoints
                         repositoryPath,
                         taskProjectSettings,
                         integrationRef,
-                        run.ResultSha));
+                        run.ResultSha,
+                        RemoteReviewPlanBuilder.DeliveryChangedFiles(
+                            git,
+                            repositoryPath,
+                            deliveryRange?.MergeBaseSha ?? integrationRef,
+                            run.ResultSha)));
             }
 
             if (!isEpicPlanning
@@ -2661,6 +2696,9 @@ public static class LeaseEndpoints
         var ceiling = 0;
         foreach (var project in settings.GetAll().Values)
         {
+            if (ExecutionLocations.RequiredClassCapability(
+                    ProjectExecutionPolicy.ResolveExecutionLocation(project)) is not null)
+                continue;
             if (!ProjectExecutionPolicy.IsAssignedRemote(project, runnerId, runnerName)) continue;
             ceiling = Math.Max(ceiling, project.MaxParallelism);
         }

@@ -31,15 +31,15 @@ public sealed class RemoteReviewWorkerReleaseProjectionTests : IDisposable
     }
 
     [Fact]
-    public async Task A_superseded_worker_release_is_named_once_on_the_card()
+    public void A_superseded_worker_release_is_named_once_on_the_card()
     {
         var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
         var task = Job();
 
-        await ProjectAsync(timeline, task, Worker(OldRelease, NewRelease));
+        Project(timeline, task, Worker(OldRelease, NewRelease));
         // Evidence projection is replay-safe, so a second delivery of the same
         // attempt must not add a second notice.
-        await ProjectAsync(timeline, task, Worker(OldRelease, NewRelease));
+        Project(timeline, task, Worker(OldRelease, NewRelease));
 
         var notice = Assert.Single(
             timeline.ReadAll(task.FolderPath),
@@ -59,14 +59,14 @@ public sealed class RemoteReviewWorkerReleaseProjectionTests : IDisposable
     [Theory]
     [InlineData(NewRelease, NewRelease)]
     [InlineData(null, null)]
-    public async Task A_verdict_from_the_current_release_adds_no_notice(
+    public void A_verdict_from_the_current_release_adds_no_notice(
         string? workerRelease,
         string? daemonRelease)
     {
         var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
         var task = Job();
 
-        await ProjectAsync(
+        Project(
             timeline,
             task,
             workerRelease is null ? null : Worker(workerRelease, daemonRelease!));
@@ -77,7 +77,7 @@ public sealed class RemoteReviewWorkerReleaseProjectionTests : IDisposable
     }
 
     [Fact]
-    public async Task Remote_concern_projects_the_same_passed_status_and_verdict_as_local_execution()
+    public void Remote_concern_projects_the_same_passed_status_and_verdict_as_local_execution()
     {
         var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
         var task = Job();
@@ -110,9 +110,9 @@ public sealed class RemoteReviewWorkerReleaseProjectionTests : IDisposable
             new FileGenerationIndex(NullLogger<FileGenerationIndex>.Instance),
             new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, configuration));
 
-        await projector.ProjectAsync(
+        projector.Project(
             task, Attempt(), report, "remote-review-grade-review-attempt-1.md",
-            started.AddMinutes(2), CancellationToken.None);
+            started.AddMinutes(2));
 
         var step = Assert.Single(
             pipeline.Read(task.FolderPath)!.Steps,
@@ -124,7 +124,7 @@ public sealed class RemoteReviewWorkerReleaseProjectionTests : IDisposable
     }
 
     [Fact]
-    public async Task Remote_aspect_command_failure_remains_a_failed_step_with_its_block_verdict()
+    public void Remote_aspect_command_failure_remains_a_failed_step_with_its_block_verdict()
     {
         var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
         var task = Job();
@@ -157,9 +157,9 @@ public sealed class RemoteReviewWorkerReleaseProjectionTests : IDisposable
             new FileGenerationIndex(NullLogger<FileGenerationIndex>.Instance),
             new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, configuration));
 
-        await projector.ProjectAsync(
+        projector.Project(
             task, Attempt(), report, "remote-review-grade-review-attempt-1.md",
-            started.AddMinutes(2), CancellationToken.None);
+            started.AddMinutes(2));
 
         var step = Assert.Single(
             pipeline.Read(task.FolderPath)!.Steps,
@@ -169,7 +169,7 @@ public sealed class RemoteReviewWorkerReleaseProjectionTests : IDisposable
         Assert.Equal("Review command 'aspect-code-quality' exited 17.", step.VerdictSummary);
     }
 
-    private async Task ProjectAsync(
+    private void Project(
         TimelineLog timeline,
         TaskInfo task,
         Contract.ReviewWorkerProvenanceDto? worker)
@@ -182,13 +182,12 @@ public sealed class RemoteReviewWorkerReleaseProjectionTests : IDisposable
             new FileGenerationIndex(NullLogger<FileGenerationIndex>.Instance),
             new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, configuration));
 
-        await projector.ProjectAsync(
+        projector.Project(
             task,
             Attempt(),
             Report(worker),
             "remote-review-grade-review-attempt-1.md",
-            new DateTime(2026, 9, 17, 18, 13, 0, DateTimeKind.Utc),
-            CancellationToken.None);
+            new DateTime(2026, 9, 17, 18, 13, 0, DateTimeKind.Utc));
     }
 
     private static Contract.ReviewWorkerProvenanceDto Worker(string workerRelease, string daemonRelease)

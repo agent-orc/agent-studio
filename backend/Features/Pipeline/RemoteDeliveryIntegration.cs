@@ -1,4 +1,5 @@
 using AgentStudio.Shared;
+using AgentStudio.Runner;
 using Contract = AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Pipeline;
@@ -130,7 +131,8 @@ public sealed record RemoteDeliveryIntegrationRequest(
     string IntegrationBranch,
     string IntegrationStrategy,
     string PipelineType,
-    DateTimeOffset DeliveredAtUtc);
+    DateTimeOffset DeliveredAtUtc,
+    string? ReviewAttemptId = null);
 
 /// <summary>
 /// Serializes immediately eligible fenced deliveries per project in delivery
@@ -149,6 +151,7 @@ public sealed class RemoteDeliveryIntegrationCoordinator
     private readonly Func<RemoteDeliveryIntegrationRequest, MergeIntoIntegrationResult, Task<IntegrationAgentRoundStartResult>> _startAgentRound;
     private readonly Action<RemoteDeliveryIntegrationRequest, string, string, string> _recordFailure;
     private readonly ILogger<RemoteDeliveryIntegrationCoordinator> _logger;
+    private readonly Func<RemoteDeliveryIntegrationRequest, bool> _isCurrentReview;
     private long _sequence;
 
     public RemoteDeliveryIntegrationCoordinator(
@@ -158,9 +161,18 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         PipelineExecutionLog pipelineLog,
         TimelineLog timeline,
         IntegrationAgentRoundService agentRounds,
-        ILogger<RemoteDeliveryIntegrationCoordinator> logger)
+        ILogger<RemoteDeliveryIntegrationCoordinator> logger,
+        AttemptAuthorityService authority)
         : this(
-            request => IntegrateAndRecordAsync(request, runner, scanner, provenance, timeline),
+            request => IntegrateAndRecordAsync(
+                request,
+                runner,
+                scanner,
+                provenance,
+                timeline,
+                request.ReviewAttemptId is { } reviewAttemptId
+                    ? apply => authority.TryApplyForCurrentReview(reviewAttemptId, apply)
+                    : null),
             logger,
             (request, failureCode, summary, detail) => RecordPreReviewFailure(
                 request,
@@ -169,7 +181,11 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                 detail,
                 pipelineLog,
                 timeline),
-            agentRounds.TryStartAsync)
+            agentRounds.TryStartAsync,
+            request => request.ReviewAttemptId is null
+                || authority.GetReview(request.ReviewAttemptId) is { } review
+                   && authority.GetTaskProjection(review.TaskKey).CurrentReviewAttempt?.AttemptId
+                       == request.ReviewAttemptId)
     {
     }
 
@@ -177,12 +193,14 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         Func<RemoteDeliveryIntegrationRequest, Task<MergeIntoIntegrationResult>> integrate,
         ILogger<RemoteDeliveryIntegrationCoordinator> logger,
         Action<RemoteDeliveryIntegrationRequest, string, string, string>? recordFailure = null,
-        Func<RemoteDeliveryIntegrationRequest, MergeIntoIntegrationResult, Task<IntegrationAgentRoundStartResult>>? startAgentRound = null)
+        Func<RemoteDeliveryIntegrationRequest, MergeIntoIntegrationResult, Task<IntegrationAgentRoundStartResult>>? startAgentRound = null,
+        Func<RemoteDeliveryIntegrationRequest, bool>? isCurrentReview = null)
     {
         _integrate = integrate;
         _startAgentRound = startAgentRound ?? ((_, _) => Task.FromResult(
             new IntegrationAgentRoundStartResult(false, "No automatic agent-round boundary was configured.")));
         _recordFailure = recordFailure ?? ((_, _, _, _) => { });
+        _isCurrentReview = isCurrentReview ?? (_ => true);
         _logger = logger;
     }
 
@@ -284,6 +302,13 @@ public sealed class RemoteDeliveryIntegrationCoordinator
 
             try
             {
+                if (!_isCurrentReview(delivery.Request))
+                {
+                    CompleteDelivery(delivery, MergeIntoIntegrationResult.Of(
+                        MergeIntoIntegrationOutcome.Error,
+                        error: MergeIntoDevelopRunner.SupersededReviewGenerationError));
+                    continue;
+                }
                 _logger.LogInformation(
                     "remote-delivery-integration started project={Project} job={JobId} sequence={Sequence} deliveredAt={DeliveredAt}",
                     delivery.Request.Project,
@@ -291,7 +316,19 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                     delivery.Sequence,
                     delivery.Request.DeliveredAtUtc);
                 var result = await _integrate(delivery.Request).ConfigureAwait(false);
-                if (result.Outcome is MergeIntoIntegrationOutcome.AgentRoundRequired or MergeIntoIntegrationOutcome.Conflict)
+                // The runner's publication fence already decided a merge; its
+                // result stays true. Only an unmerged delivery could still start
+                // a stale repair round, which a successor refuses.
+                if (result.Outcome is MergeIntoIntegrationOutcome.AgentRoundRequired or MergeIntoIntegrationOutcome.Conflict
+                    && !_isCurrentReview(delivery.Request))
+                {
+                    _logger.LogInformation(
+                        "remote-delivery-integration continuation project={Project} job={JobId} started=False reason={Reason}",
+                        delivery.Request.Project,
+                        delivery.Request.JobId,
+                        MergeIntoDevelopRunner.SupersededReviewGenerationError);
+                }
+                else if (result.Outcome is MergeIntoIntegrationOutcome.AgentRoundRequired or MergeIntoIntegrationOutcome.Conflict)
                 {
                     var continuation = await _startAgentRound(
                         delivery.Request,
@@ -372,6 +409,7 @@ public sealed class RemoteDeliveryIntegrationCoordinator
             request.IntegrationBranch,
             request.IntegrationStrategy,
             request.PipelineType,
+            request.ReviewAttemptId ?? string.Empty,
             request.DeliveredAtUtc.ToUniversalTime().Ticks.ToString(
                 System.Globalization.CultureInfo.InvariantCulture));
 
@@ -414,7 +452,8 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         MergeIntoDevelopRunner runner,
         TaskScannerService scanner,
         TaskProvenanceService provenance,
-        TimelineLog timeline)
+        TimelineLog timeline,
+        Func<Action, bool>? publicationFence)
     {
         // The start row pairs with the outcome row below, so the integration
         // span is read from the ledger instead of from the merge step whose
@@ -441,7 +480,8 @@ public sealed class RemoteDeliveryIntegrationCoordinator
             request.IntegrationBranch,
             CancellationToken.None,
             request.IntegrationStrategy,
-            request.PipelineType).ConfigureAwait(false);
+            request.PipelineType,
+            publicationFence).ConfigureAwait(false);
 
         var job = scanner.FindJob(request.JobId, request.WatchPath);
         if (job is null) return result;

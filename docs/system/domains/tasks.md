@@ -77,6 +77,67 @@ or commit attribution.
 
 ## Entry Points
 
+### Runner host placement (AGT-2939, D11)
+
+The standalone Task Server stores an optional, versioned project placement at
+`GET/PUT /api/v1/projects/{projectId}/placement`. Its
+`requiredCapabilities` are fresh advertised capability keys, such as
+`platform:linux` or `toolchain:dotnet`. The same runner binary advertises
+`platform:linux` or `platform:windows` for coding and review roles. An
+optional `pinnedRunnerId` keeps work tied to one registered machine. A second
+host with matching capabilities and a project grant needs no task rewrite.
+Missing placement retains the previous claim behavior.
+
+The coding claim transaction checks the caller's authenticated runner and
+instance, host drain, fresh required capabilities, host project grant, available
+slots, central host ceiling, and the current capacity version acknowledgement.
+Registration and capability advertisement alone do not acknowledge capacity;
+the daemon must report the desired version and effective ceiling on a claim
+poll. For configured placement, CPU telemetry above the host's target load
+blocks admission. Each project is evaluated once per claim poll, and the ready
+scan stops at the first admissible task. The claim response carries
+`placementReason`: `matched` for configured placement, `legacy-routing` for a
+project without placement, or the last refusal when nothing is admitted. The
+successful claim audit records the placement version and reason.
+`GET /api/v1/projects/{projectId}/placement/admissions` reads each runner's
+last placement decision with its timestamp. The placement GET, runner
+capability snapshot, runtime capacity GET, and host admission projection
+provide the read side for selection, rejection, capacity, and drain.
+The host's coding and review registrations retain distinct role slot budgets.
+
+Configured placement defaults to one active coding lease per project. Its
+`maxParallelism` may only use slots authorized by the existing project
+`maxParallelism` setting; the effective limit is the smaller value. Active
+and `process-unknown` leases count against that limit, so an abruptly lost
+host cannot transfer live authority. Drain stops new claims while existing
+leases renew or settle. Removal follows drain and fenced authority expiry.
+Runner join requires a scoped principal and separate coding or review service
+identity. Retiring a host now records operator drain; permanent removal refuses
+while coding or review authority is active or process-unknown, then tombstones
+registration while preserving its audit rows. A removed host cannot re-register
+or revive under the old identity.
+The target topology is two or more Linux hosts, zero or at least two Windows
+hosts when Windows is required, and zero or more workstations; these are
+operator deployment targets, not hard-coded limits.
+
+The file-backed compatibility API also accepts `class:linux`,
+`class:windows`, or `class:macos` as a project's execution location through
+the existing project-settings mutation. These map to fresh `platform:*`
+capability advertisements during coding claim and direct lease acquisition.
+An ordinary runner ID remains an explicit pin. This preserves existing
+project-to-runner configuration while letting another matching host claim
+future cards without editing their task records. The daemon claim loop and
+the direct task-key lease share one project slot policy
+(`ProjectExecutionPolicy.EvaluateProjectSlot`). It limits class-placed
+projects, which many matching hosts share: it counts Progress cards per
+project and admits another only below that project's existing maxParallelism.
+A pinned project keeps its existing admission; its one host's slot ceiling
+bounds it, so the policy sets no project limit for it. A refused claim
+candidate records `project-concurrency-full`, and a refused direct lease
+returns `ProjectCapacityFull`. Class-placed projects do not seed a host's
+deprecated compatibility ceiling, because every matching host shares their
+project limit. A class-only host keeps the ceiling it declares.
+
 ### Engine steering boundary (AGT-2933, D5)
 
 The standalone Engine uses its scoped bearer principal to submit
@@ -148,6 +209,22 @@ whose `references.dependsOn` points to a pending decision reports the key in
 the decision is pending. Deciding only releases that dependency gate. Applying
 the choice to prompts or creating implementation cards belongs to the separate
 apply delivery.
+
+## Task Server failure fingerprint API
+
+The Task Server owns append-only fingerprint observations. All three routes use
+Bearer principal authentication on `/api/v1`:
+
+| Route | Scope | Request and response |
+|---|---|---|
+| `GET /api/v1/failure-fingerprints` | `tasks:read` | Optional `fingerprint` exact-match string and `sinceUtc` UTC timestamp query parameters. Returns an array of `FailureFingerprintHistoryDto` summaries. Gate and review reporters use `sinceUtc` for the previous 24 hours. |
+| `POST /api/v1/failure-fingerprints` | Any of `reviews:write`, `runs:write`, or `tasks:write` | JSON `RecordFailureFingerprintRequest` with nonempty `fingerprint`, `cardKey`, `executor`, `source`, and idempotent `reportKey`. Returns `201` with the updated `FailureFingerprintHistoryDto`. Reusing a report key with different evidence is rejected. |
+| `GET /api/v1/management/failure-fingerprints` | `management` | The same optional query parameters and summary array as the reporter read route. This is the management read surface; there is no UI. |
+
+Each summary has `fingerprint`, `firstSeen`, `lastSeen`, `count`, distinct
+`executors`, and distinct `cardKeys`. A `sinceUtc` filter applies to events
+before aggregation, so all summary fields describe that window. The POST
+source identifies the reporter, currently `gate` or `review`.
 
 ## Result history
 
@@ -1015,7 +1092,10 @@ as `acceptance-rail-run`.
   attempts for the task; it does not reset with Studio or Engine restart.
   Consecutive Remote Review decisions with the same blocking aspect,
   classification, and summary escalate with that reason after two rounds by
-  default, even when the broader reissue budget remains.
+  default, even when the broader reissue budget remains. The AGT-2916 diagnosis
+  contract limits both this anti-churn rule and the reissue counter to confirmed
+  `product` failures. Environment, intermittent, first-occurrence, and uncited
+  reviewer concerns do not charge a card.
 - Human Review accepts an already integrated delivery. Post Processing does
   not infer human acceptance or move directly to `6-completed`.
 - Archive is server guarded for every move path. A non-integrated delivery is

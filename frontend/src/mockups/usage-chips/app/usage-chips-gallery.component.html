@@ -1,0 +1,68 @@
+<main class="gallery" [attr.data-theme]="theme">
+  <h1 class="gallery__title">Usage chips (HUC-S2), {{ theme }} theme</h1>
+  <p class="gallery__note">Synthetic fixture pinned to 25 September 2026, 16:58 Europe/Berlin. Real components, not live telemetry.</p>
+
+  <section class="gallery__section" data-testid="gallery-normal">
+    <h2>Normal</h2>
+    <div class="gallery__row">
+      <app-usage-cli-chip cliId="codex" [cli]="f.CODEX" [timeZone]="f.FIXTURE_ZONE" [now]="f.FIXTURE_NOW"
+                          [expanded]="openCli() === 'codex'" controls="fixture-detail"
+                          (activate)="toggleCli($event)" />
+      <app-usage-cli-chip cliId="claude" [cli]="f.CLAUDE" [timeZone]="f.FIXTURE_ZONE" [now]="f.FIXTURE_NOW"
+                          [expanded]="openCli() === 'claude'" controls="fixture-detail"
+                          (activate)="toggleCli($event)" />
+      <app-usage-cost-chip [cost]="f.COST" [now]="f.FIXTURE_NOW" [expanded]="costOpen()" controls="fixture-detail"
+                           (activate)="costOpen.set(!costOpen())" />
+    </div>
+  </section>
+
+  <section class="gallery__section" data-testid="gallery-states">
+    <h2>States</h2>
+    <div class="gallery__row" data-testid="gallery-loading">
+      <app-usage-cli-chip cliId="codex" [cli]="null" [now]="f.FIXTURE_NOW" />
+      <app-usage-cost-chip [cost]="null" [now]="f.FIXTURE_NOW" />
+    </div>
+    <div class="gallery__row" data-testid="gallery-unknown">
+      <app-usage-cli-chip cliId="gemini" [cli]="f.GEMINI_UNAVAILABLE" [timeZone]="f.FIXTURE_ZONE" [now]="f.FIXTURE_NOW" />
+      <app-usage-cli-chip cliId="codex" [cli]="f.CODEX_NO_SESSION" [timeZone]="f.FIXTURE_ZONE" [now]="f.FIXTURE_NOW" />
+      <app-usage-cost-chip [cost]="f.COST_UNKNOWN" [now]="f.FIXTURE_NOW" />
+    </div>
+    <div class="gallery__row" data-testid="gallery-stale">
+      <app-usage-cli-chip cliId="codex" [cli]="f.CODEX_STALE" [timeZone]="f.FIXTURE_ZONE" [now]="f.FIXTURE_NOW" />
+      <app-usage-cost-chip [cost]="f.COST_STALE" [now]="f.FIXTURE_NOW" />
+    </div>
+    <div class="gallery__row" data-testid="gallery-suspicious">
+      <app-usage-cli-chip cliId="claude" [cli]="f.CLAUDE_SUSPICIOUS" [timeZone]="f.FIXTURE_ZONE" [now]="f.FIXTURE_NOW" />
+      <app-usage-cost-chip [cost]="f.COST_PARTIAL" [now]="f.FIXTURE_NOW" />
+      <app-usage-cost-chip [cost]="f.COST_ZERO" [now]="f.FIXTURE_NOW" />
+    </div>
+  </section>
+
+  <section class="gallery__section" data-testid="gallery-long">
+    <h2>Long values</h2>
+    <div class="gallery__row">
+      <app-usage-cli-chip cliId="codex" [cli]="f.CODEX_OVER" [timeZone]="f.FIXTURE_ZONE" [now]="f.FIXTURE_NOW" />
+      <app-usage-cli-chip cliId="claude" [cli]="f.CLAUDE_FRACTIONAL" [timeZone]="f.FIXTURE_ZONE" [now]="f.FIXTURE_NOW" />
+    </div>
+    <div class="gallery__row">
+      <app-usage-cli-chip cliId="enterprise-gateway-provider" [cli]="f.LONG_PROVIDER" [timeZone]="f.FIXTURE_ZONE" [now]="f.FIXTURE_NOW" />
+      <app-usage-cost-chip [cost]="f.COST_LARGE" [now]="f.FIXTURE_NOW" />
+      <app-usage-cost-chip [cost]="f.COST_HUGE" [now]="f.FIXTURE_NOW" />
+    </div>
+  </section>
+
+  <section class="gallery__section" data-testid="gallery-expanded">
+    <h2>Expanded usage only</h2>
+    <div class="gallery__row gallery__row--sheet">
+      <app-usage-slot-chip [slots]="f.SLOTS" [expanded]="slotsOpen()" controls="fixture-slot-pools"
+                           (activate)="slotsOpen.set(!slotsOpen())" />
+      <app-usage-slot-chip [slots]="f.SLOTS_PARTIAL" />
+      <app-usage-slot-chip [slots]="null" />
+    </div>
+    <div id="fixture-slot-pools" class="gallery__pools" [hidden]="!slotsOpen()">
+      Pool detail belongs to HUC-S3. Remote, review and auto pools are counted separately.
+    </div>
+  </section>
+
+  <div id="fixture-detail" hidden></div>
+</main>

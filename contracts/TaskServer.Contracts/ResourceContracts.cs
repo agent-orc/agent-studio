@@ -16,6 +16,31 @@ public sealed record ProjectDto(
     DateTime CreatedAt,
     DateTime UpdatedAt);
 
+/// <summary>
+/// Project-wide runner placement. A capability key such as platform:linux or
+/// toolchain:dotnet describes a class of interchangeable hosts. A runner pin is
+/// reserved for work tied to one machine. Missing policy retains legacy routing.
+/// </summary>
+public sealed record ProjectPlacementDto(
+    string ProjectId,
+    IReadOnlyList<string> RequiredCapabilities,
+    string? PinnedRunnerId,
+    int MaxParallelism,
+    long Version,
+    DateTime UpdatedAt);
+
+public sealed record UpdateProjectPlacementRequest(
+    IReadOnlyList<string>? RequiredCapabilities,
+    string? PinnedRunnerId,
+    int MaxParallelism,
+    long ExpectedVersion);
+
+public sealed record ProjectPlacementAdmissionDto(
+    string ProjectId,
+    string RunnerId,
+    string Reason,
+    DateTime ObservedAt);
+
 public sealed record TaskDto(
     string TaskId,
     string ProjectId,

@@ -50,6 +50,8 @@ public sealed class RunnerReleaseIdentityWireTests
 
         Assert.NotNull(registration.Release);
         Assert.NotNull(heartbeat.Release);
+        Assert.Equal(CapabilityProtocol.LegacySchemaVersion, heartbeat.SchemaVersion);
+        Assert.Null(heartbeat.CredentialHealthVersion);
         Assert.Equal(registration.Release, heartbeat.Release);
         Assert.False(string.IsNullOrWhiteSpace(heartbeat.Release!.ReleaseId));
         Assert.False(string.IsNullOrWhiteSpace(heartbeat.Release.Version));
