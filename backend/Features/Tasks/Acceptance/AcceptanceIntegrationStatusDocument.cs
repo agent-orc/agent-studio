@@ -1,5 +1,5 @@
 using System.Collections.Concurrent;
-using System.Security.Cryptography;
+using System.Globalization;
 using System.Text;
 
 namespace AgentStudio.Tasks;
@@ -13,10 +13,9 @@ namespace AgentStudio.Tasks;
 /// Every caller value is escaped so it cannot open or close an HTML comment,
 /// and the markers are matched only as whole lines, so neither caller text
 /// nor an agent-written task result above the section can make a later
-/// upsert truncate the document. Removal requires a fingerprint of the exact
-/// text preceding the writer's section, even when task text follows it. A
-/// copied section elsewhere in the document has a different prefix and
-/// remains task text.
+/// upsert truncate the document. A writer-owned marker immediately before
+/// the section identifies it even when task text around it changes. Quoted
+/// marker pairs and copied section bodies lack that marker and remain task text.
 /// </para>
 /// </summary>
 public static class AcceptanceIntegrationStatusDocument
@@ -24,7 +23,7 @@ public static class AcceptanceIntegrationStatusDocument
     internal const string StartMarker = "<!-- agent-studio:acceptance-integration:start -->";
     internal const string EndMarker = "<!-- agent-studio:acceptance-integration:end -->";
     private const string Heading = "## Acceptance integration";
-    private const string OwnershipPrefix = "<!-- agent-studio:acceptance-integration:prefix-sha256:";
+    private const string OwnershipPrefix = "<!-- agent-studio:acceptance-integration:owned:";
     private static readonly ConcurrentDictionary<string, object> PathLocks = new(StringComparer.OrdinalIgnoreCase);
 
     public static void WriteFailure(
@@ -91,10 +90,11 @@ public static class AcceptanceIntegrationStatusDocument
             var prefix = preserved.Length == 0
                 ? string.Empty
                 : preserved + Environment.NewLine + Environment.NewLine;
-            var ownedSection = section.Insert(
-                StartMarker.Length + Environment.NewLine.Length
-                    + Heading.Length + Environment.NewLine.Length,
-                OwnershipMarker(prefix) + Environment.NewLine);
+            var generation = FindOwnedSection(original)?.Generation + 1 ?? 1;
+            var ownedSection = OwnershipPrefix
+                + generation.ToString("D16", CultureInfo.InvariantCulture)
+                + ":" + Guid.NewGuid().ToString("N") + " -->"
+                + Environment.NewLine + section;
             var updated = prefix + ownedSection;
             ReplaceAtomically(path, updated.TrimEnd() + Environment.NewLine);
         }
@@ -102,56 +102,74 @@ public static class AcceptanceIntegrationStatusDocument
 
     internal static string RemoveOwnedSection(string content)
     {
-        // Task text may be appended after the owned section, including an
-        // exact copy of it. Only the original location has the matching prefix.
-        for (var start = LastMarkerLine(content, StartMarker); start >= 0;
-             start = start == 0 ? -1 : LastMarkerLine(content[..start], StartMarker))
+        var owned = FindOwnedSection(content);
+        return owned is { } section
+            ? content.Remove(section.Start, section.End - section.Start)
+            : content;
+    }
+
+    private static (int Start, int End, long Generation)? FindOwnedSection(string content)
+    {
+        // Retries increase the generation. An older copied block can therefore
+        // remain before the current section; equal-generation copies after it
+        // leave the first occurrence as the writer's original block.
+        (int Start, int End, long Generation)? best = null;
+        for (var owner = content.IndexOf(OwnershipPrefix, StringComparison.Ordinal);
+             owner >= 0;
+             owner = content.IndexOf(OwnershipPrefix, owner + OwnershipPrefix.Length, StringComparison.Ordinal))
         {
+            var ownerEnd = content.IndexOf(" -->", owner + OwnershipPrefix.Length, StringComparison.Ordinal);
+            if (ownerEnd < 0 || !IsWholeLine(content, owner, ownerEnd + 4 - owner))
+                continue;
+            var identity = content.AsSpan(owner + OwnershipPrefix.Length, ownerEnd - owner - OwnershipPrefix.Length);
+            var separator = identity.IndexOf(':');
+            if (separator < 0
+                || !long.TryParse(identity[..separator], NumberStyles.None, CultureInfo.InvariantCulture, out var generation)
+                || generation < 1
+                || !Guid.TryParseExact(identity[(separator + 1)..], "N", out _))
+                continue;
+
+            var start = ownerEnd + 4;
+            if (start < content.Length && content[start] == '\r') start++;
+            if (start >= content.Length || content[start] != '\n') continue;
+            start++;
+            if (!content.AsSpan(start).StartsWith(StartMarker, StringComparison.Ordinal)
+                || !IsWholeLine(content, start, StartMarker.Length))
+                continue;
+
             var bodyStart = start + StartMarker.Length;
             if (bodyStart < content.Length && content[bodyStart] == '\r') bodyStart++;
             if (bodyStart >= content.Length || content[bodyStart] != '\n') continue;
             bodyStart++;
 
             var end = MarkerLine(content, EndMarker, bodyStart);
-            if (end < 0 || !IsOwnedBody(content[bodyStart..end], content[..start])) continue;
-            return content.Remove(start, end + EndMarker.Length - start);
+            if (end < 0 || !IsOwnedBody(content[bodyStart..end])) continue;
+            if (best is null || generation > best.Value.Generation)
+                best = (owner, end + EndMarker.Length, generation);
         }
-        return content;
+        return best;
     }
 
-    private static bool IsOwnedBody(string body, string prefix)
+    private static bool IsOwnedBody(string body)
     {
         var lines = body.ReplaceLineEndings("\n").Split('\n');
-        return lines.Length == 9
+        return lines.Length == 8
             && lines[0] == Heading
-            && lines[1] == OwnershipMarker(prefix)
-            && lines[2].Length == 0
-            && lines[3].StartsWith("- Outcome: `", StringComparison.Ordinal)
-            && lines[4].StartsWith("- Lane: `", StringComparison.Ordinal)
-            && (lines[5].StartsWith("- Integration branch: `", StringComparison.Ordinal)
-                || lines[5] == "- Integration: explicitly waived by the operator")
-            && lines[6].StartsWith("- Reason: ", StringComparison.Ordinal)
-            && lines[7].StartsWith("- Recorded at: `", StringComparison.Ordinal)
-            && lines[8].Length == 0;
+            && lines[1].Length == 0
+            && lines[2].StartsWith("- Outcome: `", StringComparison.Ordinal)
+            && lines[3].StartsWith("- Lane: `", StringComparison.Ordinal)
+            && (lines[4].StartsWith("- Integration branch: `", StringComparison.Ordinal)
+                || lines[4] == "- Integration: explicitly waived by the operator")
+            && lines[5].StartsWith("- Reason: ", StringComparison.Ordinal)
+            && lines[6].StartsWith("- Recorded at: `", StringComparison.Ordinal)
+            && lines[7].Length == 0;
     }
-
-    private static string OwnershipMarker(string prefix)
-        => OwnershipPrefix + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(prefix))) + " -->";
 
     private static int MarkerLine(string content, string marker, int from)
     {
         for (var index = content.IndexOf(marker, from, StringComparison.Ordinal);
              index >= 0;
              index = content.IndexOf(marker, index + 1, StringComparison.Ordinal))
-            if (IsWholeLine(content, index, marker.Length)) return index;
-        return -1;
-    }
-
-    private static int LastMarkerLine(string content, string marker)
-    {
-        for (var index = content.LastIndexOf(marker, StringComparison.Ordinal);
-             index >= 0;
-             index = index == 0 ? -1 : content.LastIndexOf(marker, index - 1, StringComparison.Ordinal))
             if (IsWholeLine(content, index, marker.Length)) return index;
         return -1;
     }

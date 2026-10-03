@@ -85,7 +85,8 @@ public sealed class AcceptanceIntegrationStatusDocumentTests : IDisposable
         Assert.Equal(result, File.ReadAllText(StatusPath));
 
         AcceptanceIntegrationStatusDocument.WriteFailure(_folder, "conflict", "first", "develop");
-        Assert.StartsWith(result + "\n" + Start, File.ReadAllText(StatusPath).ReplaceLineEndings("\n"));
+        Assert.StartsWith(result + "\n", File.ReadAllText(StatusPath).ReplaceLineEndings("\n"));
+        Assert.Equal(2, Count(File.ReadAllText(StatusPath), Start));
 
         AcceptanceIntegrationStatusDocument.Clear(_folder);
         Assert.Equal(result, File.ReadAllText(StatusPath).ReplaceLineEndings("\n"));
@@ -100,7 +101,7 @@ public sealed class AcceptanceIntegrationStatusDocumentTests : IDisposable
 
         AcceptanceIntegrationStatusDocument.WriteFailure(_folder, "conflict", "second", "develop");
         var updated = File.ReadAllText(StatusPath).ReplaceLineEndings("\n");
-        Assert.StartsWith(result + "\n" + Start, updated);
+        Assert.StartsWith(result + "\n", updated);
         Assert.Equal(2, Count(updated, Start));
         Assert.Equal(2, Count(updated, End));
         Assert.DoesNotContain("- Reason: first", updated);
@@ -186,6 +187,53 @@ public sealed class AcceptanceIntegrationStatusDocumentTests : IDisposable
         var cleared = File.ReadAllText(StatusPath);
         Assert.Contains("Follow-up task notes stay.", cleared);
         Assert.DoesNotContain(Start, cleared);
+    }
+
+    [Fact]
+    public void EditedTaskTextBeforeOwnedSection_DoesNotPreventReplacementOrClear()
+    {
+        File.WriteAllText(StatusPath, "# Result\n\nInitial task result.\n");
+        AcceptanceIntegrationStatusDocument.WriteFailure(_folder, "conflict", "first", "develop");
+        var original = File.ReadAllText(StatusPath);
+        File.WriteAllText(StatusPath, original.Replace("Initial task result.", "Edited task result.", StringComparison.Ordinal));
+
+        AcceptanceIntegrationStatusDocument.WriteFailure(_folder, "conflict", "second", "develop");
+        var updated = File.ReadAllText(StatusPath);
+        Assert.Contains("Edited task result.", updated);
+        Assert.DoesNotContain("- Reason: first", updated);
+        Assert.Equal(1, Count(updated, Start));
+        Assert.Contains("- Reason: second", updated);
+
+        AcceptanceIntegrationStatusDocument.Clear(_folder);
+        Assert.Equal("# Result\n\nEdited task result.", File.ReadAllText(StatusPath).ReplaceLineEndings("\n").TrimEnd());
+    }
+
+    [Fact]
+    public void EditedTaskTextAndCopiedEntireWriterBlockAfterIt_PreserveTheCopy()
+    {
+        File.WriteAllText(StatusPath, "# Result\n\nInitial task result.\n");
+        AcceptanceIntegrationStatusDocument.WriteFailure(_folder, "conflict", "first", "develop");
+        var original = File.ReadAllText(StatusPath).ReplaceLineEndings("\n");
+        var ownershipStart = original.IndexOf("<!-- agent-studio:acceptance-integration:owned:", StringComparison.Ordinal);
+        Assert.True(ownershipStart >= 0);
+        var copiedBlock = original[ownershipStart..];
+        File.WriteAllText(StatusPath,
+            original.Replace("Initial task result.", "Edited task result.", StringComparison.Ordinal)
+            + "\nCopied entire writer block:\n" + copiedBlock);
+
+        AcceptanceIntegrationStatusDocument.WriteFailure(_folder, "conflict", "second", "develop");
+        var updated = File.ReadAllText(StatusPath).ReplaceLineEndings("\n");
+        Assert.Contains("Edited task result.", updated);
+        Assert.Contains("Copied entire writer block:\n" + copiedBlock, updated);
+        Assert.Equal(1, Count(updated, "- Reason: first"));
+        Assert.Equal(1, Count(updated, "- Reason: second"));
+        Assert.Equal(2, Count(updated, Start));
+
+        AcceptanceIntegrationStatusDocument.Clear(_folder);
+        var cleared = File.ReadAllText(StatusPath).ReplaceLineEndings("\n");
+        Assert.True(cleared.Contains("Copied entire writer block:\n" + copiedBlock, StringComparison.Ordinal), cleared);
+        Assert.DoesNotContain("- Reason: second", cleared);
+        Assert.Equal(1, Count(cleared, Start));
     }
 
     private string StatusPath => Path.Combine(_folder, "status.md");

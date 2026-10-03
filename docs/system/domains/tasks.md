@@ -635,13 +635,15 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   no-branch cards are exempt through their mode, kind, `taskType=concept|decision`,
   or the explicit `noBranchExpected: true` card field.
   The acceptance integration writer appends its own marked section to
-  `status.md`. On retry or clear, it finds a whole-line marker pair containing
-  the writer's `## Acceptance integration` heading, field layout, and SHA-256
-  fingerprint of the exact text preceding the section. It can replace that
-  section even when task text was appended after it. A complete copy of the
-  section elsewhere in task text has a different prefix and remains untouched.
-  Marker pairs without a matching ownership fingerprint also remain task text
-  (AGT-2989).
+  `status.md`. On retry or clear, it finds a whole-line ownership marker
+  immediately before the section's marker pair, heading, and field layout.
+  The ownership marker does not depend on surrounding task text, so edits
+  before the section and task notes after it do not prevent replacement.
+  Quoted marker pairs and copied section bodies without the ownership marker
+  remain task text. Each retry advances the marker generation, so a copy of
+  an older complete writer block remains task text after replacement. When
+  task text appends an exact copy of the current block, the first occurrence
+  remains the writer's section (AGT-2989).
 - `HistoricalIntegrationVerificationSweep` runs once off the startup request
   path before the accepted integration inventory. The V2 pass reads every task
   folder directly, groups Git reads by repository, and processes card writes in
