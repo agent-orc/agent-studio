@@ -68,6 +68,45 @@ public sealed class HostOrchestratorClientTests
             handler.Paths);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Claimed_continuation_round_is_delivered_as_follow_up_and_keeps_explicit_route(
+        bool explicitSelection)
+    {
+        var now = DateTime.UtcNow;
+        var task = new TaskDto(
+            "task-c", "project-1", "TS-C", "Task", "3-progress", 4, now, now, "prompt");
+        var run = new RunDto("run-c", task.TaskId, "running", "runner-1", 3, now, now, null);
+        var lease = new LeaseDto(
+            "lease-c", run.RunId, task.TaskId, "runner-1", CurrentInstance, 3,
+            now, now.AddMinutes(2), "active");
+        var intent = new ContinuationIntentProjection(
+            new ContinuationIntentReceipt("continue-1", task.ProjectId, task.TaskId, 2, 3, 1, 1, 1,
+                "operator", "follow-up", now, "policy-1", explicitSelection),
+            "claimed", "Next instruction", "gpt-5.6-sol", "codex", "xhigh", "continue",
+            run.RunId, run.Fence, null);
+        var followUp = new FollowUpDeliveryDto("Next instruction", "continue",
+            FollowUpPromptDigest.Compute("Next instruction"), now, "follow-up", "operator", run.RunId);
+        var handler = new ContractHandler((request, _) =>
+            request.RequestUri!.AbsolutePath == "/api/v1/runners/runner-1/claims"
+                ? Json(new ClaimResponse("claimed", run, task, lease,
+                    FollowUp: followUp, ContinuationIntent: intent))
+                : new HttpResponseMessage(HttpStatusCode.NotFound));
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://task-server") };
+        using var client = Client(http);
+
+        var claim = await client.ClaimAsync(
+            new RunnerClaimRequest("runner-1", "Runner", "host-1", 1, "test"), default);
+
+        Assert.Equal(followUp, claim.RunSpec?.FollowUp);
+        // Only an explicit operator selection pins the route; a snapshot of the
+        // task's settings leaves the normal route resolution and session intact.
+        Assert.Equal(explicitSelection ? "gpt-5.6-sol" : null, claim.RunSpec?.Model);
+        Assert.Equal(explicitSelection ? "xhigh" : null, claim.RunSpec?.ThinkingLevel);
+        Assert.Equal(explicitSelection ? "codex" : null, claim.RunSpec?.CliType);
+    }
+
     [Fact]
     public async Task Result_post_step_retries_summary_only_then_reports_generated_artifact()
     {
