@@ -26,6 +26,7 @@ interface CoreEntry {
 }
 
 interface CoreFlight {
+  project: string;
   id: string;
   /**
    * Board `taskKey` of the requested task. A store event evicts a flight only
@@ -280,6 +281,11 @@ export class TaskDetailPrefetchService {
     for (const [key, entry] of [...this.cores]) {
       if (!allowed(entry.core.projectId, entry.core.projectName)) this.evictCore(key);
     }
+    for (const [key, flight] of this.coreFlights) {
+      if (!allowed(flight.project, this.cores.get(key)?.core.projectName ?? flight.project)) {
+        this.evictCore(key);
+      }
+    }
   }
 
   /** Diagnostics and tests: entry count and estimated bytes held. */
@@ -291,6 +297,7 @@ export class TaskDetailPrefetchService {
     key: string, project: string, id: string, taskKey: string, lookahead: boolean,
   ): CoreFlight {
     const flight: CoreFlight = {
+      project,
       id,
       taskKey,
       subject: new ReplaySubject<TaskCoreResult>(1),
@@ -376,6 +383,9 @@ export class TaskDetailPrefetchService {
       for (const [otherKey, entry] of [...this.cores]) {
         if (otherKey === key || otherKey.startsWith(taskCoreKey(project, ''))
           || entry.core.projectId === project) this.evictCore(otherKey);
+      }
+      for (const [otherKey, otherFlight] of this.coreFlights) {
+        if (otherFlight.project === project) this.evictCore(otherKey);
       }
       this.evictCore(key);
       return { state: 'denied', core: null };

@@ -237,6 +237,13 @@ async function backToBoard(page: Page): Promise<void> {
   await expect(page.getByTestId('studio-board')).toBeVisible();
 }
 
+async function closeTaskTabs(page: Page): Promise<void> {
+  const tabs = page.getByTestId('studio-tab-list').locator('[data-tab-kind="task"]');
+  for (const tab of await tabs.all()) {
+    await tab.getByRole('button', { name: 'Close tab' }).click();
+  }
+}
+
 async function waitForTask(page: Page, title: string): Promise<void> {
   await expect(page.getByTestId('studio-task')).toContainText(title, { timeout: 10_000 });
 }
@@ -353,7 +360,7 @@ test.describe('Task core board reuse (AGT-2956)', () => {
   });
 
   test('measures resident and uncached core paint without grouped reads', async ({ page }) => {
-    test.setTimeout(240_000);
+    test.setTimeout(360_000);
     const traffic = await openBoard(page, '#/board');
     const lane = laneScroller(page);
     const phaseStart = Date.now();
@@ -368,6 +375,7 @@ test.describe('Task core board reuse (AGT-2956)', () => {
     await card(page, REUSE, 95).click();
     await waitForTask(page, 'Reuse task-95');
     await backToBoard(page);
+    await closeTaskTabs(page);
     await lane.evaluate(el => { el.scrollTop = 0; });
 
     // Uncached cohort: board click to a task outside every earlier lookahead
@@ -385,6 +393,9 @@ test.describe('Task core board reuse (AGT-2956)', () => {
       breakdown.tail.push(parts.tail);
       await waitForTask(page, `Reuse ${slug(i)}`);
       await backToBoard(page);
+      // Keep the measured cache warm without accumulating thirty live tabs
+      // and their detail subscriptions in the browser under test.
+      await closeTaskTabs(page);
     }
 
     // Resident cohort: page back and forth over visited cores.

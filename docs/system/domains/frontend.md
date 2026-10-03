@@ -230,7 +230,8 @@ task core cache for `GET /api/tasks/{id}/core` (see
   without discarding them.
 - **Eviction for correctness.** A delete (push or own reply), a `404` and a
   project leaving the visible registry evict immediately, including a reply
-  still in flight. A `403` evicts every core of that project. Store events
+  still in flight. A `403` evicts every cached and in-flight core of that
+  project, so a late response cannot restore access-revoked content. Store events
   name the task by board `taskKey`, and every in-flight read carries its
   `taskKey`, so a delete never evicts the same slug in another project. A
   delete reply that names only an id held by two projects revalidates both
