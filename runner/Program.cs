@@ -40,22 +40,26 @@ void Log(string message) => Console.Error.WriteLine($"[{DateTime.UtcNow:HH:mm:ss
 // identity instead of a task id - so the OAuth refresh still writes through
 // but no project transcript or history ever lands in it.
 var authProbeContexts = new Dictionary<string, TaskCleanContextLease>(StringComparer.OrdinalIgnoreCase);
+using var client = new TaskServerClient(options);
 
 TaskCleanContextLease? AuthProbeContext(string provider)
 {
     if (provider is not ("claude" or "codex")) return null;
-    if (authProbeContexts.TryGetValue(provider, out var existing)) return existing;
-    try
+    lock (authProbeContexts)
     {
-        var lease = TaskCleanContextStore.Acquire(provider, ProviderAuthProbe.CleanContextIdentity);
-        authProbeContexts[provider] = lease;
-        return lease;
-    }
-    catch (Exception ex)
-    {
-        Log($"provider-auth-probe clean-context isolation unavailable for '{provider}': {ex.Message}; "
-            + "probe will run without isolation from agent sessions.");
-        return null;
+        if (authProbeContexts.TryGetValue(provider, out var existing)) return existing;
+        try
+        {
+            var lease = TaskCleanContextStore.Acquire(provider, ProviderAuthProbe.CleanContextIdentity);
+            authProbeContexts[provider] = lease;
+            return lease;
+        }
+        catch (Exception ex)
+        {
+            Log($"provider-auth-probe clean-context isolation unavailable for '{provider}': {ex.Message}; "
+                + "probe will run without isolation from agent sessions.");
+            return null;
+        }
     }
 }
 
@@ -72,6 +76,55 @@ ProviderAuthProbe.Shared.UseLauncher(
             ct: ct);
     },
     Log);
+
+// A real request uses the same configured CLI resolution as coding work. It
+// runs in the probe's protected empty context with no repository prompt.
+using var providerStatusHttp = new HttpClient();
+ProviderAuthProbe.Shared.UseRealRequest(
+    async (fileName, _, ct) =>
+    {
+        var provider = RunnerCapabilityProbe.Provider(fileName);
+        var context = AuthProbeContext(provider);
+        if (context is null)
+            return new ProcessResult(1, "", "probe isolation unavailable");
+        var invocation = AgentCliProcess.Resolve(options, new RunSpecDto(CliType: provider));
+        if (!string.Equals(invocation.FileName, fileName, StringComparison.Ordinal))
+            return new ProcessResult(1, "", "configured CLI mismatch");
+        FileStream hostFlight;
+        try
+        {
+            hostFlight = new FileStream(
+                Path.Combine(context.HomePath, ".provider-real-probe.lock"),
+                FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        }
+        catch (IOException)
+        {
+            return new ProcessResult(1, "", "another host-local provider probe is in progress");
+        }
+        await using (hostFlight)
+        {
+            var argsForProbe = invocation.Arguments.ToList();
+            if (provider == "codex")
+            {
+                // The canary needs only the result code. Older configured JSON
+                // stream flags vary by CLI version and add no access evidence.
+                argsForProbe.RemoveAll(arg => arg is "--experimental-json" or "--json");
+                argsForProbe.InsertRange(1, ["--sandbox", "read-only", "--skip-git-repo-check"]);
+            }
+            else if (provider == "claude")
+                argsForProbe.AddRange(["--tools", ""]);
+            var lowPriority = ProviderAuthProbe.LowPriorityInvocation(fileName, argsForProbe);
+            return await ProcessRunner.RunAsync(
+                lowPriority.FileName, lowPriority.Arguments,
+                workingDirectory: context.HomePath,
+                stdin: "Reply with OK. Do not use tools or access files.",
+                environment: context.Environment.ToDictionary(kv => kv.Key, kv => (string?)kv.Value),
+                ct: ct);
+        }
+    },
+    ProviderStatusIncidentAdapter.Official(providerStatusHttp),
+    client.ReadProviderComparisonAsync,
+    options.Hostname);
 
 if (help)
 {
@@ -132,7 +185,6 @@ if (options.RestartGuardOnly || options.DrainOnly)
         : await ReviewDrainCommand.RunDrainAsync(options, Log, shutdown.Token);
 }
 
-using var client = new TaskServerClient(options);
 
 // Readiness probe (--health-check): confirm the Task Server is reachable over the
 // tunnel and exit, without touching a task. This is the check the reverse-tunnel
