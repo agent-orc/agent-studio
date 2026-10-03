@@ -599,6 +599,11 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 | `RUNNER_IDLE_WATCHDOG_MINUTES` | `--idle-watchdog-minutes` | `5` | A daemon with no active slots exits after this long without starting a claim poll. The fatal journal line is followed by a service-manager restart. |
 | `RUNNER_CLAIM_MAX_LOAD_PER_CORE` | `--claim-max-load-per-core` | `1.5` | Load-per-core ceiling for new work. Coding uses the sustained gate below; Review checks it immediately before each single-slot claim. |
 | `RUNNER_LOAD_GATE_SUSTAINED_SECONDS` | none | `120` | Continuous high-load duration before Coding claim admission closes. Review admission does not use this delay. |
+| `RUNNER_SALVAGE_DIR` | `--salvage-dir` | `~/salvage` | Host salvage store owned by the coding daemon's retention sweep. See [Salvage store retention](#salvage-store-retention). |
+| `RUNNER_SALVAGE_RETENTION` | `--salvage-retention` | `apply` | `apply` deletes what the policy selects, `report` only logs `would-delete` lines, `off` only measures the store for the host report. |
+| `RUNNER_SALVAGE_RETENTION_DAYS` | none | `14` | Days a salvage entry survives after its card became completed or archived. |
+| `RUNNER_SALVAGE_MAX_PER_CARD` | none | `3` | Newest tarballs kept per card regardless of card state; for refs, applies only to eligible refs. |
+| `RUNNER_SALVAGE_SWEEP_HOURS` | none | `6` | Hours between retention sweeps. The first sweep runs five minutes after the daemon starts. |
 
 ### Sanctioned role configuration changes
 
@@ -1036,6 +1041,82 @@ journal lines to look for, and the reset commands are in
 Keep `PrivateTmp=false` on the runner units. Detached workers outlive a daemon
 restart and a namespace-scoped `/tmp` is unmounted underneath them on every
 restart (AGT-2750); the hygiene above is what bounds the shared root instead.
+
+### Salvage store retention
+
+The coding daemon owns the host salvage store and sweeps it on its own timer
+(AGT-2999). There is no host cron for it. The store has two parts:
+
+- **Tarballs** in `RUNNER_SALVAGE_DIR` (default `~/salvage`), named
+  `[<project>-]<card>[-<suffix>]-<HHMM>.tgz` or
+  `<card>-<yyyyMMdd>-<HHmmss>.tgz`. They were written by the retired host
+  snapshot script `~/salvage/snap.sh`. Do not reinstall that script: durable
+  salvage is the Git ref below. Other files and directories in the store
+  (`snap.sh`, `snap.log`, `*.bundle`, `runner-state-quarantine/`) are measured
+  but never deleted.
+- **Salvage refs** `agent-studio/salvage/<runner-id>/<card>/<attempt>/fence-<n>/<sha>`
+  on each project origin. The sweep lists only this runner's namespace, so
+  another runner's refs are never touched.
+
+Policy, decided per entry by `SalvageRetentionPolicy`:
+
+| Entry | Kept | Deleted |
+|---|---|---|
+| Any entry of a card with an active run on this host | Always | Never |
+| Name without a recognizable card key | Always | Never |
+| Tarball | While the card is open, missing, or its state is unknown, and for `RUNNER_SALVAGE_RETENTION_DAYS` after the card became completed or archived | After that window, or when it is older than the card's newest `RUNNER_SALVAGE_MAX_PER_CARD` tarballs |
+| Salvage ref | While the card is not completed or archived, or its commit is not contained in the integration branch, or containment is unknown | When the card is completed or archived **and** the commit is on the integration branch, after the window or beyond the newest `RUNNER_SALVAGE_MAX_PER_CARD` integrated refs of the card. Refs not on the integration branch do not consume these slots. |
+
+Card state comes from the Task Server (`GET /api/v1/projects/{project}/tasks/{card}`
+with the runner's `tasks:read` scope). The project is taken from the tarball
+prefix or the clone directory, else from the project whose task key prefix
+matches. The completion time is the later of the card's last update and its
+archive time, so a late edit only extends retention. A Task Server that cannot
+answer leaves the card state unknown; only the per-card limit applies then. The
+integration branch is the branch the project's stable checkout
+(`$RUNNER_WORKDIR/<project>/repo`) was last prepared on. The sweep fetches that
+clone under the same Git metadata lock as task preparation. A ref is deleted
+with a lease-guarded push (`--force-with-lease=<ref>:<sha>`), so a ref that
+moved since it was read is rejected rather than deleted. The Git credential on
+the host therefore needs delete permission on
+`refs/heads/agent-studio/salvage/<runner-id>/**`; without it, deletion fails
+visibly and the ref is kept.
+
+The active-run set (running workers and persisted attempts awaiting
+finalization) is read before the decision and again immediately before
+deleting. A run that starts during a sweep still protects its card.
+
+Each sweep writes one journal line per deletion and one summary:
+
+```text
+salvage-retention deleted kind=tarball entry=PROJ-002-AGT-2177-1430.tgz card=AGT-2177 bytes=40033694 reason=retention-elapsed
+salvage-retention deleted kind=ref ref=agent-studio/salvage/agent-runner-01/AGT-2869/attempt-1/fence-2/8c3c943... card=AGT-2869 sha=8c3c943... integration=main reason=over-per-card-limit
+salvage-retention sweep mode=apply status=completed tarballs=2050 tarballsEligible=... tarballsDeleted=... bytesDeleted=... refs=... refsDeleted=... protectedByActiveRun=... failures=0 kept=[active-run:..,card-open:..,within-retention:..]
+```
+
+```bash
+journalctl -u agent-runner --since '-1 day' | grep salvage-retention
+```
+
+The host report shows the store without a shell on the host.
+`GET /api/v1/management/remote-hosts` carries `telemetry.salvageStore` for each
+coding host: `path`, `sizeBytes`, `entryCount`, `tarballCount`,
+`unrecognizedCount`, `oldestEntry`, `oldestEntryAt`, the effective `mode`,
+`retentionDays`, `maxPerCard`, and `lastSweep` (start and end, status, eligible
+and deleted tarball and ref counts, deleted bytes, `protectedByActiveRun`,
+`failures`). The store is measured every 15 minutes. The last sweep is persisted
+in `$RUNNER_STATE_DIR/salvage-retention.json`, so it survives a daemon restart.
+
+```bash
+curl -sS https://tasks.example.com/api/v1/management/remote-hosts \
+  | jq '.[] | {hostId, salvage: .telemetry.salvageStore}'
+```
+
+Rollout on a host with a large backlog: set `RUNNER_SALVAGE_RETENTION=report`,
+restart the coding daemon, and review the `would-delete` lines and
+`lastSweep.tarballBytesEligible` after the first sweep. Then remove the setting
+to return to `apply`. Moving old tarballs into Git refs is out of scope; copy a
+tarball out of the store before a sweep if it must be kept.
 
 ### Baseline verify result cache
 
