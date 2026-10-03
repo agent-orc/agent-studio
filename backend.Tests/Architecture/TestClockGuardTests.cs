@@ -215,7 +215,7 @@ public sealed partial class TestClockGuardTests
     [GeneratedRegex(@"\b20\d\d-[01]\d-[0-3]\d|\bnew\s+(?:System\.)?Date(?:Time(?:Offset)?|Only)\s*\(\s*20\d\d\s*,")]
     private static partial Regex FixedDate();
 
-    [GeneratedRegex(@"\bFakeTimeProvider\b|\bTimeProvider\b(?!\s*\.\s*System\b)|\b(?:utcNow|nowUtc|now|clock|asOf)\s*:|\bFunc<\s*DateTime(?:Offset)?\s*>")]
+    [GeneratedRegex(@"\b(?:\w+TimeProvider|TimeProvider)\b(?!\s*\.\s*System\b)|\b(?:utcNow|nowUtc|now|clock|asOf)\s*:|\bFunc<\s*DateTime(?:Offset)?\s*>")]
     private static partial Regex ClockControl();
 
     [GeneratedRegex(@"//\s*clock-independent:\s*\S")]

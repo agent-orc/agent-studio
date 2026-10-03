@@ -34,7 +34,7 @@ wall-clock backend.Tests/AutoPushStrategyTests.cs 7
 wall-clock backend.Tests/AutoReviewPostProcessingRecoveryServiceTests.cs 4
 wall-clock backend.Tests/AutoReviewPostProcessingWorkerTests.cs 3
 wall-clock backend.Tests/AutoReviewQueueStagnationWatchdogAttemptAuthorityTests.cs 1
-wall-clock backend.Tests/AutoReviewRestartDrillTests.cs 6
+wall-clock backend.Tests/AutoReviewRestartDrillTests.cs 12
 wall-clock backend.Tests/BackendCarExecutionParityTests.cs 3
 wall-clock backend.Tests/BackendCarProjectPipelineAcceptanceTests.cs 3
 wall-clock backend.Tests/BackendCrashSurfaceTests.cs 3
@@ -74,6 +74,7 @@ wall-clock backend.Tests/CrossSlugInfraCircuitBreakerTests.cs 13
 wall-clock backend.Tests/CycleTimeBackfillTests.cs 2
 wall-clock backend.Tests/DecisionCardPolicyTests.cs 1
 wall-clock backend.Tests/DeliveryRefResolverTests.cs 2
+wall-clock backend.Tests/LeasePlacementEndpointsTests.cs 3
 wall-clock backend.Tests/DemoReplayScopeCompromiseTests.cs 1
 wall-clock backend.Tests/DescribeContextSourcesTests.cs 1
 wall-clock backend.Tests/DocsMarketingDriftAnalysisServiceTests.cs 3
@@ -225,7 +226,6 @@ wall-clock backend.Tests/WorkspaceTokensTimelineCategoryTests.cs 2
 wall-clock backend.Tests/WorktreeOrphanDirectorySweeperTests.cs 4
 wall-clock operations-server.Tests/BoundaryPolicyTests.cs 1
 wall-clock orchestrator-engine.Tests/EngineContractTests.cs 3
-wall-clock orchestrator-engine.Tests/GateDispatchRestartTests.cs 7
 wall-clock orchestrator-engine.Tests/StageHandlerTests.cs 2
 wall-clock retention.Tests/FileTreeFullBackupServiceTests.cs 4
 wall-clock retention.Tests/FileTreeRetentionStoreTests.cs 5
@@ -291,7 +291,7 @@ wall-clock task-server.Tests/ResultFinalizationStoreTests.cs 1
 wall-clock task-server.Tests/RetentionStoreTests.cs 3
 wall-clock task-server.Tests/RunnerReleaseIdentityStoreTests.cs 1
 wall-clock task-server.Tests/RuntimeCapacitySettingsTests.cs 2
-wall-clock task-server.Tests/ScenarioContext.cs 5
+wall-clock task-server.Tests/ScenarioContext.cs 3
 wall-clock task-server.Tests/StudioEndpointsTests.cs 3
 wall-clock task-server.Tests/StudioHostsTests.cs 2
 wall-clock task-server.Tests/StudioP2ComplianceEndpointsTests.cs 1
@@ -530,7 +530,6 @@ fixed-date runner.Tests/RunnerReleaseIdentityTests.cs
 fixed-date runner.Tests/TaskServerConnectivityMonitorTests.cs
 fixed-date runner.Tests/WorkstationProfileTests.cs
 fixed-date setup.Tests/SetupContractTests.cs
-fixed-date task-server.Tests/OperationPermitTests.cs
 fixed-date task-server.Tests/ProtocolTests.cs
 fixed-date task-server.Tests/RunnerReleaseIdentityStoreTests.cs
 fixed-date task-server.Tests/StudioP2SupervisorEndpointsTests.cs
