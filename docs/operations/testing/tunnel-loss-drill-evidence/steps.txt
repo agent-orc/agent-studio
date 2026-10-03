@@ -1,0 +1,3 @@
+runner pass Passed!  - Failed:     0, Passed:     6, Skipped:     0, Total:     6, Duration: 1 s - AgentRunner.Tests.dll (net10.0)
+task-server pass Passed!  - Failed:     0, Passed:     4, Skipped:     0, Total:     4, Duration: 4 s - TaskServer.Tests.dll (net10.0)
+integration-resume pass Passed!  - Failed:     0, Passed:    26, Skipped:     0, Total:    26, Duration: 8 s - OrchestratorApi.Tests.dll (net10.0)
