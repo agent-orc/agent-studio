@@ -231,6 +231,13 @@ public sealed class GateDispatchLoop : IOrchestrationStageHandler
                     capabilities.Add(CapabilityProtocol.Node);
                 if (commandText.Contains("playwright", StringComparison.Ordinal))
                     capabilities.Add(CapabilityProtocol.Playwright);
+                // AGT-2981: a Compose-render step routes to a gate host that
+                // can run `docker compose config`; the scripts also need node.
+                if (ComposeRenderGatePolicy.IsRenderInvocation(commandText))
+                {
+                    capabilities.Add(CapabilityProtocol.ComposeRender);
+                    capabilities.Add(CapabilityProtocol.Node);
+                }
                 var plan = new GatePlan("post-build-test-gate", 1, commands, "", 21600,
                     capabilities.Order(StringComparer.Ordinal).ToArray(),
                     32768, "always");

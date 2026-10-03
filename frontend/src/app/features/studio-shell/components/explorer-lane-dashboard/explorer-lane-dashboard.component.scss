@@ -32,6 +32,12 @@
     --studio-board-nav-lane-bg: var(--studio-board-nav-lane-human-review-bg);
     --studio-board-nav-lane-border: var(--studio-board-nav-lane-human-review-border);
   }
+  // AGT-2795: open decisions share the decision badge's warn register.
+  &--decisions {
+    --studio-board-nav-lane-fg: var(--studio-accent-warn-strong);
+    --studio-board-nav-lane-bg: color-mix(in srgb, var(--studio-accent-warn) 16%, var(--studio-bg-elevated));
+    --studio-board-nav-lane-border: color-mix(in srgb, var(--studio-accent-warn) 52%, transparent);
+  }
 }
 
 .studio-board-lane-dots {
@@ -52,6 +58,7 @@
   &--ready { color: var(--studio-board-nav-lane-ready-fg); }
   &--progress { color: var(--studio-board-nav-lane-progress-fg); }
   &--human-review { color: var(--studio-board-nav-lane-human-review-fg); }
+  &--decisions { color: var(--studio-accent-warn-strong); }
 }
 
 .studio-board-lane-dots__overflow {

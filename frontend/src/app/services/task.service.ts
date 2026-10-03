@@ -42,6 +42,7 @@ import type {
   PublishWorkflowRun,
   ReviewProjectionView,
   TaskDeliveryClaimAnswer,
+  DecisionActionResponse,
 } from '../models/task.model';
 import { TaskState } from '../models/task.model';
 import type { ClaudeSessionResponse } from '../features/claude';
@@ -1162,6 +1163,28 @@ export class TaskService {
         reason: edit.reason,
         requireCycleEdge: edit.requireCycleEdge ?? false,
       },
+      this.withWatchPath(watchPath),
+    );
+  }
+
+  /**
+   * AGT-2795: record the decider's choice on a decision card. The backend
+   * checks the named decider, writes the wiki record, and moves the card to
+   * the completed lane, which unblocks its dependants. Rationale is optional.
+   */
+  decideCard(jobId: string, optionId: string, rationale: string, watchPath?: string) {
+    return this.http.post<DecisionActionResponse>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/decision`,
+      { optionId, rationale },
+      this.withWatchPath(watchPath),
+    );
+  }
+
+  /** AGT-2795: reopen a decided card with a required note; re-blocks its dependants. */
+  reopenDecision(jobId: string, note: string, watchPath?: string) {
+    return this.http.post<DecisionActionResponse>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/decision/reopen`,
+      { note },
       this.withWatchPath(watchPath),
     );
   }

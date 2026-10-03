@@ -1,15 +1,46 @@
-@if (lifecycle(); as lifecycleSet) {
+@if (visible()) {
   <article class="wbinbox" data-testid="project-wiki-pulse-lifecycle">
     <header class="wbinbox__head">
       <span class="wbinbox__icon" aria-hidden="true"><app-studio-icon name="eye" [size]="13" /></span>
       <div class="wbinbox__title">
         <h4>Concept lifecycle</h4>
-        <span>Designs, concepts, explorations, and Dossiers</span>
+        <span>Decision cards, designs, concepts, explorations, and Dossiers</span>
       </div>
-      <strong>{{ lifecycleSet.count }}</strong>
+      <strong>{{ total() }}</strong>
     </header>
-    @if (lifecycleSet.available && groups().length > 0) {
+    @if (decisionCards().length > 0 || (lifecycle()?.available && groups().length > 0)) {
       <div class="wbinbox__groups">
+        @if (decisionCards().length > 0) {
+          <section class="wbinbox__group" data-state="decision-cards"
+                   data-testid="project-wiki-lifecycle-group-decision-cards">
+            <div class="wbinbox__group-head">
+              <span class="wbinbox__state-dot" data-tone="review" aria-hidden="true"></span>
+              <h5>Decisions waiting</h5>
+              <span>{{ decisionCards().length }}</span>
+            </div>
+            <ul>
+              @for (item of decisionCards(); track item.taskKey) {
+                <li><button type="button" data-tone="review"
+                    [attr.data-overdue]="item.overdue"
+                    [attr.data-testid]="'project-wiki-decision-card-' + item.key"
+                    (click)="openDecisionCard.emit(item)">
+                  <span class="wbinbox__meta">
+                    <span class="wbinbox__kind">Decision</span>
+                    <span class="wbinbox__decision-meta">{{ decisionMeta(item) }}</span>
+                  </span>
+                  <b>{{ item.question || item.title }}</b>
+                  <small>{{ item.title }}</small>
+                </button>
+                <app-copyable-task-key
+                  [key]="item.key"
+                  variant="reference"
+                  ariaLabel="Copy decision card key"
+                  [testId]="'project-wiki-decision-card-key-' + item.key" />
+                </li>
+              }
+            </ul>
+          </section>
+        }
         @for (group of groups(); track group.state) {
           <section class="wbinbox__group" [attr.data-state]="group.state"
                    [attr.data-testid]="'project-wiki-lifecycle-group-' + group.state">
@@ -46,7 +77,7 @@
         }
       </div>
     } @else {
-      <p><app-studio-icon name="check" [size]="16" />{{ lifecycleSet.reason || 'No lifecycle-aware pages yet.' }}</p>
+      <p><app-studio-icon name="check" [size]="16" />{{ lifecycle()?.reason || 'No lifecycle-aware pages yet.' }}</p>
     }
   </article>
 }

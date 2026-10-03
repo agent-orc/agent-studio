@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using AgentStudio.TaskServer.Contracts;
+using AgentTaskboard.UpdateService.Installation;
 
 namespace AgentTaskboard.UpdateService;
 
@@ -92,8 +93,25 @@ public sealed class UpdateOrchestrator
         _loggerFactory = loggerFactory;
     }
 
+    /// <summary>
+    /// AGT-2947 (Dossier AGT-W63 D6): this loopback service owns dev/stable
+    /// checkouts only. Installed Compose, systemd and runner-host placements
+    /// have their own updater, so the service refuses them until an explicit
+    /// adapter exists.
+    /// </summary>
+    private string? PlacementRefusal()
+    {
+        if (InstallationUpgradePolicy.MayApply(InstallationUpdater.CheckoutUpdateService, _options.Placement))
+            return null;
+        var owner = InstallationUpgradePolicy.SelectUpdater(_options.Placement);
+        _logger.LogWarning("Update refused: placement {Placement} is owned by {Owner}", _options.Placement, owner);
+        return $"placement {_options.Placement} is owned by {owner}; the checkout update service does not apply it";
+    }
+
     public (string RunId, string Phase, string Message) StartTrigger(string trigger, bool force, CancellationToken ct)
     {
+        if (PlacementRefusal() is { } refusal)
+            return ("(none)", _store.Get().Phase, refusal);
         var (_, behindBy) = RefreshGitStatus();
         // Release-mode updates are driven by an approved immutable tag, not by
         // whether this checkout happens to be behind the moving main branch.
@@ -156,6 +174,8 @@ public sealed class UpdateOrchestrator
     /// </summary>
     public (string RunId, string Phase, string Message) StartManualRollback(string runId, CancellationToken ct)
     {
+        if (PlacementRefusal() is { } refusal)
+            return (runId, _store.Get().Phase, refusal);
         if (!_gate.Wait(0, CancellationToken.None))
             return (runId, _store.Get().Phase, "already running");
 

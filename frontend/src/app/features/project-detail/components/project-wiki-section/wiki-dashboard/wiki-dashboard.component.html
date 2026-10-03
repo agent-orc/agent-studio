@@ -65,9 +65,11 @@
     }
     <app-wiki-pulse
         [pulse]="pulse()"
+        [decisionCards]="decisionCards()"
         [loading]="loading()"
         (openPage)="openPage.emit($event)"
-        (openWorkbench)="openWorkbench.emit($event)" />
+        (openWorkbench)="openWorkbench.emit($event)"
+        (openDecisionCard)="openDecisionCard.emit($event)" />
     <app-wiki-home-links
         [projectName]="projectName()"
         (openLink)="openPage.emit($event)" />

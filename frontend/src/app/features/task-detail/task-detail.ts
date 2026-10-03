@@ -57,6 +57,9 @@ import { authoritativeDeliveryFacts, deriveProtocolVerdict } from './components/
 import { classifyLatestActivityOutcome } from './components/agent-outcome.util';
 import { EscalationSummaryComponent } from './components/escalation-summary/escalation-summary.component';
 import { ParkedBlockerComponent } from './components/parked-blocker/parked-blocker.component';
+import { DecisionCardPanelComponent } from './components/decision-card-panel/decision-card-panel.component';
+import { DecisionBlockedNoticeComponent } from './components/decision-blocked-notice/decision-blocked-notice.component';
+import { decisionBlockReason, decisionBlockers } from '../../models/decision-card-presentation';
 import { DetailHeaderComponent } from './components/detail-header/detail-header.component';
 import { TaskLiveStatusComponent } from '../../components/task-live-status/task-live-status.component';
 import { freshestRunInfo, isTaskRunActive } from '../../services/run-activity.util';
@@ -86,6 +89,8 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
     ProtocolPaneComponent,
     EscalationSummaryComponent,
     ParkedBlockerComponent,
+    DecisionCardPanelComponent,
+    DecisionBlockedNoticeComponent,
     DetailHeaderComponent,
     TaskLiveStatusComponent,
     PaneToggleBarComponent,
@@ -755,6 +760,8 @@ export class TaskDetailComponent implements OnDestroy {
   startDisabledReason = computed<string | null>(() => {
     const info = this.detail()?.info;
     if (!info) return null;
+    const blocked = decisionBlockReason(decisionBlockers(info));
+    if (blocked) return blocked;
     const status = this.jobService.runnerStatus();
     const project = status?.projects?.[info.projectName];
     if (!project) return null;

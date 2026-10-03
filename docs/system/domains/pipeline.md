@@ -60,6 +60,84 @@ These metrics measure local exact-subject gate requests; they do not estimate
 batch green rate or answer the staging-lane decision in the
 [Gates Dossier](../../operations/gates/index.html#sect5).
 
+## Compose-render gate step (AGT-2981)
+
+A card whose diff can change the Compose stack renders it in its own gate.
+Before this step existed, only the promotion train rendered the stack.
+AGT-2736 rewrote `docker-compose.yml`, passed its Windows card gate, and broke
+release/20260927-101333Z. The scenario overlay still named services and
+secrets that no longer existed.
+
+Trigger paths (`ComposeRenderGatePolicy.IsTrigger`, repository-relative):
+
+| Path | Matches |
+|---|---|
+| `docker-compose.yml` | The root base file |
+| `deploy/compose/**` | Everything under the directory |
+| Any Dockerfile | `Dockerfile`, `*.Dockerfile`, or `Dockerfile.*` in any directory |
+| `scripts/compose-*.sh` | Compose bootstrap, rotation, and smoke scripts |
+| `scripts/scenario*.sh` | The scenario runner and its tests |
+| `testsupport/scenario/**` | The scenario overlay, runner image, and fixtures |
+
+- **Commands.** For a triggering diff the gate appends
+  `bash scripts/scenario.test.sh` and then
+  `bash scripts/compose-smoke-version.test.sh`. Both run `docker compose config`
+  on the base file plus overlay, and both use `node`. Neither contacts the
+  Docker daemon.
+- **Fail closed on a missing script.** A repository declares the step when the
+  tested checkout or the Studio checkout carries either render script, or when
+  the diff touches one (`ComposeRenderGatePolicy.IsDeclared`). A declared
+  repository owes both commands, present or not. A delivery that deletes or
+  renames a render script therefore fails:
+  - the in-process gate returns a code failure starting with
+    `compose-render script missing from the delivery` before the host probe;
+  - the Remote Review step (`ComposeRenderGatePolicy.GuardedCommand`) exits 1
+    with the same text, not bash's 127, which the remote planes classify as
+    an unavailable toolchain.
+
+  A repository that neither carries nor touches the scripts has no render
+  step, so other managed projects with Dockerfiles are not gated on them.
+- **Unknown diff.** An unknown diff triggers nothing. The full daemon-backed
+  `scripts/scenario.sh --target compose --level full` stays an operator and
+  release-time check.
+- **Host requirement.** The step requires `compose-render`, capability key
+  `toolchain:compose-render`: a Docker CLI with the compose plugin, meaning
+  `docker compose version` exits 0. It also requires `toolchain:node`.
+- **Advertisement.** A runner advertises the key only when that probe
+  answers. A bare `docker` binary does not qualify. The probe is cached for
+  ten minutes.
+- **Routing.** Requirements are derived from the frozen command text, the same
+  way `toolchain:dotnet` is derived for `dotnet` commands and `Category!=MachineBound`
+  is kept in the Build Profile's test commands:
+  - The Remote Review plan freezes the render steps as `compose-render-N`
+    (`build-tests`, compared on exit status against the merge base).
+    `ReviewLibraryStepPolicy` adds the requirement to their library steps, so
+    Review Plane claim admission hands the attempt only to an executor that
+    advertises it. Today that is the Linux review lane on agent-runner-01.
+  - The Remote Gate plane (`GateDispatchLoop`) adds the key to
+    `GatePlan.RequiredCapabilities`.
+  - The plan's diff is the delivery's changed paths against its merge base
+    in the Studio checkout. If that diff cannot be computed, the plan omits
+    the step, and the pre-develop gate below still owes it.
+- **In-process gate: fail closed, never skip.** The auto-review gate for local
+  cards and the `pre-develop` merge gate run on the Studio seat. They plan the
+  same step from their own diff:
+  - `PreDevelopBuildGate.AppliesTo` now also applies to a Compose-only merge.
+    Previously such a merge was skipped, or ran at build-only.
+  - A host that cannot render fails before preparation. The verdict starts
+    with `gate host cannot render Compose; route the gate to a Linux host`.
+  - That failure is an environment failure (`GateEnvironmentFailure` on the
+    merge path) with `UnmetRequirements = [toolchain:compose-render]`. The card
+    is not charged, the local auto-review gate does not retry it on the same
+    host, and the escalation reason carries the verdict.
+- **Reused Remote Review verdict.** The review verification record
+  (`logs/review-verification.json`) stores the review plan's requirements as
+  `verifiedRequirements`. When the pre-develop gate reuses that verdict
+  (AGT-2839) and it covers `toolchain:compose-render`, the render already ran
+  on a Linux host for exactly this tree, so the step is not repeated. The
+  selection audit says so. Without such coverage, the Windows gate host
+  returns the routing verdict.
+
 ## Key Code
 
 The creation-time `auto-tag` step (AGT-2804) is separate from the card's coding
@@ -909,18 +987,14 @@ move-error dialog.
   failure is non-blocking at the pre-main full-suite boundary. If one physical
   command belongs to both the baseline and the diff-selected set, the stricter
   work-package classification wins.
-- A remote ReviewAttempt does not require an historically red integration
-  branch to become absolutely green. For each baseline-compared test command,
-  its verdict is based on `subject failures - merge-base failures`.
-  Intersecting failures remain visible as pre-existing, while the aspect summary
-  names every new failure. The Review Executor reads xUnit
-  `Category=ReviewFlaky` traits from the exact subject's built test assemblies.
-  A newly failing marked test is retried once; if it does not reproduce, the
-  report retains its identity as `FlakyQuarantine` and does not classify the
-  card as `ProductFailure`. A reproduced marked failure remains a blocking new
-  failure. A command with unparseable failing-test output stays fail-closed as a
-  new failure. This comparison does not weaken the absolute full-suite boundary
-  before advancing `main`.
+- A failed remote verification command triggers the mandatory diagnosis in
+  [Remote Review](review.md#mandatory-failure-diagnosis-agt-2916). The
+  integration baseline, clean same-host clone, and shared fingerprint history
+  decide whether it can block or charge the card. A red baseline is reported
+  as `environment` even if the candidate has a new failure name. A clean pass
+  with known or prior matching fingerprint is `intermittent`; without that
+  history it is `unclassified-first-occurrence`. Neither consumes a card
+  counter. The absolute full-suite boundary before advancing `main` remains.
 - Remote Review command execution survives a planned Review daemon restart.
   Recovered attempts retain their original fence and containment namespace and
   resume before load-aware admission evaluates any fresh slot. Completed

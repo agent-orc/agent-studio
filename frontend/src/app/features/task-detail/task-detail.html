@@ -60,6 +60,11 @@
        not moving, so it renders ABOVE the derived escalation headline. -->
   <app-parked-blocker [detail]="detail()" />
 
+  <!-- AGT-2795: a decision card opens on its question and options; a card
+       waiting on a pending decision says which one blocks it. -->
+  <app-decision-card-panel [job]="detail().info" (changed)="fileSaved.emit()" />
+  <app-decision-blocked-notice [job]="detail().info" />
+
   @if (isEscalated() || detail().info.needsInput) {
     <app-escalation-summary
       [detail]="detail()"
