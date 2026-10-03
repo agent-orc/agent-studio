@@ -228,7 +228,9 @@ public sealed class ReviewInfrastructureRetryScheduler : BackgroundService
             repositoryPath,
             taskSettings,
             integrationRef,
-            review.Subject.ExpectedResultSha);
+            review.Subject.ExpectedResultSha,
+            RemoteReviewPlanBuilder.DeliveryChangedFiles(
+                _git, repositoryPath, integrationRef, review.Subject.ExpectedResultSha));
 
         return _lifecycle.CreateReviewAttemptInAutoReview(task, new CreateReviewAttemptRequest(
             review.TaskKey,

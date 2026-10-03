@@ -325,7 +325,6 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   });
 
   readonly mergeSignal = computed(() => buildMergeSignal(this.job()));
-
   readonly integrationStatus = computed(() => currentIntegrationStatus(this.job()));
   readonly needsAttention = computed(() => cardNeedsAttention(this.job()));
   readonly outcomeIssueBadge = computed(() => buildOutcomeIssueBadge(this.job()));
@@ -335,9 +334,6 @@ export class TaskCardComponent implements OnInit, OnDestroy {
     this.job().state === TaskState.Progress ? this.job().autoLoop ?? null : null);
   readonly currentQuotaWait = computed(() =>
     this.job().state === TaskState.Progress ? this.job().quotaWait ?? null : null);
-  /** AGT-W57: a review card parked behind an open cause breaker. */
-  readonly currentCauseWait = computed(() =>
-    this.job().state === TaskState.AutoReview ? this.job().causeWait ?? null : null);
   /**
    * Card-level "code review running" flag. Reads the shared
    * {@link CodeReviewActivityStore} singleton the detail-pane panel marks

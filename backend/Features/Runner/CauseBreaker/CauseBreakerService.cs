@@ -19,7 +19,8 @@ public sealed record CauseBreakerObservation(
     IReadOnlyList<string> EvidencePointers);
 
 /// <summary>One card parked behind the cause card.</summary>
-public sealed record CauseBreakerWaitingCard(string TaskKey, DateTime Since);
+public sealed record CauseBreakerWaitingCard(
+    string TaskKey, DateTime Since, string? FolderPath = null, string? WatchPath = null);
 
 /// <summary>The fleet-wide breaker of one cause fingerprint.</summary>
 public sealed record CauseBreakerRecord
@@ -92,6 +93,7 @@ public sealed class CauseBreakerService
     private readonly ILogger<CauseBreakerService> _logger;
     private readonly TimeProvider _time;
     private List<CauseBreakerRecord>? _records;
+    private readonly HashSet<string> _checkedPendingReviewIds = new(StringComparer.OrdinalIgnoreCase);
 
     public CauseBreakerService(
         IConfiguration configuration,
@@ -161,11 +163,13 @@ public sealed class CauseBreakerService
             var variants = record.Variants.Contains(variant, StringComparer.Ordinal) || record.Variants.Count >= MaxVariants
                 ? record.Variants
                 : [.. record.Variants, variant];
-            var observations = record.Observations
-                .Append(new CauseBreakerObservation(taskKey, task.ProjectName, attemptId, now,
-                    evidence.EvidencePointers ?? []))
-                .TakeLast(MaxObservations)
-                .ToList();
+            var observations = record.Observations.Any(item => Same(item.AttemptId, attemptId))
+                ? record.Observations
+                : record.Observations
+                    .Append(new CauseBreakerObservation(taskKey, task.ProjectName, attemptId, now,
+                        evidence.EvidencePointers ?? []))
+                    .TakeLast(MaxObservations)
+                    .ToList();
             record = record with { Observations = observations, Variants = variants };
 
             var thresholds = CauseBreakerPolicy.From(_settings.Get(task.ProjectName));
@@ -179,8 +183,18 @@ public sealed class CauseBreakerService
             FailureInterventionResult? intervention = null;
             if (decision.Action == CauseBreakerAction.Open)
             {
+                _checkedPendingReviewIds.Clear();
                 var classification = Classification(fingerprint, decision);
-                intervention = _interventions.RaiseCause(task, evidence, classification);
+                var cutoff = now - thresholds.Window;
+                var causeEvidence = evidence with
+                {
+                    EvidencePointers = observations
+                        .Where(item => item.At >= cutoff)
+                        .SelectMany(item => item.EvidencePointers)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToArray(),
+                };
+                intervention = _interventions.RaiseCause(task, causeEvidence, classification);
                 record = record with
                 {
                     State = CauseBreakerStates.Open,
@@ -200,7 +214,6 @@ public sealed class CauseBreakerService
                 // Every card already counted in the window is affected by the
                 // same cause: attach it to the one cause card and stop its
                 // pending retry instead of letting it burn the next attempt.
-                var cutoff = now - thresholds.Window;
                 foreach (var otherKey in observations
                              .Where(item => item.At >= cutoff && !Same(item.TaskKey, taskKey))
                              .Select(item => item.TaskKey)
@@ -258,15 +271,23 @@ public sealed class CauseBreakerService
         {
             if (!Records().Any(item => item.IsOpen))
                 return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var held = HeldLocked();
             var pending = _authority.ListPendingReviewAttempts();
-            if (pending.Count > 0)
+            _checkedPendingReviewIds.IntersectWith(pending.Select(review => review.AttemptId));
+            var uncheckedReviews = pending.Where(review =>
+                !held.Contains(review.TaskKey) && !_checkedPendingReviewIds.Contains(review.AttemptId)).ToArray();
+            if (uncheckedReviews.Length > 0)
             {
-                var tasks = _scanner.ScanAllAutomationJobs();
-                foreach (var review in pending)
+                var tasks = _scanner.ScanAllAutomationJobs()
+                    .SelectMany(task => new[] { task.TaskKey, task.Key, task.Id }
+                        .Where(key => !string.IsNullOrWhiteSpace(key))
+                        .Select(key => (Key: key!, Task: task)))
+                    .GroupBy(item => item.Key, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(group => group.Key, group => group.First().Task, StringComparer.OrdinalIgnoreCase);
+                foreach (var review in uncheckedReviews)
                 {
-                    var task = tasks.FirstOrDefault(item =>
-                        Same(item.TaskKey, review.TaskKey) || Same(item.Key, review.TaskKey) || Same(item.Id, review.TaskKey));
-                    if (task is null) continue;
+                    if (!tasks.TryGetValue(review.TaskKey, out var task)) continue;
+                    _checkedPendingReviewIds.Add(review.AttemptId);
                     HoldLocked(task, review.TaskKey, review.Subject.Plan);
                 }
             }
@@ -374,7 +395,12 @@ public sealed class CauseBreakerService
             var closed = 0;
             foreach (var record in records.Where(item => item.IsOpen).ToArray())
             {
-                var cause = string.IsNullOrWhiteSpace(record.CauseTaskId)
+                // The mutation service returns a folder slug, while the card's
+                // stable key survives a lane move. Resolve by key first.
+                var cause = string.IsNullOrWhiteSpace(record.CauseKey)
+                    ? null
+                    : _scanner.FindJob(record.CauseKey!, record.CauseWatchPath);
+                cause ??= string.IsNullOrWhiteSpace(record.CauseTaskId)
                     ? null
                     : _scanner.FindJob(record.CauseTaskId!, record.CauseWatchPath);
                 var reason = CauseBreakerPolicy.Close(cause?.State, probeGreen: false);
@@ -430,20 +456,31 @@ public sealed class CauseBreakerService
         DateTime now)
     {
         var reason = $"waiting for {record.CauseKey}: {record.FailureClass} on {record.Toolchain}";
-        CauseWaitMarker.Write(task.FolderPath, new CauseWaitRecord
-        {
-            CauseKey = record.CauseKey ?? string.Empty,
-            Fingerprint = record.Fingerprint,
-            FailureClass = record.FailureClass,
-            Since = now,
-            Reason = reason,
-        }, _logger);
+        var marker = CauseWaitMarker.TryRead(task.FolderPath, _logger);
+        var alreadyWaiting = marker is { Probe: false }
+            && Same(marker.Fingerprint, record.Fingerprint)
+            && Same(marker.CauseKey, record.CauseKey);
+        if (!alreadyWaiting)
+            CauseWaitMarker.Write(task.FolderPath, new CauseWaitRecord
+            {
+                CauseKey = record.CauseKey ?? string.Empty,
+                Fingerprint = record.Fingerprint,
+                FailureClass = record.FailureClass,
+                Since = now,
+                Reason = reason,
+            }, _logger);
 
         // A pending bounded-backoff retry would spend another attempt on a
         // cause that is now owned by the cause card.
         var current = _authority.GetTaskProjection(taskKey).CurrentReviewAttempt;
         if (current is not null && _authority.HasScheduledReviewInfrastructureRetry(current.AttemptId))
             _authority.ClearScheduledReviewInfrastructureRetry(current.AttemptId);
+
+        if (alreadyWaiting)
+            return record.Waiting.Any(item => Same(item.TaskKey, taskKey))
+                ? record
+                : record with { Waiting = [.. record.Waiting,
+                    new CauseBreakerWaitingCard(taskKey, marker!.Since, task.FolderPath, task.WatchPath)] };
 
         _timeline.Append(task.FolderPath, TimelineEventKinds.CauseBreakerWaiting, TimelineActors.System,
             $"Waiting for {record.CauseKey}: the cause breaker for {record.FailureClass} is open ({decision.Reason})",
@@ -460,7 +497,8 @@ public sealed class CauseBreakerService
             });
 
         if (record.Waiting.Any(item => Same(item.TaskKey, taskKey))) return record;
-        return record with { Waiting = [.. record.Waiting, new CauseBreakerWaitingCard(taskKey, now)] };
+        return record with { Waiting = [.. record.Waiting,
+            new CauseBreakerWaitingCard(taskKey, now, task.FolderPath, task.WatchPath)] };
     }
 
     private CauseBreakerRecord CloseLocked(
@@ -469,19 +507,23 @@ public sealed class CauseBreakerService
         CauseBreakerCloseReason reason,
         string? exceptTaskKey)
     {
+        _checkedPendingReviewIds.Clear();
         var now = _time.GetUtcNow().UtcDateTime;
         var closeReason = reason == CauseBreakerCloseReason.CauseIntegrated ? "cause-integrated" : "probe-green";
         foreach (var waiting in record.Waiting)
         {
-            var task = V1ReviewPlaneEndpoints.FindTask(_scanner, waiting.TaskKey);
+            var task = V1ReviewPlaneEndpoints.FindTask(_scanner, waiting.TaskKey)
+                ?? _scanner.FindJob(waiting.TaskKey, waiting.WatchPath);
+            var folderPath = task?.FolderPath ?? waiting.FolderPath;
+            if (folderPath is null || !Directory.Exists(folderPath)) continue;
+            CauseWaitMarker.Clear(folderPath, _logger);
             if (task is null) continue;
-            CauseWaitMarker.Clear(task.FolderPath, _logger);
             // The probe card already has its green review; every other card
             // gets one fresh attempt planned from current settings.
             var released = !Same(waiting.TaskKey, exceptTaskKey)
                 && string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase)
                 && _release.Release(task, $"cause-breaker-release:{record.Fingerprint}:{record.Opens}");
-            _timeline.Append(task.FolderPath, TimelineEventKinds.CauseBreakerReleased, TimelineActors.System,
+            _timeline.Append(folderPath, TimelineEventKinds.CauseBreakerReleased, TimelineActors.System,
                 $"{record.CauseKey} resolved the cause ({closeReason}); "
                 + (released ? "a fresh review attempt was planned." : "no new review attempt was needed."),
                 details: new Dictionary<string, string>

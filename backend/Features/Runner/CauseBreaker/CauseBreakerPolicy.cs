@@ -45,9 +45,9 @@ public enum CauseBreakerCloseReason
 /// </summary>
 public static class CauseBreakerPolicy
 {
-    public const int DefaultAttemptThreshold = 3;
-    public const int DefaultCardThreshold = 2;
-    public const int DefaultWindowHours = 24;
+    public const int DefaultAttemptThreshold = AgentStudio.Shared.CauseBreakerSettingsDefaults.AttemptThreshold;
+    public const int DefaultCardThreshold = AgentStudio.Shared.CauseBreakerSettingsDefaults.CardThreshold;
+    public const int DefaultWindowHours = AgentStudio.Shared.CauseBreakerSettingsDefaults.WindowHours;
     public const int MaxThreshold = 100;
     public const int MaxWindowHours = 24 * 30;
 
