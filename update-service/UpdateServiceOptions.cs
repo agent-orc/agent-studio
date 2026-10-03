@@ -1,3 +1,5 @@
+using AgentTaskboard.UpdateService.Installation;
+
 namespace AgentTaskboard.UpdateService;
 
 /// <summary>
@@ -92,4 +94,12 @@ public sealed class UpdateServiceOptions
     public int DoneLingerSeconds { get; set; } = 60;
 
     public string? TriggerToken { get; set; } = null;
+
+    /// <summary>
+    /// AGT-2947: the placement this service manages. Only
+    /// <see cref="InstallationPlacement.DevStableCheckout"/> is applied; any
+    /// other placement belongs to its own updater (installed Compose uses
+    /// update-docker.sh) and triggers are refused.
+    /// </summary>
+    public InstallationPlacement Placement { get; set; } = InstallationPlacement.DevStableCheckout;
 }

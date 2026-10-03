@@ -1,4 +1,5 @@
 using System.Reflection;
+using AgentStudio.Pipeline;
 using TokenEconomy;
 
 namespace AgentStudio.Cli;
@@ -36,6 +37,7 @@ public sealed class ModelEquivalenceCatalog : IModelEquivalenceCatalog
 {
     private static readonly ModelRoutingKnowledgeBase Knowledge = ModelRoutingKnowledgeBase.Default;
     private static readonly ModelPriceCatalog Prices = ModelPriceCatalog.Default;
+    private static readonly ModelMigrationCatalogRegistry MigrationCatalog = new();
     public string Version { get; } = BuildVersion();
     public IReadOnlyList<ModelEquivalenceRoute> Routes { get; }
 
@@ -58,11 +60,37 @@ public sealed class ModelEquivalenceCatalog : IModelEquivalenceCatalog
             ? DefaultModelFor(fromCli)
             : Knowledge.FindModel(fromModel.Trim())?.CanonicalId ?? fromModel.Trim();
 
-        return Routes.FirstOrDefault(route =>
+        var route = FindRoute(fromCli, model, requestedThinking, toCli);
+        if (route is not null) return route;
+
+        // Proposal-only successors inherit their predecessor's comparable
+        // cross-provider tier. This is a lookup, not an automatic migration.
+        var predecessor = ComparablePredecessor(model);
+        route = predecessor is null ? null : FindRoute(fromCli, predecessor, requestedThinking, toCli);
+        if (route is null) return null;
+        var price = CurrentPrice(model);
+        return route with
+        {
+            FromModel = model,
+            FromInputPerMTok = price?.InputPerMTok,
+            FromOutputPerMTok = price?.OutputPerMTok,
+        };
+    }
+
+    private ModelEquivalenceRoute? FindRoute(
+        string fromCli, string model, string? requestedThinking, string toCli)
+        => Routes.FirstOrDefault(route =>
                 string.Equals(route.FromCliType, fromCli, StringComparison.OrdinalIgnoreCase)
                 && string.Equals(route.FromModel, model, StringComparison.OrdinalIgnoreCase)
                 && string.Equals(route.FromThinkingLevel, requestedThinking, StringComparison.OrdinalIgnoreCase)
                 && string.Equals(route.ToCliType, toCli, StringComparison.OrdinalIgnoreCase));
+
+    private static string? ComparablePredecessor(string model)
+    {
+        var canonical = ModelMetadataRegistry.NormalizeId(model);
+        return MigrationCatalog.Catalog.Migrations
+            .FirstOrDefault(migration => !migration.SafeAuto
+                && string.Equals(migration.To, canonical, StringComparison.OrdinalIgnoreCase))?.From;
     }
 
     private IReadOnlyList<ModelEquivalenceRoute> BuildRoutes()
@@ -129,8 +157,11 @@ public sealed class ModelEquivalenceCatalog : IModelEquivalenceCatalog
             source.CapabilityTier.ToString());
     }
 
+    // Proposal-only successors never enter the automatic route table; they
+    // are reached only through their predecessor (see ComparablePredecessor).
     private static bool IsUsableSource(ModelRoutingModel model)
         => ModelMetadataRegistry.Find(model.CanonicalId)?.Deprecated != true
+           && ComparablePredecessor(model.CanonicalId) is null
            && !string.Equals(model.RoutingStatus.ToString(), "Deprecated", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsSelectable(ModelRoutingModel model)

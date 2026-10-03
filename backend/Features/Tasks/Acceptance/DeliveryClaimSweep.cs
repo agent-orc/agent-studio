@@ -193,9 +193,24 @@ public sealed class DeliveryClaimSweep
         }
     }
 
-    public DeliveryClaimSweepReport Run(string? projectIdOrName, bool repair)
+    /// <summary>
+    /// Sweeps one project, or every project when <paramref name="projectIdOrName"/>
+    /// is null or blank. Returns null, and reads or repairs nothing, when a
+    /// named project cannot be resolved: an unknown scope must never widen to
+    /// every project.
+    /// </summary>
+    public DeliveryClaimSweepReport? Run(string? projectIdOrName, bool repair)
     {
         var watchPath = ResolveWatchPath(projectIdOrName);
+        if (!string.IsNullOrWhiteSpace(projectIdOrName) && watchPath is null)
+        {
+            _logger.LogWarning(
+                "delivery-claim-sweep-unknown-project project={Project} repair={Repair}",
+                projectIdOrName,
+                repair);
+            return null;
+        }
+
         var cards = _scanner.ScanAllAutomationJobsWithArchive()
             .Where(task => SweptLanes.Contains(task.State))
             .Where(task => watchPath is null
@@ -265,7 +280,7 @@ public sealed class DeliveryClaimSweep
                 commit.Sha,
                 contained.Contains(commit.Sha),
                 TaskCommitSupersession.State(commit),
-                commit.FilesChanged > 0 || commit.Files.Count > 0))
+                CarriesFiles(commit)))
             .ToList();
 
         return new DeliveryClaimCardFacts(
@@ -278,22 +293,35 @@ public sealed class DeliveryClaimSweep
             HasNamedDeliverable: NamedDeliverableReader.Exists(card));
     }
 
+    /// <summary>
+    /// A commit that changed at least one file. Zero-file lifecycle markers
+    /// are not deliveries, so their containment never proves or repairs one.
+    /// </summary>
+    internal static bool CarriesFiles(TaskCommitInfo commit)
+        => commit.FilesChanged > 0 || commit.Files.Count > 0;
+
     private IReadOnlyList<string> Repair(
         TaskInfo card,
         TaskIntegrationStatus? status,
         DeliveryClaimRepairPlan plan)
     {
         var applied = new List<string>();
+        var deliveries = (card.Commits ?? [])
+            .Where(CarriesFiles)
+            .Select(commit => commit.Sha)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var containedDeliveries = (status?.Repositories ?? [])
+            .SelectMany(repository => repository.Commits)
+            .Where(commit => commit.OnIntegrationBranch && deliveries.Contains(commit.Sha))
+            .Select(commit => commit.Sha)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
         if (plan.ClearPendingSupersession)
         {
-            var contained = (status?.Repositories ?? [])
-                .SelectMany(repository => repository.Commits)
-                .Where(commit => commit.OnIntegrationBranch)
-                .Select(commit => commit.Sha)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var contained = containedDeliveries.ToHashSet(StringComparer.OrdinalIgnoreCase);
             var cleared = _mutations.ResolvePendingSupersessionOnFolder(
                 card.FolderPath,
-                commit => contained.Contains(commit.Sha));
+                commit => CarriesFiles(commit) && contained.Contains(commit.Sha));
             if (cleared.Succeeded && cleared.MarkedCommits > 0)
                 applied.Add(DeliveryClaimFindings.StalePendingSupersession);
         }
@@ -302,12 +330,6 @@ public sealed class DeliveryClaimSweep
         {
             var branch = status?.IntegrationBranch
                 ?? TaskIntegrationBranch.Name(_settings.Get(card.ProjectName).IntegrationBranch);
-            var shas = (status?.Repositories ?? [])
-                .SelectMany(repository => repository.Commits)
-                .Where(commit => commit.OnIntegrationBranch)
-                .Select(commit => commit.Sha)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
             var record = new TaskIntegrationRecord
             {
                 Id = RepairRecordIdPrefix + card.TaskKey.ToLowerInvariant(),
@@ -315,9 +337,9 @@ public sealed class DeliveryClaimSweep
                 Classification = IntegrationRecordClasses.IntegratedVerified,
                 RecordedAtUtc = _time.GetUtcNow().UtcDateTime,
                 IntegrationBranch = branch,
-                CommitShas = shas,
+                CommitShas = containedDeliveries,
                 Evidence = $"Reconciled by the AGT-2817 delivery-claim sweep: "
-                    + $"{shas.Count} attributed commit(s) are contained in '{branch}'. "
+                    + $"{containedDeliveries.Count} attributed commit(s) are contained in '{branch}'. "
                     + "The record was missing; containment, not the record, decided this.",
             };
             var write = _mutations.AppendIntegrationRecordOnFolder(card.FolderPath, record);

@@ -11,6 +11,11 @@
     <span class="studio-board-lane-count studio-board-lane-count--human-review"
           [cacTooltip]="tooltips.humanReview" [attr.data-testid]="'studio-explorer-project-board-count-human-review-' + projectName()"
           aria-hidden="true">{{ counts().humanReview }}</span>
+    @if (decisions() > 0) {
+      <span class="studio-board-lane-count studio-board-lane-count--decisions"
+            [cacTooltip]="tooltips.decisions" [attr.data-testid]="'studio-explorer-project-board-count-decisions-' + projectName()"
+            aria-hidden="true">{{ decisions() }}</span>
+    }
   </span>
 } @else {
   <span class="studio-board-lane-dots"
@@ -22,6 +27,7 @@
             [class.studio-board-lane-dot--ready]="lane === 'ready'"
             [class.studio-board-lane-dot--progress]="lane === 'progress'"
             [class.studio-board-lane-dot--human-review]="lane === 'humanReview'"
+            [class.studio-board-lane-dot--decisions]="lane === 'decisions'"
             [attr.data-lane]="lane" aria-hidden="true"></span>
     }
     @if (overflow() > 0) {

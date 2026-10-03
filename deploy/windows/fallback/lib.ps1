@@ -40,7 +40,8 @@ function Set-EnvFileValue {
     param(
         [Parameter(Mandatory)] [string] $Path,
         [Parameter(Mandatory)] [string] $Key,
-        [Parameter(Mandatory)] [string] $Value
+        # Empty clears the setting (KEY=), e.g. the TLS pin of a local upstream.
+        [Parameter(Mandatory)] [AllowEmptyString()] [string] $Value
     )
     $parent = Split-Path -Parent $Path
     if ($parent) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }

@@ -110,6 +110,18 @@ public sealed class RunnerReleaseIdentityRegistryTests
         Assert.Null(Assert.Single(registry.ListCapabilitySnapshots()).Release);
     }
 
+    [Fact]
+    public void Legacy_capability_schema_remains_accepted_without_v2_negotiation()
+    {
+        var registry = Registry();
+        Register(registry, release: null);
+        var snapshot = registry.AdvertiseCapabilities("runner-1", new Contract.CapabilityAdvertisementRequest(
+            "runner-1", "instance-1", Contract.CapabilityProtocol.LegacySchemaVersion,
+            HeartbeatAt, 180, 1,
+            [new Contract.AdvertisedCapabilityDto(Contract.CapabilityProtocol.CodingExecutor, "executor")]));
+        Assert.Equal(Contract.CapabilityProtocol.CodingExecutor, Assert.Single(snapshot.Capabilities).Key);
+    }
+
     private static void Register(
         V1ReviewExecutorRegistry registry,
         Contract.RunnerReleaseIdentityDto? release,

@@ -59,6 +59,25 @@ public class ReviewEvidenceContextTests : IDisposable
     }
 
     [Fact]
+    public void ResultsInventory_OversizedTextArtifact_ExcerptsTheSameLeadingCharacters()
+    {
+        // AGT-2991: the excerpt reads only its leading bytes, so an agent-written
+        // file of many MiB yields exactly what the whole-file read produced.
+        var results = Path.Combine(_jobFolder, "results");
+        Directory.CreateDirectory(results);
+        var content = "# Report ü\n" + string.Concat(Enumerable.Repeat("résumé ✓ line\n", 400_000));
+        var path = Path.Combine(results, "report.md");
+        File.WriteAllText(path, content);
+        Assert.True(new FileInfo(path).Length > 4 * 1024 * 1024);
+
+        var inventory = ResultsInventory.Render(_jobFolder);
+
+        var expected = File.ReadAllText(path)[..600] + "\n... (truncated)";
+        Assert.Contains(expected.Trim(), inventory);
+        Assert.DoesNotContain('\uFFFD', inventory);
+    }
+
+    [Fact]
     public void ResultsInventory_WalksNestedFolders()
     {
         var nested = Path.Combine(_jobFolder, "results", "sub");
