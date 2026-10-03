@@ -194,7 +194,7 @@ docs/operations/remote-task-server-local-studio.md,current/reference,792,7804,19
 docs/operations/research-deliverables/index.html,concept/proposal,225,1069,7,0,,mechanical full-text/reference scan
 docs/operations/retention-und-archiv/index.html,concept/proposal,583,5125,4,0,,mechanical full-text/reference scan
 docs/operations/runner-link/index.html,concept/proposal,492,3797,0,0,,mechanical full-text/reference scan
-docs/operations/runtime/log-capture.md,current/reference,234,1354,14,6,../../../backend/Models/ProductRuntimeEvent.cs; ../../../backend/Services/Cli/CliExecutionServiceBase.cs; ../../../backend/Services/Runtime/RuntimeEventReader.cs; ../../../backend/Services/Runtime/RuntimeEventStdoutAdapter.cs; ../../../backend/Services/Runtime/RuntimeEventWriter.cs; ../../../frontend/e2e/runtime-console-capture.spec.ts,mechanical full-text/reference scan
+docs/operations/runtime/log-capture.md,current/reference,234,1354,14,6,../../../backend/Models/ProductRuntimeEvent.cs; ../../../backend/Services/Cli/CliExecutionServiceBase.cs; ../../../backend/Services/Runtime/RuntimeEventReader.cs; ../../../backend/Services/Runtime/RuntimeEventStdoutAdapter.cs; ../../../backend/Services/Runtime/RuntimeEventWriter.cs; ../../../frontend/e2e/runtime-console-capture.spec.ts,manual code comparison
 docs/operations/runtime/observability.md,current/reference,150,2075,10,0,,mechanical full-text/reference scan
 docs/operations/screenshot-system/index.html,concept/proposal,111,884,0,0,,mechanical full-text/reference scan
 docs/operations/security/overview.md,current/reference,167,1384,10,0,,mechanical full-text/reference scan
@@ -212,9 +212,9 @@ docs/operations/setup/docker.md,current/reference,150,1004,2,0,,mechanical full-
 docs/operations/setup/getting-started.md,current/reference,13,71,4,0,,mechanical full-text/reference scan
 docs/operations/setup/hosted-wiki-publication.md,current/reference,212,1484,3,0,,mechanical full-text/reference scan
 docs/operations/setup/install.md,current/reference,158,934,10,0,,manual code comparison
-docs/operations/setup/installation-upgrade-contract.md,current/reference,115,829,2,0,,mechanical full-text/reference scan
+docs/operations/setup/installation-upgrade-contract.md,current/reference,115,829,2,0,,manual code comparison
 docs/operations/setup/linux-runner-host.md,current/reference,1991,16644,21,0,,manual code comparison
-docs/operations/setup/multi-machine.md,current/reference,203,1059,3,0,,mechanical full-text/reference scan
+docs/operations/setup/multi-machine.md,current/reference,203,1059,3,0,,manual code comparison
 docs/operations/setup/networked-task-server.md,current/reference,167,974,4,0,,manual code comparison
 docs/operations/setup/onboard-a-project.md,current/reference,299,2130,4,0,,mechanical full-text/reference scan
 docs/operations/setup/onboard-an-agent-cli.md,current/reference,127,1169,17,8,../../../backend/Services/Cli/CliRouter.cs; ../../../backend/Services/Cli/CodexCliService.cs; ../../../backend/Services/Cli/GeminiCliService.cs; ../../../backend/Services/Cli/OneShot/ICliOneShot.cs; ../../../backend/Services/Drift/CodePatternDriftAnalysisService.cs; ../../../backend/Services/Runner/AgentEnvironmentDetector.cs; ../../../backend/Services/Runner/AgentOutcomeAnalyzer.cs; ../../cli/skills/cli-copilot.md,manual code comparison
@@ -268,7 +268,7 @@ docs/system/architecture/backend-structure/styleguide.md,current/reference,56,37
 docs/system/architecture/backend-structure/styleguide.md.report.html,generated preview,164,690,0,0,,mechanical full-text/reference scan
 docs/system/architecture/bus/agent-message-bus.md,current/reference,286,4659,18,7,../../../backend/Endpoints/AnalysisReportEndpoints.cs; ../../../backend/Services/Runner/OrchestratorChatLog.cs; ../../schemas/README.md; ../../schemas/agent-artifact-ref.schema.json; ../../schemas/agent-participant.schema.json; ../../schemas/token-aggregate.schema.json,mechanical full-text/reference scan
 docs/system/architecture/bus/agent-message-bus.md.report.html,generated preview,156,657,0,0,,mechanical full-text/reference scan
-docs/system/architecture/bus/implementation-state.md,current/reference,153,966,0,0,,mechanical full-text/reference scan
+docs/system/architecture/bus/implementation-state.md,current/reference,153,966,0,0,,manual code comparison
 docs/system/architecture/bus/implementation-state.md.report.html,generated preview,156,680,0,0,,mechanical full-text/reference scan
 docs/system/architecture/decisions/README.md,current/reference,9,54,3,0,,mechanical full-text/reference scan
 docs/system/architecture/decisions/README.md.report.html,generated preview,156,680,0,0,,mechanical full-text/reference scan
@@ -342,7 +342,7 @@ docs/system/contracts/run-outcome.md,current/reference,240,2297,0,0,,mechanical 
 docs/system/contracts/runtime-prompts.md,current/reference,138,771,0,0,,mechanical full-text/reference scan
 docs/system/contracts/stable-view-urls.md,current/reference,115,814,0,0,,mechanical full-text/reference scan
 docs/system/contracts/ui-task-pipeline.md,current/reference,149,779,0,0,,mechanical full-text/reference scan
-docs/system/contracts/wiki-tree.md,current/reference,492,3005,12,0,,mechanical full-text/reference scan
+docs/system/contracts/wiki-tree.md,current/reference,492,3005,12,0,,manual code comparison
 docs/system/domains/README.md,current/reference,17,181,11,0,,mechanical full-text/reference scan
 docs/system/domains/areas-and-tags.md,current/reference,288,2336,2,0,,mechanical full-text/reference scan
 docs/system/domains/cli.md,current/reference,301,2843,45,1,../cli/skills/cli-copilot.md,manual code comparison

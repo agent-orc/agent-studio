@@ -306,9 +306,9 @@
 <header class="page"><p class="kicker">AGT-3004 · Decision Dossier · 2026-10-03</p><h1>Documentation drift audit</h1><p class="lede">A code-anchored audit of system and operations documentation, with mechanical page coverage, verified mismatches, replacement text, and five follow-up slices.</p><div class="meta"><span><b>Code</b> origin/develop 12d180d08</span><span><b>Scope</b> 363 pages</span><span><b>Decision state</b> pending</span></div></header>
 <section data-concept-section="alternatives"><h2>Alternatives</h2><div class="variant-grid"><div class="variant"><h3>Apply corrections by area</h3><p>Use the verified rows and replacement paragraphs, then complete the residual semantic pass. This keeps operator runbooks aligned with the owning code while preserving dated incident records.</p></div><div class="variant"><h3>Keep the inventory as a warning</h3><p>Publish the mismatch list without changing existing pages. Operators would still encounter the wrong executable, old host routes, and removed CLI instructions.</p></div></div></section>
 <section data-concept-section="recommendation"><h2>Recommendation</h2><p>Apply corrections by area through the five documentation slices below. Start with release and host instructions because those can make an operator run the wrong command or call the wrong API. Use the page inventory to finish the statement-level review of pages that received only mechanical scanning.</p></section>
-<section data-concept-section="evidence"><h2>Evidence</h2><p>The complete findings and ten ready-to-apply paragraphs follow. <a href="page-inventory.csv">Page inventory CSV</a> contains every in-scope source and preview page with review depth and candidate link failures.</p><p><strong>Source task:</strong> AGT-3004. <strong>Requested report date:</strong> 2026-09-29. <strong>Code checked:</strong> <code>origin/develop</code> at <code>12d180d08</code> on 2026-10-03. <strong>Scope:</strong> <code>docs/system/</code> and <code>docs/operations/</code>. This Dossier is at <code>docs/docs-drift-audit-2026-09-29/</code> because the concept delivery contract permits one new <code>docs/&lt;slug&gt;/</code> directory and no changes to existing pages.</p>
+<section data-concept-section="evidence"><h2>Evidence</h2><p>The complete findings and ten ready-to-apply paragraphs follow. <a href="page-inventory.csv">Page inventory CSV</a> contains every in-scope source and preview page with review depth and candidate link failures. <a href="code-path-candidates.csv">Code-path candidates CSV</a> lists literal references for triage.</p><p><strong>Source task:</strong> AGT-3004. <strong>Requested report date:</strong> 2026-09-29. <strong>Code checked:</strong> <code>origin/develop</code> at <code>12d180d08</code> on 2026-10-03. <strong>Scope:</strong> <code>docs/system/</code> and <code>docs/operations/</code>. This Dossier is at <code>docs/docs-drift-audit-2026-09-29/</code> because the concept delivery contract permits one new <code>docs/&lt;slug&gt;/</code> directory and no changes to existing pages.</p>
 <h2>Method and coverage</h2>
-<p>The <a href="page-inventory.csv">page inventory</a> lists all <strong>363</strong> Markdown and HTML pages in scope, including 14 generated <code>.report.html</code> previews. The full text of every page was read by the inventory pass to count lines, words, and local references. Its <code>unresolvedLocalLinks</code> values are <strong>candidates</strong>, because historical paths, examples, anchors, and generated previews can be intentional. Eighteen active or high-impact pages received a manual claim-to-code comparison. The code comparison used <code>task-server/TaskServerEndpoints.cs</code>, <code>task-server/StudioHostsEndpoints.cs</code>, <code>backend/Features/Runner/V1ReviewPlaneEndpoints.cs</code>, <code>backend/Features/Tasks/TaskIntegrationStatusService.cs</code>, <code>backend/Features/Runner/WorktreeTaskLifecycle.cs</code>, <code>runner/RunnerOptions.cs</code>, <code>runner/TaskServerClient.cs</code>, <code>update-service/UpdateServiceOptions.cs</code>, <code>update-service/Installation/InstallationUpgradePolicy.cs</code>, <code>scripts/release/package-release.sh</code>, <code>deploy/release/agent-orchestrator/</code>, <code>docker-compose.yml</code>, and appsettings files.</p>
+<p>The <a href="page-inventory.csv">page inventory</a> lists all <strong>363</strong> Markdown and HTML pages in scope, including 14 generated <code>.report.html</code> previews. The full text of every page was read by the inventory pass to count lines, words, and local references. Its <code>unresolvedLocalLinks</code> values are <strong>candidates</strong>, because historical paths, examples, anchors, and generated previews can be intentional. The <a href="code-path-candidates.csv">code-path candidates</a> list 1,023 backtick-quoted repository paths, of which 178 do not exist at that literal location; optional generated files and historical references need triage before correction. 23 active or high-impact pages received a manual claim-to-code comparison. The code comparison used <code>task-server/TaskServerEndpoints.cs</code>, <code>task-server/StudioHostsEndpoints.cs</code>, <code>backend/Features/Runner/V1ReviewPlaneEndpoints.cs</code>, <code>backend/Features/Tasks/TaskIntegrationStatusService.cs</code>, <code>backend/Features/Runner/WorktreeTaskLifecycle.cs</code>, <code>runner/RunnerOptions.cs</code>, <code>runner/TaskServerClient.cs</code>, <code>update-service/UpdateServiceOptions.cs</code>, <code>update-service/Installation/InstallationUpgradePolicy.cs</code>, <code>scripts/release/package-release.sh</code>, <code>deploy/release/agent-orchestrator/</code>, <code>docker-compose.yml</code>, and appsettings files.</p>
 <p>The manual pass found the mismatches below. It did <strong>not</strong> verify every factual sentence in the 363 pages against implementation. The inventory is a complete page sweep; the semantic findings are bounded to the cited claims. Historical incident logs and decision Dossiers are not silently rewritten as current runbooks. <code>wrong</code> means following the statement can produce an incorrect action or conclusion; <code>stale</code> means it described an older implementation or path; <code>missing</code> means a necessary current distinction is absent.</p>
 <h2>Release and update</h2>
 <div class="breakout table-scroll"><table>
@@ -450,6 +450,13 @@
 <td>stale</td>
 <td>Repoint symbols and remove the dead Copilot link.</td>
 </tr>
+<tr>
+<td><code>docs/system/domains/cli.md</code></td>
+<td>The Key Code section assigns CLI routing and quota ownership to <code>backend/Services/Cli/</code> and <code>backend/Services/Quota/</code>.</td>
+<td><code>CliRouter</code> is under <code>backend/Features/Cli/Execution/</code>; <code>QuotaService</code> and probes are under <code>backend/Features/Cli/Quota/</code>.</td>
+<td>stale</td>
+<td>Repoint the directory and class anchors throughout the domain map.</td>
+</tr>
 </tbody></table></div>
 <h2>Review, integration, and contracts</h2>
 <div class="breakout table-scroll"><table>
@@ -489,6 +496,27 @@
 <td>The schemas live under <code>docs/app/schemas/</code>; the documented relative <code>../schemas/...</code> targets do not resolve.</td>
 <td>stale</td>
 <td>Repoint to <code>../../app/schemas/...</code> from domain pages and verify all targets.</td>
+</tr>
+<tr>
+<td><code>docs/system/domains/runner.md</code>, <code>docs/system/domains/pipeline.md</code>, <code>docs/system/domains/tasks.md</code></td>
+<td>Key Code sections still cite many <code>backend/Services/...</code> and <code>backend/Endpoints/...</code> locations for active owners.</td>
+<td>Current owners such as <code>ProjectRunner</code>, <code>PipelineExecutionLog</code>, <code>TaskScannerService</code>, <code>TaskTransitionService</code>, and task endpoints are in <code>backend/Features/Runner/</code>, <code>Pipeline/</code>, and <code>Tasks/</code>.</td>
+<td>stale</td>
+<td>Repoint active code maps by symbol and use the code-path candidate list for a bounded repair pass.</td>
+</tr>
+<tr>
+<td><code>docs/system/architecture/bus/implementation-state.md</code></td>
+<td>Labels itself current reality and lists bus owner files under <code>backend/Services/Bus/</code> and <code>backend/Endpoints/BusEndpoints.cs</code>.</td>
+<td><code>AgentMessageBusStore</code>, <code>AgentMessageValidator</code>, and <code>BusEndpoints</code> live under <code>backend/Features/Bus/</code>; <code>AgentBus</code> models live in <code>backend/Shared/Models/</code>.</td>
+<td>stale</td>
+<td>Refresh the implementation-state table and its last-verified date; keep dated May decisions as historical context.</td>
+</tr>
+<tr>
+<td><code>docs/operations/runtime/log-capture.md</code></td>
+<td>Tells readers that the sample was captured by <code>frontend/e2e/runtime-console-capture.spec.ts</code>.</td>
+<td>The spec now lives at <code>frontend/e2e/task-detail/runtime-console-capture.spec.ts</code>; helper code is <code>frontend/e2e/helpers/runtime-capture.ts</code>.</td>
+<td>stale</td>
+<td>Repoint the proof link to the moved spec and cite the helper when describing capture behavior.</td>
 </tr>
 </tbody></table></div>
 <h2>Verified distinctions without a correction</h2>
@@ -546,7 +574,7 @@
 <li><strong>Host and runner operations.</strong> Correct <code>setup/README.md</code>, <code>setup/linux-runner-host.md</code>, and <code>remote-hosts.md</code>. Acceptance: v1 registration and lifecycle examples map to <code>TaskServerEndpoints</code>/<code>StudioHostsEndpoints</code>; compatibility endpoints are labeled; distributed outbound connectivity and reverse-link fallback are separate; the 10-second review-report timeout and still-supported legacy engine are accurate.</li>
 <li><strong>CLI onboarding and deep references.</strong> Correct <code>setup/onboard-an-agent-cli.md</code>, <code>system/domains/cli.md</code>, and <code>system/cli/skills/cli-codex.md</code>. Acceptance: only active CLIs are presented for installation; Codex stdin/resume and usage paths match <code>BuiltInCliBehaviors</code> and tests; no dead <code>CodexCliService</code>/Copilot links remain; platform push behavior agrees with <code>commit-push-doctrine.md</code>.</li>
 <li><strong>Review and integration contracts.</strong> Correct <code>system/contracts/review-plane.md</code>, <code>system/contracts/agent-task.md</code>, and stale implementation links in <code>operations/git/commit-push-doctrine.md</code>. Acceptance: distributed and compatibility report authorities are named separately; cleanup checks the configured integration branch; <code>merged-locally</code> and published <code>integrated</code> remain distinct; every code path and symbol reference resolves.</li>
-<li><strong>Reference-link repair and residual semantic pass.</strong> Repair unresolved active-page code/schema links in the page inventory, then perform a statement-level code review of the remaining pages marked <code>mechanical full-text/reference scan</code>. Acceptance: each in-scope current/reference page has a reviewed date and a code owner or a clear historical/proposal label; unresolved links are triaged, with examples excluded; corrections are recorded without rewriting historical incident facts.</li>
+<li><strong>Reference-link repair and residual semantic pass.</strong> Repair unresolved active-page code/schema links in the page inventory and code-path candidate list, then perform a statement-level code review of the remaining pages marked <code>mechanical full-text/reference scan</code>. Acceptance: each in-scope current/reference page has a reviewed date and a code owner or a clear historical/proposal label; unresolved links are triaged, with examples excluded; corrections are recorded without rewriting historical incident facts.</li>
 </ol>
 </section>
 <section data-concept-section="open-decisions"><h2>Open decisions</h2><ol><li><b>Legacy networked page:</b> label the monolith profile and direct new installs to distributed guides (recommended); archiving it would remove a still useful compatibility recipe.</li><li><b>Remediation order:</b> release and host procedures first, then CLI and review contracts (recommended).</li><li><b>Residual coverage:</b> require a statement-level review of mechanically scanned pages as the fifth documentation slice (recommended). The present inventory does not establish semantic correctness for those pages.</li></ol></section>
