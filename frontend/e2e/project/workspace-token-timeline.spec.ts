@@ -151,9 +151,9 @@ function buildFakeTimeline(windowHours: number, bucketMinutes: number) {
   // add up to the project total. Remote models are ids the registry does not
   // label, so the label is the id itself.
   const remoteModel: Record<string, string> = {
-    alpha: 'gpt-6-sol',
-    bravo: 'claude-opus-5-5',
-    charlie: 'gpt-6-sol',
+    alpha: 'gpt-unlisted-model-9',
+    bravo: 'claude-unlisted-model-9',
+    charlie: 'gpt-unlisted-model-9',
   };
   const models = Object.values(totals).flatMap((t) => {
     const remote = Math.round(t.total * 0.6);
@@ -255,8 +255,8 @@ test.describe('Workspace token timeline', () => {
     await page.setViewportSize({ width: 1600, height: 900 });
     await stubBackgroundApis(page);
     await stubTimeline(page);
-    await page.goto('/#/workspace/tokens');
-    await page.waitForLoadState('domcontentloaded');
+    await page.goto('/#/workspace/tokens', { waitUntil: 'domcontentloaded' });
+    await expect(page.getByTestId('workspace-token-timeline')).toBeVisible({ timeout: 20_000 });
   });
 
   test('opens the timeline, toggles window + project, hover popover renders', async ({ page }) => {
@@ -359,10 +359,10 @@ test.describe('Workspace token timeline', () => {
     await expect(models).toContainText('By model and executing host');
 
     // A model id the registry does not label renders as the id, never as
-    // another model's label (claude-opus-5-5 is not "Claude Opus 5").
-    const bravoRemote = page.getByTestId('wtt-model-row-bravo|claude-opus-5-5|agent-runner-01');
+    // another model's label.
+    const bravoRemote = page.getByTestId('wtt-model-row-bravo|claude-unlisted-model-9|agent-runner-01');
     await expect(bravoRemote).toBeVisible();
-    await expect(bravoRemote.getByTestId('wtt-model-label')).toHaveText('claude-opus-5-5');
+    await expect(bravoRemote.getByTestId('wtt-model-label')).toHaveText('claude-unlisted-model-9');
     await expect(bravoRemote.getByTestId('wtt-model-host')).toHaveText('agent-runner-01');
     await expect(models).not.toContainText('Claude Opus 5');
     await expect(page.getByTestId('wtt-model-row-bravo|claude-sonnet-5|local')
@@ -375,7 +375,7 @@ test.describe('Workspace token timeline', () => {
 
     // Toggling a project off removes its model rows too.
     await page.getByTestId('wtt-legend-bravo').click();
-    await expect(page.getByTestId('wtt-model-row-bravo|claude-opus-5-5|agent-runner-01')).toHaveCount(0);
+    await expect(page.getByTestId('wtt-model-row-bravo|claude-unlisted-model-9|agent-runner-01')).toHaveCount(0);
     await page.getByTestId('wtt-legend-bravo').click();
     await expect(bravoRemote).toBeVisible();
 
