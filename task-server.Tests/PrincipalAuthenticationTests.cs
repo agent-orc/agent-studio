@@ -300,7 +300,10 @@ public sealed class PrincipalAuthenticationTests
         var writeRoutesUsingReadScope = factory.Services.GetRequiredService<EndpointDataSource>().Endpoints
             .OfType<RouteEndpoint>()
             .Where(endpoint => endpoint.RoutePattern.RawText?.StartsWith("/api/v1", StringComparison.Ordinal) == true)
-            .Where(endpoint => endpoint.RoutePattern.RawText != "/api/v1/protocol/compatibility")
+            // Both protocol handshakes are POSTs that change no state; the
+            // Studio attach only needs a readable, authenticated principal.
+            .Where(endpoint => endpoint.RoutePattern.RawText is not "/api/v1/protocol/compatibility"
+                               and not "/api/v1/protocol/attach")
             .Where(endpoint => endpoint.Metadata.GetMetadata<HttpMethodMetadata>()?.HttpMethods
                 .Any(method => !HttpMethods.IsGet(method)) == true)
             .Where(endpoint => endpoint.Metadata.GetOrderedMetadata<TaskServerScopeMetadata>()
@@ -315,6 +318,35 @@ public sealed class PrincipalAuthenticationTests
         Assert.Equal(
             TaskServerScopes.EventsSubscribe,
             hub.Metadata.GetOrderedMetadata<TaskServerScopeMetadata>().Last().Scope);
+    }
+
+    [Fact]
+    public async Task Fingerprint_write_accepts_reporter_scopes_but_rejects_read_only_scope()
+    {
+        using var temp = new TempDirectory();
+        await using var factory = Factory(temp.Path);
+        using var studio = Client(factory, StudioToken);
+        var reviews = await CreateAsync(studio, "fingerprint-reviewer",
+            TaskServerPrincipalKinds.Runner, [TaskServerScopes.ReviewsWrite], "fingerprint-reviewer");
+        var runs = await CreateAsync(studio, "fingerprint-runner",
+            TaskServerPrincipalKinds.Runner, [TaskServerScopes.RunsWrite], "fingerprint-runner");
+        var reader = await CreateAsync(studio, "fingerprint-reader",
+            TaskServerPrincipalKinds.Runner, [TaskServerScopes.TasksRead], "fingerprint-reader");
+        using var reviewClient = Client(factory, reviews.Credential);
+        using var runClient = Client(factory, runs.Credential);
+        using var readClient = Client(factory, reader.Credential);
+        var path = "/api/v1/failure-fingerprints";
+
+        Assert.Equal(HttpStatusCode.Created, (await reviewClient.PostAsJsonAsync(path,
+            new RecordFailureFingerprintRequest("test:one", "AGT-1", "host-a", "review", "report-1"))).StatusCode);
+        Assert.Equal(HttpStatusCode.Created, (await runClient.PostAsJsonAsync(path,
+            new RecordFailureFingerprintRequest("test:one", "AGT-2", "host-b", "gate", "report-2"))).StatusCode);
+        Assert.Equal(HttpStatusCode.Created, (await studio.PostAsJsonAsync(path,
+            new RecordFailureFingerprintRequest("test:one", "AGT-3", "host-c", "gate", "report-3"))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await readClient.PostAsJsonAsync(path,
+            new RecordFailureFingerprintRequest("test:one", "AGT-4", "host-d", "gate", "report-4"))).StatusCode);
+        Assert.Equal(3, Assert.Single((await studio.GetFromJsonAsync<FailureFingerprintHistoryDto[]>(
+            path + "?fingerprint=test%3Aone"))!).Count);
     }
 
     private static async Task<IssuedPrincipalCredential> CreateAsync(

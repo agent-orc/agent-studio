@@ -120,6 +120,40 @@ are redacted from Runner log ingestion. Production exceptions omit stack
 traces. Plaintext session, enrollment, and Runner secrets are never persisted
 and are returned only by their creation response.
 
+## Repository hygiene (Quality Studio sensors)
+
+Quality Studio's `dependencies` and `gitleaks` sensors evaluate this checkout.
+AGT-2991 brought both to a clean posture; keep them there.
+
+- **Dependencies.** Runtime packages (Angular, `dompurify`, `@tiptap/*`, and
+  the backend's `HtmlSanitizer`/`AngleSharp`) stay on patched releases. Build
+  tooling is refreshed with `npm audit fix` in `frontend/`. Check with
+  `npm audit` there and `dotnet list agent-taskboard.sln package --vulnerable --include-transitive`.
+  If `npm audit fix` fails with `Cannot read properties of null (reading 'edgesOut')`,
+  that is an npm 10 arborist defect on vitest's optional peer set; run
+  `npx npm@11 update vitest` for that package, then `npm ci` so install
+  scripts run.
+- **Secret scan baseline.** Synthetic test credentials are accepted narrowly
+  in [`.quality/security/gitleaks.baseline.json`](../../../.quality/security/gitleaks.baseline.json),
+  one exact `file:rule:line` fingerprint plus a `Note` per entry. Keep the fixture values
+  obviously synthetic. Prefer the baseline over inline `gitleaks:allow`
+  markers when the fixture file also contains private-key or token material,
+  because the platform commit gate
+  ([`CommitCandidateGate`](../../../backend/Features/Git/CommitCandidateGate.cs))
+  scans the whole file on any edit and ignores gitleaks markers. A line shift
+  in a baselined file surfaces the finding again, which is intended: re-review
+  it and update the fingerprint.
+- **Bounded reads.** Code that reads a file the reader does not control (CLI
+  logs, JSONL ledgers, sidecars, agent-written `results/` files, sweep
+  matches) goes through
+  [`BoundedFileRead`](../../../backend/Shared/BoundedFileRead.cs) instead of
+  `File.ReadAllText`/`ReadAllLines`. Whole-content readers refuse an oversized
+  file; line readers keep the newest complete lines. A writer that updates a
+  ledger row must keep working on an oversized ledger: read the newest window
+  with `ReadTailLineWindow`, change the row there, and rewrite the file only
+  from the window's `Offset`, so older rows keep their bytes. Never rewrite
+  the whole file from a truncated window, because that deletes the older rows.
+
 ## Trust considerations in both profiles
 
 - **Task folders are external to the product checkout.** The app reads and

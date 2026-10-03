@@ -1,0 +1,127 @@
+{
+  "schemaVersion": 1,
+  "sourceTaskKey": "AGT-2994",
+  "revision": "742936e0594bf8d6511bc35a74ad171b279b37b7",
+  "capturedAt": "2026-09-29",
+  "note": "Local develop snapshot in the task worktree; no remote fetch. Runtime observations are the operator log excerpt quoted in AGT-2994, not reproduced here.",
+  "files": [
+    {
+      "path": "backend/Features/Pipeline/RemoteDeliveryIntegration.cs",
+      "sha256": "ffb498aedf4c972277a2e0cc016ea8539bddceb57fe609ab5475b97fc9051831",
+      "symbols": [
+        "RemoteDeliveryIntegrationCoordinator.EnqueueAsync:203",
+        "DrainProjectAsync:253",
+        "started log:288",
+        "agent-round branch:294",
+        "ProjectQueue:378",
+        "QueuedDeliveryComparer:395"
+      ]
+    },
+    {
+      "path": "backend/Features/Runner/V1ReviewPlaneEndpoints.cs",
+      "sha256": "c41e3a01231c33fabc9b654eb7e955d78c000826c910a1e7f4a6d7bd3fbfabc6",
+      "symbols": [
+        "await remoteIntegration.EnqueueAsync:1290"
+      ]
+    },
+    {
+      "path": "runner/TaskServerClient.cs",
+      "sha256": "8aeef1e1629f1a07519d89fbb90667a64b5734169168472aa93d5f498227df0c",
+      "symbols": [
+        "ReviewReportAckTimeout:995"
+      ]
+    },
+    {
+      "path": "backend/Features/Pipeline/MergeIntoDevelopRunner.cs",
+      "sha256": "1625a6cd3b26350ef7337ba471e1baf72815b2a4e29c67d3d928382bf432299c",
+      "symbols": [
+        "_mergeGate:60",
+        "_pushGate:61",
+        "_mergeGate.WaitAsync:166",
+        "MergeIntoIntegrationGatedAsync:690",
+        "_preDevelopBuildGate.RunAsync:859"
+      ]
+    },
+    {
+      "path": "backend/Features/Pipeline/BuildTestGateRunner.cs",
+      "sha256": "c3421351f15cd60d20cefc1c648303d170e783b5a050aa7705589a76503bb327",
+      "symbols": [
+        "OnMachineGateWaiting:74",
+        "ProcessGate:269",
+        "MachineGateLockPath:270",
+        "WaitUntilReadyAsync:388",
+        "build_test_gate_acquired:419"
+      ]
+    },
+    {
+      "path": "backend/Features/Pipeline/IntegrationGateReusePolicy.cs",
+      "sha256": "1cf48f592cacb8726e0edf44400e9786a46d18d0510eb43b0ad79636a347da7c",
+      "symbols": [
+        "Token:57",
+        "Decide:87",
+        "moved since the review:155"
+      ]
+    },
+    {
+      "path": "backend/Features/Pipeline/PreDevelopBuildGate.cs",
+      "sha256": "8ed11f1aa31929e66c0a8f1fde70822c5958a203caa54e086acfd815d4979e6c",
+      "symbols": [
+        "ResolveTestLevel:71"
+      ]
+    },
+    {
+      "path": "backend/Features/Pipeline/DotNetWorkPackagePlanner.cs",
+      "sha256": "3bc4c00cf9a627ac0b6240657996369bc8d1827542409e2e987ac0cd8033da41",
+      "symbols": [
+        "PlanSlice:72"
+      ]
+    },
+    {
+      "path": "backend/Features/Pipeline/IntegrationAgentRoundService.cs",
+      "sha256": "9d7ed3434a7a76f08a1fae505214c91857d8fe870535eaffc8bdedc0835d0994",
+      "symbols": [
+        "MaxAutomaticAgentRounds:18",
+        "TryStartAsync:171",
+        "PromoteToReadyTop:250"
+      ]
+    },
+    {
+      "path": "runner/ReviewSlotAdmissionPolicy.cs",
+      "sha256": "084a94fc1de08bebbc38b459084187bc40a961d0b7addc90ccf21dbf2764a74c",
+      "symbols": [
+        "MinimumCoresPerReview:84"
+      ]
+    },
+    {
+      "path": "docs/concepts/platform-architecture/rebase-merge-and-integration-invariants.md",
+      "sha256": "c66ddb94973d8a43e0460c2ded8c370a3d67015e328893c6e8abbca2ee1b8901",
+      "symbols": [
+        "stale MaxAutomaticAgentRounds 2:241"
+      ]
+    }
+  ],
+  "testInventory": {
+    "path": "backend.Tests",
+    "linesWithFactOrTheory": 6255,
+    "method": "grep -c '\\[Fact\\|\\[Theory' over *.cs, summed"
+  },
+  "model": {
+    "g": 42,
+    "p": 3,
+    "f": 0.1,
+    "k": 2,
+    "b": 3,
+    "lambdaPerHour": 3,
+    "bisectExtraSuites": 2.5,
+    "results": {
+      "S0": 1.2,
+      "S1": 1.2,
+      "S2_oneToken": 1.29,
+      "S2": 2.34,
+      "S3": 3.21,
+      "S4": 4.6,
+      "S2_g55": 1.79,
+      "S4_g55": 3.51
+    }
+  }
+}

@@ -95,7 +95,10 @@ public static class ResultsInventory
             string excerpt;
             try
             {
-                var text = File.ReadAllText(file);
+                // Read just past the excerpt (at most four UTF-8 bytes per
+                // character) so an agent-written file of any size costs the
+                // same as a small one (AGT-2991).
+                var text = BoundedFileRead.ReadHeadText(file, (maxExcerptChars + 1) * 4);
                 excerpt = text.Length > maxExcerptChars ? text[..maxExcerptChars] + "\n... (truncated)" : text;
             }
             catch

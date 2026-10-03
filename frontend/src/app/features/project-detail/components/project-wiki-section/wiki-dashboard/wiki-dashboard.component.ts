@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
 import { StudioIconComponent } from '../../../../../components/studio-icon/studio-icon.component';
+import type { DecisionInboxItem } from '../../../../../models/decision-card-presentation';
 import type { CliModelInfo } from '../../../../cli';
 import {
   WikiGradingRunStatus,
@@ -44,6 +45,7 @@ export class WikiDashboardComponent {
   readonly projectName = input.required<string>();
   readonly docCount = input(0);
   readonly pulse = input<WikiPulse | null>(null);
+  readonly decisionCards = input<readonly DecisionInboxItem[]>([]);
   readonly loading = input(false);
   readonly hasStarred = input(false);
 
@@ -56,6 +58,7 @@ export class WikiDashboardComponent {
   /** Open a wiki page in the reader (starred entries, home links, Pulse rows). */
   readonly openPage = output<WikiPulseOpenRequest>();
   readonly openWorkbench = output<WorkbenchListItem>();
+  readonly openDecisionCard = output<DecisionInboxItem>();
   readonly openFirst = output<void>();
   readonly openDrift = output<void>();
   readonly startGrading = output<void>();

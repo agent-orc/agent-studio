@@ -32,7 +32,7 @@ public sealed class TaskServerAuthenticationMiddleware(
         }
 
         var requiredScope = RequiredScope(context);
-        if (requiredScope is null || !principal.Scopes.Contains(requiredScope))
+        if (requiredScope is null || !requiredScope.Allows(principal.Scopes))
         {
             await DenyAsync(
                 context,
@@ -40,7 +40,7 @@ public sealed class TaskServerAuthenticationMiddleware(
                 "insufficient-scope",
                 requiredScope is null
                     ? "The route has no authorization scope declaration."
-                    : $"The authenticated principal requires scope '{requiredScope}'.");
+                    : $"The authenticated principal requires scope '{requiredScope.Scope}' or one of its declared alternatives.");
             return;
         }
 
@@ -86,15 +86,14 @@ public sealed class TaskServerAuthenticationMiddleware(
             : null;
     }
 
-    private static string? RequiredScope(HttpContext context)
+    private static TaskServerScopeMetadata? RequiredScope(HttpContext context)
     {
         if (context.Request.Path.StartsWithSegments("/hubs"))
-            return TaskServerScopes.EventsSubscribe;
+            return new TaskServerScopeMetadata(TaskServerScopes.EventsSubscribe);
         return context.GetEndpoint()?
             .Metadata
             .GetOrderedMetadata<TaskServerScopeMetadata>()
-            .LastOrDefault()?
-            .Scope;
+            .LastOrDefault();
     }
 
     private static async Task DenyAsync(

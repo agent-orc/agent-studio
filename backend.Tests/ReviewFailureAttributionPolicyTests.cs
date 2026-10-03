@@ -120,6 +120,45 @@ public sealed class ReviewFailureAttributionPolicyTests
             ReviewFailureAttributionPolicy.Failed(
                 Evidence(exitCode, baselineSha: null, baselineExitCode: null) with { Signal = signal }));
 
+    /// <summary>
+    /// AGT-2916: the candidate evidence keeps the first failed run even when the
+    /// clean repeat cleared it, so a measured diagnosis decides the owner. Only a
+    /// confirmed product failure charges the delivery.
+    /// </summary>
+    [Theory]
+    [InlineData(DeliveryFailureDiagnosis.Product, 0, ReviewFailureOwner.Delivery)]
+    [InlineData(DeliveryFailureDiagnosis.FirstOccurrence, 0, ReviewFailureOwner.Tolerated)]
+    [InlineData(DeliveryFailureDiagnosis.Intermittent, 0, ReviewFailureOwner.Tolerated)]
+    [InlineData(DeliveryFailureDiagnosis.Environment, 0, ReviewFailureOwner.Tolerated)]
+    [InlineData(DeliveryFailureDiagnosis.Environment, 1, ReviewFailureOwner.IntegrationBranch)]
+    public void A_diagnosed_failure_is_owned_by_its_diagnosis(
+        string classification,
+        int baselineExitCode,
+        ReviewFailureOwner expected)
+    {
+        var evidence = Evidence(1, BaseSha, baselineExitCode) with
+        {
+            NewFailures = ["Product.Tests.Cleared"],
+            Diagnosis = new DeliveryFailureDiagnosisResult(classification, 0.5, ["evidence"]),
+        };
+
+        Assert.Equal(expected, ReviewFailureAttributionPolicy.Attribute(
+            Command(compareToBaseline: true, ReviewBaselineModes.ExitStatus), evidence));
+    }
+
+    [Fact]
+    public void A_diagnosis_without_a_measured_baseline_still_fails_closed_to_the_delivery()
+    {
+        var evidence = Evidence(1, baselineSha: null, baselineExitCode: null) with
+        {
+            Diagnosis = new DeliveryFailureDiagnosisResult(
+                DeliveryFailureDiagnosis.FirstOccurrence, 0.2, ["baseline unavailable"]),
+        };
+
+        Assert.Equal(ReviewFailureOwner.Delivery, ReviewFailureAttributionPolicy.Attribute(
+            Command(compareToBaseline: true), evidence));
+    }
+
     private static ReviewCommandDto Command(
         bool compareToBaseline,
         string mode = ReviewBaselineModes.TestFailures)

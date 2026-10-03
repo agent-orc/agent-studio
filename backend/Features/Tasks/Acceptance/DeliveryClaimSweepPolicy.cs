@@ -6,7 +6,8 @@ namespace AgentStudio.Tasks;
 /// <param name="SupersessionState">One of <see cref="CommitSupersessionStates"/>.</param>
 /// <param name="CarriesFiles">
 /// The commit changed at least one file. Zero-file runner lifecycle markers are
-/// not delivery expectations and never make a card look unintegrated.
+/// not delivery expectations: they never make a card look unintegrated, and
+/// their containment is never evidence that a delivery landed.
 /// </param>
 public sealed record DeliveryClaimCommitFact(
     string Sha,
@@ -125,10 +126,11 @@ public static class DeliveryClaimSweepPolicy
         var expectations = effective.Where(commit => commit.CarriesFiles).ToList();
 
         var findings = new List<string>();
-        // Only a live attribution documents the card's current delivery. A
-        // contained commit that already has a named successor is history, and
-        // is not evidence that the card's delivery landed.
-        var containedExists = effective.Any(commit => commit.Contained);
+        // Only a live, file-carrying attribution documents the card's current
+        // delivery. A contained commit that already has a named successor is
+        // history, and a contained zero-file lifecycle marker delivered
+        // nothing; neither is evidence that the card's delivery landed.
+        var containedExists = expectations.Any(commit => commit.Contained);
 
         if (attributed.Count > 0 && effective.Count == 0)
             findings.Add(DeliveryClaimFindings.SupersededOnlyDelivery);
@@ -136,7 +138,7 @@ public static class DeliveryClaimSweepPolicy
         if (containedExists && !facts.HasIntegrationRecord)
             findings.Add(DeliveryClaimFindings.MissingIntegrationRecord);
 
-        var stalePlaceholder = effective.Any(commit => commit.Contained
+        var stalePlaceholder = expectations.Any(commit => commit.Contained
             && string.Equals(
                 commit.SupersessionState,
                 CommitSupersessionStates.ReplacementPending,

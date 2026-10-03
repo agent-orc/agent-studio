@@ -32,6 +32,7 @@ public sealed class TaskServerClient : IDisposable
     private readonly ConcurrentDictionary<string, string> _v1TaskBodies = new(StringComparer.OrdinalIgnoreCase);
     private bool _useV1;
     private bool _supportsCapabilityAdvertisement;
+    private bool _supportsCredentialObservationV2;
     private bool _supportsHostOrchestrator;
     private readonly bool _usesServiceCredential;
     private readonly SemaphoreSlim _hostProtocolGate = new(1, 1);
@@ -143,6 +144,7 @@ public sealed class TaskServerClient : IDisposable
         {
             _useV1 = false;
             _supportsCapabilityAdvertisement = false;
+            _supportsCredentialObservationV2 = false;
             _supportsHostOrchestrator = false;
             return;
         }
@@ -154,6 +156,7 @@ public sealed class TaskServerClient : IDisposable
         if (compatibility?.Supported != true)
             throw new TaskServerException(426, compatibility?.Reason ?? "Task Server protocol is not compatible.");
         var serverCapabilities = compatibility.Server.Capabilities ?? [];
+        _supportsCredentialObservationV2 = serverCapabilities.Contains("credential-observation-v2", StringComparer.Ordinal);
         _supportsCapabilityAdvertisement =
             serverCapabilities.Contains("capability-advertisement", StringComparer.Ordinal)
             || serverCapabilities.Contains("coding-plane", StringComparer.Ordinal);
@@ -994,6 +997,23 @@ public sealed class TaskServerClient : IDisposable
     /// </summary>
     internal static readonly TimeSpan ReviewReportAckTimeout = TimeSpan.FromSeconds(10);
 
+    public async Task<IReadOnlyList<Contract.FailureFingerprintHistoryDto>> ReadFailureFingerprintsAsync(
+        string fingerprint, CancellationToken ct)
+    {
+        using var response = await _http.GetAsync(
+            $"/api/v1/failure-fingerprints?fingerprint={Uri.EscapeDataString(fingerprint)}" +
+            $"&sinceUtc={Uri.EscapeDataString(DateTime.UtcNow.AddHours(-24).ToString("O"))}", ct);
+        var detail = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            throw new TaskServerException((int)response.StatusCode, $"Fingerprint history failed: {Trim(detail)}");
+        return JsonSerializer.Deserialize<Contract.FailureFingerprintHistoryDto[]>(detail, Json) ?? [];
+    }
+
+    public async Task RecordFailureFingerprintAsync(
+        Contract.RecordFailureFingerprintRequest request, CancellationToken ct)
+        => await PostJsonAsync<Contract.RecordFailureFingerprintRequest, Contract.FailureFingerprintHistoryDto>(
+            "/api/v1/failure-fingerprints", request, ct);
+
     public async Task<Contract.ReviewReportDto> ReportReviewAsync(
         string attemptId,
         Contract.ReviewReportRequest request,
@@ -1107,13 +1127,26 @@ public sealed class TaskServerClient : IDisposable
         var request = new Contract.CapabilityAdvertisementRequest(
             options.RunnerId,
             RunnerInstanceId,
-            Contract.CapabilityProtocol.CurrentSchemaVersion,
+            _supportsCredentialObservationV2
+                ? Contract.CapabilityProtocol.CurrentSchemaVersion
+                : Contract.CapabilityProtocol.LegacySchemaVersion,
             DateTime.UtcNow,
             180,
             generation,
-            capabilities,
+            _supportsCredentialObservationV2 ? capabilities : capabilities.Select(item => item with
+            {
+                CredentialGeneration = null,
+                CredentialObservedAt = null,
+                LastRealSuccessAt = null,
+                ExpiryProvenance = null,
+                AccessTokenExpiresAt = null,
+                EffectiveSource = null,
+                NativeFileShadowed = null,
+                EvidenceRefs = null,
+            }).ToArray(),
             telemetry,
-            RunnerReleaseIdentity.CurrentIdentity);
+            RunnerReleaseIdentity.CurrentIdentity,
+            _supportsCredentialObservationV2 ? 1 : null);
         var snapshot = await SendJsonAsync<Contract.CapabilityAdvertisementRequest, Contract.RunnerCapabilitySnapshotDto>(
             HttpMethod.Put,
             $"/api/v1/runners/{Uri.EscapeDataString(options.RunnerId)}/capabilities",

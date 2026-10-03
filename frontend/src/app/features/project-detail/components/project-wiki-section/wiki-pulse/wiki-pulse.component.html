@@ -1,10 +1,12 @@
 <!-- Review-first lifecycle surface: the operator sees fresh concepts before the ordinary dashboard feed. -->
-@defer (when pulse()?.lifecycle) {
+@defer (when pulse()?.lifecycle || decisionCards().length > 0) {
   <app-workbench-inbox
       [lifecycle]="pulse()?.lifecycle ?? null"
       [catalogue]="pulse()?.workbenches ?? null"
+      [decisionCards]="decisionCards()"
       (openPage)="openLifecyclePage($event)"
-      (openWorkbench)="openWorkbench.emit($event)" />
+      (openWorkbench)="openWorkbench.emit($event)"
+      (openDecisionCard)="openDecisionCard.emit($event)" />
 }
 
 <!-- Drift strip: full-width band across the dashboard grid (deterministic, per top-level docs folder). -->

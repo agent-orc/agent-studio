@@ -18,7 +18,8 @@ namespace AgentStudio.Tasks;
 /// </list>
 ///
 /// The project segment accepts the canonical <c>PROJ-NNN</c> id, the display
-/// name, or a watch path; <c>*</c> sweeps every registered project.
+/// name, or a watch path; <c>*</c> sweeps every registered project. An
+/// unknown project returns 404 and sweeps nothing.
 /// </summary>
 public static class DeliveryClaimEndpoints
 {
@@ -26,13 +27,18 @@ public static class DeliveryClaimEndpoints
     {
         app.MapGet("/api/projects/{projectId}/delivery-claims",
             (string projectId, DeliveryClaimSweep sweep) =>
-                Results.Ok(sweep.Run(Scope(projectId), repair: false)));
+                Report(projectId, sweep.Run(Scope(projectId), repair: false)));
 
         app.MapPost("/api/projects/{projectId}/delivery-claims/reconcile",
             (string projectId, DeliveryClaimSweep sweep) =>
-                Results.Ok(sweep.Run(Scope(projectId), repair: true)))
+                Report(projectId, sweep.Run(Scope(projectId), repair: true)))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Review);
     }
+
+    private static IResult Report(string projectId, DeliveryClaimSweepReport? report)
+        => report is null
+            ? Results.NotFound(new { error = $"Project '{projectId}' was not found." })
+            : Results.Ok(report);
 
     /// <summary>
     /// <c>GET /api/tasks/{jobId}/delivery-claim</c> - the per-card deployment
