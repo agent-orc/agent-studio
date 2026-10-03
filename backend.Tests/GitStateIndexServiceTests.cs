@@ -43,6 +43,16 @@ public sealed class GitStateIndexServiceTests : IDisposable
         // (repo) via the config built in BuildScanner below.
     }
 
+    private static string UseExternalGitDirectory(string repoPath)
+    {
+        var gitMarker = Path.Combine(repoPath, ".git");
+        var gitDirectory = Path.Combine(Path.GetDirectoryName(repoPath)!, "git-data");
+        RunGit(repoPath, "init", "-q");
+        Directory.Move(gitMarker, gitDirectory);
+        File.WriteAllText(gitMarker, "gitdir: ../git-data\n");
+        return gitMarker;
+    }
+
     private static TaskScannerService BuildScanner(string projectName, string jobsPath, string repoPath)
     {
         var config = new ConfigurationBuilder()
@@ -660,7 +670,10 @@ public sealed class GitStateIndexServiceTests : IDisposable
         RunGit(repoPath, "init", "-q");
         File.WriteAllText(extra, "[remote \"origin\"]\nurl = https://example.invalid/one.git\n");
         File.WriteAllText(Path.Combine(repoPath, ".git", "config"),
-            $"[include]\npath = {extra}\n");
+            $"[include]\npath = {extra.Replace('\\', '/')}\n");
+        var initialConfig = GitConfigSignature.Capture(repoPath);
+        Assert.Equal("https://example.invalid/one.git", initialConfig.OriginUrl);
+        Assert.Contains(initialConfig.Files, file => FileSystemPathComparer.Instance.Equals(file.Path, extra));
         var scanner = BuildScanner("proj", jobsPath, repoPath);
         var builder = new FakeBuilder
         {
@@ -685,10 +698,42 @@ public sealed class GitStateIndexServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task InvalidIncludedConfig_LogsBoundedRetriesAndRecovers()
+    {
+        var jobsPath = NewRepoWatchPath("proj");
+        var repoPath = Path.Combine(Path.GetDirectoryName(jobsPath)!, "repo");
+        RunGit(repoPath, "init", "-q");
+        var configPath = Path.Combine(repoPath, ".git", "config");
+        File.WriteAllText(configPath, "[include\npath = missing.conf\n");
+        var scanner = BuildScanner("proj", jobsPath, repoPath);
+        var logger = new RecordingLogger();
+        var builder = new FakeBuilder();
+        using var service = new GitStateIndexService(scanner, BuildWatcher(scanner),
+            new TaskListGitProjectionCache(), builder.BuildAsync, _ => { }, logger,
+            FastOptions() with { MaxRetries = 1 }, TimeProvider.System);
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            await WaitUntilAsync(() => logger.Count("git-index-run-failed") >= 2);
+            Assert.Equal("refresh-failed", service.GetRepositoryStatuses().Single().ReasonCode);
+            Assert.Equal(0, Volatile.Read(ref builder.Calls));
+            Assert.Equal(LogLevel.Warning, logger.First("git-index-run-failed").Level);
+            Assert.IsType<IOException>(logger.First("git-index-run-failed").Exception);
+
+            File.WriteAllText(configPath, "[core]\nrepositoryformatversion = 0\n");
+            service.RequestRefresh("proj", "config-repaired");
+            await WaitUntilAsync(() => service.GetRepositoryStatuses().Single().GitStateAt is not null);
+            Assert.True(Volatile.Read(ref builder.Calls) >= 1);
+        }
+        finally { await service.StopAsync(CancellationToken.None); }
+    }
+
+    [Fact]
     public async Task MissingRepository_KeepsPriorSnapshotAndReportsFailure()
     {
         var jobsPath = NewRepoWatchPath("proj");
         var repoPath = Path.Combine(Path.GetDirectoryName(jobsPath)!, "repo");
+        var gitMarker = UseExternalGitDirectory(repoPath);
         var scanner = BuildScanner("proj", jobsPath, repoPath);
         var cache = new TaskListGitProjectionCache();
         var task = new TaskInfo { TaskKey = "job", WatchPath = jobsPath };
@@ -710,11 +755,10 @@ public sealed class GitStateIndexServiceTests : IDisposable
                 && service.GetRepositoryStatuses().FirstOrDefault()?.GitStateAt is not null);
             var previous = cache.ReadTask(task);
             Assert.Equal("ready", previous.State);
-            // Recursive deletion exposes intermediate ref states which may
-            // legitimately publish before the repository disappears. Remove
-            // the checkout atomically to isolate failure retention; Dispose
-            // cleans the moved directory after the service stops.
-            Directory.Move(repoPath, repoPath + "-removed");
+            // The watcher holds the external Git directory open on Windows.
+            // Removing only the unheld pointer makes the repository unavailable
+            // without moving a directory with live watcher handles.
+            File.Delete(gitMarker);
             service.RequestRefresh("proj", "repo-deleted");
             await WaitUntilAsync(() => cache.ReadTask(task).ReasonCode == "repository-unavailable");
             using var telemetry = GitProcessTelemetry.BeginRequest("tasks/detail/git", NullLogger.Instance,
@@ -825,6 +869,7 @@ public sealed class GitStateIndexServiceTests : IDisposable
     {
         var jobsPath = NewRepoWatchPath("proj");
         var repoPath = Path.Combine(Path.GetDirectoryName(jobsPath)!, "repo");
+        var gitMarker = UseExternalGitDirectory(repoPath);
         var scanner = BuildScanner("proj", jobsPath, repoPath);
         var logger = new RecordingLogger();
         using var service = new GitStateIndexService(scanner, BuildWatcher(scanner),
@@ -837,7 +882,7 @@ public sealed class GitStateIndexServiceTests : IDisposable
         {
             await WaitUntilAsync(() => !service.IsRunning("proj")
                 && service.GetRepositoryStatuses().FirstOrDefault()?.GitStateAt is not null);
-            Directory.Move(repoPath, repoPath + "-removed");
+            File.Delete(gitMarker);
 
             // Two sweep passes prove the typed failure did not end the sweep loop.
             await WaitUntilAsync(() => logger.Count("git-state-sweep-config-unavailable") >= 2);
