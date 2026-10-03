@@ -1,0 +1,1024 @@
+page,line,literal,existence,documentType
+docs/operations/article-document-authoring.md,11,docs/app/templates/article-document-v2.html,present,current/reference
+docs/operations/article-document-authoring.md,127,scripts/stable-frontend-boot-probe.mjs,present,current/reference
+docs/operations/article-document-authoring.md,130,frontend/e2e/fixtures/dev-backend.ts,present,current/reference
+docs/operations/car-migration-plan.md,4,docs/concepts/distributed-agent-studio-target-architecture.md,present,current/reference
+docs/operations/car-migration-plan.md,47,docs/process-termination.md,unresolved candidate,current/reference
+docs/operations/car-migration-plan.md,67,backend/Features/Cli/Execution/Win/TaskProcessReaper.cs,present,current/reference
+docs/operations/car-migration-plan.md,109,backend/Shared/Lease/RunLeaseWireModels.cs,present,current/reference
+docs/operations/car-migration-plan.md,109,runner/WireModels.cs,present,current/reference
+docs/operations/car-migration-plan.md,237,runner/AgentCliProcess.cs,present,current/reference
+docs/operations/car-migration-plan.md,237,runner/ProcessRunner.cs,present,current/reference
+docs/operations/car-migration-plan.md,243,docs/concepts/distributed-agent-studio-target-architecture.md,present,current/reference
+docs/operations/car-migration-plan.md,243,docs/system/architecture/project-map.md,present,current/reference
+docs/operations/car-migration-plan.md,268,scripts/release.sh,unresolved candidate,current/reference
+docs/operations/car-migration-plan.md,270,scripts/release/generate-build-manifest.mjs,present,current/reference
+docs/operations/common-problems/circuit-breaker-3x-failure-cascade/related.md,3,docs/operations/setup/troubleshooting.md,present,historical/diagnostic
+docs/operations/common-problems/circuit-breaker-3x-failure-cascade/related.md,4,docs/research/runner-outcome-visibility-2026-05-11.md,unresolved candidate,historical/diagnostic
+docs/operations/common-problems/claude-tool-permission-allowlist-gaps/related.md,4,docs/system/cli/skills/cli-claude.md,present,historical/diagnostic
+docs/operations/common-problems/copilot-cli-exit-1-immediate/protocol.md,3,docs/system/cli/skills/cli-copilot.md,unresolved candidate,historical/diagnostic
+docs/operations/common-problems/copilot-cli-exit-1-immediate/related.md,3,docs/system/cli/skills/cli-copilot.md,unresolved candidate,historical/diagnostic
+docs/operations/common-problems/gate-child-inherits-studio-listener/README.md,37,backend/Properties/launchSettings.json,present,historical/diagnostic
+docs/operations/common-problems/hollow-api-restart/ideas.md,12,scripts/update-stable.sh,present,historical/diagnostic
+docs/operations/common-problems/hollow-api-restart/ideas.md,16,scripts/test-update-stable.sh,present,historical/diagnostic
+docs/operations/common-problems/hollow-api-restart/related.md,10,scripts/worktree-test-stack.sh,present,historical/diagnostic
+docs/operations/common-problems/lineage-blocked-integration-push/README.md,67,docs/operations/git/commit-push-doctrine.md,present,historical/diagnostic
+docs/operations/common-problems/lineage-blocked-integration-push/occurrences.md,7,docs/operations/live-improvement-log/index.html,present,historical/diagnostic
+docs/operations/common-problems/lineage-blocked-integration-push/occurrences.md,14,backend/Features/Pipeline/MergeIntoDevelopRunner.cs,present,historical/diagnostic
+docs/operations/common-problems/lineage-blocked-integration-push/occurrences.md,14,backend/Features/Tasks/TaskIntegrationStatusService.cs,present,historical/diagnostic
+docs/operations/common-problems/lineage-blocked-integration-push/occurrences.md,14,backend/Shared/Models/TaskProvenance.cs,present,historical/diagnostic
+docs/operations/common-problems/lineage-blocked-integration-push/protocol.md,64,backend/Features/Pipeline/MergeIntoDevelopRunner.cs,present,historical/diagnostic
+docs/operations/common-problems/lineage-blocked-integration-push/protocol.md,91,docs/operations/rebase-merge-and-steering/index.html,present,historical/diagnostic
+docs/operations/common-problems/lineage-blocked-integration-push/related.md,6,docs/operations/rebase-merge-and-steering/index.html,present,historical/diagnostic
+docs/operations/common-problems/lineage-blocked-integration-push/related.md,10,docs/operations/git/commit-push-doctrine.md,present,historical/diagnostic
+docs/operations/common-problems/lineage-blocked-integration-push/related.md,15,docs/operations/develop-main-promotion.md,present,historical/diagnostic
+docs/operations/common-problems/review-parallelism-shared-build-server/README.md,46,scripts/review-build-server-isolation-probe.sh,present,historical/diagnostic
+docs/operations/common-problems/review-parallelism-shared-build-server/measures.md,10,scripts/review-build-server-isolation-probe.sh,present,historical/diagnostic
+docs/operations/common-problems/review-parallelism-shared-build-server/related.md,11,runner/ReviewBuildServerIsolation.cs,present,historical/diagnostic
+docs/operations/common-problems/review-parallelism-shared-build-server/related.md,12,runner/CommandProgressWatchdog.cs,present,historical/diagnostic
+docs/operations/common-problems/review-parallelism-shared-build-server/related.md,13,runner/RemoteReviewWorkspace.cs,present,historical/diagnostic
+docs/operations/common-problems/review-parallelism-shared-build-server/related.md,14,scripts/review-build-server-isolation-probe.sh,present,historical/diagnostic
+docs/operations/common-problems/sentinel-pid-broadcast-kill/README.md,48,runner/ProcessSignalGuard.cs,present,historical/diagnostic
+docs/operations/common-problems/stale-progress-orphan-race/related.md,3,docs/system/architecture/runner-lanes/progress-lane-writers.md,present,historical/diagnostic
+docs/operations/common-problems/stale-progress-orphan-race/related.md,4,docs/research/arhciv-loop-postmortem-2026-05.md,unresolved candidate,historical/diagnostic
+docs/operations/common-problems/windows-launcher-exit-during-compile/README.md,52,scripts/api-start-windows-launcher.test.sh,present,historical/diagnostic
+docs/operations/decision-surface/README.md,314,frontend/src/app/features/task-detail/state/triage-actions.model.ts,present,current/reference
+docs/operations/decision-surface/README.md,315,backend/Shared/Models/TaskRequests.cs,present,current/reference
+docs/operations/decision-surface/README.md,316,backend/Features/Tasks/TaskRunnerEndpoints.cs,present,current/reference
+docs/operations/decision-surface/README.md,320,frontend/e2e/fixtures/decision-surface/icon-pick-decision.html,present,current/reference
+docs/operations/demo-instanz/replay-only-runner.md,21,backend/Features/DemoReplay/DemoReplayAdmissionPolicy.cs,present,current/reference
+docs/operations/demo-instanz/replay-only-runner.md,160,frontend/e2e/task-detail/runner-replay-simulated-badge.spec.ts,present,current/reference
+docs/operations/docker-ausfuehrungswelt-migration/project-definition-v2-plan.md,425,scripts/start.sh,unresolved candidate,current/reference
+docs/operations/docker-ausfuehrungswelt-migration/project-definition-v2-plan.md,440,scripts/dev-stack.mjs,unresolved candidate,current/reference
+docs/operations/docker-ausfuehrungswelt-migration/project-definition-v2-plan.md,440,scripts/start.sh,unresolved candidate,current/reference
+docs/operations/doku-inventur-2026-07/README.md,32,docs/system/contracts/wiki-tree.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,40,docs/system/domains/model-routing-policy.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,67,docs/start/README.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,67,docs/archive/README.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,84,docs/concepts/README.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,85,docs/concepts/admin-cli-onboarding.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,86,docs/concepts/api-project-identity-and-watchpath.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,87,docs/concepts/architecture-quality-layer.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,88,docs/concepts/auto-review-evidence-gate-analysis.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,89,docs/concepts/companion-app-design.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,90,docs/concepts/completion-review-and-remote-runner-stability.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,91,docs/concepts/decoupled-lifecycles.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,92,docs/concepts/deployment-first-class.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,93,docs/concepts/designated-topics/README.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,94,docs/concepts/designated-topics/cli-onboarding.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,95,docs/concepts/designated-topics/drive-to-conclusion.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,96,docs/concepts/designated-topics/evidence-gate.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,97,docs/concepts/designated-topics/supervision-loop.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,98,docs/concepts/distributed-agent-studio-target-architecture.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,99,docs/concepts/docs-structure-migration.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,100,docs/concepts/drei-einheiten-architektur.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,101,docs/concepts/expanded-lifecycle-lanes-plan-2026-05.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,102,docs/concepts/experimentier-workbench.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,103,docs/concepts/layer-infrastruktur-diagramm.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,104,docs/concepts/mockups/decoupled-lifecycles.html,unresolved candidate,current/reference
+docs/operations/doku-inventur-2026-07/README.md,105,docs/concepts/mockups/deployment-first-class.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,106,docs/concepts/mockups/experimentier-workbench.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,107,docs/concepts/mockups/multichat-orchestrator.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,108,docs/concepts/mockups/project-relationship-model.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,109,docs/concepts/mockups/wiki-pulse-dashboard.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,110,docs/concepts/model-escalation-and-companion-routing.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,111,docs/concepts/multichat-orchestrator.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,112,docs/concepts/mvp-presentation-storyboard.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,113,docs/concepts/orchestrator-chat-redesign-handoff.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,114,docs/concepts/orchestrator-chat.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,115,docs/concepts/orchestrator-drive-to-conclusion.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,116,docs/concepts/orchestrator-in-app.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,117,docs/concepts/orchestrator-supervision-loop.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,118,docs/concepts/out-of-band-task-completion.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,119,docs/concepts/parallel-task-execution.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,120,docs/concepts/planning-research-task-kinds-2026-05.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,121,docs/concepts/planning-research-task-type.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,122,docs/concepts/planning-task-lifecycle.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,123,docs/concepts/post-processing-immediacy-and-parallelism.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,124,docs/concepts/process-termination-scenarios.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,125,docs/concepts/project-chat-progress-indicator-2026-06-08.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,126,docs/concepts/project-overview-dashboard/README.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,127,docs/concepts/project-overview-dashboard/ui.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,128,docs/concepts/project-urls/README.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,129,docs/concepts/project-urls/ui.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,130,docs/concepts/proposals/2026-07-11/survey-2026-07-11-001-crash-recovery-modal-with-49-files.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,131,docs/concepts/proposals/2026-07-11/survey-2026-07-11-004-all-projects-all-lanes-explorer-open.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,132,docs/concepts/proposals/2026-07-11/survey-2026-07-11-005-all-projects-all-lanes-explorer-open.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,133,docs/concepts/proposals/2026-07-11/survey-2026-07-11-008-closed.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,134,docs/concepts/proposals/2026-07-11/survey-2026-07-11-009-closed.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,135,docs/concepts/proposals/2026-07-11/survey-2026-07-11-014-escalated-review-overview.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,136,docs/concepts/proposals/2026-07-11/survey-2026-07-11-015-escalated-review-overview.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,137,docs/concepts/proposals/2026-07-11/survey-2026-07-11-016-escalated-review-overview.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,138,docs/concepts/proposals/2026-07-11/survey-2026-07-11-017-escalated-review-overview.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,139,docs/concepts/proposals/2026-07-11/survey-2026-07-11-018-result.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,140,docs/concepts/proposals/2026-07-11/survey-2026-07-11-019-result.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,141,docs/concepts/proposals/2026-07-11/survey-2026-07-11-020-result.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,142,docs/concepts/proposals/2026-07-11/survey-2026-07-11-021-result.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,143,docs/concepts/proposals/2026-07-11/survey-2026-07-11-022-activity.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,144,docs/concepts/proposals/2026-07-11/survey-2026-07-11-023-activity.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,145,docs/concepts/proposals/2026-07-11/survey-2026-07-11-024-activity.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,146,docs/concepts/proposals/2026-07-11/survey-2026-07-11-025-activity.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,147,docs/concepts/proposals/2026-07-11/survey-2026-07-11-028-overview.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,148,docs/concepts/proposals/2026-07-11/survey-2026-07-11-029-overview.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,149,docs/concepts/proposals/2026-07-11/survey-2026-07-11-032-project-urls.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,150,docs/concepts/proposals/2026-07-11/survey-2026-07-11-033-project-urls.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,151,docs/concepts/proposals/2026-07-11/survey-2026-07-11-034-git-view.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,152,docs/concepts/proposals/2026-07-11/survey-2026-07-11-035-git-view.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,153,docs/concepts/proposals/2026-07-11/survey-2026-07-11-036-git-view.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,154,docs/concepts/proposals/2026-07-11/survey-2026-07-11-037-git-view.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,155,docs/concepts/proposals/2026-07-11/survey-2026-07-11-040-visual-evidence.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,156,docs/concepts/proposals/2026-07-11/survey-2026-07-11-041-visual-evidence.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,157,docs/concepts/proposals/2026-07-11/survey-2026-07-11-044-drift.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,158,docs/concepts/proposals/2026-07-11/survey-2026-07-11-045-drift.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,159,docs/concepts/proposals/2026-07-11/survey-2026-07-11-048-observability.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,160,docs/concepts/proposals/2026-07-11/survey-2026-07-11-049-observability.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,161,docs/concepts/proposals/2026-07-11/survey-2026-07-11-052-token-usage.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,162,docs/concepts/proposals/2026-07-11/survey-2026-07-11-053-token-usage.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,163,docs/concepts/proposals/2026-07-11/survey-2026-07-11-055-security.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,164,docs/concepts/proposals/2026-07-11/survey-2026-07-11-056-security.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,165,docs/concepts/proposals/2026-07-11/survey-2026-07-11-057-security.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,166,docs/concepts/proposals/2026-07-11/survey-2026-07-11-058-test-quality.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,167,docs/concepts/proposals/2026-07-11/survey-2026-07-11-059-test-quality.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,168,docs/concepts/proposals/2026-07-11/survey-2026-07-11-060-test-quality.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,169,docs/concepts/proposals/2026-07-11/survey-2026-07-11-061-test-quality.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,170,docs/concepts/proposals/2026-07-11/survey-2026-07-11-062-audits-checks.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,171,docs/concepts/proposals/2026-07-11/survey-2026-07-11-063-audits-checks.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,172,docs/concepts/proposals/2026-07-11/survey-2026-07-11-064-audits-checks.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,173,docs/concepts/proposals/2026-07-11/survey-2026-07-11-065-audits-checks.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,174,docs/concepts/proposals/2026-07-11/survey-2026-07-11-068-architecture.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,175,docs/concepts/proposals/2026-07-11/survey-2026-07-11-069-architecture.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,176,docs/concepts/proposals/2026-07-11/survey-2026-07-11-072-wiki.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,177,docs/concepts/proposals/2026-07-11/survey-2026-07-11-073-wiki.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,178,docs/concepts/proposals/2026-07-11/survey-2026-07-11-074-agent-docs.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,179,docs/concepts/proposals/2026-07-11/survey-2026-07-11-075-agent-docs.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,180,docs/concepts/proposals/2026-07-11/survey-2026-07-11-076-agent-docs.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,181,docs/concepts/proposals/2026-07-11/survey-2026-07-11-077-agent-docs.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,182,docs/concepts/proposals/2026-07-11/survey-2026-07-11-078-prompts.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,183,docs/concepts/proposals/2026-07-11/survey-2026-07-11-079-prompts.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,184,docs/concepts/proposals/2026-07-11/survey-2026-07-11-080-prompts.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,185,docs/concepts/proposals/2026-07-11/survey-2026-07-11-081-prompts.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,186,docs/concepts/proposals/2026-07-11/survey-2026-07-11-084-open.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,187,docs/concepts/proposals/2026-07-11/survey-2026-07-11-085-open.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,188,docs/concepts/proposals/2026-07-11/survey-2026-07-11-088-open.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,189,docs/concepts/proposals/2026-07-11/survey-2026-07-11-089-open.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,190,docs/concepts/proposals/2026-07-11/survey-2026-07-11-090-open.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,191,docs/concepts/proposals/2026-07-11/survey-2026-07-11-091-open.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,192,docs/concepts/proposals/2026-07-11/survey-2026-07-11-092-open.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,193,docs/concepts/proposals/2026-07-11/survey-2026-07-11-093-open.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,194,docs/concepts/proposals/2026-07-11/survey-2026-07-11-102-appearance.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,195,docs/concepts/proposals/2026-07-11/survey-2026-07-11-103-appearance.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,196,docs/concepts/proposals/README.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,197,docs/concepts/publishing-workflows.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,198,docs/concepts/quota-snapshot-run-events.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,199,docs/concepts/release-semantics.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,200,docs/concepts/result-view-and-case-templates.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,201,docs/concepts/review-pipeline-health.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,202,docs/concepts/review-pipeline-health/README.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,203,docs/concepts/review-pipeline-health/decision-history.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,204,docs/concepts/review-pipeline-health/incident-2026-07-22-gate-churn.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,205,docs/concepts/review-pipeline-health/issues.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,206,docs/concepts/run-liveness-and-slot-semantics.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,207,docs/concepts/runtime-prompt-usage-audit.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,208,docs/concepts/screen-tooling-mvp-presentation-2026-07.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,209,docs/concepts/skills-architecture.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,210,docs/concepts/solution-workspace-component-project-model.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,211,docs/concepts/studio-route-restoration-diagram.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,212,docs/concepts/studio-route-restoration.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,213,docs/concepts/task-detail-header-state-actions/README.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,214,docs/concepts/task-integration-and-merge-workflow.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,215,docs/concepts/task-integration-merge-config-analysis.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,216,docs/concepts/task-processing-pipeline/README.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,217,docs/concepts/task-processing-pipeline/pipeline-editor.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,218,docs/concepts/task-processing-pipeline/task-timeline.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,219,docs/concepts/token-aggregation.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,220,docs/concepts/token-budget-load-management.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,221,docs/concepts/tree-project-indicator-alternatives.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,222,docs/concepts/verteilte-task-server-git-sync.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,223,docs/concepts/visual-quality-and-proof.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,224,docs/concepts/visual-style-guide.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,225,docs/concepts/visual-style-guide/README.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,226,docs/concepts/visual-style-guide/deck-audit.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,227,docs/concepts/visual-style-guide/deck-panel-v1.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,228,docs/concepts/visual-style-guide/empty-states.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,229,docs/concepts/visual-style-guide/mini-indicators.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,230,docs/concepts/visual-style-guide/runner-cards.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,231,docs/concepts/visual-style-guide/vnext.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,232,docs/concepts/wiki-as-cognitive-interface.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,233,docs/concepts/wiki-grading-run.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,234,docs/concepts/wiki-hosting-options-2026-07.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,235,docs/concepts/wiki-pulse-dashboard.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,236,docs/concepts/zielarchitektur-diagramm.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,237,docs/concepts/zielstruktur-wiki.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,243,docs/operations/README.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,244,docs/operations/async-validation-staging-lane/brief.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,245,docs/operations/async-validation-staging-lane/index.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,246,docs/operations/car-migration-plan.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,247,docs/operations/common-problems/README.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,248,docs/operations/common-problems/accept-with-concerns-waves-through-unverified/README.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,249,docs/operations/common-problems/accept-with-concerns-waves-through-unverified/ideas.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,250,docs/operations/common-problems/accept-with-concerns-waves-through-unverified/measures.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,251,docs/operations/common-problems/accept-with-concerns-waves-through-unverified/occurrences.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,252,docs/operations/common-problems/accept-with-concerns-waves-through-unverified/protocol.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,253,docs/operations/common-problems/accept-with-concerns-waves-through-unverified/related.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,254,docs/operations/common-problems/circuit-breaker-3x-failure-cascade/README.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,255,docs/operations/common-problems/circuit-breaker-3x-failure-cascade/ideas.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,256,docs/operations/common-problems/circuit-breaker-3x-failure-cascade/measures.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,257,docs/operations/common-problems/circuit-breaker-3x-failure-cascade/occurrences.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,258,docs/operations/common-problems/circuit-breaker-3x-failure-cascade/protocol.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,259,docs/operations/common-problems/circuit-breaker-3x-failure-cascade/related.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,260,docs/operations/common-problems/classifier-unknown-on-cli-resume-failure/README.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,261,docs/operations/common-problems/classifier-unknown-on-cli-resume-failure/ideas.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,262,docs/operations/common-problems/classifier-unknown-on-cli-resume-failure/measures.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,263,docs/operations/common-problems/classifier-unknown-on-cli-resume-failure/occurrences.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,264,docs/operations/common-problems/classifier-unknown-on-cli-resume-failure/protocol.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,265,docs/operations/common-problems/classifier-unknown-on-cli-resume-failure/related.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,266,docs/operations/common-problems/claude-tool-permission-allowlist-gaps/README.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,267,docs/operations/common-problems/claude-tool-permission-allowlist-gaps/ideas.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,268,docs/operations/common-problems/claude-tool-permission-allowlist-gaps/measures.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,269,docs/operations/common-problems/claude-tool-permission-allowlist-gaps/occurrences.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,270,docs/operations/common-problems/claude-tool-permission-allowlist-gaps/protocol.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,271,docs/operations/common-problems/claude-tool-permission-allowlist-gaps/related.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,272,docs/operations/common-problems/codex-silent-finish/README.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,273,docs/operations/common-problems/codex-silent-finish/ideas.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,274,docs/operations/common-problems/codex-silent-finish/measures.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,275,docs/operations/common-problems/codex-silent-finish/occurrences.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,276,docs/operations/common-problems/codex-silent-finish/protocol.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,277,docs/operations/common-problems/codex-silent-finish/related.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,278,docs/operations/common-problems/completion-gate-dead-code/README.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,279,docs/operations/common-problems/completion-gate-dead-code/ideas.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,280,docs/operations/common-problems/completion-gate-dead-code/measures.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,281,docs/operations/common-problems/completion-gate-dead-code/occurrences.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,282,docs/operations/common-problems/completion-gate-dead-code/protocol.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,283,docs/operations/common-problems/completion-gate-dead-code/related.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,284,docs/operations/common-problems/copilot-cli-exit-1-immediate/README.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,285,docs/operations/common-problems/copilot-cli-exit-1-immediate/ideas.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,286,docs/operations/common-problems/copilot-cli-exit-1-immediate/measures.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,287,docs/operations/common-problems/copilot-cli-exit-1-immediate/occurrences.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,288,docs/operations/common-problems/copilot-cli-exit-1-immediate/protocol.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,289,docs/operations/common-problems/copilot-cli-exit-1-immediate/related.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,290,docs/operations/common-problems/direct-workspace-folder-write-by-agent/README.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,291,docs/operations/common-problems/direct-workspace-folder-write-by-agent/ideas.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,292,docs/operations/common-problems/direct-workspace-folder-write-by-agent/measures.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,293,docs/operations/common-problems/direct-workspace-folder-write-by-agent/occurrences.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,294,docs/operations/common-problems/direct-workspace-folder-write-by-agent/protocol.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,295,docs/operations/common-problems/direct-workspace-folder-write-by-agent/related.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,296,docs/operations/common-problems/eacces-on-dev-file-writes/README.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,297,docs/operations/common-problems/eacces-on-dev-file-writes/ideas.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,298,docs/operations/common-problems/eacces-on-dev-file-writes/measures.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,299,docs/operations/common-problems/eacces-on-dev-file-writes/occurrences.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,300,docs/operations/common-problems/eacces-on-dev-file-writes/protocol.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,301,docs/operations/common-problems/eacces-on-dev-file-writes/related.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,302,docs/operations/common-problems/folder-move-lock-recurrence/README.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,303,docs/operations/common-problems/folder-move-lock-recurrence/ideas.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,304,docs/operations/common-problems/folder-move-lock-recurrence/measures.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,305,docs/operations/common-problems/folder-move-lock-recurrence/occurrences.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,306,docs/operations/common-problems/folder-move-lock-recurrence/protocol.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,307,docs/operations/common-problems/folder-move-lock-recurrence/related.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,308,docs/operations/common-problems/services-killed-by-harness-sweep/README.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,309,docs/operations/common-problems/services-killed-by-harness-sweep/ideas.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,310,docs/operations/common-problems/services-killed-by-harness-sweep/measures.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,311,docs/operations/common-problems/services-killed-by-harness-sweep/occurrences.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,312,docs/operations/common-problems/services-killed-by-harness-sweep/protocol.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,313,docs/operations/common-problems/services-killed-by-harness-sweep/related.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,314,docs/operations/common-problems/stale-progress-orphan-race/README.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,315,docs/operations/common-problems/stale-progress-orphan-race/ideas.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,316,docs/operations/common-problems/stale-progress-orphan-race/measures.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,317,docs/operations/common-problems/stale-progress-orphan-race/occurrences.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,318,docs/operations/common-problems/stale-progress-orphan-race/protocol.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,319,docs/operations/common-problems/stale-progress-orphan-race/related.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,320,docs/operations/common-problems/verdict-stuck-in-auto-review/README.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,321,docs/operations/common-problems/verdict-stuck-in-auto-review/ideas.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,322,docs/operations/common-problems/verdict-stuck-in-auto-review/measures.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,323,docs/operations/common-problems/verdict-stuck-in-auto-review/occurrences.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,324,docs/operations/common-problems/verdict-stuck-in-auto-review/protocol.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,325,docs/operations/common-problems/verdict-stuck-in-auto-review/related.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,326,docs/operations/common-problems/workflow-args-json-string-fanout/README.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,327,docs/operations/common-problems/workflow-args-json-string-fanout/ideas.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,328,docs/operations/common-problems/workflow-args-json-string-fanout/measures.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,329,docs/operations/common-problems/workflow-args-json-string-fanout/occurrences.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,330,docs/operations/common-problems/workflow-args-json-string-fanout/protocol.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,331,docs/operations/common-problems/workflow-args-json-string-fanout/related.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,332,docs/operations/concept-pipeline/index.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,333,docs/operations/container-tranche-plan.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,334,docs/operations/decision-surface/README.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,335,docs/operations/entscheidungsvorlagen-2230-2132.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,336,docs/operations/epic-lebendes-dokument/index.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,337,docs/operations/execution-model-shift/container-grundlagen/index.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,338,docs/operations/execution-model-shift/index.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,339,docs/operations/git/commit-attribution-discovery.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,340,docs/operations/git/commit-push-doctrine.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,341,docs/operations/haertung-verteilte-ausfuehrung/agent-fencing-diagram.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,342,docs/operations/haertung-verteilte-ausfuehrung/agent-fencing.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,343,docs/operations/haertung-verteilte-ausfuehrung/historie.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,344,docs/operations/haertung-verteilte-ausfuehrung/index.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,345,docs/operations/haertung-verteilte-ausfuehrung/target-architecture/actors.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,346,docs/operations/haertung-verteilte-ausfuehrung/target-architecture/connection-health.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,347,docs/operations/haertung-verteilte-ausfuehrung/target-architecture/contracts.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,348,docs/operations/haertung-verteilte-ausfuehrung/target-architecture/decision-history.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,349,docs/operations/haertung-verteilte-ausfuehrung/target-architecture/distributable.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,350,docs/operations/haertung-verteilte-ausfuehrung/target-architecture/distributable.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,351,docs/operations/haertung-verteilte-ausfuehrung/target-architecture/index.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,352,docs/operations/haertung-verteilte-ausfuehrung/target-architecture/migration-path.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,353,docs/operations/haertung-verteilte-ausfuehrung/target-architecture/orchestrator-plan.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,354,docs/operations/haertung-verteilte-ausfuehrung/target-architecture/resource-governance.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,355,docs/operations/haertung-verteilte-ausfuehrung/target-architecture/restart-matrix.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,356,docs/operations/haertung-verteilte-ausfuehrung/target-architecture/setup-scenarios.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,357,docs/operations/learnings/README.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,358,docs/operations/log-retention/index.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,359,docs/operations/marketing-studio-stufenplan.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,360,docs/operations/marketing-studio/index.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,361,docs/operations/model-routing-policy/index.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,362,docs/operations/nordstern/index.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,363,docs/operations/project-feed/index.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,364,docs/operations/projekt-settings-migrationsplan.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,365,docs/operations/releases.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,366,docs/operations/remote-gate-cleanup/index.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,367,docs/operations/remote-hosts.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,368,docs/operations/remote-task-server-local-studio.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,369,docs/operations/runtime/log-capture.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,370,docs/operations/runtime/observability.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,371,docs/operations/security/overview.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,372,docs/operations/security/requirements.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,373,docs/operations/security/reviews/2026-04-15-baseline.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,374,docs/operations/security/runbook-rehearsal-evidence.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,375,docs/operations/setup/README.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,376,docs/operations/setup/README.md.report.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,377,docs/operations/setup/cli-relogin-runbook.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,378,docs/operations/setup/contributor-setup.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,379,docs/operations/setup/getting-started.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,380,docs/operations/setup/linux-runner-host.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,381,docs/operations/setup/multi-machine.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,382,docs/operations/setup/networked-task-server.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,383,docs/operations/setup/onboard-a-project.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,384,docs/operations/setup/onboard-an-agent-cli.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,385,docs/operations/setup/presentation-capture.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,386,docs/operations/setup/remote-compose-test-harness.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,387,docs/operations/setup/remote-runner-persistent-connection.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,388,docs/operations/setup/task-server.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,389,docs/operations/setup/troubleshooting.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,390,docs/operations/setup/website-onboarding-template.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,391,docs/operations/setup/worktree-test-stack.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,392,docs/operations/setup/your-first-task.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,393,docs/operations/sichtblick-entscheidungen/index.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,394,docs/operations/sichtungszettel-2026-07-28.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,395,docs/operations/stable-release-contract.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,396,docs/operations/testing/dev-test-workspace.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,397,docs/operations/token-refresh-ohne-tunnel.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,398,docs/operations/umsetzungsplan-zielbild/index.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,399,docs/operations/url-preview-diagnostics.md,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,400,docs/operations/wiki-archiv-konzept/index.html,present,current/reference
+docs/operations/doku-inventur-2026-07/README.md,401,docs/operations/zielbild-komponenten-protokolle/index.html,present,current/reference
+docs/operations/entscheidungsvorlagen-2230-2132.md,11,task-server/RuntimeCapacitySettingsService.cs,present,current/reference
+docs/operations/entscheidungsvorlagen-2230-2132.md,48,backend/Features/Runtime/BuildIdentity.cs,present,current/reference
+docs/operations/git/commit-attribution-discovery.md,54,backend/Services/Jobs/CommitAttributionRunner.cs,unresolved candidate,current/reference
+docs/operations/haertung-verteilte-ausfuehrung/target-architecture/setup-scenarios.md,55,scripts/compose-smoke-test.sh,present,current/reference
+docs/operations/haertung-verteilte-ausfuehrung/target-architecture/setup-scenarios.md,63,scripts/compose-smoke-vm-test.sh,present,current/reference
+docs/operations/marketing-studio-stufenplan.md,7,docs/operations/marketing-studio/index.html,present,current/reference
+docs/operations/remote-gate-zielbild/remote-gate.md,17,docs/concepts/platform-architecture/remote-gate.md,present,current/reference
+docs/operations/remote-task-server-local-studio.md,355,docs/studio-route-ownership/routes.json,present,current/reference
+docs/operations/remote-task-server-local-studio.md,381,docs/studio-route-ownership/routes.json,present,current/reference
+docs/operations/remote-task-server-local-studio.md,443,docs/studio-route-ownership/routes.json,present,current/reference
+docs/operations/remote-task-server-local-studio.md,449,task-server/StudioEndpoints.cs,present,current/reference
+docs/operations/remote-task-server-local-studio.md,461,docs/studio-route-ownership/routes-inventory.test.mjs,present,current/reference
+docs/operations/remote-task-server-local-studio.md,466,docs/studio-route-ownership/build-inventory.test.mjs,present,current/reference
+docs/operations/remote-task-server-local-studio.md,509,backend/Features/Pipeline/PipelineCatalogue.cs,present,current/reference
+docs/operations/remote-task-server-local-studio.md,510,backend/Features/Runner/AutoReviewPostProcessingQueue.cs,present,current/reference
+docs/operations/remote-task-server-local-studio.md,511,backend/Features/Review/CodeReviewStepService.cs,present,current/reference
+docs/operations/remote-task-server-local-studio.md,513,runner/GitWorkspace.cs,present,current/reference
+docs/operations/remote-task-server-local-studio.md,517,backend/Features/Drift/DriftPostStepRunner.cs,present,current/reference
+docs/operations/remote-task-server-local-studio.md,551,docs/system/contracts/code-patterns.md,present,current/reference
+docs/operations/runtime/log-capture.md,7,docs/app/schemas/product-runtime-event.schema.json,present,current/reference
+docs/operations/runtime/log-capture.md,10,docs/operations/runtime/observability.md,present,current/reference
+docs/operations/runtime/log-capture.md,172,docs/system/contracts/filesystem.md,present,current/reference
+docs/operations/runtime/log-capture.md,207,frontend/e2e/runtime-console-capture.spec.ts,unresolved candidate,current/reference
+docs/operations/runtime/observability.md,7,docs/app/schemas/product-runtime-event.schema.json,present,current/reference
+docs/operations/runtime/observability.md,145,docs/app/schemas/product-runtime-event.schema.json,present,current/reference
+docs/operations/runtime/observability.md,147,docs/system/contracts/protocol-style.md,present,current/reference
+docs/operations/security/overview.md,163,deploy/networked/rehearse-runbooks.sh,present,current/reference
+docs/operations/security/requirements.md,20,docs/system/contracts/agent-task.md,present,current/reference
+docs/operations/setup/connectivity-manifest.md,3,docs/deployment-story/index.html,present,current/reference
+docs/operations/setup/connectivity-manifest.md,11,backend/Features/Management/Connectivity/InstallationConnectivity.cs,present,current/reference
+docs/operations/setup/connectivity-manifest.md,20,backend/Host/Program.cs,present,current/reference
+docs/operations/setup/connectivity-manifest.md,21,task-server/Program.cs,present,current/reference
+docs/operations/setup/contributor-setup.md,101,frontend/proxy.conf.json,present,current/reference
+docs/operations/setup/contributor-setup.md,173,frontend/package.json,present,current/reference
+docs/operations/setup/contributor-setup.md,173,frontend/package-lock.json,present,current/reference
+docs/operations/setup/contributor-setup.md,185,scripts/update-stable.sh,present,current/reference
+docs/operations/setup/contributor-setup.md,187,scripts/update-stable.sh,present,current/reference
+docs/operations/setup/contributor-setup.md,206,scripts/frontend-watchdog.sh,present,current/reference
+docs/operations/setup/contributor-setup.md,221,scripts/update-stable.sh,present,current/reference
+docs/operations/setup/contributor-setup.md,227,scripts/update-stable.sh,present,current/reference
+docs/operations/setup/contributor-setup.md,241,scripts/test-frontend-watchdog.sh,present,current/reference
+docs/operations/setup/contributor-setup.md,260,scripts/api-start-windows-launcher.test.sh,present,current/reference
+docs/operations/setup/docker-compose-connector-gap.md,26,backend/Features/Connector/ConnectorOptions.cs,present,current/reference
+docs/operations/setup/docker.md,44,scripts/compose-upgrade-test.sh,present,current/reference
+docs/operations/setup/installation-upgrade-contract.md,13,deploy/release/agent-orchestrator/update-docker.sh,present,current/reference
+docs/operations/setup/installation-upgrade-contract.md,18,update-service/Installation/InstallationUpgradePolicy.cs,present,current/reference
+docs/operations/setup/installation-upgrade-contract.md,95,deploy/release/agent-orchestrator/tests/upgrade-rehearsal.sh,present,current/reference
+docs/operations/setup/linux-runner-host.md,40,runner/LeaseHeartbeat.cs,present,current/reference
+docs/operations/setup/linux-runner-host.md,154,scripts/remote-runner-onboard.sh,present,current/reference
+docs/operations/setup/linux-runner-host.md,343,docs/system/cli/supported-clis.md,present,current/reference
+docs/operations/setup/linux-runner-host.md,702,runner/ReviewBuildServerIsolation.cs,present,current/reference
+docs/operations/setup/linux-runner-host.md,771,backend/Features/Runner/AdaptiveReviewParallelismPolicy.cs,present,current/reference
+docs/operations/setup/networked-task-server.md,100,deploy/networked/rehearse-runbooks.sh,present,current/reference
+docs/operations/setup/onboard-an-agent-cli.md,23,backend/appsettings.Local.json,unresolved candidate,current/reference
+docs/operations/setup/preparation-isolation-orchestrator.md,27,contracts/TaskServer.Contracts/ProjectPreparation.cs,present,current/reference
+docs/operations/setup/remote-runner-persistent-connection.md,22,backend/appsettings.json,present,current/reference
+docs/operations/setup/remote-runner-persistent-connection.md,23,backend/appsettings.Local.json,unresolved candidate,current/reference
+docs/operations/setup/task-server.md,564,scripts/compose-distributed-bootstrap.sh,present,current/reference
+docs/operations/setup/task-server.md,579,scripts/compose-smoke-test.sh,present,current/reference
+docs/operations/setup/task-server.md,932,backend/Features/Tasks/TaskFilesEndpoints.cs,present,current/reference
+docs/operations/setup/task-server.md,934,backend/Features/Connector/ConnectorRouteInventory.cs,present,current/reference
+docs/operations/setup/task-server.md,1052,backend/Policies/model-routing-policy.v1.json,present,current/reference
+docs/operations/setup/task-server.md,1069,backend/Features/Search/GlobalSearchEndpoints.cs,present,current/reference
+docs/operations/setup/task-server.md,1172,contracts/TaskServer.Contracts/ManagementContracts.cs,present,current/reference
+docs/operations/setup/task-server.md,1302,backend/appsettings.Local.json,unresolved candidate,current/reference
+docs/operations/setup/windows-fallback-runbook.md,129,task-server/FullBackupService.cs,present,current/reference
+docs/operations/setup/worktree-test-stack.md,58,frontend/e2e/helpers/api.ts,present,current/reference
+docs/operations/setup/worktree-test-stack.md,59,frontend/playwright.config.ts,present,current/reference
+docs/operations/setup/worktree-test-stack.md,64,scripts/find-free-port.mjs,present,current/reference
+docs/operations/setup/worktree-test-stack.md,74,scripts/worktree-test-stack.sh,present,current/reference
+docs/operations/setup/worktree-test-stack.md,83,backend/Program.cs,unresolved candidate,current/reference
+docs/operations/setup/worktree-test-stack.md,84,backend/appsettings.Local.json,unresolved candidate,current/reference
+docs/operations/setup/your-first-task.md,80,docs/project-overview.md,unresolved candidate,current/reference
+docs/operations/stable-release-contract.md,304,frontend/angular.json,present,current/reference
+docs/operations/stable-release-contract.md,308,scripts/update-stable.sh,present,current/reference
+docs/operations/stable-release-contract.md,315,scripts/stable-frontend-boot-probe.mjs,present,current/reference
+docs/operations/stable-release-contract.md,384,backend/packages.lock.json,present,current/reference
+docs/operations/temp-and-cache-hygiene.md,34,runner/DetachedWorkerTmpMountGuard.cs,present,current/reference
+docs/operations/temp-and-cache-hygiene.md,103,scripts/measure-temp-residue.sh,present,current/reference
+docs/operations/testing/deployment-scenario.md,85,scripts/scenario.sh,present,current/reference
+docs/operations/testing/deployment-scenario.md,88,scripts/compose-smoke-test.sh,present,current/reference
+docs/operations/testing/deployment-scenario.md,170,scripts/scenario.test.sh,present,current/reference
+docs/operations/testing/deployment-scenario.md,171,scripts/compose-smoke-version.test.sh,present,current/reference
+docs/operations/testing/deployment-scenario.md,178,scripts/release/promotion-full-gate.sh,present,current/reference
+docs/operations/testing/deployment-scenario.md,249,backend/Features/Tasks/TaskCrudEndpoints.cs,present,current/reference
+docs/operations/testing/deployment-scenario.md,269,docs/operations/testing/windows-baseline-and-platform-gates.md,present,current/reference
+docs/operations/testing/dev-test-workspace.md,29,backend/appsettings.Local.json,unresolved candidate,current/reference
+docs/operations/token-refresh-ohne-tunnel.md,12,scripts/remote-runner-onboard.sh,present,current/reference
+docs/operations/token-refresh-ohne-tunnel.md,12,docs/system/cli/supported-clis.md,present,current/reference
+docs/operations/windows-process-spawn-safety.md,62,scripts/process-spawn-guard.test.mjs,present,current/reference
+docs/operations/workspace-repository-lifecycle.md,78,backend/appsettings.json,present,current/reference
+docs/system/architecture/bus/agent-message-bus.md,70,scripts/supervisor/system-review.md,present,current/reference
+docs/system/architecture/bus/agent-message-bus.md,70,scripts/supervisor/system-health-check.mjs,present,current/reference
+docs/system/architecture/bus/agent-message-bus.md,263,backend/Endpoints/AnalysisReportEndpoints.cs,unresolved candidate,current/reference
+docs/system/architecture/bus/implementation-state.md,13,backend/Services/Bus/AgentMessageBusStore.cs,unresolved candidate,current/reference
+docs/system/architecture/bus/implementation-state.md,14,backend/Services/Bus/AgentMessageBusBridge.cs,unresolved candidate,current/reference
+docs/system/architecture/bus/implementation-state.md,15,backend/Services/Bus/AgentMessageValidator.cs,unresolved candidate,current/reference
+docs/system/architecture/bus/implementation-state.md,16,backend/Services/Bus/AgentMessageBusPaths.cs,unresolved candidate,current/reference
+docs/system/architecture/bus/implementation-state.md,17,backend/Endpoints/BusEndpoints.cs,unresolved candidate,current/reference
+docs/system/architecture/bus/implementation-state.md,18,frontend/src/app/services/agent-bus.service.ts,present,current/reference
+docs/system/architecture/bus/implementation-state.md,19,backend/Models/AgentBus.cs,unresolved candidate,current/reference
+docs/system/architecture/bus/implementation-state.md,26,docs/app/schemas/agent-message.schema.json,present,current/reference
+docs/system/architecture/bus/implementation-state.md,27,docs/app/schemas/agent-participant.schema.json,present,current/reference
+docs/system/architecture/bus/implementation-state.md,39,frontend/src/app/models/timeline-entry.model.ts,present,current/reference
+docs/system/architecture/bus/implementation-state.md,134,frontend/src/app/services/agent-bus.service.ts,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,264,backend/Services/Cli/ChildHandle.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,264,docs/system/cli/skills/cli-claude.md,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,319,backend/Services/Cli/CliRunEvent.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,319,backend/Services/Runner/Watchdog.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,362,backend/Services/Cli/CliExecutionServiceBase.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,362,docs/research/cli-orchestration-survey-2026-05.md,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,372,docs/research/wsl2-vs-windows-decision-2026-05.md,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,386,docs/research/wsl2-vs-windows-decision-2026-05.md,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,396,docs/research/orchestrator-meta-loop-analysis-2026-05-04.md,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,406,backend/Services/Supervisor/SupervisorContract.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,406,backend/Services/Supervisor/ProjectObservationService.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,406,backend/Services/Supervisor/SupervisorInterventionService.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,406,backend/Services/Supervisor/HardHealthCheckHostedService.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,406,backend/Services/Supervisor/SoftReasoningHostedService.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,406,backend/Services/Supervisor/AutoInterventionHostedService.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,406,scripts/supervisor/system-review.md,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,428,docs/concepts/companion-app-design.md,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,428,backend/Services/Companion/CompanionSyncService.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,428,backend/Services/Companion/CompanionSnapshotBuilder.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,428,backend/Services/Companion/CompanionCommandDispatcher.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,460,backend/Services/Jobs/JobTransitionService.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,460,backend/Services/Runner/RunCompletionPolicy.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,460,backend/Services/GitService.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,460,docs/system/cli/skills/cli-claude.md,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,484,backend/Services/Runner/CrashRecoveryService.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,484,backend/Services/Runner/CompletionMarker.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,484,backend/Services/Runner/ProjectRunner.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,484,backend/Services/Jobs/JobMutationService.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,484,backend/Services/GitService.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,484,backend/Program.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,492,scripts/supervisor/restart-stable-after-batch.sh,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,492,scripts/supervisor/run-stable-restart-watcher.sh,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,505,scripts/supervisor/restart-stable-after-batch.sh,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,505,scripts/supervisor/run-stable-restart-watcher.sh,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,505,scripts/update-stable.sh,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,505,scripts/supervisor/README.md,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,527,docs/mockups/orchestrator-meta-cycle/README.md,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,527,docs/mockups/orchestrator-meta-cycle/taxonomy.md,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,527,docs/mockups/orchestrator-meta-cycle/ui.html,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,527,docs/app/schemas/meta-cycle-report.schema.json,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,527,backend/Services/Supervisor/MetaCycleHostedService.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,527,backend/Services/Supervisor/MetaCycleRules.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,527,frontend/src/app/components/project-meta-cycle-section.ts,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,549,docs/app/schemas/README.md,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,549,docs/app/schemas/supervisor-advisory.schema.json,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,549,docs/app/schemas/supervisor-intervention.schema.json,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,549,docs/app/schemas/token-aggregate.schema.json,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,549,docs/app/schemas/agent-message.schema.json,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,549,backend/Services/State/InMemoryStore.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,549,backend/Services/State/SupervisorAdvisoryStore.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,549,backend/Services/State/SupervisorInterventionStore.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,549,backend/Services/State/SupervisorRecordValidator.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,549,backend/Services/Supervisor/AutoInterventionHostedService.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,557,docs/app/schemas/task-find-result.schema.json,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,557,docs/app/schemas/task-mutation-request.schema.json,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,571,backend/Services/TaskAccess/ITaskAccess.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,571,backend/Services/TaskAccess/ITaskAccessHost.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,571,backend/Services/TaskAccess/TaskAccessRecords.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,571,backend/Services/TaskAccess/TaskAccessService.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,571,docs/app/schemas/task-find-result.schema.json,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,571,docs/app/schemas/task-mutation-request.schema.json,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,571,backend/Endpoints/ReviewDecisionsEndpoints.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,571,backend/Endpoints/ProjectSnapshotEndpoints.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,571,backend/Services/Supervisor/MetaCycleHostedService.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,571,backend/Services/Runner/ReviewDecisionOrchestrator.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,571,backend/Services/Runner/StaleProgressArchiver.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,571,backend/Services/Runner/ProjectRunner.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,591,backend/Models/JobModels.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,591,backend/Services/Jobs/JobStateMachine.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,591,backend/Services/Runner/ReviewDecisionOrchestrator.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,591,backend/Services/Runner/ProjectRunner.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,591,backend/Endpoints/Jobs/JobCrudEndpoints.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,591,frontend/src/app/app.ts,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,591,frontend/e2e/kanban-seven-lanes.spec.ts,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,612,backend/Models/JobModels.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,612,backend/Services/Jobs/JobStateMachine.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,612,backend/Services/Supervisor/OrchestratorPrepHostedService.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,612,backend/Services/Runner/OrchestratorPrepRules.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,612,backend/Endpoints/ProjectSettingsEndpoints.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,612,backend/Endpoints/Jobs/JobCrudEndpoints.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,612,frontend/src/app/app.ts,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,612,frontend/src/app/components/autonomy-slider.ts,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,622,docs/research/orchestrator-decision-protocol-2026-05.md,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,632,backend/Services/Runner/PendingDecisionScanner.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,632,backend/Services/Runner/ProjectRunner.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,632,backend/Services/TaskRunnerService.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,632,backend/Endpoints/RunnerEndpoints.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,632,frontend/src/app/components/project-detail.ts,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,632,docs/research/orchestrator-decision-protocol-2026-05.md,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,638,docs/app/schemas/pickup-failure.schema.json,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,650,backend/Services/Runner/ProjectRunner.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,650,backend/Services/Runner/PickupFailureLog.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,650,docs/app/schemas/pickup-failure.schema.json,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,671,backend/Services/Runner/StaleProgressArchiver.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,671,backend/Endpoints/Jobs/JobCrudEndpoints.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,671,docs/app/schemas/orphan-recovery.schema.json,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,671,frontend/src/app/components/job-column.ts,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,671,frontend/src/app/app.ts,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,671,frontend/e2e/failed-pickup-lane.spec.ts,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,685,backend/Services/Cli/ClaudeSessionHeartbeat.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,697,docs/research/wsl2-vs-windows-decision-2026-05.md,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,699,backend/Services/Runner/PhaseAwareWatchdog.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,699,backend/Services/Cli/RunPhaseTransitions.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,699,backend/Services/Runner/ProjectRunner.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,699,backend/Services/Cli/ClaudeSessionHeartbeat.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,714,frontend/package-lock.json,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,744,update-service/UpdateOrchestrator.cs,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,744,update-service/UpdateVerifier.cs,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,744,update-service/RunFolder.cs,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,744,update-service/Models.cs,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,744,update-service/Program.cs,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,744,backend/Features/Diagnostics/InternalProbeEndpoints.cs,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,744,frontend/src/app/features/update/components/update-block-modal/update-block-modal.component.ts,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,744,frontend/src/app/features/update/components/update-banner/update-banner.component.ts,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,744,frontend/e2e/update-pipeline-ux.spec.ts,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,744,docs/app/schemas/update-run-snapshot.schema.json,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,744,docs/app/schemas/update-run-verification.schema.json,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,750,docs/operations/stable-release-contract.md,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,762,docs/system/contracts/loop-inventory.md,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,806,frontend/angular.json,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,806,docs/quality/frontend/performance.md,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,806,frontend/e2e/perf-stress.spec.ts,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,833,docs/quality/frontend/performance.md,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,835,docs/quality/frontend/audits/architecture-review-2026-05-09.md,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,835,docs/quality/frontend/performance.md,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,1023,frontend/e2e/workspace/workspace-rename.spec.ts,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,1041,backend/Services/Tasks/TimelineLog.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,1041,backend/Services/Runner/ProjectRunner.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,1041,backend/Services/Runner/AspectRunnerService.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,1041,backend/Services/Tasks/TaskMutationService.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,1041,backend/Services/Runner/ReviewDecisionOrchestrator.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,1041,backend/Endpoints/Tasks/TaskRunnerEndpoints.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,1082,docs/app/help/lane-guides/failed-pickup-elimination.md,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,1082,backend/Services/Runner/StaleProgressArchiver.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,1082,backend/Services/Runner/ProjectRunner.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,1082,backend/Services/TaskAccess/ITaskAccess.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,1082,backend/Endpoints/ProjectSnapshotEndpoints.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,1082,backend/Services/Runner/PickupFailureLog.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,1082,backend/Program.cs,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,1118,backend/Shared/Models/PipelineTypes.cs,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,1119,backend/Features/Pipeline/PipelineTypeSettings.cs,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,1120,backend/Features/Pipeline/PipelineCatalogue.cs,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,1121,backend/Features/Projects/ProjectSettingsService.cs,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,1125,frontend/e2e/project/pipeline-step-config.spec.ts,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,1146,frontend/proxy.conf.json,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,1158,docs/system/contracts/loop-inventory.md,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,1164,frontend/e2e/project/pipeline-step-config.spec.ts,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,1252,docs/research/remote-ready-kickoff-2026-07.md,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,1265,docs/research/remote-ready-kickoff-2026-07.md,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,1265,docs/concepts/task-execution-and-log-architecture.md,unresolved candidate,current/reference
+docs/system/architecture/decisions/adr-archive.md,1267,docs/operations/security/overview.md,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,1380,runner/TaskServerClient.cs,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,1382,docs/operations/setup/task-server.md,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,1434,backend/Features/Runner/OrchestratorChat.cs,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,1436,backend/Features/Runner/RunnerEndpoints.cs,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,1438,backend/Features/Runner/RemoteChatWorkBroker.cs,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,1440,backend/Features/Tasks/LeaseEndpoints.cs,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,1442,runner/RemoteProjectChatRunner.cs,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,1444,frontend/src/app/features/orchestrator/components/orchestrator-side-sheet/orchestrator-side-sheet.component.html,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,1494,contracts/TaskServer.Contracts/OrchestrationContracts.cs,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,1496,task-server/TaskServerOrchestrationStore.cs,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,1498,task-server/TaskServerEndpoints.cs,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,1502,backend/Features/Runner/OrchestrationExecutionMode.cs,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,1504,backend/Host/Program.cs,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,1535,scripts/compose-smoke-test.sh,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,1551,deploy/release/agent-orchestrator/install-docker.sh,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,1556,docs/operations/setup/control-plane-docker.md,present,current/reference
+docs/system/architecture/decisions/adr-archive.md,1663,backend/Features/Tasks/TaskFilesEndpoints.cs,present,current/reference
+docs/system/architecture/decisions/proposed/adr-0051-task-processing-pipeline.md,7,frontend/e2e/project/pipeline-step-config.spec.ts,present,concept/proposal
+docs/system/architecture/decisions/proposed/adr-0061-unified-nav-active-item-token-contract.md,49,frontend/AGENTS.md,present,concept/proposal
+docs/system/architecture/decisions/proposed/adr-0061-unified-nav-active-item-token-contract.md,55,frontend/AGENTS.md,present,concept/proposal
+docs/system/architecture/decisions/proposed/adr-0061-unified-nav-active-item-token-contract.md,60,frontend/src/app/components/tree-row/tree-row.component.spec.ts,present,concept/proposal
+docs/system/architecture/decisions/proposed/adr-0061-unified-nav-active-item-token-contract.md,62,frontend/e2e/visual-evidence/nav-active-state.harness.mjs,present,concept/proposal
+docs/system/architecture/model.md,7,docs/app/schemas/architecture-model.schema.json,present,current/reference
+docs/system/architecture/model.md,9,docs/app/schemas/drift-report.schema.json,present,current/reference
+docs/system/architecture/model.md,35,docs/app/schemas/architecture-model.schema.json,present,current/reference
+docs/system/architecture/model.md,67,docs/system/architecture/decisions/adr-archive.md,present,current/reference
+docs/system/architecture/model.md,232,docs/app/schemas/architecture-model.schema.json,present,current/reference
+docs/system/architecture/model.md,232,docs/app/schemas/README.md,present,current/reference
+docs/system/architecture/model.md,239,backend/Services/Drift/DriftReportContract.cs,unresolved candidate,current/reference
+docs/system/architecture/project-map.md,5,docs/system/architecture/project-map-history/2026-07-13T22-32-53-484Z.json,present,current/reference
+docs/system/architecture/project-map.md,46,frontend/package.json,present,current/reference
+docs/system/architecture/project-map.md,142,docs/system/architecture/project-map.md,present,current/reference
+docs/system/architecture/runner-lanes/progress-lane-writers.md,25,backend/Features/Tasks/TaskTransitionService.cs,present,current/reference
+docs/system/architecture/runner-lanes/progress-lane-writers.md,27,backend/Services/Jobs/JobStateMachine.cs,unresolved candidate,current/reference
+docs/system/architecture/runner-lanes/progress-lane-writers.md,28,backend/Services/Runner/CrashRecoveryService.cs,unresolved candidate,current/reference
+docs/system/architecture/runner-lanes/progress-lane-writers.md,29,backend/Services/Runner/StaleProgressArchiver.cs,unresolved candidate,current/reference
+docs/system/architecture/runner-lanes/progress-lane-writers.md,30,backend/Services/Runner/ProjectRunner.cs,unresolved candidate,current/reference
+docs/system/architecture/runner-lanes/progress-lane-writers.md,31,backend/Services/TaskAccess/TaskAccessService.cs,unresolved candidate,current/reference
+docs/system/architecture/runner-lanes/progress-lane-writers.md,52,backend/Services/Jobs/LaneMutexRegistry.cs,unresolved candidate,current/reference
+docs/system/cli/skills/README.md,19,docs/system/cli/supported-clis.md,present,current/reference
+docs/system/cli/skills/README.md,26,frontend/e2e/cli-skills-pickup.spec.ts,unresolved candidate,current/reference
+docs/system/cli/skills/README.md,35,frontend/e2e/cli-skills-pickup.spec.ts,unresolved candidate,current/reference
+docs/system/cli/skills/README.md,37,docs/system/cli/supported-clis.md,present,current/reference
+docs/system/cli/skills/cli-codex.md,13,backend/Services/Cli/CodexCliService.cs,unresolved candidate,current/reference
+docs/system/cli/skills/cli-codex.md,64,docs/system/cli/investigations/codex-runner-investigation.md,present,current/reference
+docs/system/cli/skills/cli-codex.md,90,docs/system/cli/investigations/codex-runner-investigation.md,present,current/reference
+docs/system/cli/skills/cli-gemini.md,13,backend/Services/Cli/GeminiCliService.cs,unresolved candidate,current/reference
+docs/system/cli/supported-clis.md,88,backend/Host/Program.cs,present,current/reference
+docs/system/cli/supported-clis.md,179,runner/Program.cs,present,current/reference
+docs/system/cli/supported-clis.md,335,backend/Host/Program.cs,present,current/reference
+docs/system/common-problems/project-name-divergence-watchpath-vs-registry/related.md,3,docs/operations/setup/onboard-a-project.md,present,historical/diagnostic
+docs/system/common-problems/workspace-create-invisible/related.md,4,backend/Services/Configuration/WorkspaceManagementService.cs,unresolved candidate,historical/diagnostic
+docs/system/contracts/agent-contract-pattern.md,141,backend/Services/SelfHeal/SelfHealCommandRegistry.cs,unresolved candidate,current/reference
+docs/system/contracts/agent-task.md,33,docs/system/domains/runner.md,present,current/reference
+docs/system/contracts/agent-task.md,33,docs/concepts/orchestrator-drive-to-conclusion.html,present,current/reference
+docs/system/contracts/agent-task.md,149,docs/operations/runtime/observability.md,present,current/reference
+docs/system/contracts/filesystem.md,244,docs/concepts/expanded-lifecycle-lanes-plan-2026-05.md,present,current/reference
+docs/system/contracts/loop-inventory.md,39,backend/Services/Runner/ProjectRunner.cs,unresolved candidate,current/reference
+docs/system/contracts/loop-inventory.md,50,backend/Services/Runner/CrossSlugInfraCircuitBreaker.cs,unresolved candidate,current/reference
+docs/system/contracts/loop-inventory.md,73,backend/Services/Pickup/PickupDecisionService.cs,unresolved candidate,current/reference
+docs/system/contracts/loop-inventory.md,84,backend/Services/Runner/PostAbortReview.cs,unresolved candidate,current/reference
+docs/system/contracts/loop-inventory.md,95,backend/Services/Runner/CompletionRetrigger.cs,unresolved candidate,current/reference
+docs/system/contracts/loop-inventory.md,106,backend/Features/Pipeline/IntegrationAgentRoundService.cs,present,current/reference
+docs/system/contracts/loop-inventory.md,117,backend/Features/Runner/RunTimeoutSalvageContinuation.cs,present,current/reference
+docs/system/contracts/loop-inventory.md,117,backend/Features/Tasks/LeaseEndpoints.cs,present,current/reference
+docs/system/contracts/loop-inventory.md,128,backend/Features/Runner/UiIterationGate.cs,present,current/reference
+docs/system/contracts/loop-inventory.md,139,backend/Features/Runner/VisualQa/VisualQaPolicy.cs,present,current/reference
+docs/system/contracts/loop-inventory.md,150,backend/Features/Cli/Execution/CleanContextRetentionHostedService.cs,present,current/reference
+docs/system/contracts/loop-inventory.md,161,backend/Features/Cli/Quota/CliVersionMonitorHostedService.cs,present,current/reference
+docs/system/contracts/loop-inventory.md,161,backend/Features/Cli/Repair/LocalCliRepairService.cs,present,current/reference
+docs/system/contracts/protocol-style.md,290,frontend/playwright.config.ts,present,current/reference
+docs/system/contracts/remote-run-result.md,27,contracts/TaskServer.Contracts/RemoteRunResultContracts.cs,present,current/reference
+docs/system/contracts/review-plane.md,4,contracts/TaskServer.Contracts/ReviewContracts.cs,present,current/reference
+docs/system/contracts/review-plane.md,5,backend/Features/Runner/V1ReviewPlaneEndpoints.cs,present,current/reference
+docs/system/contracts/review-plane.md,7,task-server/TaskServerEndpoints.cs,present,current/reference
+docs/system/contracts/review-plane.md,66,backend/Features/Runner/RemoteReviewEvidenceProjectionQueue.cs,present,current/reference
+docs/system/contracts/review-plane.md,388,frontend/src/app/components/task-live-status/task-live-status.component.spec.ts,present,current/reference
+docs/system/contracts/run-outcome.md,197,docs/system/cli/supported-clis.md,present,current/reference
+docs/system/contracts/runtime-prompts.md,123,backend/Features/Prompts/RuntimePromptService.cs,present,current/reference
+docs/system/contracts/runtime-prompts.md,125,backend/Features/Prompts/PromptCallTelemetryService.cs,present,current/reference
+docs/system/contracts/runtime-prompts.md,127,backend/Features/Prompts/PromptReviewService.cs,present,current/reference
+docs/system/contracts/runtime-prompts.md,129,backend/Features/Prompts/PromptAdminService.cs,present,current/reference
+docs/system/contracts/stable-view-urls.md,30,frontend/src/app/features/project-detail/components/project-shell/project-shell.config.ts,present,current/reference
+docs/system/contracts/wiki-tree.md,41,backend/Features/Docs/ProjectDocsEndpoints.cs,present,current/reference
+docs/system/contracts/wiki-tree.md,42,backend/Features/Docs/ProjectDocsService.cs,present,current/reference
+docs/system/contracts/wiki-tree.md,43,backend/Features/Docs/ProjectWikiSourceResolver.cs,present,current/reference
+docs/system/contracts/wiki-tree.md,44,backend/Features/Docs/WikiContentCache.cs,present,current/reference
+docs/system/contracts/wiki-tree.md,46,backend/Features/Tasks/TaskWatcherService.cs,present,current/reference
+docs/system/contracts/wiki-tree.md,47,backend/Features/Git/GitService.cs,present,current/reference
+docs/system/contracts/wiki-tree.md,51,frontend/src/app/models/project-docs.model.ts,present,current/reference
+docs/system/contracts/wiki-tree.md,106,docs/app/config/wiki-order.json,unresolved candidate,current/reference
+docs/system/contracts/wiki-tree.md,143,docs/concepts/runner.md,unresolved candidate,current/reference
+docs/system/contracts/wiki-tree.md,209,docs/app/config/wiki-order.json,unresolved candidate,current/reference
+docs/system/contracts/wiki-tree.md,432,docs/app/config/home.json,present,current/reference
+docs/system/contracts/wiki-tree.md,438,docs/app/config/home.json,present,current/reference
+docs/system/contracts/wiki-tree.md,445,docs/app/config/wiki-order.json,unresolved candidate,current/reference
+docs/system/domains/areas-and-tags.md,4,docs/operations/dossier-consolidation-and-area-tags/index.html,present,current/reference
+docs/system/domains/areas-and-tags.md,25,backend/Features/Areas/AreaTaxonomy.cs,present,current/reference
+docs/system/domains/areas-and-tags.md,26,backend/Features/Areas/AreaGlossaryDocument.cs,present,current/reference
+docs/system/domains/areas-and-tags.md,27,backend/Features/Areas/TagFilter.cs,present,current/reference
+docs/system/domains/areas-and-tags.md,28,backend/Features/Areas/AreaRegistryService.cs,present,current/reference
+docs/system/domains/areas-and-tags.md,29,backend/Features/Areas/AreaGlossaryService.cs,present,current/reference
+docs/system/domains/areas-and-tags.md,30,backend/Features/Tags/TagRegistryService.cs,present,current/reference
+docs/system/domains/areas-and-tags.md,31,backend/Features/Docs/WorkbenchTagService.cs,present,current/reference
+docs/system/domains/areas-and-tags.md,32,backend/Features/Tags/Maintenance/TagMaintenanceService.cs,present,current/reference
+docs/system/domains/areas-and-tags.md,33,backend/Features/Tags/Maintenance/TagMaintenancePolicy.cs,present,current/reference
+docs/system/domains/areas-and-tags.md,34,backend/Features/Tags/Maintenance/TagMaintenanceWorkspace.cs,present,current/reference
+docs/system/domains/areas-and-tags.md,35,backend/Features/Tags/AutoTaggingService.cs,present,current/reference
+docs/system/domains/areas-and-tags.md,91,backend/Features/Docs/WikiProducerTargets.cs,present,current/reference
+docs/system/domains/areas-and-tags.md,260,docs/quality/tagging-golden-set/items.json,present,current/reference
+docs/system/domains/cli.md,33,backend/Services/Cli/CliRouter.cs,unresolved candidate,current/reference
+docs/system/domains/cli.md,35,backend/Services/Quota/QuotaService.cs,unresolved candidate,current/reference
+docs/system/domains/cli.md,36,backend/Features/Cli/Repair/LocalCliRepairService.cs,present,current/reference
+docs/system/domains/cli.md,43,backend/Features/Cli/Pty/CliEnvironment.cs,present,current/reference
+docs/system/domains/cli.md,45,backend/Features/Cli/CliEndpoints.cs,present,current/reference
+docs/system/domains/cli.md,51,backend/Services/Runner/OrchestratorSession.cs,unresolved candidate,current/reference
+docs/system/domains/cli.md,53,backend/Features/Cli/Routing/OneShot/ClaudeOneShot.cs,present,current/reference
+docs/system/domains/frontend.md,60,frontend/scripts/check-explicit-locales.mjs,present,current/reference
+docs/system/domains/frontend.md,61,frontend/src/test-locale.ts,present,current/reference
+docs/system/domains/frontend.md,347,docs/operations/admin-design-guideline/index.html,present,current/reference
+docs/system/domains/frontend.md,472,frontend/src/app/services/task.service.ts,present,current/reference
+docs/system/domains/frontend.md,474,frontend/src/app/services/cli-catalog.store.ts,unresolved candidate,current/reference
+docs/system/domains/frontend.md,476,frontend/src/app/features/orchestrator/state/orchestrator-composer-model.service.ts,present,current/reference
+docs/system/domains/frontend.md,592,frontend/src/app/models/lane-presentation.ts,present,current/reference
+docs/system/domains/frontend.md,630,frontend/scripts/check-lane-strings.mjs,present,current/reference
+docs/system/domains/frontend.md,635,scripts/lane-string-allowlist.json,unresolved candidate,current/reference
+docs/system/domains/frontend.md,708,frontend/e2e/helpers/timing.ts,present,current/reference
+docs/system/domains/frontend.md,712,frontend/src/app/features/project-detail/components/project-overview-dashboard/project-overview-dashboard.spec.ts,present,current/reference
+docs/system/domains/frontend.md,714,frontend/src/app/features/project-detail/components/project-overview-urls/project-overview-urls.spec.ts,present,current/reference
+docs/system/domains/frontend.md,717,frontend/e2e/project/project-overview-dashboard.spec.ts,present,current/reference
+docs/system/domains/frontend.md,719,frontend/e2e/mockups/project-overview-dashboard-mockup.spec.ts,present,current/reference
+docs/system/domains/model-routing-policy.md,104,backend/Policies/model-routing-policy.v1.json,present,current/reference
+docs/system/domains/model-routing-policy.md,278,backend/Shared/Models/CliModels.cs,present,current/reference
+docs/system/domains/model-routing-policy.md,312,backend/Policies/model-migration-catalog.v1.json,present,current/reference
+docs/system/domains/pipeline.md,168,backend/Features/Pipeline/ModelQualificationService.cs,present,current/reference
+docs/system/domains/pipeline.md,172,backend/Features/Runner/PromptEnrichmentService.cs,present,current/reference
+docs/system/domains/pipeline.md,189,backend/Features/Pipeline/PipelineStepEconomyAdvisor.cs,present,current/reference
+docs/system/domains/pipeline.md,193,backend/Features/Pipeline/PipelineCatalogue.cs,present,current/reference
+docs/system/domains/pipeline.md,217,backend/Features/Pipeline/FailureIntervention/FailureInterventionPolicy.cs,present,current/reference
+docs/system/domains/pipeline.md,218,backend/Features/Pipeline/FailureIntervention/FailureInterventionService.cs,present,current/reference
+docs/system/domains/pipeline.md,219,backend/Features/Runner/V1ReviewPlaneEndpoints.cs,present,current/reference
+docs/system/domains/pipeline.md,220,backend/Features/Runner/ProjectRunner.cs,present,current/reference
+docs/system/domains/pipeline.md,221,backend/Features/Runner/ReviewDecisionOrchestrator.cs,present,current/reference
+docs/system/domains/pipeline.md,222,backend/Features/Pipeline/MergeIntoDevelopRunner.cs,present,current/reference
+docs/system/domains/pipeline.md,223,backend/Features/Pipeline/PipelineCatalogue.cs,present,current/reference
+docs/system/domains/pipeline.md,255,docs/app/schemas/quality-analysis-policy.schema.json,present,current/reference
+docs/system/domains/pipeline.md,265,backend/Features/Pipeline/ConceptWorkbenchContract.cs,present,current/reference
+docs/system/domains/pipeline.md,272,backend/Features/Docs/DossierMaintenanceService.cs,present,current/reference
+docs/system/domains/pipeline.md,277,backend/Features/Pipeline/PipelineCatalogue.cs,present,current/reference
+docs/system/domains/pipeline.md,278,backend/Features/Runner/UiTaskPipelineRouter.cs,present,current/reference
+docs/system/domains/pipeline.md,279,backend/Features/Runner/UiIterationGate.cs,present,current/reference
+docs/system/domains/pipeline.md,286,backend/Services/Pipeline/PipelineExecutionLog.cs,unresolved candidate,current/reference
+docs/system/domains/pipeline.md,289,backend/Features/Pipeline/RemotePipelineExecutionProjection.cs,present,current/reference
+docs/system/domains/pipeline.md,295,contracts/TaskServer.Contracts/OrchestrationContracts.cs,present,current/reference
+docs/system/domains/pipeline.md,296,task-server/TaskServerOrchestrationStore.cs,present,current/reference
+docs/system/domains/pipeline.md,305,contracts/TaskServer.Contracts/GateContracts.cs,present,current/reference
+docs/system/domains/pipeline.md,306,task-server/TaskServerGateStore.cs,present,current/reference
+docs/system/domains/pipeline.md,306,runner/RemoteGateDaemon.cs,present,current/reference
+docs/system/domains/pipeline.md,339,backend/Features/Review/ReviewProjection.cs,present,current/reference
+docs/system/domains/pipeline.md,360,backend/Features/Pipeline/RemoteDeliveryIntegration.cs,present,current/reference
+docs/system/domains/pipeline.md,361,backend/Features/Pipeline/MergeIntoDevelopRunner.cs,present,current/reference
+docs/system/domains/pipeline.md,378,backend/Features/Git/IntegrationWorktreeProvider.cs,present,current/reference
+docs/system/domains/pipeline.md,444,runner/RemoteReviewWorkspace.cs,present,current/reference
+docs/system/domains/pipeline.md,445,contracts/TaskServer.Contracts/ReviewContracts.cs,present,current/reference
+docs/system/domains/pipeline.md,458,backend/Features/Runner/RemoteReviewPlanBuilder.cs,present,current/reference
+docs/system/domains/pipeline.md,477,backend/Features/Projects/ProjectSettingsEndpoints.cs,present,current/reference
+docs/system/domains/pipeline.md,479,backend/Features/Pipeline/BuildProfileContradictionPolicy.cs,present,current/reference
+docs/system/domains/pipeline.md,485,backend/Features/Runner/RemotePipelineReviewEvidenceProjector.cs,present,current/reference
+docs/system/domains/pipeline.md,489,backend/Features/Runner/ReviewBaselineBranchPolicy.cs,present,current/reference
+docs/system/domains/pipeline.md,500,backend/Features/Runner/ReviewInfrastructureRepeatPolicy.cs,present,current/reference
+docs/system/domains/pipeline.md,501,contracts/TaskServer.Contracts/ReviewInfrastructureDiagnosis.cs,present,current/reference
+docs/system/domains/pipeline.md,509,runner/ReviewStateStore.cs,present,current/reference
+docs/system/domains/pipeline.md,509,runner/DurableReviewProcess.cs,present,current/reference
+docs/system/domains/pipeline.md,510,runner/RemoteReviewExecutor.cs,present,current/reference
+docs/system/domains/pipeline.md,529,runner/ReviewWorkspaceRetention.cs,present,current/reference
+docs/system/domains/pipeline.md,572,backend/Features/Pipeline/TaskSpawnerPostStepRunner.cs,present,current/reference
+docs/system/domains/pipeline.md,581,backend/Features/Pipeline/AgentsWikiSyncPostStepRunner.cs,present,current/reference
+docs/system/domains/pipeline.md,593,backend/Services/Pipeline/PipelineStepConfigResolver.cs,unresolved candidate,current/reference
+docs/system/domains/pipeline.md,595,backend/Shared/Models/PipelineTypes.cs,present,current/reference
+docs/system/domains/pipeline.md,596,backend/Features/Pipeline/PipelineTypeSettings.cs,present,current/reference
+docs/system/domains/pipeline.md,599,backend/Features/Projects/ProjectSettingsService.cs,present,current/reference
+docs/system/domains/pipeline.md,602,backend/Features/Pipeline/TestSelectionPlanner.cs,present,current/reference
+docs/system/domains/pipeline.md,605,backend/Features/Pipeline/DeterministicTestScope.cs,present,current/reference
+docs/system/domains/pipeline.md,623,backend/Features/Pipeline/PreMainTestGate.cs,present,current/reference
+docs/system/domains/pipeline.md,626,backend/Features/Pipeline/PreDevelopBuildGate.cs,present,current/reference
+docs/system/domains/pipeline.md,634,backend/Services/Pipeline/PipelineStepConditionEvaluator.cs,unresolved candidate,current/reference
+docs/system/domains/pipeline.md,636,backend/Services/Pipeline/ProjectPipelineOrder.cs,unresolved candidate,current/reference
+docs/system/domains/pipeline.md,638,backend/Features/Pipeline/ProjectStackDetector.cs,present,current/reference
+docs/system/domains/pipeline.md,641,backend/Features/Pipeline/PipelineStepExecutionResolver.cs,present,current/reference
+docs/system/domains/pipeline.md,645,backend/Services/Pipeline/ProjectPipelineCostService.cs,unresolved candidate,current/reference
+docs/system/domains/pipeline.md,647,backend/Services/Runner/PostAbortReviewStepService.cs,unresolved candidate,current/reference
+docs/system/domains/pipeline.md,648,backend/Services/Runner/PostAbortReview.cs,unresolved candidate,current/reference
+docs/system/domains/pipeline.md,650,backend/Services/Runner/ReviewDecisionOrchestrator.cs,unresolved candidate,current/reference
+docs/system/domains/pipeline.md,653,backend/Features/Runner/ReissuePromptExperiment.cs,present,current/reference
+docs/system/domains/pipeline.md,654,scripts/reissue-prompt-experiment-analysis.mjs,present,current/reference
+docs/system/domains/pipeline.md,661,backend/Services/Review/CodeReviewStepService.cs,unresolved candidate,current/reference
+docs/system/domains/pipeline.md,665,backend/Services/Review/CodeReviewGrade.cs,unresolved candidate,current/reference
+docs/system/domains/pipeline.md,669,backend/Features/Review/CouncilReviewReaction.cs,present,current/reference
+docs/system/domains/pipeline.md,672,backend/Features/Review/CodeReviewGradeModelSelector.cs,present,current/reference
+docs/system/domains/pipeline.md,676,backend/Features/Cli/Routing/OneShot/PromptLoggingCliOneShot.cs,present,current/reference
+docs/system/domains/pipeline.md,678,backend/Host/Program.cs,present,current/reference
+docs/system/domains/pipeline.md,684,backend/Features/Cli/Routing/OneShot/CodexOneShot.cs,present,current/reference
+docs/system/domains/pipeline.md,689,backend/Features/Cli/Routing/OneShot/StepPromptLog.cs,present,current/reference
+docs/system/domains/pipeline.md,694,backend/Features/Tasks/TaskPipelineEndpoints.cs,present,current/reference
+docs/system/domains/pipeline.md,699,backend/Features/Tasks/TaskLiveStatusProjection.cs,present,current/reference
+docs/system/domains/pipeline.md,1472,docs/concepts/task-integration-and-merge-workflow.md,present,current/reference
+docs/system/domains/pipeline.md,1528,contracts/TaskServer.Contracts/RunFailureTaxonomy.cs,present,current/reference
+docs/system/domains/pipeline.md,1538,backend/Features/Pipeline/AcceptedIntegrationFailurePolicy.cs,present,current/reference
+docs/system/domains/pipeline.md,1542,backend/Shared/Models/TaskProvenance.cs,present,current/reference
+docs/system/domains/pipeline.md,1543,backend/Features/Tasks/Acceptance/AcceptanceRailPolicy.cs,present,current/reference
+docs/system/domains/pipeline.md,1555,backend/Features/Pipeline/IntegrationAgentRoundService.cs,present,current/reference
+docs/system/domains/pipeline.md,1564,backend/Features/Runner/RunTimeoutSalvageContinuation.cs,present,current/reference
+docs/system/domains/pipeline.md,1587,contracts/TaskServer.Contracts/ReviewGradingPolicy.cs,present,current/reference
+docs/system/domains/pipeline.md,1592,runner/RemoteReviewWorkspace.cs,present,current/reference
+docs/system/domains/pipeline.md,1594,backend/Features/Runner/ReviewAspectTimeoutPolicy.cs,present,current/reference
+docs/system/domains/pipeline.md,1603,backend/Features/Pipeline/GateRunBudgetPolicy.cs,present,current/reference
+docs/system/domains/pipeline.md,1608,backend/Features/Git/GitService.cs,present,current/reference
+docs/system/domains/pipeline.md,1630,backend/Features/Tasks/TaskIntegrationStatusService.cs,present,current/reference
+docs/system/domains/pipeline.md,1647,backend/Features/Tasks/Acceptance/AcceptanceRailAttemptPolicy.cs,present,current/reference
+docs/system/domains/review.md,104,runner/RemoteReviewWorkspace.cs,present,current/reference
+docs/system/domains/review.md,117,backend/Features/Runner/RemoteReviewPlanBuilder.cs,present,current/reference
+docs/system/domains/review.md,130,contracts/TaskServer.Contracts/ReviewAspectBudgetPolicy.cs,present,current/reference
+docs/system/domains/review.md,157,runner/RemoteReviewWorkspace.cs,present,current/reference
+docs/system/domains/review.md,168,contracts/TaskServer.Contracts/ReviewPlanResourcePolicy.cs,present,current/reference
+docs/system/domains/review.md,174,runner/ReviewSlotAdmissionPolicy.cs,present,current/reference
+docs/system/domains/review.md,195,runner/ReviewBuildServerIsolation.cs,present,current/reference
+docs/system/domains/review.md,205,runner/CommandProgressWatchdog.cs,present,current/reference
+docs/system/domains/review.md,221,runner/ReviewInfraAttributionPolicy.cs,present,current/reference
+docs/system/domains/review.md,314,runner/ReviewBaselineResultCache.cs,present,current/reference
+docs/system/domains/review.md,355,contracts/TaskServer.Contracts/AspectVerdictMarker.cs,present,current/reference
+docs/system/domains/review.md,362,contracts/TaskServer.Contracts/ReviewContracts.cs,present,current/reference
+docs/system/domains/review.md,433,backend/Features/Pipeline/IntegrationBranchGateReporter.cs,present,current/reference
+docs/system/domains/review.md,572,runner/RemoteReviewWorkspace.cs,present,current/reference
+docs/system/domains/review.md,575,runner/RemoteReviewExecutor.cs,present,current/reference
+docs/system/domains/review.md,580,runner/ReviewBaselineResultCache.cs,present,current/reference
+docs/system/domains/review.md,582,runner/ReviewBuildServerIsolation.cs,present,current/reference
+docs/system/domains/review.md,583,runner/CommandProgressWatchdog.cs,present,current/reference
+docs/system/domains/review.md,585,backend/Features/Runner/RemoteReviewPlanBuilder.cs,present,current/reference
+docs/system/domains/review.md,587,contracts/TaskServer.Contracts/ReviewContracts.cs,present,current/reference
+docs/system/domains/review.md,589,task-server/TaskServerReviewStore.cs,present,current/reference
+docs/system/domains/review.md,590,backend/Features/Runner/V1ReviewPlaneEndpoints.cs,present,current/reference
+docs/system/domains/review.md,604,scripts/review-build-server-isolation-probe.sh,present,current/reference
+docs/system/domains/review.md,608,backend/Features/Runner/AttemptAuthorityService.cs,present,current/reference
+docs/system/domains/review.md,611,backend/Features/Runner/ReviewInfrastructureRetryScheduler.cs,present,current/reference
+docs/system/domains/review.md,620,contracts/TaskServer.Contracts/ReviewAspectBudgetPolicy.cs,present,current/reference
+docs/system/domains/review.md,622,contracts/TaskServer.Contracts/ReviewPlanResourcePolicy.cs,present,current/reference
+docs/system/domains/review.md,625,backend/Features/Runner/AdaptiveReviewParallelismPolicy.cs,present,current/reference
+docs/system/domains/review.md,628,backend/Features/Runner/RemoteReviewReportEvidence.cs,present,current/reference
+docs/system/domains/review.md,629,backend/Features/Review/ReviewProjection.cs,present,current/reference
+docs/system/domains/review.md,634,contracts/TaskServer.Contracts/ReviewFailureAttributionPolicy.cs,present,current/reference
+docs/system/domains/review.md,636,backend/Features/TestRuns/TaskScopedTestEvidenceReader.cs,present,current/reference
+docs/system/domains/review.md,637,backend/Features/Review/ReviewProjection.cs,present,current/reference
+docs/system/domains/review.md,640,runner/RunnerReleaseIdentity.cs,present,current/reference
+docs/system/domains/review.md,640,runner/DurableReviewProcess.cs,present,current/reference
+docs/system/domains/review.md,641,runner/ReviewReleaseDrainPolicy.cs,present,current/reference
+docs/system/domains/review.md,642,contracts/TaskServer.Contracts/ReviewContracts.cs,present,current/reference
+docs/system/domains/review.md,648,runner/ReviewInfraAttributionPolicy.cs,present,current/reference
+docs/system/domains/review.md,652,backend/Features/Pipeline/IntegrationBranchGateHealthPolicy.cs,present,current/reference
+docs/system/domains/runner.md,37,runner/WorkstationProfile.cs,present,current/reference
+docs/system/domains/runner.md,82,runner/ArtifactTransferPolicy.cs,present,current/reference
+docs/system/domains/runner.md,82,runner/RemoteTaskRunner.cs,present,current/reference
+docs/system/domains/runner.md,83,backend/Features/Diagnostics/ArtifactIngestionEndpoints.cs,present,current/reference
+docs/system/domains/runner.md,84,task-server/TaskServerEndpoints.cs,present,current/reference
+docs/system/domains/runner.md,107,backend/Services/TaskRunnerService.cs,unresolved candidate,current/reference
+docs/system/domains/runner.md,109,runner/FinalizationRetryPolicy.cs,present,current/reference
+docs/system/domains/runner.md,109,runner/CodingFinalizationReconciler.cs,present,current/reference
+docs/system/domains/runner.md,110,backend/Shared/Runner/RemoteRunStalenessPolicy.cs,present,current/reference
+docs/system/domains/runner.md,116,runner/TaskServerConnectivityMonitor.cs,present,current/reference
+docs/system/domains/runner.md,131,backend/Features/Management/RunnerLinks/LinkSupervisor.cs,present,current/reference
+docs/system/domains/runner.md,143,backend/Services/Runner/ProjectRunner.cs,unresolved candidate,current/reference
+docs/system/domains/runner.md,145,backend/Shared/Models/PickupHold.cs,present,current/reference
+docs/system/domains/runner.md,156,backend/Shared/Runner/FollowUpAdmissionPolicy.cs,present,current/reference
+docs/system/domains/runner.md,161,backend/Features/Cli/Execution/CleanContextPreparation.cs,present,current/reference
+docs/system/domains/runner.md,162,runner/CarWorkerExecution.cs,present,current/reference
+docs/system/domains/runner.md,166,runner/CliProtocolNoveltyTracker.cs,present,current/reference
+docs/system/domains/runner.md,167,contracts/TaskServer.Contracts/ProtocolNoveltyContracts.cs,present,current/reference
+docs/system/domains/runner.md,168,contracts/TaskServer.Contracts/ExecutionOutcomeContracts.cs,present,current/reference
+docs/system/domains/runner.md,173,backend/Features/Runner/PromptEnrichmentService.cs,present,current/reference
+docs/system/domains/runner.md,174,backend/Features/Tasks/LeaseEndpoints.cs,present,current/reference
+docs/system/domains/runner.md,175,runner/RemoteRunPrompt.cs,present,current/reference
+docs/system/domains/runner.md,193,backend/Features/Runner/RunTimelineEventFactory.cs,present,current/reference
+docs/system/domains/runner.md,197,backend/Features/Runner/WorktreeRunPolicy.cs,present,current/reference
+docs/system/domains/runner.md,204,backend/Features/Cli/Execution/Win/TaskProcessReaper.cs,present,current/reference
+docs/system/domains/runner.md,205,backend/Features/Runner/WorktreeTaskLifecycle.cs,present,current/reference
+docs/system/domains/runner.md,213,backend/Features/Runner/OrphanReaperHostedService.cs,present,current/reference
+docs/system/domains/runner.md,220,backend/Features/Git/GitBranchRetention.cs,present,current/reference
+docs/system/domains/runner.md,227,backend/Services/Runner/AgentOutcomeAnalyzer.cs,unresolved candidate,current/reference
+docs/system/domains/runner.md,229,backend/Services/Runner/RunOutcomePolicy.cs,unresolved candidate,current/reference
+docs/system/domains/runner.md,231,backend/Features/Runner/RunTimeline.cs,present,current/reference
+docs/system/domains/runner.md,266,backend/Services/Runner/OrchestratorChatLog.cs,unresolved candidate,current/reference
+docs/system/domains/runner.md,268,backend/Features/Tasks/CliOutputLogFile.cs,present,current/reference
+docs/system/domains/runner.md,273,backend/Features/Runner/OrchestratorChat.cs,present,current/reference
+docs/system/domains/runner.md,277,backend/Features/Runner/RemoteChatWorkBroker.cs,present,current/reference
+docs/system/domains/runner.md,278,backend/Features/Tasks/LeaseEndpoints.cs,present,current/reference
+docs/system/domains/runner.md,279,runner/RemoteProjectChatRunner.cs,present,current/reference
+docs/system/domains/runner.md,280,runner/InteractiveChatAdmission.cs,present,current/reference
+docs/system/domains/runner.md,313,backend/Features/Orchestrator/OrchestratorContextKey.cs,present,current/reference
+docs/system/domains/runner.md,335,backend/Features/Orchestrator/OrchestratorContextDigestService.cs,present,current/reference
+docs/system/domains/runner.md,346,backend/Features/Registry/OrchestratorSettingsResolver.cs,present,current/reference
+docs/system/domains/runner.md,352,backend/Services/Runner/OrchestratorReplyParser.cs,unresolved candidate,current/reference
+docs/system/domains/runner.md,354,backend/Services/Runner/RunQuarantineBreaker.cs,unresolved candidate,current/reference
+docs/system/domains/runner.md,356,backend/Services/Runner/EvidenceGate.cs,unresolved candidate,current/reference
+docs/system/domains/runner.md,358,backend/Features/Runner/CrashRecoveryService.cs,present,current/reference
+docs/system/domains/runner.md,399,runner/RemoteTaskRunner.cs,present,current/reference
+docs/system/domains/runner.md,400,backend/Features/Diagnostics/ArtifactIngestionEndpoints.cs,present,current/reference
+docs/system/domains/runner.md,423,runner/ReviewStateStore.cs,present,current/reference
+docs/system/domains/runner.md,423,runner/ReviewSlotReconciler.cs,present,current/reference
+docs/system/domains/runner.md,424,runner/DurableReviewProcess.cs,present,current/reference
+docs/system/domains/runner.md,424,runner/RemoteReviewDaemon.cs,present,current/reference
+docs/system/domains/runner.md,425,runner/RemoteReviewExecutor.cs,present,current/reference
+docs/system/domains/runner.md,457,task-server/RemoteRunResultCollector.cs,present,current/reference
+docs/system/domains/runner.md,458,contracts/TaskServer.Contracts/RemoteRunResultContracts.cs,present,current/reference
+docs/system/domains/runner.md,463,scripts/remote-runner-onboard.sh,present,current/reference
+docs/system/domains/runner.md,464,scripts/agent-host-resource-governance.sh,present,current/reference
+docs/system/domains/runner.md,470,runner/WorkerResourceEnvelope.cs,present,current/reference
+docs/system/domains/runner.md,470,runner/WorkerCgroup.cs,present,current/reference
+docs/system/domains/runner.md,487,runner/WorkerBuildServerHygiene.cs,present,current/reference
+docs/system/domains/runner.md,487,runner/UnitCgroupStraySweep.cs,present,current/reference
+docs/system/domains/runner.md,506,scripts/harden-agent-runner-host.sh,present,current/reference
+docs/system/domains/runner.md,604,backend/Features/Clients/ClientDeletionPolicy.cs,present,current/reference
+docs/system/domains/runner.md,624,task-server/TaskServerOrchestrationStore.cs,present,current/reference
+docs/system/domains/runner.md,666,backend/Features/Runner/OrchestrationExecutionMode.cs,present,current/reference
+docs/system/domains/runner.md,739,contracts/TaskServer.Contracts/MissingSentinelIncidentPolicy.cs,present,current/reference
+docs/system/domains/runner.md,885,runner/RunnerReleaseIdentity.cs,present,current/reference
+docs/system/domains/runner.md,886,backend/Features/Runner/HostReleaseDrift.cs,present,current/reference
+docs/system/domains/runner.md,887,backend/Features/Runner/HostReleaseDriftWatchdog.cs,present,current/reference
+docs/system/domains/runner.md,1602,backend/Shared/Runner/FollowUpAdmissionPolicy.cs,present,current/reference
+docs/system/domains/tasks.md,27,docs/app/templates/article-document-v2.html,present,current/reference
+docs/system/domains/tasks.md,31,docs/operations/haertung-verteilte-ausfuehrung/index.html,present,current/reference
+docs/system/domains/tasks.md,40,docs/operations/setup/presentation-capture.md,present,current/reference
+docs/system/domains/tasks.md,41,frontend/e2e/visual-evidence/presentation-capture.spec.ts,present,current/reference
+docs/system/domains/tasks.md,42,scripts/stable-frontend-boot-probe.mjs,present,current/reference
+docs/system/domains/tasks.md,43,frontend/e2e/fixtures/dev-backend.ts,present,current/reference
+docs/system/domains/tasks.md,46,docs/.../index.html,unresolved candidate,current/reference
+docs/system/domains/tasks.md,70,backend/Shared/Runner/ContinueModeGuardPolicy.cs,present,current/reference
+docs/system/domains/tasks.md,918,scripts/generate-project-proposals.mjs,present,current/reference
+docs/system/domains/tasks.md,994,task-server/TaskServerStore.cs,present,current/reference
+docs/system/domains/tasks.md,1002,task-server/StudioEndpoints.cs,present,current/reference
+docs/system/domains/tasks.md,1017,task-server/StudioHostsEndpoints.cs,present,current/reference
+docs/system/domains/tasks.md,1033,task-server/LegacyMigrationService.cs,present,current/reference
+docs/system/domains/tasks.md,1037,contracts/TaskServer.Contracts/ManagementContracts.cs,present,current/reference
+docs/system/domains/tasks.md,1038,task-server/TaskServerStore.cs,present,current/reference
+docs/system/domains/tasks.md,1045,backend/Services/Tasks/TaskScannerService.cs,unresolved candidate,current/reference
+docs/system/domains/tasks.md,1046,backend/Services/Tasks/TaskMutationService.cs,unresolved candidate,current/reference
+docs/system/domains/tasks.md,1047,backend/Services/Tasks/TaskTransitionService.cs,unresolved candidate,current/reference
+docs/system/domains/tasks.md,1049,backend/Services/Tasks/TaskStateMachine.cs,unresolved candidate,current/reference
+docs/system/domains/tasks.md,1050,backend/Services/Tasks/TaskJsonFile.cs,unresolved candidate,current/reference
+docs/system/domains/tasks.md,1051,backend/Services/Tasks/LaneMutexRegistry.cs,unresolved candidate,current/reference
+docs/system/domains/tasks.md,1052,backend/Services/Tasks/CommitAttributionService.cs,unresolved candidate,current/reference
+docs/system/domains/tasks.md,1054,backend/Features/TestRuns/TestRunService.cs,present,current/reference
+docs/system/domains/tasks.md,1058,backend/Services/Tasks/ReviewEvidenceLog.cs,unresolved candidate,current/reference
+docs/system/domains/tasks.md,1060,backend/Features/Registry/WorkspaceSettingsService.cs,present,current/reference
+docs/system/domains/token-pricing.md,11,backend/Features/Runner/TokenPricing.cs,present,current/reference
+docs/system/domains/token-pricing.md,12,backend/Features/Runner/TokenEconomyPriceProvider.cs,present,current/reference
+docs/system/domains/token-pricing.md,127,scripts/check-public-docs.mjs,present,current/reference
+docs/system/domains/tokens.md,4,docs/concepts/token-aggregation.md,present,current/reference
+docs/system/domains/tokens.md,51,contracts/TaskServer.Contracts/ProviderUsageNormalization.cs,present,current/reference
+docs/system/domains/tokens.md,207,backend/Features/AdHoc/AdHocUsageService.cs,present,current/reference
+docs/system/domains/tokens.md,208,backend/Features/Runner/ProjectTokenUsageService.cs,present,current/reference
+docs/system/domains/tokens.md,209,backend/Features/Runner/WorkspaceTokensTimelineService.cs,present,current/reference
+docs/system/domains/tokens.md,210,backend/Features/Runner/TokenSummary.cs,present,current/reference
+docs/system/domains/tokens.md,211,backend/Features/Bus/BusAggregationCache.cs,present,current/reference
+docs/system/domains/tokens.md,240,backend/Features/Tokens/ITokenAggregator.cs,present,current/reference
+docs/system/domains/tokens.md,357,docs/system/contracts/code-patterns.md,present,current/reference
+docs/system/domains/tokens.md,408,backend/Features/Tokens/ITokenAggregator.cs,present,current/reference
+docs/system/domains/tokens.md,409,backend/Features/Tokens/TokenAggregationService.cs,present,current/reference
+docs/system/domains/tokens.md,410,backend/Features/Tokens/ProjectTokenReceiptReader.cs,present,current/reference
+docs/system/domains/tokens.md,411,backend/Features/Bus/BusAggregationCache.cs,present,current/reference
+docs/system/domains/tokens.md,412,backend/Features/Bus/AgentMessageBusBridge.cs,present,current/reference
+docs/system/domains/tokens.md,413,backend/Features/AdHoc/AdHocClaudeInvoker.cs,present,current/reference
+docs/system/domains/tokens.md,414,backend/Features/AdHoc/AdHocUsageRecorder.cs,present,current/reference
+docs/system/domains/tokens.md,415,backend/Features/AdHoc/AdHocUsageService.cs,present,current/reference
+docs/system/domains/tokens.md,416,backend/Features/Runner/ProjectTokenUsageService.cs,present,current/reference
+docs/system/domains/tokens.md,417,backend/Features/Runner/WorkspaceTokensTimelineService.cs,present,current/reference
+docs/system/domains/tokens.md,418,backend/Features/Runner/TokenSummary.cs,present,current/reference
+docs/system/domains/tokens.md,419,backend/Features/Tokens/BusTokenEntryConverter.cs,present,current/reference
+docs/system/domains/tokens.md,420,backend/Features/Tokens/BusBackedProjectTokenUsageReader.cs,present,current/reference
+docs/system/domains/tokens.md,421,backend/Features/Tasks/TaskEndpointHelpers.cs,present,current/reference
+docs/system/reports/analysis-reports.md,7,docs/app/schemas/analysis-report.schema.json,present,current/reference
+docs/system/reports/analysis-reports.md,54,scripts/supervisor/run-system-review.sh,present,current/reference
+docs/system/reports/analysis-reports.md,78,docs/app/schemas/analysis-report.schema.json,present,current/reference
+docs/system/reports/analysis-reports.md,81,docs/app/schemas/README.md,present,current/reference
+docs/system/reports/analysis-reports.md,174,docs/app/schemas/analysis-report.schema.json,present,current/reference
+docs/system/reports/analysis-reports.md,175,docs/app/schemas/README.md,present,current/reference
+docs/system/reports/analysis-reports.md,200,frontend/src/app/components/project-analysis-reports-section.ts,unresolved candidate,current/reference
+docs/system/reports/drift-reports.md,7,docs/app/schemas/drift-report.schema.json,present,current/reference
+docs/system/reports/drift-reports.md,9,docs/app/schemas/analysis-report.schema.json,present,current/reference
+docs/system/reports/drift-reports.md,41,docs/system/architecture/decisions/adr-archive.md,present,current/reference
+docs/system/reports/drift-reports.md,41,docs/system/architecture/model.md,present,current/reference
+docs/system/reports/drift-reports.md,42,frontend/AGENTS.md,present,current/reference
+docs/system/reports/drift-reports.md,47,docs/system/contracts/agent-task.md,present,current/reference
+docs/system/reports/drift-reports.md,47,docs/concepts/skills-architecture.md,present,current/reference
+docs/system/reports/drift-reports.md,47,docs/operations/git/commit-push-doctrine.md,present,current/reference
+docs/system/reports/drift-reports.md,171,docs/app/schemas/drift-report.schema.json,present,current/reference
+docs/system/reports/drift-reports.md,174,docs/app/schemas/README.md,present,current/reference
+docs/system/reports/drift-reports.md,235,docs/app/schemas/drift-report.schema.json,present,current/reference
+docs/system/reports/drift-reports.md,236,docs/app/schemas/README.md,present,current/reference
+docs/system/reports/git-state-index-agt-2726.md,28,backend/Features/Git/GitStateIndexService.cs,present,current/reference
