@@ -1023,6 +1023,52 @@ naming the two variables rather than blaming the current load. Load-aware
 backpressure for an already running worker stays out of scope: the envelope is
 the mechanism, and the silence and no-CPU-progress watchdogs are unchanged.
 
+### Stale MSBuild nodes and preparation hangs
+
+AGT-3005. On 2026-09-29 `agent-runner-01` carried 89 `MSBuild.dll` and
+`VBCSCompiler` reuse nodes, 101 hours old and idle, and every repository
+preparation sat in `Determining projects to restore...` until
+`prepare:timeout`. Killing the nodes made the same restore finish in four
+seconds. Three measures now keep the host free of them:
+
+- **Fence on every process.** The agent host sets `MSBUILDDISABLENODEREUSE=1`
+  and `DOTNET_CLI_USE_MSBUILD_SERVER=0` in its own environment at startup, in
+  every process it spawns (`ProcessRunner`, even with a cleared environment),
+  and in the `.agent-studio/prepare` environment. The preparation applies the
+  fence after the repository definition's `environment:` block, so a
+  definition cannot re-enable node reuse. The merge gate uses the same pair
+  (AGT-2820).
+- **Stale-node sweep.** Both daemons run a sweep at startup and once per hour.
+  A process is terminated when it is an MSBuild node or server
+  (`MSBuild.dll /nodemode:`), the Roslyn compiler server (`VBCSCompiler`) or a
+  `dotnet build-server` command, belongs to the runner user, is at least 30
+  minutes old, is not a descendant of a run this daemon tracks, has no working
+  directory inside an active workspace, and has no live build driver as its
+  parent (only nodes reparented to init or the systemd manager, or parented by
+  another node, qualify). Each kill logs `build-node-reaped`; each pass logs
+  `build-node-sweep dotnetProcesses=<n> staleNodes=<n> terminated=<n>`.
+  The review daemon reads active worker PIDs from persisted review slots and
+  verifies their process generation before each sweep. Descendant nodes stay
+  protected even when their working directory cannot be read or lies outside
+  the review workspace.
+- **Host report.** `GET /api/v1/management/remote-hosts` carries
+  `telemetry.dotnetProcesses`, `telemetry.staleBuildNodes` (last sweep),
+  `telemetry.staleBuildNodesReaped` (total since daemon start) and
+  `telemetry.buildNodeSweepAt`.
+
+A preparation still running at half its budget logs
+`project-prepare slow elapsedMs=... phase=<phase> lastLine="..."`. The phase
+is read from the restore output: `determining-projects` with no later progress
+points at MSBuild contention (check `staleBuildNodes`), `package-download`
+points at the network or the package feed, `restored` means the restore is done
+and a later script step is slow.
+
+Manual check on a suspect host:
+
+```bash
+ps -u agent-runner -o pid,ppid,etime,args | grep -E 'MSBuild.dll|VBCSCompiler' | grep -v grep
+```
+
 ### Temp and cache hygiene
 
 The host's shared `/tmp` is neither a cache root nor a workspace root. Attempt

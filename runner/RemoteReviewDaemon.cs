@@ -34,6 +34,20 @@ public sealed class RemoteReviewDaemon
         _telemetryProbe = telemetryProbe;
     }
 
+    // Review plan commands run below the durable worker. Its verified PID
+    // protects their entire process tree, including nodes with no readable CWD.
+    internal static IReadOnlyList<int> ActiveReviewWorkerPids(
+        IEnumerable<(string AttemptId, int? ProcessId, bool IsLive)> persisted,
+        IEnumerable<string> activeAttemptIds)
+    {
+        var active = activeAttemptIds.ToHashSet(StringComparer.Ordinal);
+        return persisted
+            .Where(slot => active.Contains(slot.AttemptId) && slot.IsLive && slot.ProcessId is > 0)
+            .Select(slot => slot.ProcessId!.Value)
+            .Distinct()
+            .ToArray();
+    }
+
     public async Task RunAsync(CancellationToken shutdown)
     {
         await using var idleWatchdog = new DaemonIdleWatchdog(
@@ -85,6 +99,14 @@ public sealed class RemoteReviewDaemon
                 .Distinct(StringComparer.Ordinal)
                 .ToArray();
         }
+
+        IReadOnlyList<int> ActiveReviewProcessIds()
+            => ActiveReviewWorkerPids(
+                state.LoadAll().Select(slot => (
+                    slot.AttemptId,
+                    slot.ProcessId,
+                    DurableReviewProcess.VerifyLive(slot, out _))),
+                active.Select(slot => slot.AttemptId));
 
         void LogSlotHygiene(bool force = false)
         {
@@ -337,6 +359,9 @@ public sealed class RemoteReviewDaemon
                 ReviewSlotReconciler.MaximumDormantAge,
                 _log,
                 ActiveWorkspacePaths()));
+            // AGT-3005: host-wide stale build-node sweep; the hourly repeat runs
+            // with the workspace retention sweep below.
+            BuildNodeSweep.Run(ActiveReviewProcessIds(), ActiveWorkspacePaths(), _log);
             if (active.Count > 0)
             {
                 _log(
@@ -471,6 +496,7 @@ public sealed class RemoteReviewDaemon
                                 ReviewSlotReconciler.MaximumDormantAge,
                                 _log,
                                 ActiveWorkspacePaths()));
+                            BuildNodeSweep.Run(ActiveReviewProcessIds(), ActiveWorkspacePaths(), _log);
                         }
                         catch (Exception exception)
                         {

@@ -132,7 +132,11 @@ public sealed record HostTelemetrySnapshotDto(
     string? TaskServerConnectionLastError = null,
     DateTime? TaskServerConnectionLastRecoveredAt = null,
     long? CliProcessesReaped = null,
-    ReviewPlaneBudgetDto? ReviewPlane = null);
+    ReviewPlaneBudgetDto? ReviewPlane = null,
+    int? DotnetProcesses = null,
+    int? StaleBuildNodes = null,
+    long? StaleBuildNodesReaped = null,
+    DateTime? BuildNodeSweepAt = null);
 
 /// <summary>
 /// Review-role capacity observed from the role unit's cgroup. The raw

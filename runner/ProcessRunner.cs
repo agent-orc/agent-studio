@@ -80,6 +80,9 @@ public static class ProcessRunner
         if (environment != null)
             foreach (var (key, value) in environment)
                 psi.Environment[key] = value;
+        // AGT-3005: applied last so neither a cleared environment nor a caller
+        // value can re-enable a reusable build node that outlives the run.
+        WorkerBuildServerHygiene.ApplyTo(psi.Environment);
 
         using var process = new Process { StartInfo = psi };
         // Each stream's DataReceived events are serialised by the runtime and the
