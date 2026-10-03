@@ -231,7 +231,13 @@ public sealed class IntegrationWorktreeProviderTests : IDisposable
         return new IntegrationWorktreeProvider(
             git,
             NullLogger<IntegrationWorktreeProvider>.Instance,
-            Path.Combine(_tempDir, "fallback"));
+            Path.Combine(_tempDir, "fallback"),
+            staleLocks: new GitStaleLockGuard(probe: new NoGitOwnerProbe()));
+    }
+
+    private sealed class NoGitOwnerProbe : IGitLockOwnerProbe
+    {
+        public GitLockOwnership Probe(GitLockScope scope) => GitLockOwnership.None;
     }
 
     private string SeedRepo(string name)
