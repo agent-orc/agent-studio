@@ -32,6 +32,7 @@ public sealed class TaskServerClient : IDisposable
     private readonly ConcurrentDictionary<string, string> _v1TaskBodies = new(StringComparer.OrdinalIgnoreCase);
     private bool _useV1;
     private bool _supportsCapabilityAdvertisement;
+    private bool _supportsCredentialObservationV2;
     private bool _supportsHostOrchestrator;
     private readonly bool _usesServiceCredential;
     private readonly SemaphoreSlim _hostProtocolGate = new(1, 1);
@@ -143,6 +144,7 @@ public sealed class TaskServerClient : IDisposable
         {
             _useV1 = false;
             _supportsCapabilityAdvertisement = false;
+            _supportsCredentialObservationV2 = false;
             _supportsHostOrchestrator = false;
             return;
         }
@@ -154,6 +156,7 @@ public sealed class TaskServerClient : IDisposable
         if (compatibility?.Supported != true)
             throw new TaskServerException(426, compatibility?.Reason ?? "Task Server protocol is not compatible.");
         var serverCapabilities = compatibility.Server.Capabilities ?? [];
+        _supportsCredentialObservationV2 = serverCapabilities.Contains("credential-observation-v2", StringComparer.Ordinal);
         _supportsCapabilityAdvertisement =
             serverCapabilities.Contains("capability-advertisement", StringComparer.Ordinal)
             || serverCapabilities.Contains("coding-plane", StringComparer.Ordinal);
@@ -299,9 +302,19 @@ public sealed class TaskServerClient : IDisposable
     internal async Task<bool> ReRegisterAttemptAsync(
         Contract.RunnerActiveAttempt attempt,
         CancellationToken ct)
+        => await ReAdoptAttemptAsync(attempt, ct) is not null;
+
+    /// <summary>
+    /// Re-registers one positively present attempt and returns the server's
+    /// adoption only when it was accepted. The adoption expiry is a new server
+    /// confirmation for the exact attempt identity, never an offline renewal.
+    /// </summary>
+    internal async Task<Contract.RunnerAttemptAdoption?> ReAdoptAttemptAsync(
+        Contract.RunnerActiveAttempt attempt,
+        CancellationToken ct)
     {
         if (_options is null || (!_useV1 && !_supportsCapabilityAdvertisement))
-            return false;
+            return null;
         _registrationAdoptions.TryRemove(attempt.AttemptId, out _);
         _ = await RegisterAsync(
             _options.RunnerName,
@@ -309,7 +322,9 @@ public sealed class TaskServerClient : IDisposable
             ct,
             [attempt]);
         return _registrationAdoptions.TryGetValue(attempt.AttemptId, out var adoption)
-               && string.Equals(adoption.Status, "adopted", StringComparison.Ordinal);
+               && string.Equals(adoption.Status, "adopted", StringComparison.Ordinal)
+            ? adoption
+            : null;
     }
 
     internal Contract.RunnerActiveAttempt CodingAttemptFor(RunLeaseInfoDto lease)
@@ -1124,13 +1139,26 @@ public sealed class TaskServerClient : IDisposable
         var request = new Contract.CapabilityAdvertisementRequest(
             options.RunnerId,
             RunnerInstanceId,
-            Contract.CapabilityProtocol.CurrentSchemaVersion,
+            _supportsCredentialObservationV2
+                ? Contract.CapabilityProtocol.CurrentSchemaVersion
+                : Contract.CapabilityProtocol.LegacySchemaVersion,
             DateTime.UtcNow,
             180,
             generation,
-            capabilities,
+            _supportsCredentialObservationV2 ? capabilities : capabilities.Select(item => item with
+            {
+                CredentialGeneration = null,
+                CredentialObservedAt = null,
+                LastRealSuccessAt = null,
+                ExpiryProvenance = null,
+                AccessTokenExpiresAt = null,
+                EffectiveSource = null,
+                NativeFileShadowed = null,
+                EvidenceRefs = null,
+            }).ToArray(),
             telemetry,
-            RunnerReleaseIdentity.CurrentIdentity);
+            RunnerReleaseIdentity.CurrentIdentity,
+            _supportsCredentialObservationV2 ? 1 : null);
         var snapshot = await SendJsonAsync<Contract.CapabilityAdvertisementRequest, Contract.RunnerCapabilitySnapshotDto>(
             HttpMethod.Put,
             $"/api/v1/runners/{Uri.EscapeDataString(options.RunnerId)}/capabilities",
