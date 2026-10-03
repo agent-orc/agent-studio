@@ -474,7 +474,12 @@ that transition creates a sign-in-required operator notification and Ready-card
 wait reason. A later successful probe writes
 `runner-provider-auth-probe-recovered`, clears the matching capability circuit,
 and advertises **OK** without a service restart. When credential metadata exposes
-an expiry, Studio gives a quiet warning during the final 14 days. Follow
+an issuer-backed credential expiry, Studio gives a quiet warning during the final 14 days.
+Native Codex and Claude access-token expiry is only a refresh hint, not a login
+deadline. When the daemon has `CLAUDE_CODE_OAUTH_TOKEN`, its native Claude file
+is shadowed and its date does not apply to the active environment credential.
+The capability snapshot records this source and whether the native file is
+shadowed, without reading or exporting the environment value. Follow
 [cli-relogin-runbook.md](./cli-relogin-runbook.md) for renewal.
 
 Do not create provider-specific files such as `claude.env`.
