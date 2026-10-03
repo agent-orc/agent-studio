@@ -194,6 +194,9 @@ are absent from the new effective registry after it loads.
 A failed project registry request leaves the registry incomplete and preserves
 selected ids and their URL state. A subsequent load retries the request; only a
 successful response permits pruning ids absent from the effective registry.
+Workspace tag edits and deletions invalidate cached effective project
+registries, refresh loaded projects, and ignore responses started before the
+change. Project views therefore do not restore stale labels or deleted tags.
 The workspace view preserves project-specific selections while a project route
 resolves, since workspace tags alone cannot validate tags from other projects.
 Selections absent from the workspace dropdowns appear as removable filter chips,

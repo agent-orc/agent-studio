@@ -13,6 +13,7 @@ export class TagRegistryStore {
   private workspaceLoaded = false;
   private readonly projectTags = signal(new Map<string, TagRegistryEntry[]>());
   private readonly pendingProjects = new Set<string>();
+  private projectRequestGeneration = 0;
   readonly activeProject = signal<string | null>(null);
   readonly activeProjectLoaded = signal(false);
   readonly tags = signal<TagRegistryEntry[]>([]);
@@ -23,10 +24,18 @@ export class TagRegistryStore {
   });
 
   set(entries: TagRegistryEntry[]): void {
+    // Project responses include workspace tags. Discard every effective
+    // registry when those tags change, including requests still in flight.
+    const projectsToRefresh = new Set([...this.projectTags().keys(), ...this.pendingProjects]);
+    if (this.activeProject()) projectsToRefresh.add(this.activeProject()!);
+    this.projectRequestGeneration++;
+    this.pendingProjects.clear();
+    this.projectTags.set(new Map());
     this.workspaceTags.set(entries ?? []);
     this.workspaceLoaded = true;
     this.publish();
-    this.activeProjectLoaded.set(!this.activeProject() || this.projectTags().has(this.activeProject()!));
+    this.activeProjectLoaded.set(!this.activeProject());
+    for (const project of projectsToRefresh) this.ensureProject(project);
   }
 
   loadProject(projectName: string | null): void {
@@ -40,9 +49,11 @@ export class TagRegistryStore {
   ensureProject(projectName: string): void {
     if (this.projectTags().has(projectName) || this.pendingProjects.has(projectName)) return;
     this.pendingProjects.add(projectName);
+    const generation = this.projectRequestGeneration;
     this.http.get<{ items: TagRegistryEntry[] }>(`/api/projects/${encodeURIComponent(projectName)}/tags`)
       .subscribe({
         next: response => {
+          if (generation !== this.projectRequestGeneration) return;
           this.pendingProjects.delete(projectName);
           this.projectTags.update(current => new Map(current).set(projectName, response.items ?? []));
           if (this.activeProject() === projectName) {
@@ -51,6 +62,7 @@ export class TagRegistryStore {
           }
         },
         error: () => {
+          if (generation !== this.projectRequestGeneration) return;
           this.pendingProjects.delete(projectName);
           // Workspace tags cannot validate project selections after an incomplete load.
           if (this.activeProject() === projectName) this.activeProjectLoaded.set(false);
