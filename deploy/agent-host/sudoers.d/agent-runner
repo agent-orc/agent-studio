@@ -47,4 +47,4 @@ Cmnd_Alias AGENT_RELEASE_GATE_WINDOW = \
     /usr/bin/systemctl ^set-property --runtime agent-runner[.]service CPUQuota\=([1-9][0-9]{0\,5}%)?$, \
     /usr/bin/systemctl ^set-property --runtime agent-runner-review[.]service CPUQuota\=([1-9][0-9]{0\,5}%)?$
 
-agent ALL=(root) NOPASSWD: AGENT_RUNNER_SERVICE_CONTROL, AGENT_RUNNER_DEPLOY, AGENT_RUNNER_CONFIG, AGENT_RUNNER_RESULTS, AGENT_RELEASE_GATE_WINDOW
+agent ALL=(root) NOPASSWD: AGENT_RUNNER_SERVICE_CONTROL, AGENT_RUNNER_DEPLOY, AGENT_RUNNER_CONFIG, AGENT_RELEASE_GATE_WINDOW, AGENT_RUNNER_RESULTS

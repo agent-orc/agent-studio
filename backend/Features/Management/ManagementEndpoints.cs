@@ -37,14 +37,9 @@ public static class ManagementEndpoints
         {
             context.Response.Headers.CacheControl = "no-store";
             if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
-            // The configured budget decides escalation, so it also decides visibility.
-            var budget = new AgentStudio.Runner.RemoteClaimFailureBudget(
-                Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentStudio.Runner.RemoteClaimFailureBudget>.Instance,
-                configuration.GetValue("Runner:RemoteClaimFailureBudget", AgentStudio.Runner.RemoteClaimFailureBudget.MaxAttempts));
             return Results.Ok(scanner.ScanAllJobs()
                 .Where(task => task.State == TaskStates.Escalated
-                    && task.RemoteClaimFailure is { } failure
-                    && failure.Attempts >= budget.MaximumAttempts)
+                    && task.RemoteClaimFailure is not null)
                 .Select(task => new AgentStudio.TaskServer.Contracts.RunnerInfrastructureFailureDto(
                     task.Key ?? task.Id,
                     task.RemoteClaimFailure!.Attempts,

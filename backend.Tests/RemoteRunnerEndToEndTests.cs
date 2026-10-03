@@ -1495,6 +1495,45 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Equal(1, failure.Attempts);
     }
 
+    [Fact]
+    public async Task Escalated_infrastructure_failure_remains_visible_after_budget_increases()
+    {
+        SeedTask(TaskStates.Ready, TaskKey, "Broken worktree", "Prompt.");
+        using var factory = BuildFactory(remoteRequeueGraceSeconds: 900, remoteClaimFailureBudget: 2);
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/agent-orc/agent-studio.git");
+
+        for (var attempt = 1; attempt <= 2; attempt++)
+        {
+            var claimRequest = new RClaim(
+                RunnerId, ProjectName, "host", 1, "remote-runner", ActiveTaskKeys: []);
+            var claim = attempt == 1
+                ? await ClaimWithSuccessfulPreflightAsync(client, claimRequest)
+                : await client.ClaimAsync(claimRequest, CancellationToken.None);
+            Assert.Equal(RClaimStatus.Claimed, claim.Status);
+            await client.ReleaseLeaseAsync(new RRelease(
+                claim.TaskKey!, claim.Lease!.LeaseId, claim.Lease.FencingToken, RunnerId,
+                claim.Lease.AttemptId, claim.Lease.AuthorityEpoch,
+                $"release:broken-worktree:{attempt}",
+                Outcome: "runner-environment-preparation-failed",
+                Detail: "fatal: not a git repository"), CancellationToken.None);
+        }
+
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.Escalated, TaskKey)));
+        factory.Services.GetRequiredService<IConfiguration>()["Runner:RemoteClaimFailureBudget"] = "3";
+
+        using var management = factory.CreateClient();
+        management.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var visible = await management.GetFromJsonAsync<Contract.RunnerInfrastructureFailureDto[]>(
+            "/api/v1/management/runner-infrastructure-failures", ApiJson);
+        var failure = Assert.Single(visible!);
+        Assert.Equal(2, failure.Attempts);
+        Assert.Equal("host", failure.Host);
+    }
+
     /// <summary>
     /// AGT-2932 review finding: a typed prelaunch release must not enter the
     /// AGT-2870 lost-worker continuation even when it names a salvage ref (the
