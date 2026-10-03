@@ -241,6 +241,9 @@ reopened), it posts one reminder per pending cycle: the wiki record gains
 lifecycle frontmatter (`pageKind: decision`, `review-requested`) so the
 workbench inbox lists it, and the activity feed gets an alert naming the decider
 and the blocked cards. Deciding rewrites the record without that frontmatter.
+The sweep stamps `remindedAt` only after both writes succeed. A failed inbox
+or feed write remains due for the next sweep, and a feed line already posted
+before a failed stamp is reused on retry.
 The sweep reads each due card again under the decision write gate that decide,
 reopen, and apply hold, and skips it when it is no longer pending, so a decision
 taken after the scan is never overwritten by the reminder stamp.

@@ -8,8 +8,8 @@ public sealed record DecisionReminder(string JobId, string Key, DateTime DueAt, 
 /// (Dossier decision-cards D5=A, default three days). Each reminder posts an
 /// inbox entry (the decision's wiki record, listed as "wants review" in the
 /// workbench inbox) and an activity feed line naming the blocked cards, and
-/// stamps <see cref="DecisionContent.RemindedAt"/> after the inbox write succeeds
-/// so the pending cycle is reminded once and failed writes remain retryable.
+/// stamps <see cref="DecisionContent.RemindedAt"/> after the inbox and feed writes
+/// succeed so failed writes remain retryable.
 /// The sweep never moves a card.
 /// </summary>
 public sealed class DecisionReminderSweep
@@ -106,15 +106,15 @@ public sealed class DecisionReminderSweep
             _logger.LogWarning("decision-reminder-inbox-failed job={JobId} error={Error}", card.Id, inbox.Error);
             return false;
         }
-        if (!_mutations.SetDecisionContent(card.Id, reminded, card.WatchPath))
-        {
-            _logger.LogWarning("decision-reminder-stamp-failed job={JobId}", card.Id);
-            return false;
-        }
-
         var names = blocked.Count == 0 ? "no recorded cards" : string.Join(", ", blocked);
         var summary = $"Decision overdue: {key} waits on {DeciderName(decision)} since {dueAt:yyyy-MM-dd}; blocks {names}";
-        _activityFeed.Append(card.WatchPath, new OrchestratorLogEntry
+        // A previous sweep may have appended the feed line but failed to stamp
+        // the card. Reuse that line when retrying the remaining write.
+        var alreadyPosted = _activityFeed.Read(card.WatchPath).Any(entry =>
+            entry.JobId == card.Id && entry.Kind == OrchestratorLogKinds.Alert
+            && entry.Topic == OrchestratorLogTopics.DecisionCard
+            && entry.Summary == summary);
+        if (!alreadyPosted && !_activityFeed.Append(card.WatchPath, new OrchestratorLogEntry
         {
             Ts = now,
             Kind = OrchestratorLogKinds.Alert,
@@ -122,7 +122,16 @@ public sealed class DecisionReminderSweep
             Summary = summary,
             Reasoning = decision.Question,
             JobId = card.Id,
-        });
+        }))
+        {
+            _logger.LogWarning("decision-reminder-feed-failed job={JobId}", card.Id);
+            return false;
+        }
+        if (!_mutations.SetDecisionContent(card.Id, reminded, card.WatchPath))
+        {
+            _logger.LogWarning("decision-reminder-stamp-failed job={JobId}", card.Id);
+            return false;
+        }
         _timeline.Append(card.FolderPath, TimelineEventKinds.DecisionReminded, TimelineActors.Orchestrator,
             summary: summary, payloadRef: path,
             details: new()

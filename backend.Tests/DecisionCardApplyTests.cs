@@ -591,6 +591,62 @@ public sealed class DecisionCardApplyTests : IDisposable
     }
 
     [Fact]
+    public void ReminderSweep_FailedFeedAppend_LeavesDecisionDueAndRetriesOnNextSweep()
+    {
+        var h = Build();
+        var decisionId = h.Mutations.CreateJob(new CreateTaskRequest
+        {
+            Title = "Stable release contract", WatchPath = _watchPath, Kind = TaskKinds.Decision,
+            Decision = LockFileDecision(),
+        })!;
+        var card = h.Scanner.FindJob(decisionId, _watchPath)!;
+        var clock = new FakeTimeProvider(new DateTimeOffset(card.CreatedAt.ToUniversalTime().AddDays(4)));
+        var sweep = h.Reminders(clock);
+        var feedFolder = Path.Combine(_watchPath, ".orchestrator");
+        var savedFeedFolder = Path.Combine(_watchPath, ".orchestrator-saved");
+        Directory.CreateDirectory(feedFolder);
+        Directory.Move(feedFolder, savedFeedFolder);
+        File.WriteAllText(feedFolder, "A file at the feed directory path blocks append.");
+
+        Assert.Empty(sweep.Sweep());
+        Assert.Null(h.Scanner.FindJob(decisionId, _watchPath)!.Decision!.RemindedAt);
+        Assert.Contains("lifecycleState: review-requested", ReadRecord(card.Key!));
+
+        File.Delete(feedFolder);
+        Directory.Move(savedFeedFolder, feedFolder);
+        Assert.Single(sweep.Sweep());
+        Assert.NotNull(h.Scanner.FindJob(decisionId, _watchPath)!.Decision!.RemindedAt);
+        Assert.Single(h.ActivityFeed.Read(_watchPath), e => e.Summary.StartsWith("Decision overdue:"));
+        Assert.Empty(sweep.Sweep());
+    }
+
+    [Fact]
+    public void ReminderSweep_FeedAlreadyPostedBeforeStamp_DoesNotPostItAgain()
+    {
+        var h = Build();
+        var decisionId = h.Mutations.CreateJob(new CreateTaskRequest
+        {
+            Title = "Stable release contract", WatchPath = _watchPath, Kind = TaskKinds.Decision,
+            Decision = LockFileDecision(),
+        })!;
+        var card = h.Scanner.FindJob(decisionId, _watchPath)!;
+        var dueAt = DecisionReminderPolicy.DueAt(card.Decision!, card.CreatedAt);
+        var summary = $"Decision overdue: {card.Key} waits on operator since {dueAt:yyyy-MM-dd}; blocks no recorded cards";
+        Assert.True(h.ActivityFeed.Append(_watchPath, new OrchestratorLogEntry
+        {
+            Kind = OrchestratorLogKinds.Alert,
+            Topic = OrchestratorLogTopics.DecisionCard,
+            JobId = decisionId,
+            Summary = summary,
+        }));
+
+        var clock = new FakeTimeProvider(new DateTimeOffset(dueAt.AddMinutes(1)));
+        Assert.Single(h.Reminders(clock).Sweep());
+        Assert.NotNull(h.Scanner.FindJob(decisionId, _watchPath)!.Decision!.RemindedAt);
+        Assert.Single(h.ActivityFeed.Read(_watchPath), e => e.Summary == summary);
+    }
+
+    [Fact]
     public async Task ReminderSweep_DecidedRecordLeavesTheInbox()
     {
         var h = Build();
