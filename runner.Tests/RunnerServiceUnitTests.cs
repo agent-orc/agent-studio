@@ -375,6 +375,26 @@ public sealed class RunnerServiceUnitTests
     }
 
     [Fact]
+    public void Agent_runner_sudoers_limits_the_release_gate_window_to_runtime_cpu_quota_on_the_runner_units()
+    {
+        var content = File.ReadAllText(
+            Path.Combine(RepoRoot(), "deploy", "agent-host", "sudoers.d", "agent-runner"));
+
+        // AGT-2982: the promotion gate window may only lower and restore the
+        // runtime CPUQuota of the two runner units, never another property.
+        Assert.Contains(
+            "/usr/bin/systemctl ^set-property --runtime agent-runner[.]service CPUQuota\\=([1-9][0-9]{0\\,5}%)?$",
+            content,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "/usr/bin/systemctl ^set-property --runtime agent-runner-review[.]service CPUQuota\\=([1-9][0-9]{0\\,5}%)?$",
+            content,
+            StringComparison.Ordinal);
+        Assert.Equal(2, CountOccurrences(content, "set-property"));
+        Assert.Contains("AGENT_RUNNER_CONFIG, AGENT_RELEASE_GATE_WINDOW", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Agent_runner_config_helper_owns_atomic_update_restart_audit_and_process_proof()
     {
         var helper = File.ReadAllText(

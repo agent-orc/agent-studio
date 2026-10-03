@@ -7872,6 +7872,8 @@ public class ProjectRunner
         return string.Join("\n", lines.Skip(start).Select(l => l.Text));
     }
 
+    private const int ToolCallsLivenessTailBytes = 64 * 1024;
+
     /// <summary>Tails <c>logs/tool-calls.jsonl</c> so the model can judge
     /// whether a tool call started shortly before the abort and never
     /// returned (a live long-op) vs. a genuine stall. Best-effort.</summary>
@@ -7881,9 +7883,11 @@ public class ProjectRunner
         {
             var path = Path.Combine(TaskPaths.LogsDir(jobFolderPath), "tool-calls.jsonl");
             if (!File.Exists(path)) return "(no tool-calls.jsonl on disk)";
-            var all = File.ReadAllLines(path);
-            if (all.Length == 0) return "(tool-calls.jsonl is empty)";
-            var start = Math.Max(0, all.Length - maxLines);
+            // tool-calls.jsonl grows by one row per tool call for the whole
+            // task; read only the newest window (AGT-2991).
+            var all = BoundedFileRead.ReadTailLines(path, ToolCallsLivenessTailBytes);
+            if (all.Count == 0) return "(tool-calls.jsonl is empty)";
+            var start = Math.Max(0, all.Count - maxLines);
             return string.Join("\n", all.Skip(start));
         }
         catch (Exception ex)

@@ -1,0 +1,22 @@
+@if (blockers().length > 0) {
+  <section class="decision-blocked" data-testid="decision-blocked-notice" role="status">
+    <span class="decision-blocked__dot" aria-hidden="true"></span>
+    <div class="decision-blocked__body">
+      <p class="decision-blocked__line">
+        @for (blocker of blockers(); track blocker.key; let last = $last) {
+          <span>
+            Blocked by
+            <button type="button"
+                    class="decision-blocked__link"
+                    data-testid="decision-blocked-link"
+                    [attr.data-key]="blocker.key"
+                    (click)="open(blocker.key)">{{ blocker.key }}</button>@if (blocker.title) { <span class="decision-blocked__title">{{ blocker.title }}</span>}@if (!last) {;}
+          </span>
+        }
+      </p>
+      <p class="decision-blocked__hint">
+        A pending decision. This card cannot be claimed or moved to Ready or In Progress until the decider chooses an option.
+      </p>
+    </div>
+  </section>
+}

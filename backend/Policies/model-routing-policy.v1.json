@@ -1,5 +1,5 @@
 {
-  "version": "2026-09-18",
+  "version": "2026-09-25",
   "wikiPath": "docs/system/domains/model-routing-policy.md",
   "tiers": [
     {
@@ -70,6 +70,24 @@
     }
   },
   "providerRejectionFallbacks": [
+    {
+      "cliType": "claude",
+      "fromModel": "claude-opus-5-5",
+      "toModel": "claude-opus-5",
+      "reason": "The declared Anthropic Opus sibling for provider request refusals."
+    },
+    {
+      "cliType": "codex",
+      "fromModel": "gpt-6-sol",
+      "toModel": "gpt-5.6-sol",
+      "reason": "The declared Codex Sol sibling for provider request refusals."
+    },
+    {
+      "cliType": "codex",
+      "fromModel": "gpt-6-luna",
+      "toModel": "gpt-5.6-luna",
+      "reason": "The declared Codex Luna sibling for provider request refusals."
+    },
     {
       "cliType": "codex",
       "fromModel": "gpt-6-astra",

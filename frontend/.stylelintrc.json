@@ -188,6 +188,7 @@
       "comment": "Scoped spacing-token enforcement for the lane rail and new components. Padding/margin/gap must source --studio-spacing-* tokens. If a raw value is structurally necessary, use a targeted disable with rationale.",
       "files": [
         "src/app/features/retention/**/*.scss",
+        "src/app/features/usage-cockpit/**/*.scss",
         "src/app/components/async-feedback/loading-surface/loading-surface.component.scss",
         "src/app/components/cli-model-selector/cli-model-selector.component.scss",
         "src/app/components/model-level-indicator/model-level-indicator.component.scss",
@@ -273,6 +274,9 @@
         "src/app/features/task-detail/components/decision-surface/decision-surface.component.scss",
         "src/app/features/task-detail/components/parked-blocker/parked-blocker.component.scss",
         "src/app/features/task-detail/components/concept-dossier-notice/concept-dossier-notice.component.scss",
+        "src/app/features/task-detail/components/decision-card-panel/decision-card-panel.component.scss",
+        "src/app/features/task-detail/components/decision-blocked-notice/decision-blocked-notice.component.scss",
+        "src/app/features/board/components/task-card-decision-chips/task-card-decision-chips.component.scss",
         "src/app/features/task-detail/components/escalation-summary/_escalation-summary-actions.scss",
         "src/app/features/task-detail/components/prompt-pane/pipeline-run-history/pipeline-run-history.component.scss",
         "src/app/features/task-detail/components/prompt-pane/overview-failure/overview-failure.component.scss",

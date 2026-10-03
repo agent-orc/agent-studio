@@ -722,7 +722,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             [ReviewInfraAttributionPolicyTests.FailedTestName],
             candidate.NewFailures);
         var verdict = Assert.Single(evidence.Verdicts);
-        Assert.Equal("NewTestFailures", verdict.Classification);
+        Assert.Equal(DeliveryFailureDiagnosis.Product, verdict.Classification);
         Assert.Equal("block", verdict.Status);
         Assert.Contains(
             ReviewInfraAttributionPolicyTests.FailedTestName,
@@ -871,7 +871,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Fact]
-    public async Task Baseline_comparison_blocks_only_new_test_failures_and_names_them()
+    public async Task Red_baseline_keeps_new_test_name_off_the_card()
     {
         var (_, subjectSha) = await SeedSubjectBranchAsync();
         var command = BaselineCommand(
@@ -889,19 +889,19 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
 
         var evidence = await workspace.ExecutePlanAsync(default);
 
-        Assert.Equal("ProductFailure", evidence.Outcome);
+        Assert.Equal("ReviewInfra", evidence.Outcome);
         var commandEvidence = CandidateVerification(evidence);
         Assert.Equal(["Product.NewFailure"], commandEvidence.NewFailures);
         Assert.Equal(["Product.ExistingFailure"], commandEvidence.PreExistingFailures);
         Assert.True(commandEvidence.RetryPerformed);
         var verdict = Assert.Single(evidence.Verdicts);
-        Assert.Equal("block", verdict.Status);
-        Assert.Contains("1 new failures: Product.NewFailure", verdict.Summary, StringComparison.Ordinal);
-        Assert.Contains("1 pre-existing failures: Product.ExistingFailure", verdict.Summary, StringComparison.Ordinal);
+        Assert.Equal("pass", verdict.Status);
+        Assert.Equal(DeliveryFailureDiagnosis.Environment, verdict.Classification);
+        Assert.Contains("baseline=red", verdict.Summary, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task Baseline_comparison_blocks_only_new_vitest_failures_and_names_them()
+    public async Task Red_baseline_keeps_new_vitest_name_off_the_card()
     {
         var (_, subjectSha) = await SeedSubjectBranchAsync();
         var command = BaselineCommand(
@@ -920,7 +920,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
 
         var evidence = await workspace.ExecutePlanAsync(default);
 
-        Assert.Equal("ProductFailure", evidence.Outcome);
+        Assert.Equal("ReviewInfra", evidence.Outcome);
         var commandEvidence = CandidateVerification(evidence);
         Assert.Equal(
             ["src/math.spec.ts > arithmetic > new failure"],
@@ -950,16 +950,16 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         // AGT-2819: the card adds no failure, so it is not a ProductFailure, and
         // the step is not green either - the merge base carries the failure and
         // the review says so with its own terminal.
-        Assert.Equal("IntegrationBranchDefect", evidence.Outcome);
+        Assert.Equal("ReviewInfra", evidence.Outcome);
         var commandEvidence = CandidateVerification(evidence);
         Assert.Empty(commandEvidence.NewFailures!);
         Assert.Equal(["Product.ExistingFailure"], commandEvidence.PreExistingFailures);
-        Assert.False(commandEvidence.RetryPerformed);
+        Assert.True(commandEvidence.RetryPerformed);
         Assert.Equal(1, commandEvidence.BaselineExitCode);
         var verdict = Assert.Single(evidence.Verdicts);
         Assert.Equal("pass", verdict.Status);
-        Assert.Equal("IntegrationBranchDefect", verdict.Classification);
-        Assert.Contains("0 new failures", verdict.Summary, StringComparison.Ordinal);
+        Assert.Equal(DeliveryFailureDiagnosis.Environment, verdict.Classification);
+        Assert.Contains("baseline=red", verdict.Summary, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -985,15 +985,15 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
 
         var evidence = await workspace.ExecutePlanAsync(default);
 
-        Assert.Equal("IntegrationBranchDefect", evidence.Outcome);
+        Assert.Equal("ReviewInfra", evidence.Outcome);
         var commandEvidence = CandidateVerification(evidence);
         Assert.Equal(1, commandEvidence.ExitCode);
         Assert.Equal(1, commandEvidence.BaselineExitCode);
         Assert.Empty(commandEvidence.NewFailures!);
-        Assert.False(commandEvidence.RetryPerformed);
+        Assert.True(commandEvidence.RetryPerformed);
         var verdict = Assert.Single(evidence.Verdicts);
         Assert.Equal("pass", verdict.Status);
-        Assert.Equal("IntegrationBranchDefect", verdict.Classification);
+        Assert.Equal(DeliveryFailureDiagnosis.Environment, verdict.Classification);
     }
 
     [Fact]
@@ -1017,6 +1017,71 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.Equal(1, commandEvidence.ExitCode);
         Assert.Equal(0, commandEvidence.BaselineExitCode);
         Assert.Equal("block", Assert.Single(evidence.Verdicts).Status);
+    }
+
+    /// <summary>
+    /// AGT-2916 review finding (2026-09-29): a lint or build failure has no
+    /// parseable test names, so its fingerprint came from the raw output. That
+    /// output names the workspace (the clean repeat clone carries a random
+    /// suffix), the runtime temp directory and timings, so the first run and
+    /// the clean repeat never matched and a reproducible regression settled
+    /// as <c>unclassified-first-occurrence</c> instead of <c>product</c>.
+    /// </summary>
+    [Fact]
+    public async Task A_lint_regression_whose_output_names_the_workspace_and_timings_is_a_product_failure()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var command = LintCommand(
+            "if grep -q subject product.txt; then " +
+            "printf '%s/src/app.ts\\n' \"$PWD\"; " +
+            "printf '  3:7  error  %s is assigned a value but never used  no-unused-vars\\n' \"'unused'\"; " +
+            "printf 'cache: %s/eslint-%s\\n' \"$TMPDIR\" \"$$\"; " +
+            "printf 'Done in %s.%sms\\n' \"$$\" \"$$\"; exit 1; fi; exit 0");
+        var (workspace, _) = Workspace(
+            "attempt-lint-noisy",
+            subjectSha,
+            [command],
+            26122,
+            resultRef: "refs/heads/task/new-failure",
+            integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        var candidate = CandidateVerification(evidence);
+        var clean = Assert.Single(evidence.Commands, item =>
+            item is { Phase: "clean-repeat", WorkspaceRole: "clean-repeat" });
+        Assert.Equal(1, candidate.ExitCode);
+        Assert.Equal(1, clean.ExitCode);
+        Assert.Equal(0, candidate.BaselineExitCode);
+        Assert.Equal(DeliveryFailureDiagnosis.Product, candidate.Diagnosis?.Classification);
+        Assert.True(candidate.Diagnosis!.ChargesCard);
+        Assert.Equal("ProductFailure", evidence.Outcome);
+        Assert.Equal("block", Assert.Single(evidence.Verdicts).Status);
+    }
+
+    [Fact]
+    public async Task A_build_regression_without_diagnostic_lines_is_a_product_failure_by_exit_status()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var command = BaselineCommand(
+            "if grep -q subject product.txt; then " +
+            "printf 'Building %s took %sms\\n' \"$PWD\" \"$$\"; exit 2; fi; exit 0");
+        var (workspace, _) = Workspace(
+            "attempt-build-noisy",
+            subjectSha,
+            [command],
+            26124,
+            resultRef: "refs/heads/task/new-failure",
+            integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        var candidate = CandidateVerification(evidence);
+        Assert.Equal(2, candidate.ExitCode);
+        Assert.Equal(DeliveryFailureDiagnosis.Product, candidate.Diagnosis?.Classification);
+        Assert.Equal("ProductFailure", evidence.Outcome);
     }
 
     [Fact]
@@ -1159,7 +1224,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         await second.PrepareAsync(null!, default);
         var evidence = await second.ExecutePlanAsync(default);
 
-        Assert.Equal("ProductFailure", evidence.Outcome);
+        Assert.Equal("ReviewInfra", evidence.Outcome);
         var candidate = CandidateVerification(evidence);
         Assert.True(candidate.BaselineCacheHit);
         Assert.Equal(["Product.NewFailure"], candidate.NewFailures);
@@ -1170,8 +1235,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.Equal(1, candidate.ExitCode);
         Assert.Equal("attempt-new-reuse", candidate.AttemptId);
         var verdict = Assert.Single(evidence.Verdicts);
-        Assert.Equal("NewTestFailures", verdict.Classification);
-        Assert.Equal("block", verdict.Status);
+        Assert.Equal(DeliveryFailureDiagnosis.Environment, verdict.Classification);
+        Assert.Equal("pass", verdict.Status);
     }
 
     [Theory]
@@ -1276,7 +1341,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Fact]
-    public async Task Review_flaky_new_failure_gets_one_retry_and_is_quarantined_when_it_disappears()
+    public async Task Known_flaky_test_that_repeats_in_a_clean_workspace_remains_a_product_failure()
     {
         const string failure =
             "AgentRunner.Tests.RemoteTaskRunnerRestartTests.Restarted_runner_follows_fake_job_and_delivers_completion_without_a_zombie_lease";
@@ -1301,14 +1366,94 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
 
         var evidence = await workspace.ExecutePlanAsync(default);
 
-        Assert.Equal("Pass", evidence.Outcome);
+        Assert.Equal("ProductFailure", evidence.Outcome);
         var commandEvidence = CandidateVerification(evidence);
         Assert.True(commandEvidence.RetryPerformed);
-        Assert.Empty(commandEvidence.NewFailures!);
-        Assert.Equal([failure], commandEvidence.FlakyQuarantinedFailures);
-        Assert.Equal(0, commandEvidence.ExitCode);
+        Assert.Equal([failure], commandEvidence.NewFailures);
+        Assert.Empty(commandEvidence.FlakyQuarantinedFailures!);
+        Assert.Equal(1, commandEvidence.ExitCode);
         Assert.False(evidence.Workspace.DirtyAfter);
-        Assert.Equal("FlakyQuarantine", Assert.Single(evidence.Verdicts).Classification);
+        Assert.Equal(DeliveryFailureDiagnosis.Product, Assert.Single(evidence.Verdicts).Classification);
+    }
+
+    /// <summary>
+    /// AGT-2916 review finding (2026-09-27): the clean repeat overwrote the
+    /// candidate execution, so a failure the repeat cleared was reported as a
+    /// candidate run with exit 0 and the clean workspace's output. The
+    /// candidate evidence must keep the first run; the repeat has its own.
+    /// </summary>
+    [Fact]
+    public async Task Clean_repeat_that_passes_keeps_the_failed_candidate_run_as_candidate_evidence()
+    {
+        const string failure = "Product.Tests.Sporadic.Fails_only_on_the_first_run";
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var marker = Path.Combine(_root, "first-candidate-run-seen");
+        var command = BaselineCommand(
+            "if grep -q subject product.txt; then " +
+            $"if test ! -f '{marker}'; then touch '{marker}'; " +
+            $"printf '  Failed {failure} [1 ms]\\n'; exit 1; fi; fi; exit 0");
+        var (workspace, subject) = Workspace(
+            "attempt-cleared",
+            subjectSha,
+            [command],
+            26042,
+            resultRef: "refs/heads/task/new-failure",
+            integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        var candidate = CandidateVerification(evidence);
+        var clean = Assert.Single(evidence.Commands, item =>
+            item is { Phase: "clean-repeat", WorkspaceRole: "clean-repeat" });
+        Assert.Equal(1, candidate.ExitCode);
+        Assert.Equal(0, clean.ExitCode);
+        Assert.True(candidate.RetryPerformed);
+        Assert.Equal(0, candidate.BaselineExitCode);
+        Assert.Contains(failure, ArtifactText(evidence.Artifacts, candidate.StdoutSha256), StringComparison.Ordinal);
+        Assert.NotEqual(candidate.StdoutSha256, clean.StdoutSha256);
+        Assert.DoesNotContain(evidence.Artifacts, artifact => artifact.Name.Contains(".initial.", StringComparison.Ordinal));
+        Assert.Equal(DeliveryFailureDiagnosis.FirstOccurrence, candidate.Diagnosis?.Classification);
+        Assert.False(candidate.Diagnosis!.ChargesCard);
+        Assert.Equal("ReviewInfra", evidence.Outcome);
+        Assert.Equal("pass", Assert.Single(evidence.Verdicts).Status);
+        Assert.Equal(
+            ReviewFailureOwner.Tolerated,
+            ReviewFailureAttributionPolicy.Attribute(command, candidate));
+
+        // Both authorities now see the failed candidate run and its diagnosis,
+        // and neither may charge the card for it.
+        var report = new ReviewReportRequest(
+            "review-executor", "review-instance", "lease-attempt-cleared", 1, "report-attempt-cleared",
+            evidence.Outcome, null, null, evidence.Workspace, workspace.EnvironmentEvidence(),
+            evidence.Commands, evidence.Artifacts, evidence.Verdicts);
+        var normalized = ReviewReportDiagnosisPolicy.Normalize(report, subject.Plan);
+        Assert.Equal("ReviewInfra", normalized.Outcome);
+        Assert.Equal(DeliveryFailureDiagnosis.FirstOccurrence, normalized.FailureClassification);
+    }
+
+    [Fact]
+    public void Missing_baseline_comparison_is_reported_as_infrastructure_with_command_context()
+    {
+        var command = BaselineCommand("exit 1");
+        var (workspace, _) = Workspace(
+            "attempt-null-baseline",
+            new string('a', 40),
+            [command],
+            26039,
+            integrationRef: "refs/heads/main");
+
+        var exception = Assert.Throws<ReviewInfrastructureException>(
+            () => workspace.RequireBaselineComparison(null, command));
+
+        Assert.Equal("BaselineUnavailable", exception.Classification);
+        var facts = ReviewInfrastructureDiagnosis.Parse(exception.Message);
+        Assert.Equal(ReviewInfrastructureDiagnosis.UnresolvedBase,
+            facts[ReviewInfrastructureDiagnosis.BaseKey]);
+        Assert.Equal("refs/heads/main", facts[ReviewInfrastructureDiagnosis.RefKey]);
+        Assert.Equal("verify-2", facts[ReviewInfrastructureDiagnosis.StepKey]);
+        Assert.Contains("exit 1", facts[ReviewInfrastructureDiagnosis.CommandKey],
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1706,7 +1851,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             CommandSilenceWatchdogSeconds = commandSilenceWatchdogSeconds,
             ReviewNoCpuProgressSeconds = reviewNoCpuProgressSeconds,
         };
-        return (new RemoteReviewWorkspace(options, subject, lease, _ => { }), subject);
+        return (new RemoteReviewWorkspace(options, subject, lease, _ => { },
+            _ => Task.FromResult<FailureFingerprintHistoryDto?>(null)), subject);
     }
 
     private async Task<(string BaselineSha, string SubjectSha)> SeedSubjectBranchAsync()

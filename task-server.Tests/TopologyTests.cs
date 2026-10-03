@@ -435,7 +435,7 @@ public sealed class TopologyTests
         Assert.Contains(history.Events, item => item.Kind == LifecycleEventKinds.RunCompleted);
     }
 
-    [Fact(Timeout = 90000)]
+    [Fact(Timeout = 120000)]
     public async Task Https_topology_authenticates_studio_and_runner_event_streams()
     {
         if (!OperatingSystem.IsLinux())
@@ -511,6 +511,17 @@ public sealed class TopologyTests
             "--TaskServer:TlsServerCertificateSha256", certificateSha);
         await WaitForHttpAsync(studioUrl + "/healthz", studio);
         using var studioClient = Client(studioUrl);
+        var missingOrigin = await studioClient.PostAsJsonAsync(
+            "/api/v1/workspaces", new CreateWorkspaceRequest("Rejected missing origin"));
+        Assert.Equal(HttpStatusCode.Forbidden, missingOrigin.StatusCode);
+        studioClient.DefaultRequestHeaders.Add("Origin", "https://foreign.invalid");
+        var foreignOrigin = await studioClient.PostAsJsonAsync(
+            "/api/v1/workspaces", new CreateWorkspaceRequest("Rejected foreign origin"));
+        Assert.Equal(HttpStatusCode.Forbidden, foreignOrigin.StatusCode);
+        studioClient.DefaultRequestHeaders.Remove("Origin");
+        studioClient.DefaultRequestHeaders.Add("Origin", "http://localhost:4011");
+        Assert.Equal(HttpStatusCode.NotFound,
+            (await studioClient.GetAsync("/api/not-owned")).StatusCode);
         var (project, task) = await SeedReadyTaskAsync(studioClient, "TLS");
 
         using var anonymousHandler = PinnedHandler(certificateSha);
@@ -533,6 +544,7 @@ public sealed class TopologyTests
                 ["RUNNER_TLS_CERTIFICATE_SHA256"] = certificateSha,
                 ["RUNNER_HEARTBEAT_SECONDS"] = "5",
                 ["RUNNER_RUN_TIMEOUT_SECONDS"] = "30",
+                ["TOPOLOGY_DONE_ON_FIRST"] = "1",
                 ["TOPOLOGY_RELEASE_FILE"] = releaseFile,
                 ["TOPOLOGY_INVOCATION_COUNTER"] = invocationCounter,
             },
@@ -554,7 +566,9 @@ public sealed class TopologyTests
             task.TaskKey,
             "4-auto-review",
             runner,
-            TimeSpan.FromSeconds(30));
+            // Allow bounded provider probes and detached-worker startup on
+            // shared release hosts before asserting the authentication flow.
+            TimeSpan.FromSeconds(60));
         var history = await WaitForTaskEventsAsync(
             studioClient,
             project.ProjectId,
