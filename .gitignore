@@ -131,7 +131,8 @@ frontend/.frontend-dev.log
 /mini-test-screenshot.png
 /presentation/
 /scenarios/
-/results/
+/results/*
+!/results/evidence.md
 
 # Repo-root agent scratch scripts are diagnostic runtime artefacts, never
 # product source. Keep them out of broad platform-owned snapshot commits.
