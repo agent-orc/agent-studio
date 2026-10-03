@@ -1,18 +1,108 @@
 # Documentation drift audit
 
-Code baseline: `origin/develop` at `12d180d08`. Audit date: 2026-10-03. Requested report date: 2026-09-29.
+**Source task:** AGT-3004. **Requested report date:** 2026-09-29. **Code checked:** `origin/develop` at `12d180d08` on 2026-10-03. **Scope:** `docs/system/` and `docs/operations/`. This Dossier is at `docs/docs-drift-audit-2026-09-29/` because the concept delivery contract permits one new `docs/<slug>/` directory and no changes to existing pages.
 
-The page inventory lists every Markdown and HTML page in scope, excluding generated `.report.html` previews. The audit distinguishes operational instructions from historical incident logs and proposal Dossiers. The inventory alone is a mechanical link scan, not proof that every semantic claim has been verified.
+## Method and coverage
 
-## Coverage
+The [page inventory](page-inventory.csv) lists all **363** Markdown and HTML pages in scope, including 14 generated `.report.html` previews. The full text of every page was read by the inventory pass to count lines, words, and local references. Its `unresolvedLocalLinks` values are **candidates**, because historical paths, examples, anchors, and generated previews can be intentional. Eighteen active or high-impact pages received a manual claim-to-code comparison. The code comparison used `task-server/TaskServerEndpoints.cs`, `task-server/StudioHostsEndpoints.cs`, `backend/Features/Runner/V1ReviewPlaneEndpoints.cs`, `backend/Features/Tasks/TaskIntegrationStatusService.cs`, `backend/Features/Runner/WorktreeTaskLifecycle.cs`, `runner/RunnerOptions.cs`, `runner/TaskServerClient.cs`, `update-service/UpdateServiceOptions.cs`, `update-service/Installation/InstallationUpgradePolicy.cs`, `scripts/release/package-release.sh`, `deploy/release/agent-orchestrator/`, `docker-compose.yml`, and appsettings files.
 
-See [page-inventory.csv](page-inventory.csv). Pages read mechanically: 349.
+The manual pass found the mismatches below. It did **not** verify every factual sentence in the 363 pages against implementation. The inventory is a complete page sweep; the semantic findings are bounded to the cited claims. Historical incident logs and decision Dossiers are not silently rewritten as current runbooks. `wrong` means following the statement can produce an incorrect action or conclusion; `stale` means it described an older implementation or path; `missing` means a necessary current distinction is absent.
 
-## Findings
+## Release and update
 
-| Area | Page | Statement | What current code does | Severity | Proposed fix |
-| --- | --- | --- | --- | --- | --- |
+| Page | Statement | What the code does | Severity | Proposed fix |
+| --- | --- | --- | --- | --- |
+| `docs/operations/releases.md` | Names the guided executable `agent-orchestrator-setup` and instructs `sudo ./agent-orchestrator-setup` / `--join`. | `scripts/release/package-release.sh` requires and emits `agent-studio-setup`; `.github/workflows/release.yml` publishes it. `docs/operations/setup/install.md` uses that name. | wrong | Replace the executable name and all sample commands with `agent-studio-setup`. |
+| `docs/operations/releases.md` | Says the release has three archives and that the host archive keeps the product at exactly three distributables. | `package-release.sh` creates **four** archives: `agent-orchestrator`, `agent-host`, `agent-studio`, and `agent-studio-compose`, plus the setup executable and checksums. | wrong | Add the Compose archive and update the distributable count and asset table. |
+| `docs/operations/releases.md` | The generic “Update” section only walks through `/opt/agent-orchestrator/current/update.sh`. | `InstallationUpgradePolicy.SelectUpdater` chooses checkout Update Service, installed Compose Docker scripts, installed systemd scripts, or host tooling by placement. `UpdateServiceOptions.Placement` defaults to `DevStableCheckout` and refuses non-checkout application; `deploy/release/agent-orchestrator/update-docker.sh` owns Compose. | missing | Start the update section with a placement table. Keep the current `update.sh` steps under an installed-systemd heading. |
+| `docs/operations/setup/multi-machine.md` | Offline instructions say to place “the three archives” in `--release-dir` without qualifying target placement. | `package-release.sh` emits a fourth `agent-studio-compose-<version>.tar.gz`; the default control-plane target is Docker in this same guide. | stale | Name the archives needed by each target; include the Compose archive for the default Docker control plane. |
+| `docs/operations/setup/networked-task-server.md` | Calls the monolith/Caddy `127.0.0.1:5030` profile the reference Task Server deployment and expects `/healthz` body `ok`. | The released one-box `docker-compose.yml` runs `task-server:5071`, Engine, BFF, compatibility API, web, and runners. `TaskServerEndpoints.MapTaskServerEndpoints` returns JSON `{status:"live"}` from `/healthz` and uses `/readyz` for authority readiness. The 5030/`ok` contract belongs to `backend/Host/SystemEndpoints.cs` compatibility backend. | stale | Label the page as the legacy networked monolith profile and point new installations to `setup/install.md`, `multi-machine.md`, and `task-server.md`; split health examples by process. |
 
-## Ready-to-apply paragraphs
+## Runner and host operations
+
+| Page | Statement | What the code does | Severity | Proposed fix |
+| --- | --- | --- | --- | --- |
+| `docs/operations/setup/linux-runner-host.md` | `RUNNER_SERVER_REQUEST_TIMEOUT_SECONDS` is the deadline for “every Task Server HTTP request.” | `RunnerOptions.Parse` defaults it to 60 seconds, but `TaskServerClient.ReportReviewAsync` uses `ReviewReportAckTimeout = 10s` for review report acknowledgement. | wrong | State the report exception and direct report-timeout diagnosis to the two-phase review hand-off. |
+| `docs/operations/setup/linux-runner-host.md` | The `RUNNER_EXEC_ENGINE` row says the `legacy` engine “is removed in AGT-2373.” | `RunnerOptions.Parse` still accepts `car` and `legacy`; `runner/Program.cs` still documents the rollback mode and `CarWorkerExecution` retains the counterpart. | stale | Say legacy remains an explicit rollback path in this revision; remove the future deletion claim. |
+| `docs/operations/setup/README.md` | Describes the normal persistent runner connection as autossh/systemd or a Windows Scheduled Task. | `backend/Features/Management/RunnerLinks/LinkSupervisor.cs` owns the compatibility reverse link; `docs/operations/setup/remote-runner-persistent-connection.md` itself says the Scheduled Task is emergency-only. The released distributed topology uses outbound host HTTP in `runner/TaskServerClient.cs` and `docker-compose.yml`. | wrong | Separate distributed outbound connectivity from the compatibility reverse-link runbook; identify the latter as a scoped interim path. |
+| `docs/operations/remote-hosts.md` | Tells an operator to register a distributed host with `POST /api/clients/register` and verify with `GET /api/clients/{id}`. | Those routes are in monolith `backend/Features/Clients/ClientEndpoints.cs`. A v1 host registers with `PUT /api/v1/runners/{runnerId}` in `TaskServerEndpoints.MapTaskServerEndpoints`, called by `TaskServerClient.RegisterAsync`; host management uses `StudioHostsEndpoints` under `/api/v1/studio/clients`. | wrong | Replace the distributed host bootstrap recipe with the installer/join-token and v1 registration flow. Retain the monolith API only as an explicitly labeled compatibility recipe. |
+| `docs/operations/remote-hosts.md` | Host drain, retire, revive, and permanent-delete curl examples use `/api/clients/{id}/...`. | `StudioHostsEndpoints.MapStudioHostsEndpoints` maps those operations under `/api/v1/studio/clients/{clientId}/...` on the standalone Task Server. | wrong | Give the v1 routes, required principal/scope, and payloads; keep legacy endpoints in a separate note if still supported. |
+
+## CLI and model execution
+
+| Page | Statement | What the code does | Severity | Proposed fix |
+| --- | --- | --- | --- | --- |
+| `docs/operations/setup/README.md`, `docs/operations/setup/onboard-an-agent-cli.md` | Onboarding says there are four active CLIs and includes GitHub Copilot setup. | `backend/Features/Cli/Execution/BuiltInCliBehaviors.cs` exposes Claude, Codex, and Antigravity (`gemini` stored type). `docs/system/cli/supported-clis.md` and `cli-overview.md` explicitly record Copilot removal; `CopilotCliService` is absent. | wrong | Change onboarding to three integrations and retire the Copilot instructions as history. |
+| `docs/operations/setup/onboard-an-agent-cli.md` | Says `CodexCliService.BuildSystemPromptPrefix` prepends to a **positional prompt argument** and suggests one-off `codex exec --json "<prompt>"`. | `BuiltInCliBehaviors.Codex` owns the current adapter, and `docs/system/cli/skills/cli-codex.md` records `codex exec --json -` with stdin delivery. The former `CodexCliService.cs` file is absent. | wrong | Replace the code owner and shell example with stdin-piped `codex exec --json -`; preserve the sentinel-prefix explanation. |
+| `docs/operations/setup/onboard-an-agent-cli.md` | Says Codex token usage frames do not reach the bus. | `BuiltInCliBehaviors` parses `turn.completed` usage; `backend.Tests/CodexTurnUsageBusEmitTests.cs` covers its bus emission. | stale | Remove the old bug claim; give the raw-frame, parser, and bus diagnostic sequence. |
+| `docs/system/cli/skills/cli-codex.md` | Commit/push identity card says push is “today: a tracked gap.” | `TaskTransitionService.PushJobCommitsDetailedAsync`, `CompletedPushWorker`, and `CompletedPushBackstopHostedService` implement bounded platform pushes; `docs/operations/git/commit-push-doctrine.md` already marks the gap Done. | stale | Say the platform owns configured immediate/completed pushes and the backstop; keep the CLI prohibition. |
+| `docs/system/cli/skills/cli-codex.md`, `docs/system/domains/cli.md` | Point to `backend/Services/Cli/CodexCliService.cs` and a `cli-copilot.md` deep reference. | The implementation is `backend/Features/Cli/Execution/BuiltInCliBehaviors.cs` and `backend/Features/Cli/Execution/Rendering/CodexOutputRenderer.cs`; `cli-copilot.md` does not exist. | stale | Repoint symbols and remove the dead Copilot link. |
+
+## Review, integration, and contracts
+
+| Page | Statement | What the code does | Severity | Proposed fix |
+| --- | --- | --- | --- | --- |
+| `docs/system/contracts/review-plane.md` | Calls the monolith v1 endpoint “today's production implementation” and standalone Task Server a target reference implementation. | The released one-box `docker-compose.yml` includes standalone `task-server`, and `TaskServerEndpoints` maps v1 review routes. The same document correctly says `TaskServerReviewStore.ReportReviewAsync` does **not** run the monolith's file journal/evidence worker/automatic lane continuation. | stale | State deployment-specific authorities at the top and keep the two projection models separate; do not promise monolith repair behavior in a standalone install. |
+| `docs/system/contracts/agent-task.md` | Says terminal worktree teardown requires `task/<id>` to be a strict ancestor of `develop`. | `WorktreeTaskLifecycle.TeardownIfIntegrated(repoRoot, taskId, integrationBranch, ...)` calls `GitService.IsAncestor` against the **configured** integration branch. `TaskIntegrationStatusService.ConfiguredIntegrationBranch` also resolves per task/project. | wrong | Replace hard-coded `develop` with the configured integration branch; distinguish local containment from remote `integrated` publication. |
+| `docs/operations/git/commit-push-doctrine.md` | Links implementation at `backend/Services/GitService.cs`, `backend/Services/Tasks/TaskTransitionService.cs`, and old `ProjectRunner` paths. | Those owners are under `backend/Features/Git/`, `backend/Features/Tasks/`, and `backend/Features/Runner/`. | stale | Repair the links and nearby class paths without changing the commit/push policy text. |
+| `docs/system/domains/pipeline.md`, `docs/system/domains/tasks.md` | Link task and pipeline schema files through `docs/system/schemas/`. | The schemas live under `docs/app/schemas/`; the documented relative `../schemas/...` targets do not resolve. | stale | Repoint to `../../app/schemas/...` from domain pages and verify all targets. |
+
+## Verified distinctions without a correction
+
+- `docs/operations/git/interrupted-integration-gate.md` correctly distinguishes `merged-locally` from `integrated`. `TaskIntegrationStatusService` emits the local-only state until the published branch contains the delivery; `IntegrationStatuses.IsMerged` and `IsNotIntegrated` deliberately answer different questions.
+- `docs/system/domains/runner.md` describes the v1 gate host routes and scope family found in `task-server/TaskServerEndpoints.cs` and `runner/RemoteGateDaemon.cs`. No gate-route correction is proposed from this pass.
+- `docs/operations/setup/installation-upgrade-contract.md` correctly assigns installed Compose updates to `update-docker.sh` and checkout updates to the 5039 Update Service. Its placement table is the source to reuse in `docs/operations/releases.md`.
+
+## Ready-to-apply replacement paragraphs
+
+The following ten paragraphs are replacement copy. Each is scoped to the named page and can be pasted after normal editorial review.
+
+### 1. Release assets (`docs/operations/releases.md`)
+
+> The published guided installer is `agent-studio-setup` on Linux and `agent-studio-setup.exe` on Windows. A release includes four versioned archives: `agent-orchestrator-<version>-linux-x64.tar.gz`, `agent-host-<version>.tar.gz`, `agent-studio-<version>.tar.gz`, and `agent-studio-compose-<version>.tar.gz`. Download the installer and `SHA256SUMS` from the same tag and verify them before running `./agent-studio-setup`. The Compose archive supplies the default one-box installation; the control-plane and host archives supply native placements.
+
+### 2. Update placement (`docs/operations/releases.md`)
+
+> Choose the updater from the installed placement. A dev or Stable checkout uses the loopback Update Service on port 5039; it refuses installed placements. An installed Compose control plane uses `deploy/release/agent-orchestrator/update-docker.sh` and `rollback-docker.sh`. An installed systemd control plane uses `/opt/agent-orchestrator/current/update.sh` and `rollback.sh`. Agent Hosts drain and update per host. For Compose, an update without a configured canary remains `awaiting-canary`; it is not a successful release until the detached canary passes and the same target is resumed.
+
+### 3. Runner report timeout (`docs/operations/setup/linux-runner-host.md`)
+
+> `RUNNER_SERVER_REQUEST_TIMEOUT_SECONDS` defaults to 60 seconds for ordinary Task Server HTTP exchanges. Remote Review report acknowledgement has a separate fixed 10-second deadline in `TaskServerClient.ReportReviewAsync`. A report timeout does not by itself prove that settlement failed: read the attempt state and the two-phase review hand-off before retrying or clearing a slot. The report uses fenced, idempotent replay while evidence projection may continue after acknowledgement.
+
+### 4. Remote connectivity (`docs/operations/setup/README.md`)
+
+> In the distributed installation, Agent Hosts initiate outbound HTTPS to the Task Server for registration, claims, leases, and reports; they do not need a workstation-owned SSH reverse link. The `remote-runner-persistent-connection.md` page documents the separate Windows compatibility topology in which `LinkSupervisor` owns a reverse link. Its old Scheduled Task assets are an emergency rollback path, not the normal connection method.
+
+### 5. Host registration and lifecycle (`docs/operations/remote-hosts.md`)
+
+> For a standalone Task Server, enroll the host with the guided `agent-studio-setup --join` flow and its protected join token. The daemon registers its configured `RUNNER_ID` through `PUT /api/v1/runners/{runnerId}` and advertises capabilities; do not create a `/api/clients/register` identity for that v1 registration. Standalone host management uses `/api/v1/studio/clients/{clientId}` for drain, retire, revive, and permanent removal. The `/api/clients/...` routes belong to the monolith compatibility backend and require a separately labeled procedure.
+
+### 6. CLI support (`docs/operations/setup/onboard-an-agent-cli.md`)
+
+> Agent Studio currently drives Claude Code, Codex, and Antigravity through `agentapi`; Antigravity retains the stored CLI type `gemini`. GitHub Copilot's former adapter was removed and is not a selectable coding integration. Install and authenticate only the CLI selected for the project or card. Keep historical Copilot failure notes as incident records, not as onboarding instructions.
+
+### 7. Codex invocation and usage (`docs/operations/setup/onboard-an-agent-cli.md`)
+
+> The Codex adapter is `BuiltInCliBehaviors.Codex` under `backend/Features/Cli/Execution/`. A fresh headless invocation uses `codex exec --json -` and sends the full prompt through stdin; a resume uses `codex exec resume <uuid> --json -` with the follow-up on stdin. The runtime prefix carries the terminal-sentinel reminder. For missing token usage, inspect the raw `turn.completed` frame, `TryCaptureTurnUsage`, and recorded-usage bus emission before changing pricing or quotas; this path has a regression test in `CodexTurnUsageBusEmitTests`.
+
+### 8. Platform push (`docs/system/cli/skills/cli-codex.md`)
+
+> Codex does not commit or push its own work. The platform records the candidate commit, then applies the project's `AutoPushStrategy`: `never`, `on-completed`, or `always-immediate`. `TaskTransitionService.PushJobCommitsDetailedAsync` and the completed-push worker/backstop handle bounded publication and report terminal failures. A local commit is not remotely durable until the target branch contains it; inspect the card's push evidence and remote ancestry when diagnosing delivery.
+
+### 9. Review authorities (`docs/system/contracts/review-plane.md`)
+
+> The v1 Review Plane is served by both the compatibility backend and the standalone Task Server. The released distributed one-box installation routes host reviews through `task-server/TaskServerEndpoints.cs`; the compatibility backend uses `backend/Features/Runner/V1ReviewPlaneEndpoints.cs`. Their report durability boundaries differ: the standalone `TaskServerReviewStore` settles report and task state in SQLite, while the compatibility backend also uses a file settlement journal, asynchronous evidence projection, and lane continuation. Apply the recovery procedure for the process that actually owns the attempt.
+
+### 10. Worktree and integration (`docs/system/contracts/agent-task.md`)
+
+> Before terminal teardown, the platform snapshots dirty work onto the task branch or refuses cleanup. It removes an integrated task worktree only when that branch is an ancestor of the project's configured integration branch, which may be `develop`, `main`, or another configured ref. Local ancestry permits safe worktree cleanup; it is not by itself the published `integrated` verdict. That status requires the accepted result to be reachable from the published target branch, while a local-only merge is `merged-locally`.
 
 ## Follow-up cards
+
+These are documentation-only implementation slices. Do not edit product source or change a contract merely to make an old sentence true.
+
+1. **Release and updater runbooks.** Correct `docs/operations/releases.md`, `setup/multi-machine.md`, and the scope label in `setup/networked-task-server.md`. Acceptance: filenames and archive count match `package-release.sh` and `.github/workflows/release.yml`; each installation placement names its actual updater and canary outcome; 5030 compatibility and 5071 standalone health checks are distinct; all commands and links resolve.
+2. **Host and runner operations.** Correct `setup/README.md`, `setup/linux-runner-host.md`, and `remote-hosts.md`. Acceptance: v1 registration and lifecycle examples map to `TaskServerEndpoints`/`StudioHostsEndpoints`; compatibility endpoints are labeled; distributed outbound connectivity and reverse-link fallback are separate; the 10-second review-report timeout and still-supported legacy engine are accurate.
+3. **CLI onboarding and deep references.** Correct `setup/onboard-an-agent-cli.md`, `system/domains/cli.md`, and `system/cli/skills/cli-codex.md`. Acceptance: only active CLIs are presented for installation; Codex stdin/resume and usage paths match `BuiltInCliBehaviors` and tests; no dead `CodexCliService`/Copilot links remain; platform push behavior agrees with `commit-push-doctrine.md`.
+4. **Review and integration contracts.** Correct `system/contracts/review-plane.md`, `system/contracts/agent-task.md`, and stale implementation links in `operations/git/commit-push-doctrine.md`. Acceptance: distributed and compatibility report authorities are named separately; cleanup checks the configured integration branch; `merged-locally` and published `integrated` remain distinct; every code path and symbol reference resolves.
+5. **Reference-link repair and residual semantic pass.** Repair unresolved active-page code/schema links in the page inventory, then perform a statement-level code review of the remaining pages marked `mechanical full-text/reference scan`. Acceptance: each in-scope current/reference page has a reviewed date and a code owner or a clear historical/proposal label; unresolved links are triaged, with examples excluded; corrections are recorded without rewriting historical incident facts.

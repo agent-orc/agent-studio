@@ -1,350 +1,364 @@
-page,documentType,lines,words,localLinks,unresolvedLocalLinks,sampleUnresolvedLinks
-docs/operations/README.md,current/reference,94,1163,38,0,
-docs/operations/admin-design-guideline/index.html,concept/proposal,1083,9159,5,0,
-docs/operations/admin-design-guideline/pages/applied-surfaces.html,current/reference,251,1337,3,0,
-docs/operations/admin-design-guideline/pages/dos-and-donts.html,current/reference,252,1697,3,0,
-docs/operations/app-survey/index.html,concept/proposal,28,192,1,0,
-docs/operations/article-document-authoring.md,current/reference,180,1031,7,0,
-docs/operations/async-validation-staging-lane/brief.md,current/reference,39,267,4,0,
-docs/operations/async-validation-staging-lane/index.html,concept/proposal,268,2103,5,0,
-docs/operations/batch-gate-concept/index.html,concept/proposal,616,5835,11,0,
-docs/operations/board-statusmodell-ist-soll/index.html,concept/proposal,1612,11279,6,0,
-docs/operations/car-migration-plan.md,current/reference,363,5371,0,0,
-docs/operations/common-problems/README.md,historical/diagnostic,43,502,15,0,
-docs/operations/common-problems/accept-with-concerns-waves-through-unverified/README.md,historical/diagnostic,22,113,0,0,
-docs/operations/common-problems/accept-with-concerns-waves-through-unverified/ideas.md,historical/diagnostic,4,26,0,0,
-docs/operations/common-problems/accept-with-concerns-waves-through-unverified/measures.md,historical/diagnostic,7,52,0,0,
-docs/operations/common-problems/accept-with-concerns-waves-through-unverified/occurrences.md,historical/diagnostic,7,60,0,0,
-docs/operations/common-problems/accept-with-concerns-waves-through-unverified/protocol.md,historical/diagnostic,5,38,0,0,
-docs/operations/common-problems/accept-with-concerns-waves-through-unverified/related.md,historical/diagnostic,4,11,0,0,
-docs/operations/common-problems/circuit-breaker-3x-failure-cascade/README.md,historical/diagnostic,22,118,0,0,
-docs/operations/common-problems/circuit-breaker-3x-failure-cascade/ideas.md,historical/diagnostic,4,26,0,0,
-docs/operations/common-problems/circuit-breaker-3x-failure-cascade/measures.md,historical/diagnostic,5,43,0,0,
-docs/operations/common-problems/circuit-breaker-3x-failure-cascade/occurrences.md,historical/diagnostic,5,40,0,0,
-docs/operations/common-problems/circuit-breaker-3x-failure-cascade/protocol.md,historical/diagnostic,3,29,0,0,
-docs/operations/common-problems/circuit-breaker-3x-failure-cascade/related.md,historical/diagnostic,4,6,0,0,
-docs/operations/common-problems/classifier-unknown-on-cli-resume-failure/README.md,historical/diagnostic,22,116,0,0,
-docs/operations/common-problems/classifier-unknown-on-cli-resume-failure/ideas.md,historical/diagnostic,4,26,0,0,
-docs/operations/common-problems/classifier-unknown-on-cli-resume-failure/measures.md,historical/diagnostic,7,49,0,0,
-docs/operations/common-problems/classifier-unknown-on-cli-resume-failure/occurrences.md,historical/diagnostic,7,57,0,0,
-docs/operations/common-problems/classifier-unknown-on-cli-resume-failure/protocol.md,historical/diagnostic,5,35,0,0,
-docs/operations/common-problems/classifier-unknown-on-cli-resume-failure/related.md,historical/diagnostic,4,9,0,0,
-docs/operations/common-problems/claude-launcher-stub-after-autoupdate/README.md,historical/diagnostic,76,427,0,0,
-docs/operations/common-problems/claude-tool-permission-allowlist-gaps/README.md,historical/diagnostic,22,146,0,0,
-docs/operations/common-problems/claude-tool-permission-allowlist-gaps/ideas.md,historical/diagnostic,4,25,0,0,
-docs/operations/common-problems/claude-tool-permission-allowlist-gaps/measures.md,historical/diagnostic,5,38,0,0,
-docs/operations/common-problems/claude-tool-permission-allowlist-gaps/occurrences.md,historical/diagnostic,5,43,0,0,
-docs/operations/common-problems/claude-tool-permission-allowlist-gaps/protocol.md,historical/diagnostic,3,30,0,0,
-docs/operations/common-problems/claude-tool-permission-allowlist-gaps/related.md,historical/diagnostic,4,6,0,0,
-docs/operations/common-problems/codex-silent-finish/README.md,historical/diagnostic,22,133,0,0,
-docs/operations/common-problems/codex-silent-finish/ideas.md,historical/diagnostic,4,26,0,0,
-docs/operations/common-problems/codex-silent-finish/measures.md,historical/diagnostic,7,57,0,0,
-docs/operations/common-problems/codex-silent-finish/occurrences.md,historical/diagnostic,7,67,0,0,
-docs/operations/common-problems/codex-silent-finish/protocol.md,historical/diagnostic,5,42,0,0,
-docs/operations/common-problems/codex-silent-finish/related.md,historical/diagnostic,4,13,0,0,
-docs/operations/common-problems/completion-gate-dead-code/README.md,historical/diagnostic,22,116,0,0,
-docs/operations/common-problems/completion-gate-dead-code/ideas.md,historical/diagnostic,4,26,0,0,
-docs/operations/common-problems/completion-gate-dead-code/measures.md,historical/diagnostic,7,49,0,0,
-docs/operations/common-problems/completion-gate-dead-code/occurrences.md,historical/diagnostic,7,58,0,0,
-docs/operations/common-problems/completion-gate-dead-code/protocol.md,historical/diagnostic,5,43,0,0,
-docs/operations/common-problems/completion-gate-dead-code/related.md,historical/diagnostic,4,11,0,0,
-docs/operations/common-problems/copilot-cli-exit-1-immediate/README.md,historical/diagnostic,22,99,0,0,
-docs/operations/common-problems/copilot-cli-exit-1-immediate/ideas.md,historical/diagnostic,4,21,0,0,
-docs/operations/common-problems/copilot-cli-exit-1-immediate/measures.md,historical/diagnostic,5,39,0,0,
-docs/operations/common-problems/copilot-cli-exit-1-immediate/occurrences.md,historical/diagnostic,5,38,0,0,
-docs/operations/common-problems/copilot-cli-exit-1-immediate/protocol.md,historical/diagnostic,3,21,0,0,
-docs/operations/common-problems/copilot-cli-exit-1-immediate/related.md,historical/diagnostic,4,6,0,0,
-docs/operations/common-problems/direct-workspace-folder-write-by-agent/README.md,historical/diagnostic,22,106,0,0,
-docs/operations/common-problems/direct-workspace-folder-write-by-agent/ideas.md,historical/diagnostic,4,24,0,0,
-docs/operations/common-problems/direct-workspace-folder-write-by-agent/measures.md,historical/diagnostic,5,38,0,0,
-docs/operations/common-problems/direct-workspace-folder-write-by-agent/occurrences.md,historical/diagnostic,5,42,0,0,
-docs/operations/common-problems/direct-workspace-folder-write-by-agent/protocol.md,historical/diagnostic,3,33,0,0,
-docs/operations/common-problems/direct-workspace-folder-write-by-agent/related.md,historical/diagnostic,5,11,0,0,
-docs/operations/common-problems/durable-local-cli-standardin-not-redirected/README.md,historical/diagnostic,54,347,0,0,
-docs/operations/common-problems/eacces-on-dev-file-writes/README.md,historical/diagnostic,22,214,0,0,
-docs/operations/common-problems/eacces-on-dev-file-writes/ideas.md,historical/diagnostic,5,51,0,0,
-docs/operations/common-problems/eacces-on-dev-file-writes/measures.md,historical/diagnostic,9,111,0,0,
-docs/operations/common-problems/eacces-on-dev-file-writes/occurrences.md,historical/diagnostic,9,88,0,0,
-docs/operations/common-problems/eacces-on-dev-file-writes/protocol.md,historical/diagnostic,18,120,0,0,
-docs/operations/common-problems/eacces-on-dev-file-writes/related.md,historical/diagnostic,5,18,0,0,
-docs/operations/common-problems/folder-move-lock-recurrence/README.md,historical/diagnostic,22,122,0,0,
-docs/operations/common-problems/folder-move-lock-recurrence/ideas.md,historical/diagnostic,4,26,0,0,
-docs/operations/common-problems/folder-move-lock-recurrence/measures.md,historical/diagnostic,7,47,0,0,
-docs/operations/common-problems/folder-move-lock-recurrence/occurrences.md,historical/diagnostic,7,64,0,0,
-docs/operations/common-problems/folder-move-lock-recurrence/protocol.md,historical/diagnostic,5,38,0,0,
-docs/operations/common-problems/folder-move-lock-recurrence/related.md,historical/diagnostic,4,9,0,0,
-docs/operations/common-problems/gate-child-inherits-studio-listener/README.md,historical/diagnostic,82,533,0,0,
-docs/operations/common-problems/hollow-api-restart/README.md,historical/diagnostic,48,360,0,0,
-docs/operations/common-problems/hollow-api-restart/ideas.md,historical/diagnostic,24,236,1,0,
-docs/operations/common-problems/hollow-api-restart/measures.md,historical/diagnostic,10,199,1,0,
-docs/operations/common-problems/hollow-api-restart/occurrences.md,historical/diagnostic,8,109,0,0,
-docs/operations/common-problems/hollow-api-restart/protocol.md,historical/diagnostic,65,484,0,0,
-docs/operations/common-problems/hollow-api-restart/related.md,historical/diagnostic,13,95,4,1,../../../../tools/api-restart-selfcheck.sh
-docs/operations/common-problems/lineage-blocked-integration-push/README.md,historical/diagnostic,117,854,4,0,
-docs/operations/common-problems/lineage-blocked-integration-push/ideas.md,historical/diagnostic,32,281,0,0,
-docs/operations/common-problems/lineage-blocked-integration-push/measures.md,historical/diagnostic,29,470,0,0,
-docs/operations/common-problems/lineage-blocked-integration-push/occurrences.md,historical/diagnostic,14,256,2,0,
-docs/operations/common-problems/lineage-blocked-integration-push/protocol.md,historical/diagnostic,144,853,0,0,
-docs/operations/common-problems/lineage-blocked-integration-push/related.md,historical/diagnostic,26,137,9,0,
-docs/operations/common-problems/ready-sign-in-runner-link-down/README.md,historical/diagnostic,54,302,1,0,
-docs/operations/common-problems/review-parallelism-shared-build-server/README.md,historical/diagnostic,76,504,3,0,
-docs/operations/common-problems/review-parallelism-shared-build-server/measures.md,historical/diagnostic,10,181,0,0,
-docs/operations/common-problems/review-parallelism-shared-build-server/occurrences.md,historical/diagnostic,8,139,0,0,
-docs/operations/common-problems/review-parallelism-shared-build-server/protocol.md,historical/diagnostic,42,233,0,0,
-docs/operations/common-problems/review-parallelism-shared-build-server/related.md,historical/diagnostic,16,96,6,0,
-docs/operations/common-problems/sentinel-pid-broadcast-kill/README.md,historical/diagnostic,65,496,0,0,
-docs/operations/common-problems/services-killed-by-harness-sweep/README.md,historical/diagnostic,48,331,0,0,
-docs/operations/common-problems/services-killed-by-harness-sweep/ideas.md,historical/diagnostic,6,41,0,0,
-docs/operations/common-problems/services-killed-by-harness-sweep/measures.md,historical/diagnostic,7,55,0,0,
-docs/operations/common-problems/services-killed-by-harness-sweep/occurrences.md,historical/diagnostic,7,84,0,0,
-docs/operations/common-problems/services-killed-by-harness-sweep/protocol.md,historical/diagnostic,12,91,0,0,
-docs/operations/common-problems/services-killed-by-harness-sweep/related.md,historical/diagnostic,7,28,4,0,
-docs/operations/common-problems/stale-progress-orphan-race/README.md,historical/diagnostic,22,102,0,0,
-docs/operations/common-problems/stale-progress-orphan-race/ideas.md,historical/diagnostic,4,20,0,0,
-docs/operations/common-problems/stale-progress-orphan-race/measures.md,historical/diagnostic,5,38,0,0,
-docs/operations/common-problems/stale-progress-orphan-race/occurrences.md,historical/diagnostic,5,39,0,0,
-docs/operations/common-problems/stale-progress-orphan-race/protocol.md,historical/diagnostic,3,37,0,0,
-docs/operations/common-problems/stale-progress-orphan-race/related.md,historical/diagnostic,4,6,0,0,
-docs/operations/common-problems/torn-preparation-cache/README.md,historical/diagnostic,57,276,0,0,
-docs/operations/common-problems/verdict-stuck-in-auto-review/README.md,historical/diagnostic,22,123,0,0,
-docs/operations/common-problems/verdict-stuck-in-auto-review/ideas.md,historical/diagnostic,4,26,0,0,
-docs/operations/common-problems/verdict-stuck-in-auto-review/measures.md,historical/diagnostic,7,50,0,0,
-docs/operations/common-problems/verdict-stuck-in-auto-review/occurrences.md,historical/diagnostic,7,62,0,0,
-docs/operations/common-problems/verdict-stuck-in-auto-review/protocol.md,historical/diagnostic,5,40,0,0,
-docs/operations/common-problems/verdict-stuck-in-auto-review/related.md,historical/diagnostic,4,9,0,0,
-docs/operations/common-problems/windows-launcher-exit-during-compile/README.md,historical/diagnostic,54,401,2,0,
-docs/operations/common-problems/workflow-args-json-string-fanout/README.md,historical/diagnostic,59,282,0,0,
-docs/operations/common-problems/workflow-args-json-string-fanout/ideas.md,historical/diagnostic,5,33,0,0,
-docs/operations/common-problems/workflow-args-json-string-fanout/measures.md,historical/diagnostic,7,58,0,0,
-docs/operations/common-problems/workflow-args-json-string-fanout/occurrences.md,historical/diagnostic,7,81,0,0,
-docs/operations/common-problems/workflow-args-json-string-fanout/protocol.md,historical/diagnostic,9,74,0,0,
-docs/operations/common-problems/workflow-args-json-string-fanout/related.md,historical/diagnostic,6,18,3,0,
-docs/operations/concept-pipeline/index.html,concept/proposal,168,1436,0,0,
-docs/operations/container-tranche-plan.md,current/reference,39,452,0,0,
-docs/operations/decision-briefing/index.html,concept/proposal,787,6208,0,0,
-docs/operations/decision-cards/index.html,concept/proposal,333,3989,0,0,
-docs/operations/decision-surface/README.md,current/reference,320,2035,1,0,
-docs/operations/deck-icon-exploration/index.html,concept/proposal,394,1562,2,0,
-docs/operations/delivery-chain/index.html,concept/proposal,535,8422,0,0,
-docs/operations/demo-instanz/index.html,concept/proposal,1039,11494,5,0,
-docs/operations/demo-instanz/replay-only-runner.md,current/reference,167,1108,1,0,
-docs/operations/develop-main-promotion.md,current/reference,317,2299,8,0,
-docs/operations/docker-ausfuehrungswelt-migration/index.html,concept/proposal,567,7575,4,0,
-docs/operations/docker-ausfuehrungswelt-migration/project-definition-v2-plan.md,current/reference,608,4580,18,0,
-docs/operations/doku-inventur-2026-07/README.md,current/reference,406,13731,0,0,
-docs/operations/dossier-consolidation-and-area-tags/index.html,concept/proposal,373,4246,1,0,
-docs/operations/dossier-review-2026-09/index.html,concept/proposal,295,3346,0,0,
-docs/operations/entscheidungsvorlagen-2230-2132.md,current/reference,62,464,0,0,
-docs/operations/epic-lebendes-dokument/index.html,concept/proposal,238,2206,1,0,
-docs/operations/escalation-view-information-architecture/index.html,concept/proposal,380,2884,1,0,
-docs/operations/execution-model-shift/container-grundlagen/index.html,concept/proposal,275,2854,0,0,
-docs/operations/execution-model-shift/index.html,concept/proposal,405,5102,1,0,
-docs/operations/gates/index.html,concept/proposal,871,9776,1,0,
-docs/operations/git/commit-attribution-discovery.md,current/reference,100,886,2,0,
-docs/operations/git/commit-push-doctrine.md,current/reference,184,4420,14,9,../../../backend/Services/GitService.cs; ../../../backend/Services/ProjectSettingsService.cs; ../../../backend/Services/Runner/OrchestratorChatLog.cs; ../../../backend/Services/Runner/ProjectRunner.cs; ../../../backend/Services/Runner/RunCompletionPolicy.cs; ../../../backend/Services/Tasks/TaskTransitionService.cs; ../../../frontend/src/app/features/project-detail/components/project-detail.html
-docs/operations/git/integration-worktree.md,current/reference,123,950,6,0,
-docs/operations/git/interrupted-integration-gate.md,current/reference,131,1057,9,0,
-docs/operations/haertung-verteilte-ausfuehrung/agent-fencing-diagram.html,current/reference,327,1328,1,0,
-docs/operations/haertung-verteilte-ausfuehrung/agent-fencing.html,current/reference,331,1689,3,0,
-docs/operations/haertung-verteilte-ausfuehrung/historie.html,current/reference,604,3530,5,0,
-docs/operations/haertung-verteilte-ausfuehrung/index.html,concept/proposal,1773,11656,2,0,
-docs/operations/haertung-verteilte-ausfuehrung/target-architecture/actors.md,current/reference,22,289,0,0,
-docs/operations/haertung-verteilte-ausfuehrung/target-architecture/connection-health.md,current/reference,7,139,0,0,
-docs/operations/haertung-verteilte-ausfuehrung/target-architecture/contracts.md,current/reference,7,141,0,0,
-docs/operations/haertung-verteilte-ausfuehrung/target-architecture/decision-history.md,current/reference,46,805,0,0,
-docs/operations/haertung-verteilte-ausfuehrung/target-architecture/distributable.html,current/reference,456,3516,7,0,
-docs/operations/haertung-verteilte-ausfuehrung/target-architecture/distributable.md,current/reference,80,611,3,0,
-docs/operations/haertung-verteilte-ausfuehrung/target-architecture/index.html,concept/proposal,117,1088,9,0,
-docs/operations/haertung-verteilte-ausfuehrung/target-architecture/migration-path.md,current/reference,9,155,0,0,
-docs/operations/haertung-verteilte-ausfuehrung/target-architecture/orchestrator-plan.md,current/reference,30,233,0,0,
-docs/operations/haertung-verteilte-ausfuehrung/target-architecture/resource-governance.md,current/reference,145,999,1,0,
-docs/operations/haertung-verteilte-ausfuehrung/target-architecture/restart-matrix.md,current/reference,11,167,0,0,
-docs/operations/haertung-verteilte-ausfuehrung/target-architecture/setup-scenarios.md,current/reference,78,565,3,0,
-docs/operations/installer-story/index.html,concept/proposal,519,3854,9,0,
-docs/operations/kontext-orchestrator-chats/index.html,concept/proposal,1357,8276,0,0,
-docs/operations/lagebild-2026-08/index.html,concept/proposal,480,2718,0,0,
-docs/operations/lagebild-2026-09-01/index.html,concept/proposal,137,1089,2,0,
-docs/operations/learnings/README.md,historical/diagnostic,8,28,0,0,
-docs/operations/lieferkette-robustheit/index.html,concept/proposal,481,5436,2,0,
-docs/operations/live-improvement-log/index.html,concept/proposal,216,3782,3,0,
-docs/operations/live-improvement-log/verification-2026-08-25.html,current/reference,171,2381,2,0,
-docs/operations/living-document-naming/index.html,concept/proposal,417,3466,3,0,
-docs/operations/log-retention/index.html,concept/proposal,267,2275,1,0,
-docs/operations/marketing-studio/index.html,concept/proposal,125,1282,0,0,
-docs/operations/marketing-studio-stufenplan.md,current/reference,43,534,0,0,
-docs/operations/model-routing-policy/index.html,concept/proposal,347,3296,1,0,
-docs/operations/modell-badge-kontrast/index.html,concept/proposal,117,811,0,0,
-docs/operations/nordstern/index.html,concept/proposal,432,5222,29,0,
-docs/operations/observation/index.html,concept/proposal,425,5581,1,0,
-docs/operations/operational-resilience/index.html,concept/proposal,756,4894,14,0,
-docs/operations/operations-server-backchannel/index.html,concept/proposal,639,7053,15,0,
-docs/operations/orchestrator-waechter/index.html,concept/proposal,996,9480,9,0,
-docs/operations/org-security-audit-2026-08/index.html,concept/proposal,816,6494,1,0,
-docs/operations/project-feed/index.html,concept/proposal,167,1408,1,0,
-docs/operations/projekt-scope-schalter/index.html,concept/proposal,267,2511,0,0,
-docs/operations/projekt-settings-migrationsplan.md,current/reference,44,450,0,0,
-docs/operations/protokoll-verdichtung/index.html,concept/proposal,123,1120,0,0,
-docs/operations/rebase-merge-and-steering/index.html,concept/proposal,563,5798,12,0,
-docs/operations/releases.md,historical/diagnostic,204,1370,4,0,
-docs/operations/remote-gate-cleanup/index.html,concept/proposal,143,1492,0,0,
-docs/operations/remote-gate-zielbild/index.html,concept/proposal,346,5685,29,0,
-docs/operations/remote-gate-zielbild/remote-gate.md,current/reference,312,2188,17,0,
-docs/operations/remote-hosts.md,current/reference,596,4301,7,0,
-docs/operations/remote-task-server-local-studio.md,current/reference,792,7804,19,0,
-docs/operations/research-deliverables/index.html,concept/proposal,225,1069,7,0,
-docs/operations/retention-und-archiv/index.html,concept/proposal,583,5125,4,0,
-docs/operations/runner-link/index.html,concept/proposal,492,3797,0,0,
-docs/operations/runtime/log-capture.md,current/reference,234,1354,14,6,../../../backend/Models/ProductRuntimeEvent.cs; ../../../backend/Services/Cli/CliExecutionServiceBase.cs; ../../../backend/Services/Runtime/RuntimeEventReader.cs; ../../../backend/Services/Runtime/RuntimeEventStdoutAdapter.cs; ../../../backend/Services/Runtime/RuntimeEventWriter.cs; ../../../frontend/e2e/runtime-console-capture.spec.ts
-docs/operations/runtime/observability.md,current/reference,150,2075,10,0,
-docs/operations/screenshot-system/index.html,concept/proposal,111,884,0,0,
-docs/operations/security/overview.md,current/reference,167,1384,10,0,
-docs/operations/security/requirements.md,current/reference,95,596,0,0,
-docs/operations/security/reviews/2026-04-15-baseline.md,current/reference,22,142,0,0,
-docs/operations/security/runbook-rehearsal-evidence.md,current/reference,59,386,1,0,
-docs/operations/setup/README.md,current/reference,39,611,27,0,
-docs/operations/setup/cli-relogin-runbook.md,current/reference,143,1086,0,0,
-docs/operations/setup/connectivity-manifest.md,current/reference,141,1163,1,0,
-docs/operations/setup/contributor-setup.md,current/reference,293,3385,22,0,
-docs/operations/setup/control-plane-docker.md,current/reference,301,1784,23,0,
-docs/operations/setup/docker-compose-connector-gap.md,current/reference,95,718,3,0,
-docs/operations/setup/docker.md,current/reference,150,1004,2,0,
-docs/operations/setup/getting-started.md,current/reference,13,71,4,0,
-docs/operations/setup/hosted-wiki-publication.md,current/reference,212,1484,3,0,
-docs/operations/setup/install.md,current/reference,158,934,10,0,
-docs/operations/setup/installation-upgrade-contract.md,current/reference,115,829,2,0,
-docs/operations/setup/linux-runner-host.md,current/reference,1991,16644,21,0,
-docs/operations/setup/multi-machine.md,current/reference,203,1059,3,0,
-docs/operations/setup/networked-task-server.md,current/reference,167,974,4,0,
-docs/operations/setup/onboard-a-project.md,current/reference,299,2130,4,0,
-docs/operations/setup/onboard-an-agent-cli.md,current/reference,127,1169,17,8,../../../backend/Services/Cli/CliRouter.cs; ../../../backend/Services/Cli/CodexCliService.cs; ../../../backend/Services/Cli/GeminiCliService.cs; ../../../backend/Services/Cli/OneShot/ICliOneShot.cs; ../../../backend/Services/Drift/CodePatternDriftAnalysisService.cs; ../../../backend/Services/Runner/AgentEnvironmentDetector.cs; ../../../backend/Services/Runner/AgentOutcomeAnalyzer.cs; ../../cli/skills/cli-copilot.md
-docs/operations/setup/preparation-isolation-orchestrator.md,current/reference,93,1796,3,0,
-docs/operations/setup/presentation-capture.md,current/reference,161,1171,3,0,
-docs/operations/setup/remote-compose-test-harness.md,current/reference,201,1165,1,0,
-docs/operations/setup/remote-runner-persistent-connection.md,current/reference,183,1168,3,0,
-docs/operations/setup/single-host-task-server.md,current/reference,242,2087,4,0,
-docs/operations/setup/task-server.md,current/reference,1363,10970,25,0,
-docs/operations/setup/troubleshooting.md,current/reference,134,1499,13,1,../../../backend/Services/Runner/CrossSlugInfraCircuitBreaker.cs
-docs/operations/setup/website-onboarding-template.md,current/reference,29,187,1,0,
-docs/operations/setup/windows-fallback-runbook.md,current/reference,139,868,6,0,
-docs/operations/setup/workstation-runner-host.md,current/reference,136,985,3,0,
-docs/operations/setup/worktree-test-stack.md,current/reference,104,635,3,0,
-docs/operations/setup/your-first-task.md,current/reference,82,752,4,0,
-docs/operations/sichtblick-entscheidungen/index.html,concept/proposal,149,1489,0,0,
-docs/operations/sichtungszettel-2026-07-28.md,current/reference,30,483,0,0,
-docs/operations/stable-release-contract.md,current/reference,491,3634,3,0,
-docs/operations/statusmd-konzept-karten/index.html,concept/proposal,408,3138,0,0,
-docs/operations/tagging-golden-set-approval/index.html,concept/proposal,38,392,3,0,
-docs/operations/task-and-board-ui/index.html,concept/proposal,617,6203,1,0,
-docs/operations/task-detail-usage-panel/index.html,concept/proposal,343,2884,0,0,
-docs/operations/task-kopf-und-chat-chips/index.html,concept/proposal,154,1173,0,0,
-docs/operations/telemetry-layer/index.html,concept/proposal,708,5991,13,0,
-docs/operations/temp-and-cache-hygiene.md,current/reference,281,2079,2,0,
-docs/operations/testing/build-test-gate-flaky-rerun.md,current/reference,167,1301,3,0,
-docs/operations/testing/deployment-scenario.md,current/reference,271,2150,9,0,
-docs/operations/testing/dev-test-workspace.md,current/reference,82,373,0,0,
-docs/operations/testing/restart-continuity-drill.md,current/reference,64,342,0,0,
-docs/operations/testing/windows-baseline-and-platform-gates.md,current/reference,151,1020,3,0,
-docs/operations/timeline-redesign/index.html,concept/proposal,1020,6999,11,0,
-docs/operations/token-refresh-ohne-tunnel.md,current/reference,189,1807,1,0,
-docs/operations/token-retry-tax-analysis/index.html,concept/proposal,296,3055,1,0,
-docs/operations/tunnel-keeper-diagnosis.md,current/reference,171,1924,0,0,
-docs/operations/umsetzungsplan-zielbild/index.html,concept/proposal,203,1718,0,0,
-docs/operations/unverifizierte-lieferungen/index.html,concept/proposal,323,2537,1,0,
-docs/operations/url-preview-diagnostics.md,current/reference,63,669,0,0,
-docs/operations/wiki-archiv-konzept/index.html,concept/proposal,190,1679,3,0,
-docs/operations/windows-process-spawn-safety.md,current/reference,78,453,0,0,
-docs/operations/workbench-konzept/index.html,concept/proposal,248,3107,3,0,
-docs/operations/workbench-mockup-family/index.html,concept/proposal,28,203,1,0,
-docs/operations/workflow-sized-task-cutting.md,current/reference,72,434,0,0,
-docs/operations/workspace-repo-nachhaltigkeit/index.html,concept/proposal,487,3106,0,0,
-docs/operations/workspace-repository-lifecycle.md,current/reference,120,744,0,0,
-docs/operations/zielbild-komponenten-protokolle/index.html,concept/proposal,197,1384,1,0,
-docs/system/README.md,current/reference,26,168,6,0,
-docs/system/architecture/README.md,current/reference,15,152,9,0,
-docs/system/architecture/backend-structure/structure-target.md,current/reference,65,445,1,0,
-docs/system/architecture/backend-structure/styleguide.md,current/reference,56,371,2,0,
-docs/system/architecture/bus/agent-message-bus.md,current/reference,286,4659,18,7,../../../backend/Endpoints/AnalysisReportEndpoints.cs; ../../../backend/Services/Runner/OrchestratorChatLog.cs; ../../schemas/README.md; ../../schemas/agent-artifact-ref.schema.json; ../../schemas/agent-participant.schema.json; ../../schemas/token-aggregate.schema.json
-docs/system/architecture/bus/implementation-state.md,current/reference,153,966,0,0,
-docs/system/architecture/decisions/README.md,current/reference,9,54,3,0,
-docs/system/architecture/decisions/adr-archive.md,current/reference,1858,42832,518,238,../../../../../start-dev.sh; ../../../../frontend/src/app/components/autonomy-slider.ts; ../../../../frontend/src/app/services/cli-catalog.store.ts; ../../../backend.Tests/Architecture/JobFolderAccessIsolationTest.cs; ../../../backend.Tests/JobKeyResolverTests.cs; ../../../backend.Tests/JobStateMachineMigrationTests.cs; ../../../backend.Tests/JobsEndpointPerfTests.cs; ../../../backend.Tests/PhaseAwareWatchdogTests.cs::SessionInitializing_BudgetIs60And120
-docs/system/architecture/decisions/proposed/adr-0051-task-processing-pipeline.md,concept/proposal,283,3526,28,6,../../../../backend/Services/Pipeline/PipelineCatalogue.cs; ../../../../backend/Services/ProjectChat/ProjectChatIndex.cs; ../../../schemas/pipeline-definition.schema.json; ../../../schemas/step-run.schema.json
-docs/system/architecture/decisions/proposed/adr-0060-fenced-run-lease-and-runner-identity.md,concept/proposal,50,936,6,0,
-docs/system/architecture/decisions/proposed/adr-0061-unified-nav-active-item-token-contract.md,concept/proposal,62,839,2,1,../../../frontend/AGENTS.md
-docs/system/architecture/maps/knowledge-map.html,current/reference,210,526,1,0,
-docs/system/architecture/model.md,current/reference,241,2031,12,9,../../backend/Services/Drift/DriftReportContract.cs; ../schemas/README.md; ../schemas/architecture-model.schema.json; ../schemas/drift-report.schema.json
-docs/system/architecture/project-map.md,current/reference,142,1458,0,0,
-docs/system/architecture/runner-lanes/progress-lane-writers.md,current/reference,131,1097,1,1,../../../backend.Tests/Architecture/JobFolderAccessIsolationTest.cs
-docs/system/cli/README.md,current/reference,12,71,5,0,
-docs/system/cli/audits/startup-cost-analysis-2026-05-09.md,historical/diagnostic,112,1241,16,16,../../../backend/Endpoints/CliEndpoints.cs; ../../../backend/Services/Cli/ClaudeCliService.cs; ../../../backend/Services/Cli/ClaudeSessionHeartbeat.cs; ../../../backend/Services/Cli/CodexCliService.cs; ../../../backend/Services/Cli/GeminiCliService.cs; ../../../backend/Services/Cli/SessionRegistry.cs; ../../../backend/Services/CopilotCliService.cs; ../../../backend/Services/Pty/CodexModelDiscovery.cs
-docs/system/cli/frame-compatibility-matrix.md,current/reference,129,1426,2,0,
-docs/system/cli/investigations/codex-runner-investigation.md,historical/diagnostic,126,836,0,0,
-docs/system/cli/skills/README.md,current/reference,37,554,10,1,../../../frontend/e2e/cli-skills-pickup.spec.ts
-docs/system/cli/skills/cli-claude.md,current/reference,346,4440,19,0,
-docs/system/cli/skills/cli-codex.md,current/reference,546,4706,24,6,../../../backend/Services/Bus/AgentMessageBusBridge.cs; ../../../backend/Services/Cli/CodexCliService.cs; ../../../backend/Services/Runner/ProjectRunner.cs; ../../../src/AgentTaskboard.Runner/Cli/CodexSilentCompletionDetector.cs; ../../../src/AgentTaskboard.Runner/Cli/Rendering/CodexOutputRenderer.cs
-docs/system/cli/skills/cli-gemini.md,current/reference,191,2112,9,4,../../../backend.Tests/GeminiCliServiceTests.cs; ../../../backend.Tests/GeminiQuotaProbeTests.cs; ../../../backend/Services/Cli/GeminiCliService.cs; ../../../backend/Services/Quota/GeminiQuotaProbe.cs
-docs/system/cli/skills/cli-overview.md,current/reference,226,2618,9,0,
-docs/system/cli/skills/sandbox-and-yolo.md,current/reference,142,1692,8,0,
-docs/system/cli/supported-clis.md,current/reference,341,4235,43,0,
-docs/system/common-problems/README.md,historical/diagnostic,31,180,4,0,
-docs/system/common-problems/agent-field-default-leak/README.md,historical/diagnostic,22,130,0,0,
-docs/system/common-problems/agent-field-default-leak/ideas.md,historical/diagnostic,3,17,0,0,
-docs/system/common-problems/agent-field-default-leak/measures.md,historical/diagnostic,5,43,0,0,
-docs/system/common-problems/agent-field-default-leak/occurrences.md,historical/diagnostic,5,37,0,0,
-docs/system/common-problems/agent-field-default-leak/protocol.md,historical/diagnostic,3,25,0,0,
-docs/system/common-problems/agent-field-default-leak/related.md,historical/diagnostic,4,6,0,0,
-docs/system/common-problems/diff-summary-zero-net-lines-false-block/README.md,historical/diagnostic,22,121,0,0,
-docs/system/common-problems/diff-summary-zero-net-lines-false-block/ideas.md,historical/diagnostic,4,26,0,0,
-docs/system/common-problems/diff-summary-zero-net-lines-false-block/measures.md,historical/diagnostic,7,50,0,0,
-docs/system/common-problems/diff-summary-zero-net-lines-false-block/occurrences.md,historical/diagnostic,7,64,0,0,
-docs/system/common-problems/diff-summary-zero-net-lines-false-block/protocol.md,historical/diagnostic,5,43,0,0,
-docs/system/common-problems/diff-summary-zero-net-lines-false-block/related.md,historical/diagnostic,4,11,0,0,
-docs/system/common-problems/global-search-slow-repository/README.md,historical/diagnostic,37,206,1,0,
-docs/system/common-problems/global-search-slow-repository/ideas.md,historical/diagnostic,6,48,0,0,
-docs/system/common-problems/global-search-slow-repository/measures.md,historical/diagnostic,9,125,0,0,
-docs/system/common-problems/global-search-slow-repository/occurrences.md,historical/diagnostic,7,71,0,0,
-docs/system/common-problems/global-search-slow-repository/protocol.md,historical/diagnostic,13,114,0,0,
-docs/system/common-problems/global-search-slow-repository/related.md,historical/diagnostic,4,9,1,0,
-docs/system/common-problems/project-name-divergence-watchpath-vs-registry/README.md,historical/diagnostic,22,107,0,0,
-docs/system/common-problems/project-name-divergence-watchpath-vs-registry/ideas.md,historical/diagnostic,4,22,0,0,
-docs/system/common-problems/project-name-divergence-watchpath-vs-registry/measures.md,historical/diagnostic,5,41,0,0,
-docs/system/common-problems/project-name-divergence-watchpath-vs-registry/occurrences.md,historical/diagnostic,5,45,0,0,
-docs/system/common-problems/project-name-divergence-watchpath-vs-registry/protocol.md,historical/diagnostic,3,19,0,0,
-docs/system/common-problems/project-name-divergence-watchpath-vs-registry/related.md,historical/diagnostic,5,14,1,0,
-docs/system/common-problems/workspace-create-invisible/README.md,historical/diagnostic,22,115,0,0,
-docs/system/common-problems/workspace-create-invisible/ideas.md,historical/diagnostic,4,22,0,0,
-docs/system/common-problems/workspace-create-invisible/measures.md,historical/diagnostic,5,37,0,0,
-docs/system/common-problems/workspace-create-invisible/occurrences.md,historical/diagnostic,5,40,0,0,
-docs/system/common-problems/workspace-create-invisible/protocol.md,historical/diagnostic,3,25,0,0,
-docs/system/common-problems/workspace-create-invisible/related.md,historical/diagnostic,4,6,0,0,
-docs/system/contracts/README.md,current/reference,19,190,13,0,
-docs/system/contracts/agent-contract-pattern.md,current/reference,283,2193,10,1,../schemas
-docs/system/contracts/agent-task.md,current/reference,153,1697,0,0,
-docs/system/contracts/code-patterns.md,current/reference,346,2245,2,1,../ProjectTokenUsageService|WorkspaceTokensTimelineService|TokenSummary|TokenSummaryCacheStore|OrchestratorLog|OrchestratorRunner|OrchestratorChat|OrchestratorSession|GlobalOrchestratorSession|StuckLoopGuard
-docs/system/contracts/filesystem.md,current/reference,576,5149,6,0,
-docs/system/contracts/loop-inventory.md,current/reference,171,2708,29,4,../../backend/Services/Runner/CompletionRetrigger.cs; ../../backend/Services/Runner/CrossSlugInfraCircuitBreaker.cs; ../../backend/Services/Runner/PostAbortReview.cs; ../../backend/Services/Runner/ProjectRunner.cs
-docs/system/contracts/operations-backchannel.md,current/reference,240,2077,2,0,
-docs/system/contracts/protocol-style.md,current/reference,366,3692,18,8,../../frontend/src/app/components/activity-log.parser.ts; ../attachments/<name>.png; ../foo.png; ../results/<name>.png; ../results/dashboard--mocked.png; ../schemas/executive-summary.schema.json; ../schemas/orchestrator-decision.schema.json; ../schemas/protocol-header.schema.json
-docs/system/contracts/remote-run-result.md,current/reference,95,534,2,0,
-docs/system/contracts/review-plane.md,current/reference,418,3825,2,0,
-docs/system/contracts/run-outcome.md,current/reference,240,2297,0,0,
-docs/system/contracts/runtime-prompts.md,current/reference,138,771,0,0,
-docs/system/contracts/stable-view-urls.md,current/reference,115,814,0,0,
-docs/system/contracts/ui-task-pipeline.md,current/reference,149,779,0,0,
-docs/system/contracts/wiki-tree.md,current/reference,492,3005,12,0,
-docs/system/domains/README.md,current/reference,17,181,11,0,
-docs/system/domains/areas-and-tags.md,current/reference,288,2336,2,0,
-docs/system/domains/cli.md,current/reference,301,2843,45,1,../cli/skills/cli-copilot.md
-docs/system/domains/frontend.md,current/reference,719,6593,18,0,
-docs/system/domains/model-routing-policy.md,current/reference,541,5101,12,0,
-docs/system/domains/orchestrator.md,current/reference,36,198,2,0,
-docs/system/domains/pipeline.md,current/reference,1763,16041,27,2,../schemas/pipeline-definition.schema.json; ../schemas/step-run.schema.json
-docs/system/domains/review.md,current/reference,659,5178,7,0,
-docs/system/domains/runner.md,current/reference,1702,15618,27,2,../research/orchestrator-decision-protocol-2026-05.md; ../schemas/task-execution-location.schema.json
-docs/system/domains/tasks.md,current/reference,1483,12719,33,3,../schemas/task-execution-location.schema.json; ../schemas/task-find-result.schema.json; ../schemas/task-mutation-request.schema.json
-docs/system/domains/token-pricing.md,current/reference,130,999,0,0,
-docs/system/domains/tokens.md,current/reference,421,3297,8,0,
-docs/system/reports/README.md,current/reference,9,42,3,0,
-docs/system/reports/analysis-reports.md,current/reference,232,3220,22,6,../../frontend/src/app/components/project-analysis-reports-section.ts; ../schemas/README.md; ../schemas/analysis-report.schema.json
-docs/system/reports/drift-reports.md,current/reference,250,3128,11,5,../schemas/README.md; ../schemas/drift-report.schema.json
-docs/system/reports/git-info-performance-agt-2007.md,current/reference,86,573,0,0,
-docs/system/reports/git-state-index-agt-2726.md,current/reference,100,685,2,0,
+page,documentType,lines,words,localLinks,unresolvedLocalLinks,sampleUnresolvedLinks,reviewDepth
+docs/operations/README.md,current/reference,94,1163,38,0,,mechanical full-text/reference scan
+docs/operations/admin-design-guideline/index.html,concept/proposal,1083,9159,5,0,,mechanical full-text/reference scan
+docs/operations/admin-design-guideline/pages/applied-surfaces.html,current/reference,251,1337,3,0,,mechanical full-text/reference scan
+docs/operations/admin-design-guideline/pages/dos-and-donts.html,current/reference,252,1697,3,0,,mechanical full-text/reference scan
+docs/operations/app-survey/index.html,concept/proposal,28,192,1,0,,mechanical full-text/reference scan
+docs/operations/article-document-authoring.md,current/reference,180,1031,7,0,,mechanical full-text/reference scan
+docs/operations/async-validation-staging-lane/brief.md,current/reference,39,267,4,0,,mechanical full-text/reference scan
+docs/operations/async-validation-staging-lane/index.html,concept/proposal,268,2103,5,0,,mechanical full-text/reference scan
+docs/operations/batch-gate-concept/index.html,concept/proposal,616,5835,11,0,,mechanical full-text/reference scan
+docs/operations/board-statusmodell-ist-soll/index.html,concept/proposal,1612,11279,6,0,,mechanical full-text/reference scan
+docs/operations/car-migration-plan.md,current/reference,363,5371,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/README.md,historical/diagnostic,43,502,15,0,,mechanical full-text/reference scan
+docs/operations/common-problems/accept-with-concerns-waves-through-unverified/README.md,historical/diagnostic,22,113,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/accept-with-concerns-waves-through-unverified/ideas.md,historical/diagnostic,4,26,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/accept-with-concerns-waves-through-unverified/measures.md,historical/diagnostic,7,52,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/accept-with-concerns-waves-through-unverified/occurrences.md,historical/diagnostic,7,60,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/accept-with-concerns-waves-through-unverified/protocol.md,historical/diagnostic,5,38,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/accept-with-concerns-waves-through-unverified/related.md,historical/diagnostic,4,11,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/circuit-breaker-3x-failure-cascade/README.md,historical/diagnostic,22,118,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/circuit-breaker-3x-failure-cascade/ideas.md,historical/diagnostic,4,26,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/circuit-breaker-3x-failure-cascade/measures.md,historical/diagnostic,5,43,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/circuit-breaker-3x-failure-cascade/occurrences.md,historical/diagnostic,5,40,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/circuit-breaker-3x-failure-cascade/protocol.md,historical/diagnostic,3,29,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/circuit-breaker-3x-failure-cascade/related.md,historical/diagnostic,4,6,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/classifier-unknown-on-cli-resume-failure/README.md,historical/diagnostic,22,116,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/classifier-unknown-on-cli-resume-failure/ideas.md,historical/diagnostic,4,26,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/classifier-unknown-on-cli-resume-failure/measures.md,historical/diagnostic,7,49,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/classifier-unknown-on-cli-resume-failure/occurrences.md,historical/diagnostic,7,57,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/classifier-unknown-on-cli-resume-failure/protocol.md,historical/diagnostic,5,35,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/classifier-unknown-on-cli-resume-failure/related.md,historical/diagnostic,4,9,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/claude-launcher-stub-after-autoupdate/README.md,historical/diagnostic,76,427,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/claude-tool-permission-allowlist-gaps/README.md,historical/diagnostic,22,146,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/claude-tool-permission-allowlist-gaps/ideas.md,historical/diagnostic,4,25,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/claude-tool-permission-allowlist-gaps/measures.md,historical/diagnostic,5,38,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/claude-tool-permission-allowlist-gaps/occurrences.md,historical/diagnostic,5,43,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/claude-tool-permission-allowlist-gaps/protocol.md,historical/diagnostic,3,30,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/claude-tool-permission-allowlist-gaps/related.md,historical/diagnostic,4,6,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/codex-silent-finish/README.md,historical/diagnostic,22,133,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/codex-silent-finish/ideas.md,historical/diagnostic,4,26,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/codex-silent-finish/measures.md,historical/diagnostic,7,57,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/codex-silent-finish/occurrences.md,historical/diagnostic,7,67,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/codex-silent-finish/protocol.md,historical/diagnostic,5,42,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/codex-silent-finish/related.md,historical/diagnostic,4,13,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/completion-gate-dead-code/README.md,historical/diagnostic,22,116,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/completion-gate-dead-code/ideas.md,historical/diagnostic,4,26,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/completion-gate-dead-code/measures.md,historical/diagnostic,7,49,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/completion-gate-dead-code/occurrences.md,historical/diagnostic,7,58,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/completion-gate-dead-code/protocol.md,historical/diagnostic,5,43,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/completion-gate-dead-code/related.md,historical/diagnostic,4,11,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/copilot-cli-exit-1-immediate/README.md,historical/diagnostic,22,99,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/copilot-cli-exit-1-immediate/ideas.md,historical/diagnostic,4,21,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/copilot-cli-exit-1-immediate/measures.md,historical/diagnostic,5,39,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/copilot-cli-exit-1-immediate/occurrences.md,historical/diagnostic,5,38,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/copilot-cli-exit-1-immediate/protocol.md,historical/diagnostic,3,21,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/copilot-cli-exit-1-immediate/related.md,historical/diagnostic,4,6,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/direct-workspace-folder-write-by-agent/README.md,historical/diagnostic,22,106,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/direct-workspace-folder-write-by-agent/ideas.md,historical/diagnostic,4,24,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/direct-workspace-folder-write-by-agent/measures.md,historical/diagnostic,5,38,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/direct-workspace-folder-write-by-agent/occurrences.md,historical/diagnostic,5,42,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/direct-workspace-folder-write-by-agent/protocol.md,historical/diagnostic,3,33,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/direct-workspace-folder-write-by-agent/related.md,historical/diagnostic,5,11,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/durable-local-cli-standardin-not-redirected/README.md,historical/diagnostic,54,347,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/eacces-on-dev-file-writes/README.md,historical/diagnostic,22,214,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/eacces-on-dev-file-writes/ideas.md,historical/diagnostic,5,51,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/eacces-on-dev-file-writes/measures.md,historical/diagnostic,9,111,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/eacces-on-dev-file-writes/occurrences.md,historical/diagnostic,9,88,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/eacces-on-dev-file-writes/protocol.md,historical/diagnostic,18,120,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/eacces-on-dev-file-writes/related.md,historical/diagnostic,5,18,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/folder-move-lock-recurrence/README.md,historical/diagnostic,22,122,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/folder-move-lock-recurrence/ideas.md,historical/diagnostic,4,26,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/folder-move-lock-recurrence/measures.md,historical/diagnostic,7,47,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/folder-move-lock-recurrence/occurrences.md,historical/diagnostic,7,64,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/folder-move-lock-recurrence/protocol.md,historical/diagnostic,5,38,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/folder-move-lock-recurrence/related.md,historical/diagnostic,4,9,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/gate-child-inherits-studio-listener/README.md,historical/diagnostic,82,533,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/hollow-api-restart/README.md,historical/diagnostic,48,360,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/hollow-api-restart/ideas.md,historical/diagnostic,24,236,1,0,,mechanical full-text/reference scan
+docs/operations/common-problems/hollow-api-restart/measures.md,historical/diagnostic,10,199,1,0,,mechanical full-text/reference scan
+docs/operations/common-problems/hollow-api-restart/occurrences.md,historical/diagnostic,8,109,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/hollow-api-restart/protocol.md,historical/diagnostic,65,484,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/hollow-api-restart/related.md,historical/diagnostic,13,95,4,1,../../../../tools/api-restart-selfcheck.sh,mechanical full-text/reference scan
+docs/operations/common-problems/lineage-blocked-integration-push/README.md,historical/diagnostic,117,854,4,0,,mechanical full-text/reference scan
+docs/operations/common-problems/lineage-blocked-integration-push/ideas.md,historical/diagnostic,32,281,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/lineage-blocked-integration-push/measures.md,historical/diagnostic,29,470,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/lineage-blocked-integration-push/occurrences.md,historical/diagnostic,14,256,2,0,,mechanical full-text/reference scan
+docs/operations/common-problems/lineage-blocked-integration-push/protocol.md,historical/diagnostic,144,853,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/lineage-blocked-integration-push/related.md,historical/diagnostic,26,137,9,0,,mechanical full-text/reference scan
+docs/operations/common-problems/ready-sign-in-runner-link-down/README.md,historical/diagnostic,54,302,1,0,,mechanical full-text/reference scan
+docs/operations/common-problems/review-parallelism-shared-build-server/README.md,historical/diagnostic,76,504,3,0,,mechanical full-text/reference scan
+docs/operations/common-problems/review-parallelism-shared-build-server/measures.md,historical/diagnostic,10,181,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/review-parallelism-shared-build-server/occurrences.md,historical/diagnostic,8,139,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/review-parallelism-shared-build-server/protocol.md,historical/diagnostic,42,233,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/review-parallelism-shared-build-server/related.md,historical/diagnostic,16,96,6,0,,mechanical full-text/reference scan
+docs/operations/common-problems/sentinel-pid-broadcast-kill/README.md,historical/diagnostic,65,496,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/services-killed-by-harness-sweep/README.md,historical/diagnostic,48,331,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/services-killed-by-harness-sweep/ideas.md,historical/diagnostic,6,41,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/services-killed-by-harness-sweep/measures.md,historical/diagnostic,7,55,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/services-killed-by-harness-sweep/occurrences.md,historical/diagnostic,7,84,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/services-killed-by-harness-sweep/protocol.md,historical/diagnostic,12,91,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/services-killed-by-harness-sweep/related.md,historical/diagnostic,7,28,4,0,,mechanical full-text/reference scan
+docs/operations/common-problems/stale-progress-orphan-race/README.md,historical/diagnostic,22,102,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/stale-progress-orphan-race/ideas.md,historical/diagnostic,4,20,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/stale-progress-orphan-race/measures.md,historical/diagnostic,5,38,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/stale-progress-orphan-race/occurrences.md,historical/diagnostic,5,39,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/stale-progress-orphan-race/protocol.md,historical/diagnostic,3,37,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/stale-progress-orphan-race/related.md,historical/diagnostic,4,6,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/torn-preparation-cache/README.md,historical/diagnostic,57,276,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/verdict-stuck-in-auto-review/README.md,historical/diagnostic,22,123,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/verdict-stuck-in-auto-review/ideas.md,historical/diagnostic,4,26,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/verdict-stuck-in-auto-review/measures.md,historical/diagnostic,7,50,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/verdict-stuck-in-auto-review/occurrences.md,historical/diagnostic,7,62,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/verdict-stuck-in-auto-review/protocol.md,historical/diagnostic,5,40,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/verdict-stuck-in-auto-review/related.md,historical/diagnostic,4,9,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/windows-launcher-exit-during-compile/README.md,historical/diagnostic,54,401,2,0,,mechanical full-text/reference scan
+docs/operations/common-problems/workflow-args-json-string-fanout/README.md,historical/diagnostic,59,282,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/workflow-args-json-string-fanout/ideas.md,historical/diagnostic,5,33,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/workflow-args-json-string-fanout/measures.md,historical/diagnostic,7,58,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/workflow-args-json-string-fanout/occurrences.md,historical/diagnostic,7,81,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/workflow-args-json-string-fanout/protocol.md,historical/diagnostic,9,74,0,0,,mechanical full-text/reference scan
+docs/operations/common-problems/workflow-args-json-string-fanout/related.md,historical/diagnostic,6,18,3,0,,mechanical full-text/reference scan
+docs/operations/concept-pipeline/index.html,concept/proposal,168,1436,0,0,,mechanical full-text/reference scan
+docs/operations/container-tranche-plan.md,current/reference,39,452,0,0,,mechanical full-text/reference scan
+docs/operations/decision-briefing/index.html,concept/proposal,787,6208,0,0,,mechanical full-text/reference scan
+docs/operations/decision-cards/index.html,concept/proposal,333,3989,0,0,,mechanical full-text/reference scan
+docs/operations/decision-surface/README.md,current/reference,320,2035,1,0,,mechanical full-text/reference scan
+docs/operations/deck-icon-exploration/index.html,concept/proposal,394,1562,2,0,,mechanical full-text/reference scan
+docs/operations/delivery-chain/index.html,concept/proposal,535,8422,0,0,,mechanical full-text/reference scan
+docs/operations/demo-instanz/index.html,concept/proposal,1039,11494,5,0,,mechanical full-text/reference scan
+docs/operations/demo-instanz/replay-only-runner.md,current/reference,167,1108,1,0,,mechanical full-text/reference scan
+docs/operations/develop-main-promotion.md,current/reference,317,2299,8,0,,mechanical full-text/reference scan
+docs/operations/docker-ausfuehrungswelt-migration/index.html,concept/proposal,567,7575,4,0,,mechanical full-text/reference scan
+docs/operations/docker-ausfuehrungswelt-migration/project-definition-v2-plan.md,current/reference,608,4580,18,0,,mechanical full-text/reference scan
+docs/operations/doku-inventur-2026-07/README.md,current/reference,406,13731,0,0,,mechanical full-text/reference scan
+docs/operations/dossier-consolidation-and-area-tags/index.html,concept/proposal,373,4246,1,0,,mechanical full-text/reference scan
+docs/operations/dossier-review-2026-09/index.html,concept/proposal,295,3346,0,0,,mechanical full-text/reference scan
+docs/operations/entscheidungsvorlagen-2230-2132.md,current/reference,62,464,0,0,,mechanical full-text/reference scan
+docs/operations/epic-lebendes-dokument/index.html,concept/proposal,238,2206,1,0,,mechanical full-text/reference scan
+docs/operations/escalation-view-information-architecture/index.html,concept/proposal,380,2884,1,0,,mechanical full-text/reference scan
+docs/operations/execution-model-shift/container-grundlagen/index.html,concept/proposal,275,2854,0,0,,mechanical full-text/reference scan
+docs/operations/execution-model-shift/index.html,concept/proposal,405,5102,1,0,,mechanical full-text/reference scan
+docs/operations/gates/index.html,concept/proposal,871,9776,1,0,,mechanical full-text/reference scan
+docs/operations/git/commit-attribution-discovery.md,current/reference,100,886,2,0,,mechanical full-text/reference scan
+docs/operations/git/commit-push-doctrine.md,current/reference,184,4420,14,9,../../../backend/Services/GitService.cs; ../../../backend/Services/ProjectSettingsService.cs; ../../../backend/Services/Runner/OrchestratorChatLog.cs; ../../../backend/Services/Runner/ProjectRunner.cs; ../../../backend/Services/Runner/RunCompletionPolicy.cs; ../../../backend/Services/Tasks/TaskTransitionService.cs; ../../../frontend/src/app/features/project-detail/components/project-detail.html,manual code comparison
+docs/operations/git/integration-worktree.md,current/reference,123,950,6,0,,mechanical full-text/reference scan
+docs/operations/git/interrupted-integration-gate.md,current/reference,131,1057,9,0,,mechanical full-text/reference scan
+docs/operations/haertung-verteilte-ausfuehrung/agent-fencing-diagram.html,current/reference,327,1328,1,0,,mechanical full-text/reference scan
+docs/operations/haertung-verteilte-ausfuehrung/agent-fencing.html,current/reference,331,1689,3,0,,mechanical full-text/reference scan
+docs/operations/haertung-verteilte-ausfuehrung/historie.html,current/reference,604,3530,5,0,,mechanical full-text/reference scan
+docs/operations/haertung-verteilte-ausfuehrung/index.html,concept/proposal,1773,11656,2,0,,mechanical full-text/reference scan
+docs/operations/haertung-verteilte-ausfuehrung/target-architecture/actors.md,current/reference,22,289,0,0,,mechanical full-text/reference scan
+docs/operations/haertung-verteilte-ausfuehrung/target-architecture/connection-health.md,current/reference,7,139,0,0,,mechanical full-text/reference scan
+docs/operations/haertung-verteilte-ausfuehrung/target-architecture/contracts.md,current/reference,7,141,0,0,,mechanical full-text/reference scan
+docs/operations/haertung-verteilte-ausfuehrung/target-architecture/decision-history.md,current/reference,46,805,0,0,,mechanical full-text/reference scan
+docs/operations/haertung-verteilte-ausfuehrung/target-architecture/distributable.html,current/reference,456,3516,7,0,,mechanical full-text/reference scan
+docs/operations/haertung-verteilte-ausfuehrung/target-architecture/distributable.md,current/reference,80,611,3,0,,mechanical full-text/reference scan
+docs/operations/haertung-verteilte-ausfuehrung/target-architecture/index.html,concept/proposal,117,1088,9,0,,mechanical full-text/reference scan
+docs/operations/haertung-verteilte-ausfuehrung/target-architecture/migration-path.md,current/reference,9,155,0,0,,mechanical full-text/reference scan
+docs/operations/haertung-verteilte-ausfuehrung/target-architecture/orchestrator-plan.md,current/reference,30,233,0,0,,mechanical full-text/reference scan
+docs/operations/haertung-verteilte-ausfuehrung/target-architecture/resource-governance.md,current/reference,145,999,1,0,,mechanical full-text/reference scan
+docs/operations/haertung-verteilte-ausfuehrung/target-architecture/restart-matrix.md,current/reference,11,167,0,0,,mechanical full-text/reference scan
+docs/operations/haertung-verteilte-ausfuehrung/target-architecture/setup-scenarios.md,current/reference,78,565,3,0,,mechanical full-text/reference scan
+docs/operations/installer-story/index.html,concept/proposal,519,3854,9,0,,mechanical full-text/reference scan
+docs/operations/kontext-orchestrator-chats/index.html,concept/proposal,1357,8276,0,0,,mechanical full-text/reference scan
+docs/operations/lagebild-2026-08/index.html,concept/proposal,480,2718,0,0,,mechanical full-text/reference scan
+docs/operations/lagebild-2026-09-01/index.html,concept/proposal,137,1089,2,0,,mechanical full-text/reference scan
+docs/operations/learnings/README.md,historical/diagnostic,8,28,0,0,,mechanical full-text/reference scan
+docs/operations/lieferkette-robustheit/index.html,concept/proposal,481,5436,2,0,,mechanical full-text/reference scan
+docs/operations/live-improvement-log/index.html,concept/proposal,216,3782,3,0,,mechanical full-text/reference scan
+docs/operations/live-improvement-log/verification-2026-08-25.html,current/reference,171,2381,2,0,,mechanical full-text/reference scan
+docs/operations/living-document-naming/index.html,concept/proposal,417,3466,3,0,,mechanical full-text/reference scan
+docs/operations/log-retention/index.html,concept/proposal,267,2275,1,0,,mechanical full-text/reference scan
+docs/operations/marketing-studio/index.html,concept/proposal,125,1282,0,0,,mechanical full-text/reference scan
+docs/operations/marketing-studio-stufenplan.md,current/reference,43,534,0,0,,mechanical full-text/reference scan
+docs/operations/model-routing-policy/index.html,concept/proposal,347,3296,1,0,,mechanical full-text/reference scan
+docs/operations/modell-badge-kontrast/index.html,concept/proposal,117,811,0,0,,mechanical full-text/reference scan
+docs/operations/nordstern/index.html,concept/proposal,432,5222,29,0,,mechanical full-text/reference scan
+docs/operations/observation/index.html,concept/proposal,425,5581,1,0,,mechanical full-text/reference scan
+docs/operations/operational-resilience/index.html,concept/proposal,756,4894,14,0,,mechanical full-text/reference scan
+docs/operations/operations-server-backchannel/index.html,concept/proposal,639,7053,15,0,,mechanical full-text/reference scan
+docs/operations/orchestrator-waechter/index.html,concept/proposal,996,9480,9,0,,mechanical full-text/reference scan
+docs/operations/org-security-audit-2026-08/index.html,concept/proposal,816,6494,1,0,,mechanical full-text/reference scan
+docs/operations/project-feed/index.html,concept/proposal,167,1408,1,0,,mechanical full-text/reference scan
+docs/operations/projekt-scope-schalter/index.html,concept/proposal,267,2511,0,0,,mechanical full-text/reference scan
+docs/operations/projekt-settings-migrationsplan.md,current/reference,44,450,0,0,,mechanical full-text/reference scan
+docs/operations/protokoll-verdichtung/index.html,concept/proposal,123,1120,0,0,,mechanical full-text/reference scan
+docs/operations/rebase-merge-and-steering/index.html,concept/proposal,563,5798,12,0,,mechanical full-text/reference scan
+docs/operations/releases.md,current/reference,204,1370,4,0,,manual code comparison
+docs/operations/remote-gate-cleanup/index.html,concept/proposal,143,1492,0,0,,mechanical full-text/reference scan
+docs/operations/remote-gate-zielbild/index.html,concept/proposal,346,5685,29,0,,mechanical full-text/reference scan
+docs/operations/remote-gate-zielbild/remote-gate.md,current/reference,312,2188,17,0,,mechanical full-text/reference scan
+docs/operations/remote-hosts.md,current/reference,596,4301,7,0,,manual code comparison
+docs/operations/remote-task-server-local-studio.md,current/reference,792,7804,19,0,,mechanical full-text/reference scan
+docs/operations/research-deliverables/index.html,concept/proposal,225,1069,7,0,,mechanical full-text/reference scan
+docs/operations/retention-und-archiv/index.html,concept/proposal,583,5125,4,0,,mechanical full-text/reference scan
+docs/operations/runner-link/index.html,concept/proposal,492,3797,0,0,,mechanical full-text/reference scan
+docs/operations/runtime/log-capture.md,current/reference,234,1354,14,6,../../../backend/Models/ProductRuntimeEvent.cs; ../../../backend/Services/Cli/CliExecutionServiceBase.cs; ../../../backend/Services/Runtime/RuntimeEventReader.cs; ../../../backend/Services/Runtime/RuntimeEventStdoutAdapter.cs; ../../../backend/Services/Runtime/RuntimeEventWriter.cs; ../../../frontend/e2e/runtime-console-capture.spec.ts,mechanical full-text/reference scan
+docs/operations/runtime/observability.md,current/reference,150,2075,10,0,,mechanical full-text/reference scan
+docs/operations/screenshot-system/index.html,concept/proposal,111,884,0,0,,mechanical full-text/reference scan
+docs/operations/security/overview.md,current/reference,167,1384,10,0,,mechanical full-text/reference scan
+docs/operations/security/requirements.md,current/reference,95,596,0,0,,mechanical full-text/reference scan
+docs/operations/security/reviews/2026-04-15-baseline.md,current/reference,22,142,0,0,,mechanical full-text/reference scan
+docs/operations/security/runbook-rehearsal-evidence.md,current/reference,59,386,1,0,,mechanical full-text/reference scan
+docs/operations/setup/README.md,current/reference,39,611,27,0,,manual code comparison
+docs/operations/setup/README.md.report.html,generated preview,156,683,0,0,,mechanical full-text/reference scan
+docs/operations/setup/cli-relogin-runbook.md,current/reference,143,1086,0,0,,mechanical full-text/reference scan
+docs/operations/setup/connectivity-manifest.md,current/reference,141,1163,1,0,,mechanical full-text/reference scan
+docs/operations/setup/contributor-setup.md,current/reference,293,3385,22,0,,mechanical full-text/reference scan
+docs/operations/setup/control-plane-docker.md,current/reference,301,1784,23,0,,mechanical full-text/reference scan
+docs/operations/setup/docker-compose-connector-gap.md,current/reference,95,718,3,0,,mechanical full-text/reference scan
+docs/operations/setup/docker.md,current/reference,150,1004,2,0,,mechanical full-text/reference scan
+docs/operations/setup/getting-started.md,current/reference,13,71,4,0,,mechanical full-text/reference scan
+docs/operations/setup/hosted-wiki-publication.md,current/reference,212,1484,3,0,,mechanical full-text/reference scan
+docs/operations/setup/install.md,current/reference,158,934,10,0,,manual code comparison
+docs/operations/setup/installation-upgrade-contract.md,current/reference,115,829,2,0,,mechanical full-text/reference scan
+docs/operations/setup/linux-runner-host.md,current/reference,1991,16644,21,0,,manual code comparison
+docs/operations/setup/multi-machine.md,current/reference,203,1059,3,0,,mechanical full-text/reference scan
+docs/operations/setup/networked-task-server.md,current/reference,167,974,4,0,,manual code comparison
+docs/operations/setup/onboard-a-project.md,current/reference,299,2130,4,0,,mechanical full-text/reference scan
+docs/operations/setup/onboard-an-agent-cli.md,current/reference,127,1169,17,8,../../../backend/Services/Cli/CliRouter.cs; ../../../backend/Services/Cli/CodexCliService.cs; ../../../backend/Services/Cli/GeminiCliService.cs; ../../../backend/Services/Cli/OneShot/ICliOneShot.cs; ../../../backend/Services/Drift/CodePatternDriftAnalysisService.cs; ../../../backend/Services/Runner/AgentEnvironmentDetector.cs; ../../../backend/Services/Runner/AgentOutcomeAnalyzer.cs; ../../cli/skills/cli-copilot.md,manual code comparison
+docs/operations/setup/preparation-isolation-orchestrator.md,current/reference,93,1796,3,0,,mechanical full-text/reference scan
+docs/operations/setup/presentation-capture.md,current/reference,161,1171,3,0,,mechanical full-text/reference scan
+docs/operations/setup/remote-compose-test-harness.md,current/reference,201,1165,1,0,,mechanical full-text/reference scan
+docs/operations/setup/remote-runner-persistent-connection.md,current/reference,183,1168,3,0,,manual code comparison
+docs/operations/setup/single-host-task-server.md,current/reference,242,2087,4,0,,mechanical full-text/reference scan
+docs/operations/setup/task-server.md,current/reference,1363,10970,25,0,,mechanical full-text/reference scan
+docs/operations/setup/troubleshooting.md,current/reference,134,1499,13,1,../../../backend/Services/Runner/CrossSlugInfraCircuitBreaker.cs,mechanical full-text/reference scan
+docs/operations/setup/website-onboarding-template.md,current/reference,29,187,1,0,,mechanical full-text/reference scan
+docs/operations/setup/windows-fallback-runbook.md,current/reference,139,868,6,0,,mechanical full-text/reference scan
+docs/operations/setup/workstation-runner-host.md,current/reference,136,985,3,0,,mechanical full-text/reference scan
+docs/operations/setup/worktree-test-stack.md,current/reference,104,635,3,0,,mechanical full-text/reference scan
+docs/operations/setup/your-first-task.md,current/reference,82,752,4,0,,mechanical full-text/reference scan
+docs/operations/sichtblick-entscheidungen/index.html,concept/proposal,149,1489,0,0,,mechanical full-text/reference scan
+docs/operations/sichtungszettel-2026-07-28.md,current/reference,30,483,0,0,,mechanical full-text/reference scan
+docs/operations/stable-release-contract.md,current/reference,491,3634,3,0,,mechanical full-text/reference scan
+docs/operations/statusmd-konzept-karten/index.html,concept/proposal,408,3138,0,0,,mechanical full-text/reference scan
+docs/operations/tagging-golden-set-approval/index.html,concept/proposal,38,392,3,0,,mechanical full-text/reference scan
+docs/operations/task-and-board-ui/index.html,concept/proposal,617,6203,1,0,,mechanical full-text/reference scan
+docs/operations/task-detail-usage-panel/index.html,concept/proposal,343,2884,0,0,,mechanical full-text/reference scan
+docs/operations/task-kopf-und-chat-chips/index.html,concept/proposal,154,1173,0,0,,mechanical full-text/reference scan
+docs/operations/telemetry-layer/index.html,concept/proposal,708,5991,13,0,,mechanical full-text/reference scan
+docs/operations/temp-and-cache-hygiene.md,current/reference,281,2079,2,0,,mechanical full-text/reference scan
+docs/operations/testing/build-test-gate-flaky-rerun.md,current/reference,167,1301,3,0,,mechanical full-text/reference scan
+docs/operations/testing/deployment-scenario.md,current/reference,271,2150,9,0,,mechanical full-text/reference scan
+docs/operations/testing/dev-test-workspace.md,current/reference,82,373,0,0,,mechanical full-text/reference scan
+docs/operations/testing/restart-continuity-drill.md,current/reference,64,342,0,0,,mechanical full-text/reference scan
+docs/operations/testing/windows-baseline-and-platform-gates.md,current/reference,151,1020,3,0,,mechanical full-text/reference scan
+docs/operations/timeline-redesign/index.html,concept/proposal,1020,6999,11,0,,mechanical full-text/reference scan
+docs/operations/token-refresh-ohne-tunnel.md,current/reference,189,1807,1,0,,mechanical full-text/reference scan
+docs/operations/token-retry-tax-analysis/index.html,concept/proposal,296,3055,1,0,,mechanical full-text/reference scan
+docs/operations/tunnel-keeper-diagnosis.md,current/reference,171,1924,0,0,,mechanical full-text/reference scan
+docs/operations/umsetzungsplan-zielbild/index.html,concept/proposal,203,1718,0,0,,mechanical full-text/reference scan
+docs/operations/unverifizierte-lieferungen/index.html,concept/proposal,323,2537,1,0,,mechanical full-text/reference scan
+docs/operations/url-preview-diagnostics.md,current/reference,63,669,0,0,,mechanical full-text/reference scan
+docs/operations/wiki-archiv-konzept/index.html,concept/proposal,190,1679,3,0,,mechanical full-text/reference scan
+docs/operations/windows-process-spawn-safety.md,current/reference,78,453,0,0,,mechanical full-text/reference scan
+docs/operations/workbench-konzept/index.html,concept/proposal,248,3107,3,0,,mechanical full-text/reference scan
+docs/operations/workbench-mockup-family/index.html,concept/proposal,28,203,1,0,,mechanical full-text/reference scan
+docs/operations/workflow-sized-task-cutting.md,current/reference,72,434,0,0,,mechanical full-text/reference scan
+docs/operations/workspace-repo-nachhaltigkeit/index.html,concept/proposal,487,3106,0,0,,mechanical full-text/reference scan
+docs/operations/workspace-repository-lifecycle.md,current/reference,120,744,0,0,,mechanical full-text/reference scan
+docs/operations/zielbild-komponenten-protokolle/index.html,concept/proposal,197,1384,1,0,,mechanical full-text/reference scan
+docs/system/README.md,current/reference,26,168,6,0,,mechanical full-text/reference scan
+docs/system/architecture/README.md,current/reference,15,152,9,0,,mechanical full-text/reference scan
+docs/system/architecture/backend-structure/structure-target.md,current/reference,65,445,1,0,,mechanical full-text/reference scan
+docs/system/architecture/backend-structure/structure-target.md.report.html,generated preview,156,669,0,0,,mechanical full-text/reference scan
+docs/system/architecture/backend-structure/styleguide.md,current/reference,56,371,2,0,,mechanical full-text/reference scan
+docs/system/architecture/backend-structure/styleguide.md.report.html,generated preview,164,690,0,0,,mechanical full-text/reference scan
+docs/system/architecture/bus/agent-message-bus.md,current/reference,286,4659,18,7,../../../backend/Endpoints/AnalysisReportEndpoints.cs; ../../../backend/Services/Runner/OrchestratorChatLog.cs; ../../schemas/README.md; ../../schemas/agent-artifact-ref.schema.json; ../../schemas/agent-participant.schema.json; ../../schemas/token-aggregate.schema.json,mechanical full-text/reference scan
+docs/system/architecture/bus/agent-message-bus.md.report.html,generated preview,156,657,0,0,,mechanical full-text/reference scan
+docs/system/architecture/bus/implementation-state.md,current/reference,153,966,0,0,,mechanical full-text/reference scan
+docs/system/architecture/bus/implementation-state.md.report.html,generated preview,156,680,0,0,,mechanical full-text/reference scan
+docs/system/architecture/decisions/README.md,current/reference,9,54,3,0,,mechanical full-text/reference scan
+docs/system/architecture/decisions/README.md.report.html,generated preview,156,680,0,0,,mechanical full-text/reference scan
+docs/system/architecture/decisions/adr-archive.md,current/reference,1858,42832,518,238,../../../../../start-dev.sh; ../../../../frontend/src/app/components/autonomy-slider.ts; ../../../../frontend/src/app/services/cli-catalog.store.ts; ../../../backend.Tests/Architecture/JobFolderAccessIsolationTest.cs; ../../../backend.Tests/JobKeyResolverTests.cs; ../../../backend.Tests/JobStateMachineMigrationTests.cs; ../../../backend.Tests/JobsEndpointPerfTests.cs; ../../../backend.Tests/PhaseAwareWatchdogTests.cs::SessionInitializing_BudgetIs60And120,mechanical full-text/reference scan
+docs/system/architecture/decisions/adr-archive.md.report.html,generated preview,156,682,0,0,,mechanical full-text/reference scan
+docs/system/architecture/decisions/proposed/adr-0051-task-processing-pipeline.md,concept/proposal,283,3526,28,6,../../../../backend/Services/Pipeline/PipelineCatalogue.cs; ../../../../backend/Services/ProjectChat/ProjectChatIndex.cs; ../../../schemas/pipeline-definition.schema.json; ../../../schemas/step-run.schema.json,mechanical full-text/reference scan
+docs/system/architecture/decisions/proposed/adr-0051-task-processing-pipeline.md.report.html,generated preview,164,689,0,0,,mechanical full-text/reference scan
+docs/system/architecture/decisions/proposed/adr-0060-fenced-run-lease-and-runner-identity.md,concept/proposal,50,936,6,0,,mechanical full-text/reference scan
+docs/system/architecture/decisions/proposed/adr-0061-unified-nav-active-item-token-contract.md,concept/proposal,62,839,2,1,../../../frontend/AGENTS.md,mechanical full-text/reference scan
+docs/system/architecture/maps/knowledge-map.html,current/reference,210,526,1,0,,mechanical full-text/reference scan
+docs/system/architecture/maps/knowledge-map.html.report.html,generated preview,156,701,0,0,,mechanical full-text/reference scan
+docs/system/architecture/model.md,current/reference,241,2031,12,9,../../backend/Services/Drift/DriftReportContract.cs; ../schemas/README.md; ../schemas/architecture-model.schema.json; ../schemas/drift-report.schema.json,mechanical full-text/reference scan
+docs/system/architecture/model.md.report.html,generated preview,156,679,0,0,,mechanical full-text/reference scan
+docs/system/architecture/project-map.md,current/reference,142,1458,0,0,,mechanical full-text/reference scan
+docs/system/architecture/runner-lanes/progress-lane-writers.md,current/reference,131,1097,1,1,../../../backend.Tests/Architecture/JobFolderAccessIsolationTest.cs,mechanical full-text/reference scan
+docs/system/architecture/runner-lanes/progress-lane-writers.md.report.html,generated preview,156,660,0,0,,mechanical full-text/reference scan
+docs/system/cli/README.md,current/reference,12,71,5,0,,mechanical full-text/reference scan
+docs/system/cli/audits/startup-cost-analysis-2026-05-09.md,historical/diagnostic,112,1241,16,16,../../../backend/Endpoints/CliEndpoints.cs; ../../../backend/Services/Cli/ClaudeCliService.cs; ../../../backend/Services/Cli/ClaudeSessionHeartbeat.cs; ../../../backend/Services/Cli/CodexCliService.cs; ../../../backend/Services/Cli/GeminiCliService.cs; ../../../backend/Services/Cli/SessionRegistry.cs; ../../../backend/Services/CopilotCliService.cs; ../../../backend/Services/Pty/CodexModelDiscovery.cs,mechanical full-text/reference scan
+docs/system/cli/frame-compatibility-matrix.md,current/reference,129,1426,2,0,,mechanical full-text/reference scan
+docs/system/cli/investigations/codex-runner-investigation.md,historical/diagnostic,126,836,0,0,,mechanical full-text/reference scan
+docs/system/cli/skills/README.md,current/reference,37,554,10,1,../../../frontend/e2e/cli-skills-pickup.spec.ts,mechanical full-text/reference scan
+docs/system/cli/skills/cli-claude.md,current/reference,346,4440,19,0,,mechanical full-text/reference scan
+docs/system/cli/skills/cli-codex.md,current/reference,546,4706,24,6,../../../backend/Services/Bus/AgentMessageBusBridge.cs; ../../../backend/Services/Cli/CodexCliService.cs; ../../../backend/Services/Runner/ProjectRunner.cs; ../../../src/AgentTaskboard.Runner/Cli/CodexSilentCompletionDetector.cs; ../../../src/AgentTaskboard.Runner/Cli/Rendering/CodexOutputRenderer.cs,manual code comparison
+docs/system/cli/skills/cli-gemini.md,current/reference,191,2112,9,4,../../../backend.Tests/GeminiCliServiceTests.cs; ../../../backend.Tests/GeminiQuotaProbeTests.cs; ../../../backend/Services/Cli/GeminiCliService.cs; ../../../backend/Services/Quota/GeminiQuotaProbe.cs,mechanical full-text/reference scan
+docs/system/cli/skills/cli-overview.md,current/reference,226,2618,9,0,,manual code comparison
+docs/system/cli/skills/sandbox-and-yolo.md,current/reference,142,1692,8,0,,mechanical full-text/reference scan
+docs/system/cli/supported-clis.md,current/reference,341,4235,43,0,,manual code comparison
+docs/system/common-problems/README.md,historical/diagnostic,31,180,4,0,,mechanical full-text/reference scan
+docs/system/common-problems/agent-field-default-leak/README.md,historical/diagnostic,22,130,0,0,,mechanical full-text/reference scan
+docs/system/common-problems/agent-field-default-leak/ideas.md,historical/diagnostic,3,17,0,0,,mechanical full-text/reference scan
+docs/system/common-problems/agent-field-default-leak/measures.md,historical/diagnostic,5,43,0,0,,mechanical full-text/reference scan
+docs/system/common-problems/agent-field-default-leak/occurrences.md,historical/diagnostic,5,37,0,0,,mechanical full-text/reference scan
+docs/system/common-problems/agent-field-default-leak/protocol.md,historical/diagnostic,3,25,0,0,,mechanical full-text/reference scan
+docs/system/common-problems/agent-field-default-leak/related.md,historical/diagnostic,4,6,0,0,,mechanical full-text/reference scan
+docs/system/common-problems/diff-summary-zero-net-lines-false-block/README.md,historical/diagnostic,22,121,0,0,,mechanical full-text/reference scan
+docs/system/common-problems/diff-summary-zero-net-lines-false-block/ideas.md,historical/diagnostic,4,26,0,0,,mechanical full-text/reference scan
+docs/system/common-problems/diff-summary-zero-net-lines-false-block/measures.md,historical/diagnostic,7,50,0,0,,mechanical full-text/reference scan
+docs/system/common-problems/diff-summary-zero-net-lines-false-block/occurrences.md,historical/diagnostic,7,64,0,0,,mechanical full-text/reference scan
+docs/system/common-problems/diff-summary-zero-net-lines-false-block/protocol.md,historical/diagnostic,5,43,0,0,,mechanical full-text/reference scan
+docs/system/common-problems/diff-summary-zero-net-lines-false-block/related.md,historical/diagnostic,4,11,0,0,,mechanical full-text/reference scan
+docs/system/common-problems/global-search-slow-repository/README.md,historical/diagnostic,37,206,1,0,,mechanical full-text/reference scan
+docs/system/common-problems/global-search-slow-repository/ideas.md,historical/diagnostic,6,48,0,0,,mechanical full-text/reference scan
+docs/system/common-problems/global-search-slow-repository/measures.md,historical/diagnostic,9,125,0,0,,mechanical full-text/reference scan
+docs/system/common-problems/global-search-slow-repository/occurrences.md,historical/diagnostic,7,71,0,0,,mechanical full-text/reference scan
+docs/system/common-problems/global-search-slow-repository/protocol.md,historical/diagnostic,13,114,0,0,,mechanical full-text/reference scan
+docs/system/common-problems/global-search-slow-repository/related.md,historical/diagnostic,4,9,1,0,,mechanical full-text/reference scan
+docs/system/common-problems/project-name-divergence-watchpath-vs-registry/README.md,historical/diagnostic,22,107,0,0,,mechanical full-text/reference scan
+docs/system/common-problems/project-name-divergence-watchpath-vs-registry/ideas.md,historical/diagnostic,4,22,0,0,,mechanical full-text/reference scan
+docs/system/common-problems/project-name-divergence-watchpath-vs-registry/measures.md,historical/diagnostic,5,41,0,0,,mechanical full-text/reference scan
+docs/system/common-problems/project-name-divergence-watchpath-vs-registry/occurrences.md,historical/diagnostic,5,45,0,0,,mechanical full-text/reference scan
+docs/system/common-problems/project-name-divergence-watchpath-vs-registry/protocol.md,historical/diagnostic,3,19,0,0,,mechanical full-text/reference scan
+docs/system/common-problems/project-name-divergence-watchpath-vs-registry/related.md,historical/diagnostic,5,14,1,0,,mechanical full-text/reference scan
+docs/system/common-problems/workspace-create-invisible/README.md,historical/diagnostic,22,115,0,0,,mechanical full-text/reference scan
+docs/system/common-problems/workspace-create-invisible/ideas.md,historical/diagnostic,4,22,0,0,,mechanical full-text/reference scan
+docs/system/common-problems/workspace-create-invisible/measures.md,historical/diagnostic,5,37,0,0,,mechanical full-text/reference scan
+docs/system/common-problems/workspace-create-invisible/occurrences.md,historical/diagnostic,5,40,0,0,,mechanical full-text/reference scan
+docs/system/common-problems/workspace-create-invisible/protocol.md,historical/diagnostic,3,25,0,0,,mechanical full-text/reference scan
+docs/system/common-problems/workspace-create-invisible/related.md,historical/diagnostic,4,6,0,0,,mechanical full-text/reference scan
+docs/system/contracts/README.md,current/reference,19,190,13,0,,mechanical full-text/reference scan
+docs/system/contracts/agent-contract-pattern.md,current/reference,283,2193,10,1,../schemas,mechanical full-text/reference scan
+docs/system/contracts/agent-task.md,current/reference,153,1697,0,0,,manual code comparison
+docs/system/contracts/agent-task.md.report.html,generated preview,156,671,0,0,,mechanical full-text/reference scan
+docs/system/contracts/code-patterns.md,current/reference,346,2245,2,1,../ProjectTokenUsageService|WorkspaceTokensTimelineService|TokenSummary|TokenSummaryCacheStore|OrchestratorLog|OrchestratorRunner|OrchestratorChat|OrchestratorSession|GlobalOrchestratorSession|StuckLoopGuard,mechanical full-text/reference scan
+docs/system/contracts/filesystem.md,current/reference,576,5149,6,0,,mechanical full-text/reference scan
+docs/system/contracts/loop-inventory.md,current/reference,171,2708,29,4,../../backend/Services/Runner/CompletionRetrigger.cs; ../../backend/Services/Runner/CrossSlugInfraCircuitBreaker.cs; ../../backend/Services/Runner/PostAbortReview.cs; ../../backend/Services/Runner/ProjectRunner.cs,mechanical full-text/reference scan
+docs/system/contracts/operations-backchannel.md,current/reference,240,2077,2,0,,mechanical full-text/reference scan
+docs/system/contracts/protocol-style.md,current/reference,366,3692,18,8,../../frontend/src/app/components/activity-log.parser.ts; ../attachments/<name>.png; ../foo.png; ../results/<name>.png; ../results/dashboard--mocked.png; ../schemas/executive-summary.schema.json; ../schemas/orchestrator-decision.schema.json; ../schemas/protocol-header.schema.json,mechanical full-text/reference scan
+docs/system/contracts/remote-run-result.md,current/reference,95,534,2,0,,mechanical full-text/reference scan
+docs/system/contracts/review-plane.md,current/reference,418,3825,2,0,,manual code comparison
+docs/system/contracts/run-outcome.md,current/reference,240,2297,0,0,,mechanical full-text/reference scan
+docs/system/contracts/runtime-prompts.md,current/reference,138,771,0,0,,mechanical full-text/reference scan
+docs/system/contracts/stable-view-urls.md,current/reference,115,814,0,0,,mechanical full-text/reference scan
+docs/system/contracts/ui-task-pipeline.md,current/reference,149,779,0,0,,mechanical full-text/reference scan
+docs/system/contracts/wiki-tree.md,current/reference,492,3005,12,0,,mechanical full-text/reference scan
+docs/system/domains/README.md,current/reference,17,181,11,0,,mechanical full-text/reference scan
+docs/system/domains/areas-and-tags.md,current/reference,288,2336,2,0,,mechanical full-text/reference scan
+docs/system/domains/cli.md,current/reference,301,2843,45,1,../cli/skills/cli-copilot.md,manual code comparison
+docs/system/domains/frontend.md,current/reference,719,6593,18,0,,mechanical full-text/reference scan
+docs/system/domains/model-routing-policy.md,current/reference,541,5101,12,0,,mechanical full-text/reference scan
+docs/system/domains/orchestrator.md,current/reference,36,198,2,0,,mechanical full-text/reference scan
+docs/system/domains/pipeline.md,current/reference,1763,16041,27,2,../schemas/pipeline-definition.schema.json; ../schemas/step-run.schema.json,manual code comparison
+docs/system/domains/pipeline.md.report.html,generated preview,156,676,0,0,,mechanical full-text/reference scan
+docs/system/domains/review.md,current/reference,659,5178,7,0,,mechanical full-text/reference scan
+docs/system/domains/runner.md,current/reference,1702,15618,27,2,../research/orchestrator-decision-protocol-2026-05.md; ../schemas/task-execution-location.schema.json,manual code comparison
+docs/system/domains/tasks.md,current/reference,1483,12719,33,3,../schemas/task-execution-location.schema.json; ../schemas/task-find-result.schema.json; ../schemas/task-mutation-request.schema.json,manual code comparison
+docs/system/domains/token-pricing.md,current/reference,130,999,0,0,,mechanical full-text/reference scan
+docs/system/domains/tokens.md,current/reference,421,3297,8,0,,mechanical full-text/reference scan
+docs/system/reports/README.md,current/reference,9,42,3,0,,mechanical full-text/reference scan
+docs/system/reports/analysis-reports.md,current/reference,232,3220,22,6,../../frontend/src/app/components/project-analysis-reports-section.ts; ../schemas/README.md; ../schemas/analysis-report.schema.json,mechanical full-text/reference scan
+docs/system/reports/drift-reports.md,current/reference,250,3128,11,5,../schemas/README.md; ../schemas/drift-report.schema.json,mechanical full-text/reference scan
+docs/system/reports/drift-reports.md.report.html,generated preview,164,698,0,0,,mechanical full-text/reference scan
+docs/system/reports/git-info-performance-agt-2007.md,current/reference,86,573,0,0,,mechanical full-text/reference scan
+docs/system/reports/git-state-index-agt-2726.md,current/reference,100,685,2,0,,mechanical full-text/reference scan

@@ -301,10 +301,253 @@
       *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
     }
   </style>
+<style> .table-scroll{overflow-x:auto}.table-scroll table{min-width:960px}.table-scroll td{overflow-wrap:anywhere}.table-scroll code{font-size:.8em} blockquote{margin:18px 0;padding:16px 20px;border:1px solid var(--article-line);border-radius:10px;background:var(--article-surface)} blockquote p{margin:0} </style>
 </head><body><main>
-<header class="page"><p class="kicker">AGT-3004 · Code baseline 12d180d08</p><h1>Documentation drift audit</h1><p class="lede">A code-anchored review of the system and operations documentation, with replacement text and follow-up tasks.</p></header>
-<section data-concept-section="alternatives"><h2>Alternatives</h2><p>Apply the verified corrections by area, or keep dated findings as a reference while operators continue to use the current pages.</p></section>
-<section data-concept-section="recommendation"><h2>Recommendation</h2><p>Apply corrections by area after the audit evidence has been reviewed.</p></section>
-<section data-concept-section="evidence"><h2>Evidence</h2><p>The <a href="audit.md">audit table</a> records code symbols and replacement text. The <a href="page-inventory.csv">page inventory</a> records every scanned Markdown and HTML source page.</p></section>
-<section data-concept-section="open-decisions"><h2>Open decisions</h2><p>Accept the proposed documentation corrections by area or revise individual rows.</p></section>
+<header class="page"><p class="kicker">AGT-3004 · Decision Dossier · 2026-10-03</p><h1>Documentation drift audit</h1><p class="lede">A code-anchored audit of system and operations documentation, with mechanical page coverage, verified mismatches, replacement text, and five follow-up slices.</p><div class="meta"><span><b>Code</b> origin/develop 12d180d08</span><span><b>Scope</b> 363 pages</span><span><b>Decision state</b> pending</span></div></header>
+<section data-concept-section="alternatives"><h2>Alternatives</h2><div class="variant-grid"><div class="variant"><h3>Apply corrections by area</h3><p>Use the verified rows and replacement paragraphs, then complete the residual semantic pass. This keeps operator runbooks aligned with the owning code while preserving dated incident records.</p></div><div class="variant"><h3>Keep the inventory as a warning</h3><p>Publish the mismatch list without changing existing pages. Operators would still encounter the wrong executable, old host routes, and removed CLI instructions.</p></div></div></section>
+<section data-concept-section="recommendation"><h2>Recommendation</h2><p>Apply corrections by area through the five documentation slices below. Start with release and host instructions because those can make an operator run the wrong command or call the wrong API. Use the page inventory to finish the statement-level review of pages that received only mechanical scanning.</p></section>
+<section data-concept-section="evidence"><h2>Evidence</h2><p>The complete findings and ten ready-to-apply paragraphs follow. <a href="page-inventory.csv">Page inventory CSV</a> contains every in-scope source and preview page with review depth and candidate link failures.</p><p><strong>Source task:</strong> AGT-3004. <strong>Requested report date:</strong> 2026-09-29. <strong>Code checked:</strong> <code>origin/develop</code> at <code>12d180d08</code> on 2026-10-03. <strong>Scope:</strong> <code>docs/system/</code> and <code>docs/operations/</code>. This Dossier is at <code>docs/docs-drift-audit-2026-09-29/</code> because the concept delivery contract permits one new <code>docs/&lt;slug&gt;/</code> directory and no changes to existing pages.</p>
+<h2>Method and coverage</h2>
+<p>The <a href="page-inventory.csv">page inventory</a> lists all <strong>363</strong> Markdown and HTML pages in scope, including 14 generated <code>.report.html</code> previews. The full text of every page was read by the inventory pass to count lines, words, and local references. Its <code>unresolvedLocalLinks</code> values are <strong>candidates</strong>, because historical paths, examples, anchors, and generated previews can be intentional. Eighteen active or high-impact pages received a manual claim-to-code comparison. The code comparison used <code>task-server/TaskServerEndpoints.cs</code>, <code>task-server/StudioHostsEndpoints.cs</code>, <code>backend/Features/Runner/V1ReviewPlaneEndpoints.cs</code>, <code>backend/Features/Tasks/TaskIntegrationStatusService.cs</code>, <code>backend/Features/Runner/WorktreeTaskLifecycle.cs</code>, <code>runner/RunnerOptions.cs</code>, <code>runner/TaskServerClient.cs</code>, <code>update-service/UpdateServiceOptions.cs</code>, <code>update-service/Installation/InstallationUpgradePolicy.cs</code>, <code>scripts/release/package-release.sh</code>, <code>deploy/release/agent-orchestrator/</code>, <code>docker-compose.yml</code>, and appsettings files.</p>
+<p>The manual pass found the mismatches below. It did <strong>not</strong> verify every factual sentence in the 363 pages against implementation. The inventory is a complete page sweep; the semantic findings are bounded to the cited claims. Historical incident logs and decision Dossiers are not silently rewritten as current runbooks. <code>wrong</code> means following the statement can produce an incorrect action or conclusion; <code>stale</code> means it described an older implementation or path; <code>missing</code> means a necessary current distinction is absent.</p>
+<h2>Release and update</h2>
+<div class="breakout table-scroll"><table>
+<thead>
+<tr>
+<th>Page</th>
+<th>Statement</th>
+<th>What the code does</th>
+<th>Severity</th>
+<th>Proposed fix</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>docs/operations/releases.md</code></td>
+<td>Names the guided executable <code>agent-orchestrator-setup</code> and instructs <code>sudo ./agent-orchestrator-setup</code> / <code>--join</code>.</td>
+<td><code>scripts/release/package-release.sh</code> requires and emits <code>agent-studio-setup</code>; <code>.github/workflows/release.yml</code> publishes it. <code>docs/operations/setup/install.md</code> uses that name.</td>
+<td>wrong</td>
+<td>Replace the executable name and all sample commands with <code>agent-studio-setup</code>.</td>
+</tr>
+<tr>
+<td><code>docs/operations/releases.md</code></td>
+<td>Says the release has three archives and that the host archive keeps the product at exactly three distributables.</td>
+<td><code>package-release.sh</code> creates <strong>four</strong> archives: <code>agent-orchestrator</code>, <code>agent-host</code>, <code>agent-studio</code>, and <code>agent-studio-compose</code>, plus the setup executable and checksums.</td>
+<td>wrong</td>
+<td>Add the Compose archive and update the distributable count and asset table.</td>
+</tr>
+<tr>
+<td><code>docs/operations/releases.md</code></td>
+<td>The generic “Update” section only walks through <code>/opt/agent-orchestrator/current/update.sh</code>.</td>
+<td><code>InstallationUpgradePolicy.SelectUpdater</code> chooses checkout Update Service, installed Compose Docker scripts, installed systemd scripts, or host tooling by placement. <code>UpdateServiceOptions.Placement</code> defaults to <code>DevStableCheckout</code> and refuses non-checkout application; <code>deploy/release/agent-orchestrator/update-docker.sh</code> owns Compose.</td>
+<td>missing</td>
+<td>Start the update section with a placement table. Keep the current <code>update.sh</code> steps under an installed-systemd heading.</td>
+</tr>
+<tr>
+<td><code>docs/operations/setup/multi-machine.md</code></td>
+<td>Offline instructions say to place “the three archives” in <code>--release-dir</code> without qualifying target placement.</td>
+<td><code>package-release.sh</code> emits a fourth <code>agent-studio-compose-&lt;version&gt;.tar.gz</code>; the default control-plane target is Docker in this same guide.</td>
+<td>stale</td>
+<td>Name the archives needed by each target; include the Compose archive for the default Docker control plane.</td>
+</tr>
+<tr>
+<td><code>docs/operations/setup/networked-task-server.md</code></td>
+<td>Calls the monolith/Caddy <code>127.0.0.1:5030</code> profile the reference Task Server deployment and expects <code>/healthz</code> body <code>ok</code>.</td>
+<td>The released one-box <code>docker-compose.yml</code> runs <code>task-server:5071</code>, Engine, BFF, compatibility API, web, and runners. <code>TaskServerEndpoints.MapTaskServerEndpoints</code> returns JSON <code>{status:&quot;live&quot;}</code> from <code>/healthz</code> and uses <code>/readyz</code> for authority readiness. The 5030/<code>ok</code> contract belongs to <code>backend/Host/SystemEndpoints.cs</code> compatibility backend.</td>
+<td>stale</td>
+<td>Label the page as the legacy networked monolith profile and point new installations to <code>setup/install.md</code>, <code>multi-machine.md</code>, and <code>task-server.md</code>; split health examples by process.</td>
+</tr>
+</tbody></table></div>
+<h2>Runner and host operations</h2>
+<div class="breakout table-scroll"><table>
+<thead>
+<tr>
+<th>Page</th>
+<th>Statement</th>
+<th>What the code does</th>
+<th>Severity</th>
+<th>Proposed fix</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>docs/operations/setup/linux-runner-host.md</code></td>
+<td><code>RUNNER_SERVER_REQUEST_TIMEOUT_SECONDS</code> is the deadline for “every Task Server HTTP request.”</td>
+<td><code>RunnerOptions.Parse</code> defaults it to 60 seconds, but <code>TaskServerClient.ReportReviewAsync</code> uses <code>ReviewReportAckTimeout = 10s</code> for review report acknowledgement.</td>
+<td>wrong</td>
+<td>State the report exception and direct report-timeout diagnosis to the two-phase review hand-off.</td>
+</tr>
+<tr>
+<td><code>docs/operations/setup/linux-runner-host.md</code></td>
+<td>The <code>RUNNER_EXEC_ENGINE</code> row says the <code>legacy</code> engine “is removed in AGT-2373.”</td>
+<td><code>RunnerOptions.Parse</code> still accepts <code>car</code> and <code>legacy</code>; <code>runner/Program.cs</code> still documents the rollback mode and <code>CarWorkerExecution</code> retains the counterpart.</td>
+<td>stale</td>
+<td>Say legacy remains an explicit rollback path in this revision; remove the future deletion claim.</td>
+</tr>
+<tr>
+<td><code>docs/operations/setup/README.md</code></td>
+<td>Describes the normal persistent runner connection as autossh/systemd or a Windows Scheduled Task.</td>
+<td><code>backend/Features/Management/RunnerLinks/LinkSupervisor.cs</code> owns the compatibility reverse link; <code>docs/operations/setup/remote-runner-persistent-connection.md</code> itself says the Scheduled Task is emergency-only. The released distributed topology uses outbound host HTTP in <code>runner/TaskServerClient.cs</code> and <code>docker-compose.yml</code>.</td>
+<td>wrong</td>
+<td>Separate distributed outbound connectivity from the compatibility reverse-link runbook; identify the latter as a scoped interim path.</td>
+</tr>
+<tr>
+<td><code>docs/operations/remote-hosts.md</code></td>
+<td>Tells an operator to register a distributed host with <code>POST /api/clients/register</code> and verify with <code>GET /api/clients/{id}</code>.</td>
+<td>Those routes are in monolith <code>backend/Features/Clients/ClientEndpoints.cs</code>. A v1 host registers with <code>PUT /api/v1/runners/{runnerId}</code> in <code>TaskServerEndpoints.MapTaskServerEndpoints</code>, called by <code>TaskServerClient.RegisterAsync</code>; host management uses <code>StudioHostsEndpoints</code> under <code>/api/v1/studio/clients</code>.</td>
+<td>wrong</td>
+<td>Replace the distributed host bootstrap recipe with the installer/join-token and v1 registration flow. Retain the monolith API only as an explicitly labeled compatibility recipe.</td>
+</tr>
+<tr>
+<td><code>docs/operations/remote-hosts.md</code></td>
+<td>Host drain, retire, revive, and permanent-delete curl examples use <code>/api/clients/{id}/...</code>.</td>
+<td><code>StudioHostsEndpoints.MapStudioHostsEndpoints</code> maps those operations under <code>/api/v1/studio/clients/{clientId}/...</code> on the standalone Task Server.</td>
+<td>wrong</td>
+<td>Give the v1 routes, required principal/scope, and payloads; keep legacy endpoints in a separate note if still supported.</td>
+</tr>
+</tbody></table></div>
+<h2>CLI and model execution</h2>
+<div class="breakout table-scroll"><table>
+<thead>
+<tr>
+<th>Page</th>
+<th>Statement</th>
+<th>What the code does</th>
+<th>Severity</th>
+<th>Proposed fix</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>docs/operations/setup/README.md</code>, <code>docs/operations/setup/onboard-an-agent-cli.md</code></td>
+<td>Onboarding says there are four active CLIs and includes GitHub Copilot setup.</td>
+<td><code>backend/Features/Cli/Execution/BuiltInCliBehaviors.cs</code> exposes Claude, Codex, and Antigravity (<code>gemini</code> stored type). <code>docs/system/cli/supported-clis.md</code> and <code>cli-overview.md</code> explicitly record Copilot removal; <code>CopilotCliService</code> is absent.</td>
+<td>wrong</td>
+<td>Change onboarding to three integrations and retire the Copilot instructions as history.</td>
+</tr>
+<tr>
+<td><code>docs/operations/setup/onboard-an-agent-cli.md</code></td>
+<td>Says <code>CodexCliService.BuildSystemPromptPrefix</code> prepends to a <strong>positional prompt argument</strong> and suggests one-off <code>codex exec --json &quot;&lt;prompt&gt;&quot;</code>.</td>
+<td><code>BuiltInCliBehaviors.Codex</code> owns the current adapter, and <code>docs/system/cli/skills/cli-codex.md</code> records <code>codex exec --json -</code> with stdin delivery. The former <code>CodexCliService.cs</code> file is absent.</td>
+<td>wrong</td>
+<td>Replace the code owner and shell example with stdin-piped <code>codex exec --json -</code>; preserve the sentinel-prefix explanation.</td>
+</tr>
+<tr>
+<td><code>docs/operations/setup/onboard-an-agent-cli.md</code></td>
+<td>Says Codex token usage frames do not reach the bus.</td>
+<td><code>BuiltInCliBehaviors</code> parses <code>turn.completed</code> usage; <code>backend.Tests/CodexTurnUsageBusEmitTests.cs</code> covers its bus emission.</td>
+<td>stale</td>
+<td>Remove the old bug claim; give the raw-frame, parser, and bus diagnostic sequence.</td>
+</tr>
+<tr>
+<td><code>docs/system/cli/skills/cli-codex.md</code></td>
+<td>Commit/push identity card says push is “today: a tracked gap.”</td>
+<td><code>TaskTransitionService.PushJobCommitsDetailedAsync</code>, <code>CompletedPushWorker</code>, and <code>CompletedPushBackstopHostedService</code> implement bounded platform pushes; <code>docs/operations/git/commit-push-doctrine.md</code> already marks the gap Done.</td>
+<td>stale</td>
+<td>Say the platform owns configured immediate/completed pushes and the backstop; keep the CLI prohibition.</td>
+</tr>
+<tr>
+<td><code>docs/system/cli/skills/cli-codex.md</code>, <code>docs/system/domains/cli.md</code></td>
+<td>Point to <code>backend/Services/Cli/CodexCliService.cs</code> and a <code>cli-copilot.md</code> deep reference.</td>
+<td>The implementation is <code>backend/Features/Cli/Execution/BuiltInCliBehaviors.cs</code> and <code>backend/Features/Cli/Execution/Rendering/CodexOutputRenderer.cs</code>; <code>cli-copilot.md</code> does not exist.</td>
+<td>stale</td>
+<td>Repoint symbols and remove the dead Copilot link.</td>
+</tr>
+</tbody></table></div>
+<h2>Review, integration, and contracts</h2>
+<div class="breakout table-scroll"><table>
+<thead>
+<tr>
+<th>Page</th>
+<th>Statement</th>
+<th>What the code does</th>
+<th>Severity</th>
+<th>Proposed fix</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>docs/system/contracts/review-plane.md</code></td>
+<td>Calls the monolith v1 endpoint “today&#39;s production implementation” and standalone Task Server a target reference implementation.</td>
+<td>The released one-box <code>docker-compose.yml</code> includes standalone <code>task-server</code>, and <code>TaskServerEndpoints</code> maps v1 review routes. The same document correctly says <code>TaskServerReviewStore.ReportReviewAsync</code> does <strong>not</strong> run the monolith&#39;s file journal/evidence worker/automatic lane continuation.</td>
+<td>stale</td>
+<td>State deployment-specific authorities at the top and keep the two projection models separate; do not promise monolith repair behavior in a standalone install.</td>
+</tr>
+<tr>
+<td><code>docs/system/contracts/agent-task.md</code></td>
+<td>Says terminal worktree teardown requires <code>task/&lt;id&gt;</code> to be a strict ancestor of <code>develop</code>.</td>
+<td><code>WorktreeTaskLifecycle.TeardownIfIntegrated(repoRoot, taskId, integrationBranch, ...)</code> calls <code>GitService.IsAncestor</code> against the <strong>configured</strong> integration branch. <code>TaskIntegrationStatusService.ConfiguredIntegrationBranch</code> also resolves per task/project.</td>
+<td>wrong</td>
+<td>Replace hard-coded <code>develop</code> with the configured integration branch; distinguish local containment from remote <code>integrated</code> publication.</td>
+</tr>
+<tr>
+<td><code>docs/operations/git/commit-push-doctrine.md</code></td>
+<td>Links implementation at <code>backend/Services/GitService.cs</code>, <code>backend/Services/Tasks/TaskTransitionService.cs</code>, and old <code>ProjectRunner</code> paths.</td>
+<td>Those owners are under <code>backend/Features/Git/</code>, <code>backend/Features/Tasks/</code>, and <code>backend/Features/Runner/</code>.</td>
+<td>stale</td>
+<td>Repair the links and nearby class paths without changing the commit/push policy text.</td>
+</tr>
+<tr>
+<td><code>docs/system/domains/pipeline.md</code>, <code>docs/system/domains/tasks.md</code></td>
+<td>Link task and pipeline schema files through <code>docs/system/schemas/</code>.</td>
+<td>The schemas live under <code>docs/app/schemas/</code>; the documented relative <code>../schemas/...</code> targets do not resolve.</td>
+<td>stale</td>
+<td>Repoint to <code>../../app/schemas/...</code> from domain pages and verify all targets.</td>
+</tr>
+</tbody></table></div>
+<h2>Verified distinctions without a correction</h2>
+<ul>
+<li><code>docs/operations/git/interrupted-integration-gate.md</code> correctly distinguishes <code>merged-locally</code> from <code>integrated</code>. <code>TaskIntegrationStatusService</code> emits the local-only state until the published branch contains the delivery; <code>IntegrationStatuses.IsMerged</code> and <code>IsNotIntegrated</code> deliberately answer different questions.</li>
+<li><code>docs/system/domains/runner.md</code> describes the v1 gate host routes and scope family found in <code>task-server/TaskServerEndpoints.cs</code> and <code>runner/RemoteGateDaemon.cs</code>. No gate-route correction is proposed from this pass.</li>
+<li><code>docs/operations/setup/installation-upgrade-contract.md</code> correctly assigns installed Compose updates to <code>update-docker.sh</code> and checkout updates to the 5039 Update Service. Its placement table is the source to reuse in <code>docs/operations/releases.md</code>.</li>
+</ul>
+<h2>Ready-to-apply replacement paragraphs</h2>
+<p>The following ten paragraphs are replacement copy. Each is scoped to the named page and can be pasted after normal editorial review.</p>
+<h3>1. Release assets (<code>docs/operations/releases.md</code>)</h3>
+<blockquote>
+<p>The published guided installer is <code>agent-studio-setup</code> on Linux and <code>agent-studio-setup.exe</code> on Windows. A release includes four versioned archives: <code>agent-orchestrator-&lt;version&gt;-linux-x64.tar.gz</code>, <code>agent-host-&lt;version&gt;.tar.gz</code>, <code>agent-studio-&lt;version&gt;.tar.gz</code>, and <code>agent-studio-compose-&lt;version&gt;.tar.gz</code>. Download the installer and <code>SHA256SUMS</code> from the same tag and verify them before running <code>./agent-studio-setup</code>. The Compose archive supplies the default one-box installation; the control-plane and host archives supply native placements.</p>
+</blockquote>
+<h3>2. Update placement (<code>docs/operations/releases.md</code>)</h3>
+<blockquote>
+<p>Choose the updater from the installed placement. A dev or Stable checkout uses the loopback Update Service on port 5039; it refuses installed placements. An installed Compose control plane uses <code>deploy/release/agent-orchestrator/update-docker.sh</code> and <code>rollback-docker.sh</code>. An installed systemd control plane uses <code>/opt/agent-orchestrator/current/update.sh</code> and <code>rollback.sh</code>. Agent Hosts drain and update per host. For Compose, an update without a configured canary remains <code>awaiting-canary</code>; it is not a successful release until the detached canary passes and the same target is resumed.</p>
+</blockquote>
+<h3>3. Runner report timeout (<code>docs/operations/setup/linux-runner-host.md</code>)</h3>
+<blockquote>
+<p><code>RUNNER_SERVER_REQUEST_TIMEOUT_SECONDS</code> defaults to 60 seconds for ordinary Task Server HTTP exchanges. Remote Review report acknowledgement has a separate fixed 10-second deadline in <code>TaskServerClient.ReportReviewAsync</code>. A report timeout does not by itself prove that settlement failed: read the attempt state and the two-phase review hand-off before retrying or clearing a slot. The report uses fenced, idempotent replay while evidence projection may continue after acknowledgement.</p>
+</blockquote>
+<h3>4. Remote connectivity (<code>docs/operations/setup/README.md</code>)</h3>
+<blockquote>
+<p>In the distributed installation, Agent Hosts initiate outbound HTTPS to the Task Server for registration, claims, leases, and reports; they do not need a workstation-owned SSH reverse link. The <code>remote-runner-persistent-connection.md</code> page documents the separate Windows compatibility topology in which <code>LinkSupervisor</code> owns a reverse link. Its old Scheduled Task assets are an emergency rollback path, not the normal connection method.</p>
+</blockquote>
+<h3>5. Host registration and lifecycle (<code>docs/operations/remote-hosts.md</code>)</h3>
+<blockquote>
+<p>For a standalone Task Server, enroll the host with the guided <code>agent-studio-setup --join</code> flow and its protected join token. The daemon registers its configured <code>RUNNER_ID</code> through <code>PUT /api/v1/runners/{runnerId}</code> and advertises capabilities; do not create a <code>/api/clients/register</code> identity for that v1 registration. Standalone host management uses <code>/api/v1/studio/clients/{clientId}</code> for drain, retire, revive, and permanent removal. The <code>/api/clients/...</code> routes belong to the monolith compatibility backend and require a separately labeled procedure.</p>
+</blockquote>
+<h3>6. CLI support (<code>docs/operations/setup/onboard-an-agent-cli.md</code>)</h3>
+<blockquote>
+<p>Agent Studio currently drives Claude Code, Codex, and Antigravity through <code>agentapi</code>; Antigravity retains the stored CLI type <code>gemini</code>. GitHub Copilot&#39;s former adapter was removed and is not a selectable coding integration. Install and authenticate only the CLI selected for the project or card. Keep historical Copilot failure notes as incident records, not as onboarding instructions.</p>
+</blockquote>
+<h3>7. Codex invocation and usage (<code>docs/operations/setup/onboard-an-agent-cli.md</code>)</h3>
+<blockquote>
+<p>The Codex adapter is <code>BuiltInCliBehaviors.Codex</code> under <code>backend/Features/Cli/Execution/</code>. A fresh headless invocation uses <code>codex exec --json -</code> and sends the full prompt through stdin; a resume uses <code>codex exec resume &lt;uuid&gt; --json -</code> with the follow-up on stdin. The runtime prefix carries the terminal-sentinel reminder. For missing token usage, inspect the raw <code>turn.completed</code> frame, <code>TryCaptureTurnUsage</code>, and recorded-usage bus emission before changing pricing or quotas; this path has a regression test in <code>CodexTurnUsageBusEmitTests</code>.</p>
+</blockquote>
+<h3>8. Platform push (<code>docs/system/cli/skills/cli-codex.md</code>)</h3>
+<blockquote>
+<p>Codex does not commit or push its own work. The platform records the candidate commit, then applies the project&#39;s <code>AutoPushStrategy</code>: <code>never</code>, <code>on-completed</code>, or <code>always-immediate</code>. <code>TaskTransitionService.PushJobCommitsDetailedAsync</code> and the completed-push worker/backstop handle bounded publication and report terminal failures. A local commit is not remotely durable until the target branch contains it; inspect the card&#39;s push evidence and remote ancestry when diagnosing delivery.</p>
+</blockquote>
+<h3>9. Review authorities (<code>docs/system/contracts/review-plane.md</code>)</h3>
+<blockquote>
+<p>The v1 Review Plane is served by both the compatibility backend and the standalone Task Server. The released distributed one-box installation routes host reviews through <code>task-server/TaskServerEndpoints.cs</code>; the compatibility backend uses <code>backend/Features/Runner/V1ReviewPlaneEndpoints.cs</code>. Their report durability boundaries differ: the standalone <code>TaskServerReviewStore</code> settles report and task state in SQLite, while the compatibility backend also uses a file settlement journal, asynchronous evidence projection, and lane continuation. Apply the recovery procedure for the process that actually owns the attempt.</p>
+</blockquote>
+<h3>10. Worktree and integration (<code>docs/system/contracts/agent-task.md</code>)</h3>
+<blockquote>
+<p>Before terminal teardown, the platform snapshots dirty work onto the task branch or refuses cleanup. It removes an integrated task worktree only when that branch is an ancestor of the project&#39;s configured integration branch, which may be <code>develop</code>, <code>main</code>, or another configured ref. Local ancestry permits safe worktree cleanup; it is not by itself the published <code>integrated</code> verdict. That status requires the accepted result to be reachable from the published target branch, while a local-only merge is <code>merged-locally</code>.</p>
+</blockquote>
+<h2>Follow-up cards</h2>
+<p>These are documentation-only implementation slices. Do not edit product source or change a contract merely to make an old sentence true.</p>
+<ol>
+<li><strong>Release and updater runbooks.</strong> Correct <code>docs/operations/releases.md</code>, <code>setup/multi-machine.md</code>, and the scope label in <code>setup/networked-task-server.md</code>. Acceptance: filenames and archive count match <code>package-release.sh</code> and <code>.github/workflows/release.yml</code>; each installation placement names its actual updater and canary outcome; 5030 compatibility and 5071 standalone health checks are distinct; all commands and links resolve.</li>
+<li><strong>Host and runner operations.</strong> Correct <code>setup/README.md</code>, <code>setup/linux-runner-host.md</code>, and <code>remote-hosts.md</code>. Acceptance: v1 registration and lifecycle examples map to <code>TaskServerEndpoints</code>/<code>StudioHostsEndpoints</code>; compatibility endpoints are labeled; distributed outbound connectivity and reverse-link fallback are separate; the 10-second review-report timeout and still-supported legacy engine are accurate.</li>
+<li><strong>CLI onboarding and deep references.</strong> Correct <code>setup/onboard-an-agent-cli.md</code>, <code>system/domains/cli.md</code>, and <code>system/cli/skills/cli-codex.md</code>. Acceptance: only active CLIs are presented for installation; Codex stdin/resume and usage paths match <code>BuiltInCliBehaviors</code> and tests; no dead <code>CodexCliService</code>/Copilot links remain; platform push behavior agrees with <code>commit-push-doctrine.md</code>.</li>
+<li><strong>Review and integration contracts.</strong> Correct <code>system/contracts/review-plane.md</code>, <code>system/contracts/agent-task.md</code>, and stale implementation links in <code>operations/git/commit-push-doctrine.md</code>. Acceptance: distributed and compatibility report authorities are named separately; cleanup checks the configured integration branch; <code>merged-locally</code> and published <code>integrated</code> remain distinct; every code path and symbol reference resolves.</li>
+<li><strong>Reference-link repair and residual semantic pass.</strong> Repair unresolved active-page code/schema links in the page inventory, then perform a statement-level code review of the remaining pages marked <code>mechanical full-text/reference scan</code>. Acceptance: each in-scope current/reference page has a reviewed date and a code owner or a clear historical/proposal label; unresolved links are triaged, with examples excluded; corrections are recorded without rewriting historical incident facts.</li>
+</ol>
+</section>
+<section data-concept-section="open-decisions"><h2>Open decisions</h2><ol><li><b>Legacy networked page:</b> label the monolith profile and direct new installs to distributed guides (recommended); archiving it would remove a still useful compatibility recipe.</li><li><b>Remediation order:</b> release and host procedures first, then CLI and review contracts (recommended).</li><li><b>Residual coverage:</b> require a statement-level review of mechanically scanned pages as the fifth documentation slice (recommended). The present inventory does not establish semantic correctness for those pages.</li></ol></section>
 </main></body></html>

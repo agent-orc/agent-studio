@@ -2,13 +2,34 @@
   "schemaVersion": 1,
   "id": "docs-drift-audit-2026-09-29",
   "title": "System and operations documentation drift audit",
-  "summary": "Code-anchored drift findings, replacement text, and a bounded set of follow-up documentation cards.",
+  "summary": "A code-anchored sweep of 363 system and operations pages, with 19 verified drift rows, ten replacement paragraphs, and five documentation follow-up slices; the page inventory distinguishes mechanical coverage from manual claim checks.",
   "entrypoint": "index.html",
   "status": "decision-pending",
-  "phase": "audit",
-  "updatedAt": "2026-10-03T04:20:16Z",
+  "phase": "decision-ready",
+  "updatedAt": "2026-10-03T04:29:12Z",
   "sourceTaskKeys": [
     "AGT-3004"
   ],
-  "implementationTasks": []
+  "implementationTasks": [
+    {
+      "title": "Correct release assets and updater placement runbooks",
+      "promptMarkdown": "Documentation only. Apply the Release and update table and replacement paragraphs 1-2 in docs/docs-drift-audit-2026-09-29/audit.md to docs/operations/releases.md and docs/operations/setup/multi-machine.md. Label docs/operations/setup/networked-task-server.md as the legacy monolith profile and link current distributed setup. Acceptance: executable and four archive names match scripts/release/package-release.sh and .github/workflows/release.yml; checkout, Compose, systemd and host updaters are distinct; 5030 and 5071 health bodies are not conflated; commands and links resolve."
+    },
+    {
+      "title": "Correct host and runner operator instructions",
+      "promptMarkdown": "Documentation only. Apply the Runner and host operations rows and replacement paragraphs 3-5 from docs/docs-drift-audit-2026-09-29/audit.md to docs/operations/setup/README.md, setup/linux-runner-host.md and remote-hosts.md. Acceptance: standalone registration and lifecycle routes match task-server/TaskServerEndpoints.cs and StudioHostsEndpoints.cs; monolith routes are explicitly scoped; outbound host HTTP and LinkSupervisor compatibility topology are separate; report acknowledgement is documented as 10 seconds; RUNNER_EXEC_ENGINE=legacy remains a present rollback mode."
+    },
+    {
+      "title": "Refresh CLI onboarding and Codex references",
+      "promptMarkdown": "Documentation only. Apply the CLI findings and replacement paragraphs 6-8 from docs/docs-drift-audit-2026-09-29/audit.md to docs/operations/setup/onboard-an-agent-cli.md, docs/operations/setup/README.md, docs/system/domains/cli.md and docs/system/cli/skills/cli-codex.md. Acceptance: three active integrations; no Copilot onboarding or dead cli-copilot link; Codex fresh/resume prompts use stdin; token usage bus path names BuiltInCliBehaviors and CodexTurnUsageBusEmitTests; platform push is described as implemented; all code references resolve."
+    },
+    {
+      "title": "Refresh review and integration contracts",
+      "promptMarkdown": "Documentation only. Apply the Review, integration, and contracts findings and replacement paragraphs 9-10 from docs/docs-drift-audit-2026-09-29/audit.md to docs/system/contracts/review-plane.md, docs/system/contracts/agent-task.md and docs/operations/git/commit-push-doctrine.md. Acceptance: standalone and compatibility report durability boundaries are separate; worktree cleanup uses the configured integration branch; local merged-locally and published integrated statuses remain distinct; old backend/Services links are repaired; cited symbols resolve."
+    },
+    {
+      "title": "Repair remaining active-page links and finish semantic pass",
+      "promptMarkdown": "Documentation only. Use docs/docs-drift-audit-2026-09-29/page-inventory.csv as the page checklist. Triage unresolved links in active docs under docs/system and docs/operations; repair moved code/schema targets, exclude intentional examples, and verify each remaining factual operator instruction against current owning source. Acceptance: each in-scope page has a review date and code owner or is explicitly labeled historical/proposal; candidate link failures are resolved or justified; new mismatches are recorded with page, claim, code symbol, severity and proposed wording. Do not rewrite historical incident facts."
+    }
+  ]
 }
