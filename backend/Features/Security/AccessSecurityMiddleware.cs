@@ -336,16 +336,25 @@ public sealed class AccessSecurityMiddleware
             return candidate is "status" or "orchestrator-feed" or "token-summary-aggregate"
                 or "claim" or "lease" or "logs" or "events" or "artifacts" or "completion"
                 ? ProjectRouteAddress.Unaddressed
-                : ProjectRouteAddress.Addressed(Uri.UnescapeDataString(candidate));
+                : ProjectRouteAddress.Addressed(Uri.UnescapeDataString(ContextRouteProject(path, candidate)));
         }
         if (path.StartsWith("/api/orchestrator/", StringComparison.OrdinalIgnoreCase))
         {
-            var marker = path.Contains("/project:", StringComparison.OrdinalIgnoreCase)
-                ? "/project:"
-                : path.Contains("/task:", StringComparison.OrdinalIgnoreCase) ? "/task:" : null;
-            if (marker is null) return ProjectRouteAddress.WorkspaceWide;
-            var start = path.IndexOf(marker, StringComparison.OrdinalIgnoreCase) + marker.Length;
-            return ProjectRouteAddress.Addressed(Uri.UnescapeDataString(path[start..].Split('/', 2)[0]));
+            // Context routes are task:{projectId}/{taskKey} and
+            // workbench:{projectId}/{workbenchKey}. The first segment after
+            // the colon is the project, never the task or workbench key. Read
+            // the prefix only at the start of the context key: a task key can
+            // itself contain text such as "project:mine".
+            var context = path.StartsWith("/api/orchestrator/context/", StringComparison.OrdinalIgnoreCase)
+                ? path["/api/orchestrator/context/".Length..]
+                : path.StartsWith("/api/orchestrator/sessions/", StringComparison.OrdinalIgnoreCase)
+                    ? path["/api/orchestrator/sessions/".Length..]
+                    : null;
+            if (context is null) return ProjectRouteAddress.WorkspaceWide;
+            foreach (var prefix in new[] { "project:", "task:", "workbench:" })
+                if (context.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    return ProjectRouteAddress.Addressed(Uri.UnescapeDataString(context[prefix.Length..].Split('/', 2)[0]));
+            return ProjectRouteAddress.WorkspaceWide;
         }
         if (path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase))
         {
@@ -365,6 +374,27 @@ public sealed class AccessSecurityMiddleware
             return ProjectRouteAddress.Addressed(ResolveTaskProjects(Uri.UnescapeDataString(taskId), request));
         }
         return ProjectRouteAddress.Unaddressed;
+    }
+
+    private static string ContextRouteProject(string path, string candidate)
+    {
+        // Only the concrete context-chat routes interpret these prefixes.
+        // Other runner routes may address a project whose literal name starts
+        // with the same text and must keep checking that full name.
+        var segments = path["/api/runner/".Length..].Split('/');
+        if (segments.Length == 2
+            && segments[1].Equals("orchestrator-chat", StringComparison.OrdinalIgnoreCase)
+            && candidate.StartsWith("project:", StringComparison.OrdinalIgnoreCase))
+            return candidate["project:".Length..];
+        if (segments.Length == 3
+            && segments[2].Equals("orchestrator-chat", StringComparison.OrdinalIgnoreCase))
+        {
+            if (candidate.StartsWith("task:", StringComparison.OrdinalIgnoreCase))
+                return candidate["task:".Length..];
+            if (candidate.StartsWith("workbench:", StringComparison.OrdinalIgnoreCase))
+                return candidate["workbench:".Length..];
+        }
+        return candidate;
     }
 
     /// <summary>

@@ -103,6 +103,9 @@ public sealed class ScopedOperatorAuthorizationTests : IDisposable
     [InlineData("GET", "/api/projects/{foreign}/security", "?project={mine}")]
     [InlineData("GET", "/api/runner/{foreign}/orchestrator-log", "?project={mine}")]
     [InlineData("GET", "/api/orchestrator/context/project:{foreign}", "?project={mine}")]
+    [InlineData("GET", "/api/orchestrator/context/task:{foreign}/project:{mine}", "?project={mine}")]
+    [InlineData("GET", "/api/orchestrator/sessions/task:{foreign}/project:{mine}", "?project={mine}")]
+    [InlineData("GET", "/api/orchestrator/context/workbench:{foreign}/project:{mine}", "?project={mine}")]
     [InlineData("GET", "/api/orchestrator/context/global", "?project={mine}")]
     [InlineData("GET", "/api/runner/global/status", "?project={mine}")]
     [InlineData("GET", "/api/projects/{mine}/security", "?project={foreign}")]
@@ -116,6 +119,43 @@ public sealed class ScopedOperatorAuthorizationTests : IDisposable
         string Fill(string value) => value.Replace("{mine}", fixture.Mine.Id).Replace("{foreign}", fixture.Foreign.Id);
 
         var result = await fixture.Invoke(method, Fill(pathTemplate), Fill(queryTemplate), login);
+
+        Assert.Equal(StatusCodes.Status403Forbidden, result.Context.Response.StatusCode);
+        Assert.False(result.Called.Value);
+    }
+
+    [Theory]
+    [InlineData("GET", "/api/orchestrator/context/task:{project}/{task}")]
+    [InlineData("POST", "/api/orchestrator/context/task:{project}/{task}/refresh")]
+    [InlineData("GET", "/api/orchestrator/sessions/task:{project}/{task}")]
+    [InlineData("POST", "/api/orchestrator/sessions/task:{project}/{task}/turns")]
+    [InlineData("GET", "/api/runner/task:{project}/{task}/orchestrator-chat")]
+    [InlineData("POST", "/api/runner/task:{project}/{task}/orchestrator-chat")]
+    [InlineData("GET", "/api/orchestrator/context/workbench:{project}/DOS-1")]
+    [InlineData("GET", "/api/runner/workbench:{project}/DOS-1/orchestrator-chat")]
+    public async Task Context_routes_authorize_the_project_id_before_the_task_or_workbench_key(
+        string method, string pathTemplate)
+    {
+        var fixture = NewTaskFixture();
+        var login = await SignedIn(fixture.Store, StudioRoles.Operator, [fixture.Mine.Id]);
+        string Path(string project) => pathTemplate.Replace("{project}", project).Replace("{task}", MineTask);
+
+        var member = await fixture.Invoke(method, Path(fixture.Mine.Id), "", login);
+        Assert.True(member.Called.Value, $"Member project was denied for {Path(fixture.Mine.Id)}.");
+
+        var foreign = await fixture.Invoke(method, Path(fixture.Foreign.Id), $"?project={fixture.Mine.Id}", login);
+        Assert.Equal(StatusCodes.Status403Forbidden, foreign.Context.Response.StatusCode);
+        Assert.Equal("project-scope-denied", ErrorCode(foreign.Context));
+        Assert.False(foreign.Called.Value);
+    }
+
+    [Fact]
+    public async Task Runner_context_prefixes_do_not_change_the_project_on_other_routes()
+    {
+        var fixture = NewTaskFixture();
+        var login = await SignedIn(fixture.Store, StudioRoles.Operator, [fixture.Mine.Id]);
+
+        var result = await fixture.Invoke("GET", $"/api/runner/task:{fixture.Mine.Id}/token-summary", "", login);
 
         Assert.Equal(StatusCodes.Status403Forbidden, result.Context.Response.StatusCode);
         Assert.False(result.Called.Value);
