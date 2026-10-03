@@ -39,7 +39,8 @@ public sealed partial class TaskServerStore
     // The migration block is idempotent; the number guards downgrades from
     // binaries that do not know this state.
     // 26 adds durable principal rotation receipts and scoped proof observations.
-    public const int CurrentSchemaVersion = 26;
+    // 27 binds each rotation consumer to a distinct credential generation.
+    public const int CurrentSchemaVersion = 27;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -4013,6 +4014,16 @@ public sealed partial class TaskServerStore
                 observed_at TEXT NOT NULL,
                 PRIMARY KEY(credential_id, consumer_id, scope)
             );
+            CREATE TABLE IF NOT EXISTS principal_rotation_consumers(
+                operation_id TEXT NOT NULL REFERENCES principal_rotations(operation_id),
+                consumer_id TEXT NOT NULL,
+                credential_id TEXT NOT NULL REFERENCES principal_credentials(credential_id),
+                delivered_at TEXT,
+                PRIMARY KEY(operation_id, consumer_id),
+                UNIQUE(operation_id, credential_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_principal_rotation_consumers_credential
+                ON principal_rotation_consumers(credential_id);
             """, ct);
         await EnsureColumnAsync(connection, "principal_rotations", "previous_generation", "TEXT", ct);
         await EnsureColumnAsync(connection, "principal_rotations", "acknowledged_at_json", "TEXT NOT NULL DEFAULT '{}'", ct);

@@ -763,6 +763,14 @@ and back up this key as a host secret with mode `0600` on Linux. Neither the
 SQLite backup route nor a full backup set includes this key. If it is
 unavailable, restore it before retrying; do not create a new rotation to
 compensate for a lost response.
+For a principal shared by several consumers, include `deliveryConsumerId` in
+each request, selecting one declared consumer at a time. The operation id,
+overlap and `consumers` list remain identical on every request. Each consumer
+receives a distinct bearer under the same principal and scopes. Delivery and
+replay are tracked per consumer: delivery by one host does not stop another
+host from recovering its lost response. The redacted receipt includes
+`consumerCredentialGenerations` and `deliveredAtByConsumer`. A multi-consumer
+request without `deliveryConsumerId` is rejected.
 `GET /api/v1/management/principals/{principalId}/rotations/{operationId}`
 returns the redacted receipt with actor, previous and new generations, delivery
 and per-consumer acknowledgement times, and retirement state. Store the bearer only in the target host's protected
@@ -807,10 +815,11 @@ declared `requiredScope`, then calls
 `{"consumerId":"agent-runner-01"}` using that bearer. The server records the
 scoped success against the new credential generation, rejects an acknowledgement
 without it, and revokes old generations only after all declared consumers have
-acknowledged. If an operation names more than one consumer, each scoped request
-must include `X-Principal-Consumer-Id` for its own binding; a single-consumer
-operation infers that binding. Runner and Engine clients send their configured
-identity as this header; a Studio edge can set `TaskServer:ConsumerId`.
+acknowledged. The server attributes scoped proof to the consumer bound to the
+authenticated bearer. If a client sends `X-Principal-Consumer-Id`, it must match
+that binding; the header alone cannot claim another consumer's proof. Runner
+and Engine clients send their configured identity as this header; a Studio edge
+can set `TaskServer:ConsumerId`.
 Verify the old bearer receives 401 and the new
 bearer still works.
 If a response or delivery is lost, inspect the receipt and the target host's

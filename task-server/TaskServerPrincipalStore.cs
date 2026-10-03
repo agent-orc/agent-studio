@@ -103,7 +103,8 @@ public sealed partial class TaskServerStore
             SELECT p.principal_id, p.kind, p.scopes_json, p.runner_id,
                    p.revoked_at, c.secret_hash, c.revoked_at, c.expires_at,
                    (SELECT r.operation_id FROM principal_rotations r
-                     WHERE r.credential_id = c.credential_id
+                     LEFT JOIN principal_rotation_consumers rc ON rc.operation_id = r.operation_id
+                     WHERE (r.credential_id = c.credential_id OR rc.credential_id = c.credential_id)
                        AND r.retired_at IS NULL AND r.recovery_closed_at IS NULL
                        AND r.revoked_at IS NULL LIMIT 1)
               FROM principal_credentials c

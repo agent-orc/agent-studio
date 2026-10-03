@@ -34,7 +34,8 @@ public sealed record CreatePrincipalRequest(
 public sealed record RotatePrincipalRequest(
     int? OverlapSeconds = null,
     string? OperationId = null,
-    IReadOnlyList<PrincipalRotationConsumer>? Consumers = null);
+    IReadOnlyList<PrincipalRotationConsumer>? Consumers = null,
+    string? DeliveryConsumerId = null);
 
 public sealed record PrincipalRotationConsumer(string ConsumerId, string RequiredScope);
 
@@ -51,7 +52,9 @@ public sealed record PrincipalRotationReceipt(
     DateTime? DeliveredAt = null,
     string? ActorId = null,
     string? PreviousCredentialGeneration = null,
-    IReadOnlyDictionary<string, DateTime>? AcknowledgedAt = null);
+    IReadOnlyDictionary<string, DateTime>? AcknowledgedAt = null,
+    IReadOnlyDictionary<string, string>? ConsumerCredentialGenerations = null,
+    IReadOnlyDictionary<string, DateTime>? DeliveredAtByConsumer = null);
 
 public sealed record PrincipalRotationAcknowledgement(string ConsumerId);
 

@@ -121,7 +121,7 @@ class PrincipalRotationInstallerTests(unittest.TestCase):
             self.assertEqual("old-bearer\n", real.read_text(encoding="ascii"))
 
     def test_recovered_or_retired_receipt_cannot_replace_host_secret(self):
-        issued = {"credentialGeneration": "generation-a"}
+        issued = {"credentialGeneration": "generation-a", "consumers": [{"consumerId": "edge-a"}]}
         for state in ("retired", "recovery-required", "superseded-in-recovery", "revoked"):
             with self.assertRaises(RuntimeError):
                 MODULE.require_installable(issued,
@@ -129,6 +129,16 @@ class PrincipalRotationInstallerTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             MODULE.require_installable(issued,
                 {"credentialGeneration": "generation-b", "state": "issued"})
+
+    def test_shared_receipt_requires_the_selected_consumer_generation(self):
+        receipt = {"state": "issued", "consumers": [{"consumerId": "edge-a"}, {"consumerId": "edge-b"}],
+                   "consumerCredentialGenerations": {"edge-a": "generation-a", "edge-b": "generation-b"}}
+        MODULE.require_installable(receipt, receipt, "edge-b")
+        changed = dict(receipt, consumerCredentialGenerations={"edge-a": "generation-a", "edge-b": "other"})
+        with self.assertRaises(RuntimeError):
+            MODULE.require_installable(receipt, changed, "edge-b")
+        with self.assertRaises(ValueError):
+            MODULE.require_consumer_bearer(receipt, "edge-b", "ats_generation-a." + "a" * 64)
 
     def test_ack_retries_only_missing_consumer_proof_with_a_fake_clock(self):
         ticks = [0]

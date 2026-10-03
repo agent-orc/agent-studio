@@ -336,22 +336,69 @@ public sealed class PrincipalAuthenticationTests
         await using var factory = Factory(temp.Path);
         using var old = Client(factory, StudioToken);
         const string operation = "studio-edge-consumers-1";
+        var ambiguous = await old.PostAsJsonAsync(
+            "/api/v1/management/principals/bootstrap-studio/rotate",
+            new RotatePrincipalRequest(60, operation,
+                [new("edge-a", TaskServerScopes.Management),
+                 new("edge-b", TaskServerScopes.Management)]));
+        Assert.Equal(HttpStatusCode.BadRequest, ambiguous.StatusCode);
         var rotation = await old.PostAsJsonAsync(
             "/api/v1/management/principals/bootstrap-studio/rotate",
             new RotatePrincipalRequest(60, operation,
             [new("edge-a", TaskServerScopes.Management),
-             new("edge-b", TaskServerScopes.Management)]));
+             new("edge-b", TaskServerScopes.Management)], "edge-a"));
         rotation.EnsureSuccessStatusCode();
         var issued = (await rotation.Content.ReadFromJsonAsync<IssuedPrincipalCredential>())!;
-        using var current = Client(factory, issued.Credential);
-        (await current.PostAsync($"/api/v1/principal-rotations/{operation}/delivered", null))
+        var secondRequest = new RotatePrincipalRequest(60, operation,
+            [new("edge-a", TaskServerScopes.Management),
+             new("edge-b", TaskServerScopes.Management)], "edge-b");
+        var secondResponse = await old.PostAsJsonAsync(
+            "/api/v1/management/principals/bootstrap-studio/rotate", secondRequest);
+        secondResponse.EnsureSuccessStatusCode();
+        var second = (await secondResponse.Content.ReadFromJsonAsync<IssuedPrincipalCredential>())!;
+        Assert.NotEqual(issued.Credential, second.Credential);
+        using var firstConsumer = Client(factory, issued.Credential);
+        using var secondConsumer = Client(factory, second.Credential);
+        (await firstConsumer.PostAsync($"/api/v1/principal-rotations/{operation}/delivered", null))
             .EnsureSuccessStatusCode();
-        (await current.GetAsync("/api/v1/management/status")).EnsureSuccessStatusCode();
-        Assert.Equal(HttpStatusCode.Conflict,
-            (await current.PostAsJsonAsync($"/api/v1/principal-rotations/{operation}/ack",
-                new PrincipalRotationAcknowledgement("edge-a"))).StatusCode);
-        foreach (var consumer in new[] { "edge-a", "edge-b" })
+        var lostSecondDelivery = await old.PostAsJsonAsync(
+            "/api/v1/management/principals/bootstrap-studio/rotate", secondRequest);
+        lostSecondDelivery.EnsureSuccessStatusCode();
+        Assert.Equal(second.Credential,
+            (await lostSecondDelivery.Content.ReadFromJsonAsync<IssuedPrincipalCredential>())!.Credential);
+        var firstRetry = await old.PostAsJsonAsync(
+            "/api/v1/management/principals/bootstrap-studio/rotate",
+            secondRequest with { DeliveryConsumerId = "edge-a" });
+        firstRetry.EnsureSuccessStatusCode();
+        Assert.Null((await firstRetry.Content.ReadFromJsonAsync<IssuedPrincipalCredential>())!.Credential);
+        var databaseBytes = Encoding.UTF8.GetString(
+            await File.ReadAllBytesAsync(Path.Combine(temp.Path, "task-server.db")));
+        Assert.DoesNotContain(issued.Credential!, databaseBytes, StringComparison.Ordinal);
+        Assert.DoesNotContain(second.Credential!, databaseBytes, StringComparison.Ordinal);
+        using (var falseProof = new HttpRequestMessage(HttpMethod.Get, "/api/v1/management/status"))
         {
+            falseProof.Headers.Add("X-Principal-Consumer-Id", "edge-b");
+            (await firstConsumer.SendAsync(falseProof)).EnsureSuccessStatusCode();
+        }
+        Assert.Equal(HttpStatusCode.Conflict,
+            (await firstConsumer.PostAsJsonAsync($"/api/v1/principal-rotations/{operation}/ack",
+                new PrincipalRotationAcknowledgement("edge-a"))).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict,
+            (await firstConsumer.PostAsJsonAsync($"/api/v1/principal-rotations/{operation}/ack",
+                new PrincipalRotationAcknowledgement("edge-b"))).StatusCode);
+        using (var earlyProof = new HttpRequestMessage(HttpMethod.Get, "/api/v1/management/status"))
+        {
+            earlyProof.Headers.Add("X-Principal-Consumer-Id", "edge-b");
+            (await secondConsumer.SendAsync(earlyProof)).EnsureSuccessStatusCode();
+        }
+        Assert.Equal(HttpStatusCode.Conflict,
+            (await secondConsumer.PostAsJsonAsync($"/api/v1/principal-rotations/{operation}/ack",
+                new PrincipalRotationAcknowledgement("edge-b"))).StatusCode);
+        foreach (var (consumer, current) in new[] { ("edge-a", firstConsumer), ("edge-b", secondConsumer) })
+        {
+            if (consumer == "edge-b")
+                (await current.PostAsync($"/api/v1/principal-rotations/{operation}/delivered", null))
+                    .EnsureSuccessStatusCode();
             using var proof = new HttpRequestMessage(HttpMethod.Get, "/api/v1/management/status");
             proof.Headers.Add("X-Principal-Consumer-Id", consumer);
             (await current.SendAsync(proof)).EnsureSuccessStatusCode();

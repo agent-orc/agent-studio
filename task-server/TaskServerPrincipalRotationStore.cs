@@ -12,8 +12,9 @@ public sealed partial class TaskServerStore
         PrincipalRotationReceipt Receipt,
         string[] PreviousIds,
         int OverlapSeconds,
-        DateTime? DeliveredAt,
-        DateTime? RecoveryClosedAt);
+        DateTime? RecoveryClosedAt,
+        IReadOnlyDictionary<string, string> CredentialIds,
+        IReadOnlyDictionary<string, DateTime> ConsumerDeliveredAt);
 
     private async Task<IssuedPrincipalCredential> BeginPrincipalRotationAsync(
         string principalId, RotatePrincipalRequest request, string actorId, CancellationToken ct)
@@ -31,6 +32,10 @@ public sealed partial class TaskServerStore
             throw new ArgumentException("Rotation consumers must be unique and numbered between 1 and 32.");
         foreach (var consumer in consumers)
             _ = RequireIdentifier(consumer.ConsumerId, "Consumer id");
+        var deliveryConsumerId = request.DeliveryConsumerId ??
+            (consumers.Length == 1 ? consumers[0].ConsumerId : null);
+        if (deliveryConsumerId is null || !consumers.Any(item => item.ConsumerId == deliveryConsumerId))
+            throw new ArgumentException("A declared delivery consumer id is required.");
 
         PrincipalDto? principal = null;
         PrincipalRotationReceipt? receipt = null;
@@ -55,12 +60,15 @@ public sealed partial class TaskServerStore
                     throw new TaskServerConflictException("rotation-idempotency-conflict",
                         "The rotation operation id is already bound to different parameters.");
                 receipt = prior.Receipt;
-                if (prior.DeliveredAt is null && UtcNow < prior.Receipt.PreviousCredentialValidUntil
-                    && prior.Receipt.State == "issued")
+                if (!prior.ConsumerDeliveredAt.ContainsKey(deliveryConsumerId)
+                    && UtcNow < prior.Receipt.PreviousCredentialValidUntil
+                    && prior.Receipt.State is ("issued" or "delivered" or "awaiting-consumers"))
                 {
-                    var replay = DeriveRotationCredential(principalId, operationId, createKey: false);
+                    var replay = DeriveRotationCredential(principalId, operationId,
+                        consumers.Length == 1 ? null : deliveryConsumerId, createKey: false);
                     if (!TryCredentialId(replay, out var replayId)
-                        || replayId != prior.Receipt.CredentialGeneration)
+                        || !prior.CredentialIds.TryGetValue(deliveryConsumerId, out var expectedId)
+                        || replayId != expectedId)
                         throw new TaskServerConflictException("rotation-delivery-key-mismatch",
                             "The host rotation delivery key does not match this operation.");
                     credential = replay;
@@ -100,15 +108,19 @@ public sealed partial class TaskServerStore
             await using (var reader = await command.ExecuteReaderAsync(ct))
                 while (await reader.ReadAsync(ct)) oldIds.Add(reader.GetString(0));
 
-            credential = DeriveRotationCredential(principalId, operationId, createKey: true);
-            if (!TryCredentialId(credential, out var credentialId))
+            var credentials = consumers.ToDictionary(item => item.ConsumerId,
+                item => DeriveRotationCredential(principalId, operationId,
+                    consumers.Length == 1 ? null : item.ConsumerId, createKey: true), StringComparer.Ordinal);
+            credential = credentials[deliveryConsumerId];
+            if (!TryCredentialId(credentials[consumers[0].ConsumerId], out var credentialId))
                 throw new InvalidOperationException("Generated credential is malformed.");
             await ExecuteAsync(connection, """
                 UPDATE principal_credentials SET expires_at = $deadline
                  WHERE principal_id = $id AND revoked_at IS NULL
                    AND (expires_at IS NULL OR expires_at > $deadline);
                 """, ct, transaction, ("$deadline", Iso(deadline)), ("$id", principalId));
-            await InsertCredentialAsync(connection, transaction, principalId, credential, now, ct);
+            foreach (var bearer in credentials.Values)
+                await InsertCredentialAsync(connection, transaction, principalId, bearer, now, ct);
             await ExecuteAsync(connection, """
                 INSERT INTO principal_rotations(operation_id, principal_id, credential_id,
                     previous_ids_json, previous_generation, consumers_json, acknowledged_json,
@@ -124,10 +136,23 @@ public sealed partial class TaskServerStore
                 ("$consumers", JsonSerializer.Serialize(consumers)),
                 ("$actor", actorId),
                 ("$overlap", overlap), ("$now", Iso(now)), ("$deadline", Iso(deadline)));
+            var consumerIds = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var consumer in consumers)
+            {
+                _ = TryCredentialId(credentials[consumer.ConsumerId], out var id);
+                consumerIds.Add(consumer.ConsumerId, id);
+                await ExecuteAsync(connection, """
+                    INSERT INTO principal_rotation_consumers(operation_id, consumer_id, credential_id)
+                    VALUES ($operation, $consumer, $credential);
+                    """, ct, transaction, ("$operation", operationId),
+                    ("$consumer", consumer.ConsumerId), ("$credential", id));
+            }
             receipt = new PrincipalRotationReceipt(operationId, principalId, credentialId,
                 "issued", now, deadline, consumers, [],
                 ActorId: actorId, PreviousCredentialGeneration: oldIds.FirstOrDefault(),
-                AcknowledgedAt: new Dictionary<string, DateTime>());
+                AcknowledgedAt: new Dictionary<string, DateTime>(),
+                ConsumerCredentialGenerations: consumerIds,
+                DeliveredAtByConsumer: new Dictionary<string, DateTime>());
             await AuditAsync(connection, transaction, actorId, "principal.rotation-issued", "principal",
                 principalId, JsonSerializer.Serialize(new { operationId, credentialId, overlapSeconds = overlap }), ct);
         }, ct);
@@ -161,14 +186,19 @@ public sealed partial class TaskServerStore
         {
             var row = await ReadRotationAsync(connection, transaction, operationId, ct)
                 ?? throw new KeyNotFoundException("Rotation was not found.");
-            RequireRotationBearer(row, actor);
-            if (row.DeliveredAt is not null || row.Receipt.RetiredAt is not null)
+            var consumerId = RequireRotationBearer(row, actor);
+            if (row.ConsumerDeliveredAt.ContainsKey(consumerId) || row.Receipt.RetiredAt is not null)
             {
                 receipt = row.Receipt;
                 return;
             }
             if (UtcNow >= row.Receipt.PreviousCredentialValidUntil)
                 throw new TaskServerConflictException("rotation-recovery-required", "Rotation deadline passed.");
+            await ExecuteAsync(connection, """
+                UPDATE principal_rotation_consumers SET delivered_at = COALESCE(delivered_at, $now)
+                 WHERE operation_id = $operation AND consumer_id = $consumer;
+                """, ct, transaction, ("$now", Iso(UtcNow)),
+                ("$operation", operationId), ("$consumer", consumerId));
             await ExecuteAsync(connection, """
                 UPDATE principal_rotations SET delivered_at = COALESCE(delivered_at, $now)
                  WHERE operation_id = $operation;
@@ -187,10 +217,10 @@ public sealed partial class TaskServerStore
             var row = await ReadRotationAsync(connection, transaction, actor.RotationOperationId, ct);
             if (row is null || row.Receipt.RetiredAt is not null || row.RecoveryClosedAt is not null)
                 return;
-            var consumerId = !string.IsNullOrWhiteSpace(declaredConsumerId)
-                ? declaredConsumerId
-                : row.Receipt.Consumers.Count == 1 ? row.Receipt.Consumers[0].ConsumerId : null;
-            if (consumerId is null || !row.Receipt.Consumers.Any(item =>
+            var consumerId = row.CredentialIds.FirstOrDefault(item =>
+                item.Value == actor.CredentialId).Key;
+            if (consumerId is null || declaredConsumerId is not null && declaredConsumerId != consumerId
+                || !row.Receipt.Consumers.Any(item =>
                     item.ConsumerId == consumerId && item.RequiredScope == scope)) return;
             await ExecuteAsync(connection, """
                 INSERT INTO principal_rotation_proofs(credential_id, consumer_id, scope, observed_at)
@@ -212,7 +242,10 @@ public sealed partial class TaskServerStore
         {
             var row = await ReadRotationAsync(connection, transaction, operationId, ct)
                 ?? throw new KeyNotFoundException("Rotation was not found.");
-            RequireRotationBearer(row, actor);
+            var consumerId = RequireRotationBearer(row, actor);
+            if (request.ConsumerId != consumerId)
+                throw new TaskServerConflictException("rotation-consumer-mismatch",
+                    "The bearer is bound to another rotation consumer.");
             if (row.Receipt.RetiredAt is not null)
             {
                 receipt = row.Receipt;
@@ -220,7 +253,7 @@ public sealed partial class TaskServerStore
             }
             if (UtcNow >= row.Receipt.PreviousCredentialValidUntil)
                 throw new TaskServerConflictException("rotation-recovery-required", "Rotation deadline passed.");
-            if (row.DeliveredAt is null)
+            if (!row.ConsumerDeliveredAt.ContainsKey(consumerId))
                 throw new TaskServerConflictException("rotation-delivery-required", "Delivery has not been acknowledged.");
             var consumer = row.Receipt.Consumers.SingleOrDefault(item => item.ConsumerId == request.ConsumerId)
                 ?? throw new ArgumentException("Consumer is not bound to this rotation.");
@@ -261,23 +294,26 @@ public sealed partial class TaskServerStore
         return receipt!;
     }
 
-    private static void RequireRotationBearer(RotationRow row, TaskServerPrincipal actor)
+    private static string RequireRotationBearer(RotationRow row, TaskServerPrincipal actor)
     {
-        if (actor.PrincipalId != row.Receipt.PrincipalId
-            || actor.CredentialId != row.Receipt.CredentialGeneration)
+        var consumer = row.CredentialIds.FirstOrDefault(item => item.Value == actor.CredentialId).Key;
+        if (actor.PrincipalId != row.Receipt.PrincipalId || consumer is null)
             throw new TaskServerConflictException("rotation-generation-mismatch",
                 "The acknowledgement must use the newly issued credential.");
+        return consumer;
     }
 
     // The delivery seed belongs to the Task Server host, outside the command
-    // database. A committed receipt can reproduce its one bearer after a lost
-    // HTTP response; the API stops replaying it at delivery or the deadline.
-    private string DeriveRotationCredential(string principalId, string operationId, bool createKey)
+    // database. A committed receipt can reproduce each consumer's bearer after
+    // a lost HTTP response; replay stops for that consumer at delivery or deadline.
+    private string DeriveRotationCredential(string principalId, string operationId,
+        string? consumerId, bool createKey)
     {
         var key = ReadRotationDeliveryKey(createKey);
         try
         {
-            var context = principalId + "\0" + operationId;
+            var context = principalId + "\0" + operationId +
+                (consumerId is null ? "" : "\0" + consumerId);
             var id = HMACSHA256.HashData(key, Encoding.UTF8.GetBytes("id:" + context));
             var secret = HMACSHA256.HashData(key, Encoding.UTF8.GetBytes("secret:" + context));
             return $"ats_{Convert.ToHexString(id)[..32].ToLowerInvariant()}.{Convert.ToHexString(secret).ToLowerInvariant()}";
@@ -351,15 +387,47 @@ public sealed partial class TaskServerStore
             : UtcNow >= deadline ? "recovery-required"
             : acknowledged.Length > 0 ? "awaiting-consumers"
             : delivered is not null ? "delivered" : "issued";
-        return new RotationRow(new PrincipalRotationReceipt(
+        var consumers = JsonSerializer.Deserialize<PrincipalRotationConsumer[]>(reader.GetString(4)) ?? [];
+        var receipt = new PrincipalRotationReceipt(
             reader.GetString(0), reader.GetString(1), reader.GetString(2), state,
             Parse(reader.GetString(7)), deadline,
-            JsonSerializer.Deserialize<PrincipalRotationConsumer[]>(reader.GetString(4)) ?? [],
+            consumers,
             acknowledged, retired, delivered, reader.GetString(13),
             reader.IsDBNull(14) ? null : reader.GetString(14),
             JsonSerializer.Deserialize<Dictionary<string, DateTime>>(reader.GetString(15)) ??
-                new Dictionary<string, DateTime>()),
-            JsonSerializer.Deserialize<string[]>(reader.GetString(3)) ?? [],
-            reader.GetInt32(6), delivered, recovered);
+                new Dictionary<string, DateTime>());
+        var previous = JsonSerializer.Deserialize<string[]>(reader.GetString(3)) ?? [];
+        var overlap = reader.GetInt32(6);
+        await reader.DisposeAsync();
+        var credentialIds = new Dictionary<string, string>(StringComparer.Ordinal);
+        var consumerDelivered = new Dictionary<string, DateTime>(StringComparer.Ordinal);
+        await using (var bindings = Command(connection, """
+            SELECT consumer_id, credential_id, delivered_at
+              FROM principal_rotation_consumers WHERE operation_id = $operation;
+            """, transaction, ("$operation", operationId)))
+        await using (var bindingReader = await bindings.ExecuteReaderAsync(ct))
+            while (await bindingReader.ReadAsync(ct))
+            {
+                var consumerId = bindingReader.GetString(0);
+                credentialIds.Add(consumerId, bindingReader.GetString(1));
+                if (!bindingReader.IsDBNull(2))
+                    consumerDelivered.Add(consumerId, Parse(bindingReader.GetString(2)));
+            }
+        // Pre-migration operations with one consumer retain their original bearer.
+        // A legacy shared-bearer operation has no authenticated consumer binding
+        // and remains recoverable only after its existing deadline.
+        if (credentialIds.Count == 0 && consumers.Length == 1)
+        {
+            credentialIds.Add(consumers[0].ConsumerId, receipt.CredentialGeneration);
+            if (delivered is not null)
+                consumerDelivered.Add(consumers[0].ConsumerId, delivered.Value);
+        }
+        receipt = receipt with
+        {
+            ConsumerCredentialGenerations = credentialIds,
+            DeliveredAtByConsumer = consumerDelivered,
+        };
+        return new RotationRow(receipt, previous, overlap, recovered,
+            credentialIds, consumerDelivered);
     }
 }

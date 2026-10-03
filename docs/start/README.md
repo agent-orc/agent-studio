@@ -16,6 +16,7 @@ Use this page as the first stop when you need the right document quickly.
 | [contracts/](../system/contracts/README.md) | Durable filesystem, task, protocol, run outcome, code-pattern, and wiki organization contracts. |
 | [design/](../quality/design/README.md) | Product-wide, prompt-known design hard rules (no left accent bars, full-bleed views, aggregate = sum, acute-only signals, both themes). |
 | [quality/](../quality/README.md) | Technology-aware Angular and .NET style guides, applicability metadata, and the rule-authoring workflow used by Deck and intake prompts. |
+| [docs-drift-audit-2026-09-29/](../docs-drift-audit-2026-09-29/index.html) | Documentation drift audit and page inventory from 29 September 2026. |
 | [frontend/](../quality/frontend/README.md) | Frontend design system, style guide, testing contract, performance playbook, and audits. |
 | [cli/](../system/cli/README.md) | Supported CLI contract, per-CLI skills, audits, and investigations. |
 | [operations/](../operations/README.md) | Setup, onboarding, security docs, runtime observability, git doctrine, and test workspaces. |

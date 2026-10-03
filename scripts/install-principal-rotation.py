@@ -76,10 +76,25 @@ def install(path, bearer):
             os.unlink(staged)
 
 
-def require_installable(issued_receipt, current_receipt):
-    if (current_receipt.get("credentialGeneration") != issued_receipt.get("credentialGeneration")
+def consumer_generation(receipt, consumer):
+    bindings = receipt.get("consumerCredentialGenerations") or {}
+    if bindings:
+        return bindings.get(consumer)
+    return receipt.get("credentialGeneration") if len(receipt.get("consumers", [])) == 1 else None
+
+
+def require_installable(issued_receipt, current_receipt, consumer=None):
+    consumer = consumer or (issued_receipt.get("consumers") or [{}])[0].get("consumerId")
+    if (not consumer_generation(issued_receipt, consumer)
+            or consumer_generation(current_receipt, consumer) != consumer_generation(issued_receipt, consumer)
             or current_receipt.get("state") not in ("issued", "delivered", "awaiting-consumers")):
         raise RuntimeError("The rotation generation is no longer installable.")
+
+
+def require_consumer_bearer(receipt, consumer, bearer):
+    if (not bearer.startswith("ats_") or "." not in bearer
+            or bearer.split(".", 1)[0][4:] != consumer_generation(receipt, consumer)):
+        raise ValueError("The bearer generation does not match this consumer's receipt.")
 
 
 def call(server, path, bearer, consumer, method="POST", body=None):
@@ -169,12 +184,11 @@ def main():
             raise ValueError("The one-time response does not match the requested operation.")
         if not any(item.get("consumerId") == args.consumer_id for item in receipt.get("consumers", [])):
             raise ValueError("The consumer is not declared in the rotation receipt.")
-        if not bearer.startswith("ats_") or bearer.split(".", 1)[0][4:] != receipt.get("credentialGeneration"):
-            raise ValueError("The bearer generation does not match the receipt.")
+        require_consumer_bearer(receipt, args.consumer_id, bearer)
         current = call(server, "/api/v1/principal-rotations/" +
                        urllib.parse.quote(args.operation_id, safe=""),
                        bearer, args.consumer_id, method="GET")
-        require_installable(receipt, current)
+        require_installable(receipt, current, args.consumer_id)
         try:
             staged, _ = read_installed(pending)
             if staged != bearer:
@@ -183,6 +197,13 @@ def main():
             # Persist before touching the live file so --resume survives a crash
             # between backup and replacement without another issuance.
             install(pending, bearer)
+    if args.resume:
+        current = call(server, "/api/v1/principal-rotations/" +
+                       urllib.parse.quote(args.operation_id, safe=""),
+                       bearer, args.consumer_id, method="GET")
+        if current.get("operationId") != args.operation_id:
+            raise RuntimeError("The saved bearer does not match this operation.")
+        require_consumer_bearer(current, args.consumer_id, bearer)
     installed, _ = read_installed(args.token_file)
     if installed != bearer:
         if not os.path.exists(pending):
