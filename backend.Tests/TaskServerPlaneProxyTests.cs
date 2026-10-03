@@ -75,4 +75,47 @@ public sealed class TaskServerPlaneProxyTests
             .ToList();
         Assert.Equal(["/api/v1/{**path}"], routes);
     }
+
+    [Fact]
+    public async Task File_backed_proxy_uses_new_credential_on_next_request()
+    {
+        var path = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(path, "generation-one");
+            var configuration = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["TaskServer:BaseUrl"] = "https://task-server.example",
+                    ["TaskServer:AuthTokenFile"] = path,
+                }).Build();
+            var observed = new List<string?>();
+            var services = new ServiceCollection();
+            services.AddTaskServerPlaneProxy(configuration);
+            services.AddHttpClient(TaskServerPlaneProxy.ClientName)
+                .ConfigurePrimaryHttpMessageHandler(() => new RecordingHandler(request =>
+                {
+                    observed.Add(request.Headers.Authorization?.Parameter);
+                    return new HttpResponseMessage(System.Net.HttpStatusCode.OK);
+                }));
+            using var provider = services.BuildServiceProvider();
+            using var client = provider.GetRequiredService<IHttpClientFactory>()
+                .CreateClient(TaskServerPlaneProxy.ClientName);
+            await client.GetAsync("/api/v1/workspaces");
+            File.WriteAllText(path, "generation-two");
+            await client.GetAsync("/api/v1/workspaces");
+            Assert.Equal(["generation-one", "generation-two"], observed);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    private sealed class RecordingHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(respond(request));
+    }
 }

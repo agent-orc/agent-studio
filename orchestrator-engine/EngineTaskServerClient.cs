@@ -110,15 +110,19 @@ public sealed class EngineTaskServerClient : IDisposable
 
     private static HttpClient CreateHttpClient(EngineOptions options)
     {
-        var client = new HttpClient
+        HttpMessageHandler handler = new HttpClientHandler();
+        if (!string.IsNullOrWhiteSpace(options.ClientCredentialFile))
+            handler = new EngineCredentialReloadHandler(options.ClientCredentialFile, handler);
+        var client = new HttpClient(handler)
         {
             BaseAddress = new Uri(options.ServerUrl),
             Timeout = TimeSpan.FromSeconds(60),
         };
         client.DefaultRequestHeaders.Add("X-Client-Id", options.ClientId);
+        client.DefaultRequestHeaders.Add("X-Principal-Consumer-Id", options.ClientId);
         client.DefaultRequestHeaders.Add(TaskServerProtocol.HeaderName, TaskServerProtocol.Current.ToString());
         client.DefaultRequestHeaders.Add(TaskServerProtocol.ClientVersionHeaderName, EngineVersion.ProductVersion);
-        if (!string.IsNullOrWhiteSpace(options.ClientCredential))
+        if (!string.IsNullOrWhiteSpace(options.ClientCredential) && string.IsNullOrWhiteSpace(options.ClientCredentialFile))
             client.DefaultRequestHeaders.Authorization =
                 new AuthenticationHeaderValue("Bearer", options.ClientCredential);
         return client;

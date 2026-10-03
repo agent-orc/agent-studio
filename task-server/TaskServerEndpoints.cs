@@ -736,9 +736,53 @@ public static class TaskServerEndpoints
             string principalId,
             RotatePrincipalRequest request,
             TaskServerStore store,
-            CancellationToken ct)
-            => await InvokeAsync(() => store.RotatePrincipalAsync(
-                principalId, request, Actor(context), ct)));
+            CancellationToken ct) => context.TaskServerPrincipal() is { } actor
+                ? await InvokeAsync(() => store.RotatePrincipalAsync(
+                    principalId, request, actor.PrincipalId, ct))
+                : Results.Json(new ApiError("principal-required", "An authenticated management principal is required."),
+                    statusCode: StatusCodes.Status403Forbidden));
+        management.MapGet("/principals/{principalId}/rotations/{operationId}", async (
+            string principalId, string operationId, TaskServerStore store, CancellationToken ct)
+            => await InvokeNullableAsync(() => store.GetPrincipalRotationAsync(principalId, operationId, ct)));
+        api.MapGet("/principal-rotations/{operationId}", async (
+            HttpContext context, string operationId, TaskServerStore store, CancellationToken ct)
+            => context.TaskServerPrincipal() is { } actor
+                ? await InvokeAsync(() => store.InspectPrincipalRotationConsumerAsync(operationId, actor, ct))
+                : Results.Json(new ApiError("principal-required", "An authenticated principal is required."),
+                    statusCode: StatusCodes.Status403Forbidden))
+            .RequireAnyTaskServerScope(TaskServerScopes.RunsWrite,
+                TaskServerScopes.Management, TaskServerScopes.TasksRead, TaskServerScopes.TasksWrite,
+                TaskServerScopes.OrchestrationClaim, TaskServerScopes.OrchestrationWrite,
+                TaskServerScopes.RunsClaim, TaskServerScopes.ReviewsClaim, TaskServerScopes.ReviewsWrite,
+                TaskServerScopes.EventsSubscribe, TaskServerScopes.EventsWrite,
+                TaskServerScopes.OperationsInspect, TaskServerScopes.OperationsIssue);
+        api.MapPost("/principal-rotations/{operationId}/delivered", async (
+            HttpContext context, string operationId, TaskServerStore store, CancellationToken ct)
+            => context.TaskServerPrincipal() is { } actor
+                ? await InvokeAsync(() => store.MarkPrincipalRotationDeliveredAsync(operationId, actor, ct))
+                : Results.Json(new ApiError("principal-required", "An authenticated principal is required."),
+                    statusCode: StatusCodes.Status403Forbidden))
+            .RequireAnyTaskServerScope(TaskServerScopes.RunsWrite,
+                TaskServerScopes.Management, TaskServerScopes.TasksRead, TaskServerScopes.TasksWrite,
+                TaskServerScopes.OrchestrationClaim, TaskServerScopes.OrchestrationWrite,
+                TaskServerScopes.RunsClaim,
+                TaskServerScopes.ReviewsClaim, TaskServerScopes.ReviewsWrite,
+                TaskServerScopes.EventsSubscribe, TaskServerScopes.EventsWrite,
+                TaskServerScopes.OperationsInspect, TaskServerScopes.OperationsIssue);
+        api.MapPost("/principal-rotations/{operationId}/ack", async (
+            HttpContext context, string operationId, PrincipalRotationAcknowledgement request,
+            TaskServerStore store, CancellationToken ct)
+            => context.TaskServerPrincipal() is { } actor
+                ? await InvokeAsync(() => store.AcknowledgePrincipalRotationAsync(operationId, request, actor, ct))
+                : Results.Json(new ApiError("principal-required", "An authenticated principal is required."),
+                    statusCode: StatusCodes.Status403Forbidden))
+            .RequireAnyTaskServerScope(TaskServerScopes.RunsWrite,
+                TaskServerScopes.Management, TaskServerScopes.TasksRead, TaskServerScopes.TasksWrite,
+                TaskServerScopes.OrchestrationClaim, TaskServerScopes.OrchestrationWrite,
+                TaskServerScopes.RunsClaim,
+                TaskServerScopes.ReviewsClaim, TaskServerScopes.ReviewsWrite,
+                TaskServerScopes.EventsSubscribe, TaskServerScopes.EventsWrite,
+                TaskServerScopes.OperationsInspect, TaskServerScopes.OperationsIssue);
         management.MapPost("/principals/{principalId}/revoke", async (
             HttpContext context,
             string principalId,
