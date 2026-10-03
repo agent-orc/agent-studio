@@ -174,6 +174,21 @@ public sealed partial class TaskServerStoreTests
             new ContinuationIntentRequest(1, "invalid-thinking", task.Version,
                 "Instruction", "gpt-5.6-sol", "codex", "unbounded", "continue", "operator"),
             "operator", default));
+        await Assert.ThrowsAsync<ArgumentException>(() => store.SubmitContinuationIntentAsync(
+            project.ProjectId, task.TaskId,
+            new ContinuationIntentRequest(1, "invalid-model", task.Version,
+                "Instruction", "not-in-policy", "codex", null, "continue", "operator"),
+            "operator", default));
+        await Assert.ThrowsAsync<ArgumentException>(() => store.SubmitContinuationIntentAsync(
+            project.ProjectId, task.TaskId,
+            new ContinuationIntentRequest(1, "invalid-cli", task.Version,
+                "Instruction", "gpt-5.6-sol", "gemini", null, "continue", "operator"),
+            "operator", default));
+        await Assert.ThrowsAsync<ArgumentException>(() => store.SubmitContinuationIntentAsync(
+            project.ProjectId, task.TaskId,
+            new ContinuationIntentRequest(1, "mismatched-cli", task.Version,
+                "Instruction", "gpt-5.6-sol", "claude", null, "continue", "operator"),
+            "operator", default));
         Assert.Null(await store.GetContinuationIntentAsync(project.ProjectId, task.TaskId,
             "invalid-thinking", default));
         var first = new ContinuationIntentRequest(1, "continue-1", task.Version,
@@ -216,6 +231,7 @@ public sealed partial class TaskServerStoreTests
         // The explicit selection is delivered exactly as submitted.
         Assert.Equal("gpt-5.6-sol", claim.ContinuationIntent!.Model);
         Assert.Equal("xhigh", claim.ContinuationIntent.ThinkingLevel);
+        Assert.Equal(new ContinuationSelectionMask(true, true, true), claim.ContinuationIntent.Selection);
 
         // Only the prompt reserved by this run can consume the round.
         var mismatch = await Assert.ThrowsAsync<TaskServerConflictException>(() =>
@@ -270,8 +286,36 @@ public sealed partial class TaskServerStoreTests
             "test", default);
         Assert.Equal("continue-2", secondClaim.ContinuationIntent?.Receipt.CommandId);
         Assert.Equal("Second instruction", secondClaim.FollowUp!.Prompt);
+        Assert.Equal(new ContinuationSelectionMask(false, false, false), secondClaim.ContinuationIntent!.Selection);
         Assert.Equal("consumed", (await restarted.GetContinuationIntentAsync(
             project.ProjectId, task.TaskId, "continue-1", default))!.Status);
+    }
+
+    [Fact]
+    public async Task Untiered_known_model_can_be_explicitly_pinned_without_policy_rewriting()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.SetTaskCliTypeAsync(project.ProjectId, task.TaskId,
+            new SetTaskCliTypeRequest("claude", 0), "operator", default);
+        await Assert.ThrowsAsync<ArgumentException>(() => store.SubmitContinuationIntentAsync(
+            project.ProjectId, task.TaskId,
+            new ContinuationIntentRequest(1, "implicit-cli-mismatch", task.Version,
+                "Continue", "gpt-6-sol", null, null, "continue", "operator"),
+            "operator", default));
+
+        var receipt = await store.SubmitContinuationIntentAsync(project.ProjectId, task.TaskId,
+            new ContinuationIntentRequest(1, "explicit-untiered", task.Version,
+                "Continue", "gpt-6-sol", "codex", null, "continue", "operator"),
+            "operator", default);
+        var projection = await store.GetContinuationIntentAsync(project.ProjectId, task.TaskId,
+            receipt.CommandId, default);
+
+        Assert.Equal("gpt-6-sol", projection!.Model);
+        Assert.Equal(new ContinuationSelectionMask(true, true, false), projection.Selection);
+        Assert.True(receipt.ExplicitSelection);
     }
 
     [Fact]

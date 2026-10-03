@@ -46,6 +46,19 @@ public sealed partial class TaskServerStore
                 "SELECT COALESCE(MAX(round), 0) FROM continuation_intents WHERE task_id = $task;",
                 ct, transaction, ("$task", task.TaskId)) ?? 0L) + 1;
             var fields = await ReadStudioFieldsAsync(connection, transaction, task.TaskId, ct);
+            var effectiveCli = request.CliType ?? fields?.CliType;
+            if (effectiveCli is not null)
+            {
+                var policy = ModelRoutingPolicyDocument.Value;
+                if (request.Model is not null
+                    && (!policy.ExplicitPinModels.TryGetValue(effectiveCli, out var models)
+                        || !models.Contains(request.Model)))
+                    throw new ArgumentException("Model is not supported by the task's selected CLI policy catalogue.");
+                if (request.ThinkingLevel is not null
+                    && (!policy.ExplicitThinkingLevels.TryGetValue(effectiveCli, out var levels)
+                        || !levels.Contains(request.ThinkingLevel)))
+                    throw new ArgumentException("Thinking level is not supported by the task's selected CLI policy catalogue.");
+            }
             var model = request.Model ?? fields?.Model;
             var cliType = request.CliType ?? fields?.CliType;
             var thinkingLevel = request.ThinkingLevel ?? fields?.ThinkingLevel;
@@ -128,7 +141,7 @@ public sealed partial class TaskServerStore
             SELECT command_id, project_id, task_id, round, expected_task_version,
                    result_task_version, prompt, model, cli_type, thinking_level,
                    mode, reason, actor, accepted_at, status, run_id, fence, consumed_at,
-                   policy_version, explicit_selection
+                   policy_version, explicit_selection, payload_json
               FROM continuation_intents WHERE command_id = $command;
             """, transaction, ("$command", commandId));
         await using var reader = await command.ExecuteReaderAsync(ct);
@@ -138,13 +151,16 @@ public sealed partial class TaskServerStore
             reader.GetString(2), reader.GetInt64(4), reader.GetInt64(5), round, round, round,
             reader.GetString(12), reader.GetString(11), Parse(reader.GetString(13)),
             reader.GetString(18), reader.GetInt64(19) != 0);
+        var submitted = System.Text.Json.JsonSerializer.Deserialize<ContinuationIntentRequest>(reader.GetString(20))!;
         return new ContinuationIntentProjection(receipt, reader.GetString(14), reader.GetString(6),
             reader.IsDBNull(7) ? null : reader.GetString(7),
             reader.IsDBNull(8) ? null : reader.GetString(8),
             reader.IsDBNull(9) ? null : reader.GetString(9), reader.GetString(10),
             reader.IsDBNull(15) ? null : reader.GetString(15),
             reader.IsDBNull(16) ? null : reader.GetInt64(16),
-            reader.IsDBNull(17) ? null : Parse(reader.GetString(17)));
+            reader.IsDBNull(17) ? null : Parse(reader.GetString(17)),
+            new ContinuationSelectionMask(submitted.Model is not null,
+                submitted.CliType is not null, submitted.ThinkingLevel is not null));
     }
 
     private static async Task<ContinuationIntentProjection?> ReadNextContinuationAsync(
@@ -258,12 +274,21 @@ public sealed partial class TaskServerStore
             || request.ThinkingLevel is not null && string.IsNullOrWhiteSpace(request.ThinkingLevel))
             throw new ArgumentException("A supported continuation command, task version, prompt, mode and reason are required.");
         if (request.CliType is not null
-            && (request.CliType.Length == 0 || !request.CliType.All(character =>
-                char.IsAsciiLetterOrDigit(character) || character is '-' or '_')))
+            && !ModelRoutingPolicyDocument.Value.ExplicitPinModels.ContainsKey(request.CliType))
             throw new ArgumentException("Invalid CLI selection.");
-        var policyLevels = ModelRoutingPolicyDocument.Value.Tiers
-            .Select(tier => tier.ThinkingLevel)
-            .Append("high").Append("max").Append("ultra");
+        if (request.Model is not null)
+        {
+            var catalogues = ModelRoutingPolicyDocument.Value.ExplicitPinModels;
+            if (request.CliType is { } cli)
+            {
+                if (!catalogues[cli].Contains(request.Model))
+                    throw new ArgumentException("Model is not supported by the selected CLI policy catalogue.");
+            }
+            else if (!catalogues.Values.Any(models => models.Contains(request.Model)))
+                throw new ArgumentException("Model is not in the routing policy catalogue.");
+        }
+        var policyLevels = ModelRoutingPolicyDocument.Value.ExplicitThinkingLevels.Values
+            .SelectMany(levels => levels);
         if (request.ThinkingLevel is not null
             && !policyLevels.Contains(request.ThinkingLevel, StringComparer.Ordinal))
             throw new ArgumentException("Unsupported thinking level.");

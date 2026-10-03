@@ -108,6 +108,69 @@ public sealed class HostOrchestratorClientTests
     }
 
     [Fact]
+    public async Task Mechanical_fresh_route_precedes_a_claimed_continuation_selection()
+    {
+        var now = DateTime.UtcNow;
+        var task = new TaskDto("task-c", "project-1", "TS-C", "Task", "3-progress", 4, now, now, "prompt");
+        var run = new RunDto("run-c", task.TaskId, "running", "runner-1", 3, now, now, null);
+        var lease = new LeaseDto("lease-c", run.RunId, task.TaskId, "runner-1", CurrentInstance, 3,
+            now, now.AddMinutes(2), "active");
+        var intent = new ContinuationIntentProjection(
+            new ContinuationIntentReceipt("continue-1", task.ProjectId, task.TaskId, 2, 3, 1, 1, 1,
+                "operator", "follow-up", now, "policy-1", true),
+            "claimed", "Next instruction", "gpt-5.6-luna", "codex", "medium", "continue",
+            run.RunId, run.Fence, null);
+        var followUp = new FollowUpDeliveryDto("Next instruction", "continue",
+            FollowUpPromptDigest.Compute("Next instruction"), now, "follow-up", "operator", run.RunId);
+        var handler = new ContractHandler((request, _) =>
+            request.RequestUri!.AbsolutePath == "/api/v1/runners/runner-1/claims"
+                ? Json(new ClaimResponse("claimed", run, task, lease,
+                    MechanicalFreshRoute: new MechanicalFreshRunRoute(
+                        "codex", "gpt-5.6-sol", "xhigh", "semantic-conflict"),
+                    FollowUp: followUp, ContinuationIntent: intent))
+                : new HttpResponseMessage(HttpStatusCode.NotFound));
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://task-server") };
+        using var client = Client(http);
+
+        var claim = await client.ClaimAsync(
+            new RunnerClaimRequest("runner-1", "Runner", "host-1", 1, "test"), default);
+
+        Assert.Equal("gpt-5.6-sol", claim.RunSpec?.Model);
+        Assert.Equal("xhigh", claim.RunSpec?.ThinkingLevel);
+        Assert.Equal("semantic-conflict", claim.FreshRunReason);
+        Assert.Equal(followUp, claim.RunSpec?.FollowUp);
+    }
+
+    [Fact]
+    public async Task Model_only_continuation_selection_leaves_snapshotted_cli_and_thinking_unpinned()
+    {
+        var now = DateTime.UtcNow;
+        var task = new TaskDto("task-c", "project-1", "TS-C", "Task", "3-progress", 4, now, now, "prompt");
+        var run = new RunDto("run-c", task.TaskId, "running", "runner-1", 3, now, now, null);
+        var lease = new LeaseDto("lease-c", run.RunId, task.TaskId, "runner-1", CurrentInstance, 3,
+            now, now.AddMinutes(2), "active");
+        var intent = new ContinuationIntentProjection(
+            new ContinuationIntentReceipt("continue-1", task.ProjectId, task.TaskId, 2, 3, 1, 1, 1,
+                "operator", "follow-up", now, "policy-1", true),
+            "claimed", "Next instruction", "gpt-6-sol", "codex", "xhigh", "continue",
+            run.RunId, run.Fence, null, new ContinuationSelectionMask(true, false, false));
+        var handler = new ContractHandler((request, _) =>
+            request.RequestUri!.AbsolutePath == "/api/v1/runners/runner-1/claims"
+                ? Json(new ClaimResponse("claimed", run, task, lease, ContinuationIntent: intent))
+                : new HttpResponseMessage(HttpStatusCode.NotFound));
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://task-server") };
+        using var client = Client(http);
+
+        var claim = await client.ClaimAsync(
+            new RunnerClaimRequest("runner-1", "Runner", "host-1", 1, "test"), default);
+
+        Assert.Equal("gpt-6-sol", claim.RunSpec?.Model);
+        Assert.Null(claim.RunSpec?.CliType);
+        Assert.Null(claim.RunSpec?.ThinkingLevel);
+        Assert.Null(claim.RunSpec?.ContextMode);
+    }
+
+    [Fact]
     public async Task Result_post_step_retries_summary_only_then_reports_generated_artifact()
     {
         var now = DateTime.UtcNow;

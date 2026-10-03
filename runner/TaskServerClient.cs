@@ -782,6 +782,9 @@ public sealed class TaskServerClient : IDisposable
             claim.Run.RunId);
         _v1Leases[claim.Task.TaskKey] = (claim.Run.RunId, legacyLease, RunnerInstanceId);
         if (!string.IsNullOrWhiteSpace(claim.Task.Body)) _v1TaskBodies[claim.Task.TaskKey] = claim.Task.Body;
+        var selectedIntent = claim.ContinuationIntent is { Receipt.ExplicitSelection: true } intent
+            ? intent : null;
+        var selectedFields = selectedIntent?.Selection;
         return new RunnerClaimResponse(
             RunnerClaimStatus.Claimed,
             claim.Task.TaskKey,
@@ -800,22 +803,21 @@ public sealed class TaskServerClient : IDisposable
             RunId: claim.Run.RunId,
             LeaseInstanceId: RunnerInstanceId,
             ReconciliationActions: FromContract(claim.ReconciliationActions),
-            // An explicit continuation selection is kept exactly as submitted;
-            // unspecified fields keep the task's normal route resolution.
-            RunSpec: claim.ContinuationIntent is { Receipt.ExplicitSelection: true } intent
-                ? new RunSpecDto(intent.CliType, intent.Model, intent.ThinkingLevel,
-                    ContextMode: CodingAgentRunner.Model.CliContextModes.Clean,
-                    FollowUp: claim.FollowUp)
-                : claim.MechanicalFreshRoute is { } mechanicalRoute
+            // A required mechanical route wins. Otherwise only fields the
+            // operator submitted override normal claim and host resolution.
+            RunSpec: claim.MechanicalFreshRoute is { } mechanicalRoute
                 ? new RunSpecDto(mechanicalRoute.CliType, mechanicalRoute.Model, mechanicalRoute.ThinkingLevel,
                     ContextMode: CodingAgentRunner.Model.CliContextModes.Clean,
                     FollowUp: claim.FollowUp)
-                : claim.ModelFallback is null && claim.FollowUp is null
+                : selectedIntent is null && claim.ModelFallback is null && claim.FollowUp is null
                     ? null
                     : new RunSpecDto(
-                        claim.ModelFallback?.CliType,
-                        claim.ModelFallback?.To,
-                        claim.ModelFallback?.ThinkingLevel,
+                        selectedIntent is not null && (selectedFields is null || selectedFields.CliType)
+                            ? selectedIntent.CliType : claim.ModelFallback?.CliType,
+                        selectedIntent is not null && (selectedFields is null || selectedFields.Model)
+                            ? selectedIntent.Model : claim.ModelFallback?.To,
+                        selectedIntent is not null && (selectedFields is null || selectedFields.ThinkingLevel)
+                            ? selectedIntent.ThinkingLevel : claim.ModelFallback?.ThinkingLevel,
                         ContextMode: claim.ModelFallback is null
                             ? null
                             : CodingAgentRunner.Model.CliContextModes.Clean,

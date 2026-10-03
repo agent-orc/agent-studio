@@ -61,4 +61,8 @@ public sealed record ContinuationIntentProjection(
     string Mode,
     string? RunId,
     long? Fence,
-    DateTime? ConsumedAt);
+    DateTime? ConsumedAt,
+    ContinuationSelectionMask? Selection = null);
+
+/// <summary>Distinguishes explicit route fields from values snapshotted for the receipt.</summary>
+public sealed record ContinuationSelectionMask(bool Model, bool CliType, bool ThinkingLevel);

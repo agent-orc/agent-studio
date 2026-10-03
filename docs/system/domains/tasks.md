@@ -183,8 +183,11 @@ revision, actor, reason, and acceptance time. An identical command retry returns
 that receipt. A reused id with changed input or a stale task version returns
 409. The receipt records the model-routing policy version and whether a route
 field was explicitly selected. Explicit selections are retained as supplied;
-the policy does not silently replace an operator pin. The accepted intent
-snapshots unspecified route fields from the task's current Studio settings.
+the policy does not silently replace an operator pin. The server validates an
+explicit CLI and model against the policy's known model catalogue, including
+their provider pairing. This static check does not prove host CLI availability.
+The accepted intent snapshots unspecified route fields from the task's current
+Studio settings and records a per-field selection mask.
 
 `GET /api/v1/projects/{projectId}/tasks/{taskId}/continuations` lists the
 ordered round projections for Studio readers, and its `/{commandId}` child
@@ -192,8 +195,10 @@ reads one. Each projection shows `queued`, `claimed`, `consumed`, or
 `superseded`, the bound run and fence, and the consumption time. Claim binds
 the oldest queued round to one fenced run. The claim carries that round as its
 `followUp` delivery, with the run id as its claim id, plus the
-`continuationIntent` projection. An explicit route selection is sent to the
-runner exactly as submitted. The round is consumed by the runner's existing
+`continuationIntent` projection. A required mechanical fresh route takes
+precedence at claim. Otherwise only route fields explicitly submitted for the
+continuation override normal claim and host resolution; snapshotted values
+remain visible in the projection. The round is consumed by the runner's existing
 worker-start acknowledgement: the lease renewal names `startedPromptSha256`,
 and only the active lease of the bound run with the matching prompt hash can
 mark it consumed. A different hash returns `follow-up-prompt-mismatch`. If
