@@ -349,7 +349,10 @@ internal static class ShellWords
 
     // Appends "$( ... )" verbatim, records its body (not that of an arithmetic
     // "$(( ... ))") and returns the index after the closing paren. Quoted and
-    // escaped parens do not count towards the nesting.
+    // escaped parens do not count towards the nesting. Quotes are skipped only
+    // to find the closing paren; SimpleCommands re-parses the recorded body,
+    // including substitutions inside double quotes (see the review round 3
+    // rows in ComposeScenarioDiskAdmissionTests.Commands).
     private static int AppendSubstitution(
         string script,
         int index,

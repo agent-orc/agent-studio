@@ -62,6 +62,13 @@ public sealed class ComposeScenarioDiskAdmissionTests
         { "sh", ["-lc", "echo \\$\\(scripts/scenario.sh --target compose\\)"], false },
         { "sh", ["-lc", "echo \"\\`scripts/compose-smoke-test.sh\\`\""], false },
         { "sh", ["-lc", "out=$(cat <<EOF\nscripts/scenario.sh --target compose\nEOF\n)"], false },
+        // Review round 3: nested quotes only affect balancing the outer substitution.
+        { "sh", ["-lc", "out=$(echo \"$(scripts/scenario.sh --target compose)\")"], true },
+        { "sh", ["-lc", "out=`echo \"$(scripts/scenario.sh --target compose)\"`"], true },
+        { "sh", ["-lc", "out=$(echo \"`scripts/compose-smoke-test.sh`\")"], true },
+        { "sh", ["-lc", "echo \"$(scripts/scenario.sh --target compose)\""], true },
+        { "sh", ["-lc", "cat <(scripts/scenario.sh --target compose)"], true },
+        { "sh", ["-lc", "echo $(echo '$(scripts/scenario.sh --target compose)')"], false },
     };
 
     [Theory]
