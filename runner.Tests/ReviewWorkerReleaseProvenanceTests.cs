@@ -162,7 +162,8 @@ public sealed class ReviewWorkerReleaseProvenanceTests : IDisposable
         using var shutdown = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         using var client = new TaskServerClient(
             http, options.RunnerId, usesDurableTaskServer: true, options: options);
-        var run = new RemoteReviewDaemon(options, client, logs.Enqueue, Admitting).RunAsync(shutdown.Token);
+        var run = new RemoteReviewDaemon(options, client, logs.Enqueue, Admitting,
+            AdmittingBudget()).RunAsync(shutdown.Token);
         while (server.ClaimAttempts == 0) await Task.Delay(20, shutdown.Token);
         await shutdown.CancelAsync();
         await run.WaitAsync(TimeSpan.FromSeconds(20));
@@ -194,7 +195,8 @@ public sealed class ReviewWorkerReleaseProvenanceTests : IDisposable
         using var shutdown = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         using var client = new TaskServerClient(
             http, options.RunnerId, usesDurableTaskServer: true, options: options);
-        var run = new RemoteReviewDaemon(options, client, logs.Enqueue, Admitting).RunAsync(shutdown.Token);
+        var run = new RemoteReviewDaemon(options, client, logs.Enqueue, Admitting,
+            AdmittingBudget()).RunAsync(shutdown.Token);
 
         // The adopted attempt is mid-report, so the drain must hold admission.
         await server.WaitForReportAsync().WaitAsync(TimeSpan.FromSeconds(20));
@@ -240,6 +242,9 @@ public sealed class ReviewWorkerReleaseProvenanceTests : IDisposable
             IoWaitPercent: null,
             CpuCores: Environment.ProcessorCount,
             ActiveSlots: activeSlots);
+
+    private static ReviewPlaneBudgetProbe AdmittingBudget()
+        => new(() => 12, () => "max 100000", () => "throttled_usec 0\n");
 
     /// <summary>
     /// A handed-off slot with a durable terminal result and no live process: the

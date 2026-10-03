@@ -51,7 +51,7 @@ internal static class GitConfigSignature
             {
                 var path = source["file:".Length..];
                 filePaths.Add(Path.IsPathRooted(path)
-                    ? path : Path.GetFullPath(path, repositoryPath));
+                    ? Path.GetFullPath(path) : Path.GetFullPath(path, repositoryPath));
             }
             var newline = setting.IndexOf('\n');
             if (newline >= 0 && string.Equals(setting[..newline], "remote.origin.url",

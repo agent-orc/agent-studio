@@ -669,8 +669,7 @@ public sealed class GitStateIndexServiceTests : IDisposable
         var extra = Path.Combine(Path.GetDirectoryName(jobsPath)!, "included.conf");
         RunGit(repoPath, "init", "-q");
         File.WriteAllText(extra, "[remote \"origin\"]\nurl = https://example.invalid/one.git\n");
-        File.WriteAllText(Path.Combine(repoPath, ".git", "config"),
-            $"[include]\npath = {extra.Replace('\\', '/')}\n");
+        RunGit(repoPath, "config", "--local", "include.path", extra);
         var initialConfig = GitConfigSignature.Capture(repoPath);
         Assert.Equal("https://example.invalid/one.git", initialConfig.OriginUrl);
         Assert.Contains(initialConfig.Files, file => FileSystemPathComparer.Instance.Equals(file.Path, extra));
