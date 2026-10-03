@@ -64,8 +64,9 @@ For each lock it decides (pure policy, `GitStaleLockPolicy`):
    repository, or an OS process: on Linux any `git*` process whose
    `/proc/<pid>/cwd` or command line points into the repository, on Windows any
    `git*.exe` whose command line names the path.
-3. **Older, and the process list cannot be read**: keep it. Absence is never
-   guessed.
+3. **Older, and the process list or a still-present Linux `/proc` entry cannot
+   be read**: keep it. The unreadable process may be the lock owner; absence is
+   never guessed. An entry proven to have exited during the scan is skipped.
 4. **Older, and no git process holds it**: confirm the lock is still the same file seen before the process check, then delete it and log
 
    ```text
@@ -115,8 +116,9 @@ for p in /proc/[0-9]*; do c=$(cat $p/comm 2>/dev/null); case $c in git*) echo "$
 Get-CimInstance Win32_Process -Filter "Name LIKE 'git%'" | Select-Object ProcessId,CommandLine
 ```
 
-`reason=owner-unknown` means the process inventory itself failed (on Windows
-the PowerShell `Win32_Process` query). Only when no git process runs in the
+`reason=owner-unknown` means the process inventory could not rule out an owner
+(for example, an unreadable Linux `/proc` entry or the Windows PowerShell
+`Win32_Process` query). Only when no git process runs in the
 repository, remove the lock by hand:
 
 ```bash

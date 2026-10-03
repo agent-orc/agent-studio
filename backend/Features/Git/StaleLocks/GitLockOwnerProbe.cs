@@ -129,27 +129,36 @@ public sealed class GitProcessLockOwnerProbe : IGitLockOwnerProbe
     }
 
     private static IReadOnlyList<GitProcessObservation>? ReadLinuxInventory()
+        => ReadLinuxInventory("/proc", File.ReadAllText, path => new FileInfo(path).LinkTarget);
+
+    internal static IReadOnlyList<GitProcessObservation>? ReadLinuxInventory(
+        string procRoot,
+        Func<string, string> readText,
+        Func<string, string?> readLinkTarget)
     {
         try
         {
             var result = new List<GitProcessObservation>();
-            foreach (var dir in Directory.EnumerateDirectories("/proc"))
+            foreach (var dir in Directory.EnumerateDirectories(procRoot))
             {
                 var name = Path.GetFileName(dir);
                 if (!int.TryParse(name, out var pid) || pid == Environment.ProcessId) continue;
                 try
                 {
-                    var comm = File.ReadAllText(Path.Combine(dir, "comm")).Trim();
+                    var comm = readText(Path.Combine(dir, "comm")).Trim();
                     if (!comm.StartsWith("git", StringComparison.Ordinal)) continue;
-                    var cwd = new FileInfo(Path.Combine(dir, "cwd")).LinkTarget;
-                    var cmdline = File.ReadAllText(Path.Combine(dir, "cmdline")).Replace('\0', ' ').Trim();
+                    var cwd = readLinkTarget(Path.Combine(dir, "cwd"));
+                    var cmdline = readText(Path.Combine(dir, "cmdline")).Replace('\0', ' ').Trim();
                     result.Add(new GitProcessObservation(pid, comm, cwd, cmdline));
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
-                    // Exited between enumeration and read, or belongs to another
-                    // user whose process could not have written our lock file.
-                    SilentCatch.Note(ex, "GitProcessLockOwnerProbe: unreadable /proc entry is skipped");
+                    // A process that vanished while /proc was being read
+                    // cannot own the lock. A still-present unreadable entry
+                    // may be git in this repository, so fail closed.
+                    if (!Directory.Exists(dir) && IsDefinitelyGone(pid)) continue;
+                    SilentCatch.Note(ex, "GitProcessLockOwnerProbe: unreadable /proc entry makes ownership unknown");
+                    return null;
                 }
             }
             return result;
@@ -158,6 +167,24 @@ public sealed class GitProcessLockOwnerProbe : IGitLockOwnerProbe
         {
             SilentCatch.Note(ex, "GitProcessLockOwnerProbe: /proc inventory unavailable");
             return null;
+        }
+    }
+
+    private static bool IsDefinitelyGone(int pid)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            return process.HasExited;
+        }
+        catch (ArgumentException)
+        {
+            return true;
+        }
+        catch (Exception ex)
+        {
+            SilentCatch.Note(ex, "GitProcessLockOwnerProbe: process exit check is inconclusive");
+            return false;
         }
     }
 

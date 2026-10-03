@@ -362,6 +362,56 @@ public sealed class GitStaleLockGuardTests : IDisposable
         Assert.Equal(GitLockOwnership.Unknown, unreadable.Probe(scope));
     }
 
+    [Theory]
+    [InlineData("comm")]
+    [InlineData("cwd")]
+    [InlineData("cmdline")]
+    public void Unreadable_live_linux_process_keeps_a_stale_lock(string unreadableEntry)
+    {
+        var repo = SeedRepo("unreadable-" + unreadableEntry);
+        var lockPath = Path.Combine(repo, ".git", "index.lock");
+        PlantLock(lockPath, TimeSpan.FromHours(1));
+        var procRoot = Path.Combine(_root, "proc-" + unreadableEntry);
+        Directory.CreateDirectory(Path.Combine(procRoot, "424242"));
+        var probe = new GitProcessLockOwnerProbe(
+            () => [],
+            () => GitProcessLockOwnerProbe.ReadLinuxInventory(
+                procRoot,
+                path => Path.GetFileName(path) == unreadableEntry
+                    ? throw new UnauthorizedAccessException("proc entry unreadable")
+                    : Path.GetFileName(path) == "comm" ? "git" : "git add",
+                path => Path.GetFileName(path) == unreadableEntry
+                    ? throw new IOException("proc symlink unreadable")
+                    : repo));
+
+        Assert.Equal(GitLockOwnership.Unknown, probe.Probe(GitStaleLockGuard.ResolveScope(repo)!));
+        var result = Guard(probe).EnsureWritable(repo);
+
+        Assert.True(File.Exists(lockPath));
+        Assert.Empty(result.Cleared);
+        Assert.Equal(GitLockVerdict.KeepOwnerUnknown, Assert.Single(result.Remaining).Verdict);
+    }
+
+    [Fact]
+    public void Linux_inventory_skips_a_process_that_vanished_during_inspection()
+    {
+        var procRoot = Path.Combine(_root, "vanished-proc");
+        var entry = Path.Combine(procRoot, (int.MaxValue - 1).ToString());
+        Directory.CreateDirectory(entry);
+
+        var inventory = GitProcessLockOwnerProbe.ReadLinuxInventory(
+            procRoot,
+            _ =>
+            {
+                Directory.Delete(entry);
+                throw new IOException("process exited");
+            },
+            _ => throw new InvalidOperationException("cwd must not be read"));
+
+        Assert.NotNull(inventory);
+        Assert.Empty(inventory);
+    }
+
     [Fact]
     public void Probe_matches_a_windows_git_command_line_naming_the_repository()
     {
