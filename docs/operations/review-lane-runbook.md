@@ -95,7 +95,8 @@ Logs on both sides:
 - Server: `review-claim-unclaimable reason=... attempt=... task=... executor=... missing=... pendingSince=...`
   at warning level, at most once per attempt per hour. Every unclaimable
   attempt is logged, including those beyond the 20 the response names and, on
-  the standalone Task Server, those beyond the 32-row claim page.
+  the standalone Task Server, those on later claim pages. The server scans
+  each page for a claimable attempt before it returns an empty response.
 - Runner journal: `review claim warning: reason=unclaimable-plan-requirements missing=... unclaimableAttempts=... oldestAttempt=... oldestTask=...`.
   It repeats every 15 minutes for the same key set, and at once when the set
   changes.

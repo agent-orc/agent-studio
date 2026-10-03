@@ -114,6 +114,34 @@ public sealed partial class RemoteReviewAuthorityTests
     }
 
     [Fact]
+    public async Task Claim_finds_capable_attempt_after_a_full_page_of_unclaimable_plans()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 27, 15, 8, 0, TimeSpan.Zero));
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var needsDotNet = new ReviewPlanDto(
+            [new ReviewCommandDto("verify-subject", "completion", "dotnet", ["--info"])],
+            ["completion"], LibraryVersion: ReviewLibraryStepPolicy.Version);
+        for (var index = 0; index < 33; index++)
+        {
+            await SeedReviewSubjectAsync(store, title: $"Needs dotnet {index}", plan: needsDotNet);
+            clock.Advance(TimeSpan.FromSeconds(1));
+        }
+        var eligible = await SeedReviewSubjectAsync(store, title: "Git review", plan: new ReviewPlanDto(
+            [new ReviewCommandDto("verify-subject", "completion", "git", ["rev-parse", "HEAD"])],
+            ["completion"], LibraryVersion: ReviewLibraryStepPolicy.Version));
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+
+        var claim = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+
+        Assert.Equal("claimed", claim.Status);
+        Assert.Equal(eligible.SubjectId, claim.Subject!.SubjectId);
+        Assert.Null(claim.Reason);
+    }
+
+    [Fact]
     public void Concurrent_unclaimable_log_calls_emit_one_warning_per_interval()
     {
         using var temp = new TempDirectory();

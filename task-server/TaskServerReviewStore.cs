@@ -11,7 +11,7 @@ public sealed partial class TaskServerStore
 {
     private static readonly JsonSerializerOptions ReviewJson = new(JsonSerializerDefaults.Web);
 
-    /// <summary>Rows the review claim reads per poll when selecting a candidate.</summary>
+    /// <summary>Rows read per page when selecting a review claim candidate.</summary>
     private const int ClaimCandidatePageSize = 32;
 
     /// <summary>AGT-2987: last time each unclaimable attempt was logged; one line per attempt per hour.</summary>
@@ -275,9 +275,9 @@ public sealed partial class TaskServerStore
             string? capabilityBlock = null;
             var candidates = new List<(ReviewAttemptDto Attempt, ReviewSubjectDto Subject)>();
             var unclaimable = new List<ReviewUnclaimableAttemptDto>();
-            // Returns the number of rows read so a full page can be told apart
-            // from the end of the queue.
-            async Task<int> ScanCandidatesAsync(long limit, bool collectClaimable)
+            // Read one page at a time so a claimable attempt cannot be hidden
+            // behind a page of plans this executor cannot run.
+            async Task<int> ScanCandidatesAsync(int offset)
             {
                 var rows = 0;
                 await using var command = Command(connection, """
@@ -301,9 +301,10 @@ public sealed partial class TaskServerStore
                              json_extract(s.plan_json, '$.requireDifferentHostFailureDomain') = 1
                              AND s.coding_host_id = $host
                            )
-                     ORDER BY a.created_at, a.attempt_number
-                     LIMIT $limit;
-                    """, transaction, ("$now", Iso(UtcNow)), ("$host", executor.HostId), ("$limit", limit));
+                     ORDER BY a.created_at, a.attempt_number, a.id
+                     LIMIT $limit OFFSET $offset;
+                    """, transaction, ("$now", Iso(UtcNow)), ("$host", executor.HostId),
+                    ("$limit", ClaimCandidatePageSize), ("$offset", offset));
                 await using var reader = await command.ExecuteReaderAsync(ct);
                 while (await reader.ReadAsync(ct))
                 {
@@ -312,9 +313,7 @@ public sealed partial class TaskServerStore
                     var candidateSubject = ReadReviewSubjectFromClaim(reader);
                     var missing = MissingSubjectCapabilities(executor, candidateSubject);
                     if (missing.Count == 0)
-                    {
-                        if (collectClaimable) candidates.Add((candidateAttempt, candidateSubject));
-                    }
+                        candidates.Add((candidateAttempt, candidateSubject));
                     else
                         unclaimable.Add(new ReviewUnclaimableAttemptDto(
                             candidateAttempt.AttemptId,
@@ -324,43 +323,42 @@ public sealed partial class TaskServerStore
                 }
                 return rows;
             }
-            var scannedRows = await ScanCandidatesAsync(ClaimCandidatePageSize, collectClaimable: true);
-            foreach (var candidate in candidates)
+            var offset = 0;
+            while (true)
             {
-                var candidateRequirements = RequiredReviewCapabilities(
-                    request.RequiredCapabilities,
-                    candidate.Subject);
-                var candidateAdmission = await EvaluateCapabilityAdmissionAsync(
-                    connection,
-                    transaction,
-                    request.ExecutorId,
-                    executor.HostId,
-                    candidateRequirements,
-                    ct);
-                if (!candidateAdmission.Eligible)
+                candidates.Clear();
+                var scannedRows = await ScanCandidatesAsync(offset);
+                foreach (var candidate in candidates)
                 {
-                    capabilityBlock = candidateAdmission.Message;
-                    continue;
+                    var candidateRequirements = RequiredReviewCapabilities(
+                        request.RequiredCapabilities,
+                        candidate.Subject);
+                    var candidateAdmission = await EvaluateCapabilityAdmissionAsync(
+                        connection,
+                        transaction,
+                        request.ExecutorId,
+                        executor.HostId,
+                        candidateRequirements,
+                        ct);
+                    if (!candidateAdmission.Eligible)
+                    {
+                        capabilityBlock = candidateAdmission.Message;
+                        continue;
+                    }
+                    attempt = candidate.Attempt;
+                    subject = candidate.Subject;
+                    capabilityAdmission = candidateAdmission;
+                    break;
                 }
-                attempt = candidate.Attempt;
-                subject = candidate.Subject;
-                capabilityAdmission = candidateAdmission;
-                break;
+                if (attempt is not null || scannedRows < ClaimCandidatePageSize)
+                    break;
+                offset += scannedRows;
             }
 
             if (attempt is null || subject is null)
             {
                 // AGT-2987: a subject the registered capabilities cannot serve
                 // used to be skipped without a word. Name it instead.
-                if (capabilityBlock is null && unclaimable.Count > 0 && scannedRows == ClaimCandidatePageSize)
-                {
-                    // AGT-2987: the claim page is full of attempts this executor
-                    // cannot serve. Enumerate the whole backlog so every
-                    // unclaimable attempt is counted and logged, not only the
-                    // first page. Claim selection itself keeps its page size.
-                    unclaimable.Clear();
-                    await ScanCandidatesAsync(-1, collectClaimable: false);
-                }
                 if (capabilityBlock is null) unclaimableToLog = unclaimable;
                 response = capabilityBlock is not null
                     ? ReviewClaimEmptyResponses.Empty(ReviewClaimEmptyReasons.CapabilityAdmission, capabilityBlock)
