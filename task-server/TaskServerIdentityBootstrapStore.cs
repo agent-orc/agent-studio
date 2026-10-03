@@ -399,10 +399,6 @@ public sealed partial class TaskServerStore
                 $"Project '{projectId}' already has a different repository registration.");
         }
 
-        var projectExists = (await ListProjectsAsync(null, ct)).Any(project => project.ProjectId == projectId);
-        if (!projectExists)
-            await CreateProjectAsync(
-                new CreateProjectRequest(request.WorkspaceId, request.Name, request.TaskKeyPrefix, projectId), actorId, ct);
         var now = UtcNow;
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
@@ -412,6 +408,12 @@ public sealed partial class TaskServerStore
                 throw new TaskServerConflictException(
                     "repository-owned-by-other-project",
                     $"Repository is already registered to project '{owner}'.");
+            var projectExists = Convert.ToInt64(await ScalarAsync(connection,
+                "SELECT count(*) FROM projects WHERE id = $project;", ct, transaction, ("$project", projectId))) > 0;
+            if (!projectExists)
+                await CreateProjectInTransactionAsync(connection, transaction,
+                    new CreateProjectRequest(request.WorkspaceId, request.Name, request.TaskKeyPrefix, projectId),
+                    projectId, actorId, Iso(now), ct);
             await ExecuteAsync(connection, """
                 INSERT INTO project_repositories(
                     project_id, repository_id, repository_url, integration_ref, release_ref,

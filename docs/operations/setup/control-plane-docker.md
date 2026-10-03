@@ -109,6 +109,16 @@ command exits non-zero; no operator step is required to recover. `rollback.sh`
 without an explicit tag replays `CONTROL_PLANE_PREVIOUS_VERSION`, the tag the
 last successful update recorded.
 
+Since AGT-2947 both scripts also take a verified backup before the switch.
+They gate on runner-host protocol compatibility and record each phase in
+`/etc/agent-orchestrator/installation-manifest.json`. An interrupted run
+resumes when you rerun the same tag. Success needs the observed image
+digests, `Normal` mode and a passed canary (`AGENT_ORCHESTRATOR_CANARY_COMMAND`).
+Without a canary the outcome is `awaiting-canary`. A rollback that would
+run a release against a newer store schema is refused; restore the verified
+backup instead. The full contract is in
+[installation-upgrade-contract.md](./installation-upgrade-contract.md).
+
 Management-API calls (`mode`, `prepare-shutdown`) run through
 `docker compose exec task-server curl ... 127.0.0.1:5071`, authenticated with
 the Studio credential file already mounted into the container. The host

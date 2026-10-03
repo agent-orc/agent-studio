@@ -34,12 +34,13 @@ public sealed partial class TaskServerStore
     // rollback, and terminal supersession state.
     // 23 adds bounded opaque operation permits, always checked against live leases.
     // 24 adds versioned project placement and admission receipts.
-    // 25 adds the installation identity, owner recovery codes, one-time
-    // service enrolments, and canonical project repository registrations
-    // with per-host probe receipts (I05).
+    // 25 adds installation identity, owner recovery, service enrolments,
+    // canonical project registrations, and per-host repository probes (I05).
+    // 26 records the host-owned credential registry and typed provider
+    // capability observations merged from the integration branch.
     // The migration block is idempotent; the number guards downgrades from
     // binaries that do not know this state.
-    public const int CurrentSchemaVersion = 25;
+    public const int CurrentSchemaVersion = 26;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -237,7 +238,7 @@ public sealed partial class TaskServerStore
                 version,
                 _serverId,
                 ["studio", "runner", "review-runner", TaskServerProtocol.EngineClientKind, "management"],
-                ["coding-plane", "review-plane", "orchestration-plane", "host-orchestrator", "management-plane"],
+                ["coding-plane", "review-plane", "orchestration-plane", "host-orchestrator", "management-plane", "credential-observation-v2"],
                 [TaskServerHubProtocol.StudioRange()]),
             _startedAt,
             _outboxBacklog,
@@ -284,25 +285,34 @@ public sealed partial class TaskServerStore
         var now = Iso(UtcNow);
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
-            await ExecuteAsync(connection, """
-                INSERT INTO projects(id, workspace_id, name, task_key_prefix, next_task_number, version, created_at, updated_at)
-                VALUES ($id, $workspace, $name, $prefix, 1, 1, $now, $now);
-                INSERT INTO orchestrator_contexts(
-                    context_key, kind, project_id, task_id, summary, created_at, updated_at, hidden_at)
-                VALUES ($context_key, 'project', $id, NULL, $summary, $now, $now, NULL);
-                INSERT INTO flow_definitions(project_id, version, stages_json, max_reissue_attempts, updated_at)
-                VALUES ($id, 0, $stages, $max_reissues, $now);
-                """, ct, transaction,
-                ("$id", id), ("$workspace", request.WorkspaceId), ("$name", request.Name.Trim()),
-                ("$prefix", prefix), ("$now", now),
-                ("$context_key", $"project:{request.Name.Trim()}"),
-                ("$summary", $"Project chat for {request.Name.Trim()}"),
-                ("$stages", JsonSerializer.Serialize(OrchestrationDefaults.CreateStages())),
-                ("$max_reissues", OrchestrationDefaults.MaxReissueAttempts));
-            await AuditAsync(connection, transaction, actorId, "project.created", "project", id,
-                JsonSerializer.Serialize(new { request.WorkspaceId, request.Name, taskKeyPrefix = prefix }), ct);
+            await CreateProjectInTransactionAsync(connection, transaction, request, id, actorId, now, ct);
         }, ct);
         return new ProjectDto(id, request.WorkspaceId, request.Name.Trim(), prefix, 1, Parse(now), Parse(now));
+    }
+
+    private async Task CreateProjectInTransactionAsync(
+        SqliteConnection connection, SqliteTransaction transaction, CreateProjectRequest request,
+        string id, string actorId, string now, CancellationToken ct)
+    {
+        var name = request.Name.Trim();
+        var prefix = request.TaskKeyPrefix.Trim().ToUpperInvariant();
+        await ExecuteAsync(connection, """
+            INSERT INTO projects(id, workspace_id, name, task_key_prefix, next_task_number, version, created_at, updated_at)
+            VALUES ($id, $workspace, $name, $prefix, 1, 1, $now, $now);
+            INSERT INTO orchestrator_contexts(
+                context_key, kind, project_id, task_id, summary, created_at, updated_at, hidden_at)
+            VALUES ($context_key, 'project', $id, NULL, $summary, $now, $now, NULL);
+            INSERT INTO flow_definitions(project_id, version, stages_json, max_reissue_attempts, updated_at)
+            VALUES ($id, 0, $stages, $max_reissues, $now);
+            """, ct, transaction,
+            ("$id", id), ("$workspace", request.WorkspaceId), ("$name", name),
+            ("$prefix", prefix), ("$now", now),
+            ("$context_key", $"project:{name}"),
+            ("$summary", $"Project chat for {name}"),
+            ("$stages", JsonSerializer.Serialize(OrchestrationDefaults.CreateStages())),
+            ("$max_reissues", OrchestrationDefaults.MaxReissueAttempts));
+        await AuditAsync(connection, transaction, actorId, "project.created", "project", id,
+            JsonSerializer.Serialize(new { request.WorkspaceId, request.Name, taskKeyPrefix = prefix }), ct);
     }
 
     public async Task<IReadOnlyList<ProjectDto>> ListProjectsAsync(string? workspaceId, CancellationToken ct)
@@ -1375,6 +1385,18 @@ public sealed partial class TaskServerStore
             var hostAdmission = capabilityAdmission;
             async Task<ClaimPlacementVerdict> EvaluateProjectAsync(string projectId)
             {
+                var registered = Convert.ToInt64(await ScalarAsync(connection, """
+                    SELECT count(*) FROM project_repositories WHERE project_id = $project;
+                    """, ct, transaction, ("$project", projectId))) > 0;
+                var probeVerdict = registered
+                    ? Convert.ToString(await ScalarAsync(connection, """
+                        SELECT verdict FROM project_repository_probes
+                         WHERE project_id = $project AND runner_id = $runner;
+                        """, ct, transaction, ("$project", projectId), ("$runner", request.RunnerId)))
+                    : null;
+                var probeRefusal = ProjectRepositoryPolicy.ClaimRefusal(registered, probeVerdict);
+                if (probeRefusal is not null)
+                    return new ClaimPlacementVerdict(projectId, probeRefusal, null, null);
                 var placement = await ReadProjectPlacementAsync(connection, transaction, projectId, ct);
                 if (placement is null)
                     return new ClaimPlacementVerdict(
@@ -3405,6 +3427,15 @@ public sealed partial class TaskServerStore
                 credential_expires_at TEXT,
                 limited_until TEXT,
                 credential_modified_at TEXT,
+                credential_generation TEXT,
+                credential_observed_at TEXT,
+                last_real_success_at TEXT,
+                expiry_provenance TEXT,
+                access_token_expires_at TEXT,
+                effective_source TEXT,
+                native_file_shadowed INTEGER,
+                evidence_refs_json TEXT,
+                advertised_instance_id TEXT,
                 evidence_id TEXT,
                 evidence_excerpt TEXT,
                 supported_models_json TEXT,
@@ -3419,6 +3450,26 @@ public sealed partial class TaskServerStore
                 recovery_history_json TEXT NOT NULL DEFAULT '[]',
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY(runner_id, capability_key)
+            );
+            CREATE TABLE IF NOT EXISTS credential_registry(
+                installation_id TEXT NOT NULL,
+                host_id TEXT NOT NULL,
+                credential_id TEXT NOT NULL,
+                generation TEXT NOT NULL,
+                source_instance_id TEXT NOT NULL,
+                observed_at TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(installation_id, host_id, credential_id)
+            );
+            CREATE TABLE IF NOT EXISTS credential_registry_retired_sources(
+                installation_id TEXT NOT NULL,
+                host_id TEXT NOT NULL,
+                credential_id TEXT NOT NULL,
+                source_instance_id TEXT NOT NULL,
+                retired_generation TEXT NOT NULL,
+                retired_at TEXT NOT NULL,
+                PRIMARY KEY(installation_id, host_id, credential_id, source_instance_id)
             );
             CREATE TABLE IF NOT EXISTS capability_failure_deliveries(
                 runner_id TEXT NOT NULL REFERENCES runners(id),
@@ -3878,6 +3929,15 @@ public sealed partial class TaskServerStore
         await EnsureColumnAsync(connection, "runner_capabilities", "credential_expires_at", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "limited_until", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "credential_modified_at", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "credential_generation", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "credential_observed_at", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "last_real_success_at", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "expiry_provenance", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "access_token_expires_at", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "effective_source", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "native_file_shadowed", "INTEGER", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "evidence_refs_json", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "advertised_instance_id", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "evidence_id", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "evidence_excerpt", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "supported_models_json", "TEXT", ct);

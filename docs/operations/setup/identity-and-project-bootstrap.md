@@ -133,6 +133,11 @@ and both succeed. A probe that passed through a runner fallback remote
 `fallback-remote-only`, not admitted. Fallback remotes are diagnostic only.
 `GET /api/v1/projects/{projectId}/repository` lists the registration and
 every host's latest receipt.
+Claim admission for a registered project reads the selected runner's latest
+receipt. A missing or failed receipt denies that runner's claim. A successful
+probe from another runner does not admit this host. Re-probe after a repository
+or credential change; the latest result replaces the earlier receipt. Legacy
+projects without a registration retain their existing placement behavior.
 
 ## Upstream failure
 
@@ -141,7 +146,5 @@ returns `502 task-server-unavailable` and writes nothing locally.
 
 ## Known limits
 
-- Claim admission does not yet consult the probe receipt; the receipt is the
-  registry record that I09 journey proof and placement must read.
 - No Studio screen presents these flows yet. Any UI claim needs pinned
   screenshots (I09) before it enters the installation guide.

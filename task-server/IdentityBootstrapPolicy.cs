@@ -119,6 +119,17 @@ public static class StudioRolePolicy
 /// </summary>
 public static class ProjectRepositoryPolicy
 {
+    public const string ProbeRequired = "repository-probe-required";
+    public const string ProbeDenied = "repository-probe-denied";
+
+    /// <summary>Registered projects require this runner's latest successful origin probe before a claim.</summary>
+    public static string? ClaimRefusal(bool registered, string? latestProbeVerdict)
+    {
+        if (!registered) return null;
+        if (string.IsNullOrEmpty(latestProbeVerdict)) return ProbeRequired;
+        return latestProbeVerdict == ProjectRepositoryProbeVerdicts.Admitted ? null : ProbeDenied;
+    }
+
     public static string Canonicalize(string? repositoryUrl)
     {
         if (string.IsNullOrWhiteSpace(repositoryUrl))
@@ -168,7 +179,7 @@ public static class ProjectRepositoryPolicy
     {
         if (probe.UsedFallbackRemote) return ProjectRepositoryProbeVerdicts.FallbackRemoteOnly;
         if (!SameOrigin(registeredUrl, probe.ObservedFetchUrl)
-            || probe.ObservedPushUrl is not null && !SameOrigin(registeredUrl, probe.ObservedPushUrl))
+            || !SameOrigin(registeredUrl, probe.ObservedPushUrl))
             return ProjectRepositoryProbeVerdicts.OriginMismatch;
         if (!probe.FetchSucceeded) return ProjectRepositoryProbeVerdicts.FetchFailed;
         if (!probe.PushSucceeded) return ProjectRepositoryProbeVerdicts.PushFailed;

@@ -104,6 +104,23 @@ public sealed class IdentityBootstrapTests
             "https://github.com/org/repo.git",
             new ProjectRepositoryProbeRequest(observed, observed, fetch, push, fallback)));
 
+    [Fact]
+    public void Probe_requires_an_observed_push_origin_even_when_push_is_reported_successful()
+        => Assert.Equal(ProjectRepositoryProbeVerdicts.OriginMismatch,
+            ProjectRepositoryPolicy.DecideProbe("https://github.com/org/repo.git",
+                new ProjectRepositoryProbeRequest("https://github.com/org/repo.git", null, true, true, false)));
+
+    [Theory]
+    [InlineData(false, null, null)]
+    [InlineData(true, null, ProjectRepositoryPolicy.ProbeRequired)]
+    [InlineData(true, "", ProjectRepositoryPolicy.ProbeRequired)]
+    [InlineData(true, ProjectRepositoryProbeVerdicts.FallbackRemoteOnly, ProjectRepositoryPolicy.ProbeDenied)]
+    [InlineData(true, ProjectRepositoryProbeVerdicts.PushFailed, ProjectRepositoryPolicy.ProbeDenied)]
+    [InlineData(true, ProjectRepositoryProbeVerdicts.Admitted, null)]
+    public void Registered_project_claim_requires_this_runners_latest_admitted_probe(
+        bool registered, string? verdict, string? expected)
+        => Assert.Equal(expected, ProjectRepositoryPolicy.ClaimRefusal(registered, verdict));
+
     // ---- HTTP acceptance ------------------------------------------------------
 
     [Fact]
@@ -384,6 +401,8 @@ public sealed class IdentityBootstrapTests
             Registration("prj-beta", "git@github.com:org/alpha.git".Replace("git@github.com:", "https://github.com/"),
                 workspace.WorkspaceId, prefix: "BETA")),
             HttpStatusCode.Conflict));
+        Assert.DoesNotContain((await ownerClient.GetFromJsonAsync<List<ProjectDto>>("/api/v1/projects"))!,
+            project => project.ProjectId == "prj-beta");
         Assert.Contains((await ownerClient.GetFromJsonAsync<List<ProjectDto>>("/api/v1/projects"))!,
             project => project.ProjectId == "prj-alpha");
 
