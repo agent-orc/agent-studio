@@ -1873,6 +1873,29 @@ public sealed class TaskServerClient : IDisposable
         return await resp.Content.ReadAsStringAsync(ct);
     }
 
+    public async Task<ProviderComparisonSnapshot> ReadProviderComparisonAsync(
+        ProviderComparisonQuery query, CancellationToken ct)
+    {
+        if (_options is null) return new(null, null);
+        var url = $"/api/v1/runners/{Uri.EscapeDataString(_options.RunnerId)}/provider-comparison"
+            + $"?provider={Uri.EscapeDataString(query.Provider)}"
+            + $"&generation={Uri.EscapeDataString(query.Generation ?? "")}"
+            + $"&requestShape={Uri.EscapeDataString(query.RequestShape)}"
+            + $"&effectiveSource={Uri.EscapeDataString(query.EffectiveSource)}"
+            + $"&failureSignature={Uri.EscapeDataString(query.FailureSignature)}";
+        using var response = await _http.GetAsync(url, ct);
+        if (!response.IsSuccessStatusCode) return new(null, null);
+        var metadata = await response.Content.ReadFromJsonAsync<Contract.ProviderProbeComparisonResponseDto>(Json, ct);
+        var evidence = metadata?.Comparison;
+        return new(metadata?.CredentialIdentity,
+            evidence is null ? null : new ProviderComparisonEvidence(
+                evidence.Provider, evidence.Service, evidence.RequestShape,
+                evidence.FailureSignature, evidence.LastIndependentSuccessAt,
+                evidence.ObservedAt, evidence.IndependentCredential,
+                evidence.ComparableEndpoint, evidence.HostId,
+                evidence.CredentialIdentity, evidence.ExecutedOnComparisonHost));
+    }
+
     private async Task<TResp?> PostJsonAsync<TReq, TResp>(string url, TReq body, CancellationToken ct)
         => await SendJsonAsync<TReq, TResp>(HttpMethod.Post, url, body, ct);
 

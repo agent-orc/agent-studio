@@ -27,6 +27,13 @@ public sealed record ProviderComparisonEvidence(
     bool IndependentCredential, bool ComparableEndpoint,
     string HostId = "", string CredentialIdentity = "", bool ExecutedOnComparisonHost = false);
 
+public sealed record ProviderComparisonQuery(
+    string Provider, string Service, string RequestShape, string FailureSignature,
+    string EffectiveSource, string? Generation);
+
+public sealed record ProviderComparisonSnapshot(
+    string? CredentialIdentity, ProviderComparisonEvidence? Comparison);
+
 public sealed record ProviderProbeRequest(
     string Provider, string AccountMode, string Service, string EffectiveSource,
     string? Generation, DateTimeOffset ObservedAt, ProcessResult? RealRequest = null,

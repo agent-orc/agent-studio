@@ -17,6 +17,17 @@ request outcome as `healthy`, `indeterminate`, `credential_invalid`,
 stays indeterminate unless an applicable official incident or a comparable
 request on an independently known-good host corroborates a provider incident.
 The comparison host uses its own credential; no credential is transferred.
+For this path, each host must have an active credential identity and generation
+in the Task Server metadata registry, and the identities must differ. The
+runner reads only a bounded comparison projection from
+`GET /api/v1/runners/{runnerId}/provider-comparison` through its own runner
+identity. Registry sources must match both hosts' observed effective sources.
+The other host must have a fresh capability advertisement that records a
+matching normalized real request failure and a successful real request within
+the preceding ten minutes.
+Missing registry identity or stale comparison evidence leaves the 401
+indeterminate. A 401 from the local status command still triggers the isolated
+real request when the effective credential source is usable.
 The official feed is cached per provider and inaccessible, stale, or unrelated
 status data remains unknown.
 

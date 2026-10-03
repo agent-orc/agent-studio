@@ -748,6 +748,8 @@ public sealed class ProviderAuthProbe
     private readonly Dictionary<string, (string? Generation, string Signature, int Count)> _unauthorizedReal = new(StringComparer.Ordinal);
     private ProviderAuthLauncher? _realLauncher;
     private ProviderStatusIncidentAdapter? _incidentAdapter;
+    private Func<ProviderComparisonQuery, CancellationToken, Task<ProviderComparisonSnapshot>>? _comparisonAdapter;
+    private string _hostId = "";
     public static readonly TimeSpan HealthyRealCheckCeiling = TimeSpan.FromMinutes(30);
     public static readonly TimeSpan LastGoodWindow = TimeSpan.FromMinutes(10);
     public const int DailyRealRequestBudget = 48;
@@ -755,6 +757,21 @@ public sealed class ProviderAuthProbe
     public void UseRealRequest(ProviderAuthLauncher launcher, ProviderStatusIncidentAdapter incidentAdapter)
     {
         lock (_sync) { _realLauncher = launcher; _incidentAdapter = incidentAdapter; }
+    }
+
+    public void UseRealRequest(
+        ProviderAuthLauncher launcher, ProviderStatusIncidentAdapter incidentAdapter,
+        Func<ProviderComparisonQuery, CancellationToken, Task<ProviderComparisonSnapshot>> comparisonAdapter,
+        string hostId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(hostId);
+        lock (_sync)
+        {
+            _realLauncher = launcher;
+            _incidentAdapter = incidentAdapter;
+            _comparisonAdapter = comparisonAdapter;
+            _hostId = hostId;
+        }
     }
 
     public ProviderAuthProbe(
@@ -890,7 +907,8 @@ public sealed class ProviderAuthProbe
                     _observed[cliBinary] = decision;
                 }
                 LogTransition(cliBinary, previous, decision, observation);
-                return await MaybeRealRequestAsync(cliBinary, decision.Status, ct);
+                return await MaybeRealRequestAsync(cliBinary, decision.Status,
+                    observation.Kind == ProviderAuthObservationKind.Unauthorized, ct);
             }
             finally { gate.Release(); }
         }
@@ -900,15 +918,26 @@ public sealed class ProviderAuthProbe
         }
     }
 
-    private async Task<ProviderAuthStatus> MaybeRealRequestAsync(string cliBinary, ProviderAuthStatus status, CancellationToken ct)
+    private async Task<ProviderAuthStatus> MaybeRealRequestAsync(
+        string cliBinary, ProviderAuthStatus status, bool statusUnauthorized, CancellationToken ct)
     {
         ProviderAuthLauncher? launcher;
         ProviderStatusIncidentAdapter? incidents;
-        lock (_sync) { launcher = _realLauncher; incidents = _incidentAdapter; }
-        if (launcher is null || status.Status != Ready || status.ProbeDegraded
+        Func<ProviderComparisonQuery, CancellationToken, Task<ProviderComparisonSnapshot>>? comparisons;
+        string hostId;
+        lock (_sync)
+        {
+            launcher = _realLauncher;
+            incidents = _incidentAdapter;
+            comparisons = _comparisonAdapter;
+            hostId = _hostId;
+        }
+        if (launcher is null || status.Status == Limited
+            || (!statusUnauthorized && (status.Status != Ready || status.ProbeDegraded))
             || status.Outcome == ProviderProbeOutcome.CredentialInvalid) return status;
         var now = _clock();
-        if (status.LastRealSuccessAt is { } last && now - last < HealthyRealCheckCeiling) return status;
+        if (!statusUnauthorized && status.LastRealSuccessAt is { } last
+            && now - last < HealthyRealCheckCeiling) return status;
         var provider = RunnerCapabilityProbe.Provider(cliBinary);
         lock (_sync)
         {
@@ -945,10 +974,35 @@ public sealed class ProviderAuthProbe
             }
             else _unauthorizedReal.Remove(cliBinary);
         }
+        var comparison = new ProviderComparisonSnapshot(null, null);
+        var officialDecision = ProviderProbeClassifier.Classify(new ProviderProbeRequest(
+            provider, "configured", provider == "codex" ? "codex-exec" : "claude-code",
+            status.EffectiveSource, status.CredentialGeneration, _clock(), result,
+            Incidents: official.Incidents));
+        if (unauthorizedSignature is not null && comparisons is not null && hostId.Length > 0
+            && officialDecision.Outcome != ProviderProbeOutcome.ProviderIncident)
+        {
+            try
+            {
+                using var comparisonDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                comparisonDeadline.CancelAfter(_timeout);
+                comparison = await comparisons(new ProviderComparisonQuery(provider,
+                    provider == "codex" ? "codex-exec" : "claude-code",
+                    "minimal-text-v1", unauthorizedSignature, status.EffectiveSource,
+                    status.CredentialGeneration),
+                    comparisonDeadline.Token);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                // Missing independent evidence leaves the unauthorized result indeterminate.
+            }
+        }
         var request = new ProviderProbeRequest(
             RunnerCapabilityProbe.Provider(cliBinary), "configured", RunnerCapabilityProbe.Provider(cliBinary) == "codex" ? "codex-exec" : "claude-code",
             status.EffectiveSource, status.CredentialGeneration, _clock(), result,
             UnauthorizedCount: unauthorizedCount, Incidents: official.Incidents,
+            Comparison: comparison.Comparison, HostId: hostId,
+            CredentialIdentity: comparison.CredentialIdentity ?? "",
             IncidentCheckComplete: official.Available
                 && _clock() - official.RetrievedAt <= ProviderProbeClassifier.IncidentFreshness);
         var decision = ProviderProbeClassifier.Classify(request);
@@ -1113,7 +1167,8 @@ public sealed class ProviderAuthProbe
             if (text.Contains("401", StringComparison.OrdinalIgnoreCase)
                 || text.Contains("invalid api key", StringComparison.OrdinalIgnoreCase)
                 || text.Contains("incorrect api key", StringComparison.OrdinalIgnoreCase))
-                return Indeterminate($"'{command}' reported an unauthorized response requiring corroboration.");
+                return new ProviderAuthObservation(ProviderAuthObservationKind.Unauthorized,
+                    $"'{command}' reported an unauthorized response requiring corroboration.");
             return new ProviderAuthObservation(
                 ProviderAuthObservationKind.LoggedOut,
                 $"'{command}' reports no usable session (exit {result.ExitCode}): {Excerpt(text)}",
@@ -1323,7 +1378,14 @@ public sealed class ProviderAuthProbe
                 "unverified: the auth probe has not confirmed a session yet; binary presence only.",
                 observedAt);
         if (observation.Kind is ProviderAuthObservationKind.Indeterminate
+            or ProviderAuthObservationKind.Unauthorized
             or ProviderAuthObservationKind.Transient)
+        {
+            var effectiveSource = observation.EffectiveSource == "unknown"
+                ? retained.EffectiveSource : observation.EffectiveSource;
+            var generation = observation.CredentialGeneration ?? retained.CredentialGeneration;
+            var sameBinding = effectiveSource == retained.EffectiveSource
+                && generation == retained.CredentialGeneration;
             return new ProviderAuthCacheEntry(
                 retained with
                 {
@@ -1331,11 +1393,18 @@ public sealed class ProviderAuthProbe
                     ObservedAt = retained.ObservedAt,
                     ProbeDegraded = true,
                     Outcome = ProviderProbeOutcome.Indeterminate,
-                    Signal = observedAt - retained.ObservedAt > LastGoodWindow
+                    EffectiveSource = effectiveSource,
+                    CredentialGeneration = generation,
+                    LastRealSuccessAt = sameBinding ? retained.LastRealSuccessAt : null,
+                    EvidenceId = null,
+                    EvidenceExcerpt = null,
+                    Signal = observation.Kind == ProviderAuthObservationKind.Unauthorized
+                        || observedAt - retained.ObservedAt > LastGoodWindow
                         ? "indeterminate" : observation.Kind == ProviderAuthObservationKind.Transient
                             ? SignalTransient : retained.Signal,
                 },
                 0, observedAt);
+        }
 
         var failures = Math.Min(negativeConfirmations, (previous?.ConsecutiveLogoutSignals ?? 0) + 1);
         if (failures < negativeConfirmations)
@@ -1485,6 +1554,7 @@ internal enum ProviderAuthObservationKind
     Limited,
     Transient,
     Indeterminate,
+    Unauthorized,
     BinaryMissing,
 }
 

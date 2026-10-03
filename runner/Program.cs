@@ -40,6 +40,7 @@ void Log(string message) => Console.Error.WriteLine($"[{DateTime.UtcNow:HH:mm:ss
 // identity instead of a task id - so the OAuth refresh still writes through
 // but no project transcript or history ever lands in it.
 var authProbeContexts = new Dictionary<string, TaskCleanContextLease>(StringComparer.OrdinalIgnoreCase);
+using var client = new TaskServerClient(options);
 
 TaskCleanContextLease? AuthProbeContext(string provider)
 {
@@ -121,7 +122,9 @@ ProviderAuthProbe.Shared.UseRealRequest(
                 ct: ct);
         }
     },
-    ProviderStatusIncidentAdapter.Official(providerStatusHttp));
+    ProviderStatusIncidentAdapter.Official(providerStatusHttp),
+    client.ReadProviderComparisonAsync,
+    options.Hostname);
 
 if (help)
 {
@@ -182,7 +185,6 @@ if (options.RestartGuardOnly || options.DrainOnly)
         : await ReviewDrainCommand.RunDrainAsync(options, Log, shutdown.Token);
 }
 
-using var client = new TaskServerClient(options);
 
 // Readiness probe (--health-check): confirm the Task Server is reachable over the
 // tunnel and exit, without touching a task. This is the check the reverse-tunnel

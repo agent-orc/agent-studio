@@ -160,7 +160,7 @@ public sealed class ProviderProbeEvidenceTests
         var launched = 0;
         var statusFetches = 0;
         var probe = new ProviderAuthProbe(
-            (_, _, _) => Task.FromResult(new ProcessResult(0, "Logged in", "")),
+            (_, _, _) => Task.FromResult(new ProcessResult(1, "", "HTTP 401 Unauthorized")),
             executableExists: _ => true,
             clock: () => At,
             credentialFreshness: _ => new ProviderCredentialFreshness(null, null, "native store",
@@ -186,6 +186,102 @@ public sealed class ProviderProbeEvidenceTests
         Assert.Equal(1, statusFetches);
         Assert.DoesNotContain("sk-svcacct", first.Detail, StringComparison.Ordinal);
         Assert.Equal("unauthorized:service-account-shaped", first.EvidenceExcerpt);
+    }
+
+    [Fact]
+    public async Task Status_401_still_makes_a_real_request_and_keeps_uncorroborated_failure_indeterminate()
+    {
+        var calls = 0;
+        var probe = new ProviderAuthProbe(
+            (_, _, _) => Task.FromResult(new ProcessResult(1, "", "HTTP 401 Unauthorized")),
+            executableExists: _ => true,
+            clock: () => At,
+            credentialFreshness: _ => new ProviderCredentialFreshness(null, null, "native store",
+                EffectiveSource: "native-cli-store", CredentialGeneration: "g1"));
+        probe.UseRealRequest((_, _, _) =>
+        {
+            Interlocked.Increment(ref calls);
+            return Task.FromResult(new ProcessResult(1, "", "HTTP 401 Unauthorized"));
+        }, new ProviderStatusIncidentAdapter((_, _) => Task.FromResult("{\"incidents\":[]}"), () => At));
+
+        var observed = await probe.RefreshAsync("codex", CancellationToken.None);
+        Assert.Equal(1, calls);
+        Assert.Equal(ProviderProbeOutcome.Indeterminate, observed.Outcome);
+        Assert.Equal("indeterminate", observed.Signal);
+        Assert.Equal("unauthorized", observed.EvidenceExcerpt);
+        Assert.Equal("native-cli-store", observed.EffectiveSource);
+        Assert.Equal("g1", observed.CredentialGeneration);
+    }
+
+    [Fact]
+    public async Task Live_probe_consumes_independent_host_comparison_metadata()
+    {
+        var comparisonCalls = 0;
+        var probe = new ProviderAuthProbe(
+            (_, _, _) => Task.FromResult(new ProcessResult(1, "", "HTTP 401 Unauthorized")),
+            executableExists: _ => true,
+            clock: () => At,
+            credentialFreshness: _ => new ProviderCredentialFreshness(null, null, "native store",
+                EffectiveSource: "native-cli-store", CredentialGeneration: "g1"));
+        probe.UseRealRequest(
+            (_, _, _) => Task.FromResult(new ProcessResult(1, "", "HTTP 401 Unauthorized")),
+            new ProviderStatusIncidentAdapter((_, _) => Task.FromResult("{\"incidents\":[]}"), () => At),
+            (query, _) =>
+            {
+                Interlocked.Increment(ref comparisonCalls);
+                Assert.Equal("unauthorized", query.FailureSignature);
+                return Task.FromResult(new ProviderComparisonSnapshot("local-credential",
+                    new ProviderComparisonEvidence("codex", "codex-exec", "minimal-text-v1",
+                        "unauthorized", At.AddMinutes(-3), At, true, true,
+                        "other-host", "other-credential", true)));
+            }, "local-host");
+
+        var observed = await probe.RefreshAsync("codex", CancellationToken.None);
+        Assert.Equal(1, comparisonCalls);
+        Assert.Equal(ProviderProbeOutcome.ProviderIncident, observed.Outcome);
+    }
+
+    [Fact]
+    public async Task Degraded_status_cannot_republish_an_old_real_request_failure_as_fresh_comparison()
+    {
+        var now = At;
+        var statusCalls = 0;
+        var probe = new ProviderAuthProbe(
+            (_, _, _) => Task.FromResult(Interlocked.Increment(ref statusCalls) == 1
+                ? new ProcessResult(0, "Logged in", "")
+                : new ProcessResult(2, "", "unsupported command")),
+            executableExists: _ => true,
+            clock: () => now,
+            credentialFreshness: _ => new ProviderCredentialFreshness(null, null, "native store",
+                EffectiveSource: "native-cli-store", CredentialGeneration: "g1"));
+        probe.UseRealRequest((_, _, _) => Task.FromResult(new ProcessResult(1, "", "HTTP 401 Unauthorized")),
+            new ProviderStatusIncidentAdapter((_, _) => Task.FromResult("{\"incidents\":[]}"), () => now));
+        Assert.Equal("unauthorized", (await probe.RefreshAsync("codex", CancellationToken.None)).EvidenceExcerpt);
+        now = now.AddMinutes(6);
+        Assert.Null((await probe.RefreshAsync("codex", CancellationToken.None)).EvidenceExcerpt);
+    }
+
+    [Fact]
+    public async Task Status_401_does_not_spend_a_real_request_while_quota_limit_is_active()
+    {
+        var calls = 0;
+        var statusCalls = 0;
+        var probe = new ProviderAuthProbe(
+            (_, _, _) => Task.FromResult(Interlocked.Increment(ref statusCalls) == 1
+                ? new ProcessResult(1, "", "usage limit reached; resets at 2026-09-26T13:00:00Z")
+                : new ProcessResult(1, "", "HTTP 401 Unauthorized")),
+            executableExists: _ => true,
+            clock: () => At,
+            credentialFreshness: _ => new ProviderCredentialFreshness(null, null, "native store",
+                EffectiveSource: "native-cli-store", CredentialGeneration: "g1"));
+        probe.UseRealRequest((_, _, _) =>
+        {
+            Interlocked.Increment(ref calls);
+            return Task.FromResult(new ProcessResult(0, "OK", ""));
+        }, new ProviderStatusIncidentAdapter((_, _) => Task.FromResult("{\"incidents\":[]}"), () => At));
+        await probe.RefreshAsync("codex", CancellationToken.None);
+        await probe.RefreshAsync("codex", CancellationToken.None);
+        Assert.Equal(0, calls);
     }
 
     [Fact]
