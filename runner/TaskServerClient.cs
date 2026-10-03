@@ -69,6 +69,8 @@ public sealed class TaskServerClient : IDisposable
                         StringComparison.OrdinalIgnoreCase),
             };
         }
+        if (!string.IsNullOrWhiteSpace(options.AuthTokenFile))
+            handler = new ReloadingPrincipalCredentialHandler(options.AuthTokenFile, handler);
         _http = new HttpClient(handler)
         {
             BaseAddress = new Uri(options.ServerUrl),
@@ -76,7 +78,7 @@ public sealed class TaskServerClient : IDisposable
         };
         _configuredClientId = options.ClientId;
         _usesServiceCredential = !string.IsNullOrWhiteSpace(options.AuthToken);
-        if (!string.IsNullOrWhiteSpace(options.AuthToken))
+        if (!string.IsNullOrWhiteSpace(options.AuthToken) && string.IsNullOrWhiteSpace(options.AuthTokenFile))
             _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", options.AuthToken);
         // X-Client-Id is attribution only. Seed it with the configured label or
         // Runner id; authentication is supplied independently by the service

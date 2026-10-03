@@ -730,23 +730,111 @@ process and temporary data root.
 
 ## Rotate and revoke principals
 
-Use a current `management` credential and protocol header. Creation and
-rotation reveal a new secret exactly once, so redirect the response to a
-protected file and install the credential before the overlap ends.
+Use a current `management` credential and protocol header. Enrol a separate
+management-scoped recovery principal before rotating the normal management
+path. Create it as kind `studio`, with an id starting `recovery:` and exactly
+`["management"]` as its scopes; keep its protected credential outside the normal
+management credential path. The rotation request
+requires a stable operation id and the exact consumer bindings. For a Runner,
+the consumer id must equal its bound Runner id. Choose an overlap that covers
+protected delivery, every consumer's reload or safe drain, a scoped request,
+acknowledgement, and old-bearer rejection. The server accepts 1 to the
+configured maximum overlap seconds; use explicit revocation for an emergency
+that may interrupt work.
 
 ```bash
 curl --fail --silent --show-error \
   -H "Authorization: Bearer $MANAGEMENT_CREDENTIAL" \
   -H "X-Task-Protocol-Version: 2" \
   -H "Content-Type: application/json" \
-  -d '{"overlapSeconds":300}' \
+  -d '{"operationId":"runner-rotation-2026-10-03","overlapSeconds":300,"consumers":[{"consumerId":"agent-runner-01","requiredScope":"tasks:read"}]}' \
   https://task-server.example/api/v1/management/principals/runner:agent-runner-01/rotate \
   > /root/runner-rotation.json
 ```
 
-Replace the Runner token file atomically, restart the Runner, and prove it has
-registered before the overlap expires. A zero-second overlap invalidates all
-older credential versions immediately. To contain a compromise, revoke first;
+For one consumer, the first response contains `credential`. For several
+consumers, `consumerCredentials` contains one distinct bearer per consumer and
+`credential` is null. Give each bearer only to its named host. The receipt's
+`consumerCredentialGenerations` maps each binding to its issued generation;
+all bearers retain the same principal id, scopes and host or role binding.
+If a response is lost before delivery, a retry with the same operation id and
+parameters returns the same bearer for each consumer still awaiting delivery
+until the overlap deadline. It never issues another generation. A consumer's
+delivery acknowledgement ends replay of only that consumer's bearer; retries
+return `consumerCredentials` with only the remaining undelivered consumers.
+For a single consumer, retries return `credential: null` after delivery. Each
+bearer is derived from a private host-owned
+`principal-rotation-delivery.key` in the Task Server data directory; the command
+database stores the bearer's verifier hash and rotation metadata only. Protect
+and back up this key as a host secret with mode `0600` on Linux. Neither the
+SQLite backup route nor a full backup set includes this key. If it is
+unavailable, restore it before retrying; do not create a new rotation to
+compensate for a lost response.
+The original management bearer must make an ambiguous-delivery retry while it
+is still valid. A newly issued consumer bearer cannot replay its own rotation
+to retrieve another consumer's undelivered bearer, even when the shared
+principal has `management` scope.
+`GET /api/v1/management/principals/{principalId}/rotations/{operationId}`
+returns the redacted receipt with actor, previous and per-consumer new generations,
+per-consumer delivery and acknowledgement times, and retirement state. Store each bearer only in its target host's protected
+secret file and replace that file atomically. Runner file-backed clients, the
+Engine file-backed client, and the Studio edge proxy reread it on subsequent
+requests without dropping active leases. The Studio connector also rereads its
+protected store. For a client without a supported reload path, drain it and roll
+it safely before the overlap deadline. A read-only Docker secret mount is a
+deployment-owned replacement: do not assume its contents change in a running
+container. Stage the new secret through that deployment path, drain affected
+work where reattachment is unproven, and roll the consumer within the chosen
+overlap before acknowledging it.
+
+On a Linux receiving host, `scripts/install-principal-rotation.py` accepts the
+management response on stdin and installs the bearer in the configured token file
+with an atomic replacement. Use a pinned protected SSH session or run it locally;
+do not put the response in task results. Supply `--server`, `--operation-id`,
+`--consumer-id` and `--token-file`. Before replacing the file, it checks the operation
+receipt with the new bearer and rejects a stale or recovered generation. It
+first stages the bearer in a private host-local `.pending` file, then backs up
+the previous credential and replaces the live file. It removes the pending file
+after the live file is durable. The installer then acknowledges delivery and waits
+up to 30 seconds for the running consumer
+to complete a successful request requiring its declared scope. It does not
+make that proof request on the consumer's behalf. Use `--resume` to retry the
+acknowledgement from the installed file within the overlap deadline. For a
+shared principal, run the installer once per consumer using that consumer's
+bearer from `consumerCredentials`; a retry may supply only consumers whose
+delivery is still outstanding. After all consumers acknowledge, run
+`--resume` on each host to check old-bearer rejection and remove its local
+backup. The
+installer retains the previous bearer in a restricted host-local backup while
+the operation is active. It removes that backup only after retirement and an
+HTTP 401 check with the old bearer. A failed delivery leaves the backup for
+operator recovery within the original overlap; it does not request another
+rotation or claim rollback after the deadline.
+If the command stops after staging, run it with `--resume` using the same
+operation id. It reads the private pending or installed file and completes the
+same operation. If the command stopped before staging, repeat the management
+request with the same operation id and pipe its replayed response to the
+installer. No retry requests a second bearer.
+
+The receiving consumer calls `POST /api/v1/principal-rotations/{operationId}/delivered`
+with the new bearer, completes a successful operation on a route requiring its
+declared `requiredScope`, then calls
+`POST /api/v1/principal-rotations/{operationId}/ack` with
+`{"consumerId":"agent-runner-01"}` using that bearer. The server records the
+scoped success against the authenticated consumer bearer, rejects an acknowledgement
+without it, and revokes old generations only after all declared consumers have
+acknowledged. A caller-supplied consumer label cannot supply proof or acknowledge
+another consumer; the Task Server resolves the consumer from the authenticated
+bearer and its durable rotation binding.
+Verify the old bearer receives 401 and the new
+bearer still works.
+If a response or delivery is lost, inspect the receipt and the target host's
+protected file. Do not request a new operation while the receipt is active.
+After its deadline the receipt says `recovery-required`; old credentials may
+already be unusable, and the server does not claim rollback. A separately
+enrolled `recovery:` management principal can start a new operation.
+
+To contain a compromise, revoke first;
 revocation is read from the store on the next request and needs no Task Server
 restart:
 

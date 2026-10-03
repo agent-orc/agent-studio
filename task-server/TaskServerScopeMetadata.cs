@@ -12,7 +12,10 @@ public sealed record TaskServerPrincipal(
     string PrincipalId,
     string Kind,
     IReadOnlySet<string> Scopes,
-    string? RunnerId);
+    string? RunnerId,
+    string? CredentialId = null,
+    string? RotationOperationId = null,
+    string? RotationConsumerId = null);
 
 public static class TaskServerScopeExtensions
 {

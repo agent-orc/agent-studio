@@ -51,10 +51,10 @@ public static class TaskServerPlaneProxy
                 typeof(TaskServerPlaneProxy).Assembly.GetName().Version?.ToString(3)
                 ?? "unknown");
             var token = ReadServiceToken(configuration);
-            if (token is not null)
+            if (token is not null && string.IsNullOrWhiteSpace(configuration["TaskServer:AuthTokenFile"]))
                 client.DefaultRequestHeaders.Authorization =
                     new AuthenticationHeaderValue("Bearer", token);
-        });
+        }).AddHttpMessageHandler(() => new ReloadingProxyCredentialHandler(configuration));
     }
 
     public static bool MapTaskServerPlaneProxy(this WebApplication app)
@@ -184,5 +184,20 @@ public static class TaskServerPlaneProxy
             direct = File.ReadAllText(resolved).Trim();
         }
         return string.IsNullOrWhiteSpace(direct) ? null : direct;
+    }
+
+    private sealed class ReloadingProxyCredentialHandler(IConfiguration configuration) : DelegatingHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (!string.IsNullOrWhiteSpace(configuration["TaskServer:AuthTokenFile"]))
+            {
+                var token = ReadServiceToken(configuration)
+                    ?? throw new InvalidOperationException("The Task Server service credential is empty.");
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            }
+            return base.SendAsync(request, cancellationToken);
+        }
     }
 }

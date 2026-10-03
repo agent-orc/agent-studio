@@ -51,6 +51,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 |---|---|
 | Product installer for Windows and Linux | [operations/setup/install.md](../operations/setup/install.md) |
 | Contribution and style conventions for all agents | [contribution-and-style-guide.html](contribution-and-style-guide.html) |
+| Documentation drift audit and source-linked follow-ups (2026-09-29) | [docs-drift-audit-2026-09-29/](../docs-drift-audit-2026-09-29/index.html) |
 | Windows process spawn safety and repository guards | [operations/windows-process-spawn-safety.md](../operations/windows-process-spawn-safety.md) |
 | Runner | [domains/runner.md](../system/domains/runner.md) |
 | Pipeline | [domains/pipeline.md](../system/domains/pipeline.md) |
