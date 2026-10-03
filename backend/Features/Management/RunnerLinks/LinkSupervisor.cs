@@ -25,11 +25,13 @@ public sealed record RunnerLinkOptions(
     int HeartbeatTimeoutSeconds,
     IReadOnlyList<int> BackoffSeconds,
     string SshExecutable,
-    string LogDirectory)
+    string LogDirectory,
+    string? KnownHostsFile = null)
 {
     public static IReadOnlyList<RunnerLinkOptions> Read(IConfiguration configuration)
     {
         var links = new List<RunnerLinkOptions>();
+        configuration = ConnectivityManifestLoader.RunnerLinkSource(configuration);
         foreach (var section in configuration.GetSection("RunnerLinks").GetChildren())
         {
             if (section.GetValue("Enabled", true) is false) continue;
@@ -50,7 +52,8 @@ public sealed record RunnerLinkOptions(
                 runnerId, kind, target, remotePort, localPort, forwards, timeout, backoff,
                 section["SshExecutable"]?.Trim() is { Length: > 0 } executable ? executable : "ssh",
                 Path.GetFullPath(section["LogDirectory"] ?? Path.Combine(
-                    configuration["TaskRepository"] ?? AppContext.BaseDirectory, ".logs", "runner-links"))));
+                    configuration["TaskRepository"] ?? AppContext.BaseDirectory, ".logs", "runner-links")),
+                section["KnownHostsFile"]?.Trim() is { Length: > 0 } knownHosts ? Path.GetFullPath(knownHosts) : null));
         }
         if (links.Select(link => link.RunnerId).Distinct(StringComparer.OrdinalIgnoreCase).Count() != links.Count)
             throw new InvalidOperationException("RunnerLinks runnerId values must be unique.");
@@ -135,6 +138,15 @@ public static class RunnerLinkPolicy
             return new(RunnerLinkStates.Connecting, false, false, true, false);
         return new(state, false, false, false, false);
     }
+
+    /// <summary>
+    /// Host-key pinning for every supervisor-initiated SSH call. Unknown or changed keys fail
+    /// closed; a pinned known_hosts file replaces the user's mutable one when configured.
+    /// </summary>
+    public static IReadOnlyList<string> HostKeyArguments(RunnerLinkOptions options)
+        => options.KnownHostsFile is { } file
+            ? ["-o", "StrictHostKeyChecking=yes", "-o", $"UserKnownHostsFile={file}", "-o", "GlobalKnownHostsFile=/dev/null"]
+            : ["-o", "StrictHostKeyChecking=yes"];
 
     public static bool IsForward(string value)
     {
@@ -587,12 +599,15 @@ public sealed class LinkSupervisor : BackgroundService
     private async Task StartForwardAsync(LinkState link, CancellationToken cancellationToken)
     {
         link.Attempt++;
+        // Direction: this supervisor opens SSH to the runner; the runner reaches its own
+        // loopback RemotePort, which forwards back to LocalPort on this host.
         var arguments = new List<string>
         {
             "-N", "-T", "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes",
             "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3", "-o", "LogLevel=VERBOSE",
-            "-R", $"{link.Options.RemotePort}:127.0.0.1:{link.Options.LocalPort}",
         };
+        arguments.AddRange(RunnerLinkPolicy.HostKeyArguments(link.Options));
+        arguments.AddRange(["-R", $"127.0.0.1:{link.Options.RemotePort}:127.0.0.1:{link.Options.LocalPort}"]);
         foreach (var forward in link.Options.ExtraForwards) { arguments.Add("-R"); arguments.Add(forward); }
         arguments.Add(link.Options.SshTarget);
         var log = Path.Combine(link.Options.LogDirectory, SafeName(link.Options.RunnerId) + ".log");
@@ -612,7 +627,8 @@ public sealed class LinkSupervisor : BackgroundService
     {
         var remote = $"curl --fail --silent --show-error --max-time 5 http://127.0.0.1:{link.Options.RemotePort}/healthz >/dev/null";
         var result = await RunBoundedAsync(link,
-            ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", link.Options.SshTarget, remote],
+            ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", .. RunnerLinkPolicy.HostKeyArguments(link.Options),
+                link.Options.SshTarget, remote],
             kind, TimeSpan.FromSeconds(8), cancellationToken);
         return result.Succeeded;
     }
@@ -642,7 +658,8 @@ public sealed class LinkSupervisor : BackgroundService
             [ -z "$(listener)" ] || exit 1
             """;
         var command = "timeout 4s sh -c " + ShellQuote(script);
-        return ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", options.SshTarget, command];
+        return ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", .. RunnerLinkPolicy.HostKeyArguments(options),
+            options.SshTarget, command];
     }
 
     private static string ShellQuote(string value) => "'" + value.Replace("'", "'\\''", StringComparison.Ordinal) + "'";

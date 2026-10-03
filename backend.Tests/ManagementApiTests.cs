@@ -373,7 +373,9 @@ public sealed class ManagementApiTests : IDisposable
         Assert.Contains("ss -H -ltnp", cleanup.Arguments[^1]);
         Assert.Contains("kill -KILL", cleanup.Arguments[^1]);
         Assert.Contains("ExitOnForwardFailure=yes", forward.Arguments);
-        Assert.Contains("15031:127.0.0.1:5031", forward.Arguments);
+        Assert.Contains("127.0.0.1:15031:127.0.0.1:5031", forward.Arguments);
+        Assert.Contains("StrictHostKeyChecking=yes", forward.Arguments);
+        Assert.Contains("StrictHostKeyChecking=yes", cleanup.Arguments);
         Assert.Contains("5031:127.0.0.1:5031", forward.Arguments);
         Assert.Contains("4011:localhost:4011", forward.Arguments);
 
@@ -507,6 +509,40 @@ public sealed class ManagementApiTests : IDisposable
         Assert.Equal("adopted-listener-release", paused.LastProbe?.Kind);
         Assert.Equal(2, launcher.Commands.Count(command => !command.Arguments.Contains("-N")));
         await supervisor.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task ConnectivityManifest_IsTheSingleRunnerLinkSourceAndPinsHostKeysAcrossRestart()
+    {
+        var knownHosts = Path.Combine(_root, "pinned_known_hosts");
+        var manifest = Path.Combine(_root, "connectivity.json");
+        await File.WriteAllTextAsync(manifest, JsonSerializer.Serialize(new
+        {
+            schemaVersion = 1, installationId = "inst-01", revision = 3,
+            mode = "reverse-ssh-transition", package = "legacy-backend",
+            serverOrigin = "http://127.0.0.1:5031", browserOrigin = "http://127.0.0.1:4011",
+            linkOwner = "link-supervisor", enabledListeners = new[] { "legacy-api", "runner-tunnel", "browser" },
+            runners = new[] { new { runnerId = "agent-runner-02", route = "reverse-ssh", sshTarget = "runner-02", knownHostsFile = knownHosts } },
+        }));
+
+        for (var boot = 0; boot < 2; boot++)
+        {
+            var launcher = new FakeLinkProcessLauncher();
+            await using var factory = BuildFactory(launcher: launcher, connectivityManifest: manifest);
+            var supervisor = factory.Services.GetRequiredService<LinkSupervisor>();
+            Assert.Equal("agent-runner-02", Assert.Single(supervisor.Snapshot()).RunnerId);
+            await supervisor.ReconnectAsync("agent-runner-02", "test", CancellationToken.None);
+            await supervisor.TickAsync("agent-runner-02");
+            var forward = Assert.Single(launcher.Commands, command => command.Arguments.Contains("-N"));
+            Assert.Contains("127.0.0.1:15031:127.0.0.1:5031", forward.Arguments);
+            Assert.Contains($"UserKnownHostsFile={knownHosts}", forward.Arguments);
+            Assert.Equal("runner-02", forward.Arguments[^1]);
+            Assert.All(launcher.Commands, command => Assert.Contains("StrictHostKeyChecking=yes", command.Arguments));
+        }
+
+        await using var both = BuildFactory(runnerLinks: true, connectivityManifest: manifest);
+        var error = Assert.ThrowsAny<Exception>(() => both.Services.GetRequiredService<LinkSupervisor>());
+        Assert.Contains("single owner", error.ToString());
     }
 
     [SkippableFact]
@@ -849,7 +885,8 @@ public sealed class ManagementApiTests : IDisposable
         bool runnerLinks = false,
         IRunnerLinkProcessLauncher? launcher = null,
         StableReleaseIdentity? stableRelease = null,
-        TimeProvider? timeProvider = null) =>
+        TimeProvider? timeProvider = null,
+        string? connectivityManifest = null) =>
         new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
     {
         builder.UseEnvironment(environment);
@@ -877,6 +914,7 @@ public sealed class ManagementApiTests : IDisposable
             ["RunnerLinks:0:BackoffSeconds:2"] = "30",
             ["RunnerLinks:0:BackoffSeconds:3"] = "60",
             ["RunnerLinks:0:BackoffSeconds:4"] = "120",
+            [ConnectivityManifestLoader.ManifestPathKey] = connectivityManifest,
         }));
         builder.ConfigureTestServices(services =>
         {
@@ -898,7 +936,7 @@ public sealed class ManagementApiTests : IDisposable
                 services.RemoveAll<IProviderAuthProvisioner>();
                 services.AddSingleton(provisioner);
             }
-            if (runnerLinks || launcher is not null)
+            if (runnerLinks || launcher is not null || connectivityManifest is not null)
             {
                 services.RemoveAll<IRunnerLinkProcessLauncher>();
                 services.AddSingleton<IRunnerLinkProcessLauncher>(launcher ?? new FakeLinkProcessLauncher());
