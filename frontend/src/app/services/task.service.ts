@@ -1,6 +1,7 @@
 import { Injectable, signal, inject } from '@angular/core';
 import { HttpClient, HttpErrorResponse, HttpHeaders, HttpParams } from '@angular/common/http';
-import { catchError, finalize, map } from 'rxjs';
+import { Subject, catchError, finalize, map, tap } from 'rxjs';
+import type { TaskCore } from '../models/task-core.model';
 import type {
   ArchivedTasksResponse,
   BatchMoveItemInput,
@@ -202,6 +203,25 @@ export interface IntegrationRetryResponse {
 }
 
 type LaneKey = keyof GroupedJobs;
+
+/**
+ * A per-task change for resource caches. Row events (`upserted`, a pushed
+ * `deleted`, `snapshot`) are published after the board store has applied
+ * them. Own mutation replies (`mutated`, a replied `deleted`) are published
+ * when the reply lands; the store converges through the push that follows.
+ * `moved`, `bulk` and `reconnected` announce a change the store is about to
+ * reconcile with a grouped read.
+ */
+export type TaskStoreEvent =
+  | { kind: 'upserted'; info: TaskInfo }
+  /** `taskKey` is null when the caller named only the id and it is ambiguous. */
+  | { kind: 'deleted'; id: string; taskKey: string | null }
+  | { kind: 'moved'; id: string }
+  /** A successful own mutation reply; `lane` is set when the reply implies it. */
+  | { kind: 'mutated'; id: string; watchPath?: string; lane?: string }
+  | { kind: 'bulk' }
+  | { kind: 'reconnected' }
+  | { kind: 'snapshot' };
 // ADR-0025: state strings use the new seven-lane order.
 // ADR-0026: 1a-orchestrator-prep joins the catalog. The 1b-needs-human-review
 // bounce lane has been retired (its "Human decision needed" concept was
@@ -316,6 +336,33 @@ export class TaskService {
 
   /** True while the job-events socket is connected (diagnostics / e2e). */
   readonly pushConnected = this.jobsHub.connected;
+
+  private readonly taskEventSubject = new Subject<TaskStoreEvent>();
+  /**
+   * Per-task changes the board store has applied: pushed rows, deletes, moves,
+   * a reconnect resync and each accepted grouped snapshot. Resource caches
+   * (the task core cache) subscribe so they can revalidate exactly the task
+   * that changed instead of discarding everything on a global generation.
+   */
+  readonly taskEvents = this.taskEventSubject.asObservable();
+
+  /** Publish a successful mutation reply for one task (see `taskEvents`). */
+  private afterMutation<T>(id: string, watchPath?: string, lane?: string) {
+    return tap<T>({ next: () => this.taskEventSubject.next({ kind: 'mutated', id, watchPath, lane }) });
+  }
+
+  /**
+   * Publish a successful delete or project change. Without a watch path the
+   * task is resolved from the board by id; an id held by two projects stays
+   * unresolved (`taskKey: null`) so no other project's entry is evicted.
+   */
+  private afterRemoval<T>(id: string, watchPath?: string) {
+    return tap<T>({ next: () => {
+      const matches = watchPath ? [] : this.jobs().filter((job) => job.id === id);
+      const taskKey = watchPath ? `${watchPath}::${id}` : matches.length === 1 ? matches[0].taskKey : null;
+      this.taskEventSubject.next({ kind: 'deleted', id, taskKey });
+    } });
+  }
 
   /**
    * AGT-2726 — the background Git-index freshness stamp folded into the last
@@ -475,6 +522,7 @@ export class TaskService {
           this.gitStateAt.set(gitStateAt);
           this.gitStateStale.set(stale);
           this.groupedETag = response.headers.get('ETag');
+          this.taskEventSubject.next({ kind: 'snapshot' });
         } else {
           // The optimistic guards discarded this snapshot, so the rendered board
           // no longer corresponds to any tag. Drop it rather than let the next
@@ -697,6 +745,23 @@ export class TaskService {
     );
   }
 
+  /**
+   * Bounded task core (AGT-2953). A conditional read: when `etag` names the
+   * core the caller still holds, an unchanged task answers 304 with no body.
+   * Callers go through `TaskDetailPrefetchService`, which owns the shared
+   * cache, coalescing and lookahead cancellation.
+   */
+  getCore(jobId: string, project: string, etag?: string | null) {
+    return this.http.get<TaskCore>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/core`,
+      {
+        params: new HttpParams().set('project', project),
+        headers: etag ? new HttpHeaders({ 'If-None-Match': etag }) : undefined,
+        observe: 'response',
+      },
+    );
+  }
+
   getDetail(jobId: string, watchPath?: string, project?: string) {
     let params = this.withWatchPath(watchPath).params ?? new HttpParams();
     if (project) params = params.set('project', project);
@@ -753,7 +818,7 @@ export class TaskService {
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/move`,
       body,
       this.withWatchPath(watchPath),
-    );
+    ).pipe(this.afterMutation(jobId, watchPath, targetState));
   }
 
   /** Queue independent task moves and return the server-side job handle. */
@@ -1100,7 +1165,7 @@ export class TaskService {
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/tags`,
       { tags },
       this.withWatchPath(watchPath),
-    );
+    ).pipe(this.afterMutation(jobId, watchPath));
   }
 
   /**
@@ -1335,7 +1400,7 @@ export class TaskService {
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/task-type`,
       { taskType },
       this.withWatchPath(watchPath),
-    );
+    ).pipe(this.afterMutation(jobId, watchPath));
   }
 
   updateJobFile(jobId: string, fileName: string, content: string, watchPath?: string) {
@@ -1343,7 +1408,7 @@ export class TaskService {
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/files/${encodeURIComponent(fileName)}`,
       { content },
       this.withWatchPath(watchPath),
-    );
+    ).pipe(this.afterMutation(jobId, watchPath));
   }
 
   /**
@@ -1471,7 +1536,7 @@ export class TaskService {
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/move-to-top`,
       null,
       this.withWatchPath(watchPath),
-    );
+    ).pipe(this.afterMutation(jobId, watchPath));
   }
 
   changeProject(jobId: string, targetWatchPath: string, watchPath?: string) {
@@ -1479,14 +1544,14 @@ export class TaskService {
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/change-project`,
       { targetWatchPath },
       this.withWatchPath(watchPath),
-    );
+    ).pipe(this.afterRemoval(jobId, watchPath));
   }
 
   deleteJob(jobId: string, watchPath?: string) {
     return this.http.delete(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}`,
       this.withWatchPath(watchPath),
-    );
+    ).pipe(this.afterRemoval(jobId, watchPath));
   }
 
   // Git
@@ -1867,7 +1932,7 @@ export class TaskService {
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/model`,
       { model },
       this.withWatchPath(watchPath),
-    );
+    ).pipe(this.afterMutation(jobId, watchPath));
   }
 
   setJobThinkingLevel(jobId: string, thinkingLevel: string | null, watchPath?: string) {
@@ -1875,7 +1940,7 @@ export class TaskService {
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/thinking-level`,
       { thinkingLevel },
       this.withWatchPath(watchPath),
-    );
+    ).pipe(this.afterMutation(jobId, watchPath));
   }
 
   setJobCliType(jobId: string, cliType: CliType, watchPath?: string, useOwnSession?: boolean) {
@@ -1885,7 +1950,7 @@ export class TaskService {
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/cli-type`,
       body,
       this.withWatchPath(watchPath),
-    );
+    ).pipe(this.afterMutation(jobId, watchPath));
   }
 
   getCliModelCatalog(cliType: CliType, refresh = false) {
@@ -1955,7 +2020,7 @@ export class TaskService {
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/title`,
       { title },
       this.withWatchPath(watchPath),
-    );
+    ).pipe(this.afterMutation(jobId, watchPath));
   }
 
   // --- Epics -------------------------------------------------------------
@@ -1968,7 +2033,7 @@ export class TaskService {
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/epic`,
       { epicId: epicId ?? '' },
       this.withWatchPath(watchPath),
-    );
+    ).pipe(this.afterMutation(jobId, watchPath));
   }
 
   /** All epics with their live sub-task rollups. */
@@ -2900,9 +2965,15 @@ export class TaskService {
       jobCreated: (info) => this.upsertJobLocal(info),
       jobUpdated: (info) => this.upsertJobLocal(info),
       jobDeleted: (e) => this.removeJobLocal(e.id, e.watchPath),
-      jobMoved: () => this.scheduleSilentRefresh(),
+      jobMoved: (e) => {
+        this.taskEventSubject.next({ kind: 'moved', id: e.id });
+        this.scheduleSilentRefresh();
+      },
       jobsReordered: () => this.scheduleSilentRefresh(),
-      jobsBulkChanged: () => this.scheduleSilentRefresh(),
+      jobsBulkChanged: () => {
+        this.taskEventSubject.next({ kind: 'bulk' });
+        this.scheduleSilentRefresh();
+      },
       // Quiet, immediate stamp update from the push payload itself (no round
       // trip needed to know the index moved forward), plus a silent re-pull
       // so the merge/integration/publish/test-run signals that repository's
@@ -2917,7 +2988,10 @@ export class TaskService {
       cliFinished: () => this.scheduleSilentRefresh(),
       // Initial connect + every reconnect: re-pull the full board so anything
       // emitted while the socket was down is reconciled.
-      reconnected: () => this.refresh(true),
+      reconnected: () => {
+        this.taskEventSubject.next({ kind: 'reconnected' });
+        this.refresh(true);
+      },
     });
   }
 
@@ -2965,12 +3039,12 @@ export class TaskService {
       );
     }
     this.grouped.set(next);
+    this.taskEventSubject.next({ kind: 'upserted', info });
   }
 
   /** Remove a task from the local `jobs` + `grouped` signals. Idempotent. */
   private removeJobLocal(jobId: string, watchPath: string): void {
     const key = `${watchPath}::${jobId}`;
-
     const flat = this.jobs();
     const nextFlat = flat.filter((j) => `${j.watchPath}::${j.id}` !== key);
     if (nextFlat.length !== flat.length) this.jobs.set(nextFlat);
@@ -2987,6 +3061,7 @@ export class TaskService {
       }
     }
     if (changed) this.grouped.set(next);
+    this.taskEventSubject.next({ kind: 'deleted', id: jobId, taskKey: key });
   }
 
   // CLI settings

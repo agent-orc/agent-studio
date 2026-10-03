@@ -170,6 +170,93 @@ AGT-2410 acute-only status contract, and every event kind uses the same
 row-width grid so Watcher Problem and Decision projections can join the stream
 without a parallel surface.
 
+## Task core cache and board reuse (AGT-2956)
+
+Task navigation reads the board it already holds. `TaskService` stays the
+single owner of the grouped board store; `TaskDetailPrefetchService` owns two
+independent caches: the existing 30 s full-detail lookahead, and the bounded
+task core cache for `GET /api/tasks/{id}/core` (see
+[Bounded task core read](tasks.md#bounded-task-core-read-agt-2953)).
+
+- **Selection never reads the grouped board.** Board click, Explorer, pager,
+  triage advance, deep link, Back/Forward and editor-tab switches do not call
+  `TaskService.refresh`. Only mutation replies, SignalR events, the reconnect
+  resync and the 30 s conditional heartbeat do. The board component is
+  re-created from the resident store when its tab returns; filters, lane sort,
+  lane focus and collapse live in services, and `ScrollMemoryDirective`
+  restores the board and lane-group scroll offsets.
+- **Seed first, then core, then full detail.** `TaskSelectionService.selectedCore`
+  is set synchronously from the board record: identity, lane, order, runtime
+  activity/location and model/thinking/CLI pins (`seedTaskCore`). Its state is
+  `seeded` until the bounded heads arrive, then `ready` or `stale`; `warming`,
+  `missing`, `denied` and `error` are explicit. The task route shell
+  (`TaskDetailLoadSectionsComponent`) reads that selection signal directly.
+  Board facts and pins paint at once; the prompt, status and timeline heads
+  paint as escaped text when
+  the core is available, with explicit empty states. Git evidence is not core
+  and keeps its own loading and retry state, so a failed full-detail request
+  never blanks core content already on screen. The shell shows while the full
+  detail loads: board and Explorer clicks, tab restore, and pager or triage
+  steps whose full detail was not prefetched. On a board or Explorer click
+  with an uncached core, the full-detail request waits until the core has
+  answered (at most 250 ms) and a frame has painted, so its heavier render
+  never competes with the core paint. The board payload is not widened with
+  prompt, status or timeline heads.
+- **Key and bounds.** A core is keyed by registry project handle plus task id,
+  so identical slugs in two projects never share an entry. The cache holds at
+  most 48 cores and 512 KiB of estimated body bytes, evicting least recently
+  used first. Full-detail TTL expiry and `clear()` never touch cores.
+- **One request per task.** Concurrent reads of one core share a request. A
+  foreground read joins an in-flight lookahead. A late reply for a task the
+  operator already left is retained as a visited core but never replaces the
+  selected one.
+- **Lookahead.** After the selected core is available and a frame has
+  painted, only the next two pager cores are requested. Moving the window or
+  leaving the task aborts lookahead that left it. The existing two-peer
+  full-detail prefetch still serves the instant accept -> next path while its
+  30 s entries are fresh. A pager step that misses it paints the lookahead
+  core instead of leaving the previous task on screen, and cores do not
+  expire with that TTL.
+- **Invalidation is per task and per resource.** Core, runtime and content
+  versions travel in the core ETag; Git and usage versions do not. A pushed
+  row, a move or a successful own mutation marks only that task's core stale
+  and patches its lane facts in place; the next read revalidates with
+  `If-None-Match`, so an unchanged core costs a 304. A mutation reply that
+  names only the id revalidates every same-slug core but patches no lane,
+  because the slug may belong to another project. A reply that raced a
+  change of its task is kept for paint but not trusted as current.
+  `gitStateChanged`, sidecar generations and an unchanged grouped snapshot
+  leave every core current. Reconnect and bulk changes mark all cores stale
+  without discarding them.
+- **Eviction for correctness.** A delete (push or own reply), a `404` and a
+  project leaving the visible registry evict immediately, including a reply
+  still in flight. A `403` evicts every core of that project. Store events
+  name the task by board `taskKey`, and every in-flight read carries its
+  `taskKey`, so a delete never evicts the same slug in another project. A
+  delete reply that names only an id held by two projects revalidates both
+  instead of evicting either (the deleted one then answers `404`).
+
+Coverage: `task-core-cache.spec.ts` (cache invariants) and
+`task-selection-core.spec.ts` (board -> A -> B -> board, pager reuse and
+pager-miss preview, A -> B -> A, identical slugs, reconnect, delete, denial)
+assert zero grouped requests on selection and zero duplicate core requests;
+`task-detail-load-sections.component.spec.ts` covers the core rendering. The
+browser proof is `e2e/task-detail/task-core-board-reuse.spec.ts` (fully mocked
+API; `PW_BASE_URL` may point at a served production bundle). It times each
+selection from the click event to the first animation frame after the
+selected task's core facts are in the DOM, and asserts resident p95 <= 50 ms
+and uncached p95 <= 100 ms by default. A wall-clock verdict is not decidable
+on an oversubscribed host (1-minute load above the CPU count); such a run
+keeps every sample, records the load in its summary and annotates the
+skipped verdict, while the request invariants stay asserted. The mocked core
+latency makes this a client budget; the workstation gate with real reads is
+Dossier card 6. In-app
+diagnostic spans under `?perf=1`: `task-core-select-to-ready` (core available)
+and `task-core-select-to-painted` (heads rendered). The saving is
+conditional: it avoids a grouped handler of p50 350 ms / p95 956 ms and its
+roughly 2.56 MB body only where such a navigation refetch would otherwise
+occur. It is not a claim about tunnel transfer time.
+
 ## Key Code
 
 - `frontend/src/app/features/board/`: kanban lanes, task cards, project tabs,
