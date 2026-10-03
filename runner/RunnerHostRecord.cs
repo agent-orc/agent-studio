@@ -34,7 +34,7 @@ public sealed record RunnerHostRecord(
     };
 
     public EnrolHostRequest ToEnrolment(long expectedGeneration)
-        => new(HostClass, Roles.Select(role => new HostRolePrincipalDto(role.Role, role.PrincipalId)).ToArray(),
+        => new(HostClass, (Roles ?? []).Select(role => new HostRolePrincipalDto(role.Role, role.PrincipalId)).ToArray(),
             Envelope, expectedGeneration);
 }
 

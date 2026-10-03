@@ -27,6 +27,8 @@ host_record=""
 host_id=""
 coding_slots=2
 review_slots=2
+coding_slots_explicit=0
+review_slots_explicit=0
 
 usage() {
   cat <<'EOF'
@@ -85,8 +87,8 @@ while (($#)); do
     --skip-auth) skip_auth=1; shift ;;
     --host-record) host_record="${2:-}"; shift 2 ;;
     --host-id) host_id="${2:-}"; shift 2 ;;
-    --coding-slots) coding_slots="${2:-}"; shift 2 ;;
-    --review-slots) review_slots="${2:-}"; shift 2 ;;
+    --coding-slots) coding_slots="${2:-}"; coding_slots_explicit=1; shift 2 ;;
+    --review-slots) review_slots="${2:-}"; review_slots_explicit=1; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) die "Unknown argument '$1'. Run with --help." ;;
   esac
@@ -99,13 +101,16 @@ if [[ -n "$host_record" ]]; then
   record_values="$(python3 - "$host_record" "$role" <<'HOST_RECORD'
 import json, sys
 record = json.load(open(sys.argv[1]))
-role = next((item for item in record.get("roles", []) if item.get("role") == sys.argv[2]), None)
+roles = record.get("roles") or []
+if not isinstance(roles, list):
+    sys.exit("host record roles must be a list")
+role = next((item for item in roles if isinstance(item, dict) and item.get("role") == sys.argv[2]), None)
 if role is None:
     sys.exit(f"host record has no {sys.argv[2]} role")
 envelope = record["envelope"]
 for value in (record["serverUrl"], record["gitRemote"], record.get("gitPushRemote") or "",
               role["principalId"], role["tokenFile"], role.get("name") or "", record["hostId"],
-              envelope["codingSlots"], envelope["reviewSlots"]):
+              envelope["codingSlots"], envelope["reviewSlots"], role.get("clientId") or ""):
     print(value)
 HOST_RECORD
 )" || die "--host-record could not be read."
@@ -113,7 +118,7 @@ HOST_RECORD
   adopt() {
     local name="$1" value="$2"
     local current="${!name}"
-    if [[ -n "$current" && "$current" != "$value" && -n "$value" ]]; then
+    if [[ -n "$current" && "$current" != "$value" ]]; then
       die "--${name//_/-} '$current' disagrees with host record value '$value'."
     fi
     [[ -z "$value" ]] || printf -v "$name" '%s' "$value"
@@ -123,8 +128,20 @@ HOST_RECORD
   adopt git_push_remote "${record_fields[2]}"
   adopt runner_id "${record_fields[3]}"
   adopt auth_token_file "${record_fields[4]}"
-  [[ -n "$runner_name" ]] || runner_name="${record_fields[5]:-${record_fields[6]}-$role}"
+  if [[ -n "${record_fields[5]}" ]]; then
+    adopt runner_name "${record_fields[5]}"
+  else
+    [[ -z "$runner_name" ]] || die "--runner-name needs a name in the host record role."
+    runner_name="${record_fields[6]}-$role"
+  fi
   adopt host_id "${record_fields[6]}"
+  adopt client_id "${record_fields[9]:-}"
+  if ((coding_slots_explicit)) && [[ "$coding_slots" != "${record_fields[7]}" ]]; then
+    die "--coding-slots '$coding_slots' disagrees with host record value '${record_fields[7]}'."
+  fi
+  if ((review_slots_explicit)) && [[ "$review_slots" != "${record_fields[8]}" ]]; then
+    die "--review-slots '$review_slots' disagrees with host record value '${record_fields[8]}'."
+  fi
   coding_slots="${record_fields[7]}"
   review_slots="${record_fields[8]}"
 fi
@@ -439,9 +456,18 @@ if [[ "$role" == "review" ]]; then
     'guard_tmp="$(mktemp)"; trap '"'"'rm -f "$guard_tmp"'"'"' EXIT; cat >"$guard_tmp"; sudo install -d -m 0755 /usr/local/libexec; sudo install -m 0644 "$guard_tmp" /usr/local/libexec/agent-runner-review-restart-guard.conf' \
     <"$review_restart_guard"
 fi
+record_owned=0
+if [[ -n "$host_record" ]]; then
+  record_owned=1
+  # The record contains paths and principals, never tokens. Install it once as
+  # the desired source before rendering any role or resource setting.
+  "${ssh_base[@]}" -T "$host" \
+    'set -euo pipefail; record_tmp="$(mktemp)"; trap '"'"'rm -f "$record_tmp"'"'"' EXIT; cat >"$record_tmp"; sudo install -d -m 0755 /etc/agent-host; sudo install -m 0644 -o root -g root "$record_tmp" /etc/agent-host/host.json' \
+    <"$host_record"
+fi
 "${ssh_base[@]}" -T "$host" bash -s -- \
   "$server_url" "$client_id" "$runner_id" "$runner_name" "$role" "$git_remote" "$git_push_remote" "$runner_command" "$auth_token_file" "$service_auth" "$provider_auth_file" \
-  "$host_id" "$coding_slots" "$review_slots" <<'REMOTE_SYSTEMD'
+  "$host_id" "$coding_slots" "$review_slots" "$record_owned" <<'REMOTE_SYSTEMD'
 set -euo pipefail
 server_url="$1"
 client_id="$2"
@@ -457,6 +483,7 @@ provider_auth_file="${11}"
 host_id="${12}"
 coding_slots="${13}"
 review_slots="${14}"
+record_owned="${15}"
 restart_guard_source="/usr/local/libexec/agent-runner-review-restart-guard.conf"
 export PATH="$HOME/.dotnet/tools:$HOME/.local/bin:$PATH"
 runner_user="$(id -un)"
@@ -489,9 +516,27 @@ fi
 
 env_tmp="$(mktemp)"
 unit_tmp="$(mktemp)"
-trap 'rm -f "$env_tmp" "$unit_tmp"' EXIT
+render_dir="$(mktemp -d)"
+trap 'rm -f "$env_tmp" "$unit_tmp"; rm -rf "$render_dir"' EXIT
 chmod 600 "$env_tmp"
-{
+if [[ "$record_owned" == 1 ]]; then
+  "$runner_bin" host-record render --record /etc/agent-host/host.json --out-dir "$render_dir" >/dev/null
+  rendered_env="$render_dir/$(basename "$env_file")"
+  [[ -f "$rendered_env" && -f "$render_dir/profile.conf" ]] || {
+    echo '[remote] Host record did not render the requested role and profile.' >&2
+    exit 51
+  }
+  # Refuse a malformed resource value before replacing the live profile or
+  # removing an older unit override.
+  sudo /usr/local/libexec/agent-host-resource-governance \
+    --role "$role" --coding-slots "$coding_slots" --review-slots "$review_slots" \
+    --profile "$render_dir/profile.conf" >/dev/null
+  cp "$rendered_env" "$env_tmp"
+  sudo install -m 0644 -o root -g root "$render_dir/profile.conf" /etc/agent-host/profile.conf
+  resource_mode=(--replace-drop-in-resources)
+else
+  resource_mode=(--migrate-drop-ins)
+  {
   printf 'RUNNER_SERVER_URL=%s\n' "$server_url"
   [[ -z "$client_id" ]] || printf 'RUNNER_CLIENT_ID=%s\n' "$client_id"
   printf 'RUNNER_ID=%s\n' "$runner_id"
@@ -517,7 +562,8 @@ chmod 600 "$env_tmp"
   fi
   printf 'RUNNER_HOST_CODING_SLOTS=%s\n' "$coding_slots"
   printf 'RUNNER_HOST_REVIEW_SLOTS=%s\n' "$review_slots"
-} >"$env_tmp"
+  } >"$env_tmp"
+fi
 
 resource_policy="$(sudo /usr/local/libexec/agent-host-resource-governance \
   --role "$role" \
@@ -525,7 +571,7 @@ resource_policy="$(sudo /usr/local/libexec/agent-host-resource-governance \
   --review-slots "$review_slots" \
   --profile /etc/agent-host/profile.conf \
   --drop-in-dir "/etc/systemd/system/${service_name}.service.d" \
-  --migrate-drop-ins)"
+  "${resource_mode[@]}")"
 
 cat >"$unit_tmp" <<EOF
 [Unit]

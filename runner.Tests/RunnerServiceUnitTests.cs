@@ -730,6 +730,39 @@ public sealed class RunnerServiceUnitTests
         }
     }
 
+    [SkippableFact]
+    public void Record_owned_profile_replaces_legacy_drop_in_without_adopting_its_values()
+    {
+        PlatformGate.RequiresPosixShell();
+
+        var root = CreateTemporaryDirectory();
+        try
+        {
+            var profile = Path.Combine(root, "profile.conf");
+            File.WriteAllText(profile, "REVIEW_MEMORY_MAX=6G\n");
+            var dropInDirectory = Path.Combine(root, "agent-runner-review.service.d");
+            Directory.CreateDirectory(dropInDirectory);
+            var legacy = Path.Combine(dropInDirectory, "10-limits.conf");
+            File.WriteAllText(legacy, "[Service]\nCPUQuota=999%\nMemoryMax=8G\nRestartSec=20s\n");
+
+            var result = RunResourceGovernance(
+                "--role", "review", "--cpu-count", "8", "--coding-slots", "2", "--review-slots", "1",
+                "--profile", profile, "--drop-in-dir", dropInDirectory, "--replace-drop-in-resources");
+
+            AssertScriptSucceeded(result);
+            Assert.Contains("MemoryMax=6G", result.StandardOutput);
+            Assert.DoesNotContain("CPUQuota=999%", result.StandardOutput);
+            Assert.Equal("REVIEW_MEMORY_MAX=6G\n", File.ReadAllText(profile));
+            Assert.DoesNotContain("CPUQuota", File.ReadAllText(legacy));
+            Assert.DoesNotContain("MemoryMax", File.ReadAllText(legacy));
+            Assert.Contains("RestartSec=20s", File.ReadAllText(legacy));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     [Fact]
     public void Onboarding_embeds_generated_policy_in_the_managed_main_unit()
     {

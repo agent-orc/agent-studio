@@ -76,6 +76,30 @@ public sealed class RunnerHostRecordTests
     }
 
     [Fact]
+    public void Missing_roles_report_validation_instead_of_throwing_or_emitting_enrolment()
+    {
+        var record = Record() with { Roles = null! };
+        Assert.Contains(RunnerHostRecordPolicy.Validate(record), item => item.Contains("At least one role service"));
+
+        var root = Path.Combine(Path.GetTempPath(), "host-record-invalid-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var path = Path.Combine(root, "host.json");
+            File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(record, RunnerHostRecord.Json));
+            var output = new StringWriter();
+            var error = new StringWriter();
+            Assert.Equal(2, RunnerHostRecordCommand.Run(["enrolment", "--record", path], output, error));
+            Assert.Empty(output.ToString());
+            Assert.Contains("At least one role service", error.ToString());
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Workstation_host_renders_explicit_roots_without_new_unit_names()
     {
         var record = Record() with

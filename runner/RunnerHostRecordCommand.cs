@@ -60,7 +60,14 @@ public static class RunnerHostRecordCommand
                 case "enrolment":
                 {
                     var generation = long.Parse(options.GetValueOrDefault("--expected-generation", "0"));
-                    output.WriteLine(JsonSerializer.Serialize(Load(recordPath).ToEnrolment(generation), RunnerHostRecord.Json));
+                    var record = Load(recordPath);
+                    var errors = RunnerHostRecordPolicy.Validate(record);
+                    if (errors.Count > 0)
+                    {
+                        foreach (var item in errors) error.WriteLine($"error: {item}");
+                        return 2;
+                    }
+                    output.WriteLine(JsonSerializer.Serialize(record.ToEnrolment(generation), RunnerHostRecord.Json));
                     return 0;
                 }
                 default:

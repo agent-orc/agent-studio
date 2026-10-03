@@ -271,7 +271,15 @@ identity. Each file declares both `RUNNER_HOST_CODING_SLOTS` and
 `RUNNER_HOST_REVIEW_SLOTS`, so a value inherited from the service environment
 cannot leak in. `remote-runner-onboard.sh --host-record host.json --role
 <coding|review>` reads the same record and refuses any flag that disagrees
-with it.
+with it, including an explicit coding or review slot count. The controller
+installs the record at `/etc/agent-host/host.json` on the selected host, runs
+the installed `agent-host host-record render`, then installs the selected role's
+generated EnvironmentFile and generated `profile.conf`. The managed unit's
+resource policy reads that profile. Legacy resource directives in that unit's
+drop-ins are removed so they cannot override the record; unrelated drop-in
+settings remain. Repeat onboarding for each enrolled role service. A record
+without the requested role or with an invalid envelope fails before service
+replacement. Keep each role's token file provisioned separately on that host.
 
 **Migrating an existing host.** Build the first record from the files already
 in place, review the notes, then render and compare:
@@ -285,7 +293,11 @@ agent-host host-record migrate --runner-env /etc/agent-runner/runner.env \
 The import refuses disagreeing shared facts (server URL, origin, host id) and
 shared principals instead of choosing one. A missing `RUNNER_HOSTNAME` is
 pinned to the current machine name. The envelope starts at the sum of today's
-role slots; tightening it is a deliberate edit.
+role slots; tightening it is a deliberate edit. Review the imported resource
+values, then use `--host-record` on the normal onboarding controller. The
+controller replaces the old `runner.env`, `review.env` (one role at a time)
+and `profile.conf` from the record. Legacy onboarding without `--host-record`
+continues to import unit resource drop-ins into the existing profile.
 
 **Enrolment on the Task Server.** The Task Server owns the enrolment. With an
 administrator principal:
