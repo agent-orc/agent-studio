@@ -333,6 +333,7 @@ public static class V1ReviewPlaneEndpoints
             ILoggerFactory loggerFactory,
             QuotaAdmissionService quotaAdmission,
             QuotaAdmissionRecorder quotaAdmissionRecorder,
+            CauseBreakerService causeBreakers,
             CancellationToken ct) =>
         {
             if (!RunnerMatches(context, runnerId)
@@ -394,12 +395,16 @@ public static class V1ReviewPlaneEndpoints
                 }
             }
 
+            // AGT-W57: park pending reviews that would run into an open cause
+            // before they spend an attempt, and skip every parked card.
+            var heldByCauseBreaker = causeBreakers.HoldPendingReviews();
             var claimed = reviewAttemptLifecycle.ClaimNextReview(
                 runnerId,
                 executor.HostId,
                 request.InstanceId,
                 request.RequestedTtlSeconds,
-                executor.Capabilities);
+                executor.Capabilities,
+                heldByCauseBreaker);
             if (claimed.Status == AttemptWriteStatus.NotFound)
                 return Results.Ok(new Contract.ReviewClaimResponse(
                     "empty", Message: "No current immutable ReviewAttempt is queued."));
@@ -604,6 +609,7 @@ public static class V1ReviewPlaneEndpoints
             RemoteDeliveryIntegrationCoordinator remoteIntegration,
             TimelineLog timeline,
             FailureInterventionService failureInterventions,
+            CauseBreakerService causeBreakers,
             IntegrationBranchGateReporter integrationGates,
             IRemoteReviewEvidenceProjectionQueue evidenceQueue,
             ILoggerFactory loggerFactory,
@@ -935,10 +941,13 @@ public static class V1ReviewPlaneEndpoints
                 "ReviewInfra",
                 StringComparison.OrdinalIgnoreCase);
             FailureInterventionResult? intervention = null;
+            CauseBreakerOutcome? causeBreaker = null;
             var interventionStep = PipelineCatalogue.FindStep(PipelineCatalogue.FailureInterventionStepId)!;
+            var breakerEnabled = causeBreakers.IsEnabled(task.ProjectName);
             if (infrastructureFailure
                 && !aspectRetryExhausted
-                && PipelineStepConfigResolver.IsEnabled(settings.Get(task.ProjectName), interventionStep))
+                && (breakerEnabled
+                    || PipelineStepConfigResolver.IsEnabled(settings.Get(task.ProjectName), interventionStep)))
             {
                 var failedCommand = request.Commands.FirstOrDefault(command => command.ExitCode is not null and not 0)
                     ?? request.Commands.FirstOrDefault();
@@ -954,7 +963,7 @@ public static class V1ReviewPlaneEndpoints
                     .Prepend(evidenceFile)
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToArray();
-                intervention = await failureInterventions.RaiseAsync(task, new FailureCommandEvidence(
+                var failureEvidence = new FailureCommandEvidence(
                     request.FailureClassification ?? request.Outcome,
                     request.Outcome,
                     failedCommand?.ExitCode,
@@ -962,7 +971,43 @@ public static class V1ReviewPlaneEndpoints
                     stdoutTail,
                     stderrTail,
                     failedCommand?.StepId,
-                    evidencePointers), ct);
+                    evidencePointers);
+                if (breakerEnabled)
+                {
+                    // AGT-W57: count the cause fleet-wide. Below the threshold
+                    // the ordinary bounded retry applies; at it, one cause card
+                    // is raised and this card waits on it.
+                    var planned = settled.ReviewAttempt.Subject.Plan?.Commands.FirstOrDefault(command =>
+                        failedCommand is not null
+                        && string.Equals(command.StepId, failedCommand.StepId, StringComparison.OrdinalIgnoreCase));
+                    var failureText = string.Join("\n", new[] { request.Summary, stderrTail, stdoutTail }
+                        .Where(text => !string.IsNullOrWhiteSpace(text))
+                        .Distinct(StringComparer.Ordinal));
+                    var fingerprint = CauseFingerprintPolicy.Compute(
+                        request.Outcome,
+                        request.FailureClassification,
+                        failureText,
+                        failedCommand?.ExitCode,
+                        CauseFingerprintPolicy.Toolchain(planned, failedCommand?.FileName));
+                    causeBreaker = causeBreakers.Observe(
+                        task,
+                        settled.ReviewAttempt.TaskKey,
+                        settled.ReviewAttempt.AttemptId,
+                        fingerprint,
+                        failureEvidence,
+                        failureText);
+                    intervention = causeBreaker.Intervention;
+                }
+                else
+                {
+                    intervention = await failureInterventions.RaiseAsync(task, failureEvidence, ct);
+                }
+            }
+            else if (!infrastructureFailure && breakerEnabled)
+            {
+                // A review that ran through without an infrastructure failure
+                // is a green probe for any breaker this card was parked behind.
+                causeBreakers.ObserveGreen(settled.ReviewAttempt.TaskKey, settled.ReviewAttempt.AttemptId);
             }
             var retry = infrastructureFailure && !aspectRetryExhausted && intervention is null
                         && authority.HasReviewInfrastructureRetryBudget(settled.ReviewAttempt.AttemptId);
@@ -1534,7 +1579,18 @@ public static class V1ReviewPlaneEndpoints
             else
             {
                 var review = settled.ReviewAttempt;
-                if (string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
+                if (causeBreaker is { Parked: true }
+                    && string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
+                {
+                    // AGT-W57: the card waits in its lane on the cause card
+                    // ("waiting for <key>"), not in Escalated. The breaker
+                    // releases it with a freshly planned review when it closes.
+                    taskState = TaskStates.AutoReview;
+                    logger.LogInformation(
+                        "review-cause-waiting attempt={AttemptId} task={TaskKey} cause={CauseKey} fingerprint={Fingerprint}",
+                        attemptId, review.TaskKey, causeBreaker.Breaker.CauseKey, causeBreaker.Breaker.Fingerprint);
+                }
+                else if (string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
                 {
                     // The budget constant alone described the chain by its size.
                     // The chain summary describes it by its NEWEST cause and by
