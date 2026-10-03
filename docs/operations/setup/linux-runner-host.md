@@ -1041,9 +1041,10 @@ seconds. Three measures now keep the host free of them:
 - **Stale-node sweep.** Both daemons run a sweep at startup and once per hour.
   A process is terminated when it is an MSBuild node or server
   (`MSBuild.dll /nodemode:`), the Roslyn compiler server (`VBCSCompiler`) or a
-  `dotnet build-server` command, belongs to the runner user, is at least 30
-  minutes old, is not a descendant of a run this daemon tracks, has no working
-  directory inside an active workspace, and has no live build driver as its
+  `dotnet build-server` command. The sweep identifies the executable or .NET
+  entry point. The process must belong to the runner user, be at least 30
+  minutes old, have no ancestor among runs this daemon tracks, have no working
+  directory inside an active workspace, and have no live build driver as its
   parent (only nodes reparented to init or the systemd manager, or parented by
   another node, qualify). Each kill logs `build-node-reaped`; each pass logs
   `build-node-sweep dotnetProcesses=<n> staleNodes=<n> terminated=<n>`.

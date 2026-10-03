@@ -40,10 +40,15 @@ public sealed class BuildNodeSweepPolicyTests
     [InlineData("dotnet", "dotnet /sdk/MSBuild.dll -nodemode:8", BuildNodeKind.MsBuildNode)]
     [InlineData("dotnet", CompilerCommand, BuildNodeKind.CompilerServer)]
     [InlineData("VBCSCompiler", "VBCSCompiler", BuildNodeKind.CompilerServer)]
+    [InlineData("dotnet", "dotnet exec /sdk/Roslyn/VBCSCompiler.dll -pipename:abc", BuildNodeKind.CompilerServer)]
     [InlineData("dotnet", "/usr/bin/dotnet build-server shutdown", BuildNodeKind.BuildServerCommand)]
     [InlineData("dotnet", "dotnet build backend/OrchestratorApi.csproj", BuildNodeKind.None)]
     [InlineData("dotnet", "dotnet /sdk/MSBuild.dll backend.csproj", BuildNodeKind.None)]
     [InlineData("bash", "bash -lc make", BuildNodeKind.None)]
+    [InlineData("bash", "bash -lc 'sleep 3600; echo VBCSCompiler'", BuildNodeKind.None)]
+    [InlineData("bash", "bash -lc 'echo MSBuild.dll /nodemode:1'", BuildNodeKind.None)]
+    [InlineData("dotnet", "dotnet test --filter VBCSCompiler", BuildNodeKind.None)]
+    [InlineData("dotnet", "dotnet /sdk/Other.dll VBCSCompiler.dll", BuildNodeKind.None)]
     public void Classifies_build_server_processes(string comm, string command, BuildNodeKind expected)
         => Assert.Equal(expected, BuildNodeSweepPolicy.Classify(comm, command));
 
@@ -65,9 +70,12 @@ public sealed class BuildNodeSweepPolicyTests
 
     [Fact]
     public void A_non_build_process_is_never_touched()
-        => Assert.Equal(
-            BuildNodeVerdict.NotBuildNode,
+    {
+        Assert.Equal(BuildNodeVerdict.NotBuildNode,
             Decide(Node(command: "dotnet build backend.csproj"), Context()));
+        Assert.Equal(BuildNodeVerdict.NotBuildNode,
+            Decide(Node(command: "bash -lc 'sleep 3600; echo VBCSCompiler'") with { Comm = "bash" }, Context()));
+    }
 
     [Fact]
     public void Another_users_node_is_never_touched()

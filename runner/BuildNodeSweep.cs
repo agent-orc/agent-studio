@@ -52,20 +52,29 @@ public static class BuildNodeSweepPolicy
 
     public static BuildNodeKind Classify(string comm, string commandLine)
     {
-        if (commandLine.Contains("VBCSCompiler", StringComparison.Ordinal)
-            || string.Equals(comm, "VBCSCompiler", StringComparison.Ordinal))
-            return BuildNodeKind.CompilerServer;
-        if (commandLine.Contains("MSBuild.dll", StringComparison.OrdinalIgnoreCase)
-            && (commandLine.Contains("/nodemode:", StringComparison.OrdinalIgnoreCase)
-                || commandLine.Contains("-nodemode:", StringComparison.OrdinalIgnoreCase)
-                || commandLine.Contains("/nodeReuse:", StringComparison.OrdinalIgnoreCase)))
-            return BuildNodeKind.MsBuildNode;
         var arguments = commandLine.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        return arguments.Length >= 2
-               && IsDotnetHost(arguments[0])
-               && string.Equals(arguments[1], "build-server", StringComparison.Ordinal)
-            ? BuildNodeKind.BuildServerCommand
-            : BuildNodeKind.None;
+        if (arguments.Length == 0) return BuildNodeKind.None;
+        if (string.Equals(comm, "VBCSCompiler", StringComparison.Ordinal)
+            && IsCompilerExecutable(arguments[0]))
+            return BuildNodeKind.CompilerServer;
+        if (!string.Equals(comm, "dotnet", StringComparison.Ordinal)
+            || !IsDotnetHost(arguments[0]))
+            return BuildNodeKind.None;
+
+        var entryPointIndex = arguments.Length > 1 && arguments[1] == "exec" ? 2 : 1;
+        if (arguments.Length <= entryPointIndex) return BuildNodeKind.None;
+        var entryPoint = arguments[entryPointIndex];
+        if (string.Equals(entryPoint, "build-server", StringComparison.Ordinal) && entryPointIndex == 1)
+            return BuildNodeKind.BuildServerCommand;
+        if (string.Equals(Path.GetFileName(entryPoint), "VBCSCompiler.dll", StringComparison.OrdinalIgnoreCase))
+            return BuildNodeKind.CompilerServer;
+        if (string.Equals(Path.GetFileName(entryPoint), "MSBuild.dll", StringComparison.OrdinalIgnoreCase)
+            && arguments.Skip(entryPointIndex + 1).Any(argument =>
+                argument.StartsWith("/nodemode:", StringComparison.OrdinalIgnoreCase)
+                || argument.StartsWith("-nodemode:", StringComparison.OrdinalIgnoreCase)
+                || argument.StartsWith("/nodeReuse:", StringComparison.OrdinalIgnoreCase)))
+            return BuildNodeKind.MsBuildNode;
+        return BuildNodeKind.None;
     }
 
     /// <summary>True for the dotnet host itself or a process it runs, for the host report.</summary>
@@ -114,6 +123,10 @@ public static class BuildNodeSweepPolicy
     private static bool IsDotnetHost(string executable)
         => string.Equals(Path.GetFileName(executable), "dotnet", StringComparison.Ordinal)
            || string.Equals(Path.GetFileName(executable), "dotnet.exe", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsCompilerExecutable(string executable)
+        => string.Equals(Path.GetFileName(executable), "VBCSCompiler", StringComparison.Ordinal)
+           || string.Equals(Path.GetFileName(executable), "VBCSCompiler.exe", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsUnder(string? cwd, IReadOnlyList<string> roots)
     {
