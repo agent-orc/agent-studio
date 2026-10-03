@@ -1,0 +1,711 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Integration lane throughput | Concept Dossier</title>
+  <style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #7c7a74;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main,
+    .article {
+      width: min(70ch, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 0 0 80px;
+    }
+    header.page {
+      margin-bottom: 12px;
+      padding: 48px 0 28px;
+      border-bottom: 1px solid var(--article-line);
+    }
+    h1,
+    h2,
+    h3,
+    h4,
+    .kicker,
+    .meta,
+    .number,
+    nav,
+    table,
+    figcaption,
+    .box,
+    .callout,
+    .evidence-figure,
+    .variant-grid,
+    .evidence-list {
+      font-family: var(--article-sans);
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      margin: 56px 0 10px;
+      font-size: 1.55rem;
+      line-height: 1.25;
+    }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker,
+    .number {
+      margin: 0 0 12px;
+      color: var(--article-faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code {
+      padding: 0.08em 0.34em;
+      border-radius: 4px;
+      background: var(--article-surface-strong);
+      font: 0.84em/1.5 var(--article-mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    pre code { padding: 0; background: transparent; }
+    ul,
+    ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+    th,
+    td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box,
+    .callout {
+      margin: 24px 0;
+      padding: 18px 22px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+    .box.accent,
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .box.good,
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .box.warn,
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .box.bad,
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    figure { margin: 30px 0; }
+    figure > img,
+    figure > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .evidence-figure { margin-top: 38px; margin-bottom: 38px; }
+    .evidence-captures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+      gap: 12px;
+    }
+    .evidence-capture {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    .evidence-capture > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .capture-theme,
+    .figure-annotation {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--article-line);
+      border-radius: 999px;
+      background: var(--article-surface);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      line-height: 1.35;
+    }
+    .capture-theme {
+      top: 10px;
+      left: 10px;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+    .figure-annotation {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(28ch, calc(100% - 24px));
+      padding: 5px 10px;
+      border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line));
+      background: var(--article-link-soft);
+      color: var(--article-link);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .figure-claim { display: block; color: var(--article-ink); font-size: 0.84rem; }
+    .figure-as-of {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 14px;
+      margin-top: 6px;
+      color: var(--article-faint);
+      font-size: 0.72rem;
+    }
+    .breakout,
+    .media-breakout {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .variant-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0; }
+    .variant {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    .variant h3 { margin: 0 0 8px; }
+    .variant img,
+    .variant svg { display: block; width: 100%; height: auto; margin-top: 12px; }
+    [data-document-pattern="ui"] .variant-grid {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    [data-document-pattern="ui"] .mockup { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--article-line);
+      border-radius: 9px;
+      background: var(--article-surface);
+      color: var(--article-ink);
+      text-decoration: none;
+    }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .dim { color: var(--article-muted); }
+
+    @media (max-width: 760px) {
+      main,
+      .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout,
+      .media-breakout,
+      [data-document-pattern="ui"] .variant-grid,
+      [data-document-pattern="ui"] .mockup { width: calc(100vw - 20px); }
+      [data-document-pattern="ui"] .variant-grid { grid-template-columns: 1fr; }
+      .evidence { grid-template-columns: 1fr; }
+      .evidence-captures { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+  </style>
+  <style>
+    nav.toc { margin: 18px 0 0; font-size: 0.85rem; line-height: 2; }
+    .diagram-scroll { overflow-x: auto; }
+    .diagram-scroll svg { display: block; width: 100%; min-width: 780px; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-paper); }
+    .sketch text { font-family: var(--article-sans); fill: var(--article-ink); font-size: 14px; }
+    .sketch .small { font-size: 12px; fill: var(--article-muted); }
+    .sketch .tiny { font-size: 11px; fill: var(--article-muted); }
+    .sketch .box { fill: var(--article-surface); stroke: var(--article-line); stroke-width: 1.2; }
+    .sketch .box-serial { fill: var(--article-link-soft); stroke: var(--article-link); stroke-width: 1.2; }
+    .sketch .box-good { fill: var(--article-good-soft); stroke: var(--article-good); stroke-width: 1; }
+    .sketch .box-bad { fill: var(--article-bad-soft); stroke: var(--article-bad); stroke-width: 1; }
+    .sketch .box-void { fill: var(--article-surface-strong); stroke: var(--article-faint); stroke-width: 1; stroke-dasharray: 4 3; }
+    .sketch .box-plain { fill: var(--article-link-soft); stroke: var(--article-line); stroke-width: 1; }
+    .sketch .wire { fill: none; stroke: var(--article-link); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+    .sketch .wire-bad { fill: none; stroke: var(--article-bad); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+    .sketch .arrow { fill: var(--article-link); }
+    .sketch .arrow-bad { fill: var(--article-bad); }
+    .sketch .grid { stroke: var(--article-line); stroke-width: 1; }
+    .sketch .tick { stroke: var(--article-ink); stroke-width: 2; }
+    .chart .bar { fill: var(--article-link); }
+    .chart .bar:hover { opacity: 0.8; }
+    .chart .ref { stroke: var(--article-warn); stroke-width: 2; }
+    .decision { margin: 22px 0; padding: 16px 20px; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-surface); font-family: var(--article-sans); font-size: 0.9rem; line-height: 1.6; }
+    .decision h3 { margin: 0 0 8px; }
+    .decision ul { margin-bottom: 8px; }
+    .decision .rec { margin: 8px 0 0; }
+    .source-path { overflow-wrap: anywhere; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body>
+<main class="article">
+  <header class="page">
+    <p class="kicker">AGT-2994 · Concept Dossier · Integration lane</p>
+    <h1>Integration lane throughput</h1>
+    <p class="lede">Only the publication of a merge must be serial per project. Preparing the next deliveries, gating them and running agent rounds can run in parallel, bounded by cores. A speculative merge train with ordered publication doubles one busy project's modelled merge rate on the 12-core host. Gating the train tip while the queue is deep roughly quadruples it.</p>
+    <div class="meta"><span><b>Pattern</b> concept</span><span><b>Status</b> Decision pending</span><span><b>Phase</b> Decision ready</span><span><b>As of</b> 29 September 2026</span><span><b>Source revision</b> <code>742936e0</code></span></div>
+    <nav class="toc" aria-label="Contents"><a href="#problem">Problem</a> · <a href="#alternatives">Alternatives</a> · <a href="#recommendation">Recommendation</a> · <a href="#throughput">Throughput model</a> · <a href="#failure-modes">Failure modes</a> · <a href="#evidence">Evidence</a> · <a href="#open-decisions">Open decisions</a> · <a href="#implementation">Implementation</a> · <a href="#sources">Code index</a></nav>
+  </header>
+
+  <section id="problem">
+    <h2>Problem</h2>
+    <p>On the night of 28 to 29 September 2026 a delivery reported at 16:35 was integrated at 03:51, a lag of 11 hours 16 minutes. The lane spent 42 minutes per merge in the Windows gate. A Quality Studio merge waited 55 minutes behind an Agent Studio gate. An agent round for AGT-2373 waited 44 minutes for a coding slot. Every one of these waits sits in front of one serial section. That section is wider than the card assumes: it spans all projects in the process, not one project.</p>
+    <p>The serial section today is <code>fetch → sync → merge → gate → rollback</code>, held under one process-wide semaphore. Only the push happens outside it, on a separate queue. The next delivery cannot even be fetched until the previous gate has finished. Because every merge moves <code>develop</code>, the reuse rule that would skip the suite for an unchanged tip can succeed for at most the first delivery in a queue. Every later delivery runs the full suite by construction.</p>
+    <table>
+      <thead><tr><th>Work</th><th>Today</th><th>Must it be serial?</th></tr></thead>
+      <tbody>
+        <tr><td>Publication: final tip check, fast-forward of <code>develop</code>, push</td><td>Serial, and global across projects</td><td><b>Yes, per project.</b> One ref writer per project namespace (adopted AGT-W18 D7). Minutes, not the gate.</td></tr>
+        <tr><td>Ordering of candidates</td><td>Implicit in the drain loop</td><td><b>Yes, per project, as a rule, not a lock.</b> Candidate i+1 is built on candidate i, so landing order is fixed when the chain is built.</td></tr>
+        <tr><td>Fetching the delivery, verifying the fenced SHA, warming the workspace</td><td>Inside the serial section</td><td><b>No.</b> Pure preparation against immutable refs.</td></tr>
+        <tr><td>Building the merge candidate</td><td>Inside the serial section, on the shared integration worktree</td><td><b>No.</b> A disposable ref on a predicted base; it never touches <code>develop</code>.</td></tr>
+        <tr><td>Running the gate</td><td>One slot per machine, inside the serial section</td><td><b>No.</b> Each candidate is an exact subject; slots are bounded by cores, not by project.</td></tr>
+        <tr><td>Agent round after <code>AgentRoundRequired</code> or conflict</td><td>Queued in Ready; the drain moves on</td><td><b>No.</b> It leaves the lane and re-enters as a new delivery after review.</td></tr>
+        <tr><td>Another project's merge</td><td>Serial behind this project's gate</td><td><b>No.</b> Projects share only the core budget.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="alternatives" data-concept-section="alternatives" data-document-section="alternatives">
+    <h2>Alternatives</h2>
+    <p>Each alternative keeps the existing merge invariants: merge first, then mechanical merge, then guarded rebase; ambiguous attribution fails closed as <code>AgentRoundRequired</code>; a red gate never reaches <code>develop</code>. Throughput figures use the model in <a href="#throughput">Throughput model</a>.</p>
+    <div class="variant-grid">
+      <article class="variant"><h3>A · Split the global locks only</h3><p>Replace the process-wide merge semaphore with one lock per project, and the machine gate lock with a small core-bounded slot pool. Each project remains a serial fetch, merge and gate loop.</p><p class="dim">Removes the cross-project wait, such as the 55-minute Quality Studio case. One busy project still lands at most 60/45 per hour (1.20 with a 10 percent red rate). The 11-hour backlog shape is unchanged. Small change. Necessary, but not sufficient.</p></article>
+      <article class="variant"><h3>B · Prepare-ahead without speculation</h3><p>A: plus fetching, verifying and warming the next N deliveries while the current gate runs. The gate still runs on the real tip after the previous merge.</p><p class="dim">Saves only the preparation minutes, about 3 of 45 (assumption). Gates stay serial per project because each depends on the landed tip. Reuse still fails for every queued delivery because <code>develop</code> moves between review and merge.</p></article>
+      <article class="variant"><h3>C · Speculative merge train with ordered publication</h3><p>A and B, plus candidates chained on the predicted tip: C1 = tip + D1, C2 = C1 + D2. Up to k candidates gate in parallel. Publication is strictly in chain order and fast-forwards <code>develop</code> to the exact gated candidate. A red Ci is abandoned, and every later candidate in the chain is rebuilt without Di.</p><p class="dim">Modelled 2.34 merges per hour for one busy project with two slots. A candidate's own green gate stays valid at publication, so no delivery is re-gated because its predecessor landed. Costs a durable train manifest and cancelled-gate waste after a red candidate.</p></article>
+      <article class="variant"><h3>D · Batch Gate for a closed wave</h3><p>The archived AGT-W36 concept: close a manifest of all eligible deliveries, replay them onto one temporary branch, run one suite, publish the green tip, and bisect on red.</p><p class="dim">Highest throughput per suite at high load, but it adds a whole coordinator with its own manifest lifecycle, waits for a wave to close, and bisects a large batch on every red. At low load it adds latency compared with C.</p></article>
+      <article class="variant"><h3>E · Make the gate shorter</h3><p>Stop the full <code>OrchestratorApi.Tests</code> project from running for every backend change. Today <code>DotNetWorkPackagePlanner.PlanSlice</code> returns the whole project whenever referenced production code changes.</p><p class="dim">This is the largest single lever per merge, but it changes verification policy, needs its own evidence of test-impact accuracy, and is independent of lane shape. It is out of scope here and noted as a follow-up in D7.</p></article>
+    </div>
+  </section>
+
+  <section id="recommendation" data-concept-section="recommendation" data-document-section="recommendation">
+    <h2>Recommendation</h2>
+    <div class="callout" data-tone="accent"><h3>Recommended default</h3><p>Adopt <b>C, the speculative merge train</b>, on top of A's lock split. While a project's queue is deep, allow C to gate only the train tip. This backlog mode borrows D's mechanism without D's separate coordinator. Publication is the only serial step per project. Gate slots come from one core-bounded token pool shared by all projects. Agent rounds leave the train immediately and re-enter at the tail after review.</p></div>
+    <figure class="media-breakout">
+      <div class="diagram-scroll">
+<svg class="sketch" viewBox="0 0 1060 390" role="img" aria-labelledby="fig-1-title fig-1-desc">
+<title id="fig-1-title">Proposed integration lane: parallel preparation and gates, serial ordered publication per project</title>
+<desc id="fig-1-desc">A passed review enters a durable per-project intake queue. The next deliveries are prepared ahead and chained into speculative candidates. Candidates gate on core-bounded slots. Only the ordered publication step is serial per project. Conflicts and agent rounds leave the train and re-enter at the tail after review; a red candidate is abandoned and later candidates are rebuilt without it.</desc>
+<defs>
+<marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow" d="M0 0 L10 5 L0 10 z"/></marker>
+<marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow-bad" d="M0 0 L10 5 L0 10 z"/></marker>
+</defs>
+<rect class="box" x="20" y="30" width="150" height="100" rx="8"/>
+<text x="32" y="56">Review passed</text>
+<text class="small" x="32" y="78">settled envelope,</text>
+<text class="small" x="32" y="96">exact-SHA verdict</text>
+<rect class="box" x="195" y="30" width="175" height="100" rx="8"/>
+<text x="207" y="56">Intake queue</text>
+<text class="small" x="207" y="78">durable, per project</text>
+<text class="small" x="207" y="96">FIFO by review completion</text>
+<text class="small" x="207" y="114">no HTTP request holds it</text>
+<rect class="box" x="395" y="30" width="190" height="100" rx="8"/>
+<text x="407" y="56">Prepare-ahead</text>
+<text class="small" x="407" y="78">next N = 4 deliveries</text>
+<text class="small" x="407" y="96">fetch, verify fenced SHA,</text>
+<text class="small" x="407" y="114">warm workspace and caches</text>
+<rect class="box" x="610" y="30" width="190" height="100" rx="8"/>
+<text x="622" y="56">Candidate chain</text>
+<text class="small" x="622" y="78">C1 = tip + D1</text>
+<text class="small" x="622" y="96">C2 = C1 + D2, ...</text>
+<text class="small" x="622" y="114">disposable refs only</text>
+<rect class="box" x="825" y="30" width="215" height="100" rx="8"/>
+<text x="837" y="56">Gate slots</text>
+<text class="small" x="837" y="78">core-bounded token pool</text>
+<text class="small" x="837" y="96">3 cores per token</text>
+<text class="small" x="837" y="114">at most 2 per project</text>
+<rect class="box" x="20" y="220" width="350" height="100" rx="8"/>
+<text x="32" y="246">Ejected delivery</text>
+<text class="small" x="32" y="268">Conflict or AgentRoundRequired: leaves at once;</text>
+<text class="small" x="32" y="286">coding slot, then review; re-enters at the tail</text>
+<text class="small" x="32" y="304">and never holds the queue</text>
+<rect class="box-bad" x="395" y="220" width="190" height="100" rx="8"/>
+<text x="407" y="246">Red candidate Ci</text>
+<text class="small" x="407" y="268">abandon Ci and every</text>
+<text class="small" x="407" y="286">chained Cj after it; rebuild</text>
+<text class="small" x="407" y="304">them without Di, re-gate</text>
+<rect class="box-good" x="610" y="220" width="190" height="100" rx="8"/>
+<text x="622" y="246">Integrated</text>
+<text class="small" x="622" y="268">develop = exact gated Ci</text>
+<text class="small" x="622" y="286">receipt per delivery</text>
+<rect class="box-serial" x="825" y="220" width="215" height="100" rx="8"/>
+<text x="837" y="246">Ordered publication</text>
+<text class="small" x="837" y="268">serial per project, in train</text>
+<text class="small" x="837" y="286">order; expected-old tip check,</text>
+<text class="small" x="837" y="304">fast-forward and push</text>
+<path class="wire" marker-end="url(#a1)" d="M170 80 L193 80"/>
+<path class="wire" marker-end="url(#a1)" d="M370 80 L393 80"/>
+<path class="wire" marker-end="url(#a1)" d="M585 80 L608 80"/>
+<path class="wire" marker-end="url(#a1)" d="M800 80 L823 80"/>
+<path class="wire" marker-end="url(#a1)" d="M950 130 L950 218"/>
+<text class="tiny" x="956" y="180">green</text>
+<path class="wire" marker-end="url(#a1)" d="M825 270 L802 270"/>
+<path class="wire-bad" marker-end="url(#a2)" d="M870 130 L870 195 L490 195 L490 218"/>
+<text class="tiny" x="720" y="190">red</text>
+<path class="wire-bad" marker-end="url(#a2)" d="M640 130 L640 168 L195 168 L195 218"/>
+<text class="tiny" x="300" y="162">conflict at candidate construction</text>
+<path class="wire" marker-end="url(#a1)" d="M60 220 L60 132"/>
+<text class="tiny" x="66" y="180">re-review</text>
+<text class="small" x="20" y="352">Blue outline: the only serial step per project. Everything else runs in parallel, bounded by the token pool and by prepare depth N.</text>
+<text class="small" x="20" y="372">No lock spans projects except the core-bounded token pool; the process-wide merge semaphore goes away.</text>
+</svg>
+      </div>
+      <figcaption><b>Figure 1.</b> Proposed lane. Architecture diagram, not a product screenshot. N, the token size and the per-project cap are the recommended values from D2 and D3.</figcaption>
+    </figure>
+    <h3>Lane rules</h3>
+    <ol>
+      <li><b>Intake.</b> A passed review writes its settlement record, as today, and appends the delivery to a durable per-project queue. The review report request returns without waiting for the merge. Order is review-subject completion time, then a durable enqueue sequence. This is today's <code>QueuedDeliveryComparer</code>, made persistent.</li>
+      <li><b>Prepare-ahead.</b> A per-project worker prepares the next N = 4 queued deliveries. It fetches the delivery ref, verifies the fenced SHA, computes changed paths, and materialises a disposable worktree with dependency caches. Preparation holds no gate token and no publication lock. At most two preparations run per host at once.</li>
+      <li><b>Candidate chain.</b> Candidate Ci is built as Ci-1 + Di. C0 is the current <code>develop</code> tip. The existing merge order is reused unchanged. Candidates are disposable refs with ordered parents and a delivery attribution map. A conflict or ambiguous attribution ejects Di before any gate starts.</li>
+      <li><b>Gate slots.</b> Each candidate gates as an exact subject on a token from one host-wide pool. A token is 3 cores, and the test runner's thread count is capped to match. The pool size is <code>max(1, floor((cores − reserved) / 3))</code>. On the 12-core host with 6 coding and 6 review slots, <code>reserved</code> is 6 and the pool is 2 tokens. Review-run suites and integration gates draw from the same pool, as they already share the machine lock today. A project with no running gate is served first. No project holds more than 2 tokens.</li>
+      <li><b>Ordered publication.</b> Under the project ref-mutation lease (AGT-W18 D7), the publisher checks three things: <code>develop</code> still equals the candidate's predecessor, the candidate has a green receipt, and the candidate is next in chain order. It then fast-forwards and pushes. This step is serial per project and takes seconds to minutes. A candidate whose own gate passed is published without another gate. Its base equals the landed predecessor by construction, so "moved since the review" no longer triggers a second suite.</li>
+      <li><b>Order rule.</b> Merges land in chain order, which is intake order. A later delivery never lands before an earlier eligible one, because its candidate contains the earlier delivery. A delivery ejected for a conflict, an agent round or a red gate forfeits its position. It re-enters at the tail when its next review passes. There is no expedite path in the first slice.</li>
+      <li><b>Agent rounds.</b> <code>AgentRoundRequired</code> and <code>Conflict</code> eject the delivery at candidate construction. Later candidates are chained without it, and the recovery round waits for a coding slot outside the lane. The existing budget of one automatic round is kept.</li>
+      <li><b>Backlog mode.</b> When at least 4 prepared deliveries are waiting, a project gates only every third candidate. A green tip publishes the chain up to it, so each delivery in the batch lands as an ancestor of a gated commit. On red, the batch is bisected on free tokens, and the members that are not implicated keep their position.</li>
+    </ol>
+    <p><b>Composition with adopted decisions.</b> The train is the scheduling layer of the AGT-W18 remote integration target. Each candidate is an IntegrationSubject whose expected base is its predecessor, and each publication uses the single D7 publisher. Build the scheduler as a portable component. Before cutover, it drives the current <code>MergeIntoDevelopRunner</code> path; after cutover, it drives the remote integration executor. Under W18 D14 the lock split is bounded transitional work; the train itself is target work.</p>
+  </section>
+
+  <section id="throughput">
+    <h2>Throughput model</h2>
+    <p>The model counts merges per hour for one busy project. The host is the 12-core host with 6 coding and 6 review slots, and the gate token pool derived above (2 tokens). The only observed input is the 42-minute gate. Every other parameter is an assumption stated here, and card 1 replaces each one with a measurement.</p>
+    <table>
+      <thead><tr><th>Symbol</th><th>Value</th><th>Source</th></tr></thead>
+      <tbody>
+        <tr><td><code>g</code> gate duration</td><td class="num">42 min</td><td>Observed, operator log 28 to 29 September</td></tr>
+        <tr><td><code>p</code> serial preparation and merge today</td><td class="num">3 min</td><td>Assumption. Two fetches with a 30 s timeout, plus merge and receipts.</td></tr>
+        <tr><td><code>f</code> share of red candidates</td><td class="num">0.10</td><td>Assumption. Not measured for the integration gate.</td></tr>
+        <tr><td><code>k</code> parallel gates per busy project</td><td class="num">2</td><td>Recommended D2: pool of 2 tokens of 3 cores</td></tr>
+        <tr><td><code>b</code> backlog batch size</td><td class="num">3</td><td>Recommended D5</td></tr>
+        <tr><td><code>λ</code> wave demand, one project</td><td class="num">3 per h</td><td>Assumption. 6 coding slots at about 1 h per run, and review at 45 to 90 min on 6 slots, give at most 4 to 6 deliveries per hour across projects.</td></tr>
+      </tbody>
+    </table>
+    <p>Formulas. Today: <code>60/(g+p) · (1−f)</code>, shared by all projects. Train: <code>k · 60/g · (1−f) / (1 + f·(k−1))</code>, because a red candidate also cancels up to k−1 chained gates. Backlog mode: <code>k · 60/g · b(1−f) / (1 + (1−(1−f)^b) · 2.5)</code>, where 2.5 is the expected extra suites for a bisect of three.</p>
+    <figure class="media-breakout">
+      <div class="diagram-scroll">
+<svg class="sketch" viewBox="0 0 1060 370" role="img" aria-labelledby="fig-2-title fig-2-desc">
+<title id="fig-2-title">Three hours of one busy project lane, today and with a two-slot train</title>
+<desc id="fig-2-desc">Today one gate at a time lands four deliveries in 180 minutes. The train gates two candidates at once; one red candidate cancels its dependent, which is rebuilt, and six deliveries land by minute 172.</desc>
+<line class="grid" x1="170.0" y1="34" x2="170.0" y2="316"/>
+<text class="tiny" x="170.0" y="334" text-anchor="middle">0 min</text>
+<line class="grid" x1="314.0" y1="34" x2="314.0" y2="316"/>
+<text class="tiny" x="314.0" y="334" text-anchor="middle">30 min</text>
+<line class="grid" x1="458.0" y1="34" x2="458.0" y2="316"/>
+<text class="tiny" x="458.0" y="334" text-anchor="middle">60 min</text>
+<line class="grid" x1="602.0" y1="34" x2="602.0" y2="316"/>
+<text class="tiny" x="602.0" y="334" text-anchor="middle">90 min</text>
+<line class="grid" x1="746.0" y1="34" x2="746.0" y2="316"/>
+<text class="tiny" x="746.0" y="334" text-anchor="middle">120 min</text>
+<line class="grid" x1="890.0" y1="34" x2="890.0" y2="316"/>
+<text class="tiny" x="890.0" y="334" text-anchor="middle">150 min</text>
+<line class="grid" x1="1034.0" y1="34" x2="1034.0" y2="316"/>
+<text class="tiny" x="1034.0" y="334" text-anchor="middle">180 min</text>
+<text x="12" y="26" class="small">Today: global merge semaphore, one gate slot</text>
+<text x="12" y="70">Lane</text>
+<rect class="box-plain" x="171.0" y="48" width="214.0" height="34" rx="4"/>
+<text class="small" x="278.0" y="70" text-anchor="middle">D1: prepare 3 + gate 42</text>
+<line class="tick" x1="385.0" y1="88" x2="385.0" y2="102"/>
+<rect class="box-plain" x="387.0" y="48" width="214.0" height="34" rx="4"/>
+<text class="small" x="494.0" y="70" text-anchor="middle">D2: prepare 3 + gate 42</text>
+<line class="tick" x1="601.0" y1="88" x2="601.0" y2="102"/>
+<rect class="box-plain" x="603.0" y="48" width="214.0" height="34" rx="4"/>
+<text class="small" x="710.0" y="70" text-anchor="middle">D3: prepare 3 + gate 42</text>
+<line class="tick" x1="817.0" y1="88" x2="817.0" y2="102"/>
+<rect class="box-plain" x="819.0" y="48" width="214.0" height="34" rx="4"/>
+<text class="small" x="926.0" y="70" text-anchor="middle">D4: prepare 3 + gate 42</text>
+<line class="tick" x1="1033.0" y1="88" x2="1033.0" y2="102"/>
+<text class="tiny" x="12" y="100">Lands</text>
+<line class="grid" x1="12" y1="120" x2="1048" y2="120"/>
+<text x="12" y="144" class="small">Train: prepare-ahead, two gate slots, ordered publication</text>
+<text x="12" y="182">Slot 1</text>
+<rect class="box-good" x="180.6" y="160" width="199.6" height="34" rx="4"/>
+<text class="small" x="280.4" y="182" text-anchor="middle">C1 = tip+D1</text>
+<rect class="box-bad" x="382.2" y="160" width="199.6" height="34" rx="4"/>
+<text class="small" x="482.0" y="182" text-anchor="middle">C3 red: eject D3</text>
+<rect class="box-good" x="583.8" y="160" width="199.6" height="34" rx="4"/>
+<text class="small" x="683.6" y="182" text-anchor="middle">C4′ = C2+D4</text>
+<rect class="box-good" x="790.2" y="160" width="199.6" height="34" rx="4"/>
+<text class="small" x="890.0" y="182" text-anchor="middle">C6</text>
+<text x="12" y="228">Slot 2</text>
+<rect class="box-good" x="185.4" y="206" width="199.6" height="34" rx="4"/>
+<text class="small" x="285.2" y="228" text-anchor="middle">C2 = C1+D2</text>
+<rect class="box-void" x="387.0" y="206" width="194.8" height="34" rx="4"/>
+<text class="small" x="484.4" y="228" text-anchor="middle">C4 cancelled</text>
+<rect class="box-good" x="583.8" y="206" width="199.6" height="34" rx="4"/>
+<text class="small" x="683.6" y="228" text-anchor="middle">C5′ = C4′+D5</text>
+<rect class="box-good" x="795.0" y="206" width="199.6" height="34" rx="4"/>
+<text class="small" x="894.8" y="228" text-anchor="middle">C7</text>
+<text x="12" y="276">Publish</text>
+<line class="tick" x1="381.2" y1="258" x2="381.2" y2="282"/>
+<text class="tiny" x="378.2" y="252" text-anchor="end">D1</text>
+<line class="tick" x1="386.0" y1="258" x2="386.0" y2="282"/>
+<text class="tiny" x="389.0" y="300" text-anchor="start">D2</text>
+<line class="tick" x1="784.4" y1="258" x2="784.4" y2="282"/>
+<text class="tiny" x="781.4" y="252" text-anchor="end">D4</text>
+<line class="tick" x1="789.2" y1="258" x2="789.2" y2="282"/>
+<text class="tiny" x="792.2" y="300" text-anchor="start">D5</text>
+<line class="tick" x1="990.8" y1="258" x2="990.8" y2="282"/>
+<text class="tiny" x="987.8" y="252" text-anchor="end">D6</text>
+<line class="tick" x1="995.6" y1="258" x2="995.6" y2="282"/>
+<text class="tiny" x="998.6" y="300" text-anchor="start">D7</text>
+</svg>
+      </div>
+      <figcaption><b>Figure 2.</b> Three illustrative hours of one busy project under the model parameters. This is a schedule sketch, not a log replay. Today four deliveries land in 180 minutes, assuming no red gate. The train lands six by minute 172. That includes one red candidate (C3), which cancels its chained successor (C4) and ejects D3 back to coding.</figcaption>
+    </figure>
+    <figure class="media-breakout">
+      <div class="diagram-scroll">
+<svg class="sketch chart" viewBox="0 0 1060 314" role="img" aria-labelledby="fig-3-title fig-3-desc">
+<title id="fig-3-title">Modelled merges per hour for one busy project</title>
+<desc id="fig-3-desc">S0 1.20, S1 1.20, S2 2.34, S3 3.21, S4 4.60 merges per hour. The assumed wave demand of 3 deliveries per hour is exceeded by S0 to S2 and met by S3 and S4.</desc>
+<line class="grid" x1="250.0" y1="30" x2="250.0" y2="264"/>
+<text class="tiny" x="250.0" y="282" text-anchor="middle">0</text>
+<line class="grid" x1="400.0" y1="30" x2="400.0" y2="264"/>
+<text class="tiny" x="400.0" y="282" text-anchor="middle">1</text>
+<line class="grid" x1="550.0" y1="30" x2="550.0" y2="264"/>
+<text class="tiny" x="550.0" y="282" text-anchor="middle">2</text>
+<line class="grid" x1="700.0" y1="30" x2="700.0" y2="264"/>
+<text class="tiny" x="700.0" y="282" text-anchor="middle">3</text>
+<line class="grid" x1="850.0" y1="30" x2="850.0" y2="264"/>
+<text class="tiny" x="850.0" y="282" text-anchor="middle">4</text>
+<line class="grid" x1="1000.0" y1="30" x2="1000.0" y2="264"/>
+<text class="tiny" x="1000.0" y="282" text-anchor="middle">5</text>
+<text class="tiny" x="625.0" y="302" text-anchor="middle">merges per hour, one busy project (model, not measured)</text>
+<text x="12" y="60">S0 Today</text>
+<path class="bar" d="M250.0 44.0 H426.0 A4 4 0 0 1 430.0 48.0 V62.0 A4 4 0 0 1 426.0 66.0 H250.0 Z"><title>S0 Today: 1.20 merges per hour; global merge semaphore, one gate slot</title></path>
+<text class="small" x="438.0" y="60">1.20</text>
+<text x="12" y="106">S1 Per-project locks</text>
+<path class="bar" d="M250.0 90.0 H426.0 A4 4 0 0 1 430.0 94.0 V108.0 A4 4 0 0 1 426.0 112.0 H250.0 Z"><title>S1 Per-project locks: 1.20 merges per hour; two gate tokens; a busy project still gates serially</title></path>
+<text class="small" x="438.0" y="106">1.20</text>
+<text x="12" y="152">S2 Train, 2 slots</text>
+<path class="bar" d="M250.0 136.0 H597.0 A4 4 0 0 1 601.0 140.0 V154.0 A4 4 0 0 1 597.0 158.0 H250.0 Z"><title>S2 Train, 2 slots: 2.34 merges per hour; recommended default</title></path>
+<text class="small" x="609.0" y="152">2.34</text>
+<text x="12" y="198">S3 Train, 3 slots</text>
+<path class="bar" d="M250.0 182.0 H727.5 A4 4 0 0 1 731.5 186.0 V200.0 A4 4 0 0 1 727.5 204.0 H250.0 Z"><title>S3 Train, 3 slots: 3.21 merges per hour; needs 9 gate cores; outside the 12-core budget</title></path>
+<text class="small" x="739.5" y="198">3.21</text>
+<text x="12" y="244">S4 S2 + backlog tip gating</text>
+<path class="bar" d="M250.0 228.0 H936.0 A4 4 0 0 1 940.0 232.0 V246.0 A4 4 0 0 1 936.0 250.0 H250.0 Z"><title>S4 S2 + backlog tip gating: 4.60 merges per hour; batches of up to 3 when the queue is deep</title></path>
+<text class="small" x="948.0" y="244">4.60</text>
+<line class="ref" x1="700.0" y1="28" x2="700.0" y2="264"/>
+<text class="small" x="706.0" y="24">assumed wave demand, 3 per hour</text>
+</svg>
+      </div>
+      <figcaption><b>Figure 3.</b> Modelled merges per hour for one busy project. The bars are model outputs from the parameters above, not measurements. Hover a bar for its note. The reference line is the assumed wave demand. The same values are in the table below.</figcaption>
+    </figure>
+    <table>
+      <thead><tr><th>Scenario</th><th class="num">Busy project, merges/h</th><th class="num">Utilisation at λ = 3/h</th><th class="num">Lag for 16 queued ahead</th><th>Note</th></tr></thead>
+      <tbody>
+        <tr><td>S0 Today</td><td class="num">1.20</td><td class="num">2.50</td><td class="num">13.3 h</td><td>Shared by every project on the process. The observed 11 h 16 min lag corresponds to about 16 merges at 42 min.</td></tr>
+        <tr><td>S1 Split locks (A)</td><td class="num">1.20</td><td class="num">2.50</td><td class="num">13.3 h</td><td>Host-wide 2.40 with two busy projects; no cross-project wait.</td></tr>
+        <tr><td>S2 Train, 1 token</td><td class="num">1.29</td><td class="num">2.33</td><td class="num">12.4 h</td><td>Fallback if the reservation leaves only one token. Preparation leaves the serial path.</td></tr>
+        <tr><td>S2 Train, 2 tokens (C)</td><td class="num">2.34</td><td class="num">1.28</td><td class="num">6.8 h</td><td>Recommended default. Still below a 3/h wave.</td></tr>
+        <tr><td>S3 Train, 3 tokens</td><td class="num">3.21</td><td class="num">0.93</td><td class="num">5.0 h</td><td>Needs 9 gate cores; exceeds the 12-core budget with 6 + 6 slots.</td></tr>
+        <tr><td>S4 Train + backlog mode (C with D's batching)</td><td class="num">4.60</td><td class="num">0.65</td><td class="num">3.5 h</td><td>Recommended while depth is 4 or more. Stable at the assumed wave demand.</td></tr>
+        <tr><td>Sensitivity: S2 and S4 with <code>g</code> = 55 min at 3 cores</td><td class="num">1.79 / 3.51</td><td class="num">1.68 / 0.85</td><td class="num">8.9 h / 4.6 h</td><td>If capping the test runner at 3 threads slows the suite, only backlog mode stays stable.</td></tr>
+      </tbody>
+    </table>
+    <p><b>Reading.</b> The train and the lock split alone roughly double a busy project's rate and remove every cross-project wait. They do not meet a 3-per-hour wave with a 42-minute suite on two tokens. Backlog mode closes that gap without more cores. A shorter gate (alternative E) would multiply every row. <code>λ</code> and <code>f</code> are the least certain inputs, and card 1 measures both before cards 3 and 5 claim any improvement.</p>
+  </section>
+
+  <section id="failure-modes">
+    <h2>Failure modes</h2>
+    <p>Speculation only ever touches disposable candidate refs, so "rollback of a queued merge" means discarding refs and cancelling gates, never resetting <code>develop</code>. Today a red gate hard-resets the shared integration worktree to the captured tip. The train removes that reset from the normal path.</p>
+    <table>
+      <thead><tr><th>Event</th><th>Lane response</th><th>Cost</th></tr></thead>
+      <tbody>
+        <tr><td>Gate red on Ci</td><td>Di is ejected with its typed gate failure, and Ci is abandoned. Every chained Cj (j &gt; i) is cancelled and rebuilt from Ci-1 without Di, then re-gated. C1 to Ci-1 are unaffected and publish in order.</td><td>Up to k−1 cancelled gates. Recorded as speculation waste in gate-minutes.</td></tr>
+        <tr><td>Flaky red</td><td>The existing targeted flaky re-run (AGT-2853) runs inside the gate first. A red that survives it is treated as red.</td><td>Same as red</td></tr>
+        <tr><td>Conflict or <code>AgentRoundRequired</code> while building Ci</td><td>Di is ejected before any gate. The recovery round is queued in Ready as today, and Di+1 is chained on Ci-1.</td><td>No gate time</td></tr>
+        <tr><td>Red tip in backlog mode</td><td>Bisect on free tokens. Members that are not implicated keep their position; the culprit is ejected.</td><td>About 2.5 extra suites for a batch of 3</td></tr>
+        <tr><td><code>develop</code> moved by another writer</td><td>The publication check fails on the expected old tip. All unpublished candidates are invalid and the chain is rebuilt from the new tip. Under AGT-W18 D7 every enabled writer goes through the same publisher, so this should be rare.</td><td>All in-flight gates</td></tr>
+        <tr><td>Push outcome unknown</td><td>Publication for the project stops in <code>reconciliation-required</code> (AGT-W18 publication recovery). No further candidate lands until the remote ref is read and reconciled.</td><td>Blocks one project only</td></tr>
+        <tr><td>Process restart during a train</td><td>The durable queue and train manifest survive. Running gates are lost and re-run. Published candidates are recognised by the ref. The interrupted-gate journal keeps its current meaning for a legacy in-place merge.</td><td>Re-gate of in-flight candidates</td></tr>
+        <tr><td>Host overload</td><td>Tokens are admitted only through the existing load throttle. The gate timeout budget excludes token wait, so waiting in the queue never becomes a red.</td><td>Longer token wait, visible in the Ops metrics</td></tr>
+        <tr><td>Stale speculation after a long wait</td><td>A candidate older than its predecessor's publication plus 2 h is rebuilt before gating, so the train does not gate on a far-behind prediction.</td><td>One rebuild</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="evidence" data-concept-section="evidence" data-document-section="evidence">
+    <h2>Evidence</h2>
+    <p><b>Source baseline.</b> The code facts are from this worktree at <code>742936e0594bf8d6511bc35a74ad171b279b37b7</code>. That is <code>develop</code> as available locally on 29 September 2026; no remote fetch was made. Line numbers refer to that revision, and <a href="evidence.json">evidence.json</a> pins file hashes. The runtime observations come from the operator's Task Server log excerpt quoted in AGT-2994. The raw log was not available to this run and was not reproduced.</p>
+    <p><b>Visible surfaces.</b> This Dossier makes no claim about what a product surface currently shows. It states code facts about which signals are emitted, and it proposes Ops metrics. Card 1 must prove its new Ops surface with light and dark captures.</p>
+    <div class="evidence-list">
+      <a class="evidence" href="#src-merge-gate"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Merges are serial across all projects, not per project</b><small><code>MergeIntoDevelopRunner</code> is a singleton, and <code>RunAsync</code> takes <code>_mergeGate = new SemaphoreSlim(1, 1)</code> around fetch, merge, gate and rollback. The per-project drain loop is therefore nested inside one process-wide lock. Code, lines 60 and 166.</small></span></a>
+      <a class="evidence" href="#src-gate-lock"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>One build/test gate slot per machine</b><small><code>BuildTestGateRunner.ProcessGate = new SemaphoreSlim(1, 1)</code>, plus a machine-wide file lock in the temp directory. There is no configuration key. Review-run gates and integration gates share it.</small></span></a>
+      <a class="evidence" href="#src-gate-lock"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b>The 55-minute Quality Studio wait was at the merge semaphore, not the gate lock</b><small><code>collision</code> is true only when the gate lock was busy at acquisition. The operator line shows <code>collision=False</code> for the waiting merge, so its wait happened before the gate, inside <code>_mergeGate</code>. The integration gate request sets no <code>OnMachineGateWaiting</code> callback, so that wait emits no gate-queued signal.</small></span></a>
+      <a class="evidence" href="#src-coordinator"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>No preparation ahead of the lane</b><small>The drain loop takes one delivery, logs <code>remote-delivery-integration started</code>, and awaits the whole merge. Fetching the delivery ref and syncing the branch run only after the merge semaphore is acquired. Queue and sequence live in memory; restart recovery goes through the settlement store.</small></span></a>
+      <a class="evidence" href="#src-coordinator"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Integration runs inside the review report request</b><small>The review report handler awaits <code>remoteIntegration.EnqueueAsync</code> before the lane move. The runner's report acknowledgement timeout is 10 s, so the work continues after the client has left. The durable resume point is the delivery settlement record (AGT-2860).</small></span></a>
+      <a class="evidence" href="#src-agent-round"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>An agent round does not hold the drain loop in code</b><small><code>IntegrationAgentRoundService.TryStartAsync</code> saves a steer intent, supersedes the delivery, calls <code>PromoteToReadyTop</code> and returns synchronously. The drain completes the delivery and takes the next one. The automatic budget is <code>MaxAutomaticAgentRounds = 1</code>. Two architecture pages still say 2.</small></span></a>
+      <a class="evidence" href="#src-agent-round"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b>The hour without integration around AGT-2373 has another cause</b><small>The operator saw no integration for that project while the round waited from 05:56 to 06:40 and then ran. The code does not explain this as a hold by the round. Plausible causes are the global merge semaphore held by another project's gate, or an empty queue because the other deliveries were still in review. Card 1's lane events separate these. The design still makes rounds leave and re-enter explicitly.</small></span></a>
+      <a class="evidence" href="#src-reuse"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b><code>reviewReuse=full</code> records the decision to run the full gate</b><small><code>IntegrationGateReuseDecision.Token</code> is <code>"reused"</code> or <code>"full"</code>. Reuse needs the exact review-time tip (<code>PreMergeTipSha == review.IntegrationTipSha</code>) and an equal tree. Otherwise the reason is <code>"{target} moved since the review"</code>. In a queue, every merge moves the tip, so only the first queued delivery can ever be reused.</small></span></a>
+      <a class="evidence" href="#src-reuse"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>"Work-package" means the whole backend test project for backend changes</b><small><code>PreDevelopBuildGate</code> selects <code>WorkPackage</code> for managed diffs. <code>DotNetWorkPackagePlanner.PlanSlice</code> returns <code>null</code>, meaning the whole test project, whenever referenced production code changed. <code>backend.Tests</code> has 6,255 source lines carrying <code>[Fact]</code> or <code>[Theory]</code>, consistent with about 7,700 cases after theory expansion.</small></span></a>
+      <a class="evidence" href="#problem"><span class="evidence-class" data-evidence-class="observed">Observed (operator log)</span><span><b>Lag, gate duration and waits</b><small>Delivery at 16:35 integrated at 03:51, 11 h 16 min later. 42 min per merge in the Windows gate. A 44 min coding-slot wait for the AGT-2373 continuation. A 55 min cross-project wait. Times are local, UTC+2, on 28 and 29 September 2026.</small></span></a>
+      <a class="evidence" href="#src-capacity"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Core budget on the 12-core host</b><small>Review admission requires 2 cores per review worker (<code>MinimumCoresPerReview = 2.0</code>). The documented validated host configuration is 2 coding + 2 review slots at 3 cores per slot. With 6 + 6 slots, the review minimum alone reaches 12 cores at peak. The operator saw load 22 on 12 cores on 11 August (AGT-W36).</small></span></a>
+      <a class="evidence" href="#throughput"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b>Modelled throughput</b><small>S0 1.20, S2 2.34 and S4 4.60 merges per hour. These follow from one observed input (<code>g</code>) and stated assumptions (<code>p</code>, <code>f</code>, <code>λ</code>, the bisect cost), not from a measurement.</small></span></a>
+      <a class="evidence" href="#recommendation"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b>Train, token pool, ordered publication, backlog mode</b><small>Designed to compose with adopted AGT-W18 D7 (one publisher per project), D9 (publish the exact verified object) and D11 (one bounded recovery round).</small></span></a>
+    </div>
+  </section>
+
+  <section id="open-decisions" data-concept-section="open-decisions" data-document-section="open-decisions">
+    <h2>Open decisions</h2>
+    <p>Each decision names a recommended working option. Promoted cards implement the recommendation unless a recorded operator decision selects another option. No operator decision is recorded yet.</p>
+    <div class="decision" id="d1"><h3>D1 · Lane shape</h3><ul><li>A: split the locks only</li><li>B: prepare-ahead without speculation</li><li>C: speculative train with ordered publication</li><li>D: Batch Gate coordinator</li></ul><p class="rec"><b>Recommended: C</b>, including A's lock split. It is the only option that makes both gate parallelism and gate reuse work within one project. Its backlog mode keeps D's gain without a second coordinator.</p></div>
+    <div class="decision" id="d2"><h3>D2 · Gate slot bound</h3><ul><li>Fixed slot count per project</li><li>Core-bounded token pool shared by all projects and by review suites</li><li>Unbounded, relying on the load throttle</li></ul><p class="rec"><b>Recommended: the token pool.</b> 3 cores per token, with the test runner capped to match. Pool size <code>max(1, floor((cores − reserved)/3))</code>, which is 2 on the 12-core host. At most 2 tokens per project, and a project with no running gate is served first. Fixed per-project slots oversubscribe with several projects; unbounded gates repeat the load-22 night.</p></div>
+    <div class="decision" id="d3"><h3>D3 · Prepare-ahead depth</h3><ul><li>N = 1</li><li>N = 4</li><li>The whole queue</li></ul><p class="rec"><b>Recommended: N = 4</b>, at most two preparations per host at once. That is enough to feed two tokens and a batch of three, while bounding disk and fetch work. Preparing the whole queue wastes work on deliveries that later get superseded.</p></div>
+    <div class="decision" id="d4"><h3>D4 · Landing order and re-entry</h3><ul><li>FIFO by review completion; an ejected delivery re-enters at the tail</li><li>An ejected delivery keeps a reserved position</li><li>Priority classes or operator expedite</li></ul><p class="rec"><b>Recommended: FIFO with tail re-entry.</b> A reserved position would force the whole chain behind it to be rebuilt when the delivery returns, which recreates the blocking the card wants removed. Expedite stays out of the first slice.</p></div>
+    <div class="decision" id="d5"><h3>D5 · Backlog mode</h3><ul><li>Off: gate every candidate</li><li>Automatic: gate every third candidate when 4 or more prepared deliveries wait</li><li>Always batch</li></ul><p class="rec"><b>Recommended: automatic, off below the threshold.</b> The <code>develop</code> tip is always a gated object, and each intermediate commit is an ancestor of a green tip. It is the only modelled option that is stable at the assumed wave demand. The Ops view shows when it is active.</p></div>
+    <div class="decision" id="d6"><h3>D6 · Placement</h3><ul><li>Rework the current Studio-side coordinator only</li><li>Build the scheduler only inside the future remote integration executor</li><li>A portable scheduler used by both</li></ul><p class="rec"><b>Recommended: the portable scheduler.</b> It delivers throughput before the AGT-W18 cutover without adding workstation-only logic, which D14 forbids. The lock split (card 2) is the bounded transitional part.</p></div>
+    <div class="decision" id="d7"><h3>D7 · Shorter gate</h3><ul><li>Keep the full test project for backend changes</li><li>Open a separate test-impact concept</li></ul><p class="rec"><b>Recommended: a separate concept after card 1's data.</b> It changes verification policy and needs its own accuracy evidence. This Dossier does not depend on it.</p></div>
+  </section>
+  <!-- agent-studio:implementation-section:start -->
+  <section id="implementation" data-document-section="implementation">
+    <h2>Implementation</h2>
+    <p>Five independently reviewable slices, one <code>workbench.json</code> <code>implementationTasks</code> entry each. Card 1 comes first, because it replaces the model's assumptions with measurements. Cards 2 to 5 depend on it and on each other in number order. Decision content above remains unchanged when slices append their status here.</p>
+    <ol>
+      <li><b>Measure the integration lane and show it in the Ops view.</b> Lane events and projections for delivery-to-integration lag per project, publication-lock wait, gate token wait, gate duration, queue depth and ejections. The acceptance bar is a before baseline covering at least one full wave.</li>
+      <li><b>Per-project lanes and a core-bounded gate token pool.</b> Remove the process-wide merge semaphore for remote deliveries. Replace the single machine gate slot with a token pool shared with review suites. Move the lane out of the review report request into a durable hosted worker.</li>
+      <li><b>Prepare-ahead and a speculative train with ordered publication.</b> Prepare N = 4 deliveries, chain the candidates, gate on up to 2 tokens, publish in order, and accept the train receipt without a second gate.</li>
+      <li><b>Eject and re-enter.</b> Conflicts, <code>AgentRoundRequired</code> and red candidates leave the train and dependents are rebuilt. Re-entry happens at the tail after review. The round-budget documentation drift is fixed.</li>
+      <li><b>Backlog mode.</b> Gate the train tip at depth 4 or more, with bisect isolation.</li>
+    </ol>
+    <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+    </ol>
+  </section>
+  <!-- agent-studio:implementation-section:end -->
+
+  <section id="ops-metrics">
+    <h2>Ops metrics</h2>
+    <p>The Ops view needs these per project, in both themes, from Task Server projections rather than log scraping. Card 1 defines them; cards 2 to 5 must keep them truthful.</p>
+    <table>
+      <thead><tr><th>Metric</th><th>Definition</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td>Delivery-to-integration lag</td><td>Review-subject completion to publication receipt; p50, p95 and the current oldest waiting delivery, per project and 24 h window</td><td>The card's headline number (11 h 16 min)</td></tr>
+        <tr><td>Queue depth</td><td>Queued, prepared, gating and ready-to-publish deliveries per project</td><td>Shows backlog mode entry and exit</td></tr>
+        <tr><td>Gate token wait</td><td>Candidate ready to token granted, p50 and p95, with the holding project named</td><td>Replaces the invisible 55-minute wait</td></tr>
+        <tr><td>Publication-lock wait</td><td>Green receipt to publication start</td><td>Must stay in minutes; a rise signals a reconciliation stop</td></tr>
+        <tr><td>Gate duration and outcome</td><td>Per candidate: level, tokens, duration, green, red or cancelled</td><td>Measures <code>g</code> and <code>f</code> for the model</td></tr>
+        <tr><td>Speculation waste</td><td>Gate-minutes of cancelled candidates per day</td><td>The cost of the train</td></tr>
+        <tr><td>Ejections</td><td>Count and causes (conflict, <code>AgentRoundRequired</code>, red) and re-entry delay</td><td>Settles the agent-round question with data</td></tr>
+        <tr><td>Merges per hour</td><td>Publications per project per hour, compared with arrivals</td><td>Checks the modelled rates against live throughput</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="sources">
+    <h2>Code index</h2>
+    <p>Paths are relative repository links at <code>742936e0</code>; <a href="evidence.json">evidence.json</a> records their SHA-256.</p>
+    <table>
+      <thead><tr><th>Ref</th><th>File, symbol and purpose</th></tr></thead>
+      <tbody>
+        <tr id="src-coordinator"><td>Lane</td><td class="source-path"><a href="../../backend/Features/Pipeline/RemoteDeliveryIntegration.cs">backend/Features/Pipeline/RemoteDeliveryIntegration.cs</a>: <code>RemoteDeliveryIntegrationCoordinator.EnqueueAsync</code> (203), <code>DrainProjectAsync</code> (253; <code>started</code> log 288; agent-round branch 294), in-memory <code>ProjectQueue</code> (378), <code>QueuedDeliveryComparer</code> (395). Caller: <a href="../../backend/Features/Runner/V1ReviewPlaneEndpoints.cs">V1ReviewPlaneEndpoints.cs</a> awaits <code>EnqueueAsync</code> at 1290. Runner acknowledgement timeout: <a href="../../runner/TaskServerClient.cs">runner/TaskServerClient.cs</a> <code>ReviewReportAckTimeout</code> (995).</td></tr>
+        <tr id="src-merge-gate"><td>Merge</td><td class="source-path"><a href="../../backend/Features/Pipeline/MergeIntoDevelopRunner.cs">backend/Features/Pipeline/MergeIntoDevelopRunner.cs</a>: <code>_mergeGate</code> and <code>_pushGate</code> (60 to 61), <code>RunAsync</code> acquisition (166), <code>MergeIntoIntegrationGatedAsync</code> (690), gate request without <code>OnMachineGateWaiting</code> (859).</td></tr>
+        <tr id="src-gate-lock"><td>Gate</td><td class="source-path"><a href="../../backend/Features/Pipeline/BuildTestGateRunner.cs">backend/Features/Pipeline/BuildTestGateRunner.cs</a>: <code>ProcessGate</code> (269), <code>MachineGateLockPath</code> (270), load throttle wait (388), <code>build_test_gate_acquired</code> with <code>collision</code> (419), <code>OnMachineGateWaiting</code> (74).</td></tr>
+        <tr id="src-reuse"><td>Reuse</td><td class="source-path"><a href="../../backend/Features/Pipeline/IntegrationGateReusePolicy.cs">backend/Features/Pipeline/IntegrationGateReusePolicy.cs</a>: token (57), <code>Decide</code> (87), tip rule (149 to 158). <a href="../../backend/Features/Pipeline/PreDevelopBuildGate.cs">PreDevelopBuildGate.cs</a> <code>ResolveTestLevel</code> (71). <a href="../../backend/Features/Pipeline/DotNetWorkPackagePlanner.cs">DotNetWorkPackagePlanner.cs</a> <code>PlanSlice</code> (72 to 78).</td></tr>
+        <tr id="src-agent-round"><td>Rounds</td><td class="source-path"><a href="../../backend/Features/Pipeline/IntegrationAgentRoundService.cs">backend/Features/Pipeline/IntegrationAgentRoundService.cs</a>: <code>MaxAutomaticAgentRounds = 1</code> (18), <code>TryStartAsync</code> (171), <code>PromoteToReadyTop</code> call (250). Drift: <a href="../concepts/platform-architecture/rebase-merge-and-integration-invariants.md">rebase-merge-and-integration-invariants.md</a> line 241 says 2.</td></tr>
+        <tr id="src-capacity"><td>Capacity</td><td class="source-path"><a href="../../runner/ReviewSlotAdmissionPolicy.cs">runner/ReviewSlotAdmissionPolicy.cs</a> <code>MinimumCoresPerReview</code> (84); <a href="../operations/setup/linux-runner-host.md">linux-runner-host.md</a> slot derivation; <a href="../operations/batch-gate-concept/index.html">AGT-W36 Batch Gate</a> host saturation note.</td></tr>
+        <tr><td>Adopted target</td><td class="source-path"><a href="../operations/remote-gate-zielbild/index.html">AGT-W18 Remote integration authority</a>: D7 publisher, D9 exact candidate, D11 recovery round, D14 transitional work. <a href="../operations/delivery-chain/index.html">AGT-W57 Delivery chain</a>: merge-first stage policy.</td></tr>
+      </tbody>
+    </table>
+    <p class="dim">Publication note: this concept run may change only this directory. The docs index row in <code>docs/start/README.md</code> and the correction of the stale round budget are therefore assigned to cards 1 and 4 rather than made here.</p>
+  </section>
+</main>
+</body>
+</html>
