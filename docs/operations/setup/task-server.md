@@ -477,6 +477,13 @@ dotnet task-server.dll backup verify-full <backup-id> --TaskServer:DataDirectory
 dotnet task-server.dll backup restore-full <backup-id> --TaskServer:DataDirectory /srv/agent-orchestrator/data
 ```
 
+The authenticated full-backup verify and restore API responses include
+`identitySha256`, a digest of stable authority, principal, human-account,
+project and project-URL identity. Restore compares the verified snapshot
+digest with the live store after restore and fails if they differ. The setup
+relocation gate requires the matching response digests and the preserved
+`installation.json` before it records the authority as relocated.
+
 ## Container images
 
 Every release tag publishes one container image per service to

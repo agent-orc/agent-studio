@@ -108,7 +108,12 @@ same release. A different release needs `update` or `rollback`, and the
 installer rejects a downgrade over preserved data. Token and join-token files
 must be owner-only; the installer does not accept secrets as arguments or in
 answer files. `uninstall` keeps data and the manifest, so a later install
-keeps the same installation id. Only `--purge` deletes them.
+keeps the same installation id. Only `--purge` deletes them. On Linux native
+hosts, pass the installed role (`--journey one-box` or `--journey join-host`),
+and use `--target native` for a one-box host. The installer stops and disables
+the owned systemd units; an explicit purge also deletes that role's local
+configuration, release tree and state. On a Docker control-plane host, purge
+removes the Compose volumes. The separately mounted off-host backup remains.
 `checkpoints.jsonl` records observed installer checkpoints with host,
 platform, setup version and release provenance. Identity bootstrap,
 authenticated canary and recovery checkpoint are recorded as `not reached`
@@ -143,11 +148,15 @@ agent-studio-setup --journey relocate-authority \
 ```
 
 The installer recalculates the full set's file and set hashes and compares
-the restored installation id, release, principal names and project origin
+the staged installation id, release, principal names and project origin
 with the frozen source. It then calls the target's authenticated full-set
-verify and restore endpoints in that order. It refuses a missing target,
-changed identity, damaged set, failed API verification or missing rehearsal
-receipt. It does not start a fresh Task Server over restored data. The freeze
+verify and restore endpoints in that order. Task Server calculates an identity
+digest from the verified snapshot's authority id, principals, human accounts,
+projects and project URLs, then checks the live store against it after restore.
+The installer requires matching verify and restore digests and rereads the
+destination manifest before marking relocation complete. It refuses a missing
+target, changed identity, damaged set, failed API verification or missing
+rehearsal receipt. It does not start a fresh Task Server over restored data. The freeze
 and rehearsal receipt are operator evidence; the installer cannot independently
 observe the old host's mode. Keep admission closed until the authenticated
 canary, private HTTPS cutover and recovery check pass. Re-running the completed

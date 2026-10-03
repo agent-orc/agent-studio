@@ -28,7 +28,8 @@ internal static class RelocationGate
         var restored = await ManifestStore.ReadAsync(destinationRoot)
             ?? throw new InvalidOperationException(
                 "No restored installation manifest exists at the destination. Restore into an empty target first; a new install would create another authority.");
-        if (source.InstallationId != restored.InstallationId
+        if (source.Phase != InstallationManifest.PhaseComplete
+            || source.InstallationId != restored.InstallationId
             || source.ReleaseVersion != restored.ReleaseVersion
             || restored.Phase != InstallationManifest.PhaseComplete
             || !source.Principals.Order(StringComparer.Ordinal).SequenceEqual(
@@ -99,7 +100,7 @@ internal static class RelocationGate
             UpdatedUtc = DateTime.UtcNow,
         };
 
-    internal static async Task RestoreAsync(string authorityUrl, string tokenFile, string recoverySetPath,
+    internal static async Task<string> RestoreAsync(string authorityUrl, string tokenFile, string recoverySetPath,
         HttpClient? client = null)
     {
         ProductSetup.ValidateUpstream(authorityUrl);
@@ -123,14 +124,35 @@ internal static class RelocationGate
             return JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         }
         using var verification = await PostAsync("verify");
+        var expectedIdentity = verification.RootElement.TryGetProperty("identitySha256", out var verifiedIdentity)
+            ? verifiedIdentity.GetString() : null;
         if (!verification.RootElement.GetProperty("verified").GetBoolean()
             || verification.RootElement.GetProperty("backupId").GetString() != backupId
             || !string.Equals(verification.RootElement.GetProperty("summary")
-                    .GetProperty("setSha256").GetString(), localSetHash, StringComparison.OrdinalIgnoreCase))
+                    .GetProperty("setSha256").GetString(), localSetHash, StringComparison.OrdinalIgnoreCase)
+            || string.IsNullOrWhiteSpace(expectedIdentity))
             throw new InvalidDataException("Target Task Server did not verify the selected full backup set.");
         using var restore = await PostAsync("restore");
         if (!restore.RootElement.GetProperty("restored").GetBoolean()
-            || restore.RootElement.GetProperty("backupId").GetString() != backupId)
-            throw new InvalidDataException("Target Task Server did not restore the selected full backup set.");
+            || restore.RootElement.GetProperty("backupId").GetString() != backupId
+            || !restore.RootElement.TryGetProperty("identitySha256", out var restoredIdentity)
+            || !string.Equals(restoredIdentity.GetString(), expectedIdentity, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Target Task Server did not preserve the verified authority identity after restore.");
+        return expectedIdentity;
+    }
+
+    internal static async Task<InstallationManifest> VerifyManifestAfterRestoreAsync(
+        InstallationManifest source, string destinationRoot)
+    {
+        var restored = await ManifestStore.ReadAsync(destinationRoot)
+            ?? throw new InvalidDataException("Restored installation manifest is missing after authority restore.");
+        if (source.InstallationId != restored.InstallationId
+            || source.ReleaseVersion != restored.ReleaseVersion
+            || restored.Phase != InstallationManifest.PhaseComplete
+            || !source.Principals.Order(StringComparer.Ordinal).SequenceEqual(
+                restored.Principals.Order(StringComparer.Ordinal), StringComparer.Ordinal)
+            || source.ProjectOrigin != restored.ProjectOrigin)
+            throw new InvalidDataException("Restored installation identity, release, principals or project origin changed after restore.");
+        return restored;
     }
 }

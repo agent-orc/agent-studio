@@ -278,6 +278,68 @@ public sealed class InstallationJourneyTests
     }
 
     [Fact]
+    public async Task Delegated_uninstall_records_uninstalled_and_purge_removes_data_and_metadata()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Directory.CreateTempSubdirectory().FullName;
+        var names = new[] { "AGENT_SETUP_HOST_OPT", "AGENT_SETUP_HOST_CONFIG",
+            "AGENT_SETUP_HOST_STATE", "AGENT_SETUP_SYSTEMD_ROOT", "AGENT_SETUP_SYSTEMCTL" };
+        var previous = names.ToDictionary(name => name, Environment.GetEnvironmentVariable);
+        try
+        {
+            var config = Path.Combine(root, "config");
+            var state = Path.Combine(root, "state");
+            var units = Path.Combine(root, "units");
+            Directory.CreateDirectory(config);
+            Directory.CreateDirectory(state);
+            Directory.CreateDirectory(units);
+            await File.WriteAllTextAsync(Path.Combine(state, "task-data"), "preserve");
+            await File.WriteAllTextAsync(Path.Combine(units, "agent-host.service"), "unit");
+            var fakeSystemctl = Path.Combine(root, "systemctl");
+            await File.WriteAllTextAsync(fakeSystemctl,
+                "#!/bin/sh\n[ \"$1\" = is-active ] && exit 1\nexit 0\n");
+            File.SetUnixFileMode(fakeSystemctl,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            Environment.SetEnvironmentVariable(names[0], Path.Combine(root, "opt"));
+            Environment.SetEnvironmentVariable(names[1], config);
+            Environment.SetEnvironmentVariable(names[2], state);
+            Environment.SetEnvironmentVariable(names[3], units);
+            Environment.SetEnvironmentVariable(names[4], fakeSystemctl);
+            var manifest = Manifest("1.2.0", InstallationManifest.PhaseComplete) with
+            { Mode = "agent-host", Target = "native", Journey = "join-host" };
+            await ManifestStore.WriteAsync(config, manifest);
+            await ManifestStore.CheckpointAsync(config, manifest, "host-enrolled", "observed");
+
+            await File.WriteAllTextAsync(Path.Combine(units, "agent-host-review.service"), "unit");
+            await File.WriteAllTextAsync(fakeSystemctl, "#!/bin/sh\nexit 0\n");
+            Assert.Equal(1, await ProductSetup.RunAsync(["uninstall", "--journey", "join-host",
+                "--install-dir", config]));
+            Assert.Equal(InstallationManifest.PhaseComplete,
+                (await ManifestStore.ReadAsync(config))!.Phase);
+            Assert.True(File.Exists(Path.Combine(units, "agent-host-review.service")));
+            await File.WriteAllTextAsync(fakeSystemctl,
+                "#!/bin/sh\n[ \"$1\" = is-active ] && exit 1\nexit 0\n");
+
+            Assert.Equal(0, await ProductSetup.RunAsync(["uninstall", "--journey", "join-host",
+                "--install-dir", config]));
+            Assert.Equal(InstallationManifest.PhaseUninstalled,
+                (await ManifestStore.ReadAsync(config))!.Phase);
+            Assert.True(File.Exists(Path.Combine(state, "task-data")));
+            Assert.True(File.Exists(Path.Combine(config, InstallationManifest.CheckpointFileName)));
+
+            Assert.Equal(0, await ProductSetup.RunAsync(["uninstall", "--journey", "join-host",
+                "--install-dir", config, "--purge"]));
+            Assert.False(Directory.Exists(config));
+            Assert.False(Directory.Exists(state));
+        }
+        finally
+        {
+            foreach (var name in names) Environment.SetEnvironmentVariable(name, previous[name]);
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Unreachable_authority_is_a_connectivity_failure_with_tls_not_applicable()
     {
         var findings = PreflightPolicy.Evaluate(InstallationJourney.AttachStudio, "native", new HostFacts(
@@ -397,6 +459,11 @@ public sealed class InstallationJourneyTests
             Assert.Equal(source.Principals, relocated.Principals);
             await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 RelocationGate.VerifyAsync(sourcePath, set, destination, false));
+            await File.WriteAllTextAsync(sourcePath, System.Text.Json.JsonSerializer.Serialize(
+                source with { Phase = InstallationManifest.PhaseInstalling }));
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                RelocationGate.VerifyAsync(sourcePath, set, destination, true));
+            await File.WriteAllTextAsync(sourcePath, System.Text.Json.JsonSerializer.Serialize(source));
             await ManifestStore.WriteAsync(destination, source with { InstallationId = "different" });
             await Assert.ThrowsAsync<InvalidDataException>(() =>
                 RelocationGate.VerifyAsync(sourcePath, set, destination, true));
@@ -418,20 +485,21 @@ public sealed class InstallationJourneyTests
             if (!OperatingSystem.IsWindows())
                 File.SetUnixFileMode(token, UnixFileMode.UserRead | UnixFileMode.UserWrite);
             var calls = new List<string>();
+            var identity = new string('a', 64);
             using var http = new HttpClient(new RecordingHandler(request =>
             {
                 calls.Add(request.RequestUri!.AbsolutePath);
                 Assert.Equal("private-token", request.Headers.Authorization!.Parameter);
                 var answer = calls.Count == 1
-                    ? "{\"backupId\":\"backup-1\",\"verified\":true,\"summary\":{\"setSha256\":\"abc123\"}}"
-                    : "{\"backupId\":\"backup-1\",\"restored\":true}";
+                    ? "{\"backupId\":\"backup-1\",\"verified\":true,\"identitySha256\":\"" + identity + "\",\"summary\":{\"setSha256\":\"abc123\"}}"
+                    : "{\"backupId\":\"backup-1\",\"restored\":true,\"identitySha256\":\"" + identity + "\"}";
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent(answer),
                 };
             }));
-            await RelocationGate.RestoreAsync("https://authority.wg.internal", token,
-                set, http);
+            Assert.Equal(identity, await RelocationGate.RestoreAsync("https://authority.wg.internal", token,
+                set, http));
             Assert.Equal([
                 "/api/v1/management/backups/full/backup-1/verify",
                 "/api/v1/management/backups/full/backup-1/restore",
@@ -449,12 +517,43 @@ public sealed class InstallationJourneyTests
             await Assert.ThrowsAsync<InvalidDataException>(() =>
                 RelocationGate.RestoreAsync("https://authority.wg.internal", token, set, wrongSet));
             Assert.Equal(1, rejectedCalls);
+            var mismatchCalls = 0;
+            using var mismatchedRestore = new HttpClient(new RecordingHandler(_ =>
+            {
+                mismatchCalls++;
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(mismatchCalls == 1
+                        ? "{\"backupId\":\"backup-1\",\"verified\":true,\"identitySha256\":\"" + identity + "\",\"summary\":{\"setSha256\":\"abc123\"}}"
+                        : "{\"backupId\":\"backup-1\",\"restored\":true,\"identitySha256\":\"different\"}"),
+                };
+            }));
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                RelocationGate.RestoreAsync("https://authority.wg.internal", token, set, mismatchedRestore));
+            Assert.Equal(2, mismatchCalls);
         }
         finally
         {
             File.Delete(token);
             Directory.Delete(root, recursive: true);
         }
+    }
+
+    [Fact]
+    public async Task Relocation_checks_destination_manifest_again_after_restore()
+    {
+        var root = Directory.CreateTempSubdirectory().FullName;
+        try
+        {
+            var source = Manifest("1.2.0", InstallationManifest.PhaseComplete);
+            await ManifestStore.WriteAsync(root, source);
+            Assert.Equal(source.InstallationId,
+                (await RelocationGate.VerifyManifestAfterRestoreAsync(source, root)).InstallationId);
+            await ManifestStore.WriteAsync(root, source with { InstallationId = "new-authority" });
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                RelocationGate.VerifyManifestAfterRestoreAsync(source, root));
+        }
+        finally { Directory.Delete(root, recursive: true); }
     }
 
     private sealed class RecordingHandler(Func<HttpRequestMessage, HttpResponseMessage> handle) : HttpMessageHandler

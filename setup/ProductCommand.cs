@@ -188,7 +188,7 @@ internal static class ProductPlanner
         if (windows)
             throw new PlatformNotSupportedException(
                 $"--mode {mode} installs Linux services. Run the Linux x64 setup binary on the target host.");
-        if (command.Verb != "install")
+        if (command.Verb is not ("install" or "uninstall"))
             throw new ArgumentException(mode == "studio"
                 ? $"{command.Verb} for the Linux native profile uses update.sh and rollback.sh in /opt/agent-orchestrator/current; see docs/operations/setup/multi-machine.md."
                 : $"{command.Verb} is supported for the Studio and connector installations only.");
@@ -197,6 +197,8 @@ internal static class ProductPlanner
         {
             "--mode", mode == "studio" ? "single" : mode,
         };
+        if (command.Verb == "uninstall")
+            return new ProductPlan(profile, mode, target, []);
         if (mode == "control-plane")
             arguments.AddRange(["--target", target == "native" ? "systemd" : "docker"]);
         foreach (var (option, value) in forwarded)

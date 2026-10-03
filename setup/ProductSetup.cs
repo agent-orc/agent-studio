@@ -139,14 +139,15 @@ internal static class ProductSetup
                     ?? throw new ArgumentException("Relocation requires --server-url for the target Task Server.");
                 var managementToken = values.GetValueOrDefault("--token-file")
                     ?? throw new ArgumentException("Relocation requires --token-file for the target management principal.");
-                await RelocationGate.RestoreAsync(targetUrl, managementToken,
+                var authorityIdentity = await RelocationGate.RestoreAsync(targetUrl, managementToken,
                     values["--recovery-checkpoint"]);
-                var relocated = RelocationGate.RelocatedManifest(restored, target);
+                var postRestore = await RelocationGate.VerifyManifestAfterRestoreAsync(restored, destination);
+                var relocated = RelocationGate.RelocatedManifest(postRestore, target);
                 await ManifestStore.WriteAsync(destination, relocated);
                 await ManifestStore.CheckpointAsync(destination, relocated, "recovery-verified", "observed",
                     "Full recovery set hashes and target Task Server verify and restore responses passed.");
                 await ManifestStore.CheckpointAsync(destination, relocated, "identity-matched", "observed",
-                    "Restored authority installation id, principals and project origin match the frozen source.");
+                    $"Post-restore authority digest {authorityIdentity} and installation id, principals and project origin match the frozen source.");
                 await ManifestStore.CheckpointAsync(destination, relocated, "authority-frozen", "operator attested",
                     "--authority-frozen was supplied; the old host mode was not observed by this installer.");
                 await ManifestStore.CheckpointAsync(destination, relocated, "workspace-restored", "observed",
@@ -174,6 +175,17 @@ internal static class ProductSetup
             }
             var delegatedManifest = await ReconcileManifestAsync(delegatedRoot, command, plan, journey,
                 delegatedVersion, null, flags.Contains("--dry-run"));
+            if (command == "uninstall")
+            {
+                if (delegatedManifest is null && !flags.Contains("--dry-run"))
+                    throw new InvalidOperationException($"No installation manifest exists at {delegatedRoot}.");
+                await UninstallDelegatedAsync(plan, paths, flags.Contains("--dry-run"), flags.Contains("--purge"));
+                if (flags.Contains("--purge") && !flags.Contains("--dry-run"))
+                    PurgeDelegatedPaths(plan, paths);
+                await FinishManifestAsync(delegatedRoot, delegatedManifest, flags.Contains("--dry-run"),
+                    flags.Contains("--purge"), InstallationManifest.PhaseUninstalled, "uninstalled");
+                return 0;
+            }
             var delegatedResult = await SetupApplication.RunAsync(plan.DelegatedArguments.ToArray());
             if (delegatedResult == 0)
                 await FinishManifestAsync(delegatedRoot, delegatedManifest, flags.Contains("--dry-run"), false,
@@ -477,7 +489,13 @@ internal static class ProductSetup
                 JourneyPolicy.Name(journey), state.Mode, state.Target, state.Version,
                 InstallationManifest.PhaseComplete, [], null, null, null, null, DateTime.UtcNow, DateTime.UtcNow);
         }
-        if (command is "uninstall" or "rollback") return existing;
+        if (command is "uninstall" or "rollback")
+        {
+            if (existing is not null && (existing.Mode != plan.Mode || existing.Target != plan.Target))
+                throw new InvalidOperationException(
+                    $"Installation {existing.InstallationId} is --mode {existing.Mode} --target {existing.Target}.");
+            return existing;
+        }
         var principals = plan.Profile switch
         {
             ProductProfile.ConnectorWindows => new[] { "studio-connector" },
@@ -512,8 +530,11 @@ internal static class ProductSetup
         if (manifest is null || dryRun) return;
         if (purge)
         {
-            File.Delete(Path.Combine(root, InstallationManifest.FileName));
-            File.Delete(Path.Combine(root, InstallationManifest.CheckpointFileName));
+            if (Directory.Exists(root))
+            {
+                File.Delete(Path.Combine(root, InstallationManifest.FileName));
+                File.Delete(Path.Combine(root, InstallationManifest.CheckpointFileName));
+            }
             return;
         }
         var next = manifest with { Phase = phase, UpdatedUtc = DateTime.UtcNow };
@@ -535,6 +556,62 @@ internal static class ProductSetup
         }
         else
             await ManifestStore.CheckpointAsync(root, next, checkpoint, "observed", detail);
+    }
+
+    private static async Task UninstallDelegatedAsync(ProductPlan plan, InstallPaths paths, bool dryRun, bool purge)
+    {
+        var process = new ProcessRunner(dryRun);
+        if (plan.Mode == "control-plane" && plan.Target == "docker")
+        {
+            var composeRoot = Path.Combine(paths.OrchestratorOpt, "compose");
+            var args = new List<string> { "compose", "--project-directory", composeRoot,
+                "--env-file", Path.Combine(paths.OrchestratorConfig, "docker.env"), "down" };
+            if (purge) args.Add("--volumes");
+            await process.RequireAsync("docker", args);
+            return;
+        }
+        var units = plan.Mode == "agent-host"
+            ? new[] { "agent-host-review.service", "agent-host.service" }
+            : plan.Mode == "studio"
+                ? new[] { "agent-host-review.service", "agent-host.service",
+                    "agent-orchestrator-engine.service", "agent-task-server.service",
+                    "agent-task-server-backup.timer", "agent-task-server-backup.service" }
+                : new[] { "agent-orchestrator-engine.service", "agent-task-server.service",
+                    "agent-task-server-backup.timer", "agent-task-server-backup.service" };
+        var systemctl = Environment.GetEnvironmentVariable("AGENT_SETUP_SYSTEMCTL") ?? "systemctl";
+        if (plan.Mode is "agent-host" or "studio"
+            && File.Exists(Path.Combine(paths.Systemd, "agent-host-review.service")))
+        {
+            var active = await process.RunAsync(systemctl, ["is-active", "--quiet", "agent-host-review.service"],
+                printOutput: false);
+            if (active.ExitCode == 0)
+                await process.RequireAsync(Path.Combine(paths.HostOpt, "current", "agent-host"),
+                    NativeInstaller.BuildReviewRestartGuardArguments(Path.Combine(paths.HostState, "review-state")));
+            var guardPath = NativeInstaller.ResolveReviewRestartGuardPath(
+                "review", paths.Systemd, "agent-host-review.service")!;
+            if (!dryRun && File.Exists(guardPath)) File.Delete(guardPath);
+            await process.RequireAsync(systemctl, ["daemon-reload"]);
+        }
+        foreach (var unit in units)
+        {
+            var path = Path.Combine(paths.Systemd, unit);
+            if (!File.Exists(path)) continue;
+            await process.RequireAsync(systemctl, ["disable", "--now", unit]);
+            if (!dryRun) File.Delete(path);
+        }
+        await process.RequireAsync(systemctl, ["daemon-reload"]);
+    }
+
+    private static void PurgeDelegatedPaths(ProductPlan plan, InstallPaths paths)
+    {
+        var roots = plan.Mode == "agent-host"
+            ? new[] { paths.HostOpt, paths.HostState, paths.HostConfig }
+            : plan.Mode == "studio"
+                ? new[] { paths.OrchestratorOpt, paths.OrchestratorState, paths.OrchestratorConfig,
+                    paths.StudioOpt, paths.HostOpt, paths.HostState, paths.HostConfig }
+                : new[] { paths.OrchestratorOpt, paths.OrchestratorState, paths.OrchestratorConfig };
+        foreach (var root in roots)
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
     }
 
     private static string NewInstallationId() => $"inst_{Guid.NewGuid():N}";
