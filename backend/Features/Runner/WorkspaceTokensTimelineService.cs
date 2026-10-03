@@ -75,6 +75,19 @@ public class WorkspaceTokensTimelineService
         return BuildFromEntries(perProjectEntries, windowStart, windowEnd, b);
     }
 
+    /// <summary>Read a workspace-local calendar interval supplied as UTC boundaries.</summary>
+    public TokenTimeline BuildRange(
+        IEnumerable<(string Name, string WatchPath)> projects,
+        DateTime fromUtc,
+        DateTime toUtc,
+        int bucketMinutes)
+    {
+        if (_busReader != null)
+            return _busReader.BuildRange(projects, fromUtc, toUtc, bucketMinutes);
+        var entries = projects.Select(p => (p.Name, (IReadOnlyList<OrchestratorLogEntry>)_log.Read(p.WatchPath))).ToList();
+        return BuildFromEntries(entries, fromUtc, toUtc, bucketMinutes);
+    }
+
     /// <summary>
     /// Pure overload: bucket pre-loaded entries. Used by the unit tests
     /// to avoid filesystem round-trips.
@@ -105,7 +118,7 @@ public class WorkspaceTokensTimelineService
                 var ts = entry.Ts.ToUniversalTime();
                 if (ts < windowStart || ts >= windowEnd) continue;
 
-                var bucketStart = AlignDown(ts, b);
+                var bucketStart = windowStart.AddMinutes(Math.Floor((ts - windowStart).TotalMinutes / b) * b);
                 var key = (project, bucketStart);
                 if (!cellMap.TryGetValue(key, out var bucket))
                 {

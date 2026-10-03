@@ -62,6 +62,20 @@ public sealed class BusBackedWorkspaceTimelineReader
         return BuildFromStore(_store, workspace!, projects, windowHours, bucketMinutes, nowUtc);
     }
 
+    /// <summary>Build a timeline for exact UTC calendar boundaries.</summary>
+    public TokenTimeline BuildRange(
+        IEnumerable<(string Name, string WatchPath)> projects,
+        DateTime fromUtc,
+        DateTime toUtc,
+        int bucketMinutes)
+    {
+        var workspaceRoot = _config["TaskRepository"] ?? "(unconfigured)";
+        var entries = projects.Select(p => (p.Name,
+            (IReadOnlyList<OrchestratorLogEntry>)BusTokenEntryConverter.LoadTokenUsageEntries(_store, workspaceRoot, p.Name)))
+            .ToList();
+        return WorkspaceTokensTimelineService.BuildFromEntries(entries, fromUtc, toUtc, bucketMinutes);
+    }
+
     /// <summary>
     /// Pure overload used by the parity test. The window math lives in
     /// <see cref="WorkspaceTokensTimelineService.BuildFromEntries"/> so
