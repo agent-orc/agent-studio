@@ -1,8 +1,9 @@
 # Runbook: renew provider authentication on an execution host
 
-Use this runbook when an Execution Hosts provider badge changes from **OK** to
-**Unavailable**, a Ready card says it is waiting for a provider sign-in, or a
-run reports `ProviderUnauthorized`.
+Use this runbook when a credential is confirmed missing, expired, or signed out.
+A lone `ProviderUnauthorized` run is a diagnosis signal. Check the effective
+source, a bounded real request, provider network and quota evidence, and a fresh
+applicable official incident before starting renewal.
 
 The authoritative store for environment-backed provider credentials is
 `/etc/agent-runner/provider-auth.env`, owned by `root:agent` with mode `640`.
@@ -10,7 +11,23 @@ Codex browser authentication is stored separately in the runner user's native
 Codex credential store. Both are host-owned. A provider probe uses the daemon
 process environment and CLI status as authentication authority. It may also
 read expiry and modification timestamps from native Claude and Codex credential
-files, but never returns or logs token values.
+files, but never returns or logs token values. The runner now records a real
+request outcome as `healthy`, `indeterminate`, `credential_invalid`,
+`provider_incident`, `quota_exhausted`, or `network_failure`. An ambiguous 401
+stays indeterminate unless an applicable official incident or a comparable
+request on an independently known-good host corroborates a provider incident.
+The comparison host uses its own credential; no credential is transferred.
+The official feed is cached per provider and inaccessible, stale, or unrelated
+status data remains unknown.
+
+The real check uses the configured CLI execution route in an isolated probe
+context with a 30-second deadline, one in-flight check per provider, a daily
+48-request ceiling, and a 30-minute maximum interval after a successful real
+check. Successful work counts only for the same credential generation. A
+degraded local status probe keeps the original last-good timestamp and marks
+the evidence indeterminate after ten minutes. Binary presence alone is
+unverified. Legacy claim admission is unchanged in this slice; fleet reactions
+and operator items remain owned by the later admission slice.
 
 Claude now has the same host-owned sign-in as Codex (AGT-2759): **Sign in
 Claude** starts `claude setup-token` as the runner user over SSH, streams back
