@@ -350,7 +350,7 @@ test.describe('Post Processing lane identity', () => {
     });
     await seedBoardTab(page);
     await installRoutes(page, [job]);
-    await page.goto('/');
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
 
     const card = page.getByTestId('task-card').filter({ hasText: job.title });
     const wait = card.getByTestId('task-card-cause-wait');

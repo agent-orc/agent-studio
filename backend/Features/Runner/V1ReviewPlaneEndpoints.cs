@@ -1003,10 +1003,10 @@ public static class V1ReviewPlaneEndpoints
                     intervention = await failureInterventions.RaiseAsync(task, failureEvidence, ct);
                 }
             }
-            else if (!infrastructureFailure && breakerEnabled)
+            else if (settled.ReviewAttempt.Outcome == ReviewTerminalOutcome.Pass && breakerEnabled)
             {
-                // A review that ran through without an infrastructure failure
-                // is a green probe for any breaker this card was parked behind.
+                // Only a passing review is a green probe. A product failure,
+                // cancellation or inconclusive result does not resolve the cause.
                 causeBreakers.ObserveGreen(settled.ReviewAttempt.TaskKey, settled.ReviewAttempt.AttemptId);
             }
             var retry = infrastructureFailure && !aspectRetryExhausted && intervention is null

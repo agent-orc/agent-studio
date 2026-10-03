@@ -5980,6 +5980,38 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Null(CauseWaitMarker.TryRead(task.FolderPath));
     }
 
+    [Theory]
+    [InlineData(59, "ToolUnavailable", "agent:codex:withdrawn-model")]
+    [InlineData(411, "PreparationFailed", "tool:npm")]
+    public void Cause_breaker_E1_window_replay_creates_one_real_cause_card(
+        int historicalAttempts, string failureClass, string toolchain)
+    {
+        SeedTask(TaskStates.AutoReview, TaskKey, "Repeated review infrastructure failure", "Build and verify.");
+        using var factory = BuildFactory();
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var breaker = factory.Services.GetRequiredService<CauseBreakerService>();
+        var task = scanner.FindJob(TaskKey, _watchPath)!;
+        var attempts = 0;
+
+        for (var index = 0; index < historicalAttempts; index++)
+        {
+            var text = $"CAC-18: {failureClass} on /tmp/run-{index + 1}";
+            var fingerprint = CauseFingerprintPolicy.Compute("ReviewInfra", failureClass, text, 127, toolchain);
+            var evidence = new FailureCommandEvidence(failureClass, "ReviewInfra", 127,
+                StderrTail: text, EvidencePointers: [$"logs/review-{index + 1}.json"]);
+            var outcome = breaker.Observe(task, TaskKey, $"replay-{index + 1}", fingerprint, evidence, text);
+            attempts++;
+            if (outcome.Decision.Action == CauseBreakerAction.Open) break;
+        }
+
+        Assert.Equal(3, attempts);
+        var opened = Assert.Single(breaker.List(openOnly: true));
+        Assert.Equal(3, opened.Observations.Count);
+        Assert.NotNull(CauseWaitMarker.TryRead(task.FolderPath));
+        Assert.Single(scanner.ScanAllAutomationJobs(), card =>
+            card.Title.StartsWith("Intervention:", StringComparison.Ordinal));
+    }
+
     [Fact]
     public async Task Monolith_v1_review_plane_exhausts_three_infrastructure_retries_to_escalated()
     {
