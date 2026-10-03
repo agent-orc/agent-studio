@@ -840,14 +840,15 @@ restart_release_services() {
 # or prints the number of rejected completions and returns 1 when the window
 # closes without one.
 watch_for_accepted_completion() {
-  local since_epoch="$1"
+  local invocation_id="$1"
   local window_seconds="$2"
   local deadline=$((SECONDS + window_seconds))
   local journal=""
   local accepted
 
   while :; do
-    journal="$(journalctl -u "$coding_unit" --since "@$since_epoch" -o cat --no-pager 2>/dev/null)" \
+    journal="$(journalctl _SYSTEMD_UNIT="$coding_unit" \
+      _SYSTEMD_INVOCATION_ID="$invocation_id" -o cat --no-pager 2>/dev/null)" \
       || journal=""
     accepted="$(grep -m 1 -F "handed back to the local board: " <<<"$journal" || true)"
     if [[ -n "$accepted" ]]; then
@@ -865,11 +866,12 @@ record_last_promotion() {
   local release_id="$1"
   local previous_release_id="$2"
   local activated_epoch="$3"
+  local invocation_id="$4"
   local temporary
 
   temporary="$(mktemp "$deploy_root/.last-promotion.XXXXXX")"
-  printf 'release=%s\nprevious=%s\nactivated=%s\n' \
-    "$release_id" "$previous_release_id" "$activated_epoch" >"$temporary"
+  printf 'release=%s\nprevious=%s\nactivated=%s\ninvocation=%s\n' \
+    "$release_id" "$previous_release_id" "$activated_epoch" "$invocation_id" >"$temporary"
   chmod 0644 "$temporary"
   mv -fT -- "$temporary" "$last_promotion_file"
 }
@@ -890,6 +892,7 @@ verify_completions() {
   local release_id
   local previous_release_id
   local activated_epoch
+  local invocation_id
   local remaining
   local observation
   local detail
@@ -898,17 +901,20 @@ verify_completions() {
     || die "no recorded promotion to verify: $last_promotion_file"
   previous_release_id="$(last_promotion_value previous)" || previous_release_id=""
   activated_epoch="$(last_promotion_value activated)" || activated_epoch=""
+  invocation_id="$(last_promotion_value invocation)" || invocation_id=""
   [[ "$release_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] \
     || die "recorded promotion has an invalid release id"
   [[ -z "$previous_release_id" || "$previous_release_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] \
     || die "recorded promotion has an invalid previous release id"
   [[ "$activated_epoch" =~ ^[0-9]+$ ]] || die "recorded promotion has an invalid activation time"
+  [[ "$invocation_id" =~ ^[0-9a-f]{32}$ ]] \
+    || die "recorded promotion has an invalid Coding service invocation id"
 
   remaining=$((activated_epoch + completion_watch_seconds - $(date +%s)))
   ((remaining > 0)) || remaining=0
   printf 'agent-runner-deploy: waiting up to %ss for %s to report an accepted completion from release %s\n' \
     "$remaining" "$coding_unit" "$release_id"
-  if observation="$(watch_for_accepted_completion "$activated_epoch" "$remaining")"; then
+  if observation="$(watch_for_accepted_completion "$invocation_id" "$remaining")"; then
     logger -p authpriv.notice -t agent-runner-deploy \
       "action=verify-completions release=$release_id result=accepted" || true
     printf 'agent-runner-deploy: completion accepted after release %s: %s\n' "$release_id" "$observation"
@@ -1062,17 +1068,22 @@ promote_release() {
   chown -R root:root "$accepted_release"
   install -d -o "$service_user" -g "$service_group" -m 0750 "$incoming_root"
 
-  local activated_epoch
-  activated_epoch="$(date +%s)"
   restart_release_services \
     "$release_id" \
     "$previous_release_id" \
     "${before_restart_counts[@]}"
+  local invocation_id
+  invocation_id="$(systemctl show --property=InvocationID --value "$coding_unit")" \
+    || post_restart_failure "$release_id" "$previous_release_id" "coding-invocation-query-failed"
+  [[ "$invocation_id" =~ ^[0-9a-f]{32}$ ]] \
+    || post_restart_failure "$release_id" "$previous_release_id" "invalid-coding-invocation-id"
+  local activated_epoch
+  activated_epoch="$(date +%s)"
 
   logger -p authpriv.notice -t agent-runner-deploy \
     "action=release release=$release_id previous=${previous_release_id:-none} source=$incoming_root target=$release_root result=activated" || true
   printf 'agent-runner-deploy: promoted and activated release %s at %s\n' "$release_id" "$release_root"
-  record_last_promotion "$release_id" "$previous_release_id" "$activated_epoch"
+  record_last_promotion "$release_id" "$previous_release_id" "$activated_epoch" "$invocation_id"
   verify_completions
 }
 

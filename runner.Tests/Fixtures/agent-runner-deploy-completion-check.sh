@@ -7,8 +7,10 @@ set -euo pipefail
 helper_path="${1:?expected the agent-runner-deploy path}"
 fixture_root="$(mktemp -d)"
 journal_file="$fixture_root/journal"
+outgoing_journal_file="$fixture_root/outgoing-journal"
 poll_file="$fixture_root/polls"
 scenario=""
+new_invocation_id="0123456789abcdef0123456789abcdef"
 
 cleanup() {
   rm -rf -- "$fixture_root"
@@ -23,11 +25,11 @@ last_promotion_value() {
     release) printf 'rel-new\n' ;;
     previous) printf 'rel-previous\n' ;;
     activated) date +%s ;;
+    invocation) printf '%s\n' "$new_invocation_id" ;;
   esac
 }
 
 journalctl() {
-  [[ "$*" == "-u agent-runner.service --since @"*" -o cat --no-pager" ]] || return 64
   local polls=0
   [[ ! -f "$poll_file" ]] || polls="$(<"$poll_file")"
   polls=$((polls + 1))
@@ -35,7 +37,12 @@ journalctl() {
   if [[ "$scenario" == "late-acceptance" && "$polls" -ge 3 ]]; then
     printf "[10:02:00] [agent-host] task 'AGT-2' handed back to the local board: Done\n" >>"$journal_file"
   fi
-  cat -- "$journal_file"
+  if [[ "$*" == *"_SYSTEMD_UNIT=agent-runner.service"* \
+      && "$*" == *"_SYSTEMD_INVOCATION_ID=$new_invocation_id"* ]]; then
+    cat -- "$journal_file"
+  else
+    cat -- "$outgoing_journal_file" "$journal_file"
+  fi
 }
 
 logger() { :; }
@@ -47,11 +54,16 @@ sleep() {
 run_scenario() {
   scenario="$1"
   : >"$journal_file"
+  : >"$outgoing_journal_file"
   rm -f -- "$poll_file"
   case "$scenario" in
     accepted)
       printf "[10:00:00] [agent-host] remote-runner-completion recorded: outcome Done, state 4-auto-review, result-envelope attached\n" >>"$journal_file"
       printf "[10:00:00] [agent-host] task 'AGT-1' handed back to the local board: Done\n" >>"$journal_file"
+      ;;
+    outgoing-acceptance)
+      printf "[10:00:00] [agent-host] task 'AGT-old' handed back to the local board: Done\n" >>"$outgoing_journal_file"
+      printf '[10:00:00] [agent-host] slot failed: AgentRunner.TaskServerException: POST /api/runner/completion -> 400\n' >>"$journal_file"
       ;;
     rejected)
       printf '[10:00:00] [agent-host] slot failed: AgentRunner.TaskServerException: POST /api/runner/completion -> 400: {"message":"Session continuation evidence does not match the fenced attempt."}\n' >>"$journal_file"
@@ -68,5 +80,6 @@ run_scenario() {
 
 run_scenario accepted
 run_scenario late-acceptance
+run_scenario outgoing-acceptance
 run_scenario rejected
 run_scenario idle

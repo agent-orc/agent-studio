@@ -1609,8 +1609,10 @@ A clean restart does not prove a working release. Stable 0.9.3 restarted
 without a fault and then had every completion rejected with
 `400 Session continuation evidence does not match the fenced attempt.` for
 almost two hours, while each rejected run was requeued and re-run (AGT-2985).
-After every promotion the helper therefore watches the Coding journal
-(`agent-runner.service`) for up to ten minutes from the activation:
+After every promotion the helper records the new Coding service invocation ID
+after the restart checks finish, then watches that invocation's journal for up
+to ten minutes. A completion logged by the outgoing daemon during restart
+cannot satisfy the check:
 
 - The first `task '<key>' handed back to the local board: <outcome>` line
   passes the check. The runner logs it only after the Task Server accepted the
@@ -1630,7 +1632,7 @@ agent-runner-deploy: rollback command: sudo sh -c 'ln -sfnT /opt/agent-host/rele
 Rejected completions mean the release is broken for this fleet: run the printed
 command. "No completion was attempted" means the host had no finished work in
 the window, so the release is unproven rather than broken. Rerun the check once
-cards are flowing; it reads the journal since the recorded activation and
+cards are flowing; it reads only the recorded Coding invocation's journal and
 waits only for the rest of the window:
 
 ```bash

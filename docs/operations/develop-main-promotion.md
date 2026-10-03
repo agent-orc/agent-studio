@@ -321,9 +321,10 @@ condition and a later cron tick retries. The watcher never changes task state.
   external updater and use its rollback procedure; do not rewrite `main` or
   move the release marker.
 - Runner host deploy: `agent-runner-deploy` waits up to ten minutes after the
-  restart for one accepted completion and otherwise prints the rollback command
-  to the previous runner release. Follow
-  [the post-restart completion check](setup/linux-runner-host.md#post-restart-completion-check)
+  restart for one accepted completion from the new Coding service invocation
+  and otherwise prints the rollback command to the previous runner release.
+  Follow the
+  [post-restart completion check](setup/linux-runner-host.md#post-restart-completion-check)
   before you declare a runner release deployed.
 - Released regression: revert the offending change through normal `develop`
   work and run a new promotion. Reserve an immutable Stable rollback for the
