@@ -34,12 +34,32 @@ public static class IntegrationGateReceipts
         string jobFolderPath,
         string prefix,
         string expectedSha)
+        => ReadNewest(
+            jobFolderPath,
+            [prefix],
+            testedSha => string.Equals(testedSha, expectedSha, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// AGT-3002: the newest receipt across <paramref name="prefixes"/> whose
+    /// expected and tested SHA agree and whose tested SHA satisfies
+    /// <paramref name="testedMatches"/> - typically "is, or has the same tree
+    /// as, the exact integration-branch SHA". Receipts are ordered by write
+    /// time so a develop and a main receipt compete fairly.
+    /// </summary>
+    public static BuildTestGateResult? ReadNewest(
+        string jobFolderPath,
+        IReadOnlyList<string> prefixes,
+        Func<string, bool> testedMatches)
     {
         var dir = Path.Combine(jobFolderPath, "post-steps");
         if (!Directory.Exists(dir)) return null;
 
-        foreach (var path in Directory.GetFiles(dir, $"{prefix}-*.log")
-                     .OrderByDescending(EvidenceIndex))
+        // One prefix keeps its numbered order; several are interleaved by write time.
+        var paths = prefixes
+            .SelectMany(prefix => Directory.GetFiles(dir, $"{prefix}-*.log"))
+            .OrderByDescending(path => prefixes.Count == 1 ? 0 : File.GetLastWriteTimeUtc(path).Ticks)
+            .ThenByDescending(EvidenceIndex);
+        foreach (var path in paths)
         {
             try
             {
@@ -53,8 +73,9 @@ public static class IntegrationGateReceipts
                 var recordedExpected = HeaderValue(shaLine, "expectedSha=");
                 var recordedTested = HeaderValue(shaLine, "testedSha=");
                 if (!Enum.TryParse<BuildTestGateVerdict>(verdictValue, ignoreCase: true, out var verdict)
-                    || !string.Equals(recordedExpected, expectedSha, StringComparison.OrdinalIgnoreCase)
-                    || !string.Equals(recordedTested, expectedSha, StringComparison.OrdinalIgnoreCase))
+                    || !ReviewSubjectStore.IsValidResultSha(recordedTested)
+                    || !string.Equals(recordedExpected, recordedTested, StringComparison.OrdinalIgnoreCase)
+                    || !testedMatches(recordedTested!))
                 {
                     continue;
                 }

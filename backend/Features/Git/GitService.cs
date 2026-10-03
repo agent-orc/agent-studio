@@ -130,9 +130,16 @@ public static class MergeIntoIntegrationOutcomePolicy
             or MergeIntoIntegrationOutcome.MergedAfterRebase;
 
     public static bool IsSuccessfulIntegration(this MergeIntoIntegrationOutcome outcome)
-        => outcome.IsFreshMerge()
-            || outcome is MergeIntoIntegrationOutcome.AlreadyMerged
-                or MergeIntoIntegrationOutcome.AlreadyOnIntegrationBranch;
+        => outcome.IsFreshMerge() || outcome.IsAlreadyContained();
+
+    /// <summary>
+    /// The branch already carried the delivery; this call created no merge. The
+    /// runner completes such an outcome only on gate evidence for the exact
+    /// tree (AGT-3002, <see cref="IntegrationVerificationPolicy"/>).
+    /// </summary>
+    public static bool IsAlreadyContained(this MergeIntoIntegrationOutcome outcome)
+        => outcome is MergeIntoIntegrationOutcome.AlreadyMerged
+            or MergeIntoIntegrationOutcome.AlreadyOnIntegrationBranch;
 }
 
 /// <summary>

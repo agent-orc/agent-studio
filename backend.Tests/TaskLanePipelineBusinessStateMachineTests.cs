@@ -926,11 +926,10 @@ public sealed class TaskLanePipelineEdgeCaseTests : IDisposable
     }
 
     [Fact]
-    public async Task HumanReview_OutOfBandMergeThenAccept_TaskRecognizesIntegratedWork()
+    public async Task HumanReview_OutOfBandMergeThenAccept_RequiresExactTreeGateEvidence()
     {
-        // AGT-2424 Part C: a merge performed outside the accept request is
-        // still Git truth. Accept must derive "integrated" and must not leave a
-        // stale integrationpending marker.
+        // A merge performed outside the accept request is Git containment,
+        // but acceptance waits for gate evidence on that exact tree.
         var integratedSha = _fixture.InitializeRepositoryWithIntegratedCommit();
         const string id = "out-of-band-integrated";
         _fixture.SeedTask(
@@ -942,6 +941,27 @@ public sealed class TaskLanePipelineEdgeCaseTests : IDisposable
         var transitions = _fixture.CreateTransitions(
             integrationStatus: _fixture.CreateIntegrationStatus());
 
+        var unverified = await transitions.MoveAsync(
+            id,
+            TaskStates.Completed,
+            _fixture.WatchPath);
+
+        Assert.Equal(MoveJobStatus.IntegrationFailed, unverified.Status);
+        var reviewed = _fixture.Scanner.FindJob(id, _fixture.WatchPath)!;
+        Assert.Equal(TaskStates.HumanReview, reviewed.State);
+        var before = _fixture.CreateIntegrationStatus().BuildLookup([reviewed])[reviewed.TaskKey];
+        Assert.Equal(IntegrationStatuses.Integrated, before.Status);
+        Assert.Equal(IntegrationVerificationStates.Unverified, before.Verification?.State);
+
+        IntegrationVerificationStore.Write(reviewed.FolderPath, new IntegrationVerificationRecord
+        {
+            State = IntegrationVerificationStates.Verified,
+            Sha = integratedSha,
+            IntegrationBranch = "develop",
+            Evidence = IntegrationVerificationEvidence.GateRun,
+            GateVerdict = nameof(BuildTestGateVerdict.Ok),
+            Reason = "The gate passed on the out-of-band integration tree.",
+        });
         var outcome = await transitions.MoveAsync(
             id,
             TaskStates.Completed,
