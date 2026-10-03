@@ -48,7 +48,7 @@ public sealed class DecisionApplyService
         var plan = DecisionApplyPolicy.Plan(decided,
             linked.Select(item => new DecisionLinkedCardFact(item.Key, item.Card?.State)).ToList());
         var block = DecisionPromptBlock.Render(key, decisionCard.Title, decided);
-        var marker = DecisionPromptBlock.Marker(key, decided.DecidedAt ?? DateTime.UtcNow);
+        var marker = DecisionPromptBlock.Marker(key, decided);
 
         return plan.Outcome switch
         {
@@ -78,7 +78,7 @@ public sealed class DecisionApplyService
             var promptPath = Path.Combine(card.FolderPath, "prompt.md");
             var prompt = File.Exists(promptPath) ? File.ReadAllText(promptPath) : string.Empty;
             if (!_mutations.UpdateJobFile(card.Id, "prompt.md",
-                    DecisionPromptBlock.Append(prompt, block, marker), card.WatchPath))
+                    DecisionPromptBlock.Append(prompt, block, marker, key), card.WatchPath))
             {
                 notes.Add($"{step.Key}: the decision block could not be written.");
                 continue;
@@ -101,7 +101,7 @@ public sealed class DecisionApplyService
     private DecisionApplyResult CreateFromRequirements(TaskInfo decisionCard, string key,
         DecisionContent decided, DecisionApplyPlan plan, string block)
     {
-        var cycle = (decided.DecidedAt ?? DateTime.UtcNow).ToUniversalTime().Ticks;
+        var cycle = $"{(decided.DecidedAt ?? DateTime.UtcNow).ToUniversalTime().Ticks}:{decided.History.Count}";
         var spawns = plan.Requirements.Select((requirement, index) =>
             new AgentStudio.Pipeline.ConceptCardSpawn(
                 $"{ReasonPrefix}{key}:{cycle}:{index}",

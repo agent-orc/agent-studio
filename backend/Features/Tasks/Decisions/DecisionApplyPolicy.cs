@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace AgentStudio.Tasks;
 
@@ -76,8 +77,12 @@ public static class DecisionApplyPolicy
 /// </summary>
 public static class DecisionPromptBlock
 {
-    public static string Marker(string decisionKey, DateTime decidedAt) =>
-        $"<!-- agent-studio:decision-apply {decisionKey} {decidedAt.ToUniversalTime():yyyy-MM-dd'T'HH:mm:ss'Z'} -->";
+    private const string FinalInstruction = "Implement the chosen option. The decision is settled; do not reopen it in this run.";
+
+    // The history count distinguishes two choices even if the clock gives them
+    // the same timestamp. Every recorded choice appends a history entry.
+    public static string Marker(string decisionKey, DecisionContent decided) =>
+        $"<!-- agent-studio:decision-apply {decisionKey} {(decided.DecidedAt ?? DateTime.UtcNow).ToUniversalTime().Ticks}:{decided.History.Count} -->";
 
     public static string Render(string decisionKey, string title, DecisionContent decided)
     {
@@ -85,7 +90,7 @@ public static class DecisionPromptBlock
         var decidedAt = decided.DecidedAt ?? DateTime.UtcNow;
         var sb = new StringBuilder();
         sb.Append("## Decision ").Append(decisionKey).Append(": ").Append(title.Trim()).Append("\n\n");
-        sb.Append(Marker(decisionKey, decidedAt)).Append("\n\n");
+        sb.Append(Marker(decisionKey, decided)).Append("\n\n");
         sb.Append("- Question: ").Append(decided.Question.Trim()).Append('\n');
         sb.Append("- Chosen option: ").Append(chosen?.Id ?? decided.ChosenOptionId)
             .Append(" · ").Append(chosen?.Label ?? "").Append('\n');
@@ -100,16 +105,20 @@ public static class DecisionPromptBlock
                 ? $"decision card {decisionKey}"
                 : $"project wiki `{decided.RecordPath}` (decision card {decisionKey})")
             .Append('\n');
-        sb.Append("\nImplement the chosen option. The decision is settled; do not reopen it in this run.\n");
+        sb.Append("\n").Append(FinalInstruction).Append('\n');
         return sb.ToString();
     }
 
-    /// <summary>Appends <paramref name="block"/> unless the prompt already carries its marker.</summary>
-    public static string Append(string? prompt, string block, string marker)
+    /// <summary>Replaces an earlier choice for this decision, or appends the first one.</summary>
+    public static string Append(string? prompt, string block, string marker, string decisionKey)
     {
         var current = prompt ?? string.Empty;
         if (current.Contains(marker, StringComparison.Ordinal)) return current;
-        var trimmed = current.TrimEnd();
+        var oldBlock = $"^## Decision {Regex.Escape(decisionKey)}:[^\r\n]*\r?\n\r?\n"
+            + $"<!-- agent-studio:decision-apply {Regex.Escape(decisionKey)} [^\r\n]* -->\r?\n\r?\n"
+            + $".*?^{Regex.Escape(FinalInstruction)}\r?\n?";
+        var trimmed = Regex.Replace(current, oldBlock, string.Empty,
+            RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.CultureInvariant).TrimEnd();
         return trimmed.Length == 0 ? block : trimmed + "\n\n" + block;
     }
 }

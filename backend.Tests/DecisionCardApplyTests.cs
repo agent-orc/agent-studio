@@ -103,12 +103,13 @@ public sealed class DecisionCardApplyTests : IDisposable
         {
             Status = DecisionStatuses.Decided, ChosenOptionId = "b", Rationale = "Fewer moving parts.",
             DecidedBy = "alice", DecidedAt = at, RecordPath = "operations/decisions/AGT-1.md",
+            History = [new DecisionHistoryEntry(DecisionStatuses.Decided, "b", "Fewer moving parts.", "alice", at, null)],
         };
 
         var block = DecisionPromptBlock.Render("AGT-1", "Stable release contract", decided);
-        var marker = DecisionPromptBlock.Marker("AGT-1", at);
-        var once = DecisionPromptBlock.Append("# Work\n\nDo it.\n", block, marker);
-        var twice = DecisionPromptBlock.Append(once, block, marker);
+        var marker = DecisionPromptBlock.Marker("AGT-1", decided);
+        var once = DecisionPromptBlock.Append("# Work\n\nDo it.\n", block, marker, "AGT-1");
+        var twice = DecisionPromptBlock.Append(once, block, marker, "AGT-1");
 
         Assert.Contains("- Question: Ship the Stable release with a lock file?", block);
         Assert.Contains("- Chosen option: b · No lock file", block);
@@ -117,6 +118,49 @@ public sealed class DecisionCardApplyTests : IDisposable
         Assert.StartsWith("# Work", once);
         Assert.Equal(once, twice);
         Assert.Equal(1, CountOf(twice, marker));
+    }
+
+    [Fact]
+    public void PromptBlock_RechoiceAtSameInstant_ReplacesPreviousChoice()
+    {
+        var at = new DateTime(2026, 10, 3, 1, 0, 0, DateTimeKind.Utc);
+        var firstEntry = new DecisionHistoryEntry(DecisionStatuses.Decided, "a", "Use the lock file.", "alice", at, null);
+        var first = LockFileDecision() with
+        {
+            Status = DecisionStatuses.Decided, ChosenOptionId = "a", Rationale = firstEntry.Rationale,
+            DecidedAt = at, History = [firstEntry],
+        };
+        var second = first with
+        {
+            ChosenOptionId = "b", Rationale = "Use the manifest.",
+            History = [firstEntry,
+                new DecisionHistoryEntry(DecisionStatuses.Reopened, null, null, "alice", at, "Revisit"),
+                new DecisionHistoryEntry(DecisionStatuses.Decided, "b", "Use the manifest.", "alice", at, null)],
+        };
+        var firstMarker = DecisionPromptBlock.Marker("AGT-1", first);
+        var secondMarker = DecisionPromptBlock.Marker("AGT-1", second);
+        Assert.NotEqual(firstMarker, secondMarker);
+
+        var original = DecisionPromptBlock.Append("# Work\n\nDo it.\n",
+            DecisionPromptBlock.Render("AGT-1", "Release contract", first), firstMarker, "AGT-1");
+        var updated = DecisionPromptBlock.Append(original,
+            DecisionPromptBlock.Render("AGT-1", "Release contract", second), secondMarker, "AGT-1");
+
+        Assert.StartsWith("# Work\n\nDo it.", updated);
+        Assert.DoesNotContain(firstMarker, updated);
+        Assert.DoesNotContain("- Chosen option: a · Lock file", updated);
+        Assert.Contains("- Chosen option: b · No lock file", updated);
+        Assert.Contains("- Rationale: Use the manifest.", updated);
+        Assert.Equal(1, CountOf(updated, "## Decision AGT-1:"));
+        Assert.Equal(updated, DecisionPromptBlock.Append(updated,
+            DecisionPromptBlock.Render("AGT-1", "Release contract", second), secondMarker, "AGT-1"));
+
+        var legacy = original.Replace(firstMarker,
+            "<!-- agent-studio:decision-apply AGT-1 2026-10-03T01:00:00Z -->");
+        var upgraded = DecisionPromptBlock.Append(legacy,
+            DecisionPromptBlock.Render("AGT-1", "Release contract", second), secondMarker, "AGT-1");
+        Assert.DoesNotContain("- Chosen option: a · Lock file", upgraded);
+        Assert.Equal(1, CountOf(upgraded, "## Decision AGT-1:"));
     }
 
     // ---- apply on decide: linked implementation card ----
@@ -168,6 +212,37 @@ public sealed class DecisionCardApplyTests : IDisposable
         Assert.Contains(new TimelineLog(NullLogger<TimelineLog>.Instance)
             .ReadAll(h.Scanner.FindJob(decisionId, _watchPath)!.FolderPath),
             e => e.Kind == TimelineEventKinds.DecisionApplied);
+    }
+
+    [Fact]
+    public async Task Reopen_ThenChooseAgain_UpdatesLinkedCardPromptToCurrentChoice()
+    {
+        var h = Build();
+        var implId = h.Mutations.CreateJob(new CreateTaskRequest
+        {
+            Title = "Stable release gate", WatchPath = _watchPath, TargetState = TaskStates.Preparation,
+            PromptMarkdown = "# Stable release gate\n\nImplement the release contract.\n",
+        })!;
+        var impl = h.Scanner.FindJob(implId, _watchPath)!;
+        var decisionId = h.Mutations.CreateJob(new CreateTaskRequest
+        {
+            Title = "Stable release contract", WatchPath = _watchPath, Kind = TaskKinds.Decision,
+            Decision = LockFileDecision(impl.Key!),
+        })!;
+
+        Assert.Equal(DecisionCardStatus.Success, (await h.Decisions.DecideAsync(decisionId, _watchPath,
+            new DecideCardRequest { OptionId = "a", Rationale = "Keep installs reproducible." }, "alice")).Status);
+        Assert.Equal(DecisionCardStatus.Success, (await h.Decisions.ReopenAsync(decisionId, _watchPath,
+            new ReopenDecisionRequest { Note = "The release contract changed." }, "alice")).Status);
+        Assert.Equal(DecisionCardStatus.Success, (await h.Decisions.DecideAsync(decisionId, _watchPath,
+            new DecideCardRequest { OptionId = "b", Rationale = "Use the manifest instead." }, "alice")).Status);
+
+        var prompt = File.ReadAllText(Path.Combine(impl.FolderPath, "prompt.md"));
+        Assert.DoesNotContain("- Chosen option: a · Lock file", prompt);
+        Assert.Contains("- Chosen option: b · No lock file", prompt);
+        Assert.Contains("- Rationale: Use the manifest instead.", prompt);
+        Assert.Equal(1, CountOf(prompt, $"## Decision {h.Scanner.FindJob(decisionId, _watchPath)!.Key}:"));
+        Assert.Equal(TaskStates.Ready, h.Scanner.FindJob(implId, _watchPath)!.State);
     }
 
     [Fact]
