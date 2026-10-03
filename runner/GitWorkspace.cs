@@ -303,10 +303,10 @@ public sealed class GitWorkspace
             if (!pushSet.Success) return Failed("set push URL", pushSet, expected, expected);
 
             var fetch = await ProcessRunner.RunAsync(
-                "git", ["remote", "get-url", "origin"], sharedRepoPath, ct: ct);
+                "git", ["config", "--get", "remote.origin.url"], sharedRepoPath, ct: ct);
             if (!fetch.Success) return Failed("read fetch URL", fetch, expected, expected);
             var push = await ProcessRunner.RunAsync(
-                "git", ["remote", "get-url", "--push", "origin"], sharedRepoPath, ct: ct);
+                "git", ["config", "--get", "remote.origin.pushurl"], sharedRepoPath, ct: ct);
             if (!push.Success) return Failed("read push URL", push, fetch.StdOut.Trim(), expected);
             var fetchUrl = fetch.StdOut.Trim();
             var pushUrl = push.StdOut.Trim();

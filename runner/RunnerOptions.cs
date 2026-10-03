@@ -71,6 +71,12 @@ public sealed class RunnerOptions
     /// </summary>
     public string? GitPushRemote { get; init; }
 
+    /// <summary>Exact private workspace origin, checked separately from the product fallback.</summary>
+    public string? WorkspaceGitRemote { get; init; }
+
+    /// <summary>Whether workspace access must also prove a managed temporary-ref push.</summary>
+    public bool WorkspaceGitRequiresPush { get; init; }
+
     /// <summary>Directory the runner checks the repo out into on the runner host.</summary>
     public required string WorkDir { get; init; }
 
@@ -434,6 +440,9 @@ public sealed class RunnerOptions
                     : null,
             GitRemote = Val("git-remote", "RUNNER_GIT_REMOTE").Trim() is { Length: > 0 } gitRemote ? gitRemote : null,
             GitPushRemote = Val("git-push-remote", "RUNNER_GIT_PUSH_REMOTE").Trim() is { Length: > 0 } gitPushRemote ? gitPushRemote : null,
+            WorkspaceGitRemote = Val("workspace-git-remote", "RUNNER_WORKSPACE_GIT_REMOTE").Trim() is { Length: > 0 } workspaceRemote ? workspaceRemote : null,
+            WorkspaceGitRequiresPush = Val("workspace-git-requires-push", "RUNNER_WORKSPACE_GIT_REQUIRES_PUSH")
+                .Trim().ToLowerInvariant() is "1" or "true",
             WorkDir = Val("workdir", "RUNNER_WORKDIR", Path.Combine(Path.GetTempPath(), "agent-runner-work")),
             ReviewWorkDir = Val(
                 "review-workdir",
