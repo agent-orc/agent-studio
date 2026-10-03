@@ -25,7 +25,7 @@ public sealed class TaskServerClient : IDisposable
     private readonly string? _configuredClientId;
     private readonly string? _runnerInstanceIdOverride;
     private readonly RunnerOptions? _options;
-    // Per-run caches, evicted on release after post-completion evidence transport
+    // Per-run caches, evicted on release after pre-settlement evidence transport
     // so the long-lived daemon does not retain every claimed task's lease and prompt.
     private readonly ConcurrentDictionary<string, (string RunId, RunLeaseInfoDto Lease, string InstanceId)> _v1Leases = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, string> _v1CompletedLeases = new(StringComparer.OrdinalIgnoreCase);
@@ -1342,32 +1342,6 @@ public sealed class TaskServerClient : IDisposable
         return lease;
     }
 
-    /// <summary>
-    /// Restore the original fence for artifact-only replay after completion.
-    /// The Task Server validates that fence and permits completed-run artifact
-    /// writes; renewing a completed lease would correctly be rejected.
-    /// </summary>
-    public void RestoreCompletedOutboxAuthority(RunOutboxAuthority authority)
-    {
-        if (!_useV1)
-            throw new InvalidOperationException("Completed artifact replay requires the versioned Task Server.");
-        _v1Leases[authority.TaskKey] = (
-            authority.RunId,
-            new RunLeaseInfoDto(
-                authority.TaskKey,
-                authority.RunnerId,
-                authority.RunnerId,
-                _options?.Hostname ?? "recovery",
-                Environment.ProcessId,
-                _options?.BackendName ?? "task-server",
-                authority.LeaseId,
-                authority.Fence,
-                DateTime.UtcNow,
-                DateTime.UtcNow,
-                authority.RunId),
-            authority.InstanceId);
-    }
-
     private static Contract.RunnerProcessInventory? ToContract(RunnerProcessInventory? inventory)
         => inventory is null
             ? null
@@ -1560,11 +1534,9 @@ public sealed class TaskServerClient : IDisposable
     public async Task<ArtifactIngestResponse?> UploadArtifactsAsync(ArtifactIngestRequest req, CancellationToken ct)
     {
         if (!_useV1) return await PostJsonAsync<ArtifactIngestRequest, ArtifactIngestResponse>("/api/runner/artifacts", req, ct);
-        // Result evidence is uploaded after the fenced completion (AGT-2890), so
-        // the lease is already "completed" on the v1 plane. The Task Server admits
-        // that only with the exact outbox authority (runner, instance, lease),
-        // exactly as the durable outbox replay sends it; the fence alone is
-        // answered with 409 lease-not-active and the artifact is lost.
+        // Result evidence is uploaded before the fenced completion. The exact
+        // runner, instance, lease, and fence still bind every write so a stale
+        // host cannot add evidence to a successor attempt.
         var authority = OutboxAuthority(req.TaskKey);
         var files = new List<string>();
         foreach (var artifact in req.Artifacts)
