@@ -114,12 +114,13 @@ public sealed class AcceptanceIntegrationStatusDocumentTests : IDisposable
     public void CompleteQuotedPairAfterOwnedSection_PreservesTheQuoteAndReplacesOnlyTheOwnedSection()
     {
         AcceptanceIntegrationStatusDocument.WriteFailure(_folder, "conflict", "first", "develop");
-        var quote = "Quoted pair:\n" + Start + "\n## Acceptance integration\n\nexample text\n" + End + "\n";
-        File.AppendAllText(StatusPath, "\n" + quote);
+        var original = File.ReadAllText(StatusPath).ReplaceLineEndings("\n");
+        var quote = original[original.IndexOf(Start, StringComparison.Ordinal)..];
+        File.AppendAllText(StatusPath, "\nQuoted complete writer section:\n" + quote);
 
         AcceptanceIntegrationStatusDocument.WriteFailure(_folder, "conflict", "second", "develop");
         var updated = File.ReadAllText(StatusPath).ReplaceLineEndings("\n");
-        Assert.DoesNotContain("- Reason: first", updated);
+        Assert.Equal(1, Count(updated, "- Reason: first"));
         Assert.Contains("- Reason: second", updated);
         Assert.Equal(2, Count(updated, Start));
         Assert.Equal(2, Count(updated, End));
@@ -128,7 +129,41 @@ public sealed class AcceptanceIntegrationStatusDocumentTests : IDisposable
         AcceptanceIntegrationStatusDocument.Clear(_folder);
         var cleared = File.ReadAllText(StatusPath).ReplaceLineEndings("\n");
         Assert.DoesNotContain("- Reason: second", cleared);
+        Assert.Equal(1, Count(cleared, "- Reason: first"));
         Assert.Contains(quote, cleared);
+        Assert.Equal(1, Count(cleared, Start));
+        Assert.Equal(1, Count(cleared, End));
+    }
+
+    [Fact]
+    public void CompleteWriterLayoutQuotedWithoutAnOwnedSection_SurvivesClearAndUpsert()
+    {
+        var quoted = "# Result\n\nQuoted writer layout:\n" + Start
+            + "\n## Acceptance integration\n\n- Outcome: `Conflict`\n- Lane: `5-human-review`"
+            + "\n- Integration branch: `develop`\n- Reason: example\n- Recorded at: `2026-10-03T00:00:00.0000000Z`\n"
+            + End + "\n";
+        File.WriteAllText(StatusPath, quoted);
+
+        AcceptanceIntegrationStatusDocument.Clear(_folder);
+        Assert.Equal(quoted, File.ReadAllText(StatusPath).ReplaceLineEndings("\n"));
+
+        AcceptanceIntegrationStatusDocument.WriteFailure(_folder, "conflict", "new", "develop");
+        Assert.StartsWith(quoted + "\n", File.ReadAllText(StatusPath).ReplaceLineEndings("\n"));
+    }
+
+    [Fact]
+    public void ClearWithCopiedWriterSectionAfterTheOwnedSection_RemovesOnlyTheOwnedSection()
+    {
+        AcceptanceIntegrationStatusDocument.WriteFailure(_folder, "conflict", "first", "develop");
+        var original = File.ReadAllText(StatusPath).ReplaceLineEndings("\n");
+        var quote = original[original.IndexOf(Start, StringComparison.Ordinal)..];
+        File.AppendAllText(StatusPath, "\nCopied section:\n" + quote);
+
+        AcceptanceIntegrationStatusDocument.Clear(_folder);
+
+        var cleared = File.ReadAllText(StatusPath).ReplaceLineEndings("\n");
+        Assert.StartsWith("# Result", cleared);
+        Assert.Contains("Copied section:\n" + quote, cleared);
         Assert.Equal(1, Count(cleared, Start));
         Assert.Equal(1, Count(cleared, End));
     }

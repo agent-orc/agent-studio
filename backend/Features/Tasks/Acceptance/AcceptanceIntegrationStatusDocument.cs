@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace AgentStudio.Tasks;
@@ -12,15 +13,18 @@ namespace AgentStudio.Tasks;
 /// Every caller value is escaped so it cannot open or close an HTML comment,
 /// and the markers are matched only as whole lines, so neither caller text
 /// nor an agent-written task result above the section can make a later
-/// upsert truncate the document. Removal requires the owned heading and the
-/// writer's field layout, even when task text follows the section. Quoted
-/// marker pairs outside that layout remain task text.
+/// upsert truncate the document. Removal requires a fingerprint of the exact
+/// text preceding the writer's section, even when task text follows it. A
+/// copied section elsewhere in the document has a different prefix and
+/// remains task text.
 /// </para>
 /// </summary>
 public static class AcceptanceIntegrationStatusDocument
 {
     internal const string StartMarker = "<!-- agent-studio:acceptance-integration:start -->";
     internal const string EndMarker = "<!-- agent-studio:acceptance-integration:end -->";
+    private const string Heading = "## Acceptance integration";
+    private const string OwnershipPrefix = "<!-- agent-studio:acceptance-integration:prefix-sha256:";
     private static readonly ConcurrentDictionary<string, object> PathLocks = new(StringComparer.OrdinalIgnoreCase);
 
     public static void WriteFailure(
@@ -32,7 +36,7 @@ public static class AcceptanceIntegrationStatusDocument
     {
         var section = new StringBuilder()
             .AppendLine(StartMarker)
-            .AppendLine("## Acceptance integration")
+            .AppendLine(Heading)
             .AppendLine()
             .AppendLine($"- Outcome: `{SingleLine(outcome)}`")
             .AppendLine($"- Lane: `{TaskStates.HumanReview}`")
@@ -51,7 +55,7 @@ public static class AcceptanceIntegrationStatusDocument
     {
         var section = new StringBuilder()
             .AppendLine(StartMarker)
-            .AppendLine("## Acceptance integration")
+            .AppendLine(Heading)
             .AppendLine()
             .AppendLine("- Outcome: `OperatorOverride`")
             .AppendLine($"- Lane: `{TaskStates.Completed}`")
@@ -84,17 +88,22 @@ public static class AcceptanceIntegrationStatusDocument
         {
             var original = File.Exists(path) ? File.ReadAllText(path) : "# Result\n";
             var preserved = RemoveOwnedSection(original).TrimEnd();
-            var updated = preserved.Length == 0
-                ? section
-                : preserved + Environment.NewLine + Environment.NewLine + section;
+            var prefix = preserved.Length == 0
+                ? string.Empty
+                : preserved + Environment.NewLine + Environment.NewLine;
+            var ownedSection = section.Insert(
+                StartMarker.Length + Environment.NewLine.Length
+                    + Heading.Length + Environment.NewLine.Length,
+                OwnershipMarker(prefix) + Environment.NewLine);
+            var updated = prefix + ownedSection;
             ReplaceAtomically(path, updated.TrimEnd() + Environment.NewLine);
         }
     }
 
     internal static string RemoveOwnedSection(string content)
     {
-        // Task text may be appended after the owned section, including a
-        // quoted marker pair. Search past quotes and require the writer's body.
+        // Task text may be appended after the owned section, including an
+        // exact copy of it. Only the original location has the matching prefix.
         for (var start = LastMarkerLine(content, StartMarker); start >= 0;
              start = start == 0 ? -1 : LastMarkerLine(content[..start], StartMarker))
         {
@@ -104,26 +113,30 @@ public static class AcceptanceIntegrationStatusDocument
             bodyStart++;
 
             var end = MarkerLine(content, EndMarker, bodyStart);
-            if (end < 0 || !IsOwnedBody(content[bodyStart..end])) continue;
+            if (end < 0 || !IsOwnedBody(content[bodyStart..end], content[..start])) continue;
             return content.Remove(start, end + EndMarker.Length - start);
         }
         return content;
     }
 
-    private static bool IsOwnedBody(string body)
+    private static bool IsOwnedBody(string body, string prefix)
     {
         var lines = body.ReplaceLineEndings("\n").Split('\n');
-        return lines.Length == 8
-            && lines[0] == "## Acceptance integration"
-            && lines[1].Length == 0
-            && lines[2].StartsWith("- Outcome: `", StringComparison.Ordinal)
-            && lines[3].StartsWith("- Lane: `", StringComparison.Ordinal)
-            && (lines[4].StartsWith("- Integration branch: `", StringComparison.Ordinal)
-                || lines[4] == "- Integration: explicitly waived by the operator")
-            && lines[5].StartsWith("- Reason: ", StringComparison.Ordinal)
-            && lines[6].StartsWith("- Recorded at: `", StringComparison.Ordinal)
-            && lines[7].Length == 0;
+        return lines.Length == 9
+            && lines[0] == Heading
+            && lines[1] == OwnershipMarker(prefix)
+            && lines[2].Length == 0
+            && lines[3].StartsWith("- Outcome: `", StringComparison.Ordinal)
+            && lines[4].StartsWith("- Lane: `", StringComparison.Ordinal)
+            && (lines[5].StartsWith("- Integration branch: `", StringComparison.Ordinal)
+                || lines[5] == "- Integration: explicitly waived by the operator")
+            && lines[6].StartsWith("- Reason: ", StringComparison.Ordinal)
+            && lines[7].StartsWith("- Recorded at: `", StringComparison.Ordinal)
+            && lines[8].Length == 0;
     }
+
+    private static string OwnershipMarker(string prefix)
+        => OwnershipPrefix + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(prefix))) + " -->";
 
     private static int MarkerLine(string content, string marker, int from)
     {
