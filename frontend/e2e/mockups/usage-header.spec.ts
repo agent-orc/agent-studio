@@ -284,6 +284,11 @@ test.describe('@mockup header usage cockpit: priority and container rules', () =
     await expect(page.getByTestId('cockpit-primary-cli').getByRole('button')).toHaveAttribute('data-testid', 'usage-cli-chip-claude');
     await open(page, { width: 390, query: { default: 'claude', selected: 'codex' } });
     await expect(page.getByTestId('cockpit-primary-cli').getByRole('button')).toHaveAttribute('data-testid', 'usage-cli-chip-codex');
+
+    await open(page, { width: 1728, query: { scenario: 'three', default: 'gemini', selected: 'claude' } });
+    expect(await usageRow(page).locator('button[data-testid^="usage-cli-chip-"]').evaluateAll(
+      (chips) => chips.map((chip) => chip.getAttribute('data-testid')),
+    )).toEqual(['usage-cli-chip-claude', 'usage-cli-chip-gemini', 'usage-cli-chip-codex']);
   });
 
   test('a narrow container follows the same rules as a narrow viewport', async ({ page }) => {

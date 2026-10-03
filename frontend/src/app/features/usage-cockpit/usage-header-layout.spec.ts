@@ -50,7 +50,8 @@ describe('orderClis', () => {
 
   it('leads with the saved default, then the current selection over it', () => {
     expect(orderClis(clis, null, 'gemini').map(c => c.cliId)).toEqual(['gemini', 'codex', 'claude']);
-    expect(orderClis(clis, 'claude', 'gemini').map(c => c.cliId)).toEqual(['claude', 'codex', 'gemini']);
+    expect(orderClis(clis, 'claude', 'gemini').map(c => c.cliId)).toEqual(['claude', 'gemini', 'codex']);
+    expect(orderClis(clis, 'GEMINI', 'gemini').map(c => c.cliId)).toEqual(['gemini', 'codex', 'claude']);
   });
 
   it('ignores a selection or default that is not configured', () => {

@@ -38,13 +38,27 @@ export function orderClis(
   selectedCliId: string | null,
   defaultCliId: string | null,
 ): UsageCli[] {
-  const ordered = [...clis];
-  const lead = [selectedCliId, defaultCliId]
-    .map(id => id?.toLowerCase() ?? null)
-    .find(id => id != null && ordered.some(c => c.cliId.toLowerCase() === id));
-  if (lead == null) return ordered;
-  const index = ordered.findIndex(c => c.cliId.toLowerCase() === lead);
-  return [ordered[index], ...ordered.slice(0, index), ...ordered.slice(index + 1)];
+  const priorities = [selectedCliId, defaultCliId]
+    .filter((id): id is string => id != null)
+    .map(id => id.toLowerCase());
+  const ordered: UsageCli[] = [];
+  const seen = new Set<string>();
+
+  for (const id of priorities) {
+    const match = clis.find(c => c.cliId.toLowerCase() === id);
+    if (match && !seen.has(id)) {
+      ordered.push(match);
+      seen.add(id);
+    }
+  }
+  for (const cli of clis) {
+    const id = cli.cliId.toLowerCase();
+    if (!seen.has(id)) {
+      ordered.push(cli);
+      seen.add(id);
+    }
+  }
+  return ordered;
 }
 
 /** Established short provider names for the narrowest fit (step 5). */
