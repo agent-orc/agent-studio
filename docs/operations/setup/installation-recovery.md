@@ -55,7 +55,12 @@ The manifest records:
 ### Custody declaration
 
 The administrator keeps one custody file outside the store, for example
-`/etc/agent-orchestrator/recovery-custody.json`:
+`/etc/agent-orchestrator/recovery-custody.json`. On an installed Compose
+control plane, copy `installationId` from the versioned
+`/etc/agent-orchestrator/installation-manifest.json` (schema 1), and list that
+manifest under `configuration` with its retained copy and digest. The upgrade
+manifest identifies the installation and release; it does not contain the
+encrypted recovery credentials or replace the full recovery set:
 
 ```json
 {
@@ -184,7 +189,8 @@ the time of the loss.
   inventory, `complete.json`). Move it to the Task Server through the legacy
   migration before relying on this drill. The manifest reserves the
   `file-tree-workspace` store type for that set.
-- The installation id is copied from the custody declaration until the I06
-  installation manifest owns it.
+- The recovery command copies the installation id from the custody declaration;
+  the installed Compose updater owns its source value in the I06 installation
+  manifest. The operator must compare the two when capturing and restoring.
 - Runner-side outbox contents live on the runner host. The manifest records
   the authority's view of each pending obligation; the host keeps the data.

@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "id": "integration-lane-throughput",
+  "title": "Integration lane throughput",
+  "summary": "Only publication must be serial per project. Today one process-wide merge semaphore and one machine gate slot serialise every project, and nothing is prepared ahead. Recommends a speculative merge train: prepare-ahead of 4, chained candidates gated on a core-bounded token pool (2 tokens of 3 cores on the 12-core host), ordered publication, agent rounds ejected and re-entered at the tail, and a backlog mode that gates the train tip. Modelled busy-project throughput rises from 1.20 to 2.34 merges per hour, or 4.60 in backlog mode. Five cards, starting with lane metrics in the Ops view.",
+  "entrypoint": "index.html",
+  "status": "decision-pending",
+  "phase": "decision-ready",
+  "pattern": "concept",
+  "updatedAt": "2026-09-29T10:18:09Z",
+  "sourceTaskKeys": [
+    "AGT-2994"
+  ],
+  "relatedTaskKeys": [
+    "AGT-W18",
+    "AGT-W36",
+    "AGT-W57"
+  ],
+  "implementationTasks": [
+    {
+      "number": 1,
+      "title": "1. Measure the integration lane and show it in the Ops view",
+      "promptMarkdown": "# Measure the integration lane and show it in the Ops view\n\nSource: docs/integration-lane-throughput/index.html (AGT-2994), sections Throughput model, Evidence and Ops metrics, pinned at develop 742936e0. Dependency: none. This slice changes observability only; the lane behaviour stays the same.\n\n## Context\nThe 11 h 16 min lag of 28 to 29 September is visible only in logs. The coordinator queue (RemoteDeliveryIntegrationCoordinator), the process-wide merge semaphore (MergeIntoDevelopRunner._mergeGate) and the integration gate request (no OnMachineGateWaiting, no health context) emit no queue or wait metric. The model in the Dossier rests on one observed input (gate 42 min) and assumptions for red rate f, preparation p and demand lambda.\n\n## Deliver\n- Typed lane events persisted by the Task Server for each delivery: enqueued (review-subject completion time, durable sequence), merge-lock acquired, gate requested, gate token or machine lock acquired (queue wait, holding project), gate finished (level, duration, outcome, reuse token and reason), published (receipt), ejected (cause: conflict, AgentRoundRequired, red, error) and agent-round re-entry.\n- A projection per project: delivery-to-integration lag p50/p95 and the oldest waiting delivery (24 h window), queue depth by stage, gate token wait p50/p95, publication-lock wait, gate duration and outcome, ejections by cause, and merges per hour against arrivals.\n- An Ops view panel showing those per-project metrics, built from the existing design tokens and components, in light and dark themes. No left accent bars.\n- Record a baseline covering at least one full delivery wave, and replace the Dossier\u0027s assumed p, f and lambda in a short measurement note beside the projection docs. State whether an agent round ever coincided with a stalled project queue and what actually held the queue.\n- Add one row for docs/integration-lane-throughput/index.html to docs/start/README.md.\n\n## Acceptance\n- Every integration of a remote delivery produces the full event sequence with project, job, sequence and timestamps; the Quality Studio case (a wait on the merge lock with collision=False) is attributable as merge-lock wait.\n- The Ops panel shows lag, queue depth and gate queue wait per project, with Playwright coverage and real screenshots in both themes stored in the task results folder.\n- Baseline numbers for g, f, p and lambda are published with provenance; no metric is scraped from log text.\n\nRead AGENTS.md, docs/start/contribution-and-style-guide.html and docs/concepts/orchestrator-drive-to-conclusion.html before changing outcome or retry logic. Use the Dossier recommendation as the working decision unless a recorded operator decision selects another option, and record which option you implemented. Git remains platform-owned; the agent does not commit, push or merge. Report changed files and exact verification.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Measure the integration lane and show it in the Ops view",
+        "criteria": [
+          "Each remote delivery emits enqueue, lock, gate-wait, gate, publish or eject events with durations.",
+          "The Ops view shows per-project delivery-to-integration lag, queue depth and gate queue wait in both themes, with Playwright evidence.",
+          "A measured baseline for gate duration, red rate and arrival rate replaces the Dossier assumptions."
+        ]
+      }
+    },
+    {
+      "number": 2,
+      "title": "2. Per-project lanes and a core-bounded gate token pool",
+      "promptMarkdown": "# Per-project lanes and a core-bounded gate token pool\n\nSource: docs/integration-lane-throughput/index.html (AGT-2994), recommended D1 (lock split part), D2 and D6. Dependency: card 1 (metrics must exist to prove the change). Bounded transitional work under AGT-W18 D14.\n\n## Context\nMergeIntoDevelopRunner is a singleton whose _mergeGate (SemaphoreSlim 1,1) serialises fetch, merge, gate and rollback for every project. BuildTestGateRunner has one ProcessGate plus a machine file lock, shared by review-run and integration gates, with no configuration. The review report handler (V1ReviewPlaneEndpoints) awaits the whole integration while the runner\u0027s acknowledgement times out after 10 s.\n\n## Deliver\n- Replace the process-wide merge semaphore with one lock per project (and per integration worktree) for remote deliveries. Keep merge, gate and rollback atomic per project. Keep the drain signal (IsMergeGateBusy and /healthz/drain) truthful across all project locks.\n- Replace the single machine gate slot with a token pool: token = 3 cores, test runner threads capped to match, pool = max(1, floor((cores - reserved) / 3)), with reserved configurable and defaulting to 6 on a 12-core host. Review suites and integration gates draw from the same pool. A project with no running gate is served first; at most 2 tokens per project. Keep the load-throttle admission. Gate timeouts exclude token wait.\n- Move the lane into a hosted worker with a durable per-project queue (same order: review-subject completion time, then sequence). The review report endpoint records the settlement, enqueues and returns. Restart resumes from the durable queue and the existing settlement store.\n- Emit card 1\u0027s token-wait and lock-wait events for the integration gate (OnMachineGateWaiting or its replacement).\n\n## Acceptance\n- Two projects with concurrent deliveries gate in parallel on two tokens; neither waits for the other\u0027s merge lock (integration test with fake gates).\n- One project remains strictly serial in this slice; merge, gate and rollback stay atomic; a red gate still resets only that project\u0027s integration worktree.\n- The review report returns before the merge completes, and a restart during a queued delivery integrates it exactly once.\n\nDo not add speculation or prepare-ahead here; that is card 3.\n\nRead AGENTS.md, docs/start/contribution-and-style-guide.html and docs/concepts/orchestrator-drive-to-conclusion.html before changing outcome or retry logic. Use the Dossier recommendation as the working decision unless a recorded operator decision selects another option, and record which option you implemented. Git remains platform-owned; the agent does not commit, push or merge. Report changed files and exact verification.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Per-project lanes and a core-bounded gate token pool",
+        "criteria": [
+          "Deliveries of two projects merge and gate concurrently without waiting on each other.",
+          "Gate concurrency is bounded by a core-derived token pool shared with review suites, with fair per-project allocation.",
+          "The lane runs from a durable queue off the review report request and resumes exactly once after restart."
+        ]
+      }
+    },
+    {
+      "number": 3,
+      "title": "3. Prepare-ahead and a speculative train with ordered publication",
+      "promptMarkdown": "# Prepare-ahead and a speculative train with ordered publication\n\nSource: docs/integration-lane-throughput/index.html (AGT-2994), recommended D1 (C), D3, D4 and D6; Failure modes table. Dependencies: cards 1 and 2. Compose with adopted AGT-W18 D7 (one publisher per project), D9 (publish the exact verified object) and D11.\n\n## Context\nToday the next delivery is fetched only after the previous gate. IntegrationGateReusePolicy reuses a review only when the integration tip equals the review-time tip, so every queued delivery after the first runs the full gate (\u0022moved since the review\u0022).\n\n## Deliver\n- A portable train scheduler per project: prepare the next N = 4 deliveries (fetch, fenced SHA verification, changed paths, disposable worktree, dependency caches; at most two preparations per host).\n- Build candidates Ci = Ci-1 \u002B Di (C0 = develop tip) in disposable worktrees using the unchanged merge order (merge --no-ff, mechanical merge, guarded rebase), with ordered parents and a delivery attribution map. Store them under a train-scoped ref namespace and a durable train manifest.\n- Gate candidates on up to 2 tokens from card 2\u0027s pool as exact subjects.\n- Publish strictly in chain order under the project publication lock: verify develop equals the predecessor, verify Ci\u0027s green receipt, fast-forward and push. Add a reuse state (for example TrainVerified) so a candidate\u0027s own green gate satisfies publication without a second gate or compile step.\n- A red Ci cancels and rebuilds every chained Cj; published candidates are never rolled back. Stale candidates (predecessor published more than 2 h ago) are rebuilt before gating. Report cancelled gate-minutes as speculation waste.\n\n## Acceptance\n- With two tokens and four queued deliveries, two gates run concurrently for one project, and publication order equals intake order.\n- A red candidate cancels its dependents, which are rebuilt without it; develop only ever moves to an exact gated candidate, with no hard reset of the shared branch in the normal path.\n- Measured merges per hour for a busy project at least doubles against the card 1 baseline under comparable load, or the report explains the measured gap.\n\nRead AGENTS.md, docs/start/contribution-and-style-guide.html and docs/concepts/orchestrator-drive-to-conclusion.html before changing outcome or retry logic. Use the Dossier recommendation as the working decision unless a recorded operator decision selects another option, and record which option you implemented. Git remains platform-owned; the agent does not commit, push or merge. Report changed files and exact verification.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Prepare-ahead and a speculative train with ordered publication",
+        "criteria": [
+          "One project gates up to two chained candidates at once and publishes strictly in intake order.",
+          "A red candidate cancels and rebuilds its dependents; develop advances only to exact gated candidates.",
+          "Busy-project merges per hour are measured against the card 1 baseline, targeting at least 2x."
+        ]
+      }
+    },
+    {
+      "number": 4,
+      "title": "4. Eject conflicts, agent rounds and red candidates, then re-enter at the tail",
+      "promptMarkdown": "# Eject conflicts, agent rounds and red candidates, then re-enter at the tail\n\nSource: docs/integration-lane-throughput/index.html (AGT-2994), recommended D4 and the Failure modes table. Dependency: card 3.\n\n## Context\nIntegrationAgentRoundService.TryStartAsync already queues the recovery round at the top of Ready and returns; MaxAutomaticAgentRounds = 1. The operator observed a project without integrations while a round waited 44 min and ran; card 1\u0027s data shows the actual holder. docs/concepts/platform-architecture/rebase-merge-and-integration-invariants.md (line 241) and docs/operations/remote-gate-zielbild/remote-gate.md still state 2 rounds.\n\n## Deliver\n- In the train, AgentRoundRequired and Conflict during candidate construction eject the delivery before any gate. Later candidates chain without it. The existing recovery round (steer intent, supersession, PromoteToReadyTop, budget 1) remains unchanged.\n- A red candidate ejects its delivery with the typed gate failure; the existing failure and requeue policy applies.\n- Re-entry: a recovered delivery re-enters the train at the tail when its next review passes, with a new review-subject completion time. It never reserves its old position. No expedite path.\n- Make ejection and re-entry visible through card 1\u0027s events (cause, time out of the lane, re-entry delay).\n- Correct the stale round budget in both documents.\n\n## Acceptance\n- While an agent round waits for or occupies a coding slot, later deliveries of the same project keep publishing (integration test with a fake slow round).\n- An ejected delivery never lands ahead of deliveries that were queued before its re-entry; its dependents are rebuilt exactly once.\n- Documentation states the enforced budget of 1, and drive-to-conclusion behaviour is unchanged apart from the lane position.\n\nRead AGENTS.md, docs/start/contribution-and-style-guide.html and docs/concepts/orchestrator-drive-to-conclusion.html before changing outcome or retry logic. Use the Dossier recommendation as the working decision unless a recorded operator decision selects another option, and record which option you implemented. Git remains platform-owned; the agent does not commit, push or merge. Report changed files and exact verification.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Eject conflicts, agent rounds and red candidates, then re-enter at the tail",
+        "criteria": [
+          "Agent rounds and conflicts never stall the project\u0027s train; later deliveries keep publishing.",
+          "Ejected deliveries re-enter only at the tail after a passed review and cannot overtake earlier deliveries.",
+          "The documented automatic round budget matches the enforced value of 1."
+        ]
+      }
+    },
+    {
+      "number": 5,
+      "title": "5. Backlog mode: gate the train tip with bisect isolation",
+      "promptMarkdown": "# Backlog mode: gate the train tip with bisect isolation\n\nSource: docs/integration-lane-throughput/index.html (AGT-2994), recommended D5; mechanism borrowed from the archived AGT-W36 Batch Gate (docs/concepts/platform-architecture/batch-gate.md) without its separate coordinator. Dependencies: cards 3 and 4.\n\n## Context\nWith a 42-minute suite and two tokens the train models 2.34 merges per hour for one busy project, below an assumed 3 per hour wave. Gating every third candidate while the queue is deep models 4.60 per hour.\n\n## Deliver\n- Per project, enter backlog mode when at least 4 prepared deliveries wait, and leave it when fewer remain. In backlog mode gate only every b-th candidate (b = 3, configurable 2 to 4). A green tip publishes the chain up to it by fast-forward; every delivery gets a receipt naming the gated tip that covers it.\n- On a red tip, bisect on free tokens, eject the culprit, keep the other members\u0027 positions, and publish the green prefix. Cap bisect depth and fall back to per-candidate gating after repeated reds.\n- Show backlog mode state, batch membership and bisect cost in the Ops view (card 1 panel).\n- Require an explicit per-project setting to disable it; default follows the recorded decision (recommended: automatic).\n\n## Acceptance\n- Under a synthetic queue of 9 deliveries with one injected red, all green members land, the culprit is ejected, and develop only ever points to gated tips.\n- Measured merges per hour in backlog mode are reported against cards 1 and 3; the model\u0027s 4.60 target is checked, not assumed.\n- Below the threshold the lane behaves exactly like card 3.\n\nRead AGENTS.md, docs/start/contribution-and-style-guide.html and docs/concepts/orchestrator-drive-to-conclusion.html before changing outcome or retry logic. Use the Dossier recommendation as the working decision unless a recorded operator decision selects another option, and record which option you implemented. Git remains platform-owned; the agent does not commit, push or merge. Report changed files and exact verification.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Backlog mode: gate the train tip with bisect isolation",
+        "criteria": [
+          "Backlog mode activates only at depth 4 or more and publishes only gated tips with per-delivery receipts.",
+          "A red tip is bisected, the culprit ejected, and the green members land in order.",
+          "Measured throughput in backlog mode is reported against the card 1 and card 3 baselines."
+        ]
+      }
+    }
+  ],
+  "key": "AGT-W70"
+}

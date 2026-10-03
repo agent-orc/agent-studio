@@ -334,6 +334,27 @@ an archived artifact,
 of an empty body. Restoring rewrites the content back and re-verifies every
 file's hash before clearing `archived`.
 
+The management-scoped `GET /api/v1/management/credentials` and
+`PUT /api/v1/management/credentials` routes expose and update only credential
+metadata. The record follows
+[`registry.schema.json`](../../credentials-and-logins/registry.schema.json):
+installation, host and credential ID form its key; service bindings identify
+each consumer; every unknown date requires a reason. A write carries
+`sourceInstanceId`, `expectedGeneration` and UTC `observedAt`. A newer generation
+must name the generation it supersedes. Stale generation, instance or observation
+time is rejected. If a host has registered runners, observations must name a
+current active instance. Transferring a credential to a different instance
+requires that the new instance is registered on the same host and the previous
+instance is no longer current. The previous instance is retained as retired
+metadata for that credential and cannot regain ownership by re-registering.
+Because a daemon restart keeps the native store, the new instance may take over
+with the same generation as well as with a superseding one. A generation change
+alone cannot transfer
+ownership. Hosts without a registered runner can update only from the instance
+that created the record. The management principal is required; secret values, token
+hashes and credential-bearing URLs are never accepted. The host or CLI retains
+native refresh and custody.
+
 Management routes, all under `/api/v1/management/retention`:
 
 | Route | Purpose | Scope |
