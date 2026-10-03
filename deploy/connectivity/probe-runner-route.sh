@@ -66,9 +66,16 @@ probe_path="$url/api/v1/runners/$runner"
 anon=$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 5 $curl_tls "$probe_path")
 [ "$anon" = 401 ] || fail auth-open "anonymous request returned $anon, expected 401" \
   "The server is not enforcing bearer auth on this route; set AUTH=bearer before admitting runners."
+IFS= read -r scoped_token < "$credential_file" || [ -n "${scoped_token:-}" ]
+[ -n "${scoped_token:-}" ] || fail credential "credential file is empty" "Reprovision the scoped runner credential."
+case "$scoped_token" in
+  *[!A-Za-z0-9._~+/=-]*) fail credential "credential format is invalid" "Reprovision the scoped runner credential." ;;
+esac
+# curl reads the bearer from standard input, keeping it out of process arguments.
 # shellcheck disable=SC2086
-code=$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 5 $curl_tls \
-  -H "Authorization: Bearer $(cat "$credential_file")" "$probe_path")
+code=$(printf 'header = "Authorization: Bearer %s"\n' "$scoped_token" | \
+  curl --silent --output /dev/null --write-out '%{http_code}' --max-time 5 $curl_tls \
+    --config - "$probe_path")
 case "$code" in
   401|403) fail auth "credential rejected ($code)" "Re-enrol $runner and reprovision its scoped credential; never reuse another host's secret." ;;
   000|5*) fail auth "authenticated request failed ($code)" "Check that the runner server URL equals the URL above for this route." ;;
