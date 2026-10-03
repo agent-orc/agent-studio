@@ -234,6 +234,7 @@ public sealed class TopologyTests
             "--max-parallelism", "1",
             "--poll-seconds", "1");
         await WaitForAuditCountAsync(client, "work.permit.accepted", 1, originalRunner);
+        await WaitForFileAsync(invocationCounter, originalRunner, TimeSpan.FromSeconds(20));
 
         firstServer.Stop();
         await WaitForOutputAsync(
