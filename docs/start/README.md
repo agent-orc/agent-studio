@@ -230,6 +230,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | MVP presentation storyboard and shot list | [product/mvp-presentation-storyboard.md](../concepts/mvp-presentation-storyboard.md) |
 | Quota snapshot events at run start/end (cap-forecast data collection) | [concepts/quota-snapshot-run-events.md](../concepts/quota-snapshot-run-events.md) |
 | Quota fallback operator help (caps, preference, catalogue routes, evidence) | [app/help/quota-fallback.md](../app/help/quota-fallback.md) |
+| Quota forecast: weekly curve, 3-hour burn rate, time of 100 %, armed fallback, and the `/api/cli/quota/history` series (AGT-3001) | [app/help/quota-forecast.md](../app/help/quota-forecast.md) |
 | Runtime prompt usage audit | [concepts/runtime-prompt-usage-audit.html](../concepts/runtime-prompt-usage-audit.html) |
 | Admin CLI onboarding | [concepts/admin-cli-onboarding.html](../concepts/admin-cli-onboarding.html) |
 | Orchestrator supervision loop | [concepts/orchestrator-supervision-loop.html](../concepts/orchestrator-supervision-loop.html) |

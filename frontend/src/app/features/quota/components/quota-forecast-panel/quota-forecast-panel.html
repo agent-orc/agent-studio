@@ -1,0 +1,75 @@
+<div class="quota-forecast" data-testid="quota-forecast-panel">
+  @if (errorMsg(); as err) {
+    <div class="quota-forecast__error" data-testid="quota-forecast-error">{{ err }}</div>
+  }
+
+  @if (loaded() && cards().length === 0) {
+    <div class="quota-forecast__empty" data-testid="quota-forecast-empty">
+      No quota readings recorded yet. Each quota probe adds a reading; the curve
+      appears after the first one.
+    </div>
+  }
+
+  @for (card of cards(); track card.cliType) {
+    <article class="quota-forecast__cli" data-testid="quota-forecast-cli" [attr.data-cli]="card.cliType">
+      <header class="quota-forecast__head">
+        <span class="quota-forecast__icon" aria-hidden="true">{{ icon(card.cliType) }}</span>
+        <span class="quota-forecast__name">{{ label(card.cliType) }}</span>
+
+        @if (card.session; as session) {
+          <div class="session-gauge" data-testid="quota-session-gauge" [attr.data-tone]="tone(session.forecast.currentPct)">
+            <span class="session-gauge__label">{{ session.label }}</span>
+            <span class="session-gauge__track"
+                  role="meter"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  [attr.aria-valuenow]="session.forecast.currentPct"
+                  [attr.aria-label]="session.label + ' used'">
+              <span class="session-gauge__fill" [style.width.%]="gaugeWidth(session.forecast.currentPct)"></span>
+            </span>
+            <strong class="session-gauge__value">{{ pct(session.forecast.currentPct) }}</strong>
+            <small class="session-gauge__reset">resets {{ when(session.forecast.resetAt) }}</small>
+          </div>
+        }
+      </header>
+
+      @if (card.weekly.length === 0) {
+        <p class="quota-forecast__note">No weekly window recorded for this CLI.</p>
+      }
+
+      @for (row of card.weekly; track row.window.label) {
+        <section class="weekly" data-testid="quota-weekly" [attr.data-window]="row.window.label" [attr.data-status]="row.window.forecast.status">
+          <div class="weekly__head">
+            <span class="weekly__label">{{ row.window.label }}</span>
+            @if (row.warn) {
+              <span class="weekly__badge" data-testid="quota-forecast-badge">Full before reset</span>
+            }
+          </div>
+          <dl class="weekly__stats">
+            <div><dt>Used</dt><dd data-testid="quota-stat-current">{{ pct(row.window.forecast.currentPct) }}</dd></div>
+            <div><dt>Rate (3 h)</dt><dd data-testid="quota-stat-rate">{{ rate(row.window.forecast.ratePctPerHour) }}</dd></div>
+            <div><dt>100% at</dt><dd data-testid="quota-stat-full">{{ when(row.window.forecast.forecastFullAt) }}</dd></div>
+            <div><dt>Reset</dt><dd data-testid="quota-stat-reset">{{ when(row.window.forecast.resetAt) }}</dd></div>
+          </dl>
+          <p class="weekly__sentence" data-testid="quota-forecast-sentence">{{ row.sentence }}</p>
+
+          <app-quota-curve [window]="row.window" [from]="card.from" [to]="card.to" />
+
+          @if (row.fallback; as fb) {
+            <div class="fallback" data-testid="quota-fallback" [attr.data-armed]="fb.armed">
+              <span class="fallback__badge" [attr.data-state]="fb.engaged ? 'engaged' : fb.armed ? 'armed' : 'unarmed'">
+                {{ fb.engaged ? 'Engaged' : fb.armed ? 'Armed' : 'Not armed' }}
+              </span>
+              <span class="fallback__text">
+                Fallback:
+                <strong data-testid="quota-fallback-target">{{ fb.target ?? 'none' }}</strong>
+                @if (fb.derived) { <small> · equivalence catalogue</small> }
+                <span class="fallback__reason">{{ fb.reason }}</span>
+              </span>
+            </div>
+          }
+        </section>
+      }
+    </article>
+  }
+</div>
