@@ -79,6 +79,14 @@ public sealed record BuildTestGateRequest(
     public Action? OnMachineGateAcquired { get; init; }
 
     /// <summary>
+    /// Host requirements (capability keys) whose gate steps the reused Remote
+    /// Review verdict already ran on a host that has them (AGT-2981). Only
+    /// the pre-develop gate sets this, and only when the reuse policy granted
+    /// the verdict. A step listed here is not repeated on this host.
+    /// </summary>
+    public IReadOnlyList<string> CoveredRequirements { get; init; } = [];
+
+    /// <summary>
     /// Budget for the true infrastructure operations that MUST be quick regardless
     /// of how long a verify run takes: materializing the exact-subject worktree
     /// (fetch + <c>worktree add</c>), reading HEAD, and tearing the worktree down.
@@ -233,8 +241,38 @@ public sealed record BuildTestGateResult(
         ? ReviewFlakyQuarantine.Classification
         : null;
 
+    /// <summary>
+    /// AGT-W57 D4: failures of tests on the project's active quarantine list.
+    /// They did not count against the verdict and stay in the run report.
+    /// </summary>
+    public IReadOnlyList<TestQuarantineHit> QuarantinedFailures { get; init; } = [];
+
+    /// <summary>Entries of the quarantine file that were rejected and therefore quarantine nothing.</summary>
+    public IReadOnlyList<string> QuarantineIssues { get; init; } = [];
+
+    /// <summary>
+    /// AGT-W57 section 4: the guard-first step went red, so the full suite never
+    /// ran and the verdict came back after the guard step alone.
+    /// </summary>
+    public bool GuardViolation { get; init; }
+
     public ProjectPreparationManifest? PreparationManifest { get; init; }
     public IReadOnlyList<ProjectDefinitionIssue> ProjectDefinitionIssues { get; init; } = [];
+
+    /// <summary>
+    /// Host requirements (capability keys) the planned gate steps carry, e.g.
+    /// <see cref="CapabilityProtocol.ComposeRender"/> for a Compose-render
+    /// step (AGT-2981). Empty when every step runs on any gate host.
+    /// </summary>
+    public IReadOnlyList<string> Requirements { get; init; } = [];
+
+    /// <summary>
+    /// Requirements this gate host lacks. Non-empty only on a routing
+    /// verdict: the gate failed closed because it must run on another host,
+    /// so repeating it here cannot change the outcome.
+    /// </summary>
+    public IReadOnlyList<string> UnmetRequirements { get; init; } = [];
+
     public bool IsInfrastructureFailure => FailureKind is not BuildTestGateFailureKind.None
         and not BuildTestGateFailureKind.Code;
 }
@@ -318,6 +356,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
     private readonly IHttpClientFactory? _failureHistoryClients;
     private readonly BuildTestMachineGateMode _machineGateMode;
     private readonly Func<int, IGateProcessResources> _resourceFactory = pid => new GateProcessResources(pid);
+    private readonly Func<CancellationToken, Task<bool>> _composeRenderHost = ComposeRenderHostProbe.IsAvailableAsync;
 
     public BuildTestGateRunner(
         ILogger<BuildTestGateRunner> logger,
@@ -337,11 +376,13 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         ILogger<BuildTestGateRunner> logger,
         BuildTestMachineGateMode machineGateMode,
         string? preparationCacheRoot = null,
-        Func<int, IGateProcessResources>? resourceFactory = null)
+        Func<int, IGateProcessResources>? resourceFactory = null,
+        Func<CancellationToken, Task<bool>>? composeRenderHost = null)
         : this(logger)
     {
         _machineGateMode = machineGateMode;
         if (resourceFactory is not null) _resourceFactory = resourceFactory;
+        if (composeRenderHost is not null) _composeRenderHost = composeRenderHost;
         if (!string.IsNullOrWhiteSpace(preparationCacheRoot))
             _preparationCacheRoot = preparationCacheRoot;
         if (!string.IsNullOrWhiteSpace(preparationCacheRoot))
@@ -482,6 +523,33 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 testedSha = await ReadHeadShaAsync(repositoryPath, infrastructureTimeout, ct).ConfigureAwait(false);
             }
 
+            // AGT-2981: a diff that can change the Compose stack owes a render
+            // step. A delivery without an owed render script, or a host that
+            // cannot render, fails closed before any preparation is spent; the
+            // step never skips.
+            var composeRender = ComposeRenderScope.None;
+            if (completed is null)
+            {
+                composeRender = ComposeRenderGate.Plan(
+                    workspace!, changedFiles, request.CoveredRequirements, repositoryPath);
+                if (composeRender.MissingScripts.Count > 0)
+                {
+                    completed = ComposeRenderGate.MissingScriptVerdict(composeRender);
+                    _logger.LogWarning(
+                        "build_test_gate_compose_render_script_missing gate_run_id={GateRunId} repository={Repository} missing={Missing} triggers={Triggers}",
+                        gateRunId, repositoryPath, string.Join(",", composeRender.MissingScripts),
+                        string.Join(",", composeRender.Triggers));
+                }
+                else if (composeRender.Required && !await _composeRenderHost(ct).ConfigureAwait(false))
+                {
+                    completed = ComposeRenderGate.HostVerdict(composeRender);
+                    _logger.LogWarning(
+                        "build_test_gate_host_requirement_unmet gate_run_id={GateRunId} repository={Repository} requirement={Requirement} triggers={Triggers}",
+                        gateRunId, repositoryPath, ComposeRenderGatePolicy.Requirement,
+                        string.Join(",", composeRender.Triggers));
+                }
+            }
+
             // A hit must bypass project preparation as well as verification.
             // The SHA fixes repository-owned command definitions. Resolve the
             // same deterministic scope used after preparation before lookup.
@@ -492,14 +560,14 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 try
                 {
                     var preflightPlan = VerifyCommandPlanner.Plan(workspace!, profile);
-                    if (!preflightPlan.IsEmpty)
+                    if (!preflightPlan.IsEmpty || composeRender.Required)
                     {
                         var preflight = DeterministicTestScope.Plan(
                             workspace!, preflightPlan, changedFiles,
                             request.ChangedFileStatuses, request.TestExecution,
                             request.Lane, request.RequiredTestLevel);
-                        var preflightCommands = preflight.Commands
-                            .Where(command => ShouldRunForChange(command, changedFiles)).ToList();
+                        var preflightCommands = ComposeRenderGate.Append(preflight.Commands
+                            .Where(command => ShouldRunForChange(command, changedFiles)).ToList(), composeRender);
                         if (preflightCommands.Count > 0)
                         {
                             toolchainIdentity ??= GateResultCache.LocalToolchainIdentity(preflightCommands, workspace!);
@@ -582,7 +650,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
             if (completed is null)
             {
                 var plan = VerifyCommandPlanner.Plan(workspace!, profile);
-                if (plan.IsEmpty)
+                if (plan.IsEmpty && !composeRender.Required)
                 {
                     _logger.LogInformation(
                         "BuildTestGateRunner: no verify commands derivable for {Repo}; gate runs without a build check",
@@ -598,10 +666,12 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 }
                 else
                 {
-                    var staged = DeterministicTestScope.Plan(
+                    var staged = ComposeRenderGate.Annotate(DeterministicTestScope.Plan(
                         workspace!, plan, changedFiles, request.ChangedFileStatuses,
-                        request.TestExecution, request.Lane, request.RequiredTestLevel);
-                    var commands = staged.Commands.Where(c => ShouldRunForChange(c, changedFiles)).ToList();
+                        request.TestExecution, request.Lane, request.RequiredTestLevel), composeRender);
+                    var commands = ComposeRenderGate.Append(
+                        staged.Commands.Where(c => ShouldRunForChange(c, changedFiles)).ToList(),
+                        composeRender);
                     // The digest covers the resolved command plan as well as the
                     // inputs that selected it. A different selection never borrows
                     // a verdict merely because the tree SHA is unchanged.
@@ -755,6 +825,10 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 ProjectDefinitionIssues = completed.ProjectDefinitionIssues.Count > 0
                     ? completed.ProjectDefinitionIssues
                     : projectPreparation?.DefinitionIssues ?? [],
+                Requirements = composeRender.Required
+                    ? completed.Requirements.Append(ComposeRenderGatePolicy.Requirement)
+                        .Distinct(StringComparer.Ordinal).ToArray()
+                    : completed.Requirements,
             };
             if (profileDigest is not null && completed.VerdictSource == GateVerdictSource.Executed)
                 completed = _verdictCache.Record(cacheProject, testedSha!, profileDigest, completed);
@@ -1208,6 +1282,11 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         var ranFrontend = false;
         var flakyQuarantined = new List<string>();
         var retryPerformed = false;
+        var quarantine = TestQuarantineFile.Read(repositoryPath);
+        var quarantineDay = DateOnly.FromDateTime(DateTime.UtcNow);
+        var quarantined = new List<TestQuarantineHit>();
+        foreach (var issue in quarantine.Issues) output.AppendLine($"# test quarantine issue: {issue}");
+        commands = GuardFirstGatePlan.Apply(commands);
 
         foreach (var command in preparation)
         {
@@ -1315,6 +1394,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
             if (command.Ecosystem == VerifyEcosystem.Node) ranFrontend = true;
             else ranBackend = true;
             output.AppendLine($"# working directory: {workingDirectory}");
+            var guardStep = GuardFirstGatePlan.IsGuardStep(command);
+            if (guardStep) output.AppendLine("# guard-first step: architecture and guard tests before the full suite");
 
             var elapsedBefore = sw.Elapsed;
             var process = await RunShellAsync(
@@ -1344,6 +1425,23 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                         LastEvidence(process)));
                     output.AppendLine("# non-blocking finding: continuous test failure recorded separately");
                     continue;
+                }
+
+                // AGT-W57 D4: failures of actively quarantined tests do not
+                // block; they are recorded for the run and fleet reports.
+                if (kind == BuildTestGateFailureKind.Code && command.Kind == VerifyCommandKind.Test)
+                {
+                    var partition = TestQuarantinePolicy.Partition(
+                        GateFlakyRerunPolicy.ParseFailedTests($"{process.StandardOutput}\n{process.StandardError}"),
+                        quarantine.Entries,
+                        quarantineDay);
+                    quarantined.AddRange(partition.Ignored);
+                    foreach (var hit in partition.Ignored)
+                    {
+                        output.AppendLine(
+                            $"# test quarantine: {hit.Test} failed; quarantined by {hit.Card} until {hit.ExpiresOn:yyyy-MM-dd}, not blocking");
+                    }
+                    if (partition.AllQuarantined) continue;
                 }
 
                 // AGT-2853: one targeted re-run of exactly the failed tests, on
@@ -1392,9 +1490,10 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                     ? BuildTestGateVerdict.Warn
                     : BuildTestGateVerdict.Fail;
                 var reason = FailureReason(Describe(command), process);
+                if (guardStep) reason = $"guard violation, full suite not run: {reason}";
                 return WithFailure(new BuildTestGateResult(
                     verdict, process.ExitCode, sw.ElapsedMilliseconds, output.Text,
-                    reason, ranBackend, ranFrontend)
+                    QuarantineReason(reason, quarantined), ranBackend, ranFrontend)
                 {
                     Processes = evidence,
                     Findings = findings,
@@ -1403,6 +1502,9 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                     ViolatedBudget = process.ViolatedBudget,
                     RetryPerformed = retryPerformed,
                     FlakyQuarantinedFailures = flakyQuarantined,
+                    QuarantinedFailures = quarantined,
+                    QuarantineIssues = quarantine.Issues,
+                    GuardViolation = guardStep,
                 }, kind);
             }
         }
@@ -1414,7 +1516,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         return new BuildTestGateResult(
             findings.Count == 0 ? BuildTestGateVerdict.Ok : BuildTestGateVerdict.Warn,
             0, sw.ElapsedMilliseconds, output.Text,
-            FlakyReason(passedReason, flakyQuarantined),
+            QuarantineReason(FlakyReason(passedReason, flakyQuarantined), quarantined),
             ranBackend, ranFrontend)
         {
             Processes = evidence,
@@ -1422,8 +1524,21 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
             DependencyCache = dependencyCache,
             RetryPerformed = retryPerformed,
             FlakyQuarantinedFailures = flakyQuarantined,
+            QuarantinedFailures = quarantined,
+            QuarantineIssues = quarantine.Issues,
         };
     }
+
+    /// <summary>
+    /// Names the quarantined failures in the one-line reason so an ignored
+    /// failure is visible wherever the verdict is read.
+    /// </summary>
+    internal static string QuarantineReason(string reason, IReadOnlyList<TestQuarantineHit> quarantined)
+        => quarantined.Count == 0
+            ? reason
+            : $"{reason}; test-quarantine: " +
+              string.Join(", ", quarantined.Select(hit => $"{hit.Test} ({hit.Card}, until {hit.ExpiresOn:yyyy-MM-dd})")) +
+              " failed and did not block";
 
     /// <summary>
     /// Names the quarantined tests in the gate's own one-line reason so the
