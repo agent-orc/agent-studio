@@ -602,6 +602,7 @@ public static class V1ReviewPlaneEndpoints
             TaskSessionLog sessions,
             HumanReviewEscalation escalation,
             RemoteDeliveryIntegrationCoordinator remoteIntegration,
+            BatchGatePilotService batchPilot,
             TimelineLog timeline,
             FailureInterventionService failureInterventions,
             IntegrationBranchGateReporter integrationGates,
@@ -714,6 +715,17 @@ public static class V1ReviewPlaneEndpoints
                     "Outcome must be Pass, ProductFailure, IntegrationBranchDefect, ReviewInfra, "
                     + "Inconclusive, or Cancellation."));
 
+            var batchDeferred = currentReview.Subject.Plan?.BuildTestDeferredToBatch == true;
+            if (batchDeferred && outcome == ReviewTerminalOutcome.Pass)
+            {
+                request = request with
+                {
+                    Verdicts = request.Verdicts.Append(new Contract.ReviewVerdictDto(
+                        "build-tests", "deferred-to-batch", "DeferredToBatch",
+                        "The complete suite is owned by the documentation-only batch gate.")).ToArray(),
+                };
+            }
+
             // Prepare the canonical payload before the authority can become terminal.
             // A killed process between SettleReview and any projection can then be
             // recovered without accepting a second review or guessing a gate verdict.
@@ -741,7 +753,11 @@ public static class V1ReviewPlaneEndpoints
                         "The review report key is bound to a different payload."));
             }
             RemoteDeliverySettlementRecord? preparedDelivery = null;
+            // A batch-deferred pass owes no per-card integration: the batch gate
+            // publishes it, so no delivery record may tell recovery to integrate
+            // or to settle it as a failed gate.
             if (!replay && outcome != ReviewTerminalOutcome.InfrastructureFailure
+                && !(batchDeferred && outcome == ReviewTerminalOutcome.Pass)
                 && string.Equals(preparedTask.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
             {
                 var sourceRun = authority.GetRun(currentReview.SourceRunAttemptId);
@@ -843,6 +859,43 @@ public static class V1ReviewPlaneEndpoints
                     StringComparison.Ordinal))
                 ?.ReceivedAt
                 ?? DateTime.UtcNow;
+            string? emergencyBatchState = task.State == TaskStates.AutoReview ? null : task.State;
+            if (batchDeferred && settled.ReviewAttempt.Outcome == ReviewTerminalOutcome.Pass
+                && task.State == TaskStates.AutoReview)
+            {
+                var batchSource = authority.GetRun(settled.ReviewAttempt.SourceRunAttemptId);
+                if (batchSource is null)
+                    return Results.Json(new Contract.ApiError(
+                        "batch-gate-evidence-missing", "The batch source run is missing."),
+                        statusCode: StatusCodes.Status503ServiceUnavailable);
+                try
+                {
+                    batchPilot.Enqueue(task, settled.ReviewAttempt, batchSource,
+                        new DateTimeOffset(DateTime.SpecifyKind(receivedAt, DateTimeKind.Utc)));
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "batch-gate-enqueue-failed attempt={AttemptId}", attemptId);
+                    try
+                    {
+                        await batchPilot.RunEmergencyFallbackAsync(task,
+                            settled.ReviewAttempt, batchSource,
+                            new DateTimeOffset(DateTime.SpecifyKind(receivedAt, DateTimeKind.Utc)),
+                            ct).ConfigureAwait(false);
+                        emergencyBatchState = FindTask(scanner, task.Id)?.State;
+                    }
+                    catch (Exception fallbackError)
+                    {
+                        logger.LogError(fallbackError,
+                            "batch-gate-emergency-fallback-failed attempt={AttemptId}", attemptId);
+                    }
+                    if (emergencyBatchState is not (TaskStates.HumanReview or TaskStates.Escalated))
+                        return Results.Json(new Contract.ApiError(
+                            "batch-gate-evidence-missing",
+                            "The settled review could not enter the durable batch queue or finish its per-task gate."),
+                            statusCode: StatusCodes.Status503ServiceUnavailable);
+                }
+            }
             var reportHash = preparedHash;
 
             // The authority already settled this delivery. Requeue unfinished
@@ -871,7 +924,7 @@ public static class V1ReviewPlaneEndpoints
                     reportHash,
                     receivedAt,
                     RetryScheduled: false,
-                    task.State,
+                    emergencyBatchState ?? task.State,
                     EvidenceProjection: Contract.ReviewEvidenceProjectionStatus.Duplicate));
             }
 
@@ -897,7 +950,7 @@ public static class V1ReviewPlaneEndpoints
                     string.Join(", ", branchGateFindings.Select(finding => finding.StepId)));
             }
 
-            if (settled.ReviewAttempt.Outcome == ReviewTerminalOutcome.Pass)
+            if (settled.ReviewAttempt.Outcome == ReviewTerminalOutcome.Pass && !batchDeferred)
             {
                 settings.MarkBuildProfileRemotelyValidated(
                     task.ProjectName,
@@ -929,6 +982,18 @@ public static class V1ReviewPlaneEndpoints
                 reportHash,
                 receivedAt,
                 EnqueuedAtUtc: DateTime.UtcNow));
+
+            if (batchDeferred && settled.ReviewAttempt.Outcome == ReviewTerminalOutcome.Pass)
+            {
+                EnqueueEvidenceProjection();
+                return Results.Ok(new Contract.ReviewReportDto(
+                    "rrpt_" + HashId($"{attemptId}:{request.IdempotencyKey}"),
+                    attemptId, settled.ReviewAttempt.Subject.SubjectId,
+                    request.Outcome, request.FailureClassification, request.Summary,
+                    reportHash, receivedAt, RetryScheduled: false,
+                    emergencyBatchState ?? TaskStates.AutoReview,
+                    EvidenceProjection: Contract.ReviewEvidenceProjectionStatus.Queued));
+            }
 
             var infrastructureFailure = string.Equals(
                 request.Outcome,
