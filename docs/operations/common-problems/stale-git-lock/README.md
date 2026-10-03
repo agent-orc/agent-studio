@@ -66,7 +66,9 @@ For each lock it decides (pure policy, `GitStaleLockPolicy`):
    `git*.exe` whose command line names the path.
 3. **Older, and the process list or a still-present Linux `/proc` entry cannot
    be read**: keep it. The unreadable process may be the lock owner; absence is
-   never guessed. An entry proven to have exited during the scan is skipped.
+   never guessed. The Windows process query also returns unknown after 15
+   seconds, including when its output pipe stays open. An entry proven to have
+   exited during the Linux scan is skipped.
 4. **Older, and no git process holds it**: confirm the lock is still the same file seen before the process check, then delete it and log
 
    ```text

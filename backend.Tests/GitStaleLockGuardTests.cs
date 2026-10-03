@@ -425,6 +425,55 @@ public sealed class GitStaleLockGuardTests : IDisposable
         Assert.False(GitProcessLockOwnerProbe.IsTiedTo(inventory[1], paths));
     }
 
+    [Fact]
+    public void Process_inventory_times_out_when_stdout_remains_open()
+    {
+        var start = ShellProcess(OperatingSystem.IsWindows()
+            ? "Start-Sleep -Seconds 30"
+            : "sleep 30");
+        var clock = Stopwatch.StartNew();
+
+        var output = GitProcessLockOwnerProbe.ReadProcessOutput(start, TimeSpan.FromMilliseconds(250));
+
+        Assert.Null(output);
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), $"Inventory blocked for {clock.Elapsed}");
+    }
+
+    [Fact]
+    public void Process_inventory_returns_output_after_successful_exit()
+    {
+        var start = ShellProcess(OperatingSystem.IsWindows()
+            ? "Write-Output inventory-ok"
+            : "printf inventory-ok");
+
+        var output = GitProcessLockOwnerProbe.ReadProcessOutput(start, TimeSpan.FromSeconds(10));
+
+        Assert.Equal("inventory-ok", output?.Trim());
+    }
+
+    private static ProcessStartInfo ShellProcess(string command)
+    {
+        var start = new ProcessStartInfo(OperatingSystem.IsWindows() ? "powershell.exe" : "/bin/sh")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        if (OperatingSystem.IsWindows())
+        {
+            start.ArgumentList.Add("-NoProfile");
+            start.ArgumentList.Add("-NonInteractive");
+            start.ArgumentList.Add("-Command");
+        }
+        else
+        {
+            start.ArgumentList.Add("-c");
+        }
+        start.ArgumentList.Add(command);
+        return start;
+    }
+
     [SkippableFact]
     public void Probe_sees_a_running_git_process_whose_cwd_is_the_repository_on_linux()
     {

@@ -193,33 +193,60 @@ public sealed class GitProcessLockOwnerProbe : IGitLockOwnerProbe
         const string script =
             "$ErrorActionPreference='Stop'; " +
             "@(Get-CimInstance Win32_Process -Filter \"Name LIKE 'git%'\" | Select-Object ProcessId,Name,CommandLine) | ConvertTo-Json -Compress";
-        try
+        var json = ReadProcessOutput(new ProcessStartInfo
         {
-            using var process = Process.Start(new ProcessStartInfo
-            {
-                FileName = "powershell.exe",
-                ArgumentList = { "-NoProfile", "-NonInteractive", "-Command", script },
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            });
-            if (process is null) return null;
-            var stderr = process.StandardError.ReadToEndAsync();
-            var json = process.StandardOutput.ReadToEnd();
-            if (!process.WaitForExit(15_000) || process.ExitCode != 0)
-            {
-                try { process.Kill(entireProcessTree: true); }
-                catch (Exception ex) { SilentCatch.Note(ex, "GitProcessLockOwnerProbe: inventory kill is best-effort"); }
-                return null;
-            }
-            _ = stderr.Result;
-            return ParseWindowsInventory(json);
-        }
+            FileName = "powershell.exe",
+            ArgumentList = { "-NoProfile", "-NonInteractive", "-Command", script },
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        }, TimeSpan.FromSeconds(15));
+        if (json is null) return null;
+        try { return ParseWindowsInventory(json); }
         catch (Exception ex)
         {
             SilentCatch.Note(ex, "GitProcessLockOwnerProbe: Win32_Process inventory unavailable");
             return null;
+        }
+    }
+
+    // The output pipes can stay open even after the parent exits (for example,
+    // when a descendant inherits them). Bound both reads and exit together.
+    internal static string? ReadProcessOutput(ProcessStartInfo startInfo, TimeSpan timeout)
+    {
+        try { return ReadProcessOutputAsync(startInfo, timeout).GetAwaiter().GetResult(); }
+        catch (Exception ex)
+        {
+            SilentCatch.Note(ex, "GitProcessLockOwnerProbe: process inventory unavailable");
+            return null;
+        }
+    }
+
+    private static async Task<string?> ReadProcessOutputAsync(ProcessStartInfo startInfo, TimeSpan timeout)
+    {
+        using var process = Process.Start(startInfo);
+        if (process is null) return null;
+        try
+        {
+            var stdout = process.StandardOutput.ReadToEndAsync();
+            var stderr = process.StandardError.ReadToEndAsync();
+            var exit = process.WaitForExitAsync();
+            await Task.WhenAll(stdout, stderr, exit).WaitAsync(timeout).ConfigureAwait(false);
+            return process.ExitCode == 0 ? await stdout.ConfigureAwait(false) : null;
+        }
+        catch (TimeoutException ex)
+        {
+            SilentCatch.Note(ex, "GitProcessLockOwnerProbe: process inventory timed out");
+            return null;
+        }
+        finally
+        {
+            if (!process.HasExited)
+            {
+                try { process.Kill(entireProcessTree: true); }
+                catch (Exception ex) { SilentCatch.Note(ex, "GitProcessLockOwnerProbe: inventory kill is best-effort"); }
+            }
         }
     }
 
