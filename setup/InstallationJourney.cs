@@ -115,9 +115,8 @@ internal static class JourneyPolicy
     public static string? RelocationBlocker(string? recoveryCheckpoint, bool authorityFrozen)
     {
         if (string.IsNullOrWhiteSpace(recoveryCheckpoint))
-            return "Relocating authority requires --recovery-checkpoint with a verified backup id. " +
-                   "Create and verify one with POST /api/v1/management/backups, then rehearse its restore " +
-                   "into an empty target before migration.";
+            return "Relocating authority requires --recovery-checkpoint with the path to a verified full backup set. " +
+                   "Create and verify a full set, then rehearse its restore into an empty target before migration.";
         if (!authorityFrozen)
             return "Relocating authority requires --authority-frozen after the current Task Server " +
                    "is in Maintenance with every attempt resolved.";

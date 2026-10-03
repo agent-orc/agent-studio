@@ -116,12 +116,43 @@ with their owning follow-up until they are verified. Linux native single and
 control-plane manifests live under `/etc/agent-orchestrator`; the agent-host
 manifest lives under `/etc/agent-host` (or `--install-dir` when supplied).
 
-`relocate-authority` requires `--recovery-checkpoint BACKUP_ID`. That backup
-must be verified and its restore rehearsed into an empty target. The journey
-also requires `--authority-frozen`, which you pass once the current Task
-Server is in Maintenance with every attempt resolved. The workspace then
-moves through the existing restore contract, not as a new installation
-identity.
+`relocate-authority` is the final certification step of the gated migration.
+First drain the source, resolve every attempt, enter Maintenance and create a
+full backup set. Verify it with `task-server backup verify-full BACKUP_ID` and
+rehearse `restore-full` into an isolated empty store. Freeze the source and
+retain its `installation.json`, D6 runtime manifest, credentials, repository
+origins and network configuration. Stage the complete set in the new host's
+Task Server backup directory, start that target in Maintenance, and place the
+source `installation.json` at the destination configuration root. Follow the
+[Task Server recovery procedure](./task-server.md#full-backup-sets) for the
+data and archive paths.
+Keep the old authority in Maintenance until cutover is proven.
+
+Record the rehearsal result in `BACKUP_SET.rehearsal.json`, beside the backup
+set directory. Its JSON fields are `backupId`, `setSha256`, `installationId`,
+`verified: true` and `restoredIntoEmptyTarget: true`; use the id and hash from
+the Task Server verify result. Run:
+
+```bash
+agent-studio-setup --journey relocate-authority \
+  --source-manifest /path/to/source/installation.json \
+  --recovery-checkpoint /path/to/full-backup/BACKUP_ID \
+  --authority-frozen --backup-path /path/to/offhost-backups \
+  --server-url https://new-authority.wg.internal \
+  --token-file /path/to/target-management.token
+```
+
+The installer recalculates the full set's file and set hashes and compares
+the restored installation id, release, principal names and project origin
+with the frozen source. It then calls the target's authenticated full-set
+verify and restore endpoints in that order. It refuses a missing target,
+changed identity, damaged set, failed API verification or missing rehearsal
+receipt. It does not start a fresh Task Server over restored data. The freeze
+and rehearsal receipt are operator evidence; the installer cannot independently
+observe the old host's mode. Keep admission closed until the authenticated
+canary, private HTTPS cutover and recovery check pass. Re-running the completed
+relocation recognizes the same installation id and does not restore the backup
+again.
 
 ## Native installation without Docker
 

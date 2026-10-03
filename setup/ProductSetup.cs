@@ -119,6 +119,44 @@ internal static class ProductSetup
             SetupSecrets.RequireProtected(Path.GetFullPath(secretFile),
                 mode == "agent-host" ? "Join token file" : "Token file");
         var plan = ProductPlanner.Plan(parsed, mode, target, OperatingSystem.IsWindows(), forwarded);
+        if (command == "install" && values.TryGetValue("--journey", out var relocationJourney)
+            && JourneyPolicy.Parse(relocationJourney) == InstallationJourney.RelocateAuthority)
+        {
+            var paths = InstallPaths.Load();
+            var destination = Path.GetFullPath(installDirectory ?? paths.OrchestratorConfig);
+            var restored = await RelocationGate.VerifyAsync(
+                values.GetValueOrDefault("--source-manifest"),
+                values.GetValueOrDefault("--recovery-checkpoint"), destination,
+                flags.Contains("--authority-frozen"));
+            if (restored.Journey == "relocate-authority" && restored.Mode == "control-plane")
+            {
+                Console.WriteLine($"Relocated authority {restored.InstallationId} is already recorded; no restore was repeated.");
+                return 0;
+            }
+            if (!flags.Contains("--dry-run"))
+            {
+                var targetUrl = values.GetValueOrDefault("--server-url")
+                    ?? throw new ArgumentException("Relocation requires --server-url for the target Task Server.");
+                var managementToken = values.GetValueOrDefault("--token-file")
+                    ?? throw new ArgumentException("Relocation requires --token-file for the target management principal.");
+                await RelocationGate.RestoreAsync(targetUrl, managementToken,
+                    values["--recovery-checkpoint"]);
+                var relocated = RelocationGate.RelocatedManifest(restored, target);
+                await ManifestStore.WriteAsync(destination, relocated);
+                await ManifestStore.CheckpointAsync(destination, relocated, "recovery-verified", "observed",
+                    "Full recovery set hashes and target Task Server verify and restore responses passed.");
+                await ManifestStore.CheckpointAsync(destination, relocated, "identity-matched", "observed",
+                    "Restored authority installation id, principals and project origin match the frozen source.");
+                await ManifestStore.CheckpointAsync(destination, relocated, "authority-frozen", "operator attested",
+                    "--authority-frozen was supplied; the old host mode was not observed by this installer.");
+                await ManifestStore.CheckpointAsync(destination, relocated, "workspace-restored", "observed",
+                    "The target Task Server reported full backup restoration; the empty-target rehearsal receipt was supplied.");
+                await ManifestStore.CheckpointAsync(destination, relocated, "authenticated-canary", "not reached",
+                    "I09 owns the detached provider canary after private HTTPS cutover.");
+            }
+            Console.WriteLine($"Relocated authority {restored.InstallationId} verified. Resume admission only after the authenticated canary and network cutover.");
+            return 0;
+        }
         if (plan.Profile == ProductProfile.Delegated)
         {
             var paths = InstallPaths.Load();

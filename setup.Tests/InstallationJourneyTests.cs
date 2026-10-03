@@ -1,4 +1,7 @@
 using AgentStudio.Setup;
+using System.Security.AccessControl;
+using System.Security.Principal;
+using System.Net;
 using Xunit;
 
 namespace AgentOrchestratorSetup.Tests;
@@ -318,6 +321,146 @@ public sealed class InstallationJourneyTests
             File.Delete(empty);
             File.Delete(open);
         }
+    }
+
+    [Fact]
+    public void Windows_token_with_world_read_acl_is_rejected()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var file = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(file, "token");
+            var info = new FileInfo(file);
+            var acl = info.GetAccessControl();
+            acl.AddAccessRule(new FileSystemAccessRule(
+                new SecurityIdentifier(WellKnownSidType.WorldSid, null),
+                FileSystemRights.ReadData, AccessControlType.Allow));
+            info.SetAccessControl(acl);
+            Assert.False(SetupSecrets.IsProtected(file));
+            Assert.Throws<InvalidOperationException>(() => SetupSecrets.RequireProtected(file, "Token file"));
+        }
+        finally
+        {
+            File.Delete(file);
+        }
+    }
+
+    [Fact]
+    public void Secret_file_symlink_is_rejected()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var root = Directory.CreateTempSubdirectory().FullName;
+        try
+        {
+            var target = Path.Combine(root, "token");
+            File.WriteAllText(target, "token");
+            if (!OperatingSystem.IsWindows())
+                File.SetUnixFileMode(target, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            var link = Path.Combine(root, "link");
+            File.CreateSymbolicLink(link, target);
+            Assert.False(SetupSecrets.IsProtected(link));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task Relocation_requires_verified_recovery_and_preserves_source_identity()
+    {
+        var root = Directory.CreateTempSubdirectory().FullName;
+        try
+        {
+            var source = Manifest("1.2.0", InstallationManifest.PhaseComplete);
+            var sourcePath = Path.Combine(root, "source.json");
+            await File.WriteAllTextAsync(sourcePath, System.Text.Json.JsonSerializer.Serialize(source));
+            var destination = Path.Combine(root, "destination");
+            await ManifestStore.WriteAsync(destination, source with { Mode = "control-plane", Journey = "relocate-authority" });
+            var set = Path.Combine(root, "backup-1");
+            Directory.CreateDirectory(set);
+            await File.WriteAllTextAsync(Path.Combine(set, "snapshot.db"), "snapshot");
+            var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes("snapshot")));
+            var setHash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes($"snapshot.db:8:{hash.ToLowerInvariant()}\n")));
+            await File.WriteAllTextAsync(Path.Combine(set, "inventory.json"),
+                $$"""{"setSha256":"{{setHash}}","files":[{"relativePath":"snapshot.db","size":8,"sha256":"{{hash}}"}]}""");
+            await File.WriteAllTextAsync(Path.Combine(set, "complete.json"),
+                $$"""{"setSha256":"{{setHash}}"}""");
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                RelocationGate.VerifyAsync(sourcePath, set, destination, true));
+            await File.WriteAllTextAsync(set + ".rehearsal.json",
+                $$"""{"backupId":"backup-1","setSha256":"{{setHash}}","installationId":"inst_original","verified":true,"restoredIntoEmptyTarget":true}""");
+            Assert.Equal("inst_original", (await RelocationGate.VerifyAsync(sourcePath, set, destination, true)).InstallationId);
+            var relocated = RelocationGate.RelocatedManifest(source, "docker");
+            Assert.Equal(("inst_original", "control-plane", "relocate-authority"),
+                (relocated.InstallationId, relocated.Mode, relocated.Journey));
+            Assert.Equal(source.Principals, relocated.Principals);
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                RelocationGate.VerifyAsync(sourcePath, set, destination, false));
+            await ManifestStore.WriteAsync(destination, source with { InstallationId = "different" });
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                RelocationGate.VerifyAsync(sourcePath, set, destination, true));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task Relocation_verifies_target_before_restoring_with_management_token()
+    {
+        var token = Path.GetTempFileName();
+        var root = Directory.CreateTempSubdirectory().FullName;
+        try
+        {
+            var set = Path.Combine(root, "backup-1");
+            Directory.CreateDirectory(set);
+            await File.WriteAllTextAsync(Path.Combine(set, "inventory.json"), "{\"setSha256\":\"abc123\"}");
+            await File.WriteAllTextAsync(token, "private-token");
+            if (!OperatingSystem.IsWindows())
+                File.SetUnixFileMode(token, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            var calls = new List<string>();
+            using var http = new HttpClient(new RecordingHandler(request =>
+            {
+                calls.Add(request.RequestUri!.AbsolutePath);
+                Assert.Equal("private-token", request.Headers.Authorization!.Parameter);
+                var answer = calls.Count == 1
+                    ? "{\"backupId\":\"backup-1\",\"verified\":true,\"summary\":{\"setSha256\":\"abc123\"}}"
+                    : "{\"backupId\":\"backup-1\",\"restored\":true}";
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(answer),
+                };
+            }));
+            await RelocationGate.RestoreAsync("https://authority.wg.internal", token,
+                set, http);
+            Assert.Equal([
+                "/api/v1/management/backups/full/backup-1/verify",
+                "/api/v1/management/backups/full/backup-1/restore",
+            ], calls);
+            var rejectedCalls = 0;
+            using var wrongSet = new HttpClient(new RecordingHandler(_ =>
+            {
+                rejectedCalls++;
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        "{\"backupId\":\"backup-1\",\"verified\":true,\"summary\":{\"setSha256\":\"different\"}}"),
+                };
+            }));
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                RelocationGate.RestoreAsync("https://authority.wg.internal", token, set, wrongSet));
+            Assert.Equal(1, rejectedCalls);
+        }
+        finally
+        {
+            File.Delete(token);
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private sealed class RecordingHandler(Func<HttpRequestMessage, HttpResponseMessage> handle) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
+            CancellationToken cancellationToken) => Task.FromResult(handle(request));
     }
 
     [Fact]

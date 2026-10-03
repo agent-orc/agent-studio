@@ -43,7 +43,7 @@ internal sealed record ProductCommand(
     {
         "--mode", "--target", "--answer-file", "--release-version", "--release-dir",
         "--install-dir", "--ui-port", "--server-url", "--join-token-file", "--token-file",
-        "--journey", "--recovery-checkpoint", "--backup-path",
+        "--journey", "--recovery-checkpoint", "--source-manifest", "--backup-path",
     };
 
     // Options only the delegated Linux flows understand. They are forwarded

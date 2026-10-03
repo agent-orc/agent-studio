@@ -1,6 +1,9 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
+using System.Security.Principal;
+using System.Runtime.Versioning;
 
 namespace AgentStudio.Setup;
 
@@ -85,7 +88,7 @@ internal static class PreflightPolicy
             "Mount the off-host backup destination (NFS, SMB or block device) and make it writable for the installer before retrying."));
         findings.Add(Check("Provider", journey == InstallationJourney.JoinHost ? facts.ProviderCli : null, "provider CLI installed (login is proven at host enrolment)",
             "Install Codex or Claude for the execution user and complete its login on this host; setup never copies provider credentials."));
-        findings.Add(Check("Secret file", journey is InstallationJourney.JoinHost or InstallationJourney.AttachStudio ? facts.ProtectedSecretFile : null, "token file owner-only",
+        findings.Add(Check("Secret file", journey is InstallationJourney.JoinHost or InstallationJourney.AttachStudio or InstallationJourney.RelocateAuthority ? facts.ProtectedSecretFile : null, "token file owner-only",
             "Restrict the token file to its owner ('chmod 600 FILE' or an owner-only ACL) and deliver it over a trusted channel, not chat or task text."));
         return findings;
     }
@@ -150,7 +153,7 @@ internal static class PreflightProbe
                 ? await SucceedsAsync(processes, "codex", ["--version"])
                   || await SucceedsAsync(processes, "claude", ["--version"])
                 : null,
-            journey is (InstallationJourney.JoinHost or InstallationJourney.AttachStudio) && secretFile is not null
+            journey is (InstallationJourney.JoinHost or InstallationJourney.AttachStudio or InstallationJourney.RelocateAuthority) && secretFile is not null
                 ? SetupSecrets.IsProtected(secretFile) : null,
             tls.Reachable);
     }
@@ -243,12 +246,41 @@ internal static class SetupSecrets
     /// <summary>A secret file must exist, be non-empty and readable only by its owner.</summary>
     public static bool IsProtected(string path)
     {
-        if (!File.Exists(path) || new FileInfo(path).Length == 0) return false;
-        if (OperatingSystem.IsWindows()) return true;
+        if (!File.Exists(path) || new FileInfo(path).Length == 0
+            || (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0) return false;
+        if (OperatingSystem.IsWindows()) return WindowsOwnerOnly(path);
         var mode = File.GetUnixFileMode(path);
         const UnixFileMode open = UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute
                                   | UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute;
         return (mode & open) == 0;
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static bool WindowsOwnerOnly(string path)
+    {
+        try
+        {
+            var acl = new FileInfo(path).GetAccessControl();
+            var owner = acl.GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
+            var current = WindowsIdentity.GetCurrent().User;
+            if (owner is null || current is null || !owner.Equals(current)) return false;
+            var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
+            var administrators = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+            foreach (FileSystemAccessRule rule in acl.GetAccessRules(true, true, typeof(SecurityIdentifier)))
+            {
+                if (rule.AccessControlType != AccessControlType.Allow) continue;
+                if (rule.FileSystemRights == 0) continue;
+                var sid = (SecurityIdentifier)rule.IdentityReference;
+                if (!sid.Equals(owner) && !sid.Equals(system) && !sid.Equals(administrators))
+                    return false;
+            }
+            return true;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException
+            or System.Security.SecurityException or PlatformNotSupportedException)
+        {
+            return false;
+        }
     }
 
     public static void RequireProtected(string path, string label)
