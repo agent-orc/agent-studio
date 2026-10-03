@@ -20,6 +20,89 @@ public sealed class RecoveryDrillTests(ITestOutputHelper output)
 {
     private const string RunnerPrincipal = "runner:runner-full";
 
+    [Fact]
+    public async Task Lost_runner_credential_blocks_resume_until_fenced_and_reenrolled()
+    {
+        using var temp = new TempDirectory("recovery-lost-client");
+        var drill = await CaptureAsync(temp.Path, RecoveryCredentialCustody.Undeclared);
+        var targetDirectory = Path.Combine(temp.Path, "target");
+        var target = Store(targetDirectory, drill.Clock);
+        var workflow = Workflow(target, targetDirectory, drill.Clock);
+        Assert.True((await workflow.RestoreToEmptyAsync(drill.CopyRoot, null, null, "drill", default)).Restored);
+
+        target = Store(targetDirectory, drill.Clock);
+        await target.InitializeAsync();
+        workflow = Workflow(target, targetDirectory, drill.Clock);
+        drill.Clock.Advance(TimeSpan.FromSeconds(1));
+        await workflow.FenceHostsAsync("drill", default);
+        var (blocked, _) = await workflow.ResumeAsync(true, false, true, null, "drill", default);
+        Assert.Contains(blocked.Blockers, item => item.Code == "client-credentials-lost" && item.Subject == RunnerPrincipal);
+
+        drill.Clock.Advance(TimeSpan.FromSeconds(1));
+        await workflow.ReenrolClientAsync(RunnerPrincipal, "drill", default);
+        var (ready, _) = await workflow.ResumeAsync(true, false, true, null, "drill", default);
+        Assert.True(ready.Allowed, string.Join("; ", ready.Blockers.Select(item => item.Code)));
+    }
+
+    [Fact]
+    public async Task Lost_studio_credential_requires_rotation_in_maintenance()
+    {
+        using var temp = new TempDirectory("recovery-lost-studio");
+        var drill = await CaptureAsync(temp.Path, includeLostStudio: true);
+        var targetDirectory = Path.Combine(temp.Path, "target");
+        var target = Store(targetDirectory, drill.Clock);
+        var workflow = Workflow(target, targetDirectory, drill.Clock);
+        Assert.True((await workflow.RestoreToEmptyAsync(drill.CopyRoot, null, null, "drill", default)).Restored);
+
+        target = Store(targetDirectory, drill.Clock);
+        await target.InitializeAsync();
+        workflow = Workflow(target, targetDirectory, drill.Clock);
+        drill.Clock.Advance(TimeSpan.FromSeconds(1));
+        await workflow.FenceHostsAsync("drill", default);
+        Assert.NotNull(await target.AuthenticatePrincipalAsync(drill.OldStudioCredential!, default));
+        var (blocked, _) = await workflow.ResumeAsync(true, false, true, null, "drill", default);
+        Assert.Contains(blocked.Blockers, item => item.Code == "client-credentials-lost" && item.Subject == "studio:recovery");
+
+        drill.Clock.Advance(TimeSpan.FromSeconds(1));
+        var reenrolled = await workflow.ReenrolClientAsync("studio:recovery", "drill", default);
+        Assert.Null(await target.AuthenticatePrincipalAsync(drill.OldStudioCredential!, default));
+        Assert.NotNull(await target.AuthenticatePrincipalAsync(reenrolled.Credential, default));
+        var (ready, _) = await workflow.ResumeAsync(true, false, true, null, "drill", default);
+        Assert.True(ready.Allowed, string.Join("; ", ready.Blockers.Select(item => item.Code)));
+    }
+
+    [Fact]
+    public async Task Moved_origin_ref_blocks_resume_until_immutable_ref_proves_recorded_commit()
+    {
+        using var temp = new TempDirectory("recovery-moved-ref");
+        var drill = await CaptureAsync(temp.Path);
+        var clone = Path.Combine(temp.Path, "clone");
+        Git(temp.Path, "clone", drill.Origin, clone);
+        var recordedSha = Git(clone, "rev-parse", "HEAD").Trim();
+        await File.WriteAllTextAsync(Path.Combine(clone, "NEXT.md"), "later publication\n");
+        Git(clone, "add", "NEXT.md");
+        Git(clone, "-c", "user.name=drill", "-c", "user.email=drill@example.invalid", "commit", "-m", "later");
+        Git(clone, "push", "origin", "main");
+
+        var targetDirectory = Path.Combine(temp.Path, "target");
+        var target = Store(targetDirectory, drill.Clock);
+        var workflow = Workflow(target, targetDirectory, drill.Clock);
+        var restore = await workflow.RestoreToEmptyAsync(drill.CopyRoot, null, null, "drill", default);
+        Assert.True(restore.Restored, restore.Message);
+        Assert.Contains(restore.Report.Findings, item => item.Code == "git-ref-moved" && item.Severity == RecoveryFindingSeverity.BlocksResume);
+
+        target = Store(targetDirectory, drill.Clock);
+        await target.InitializeAsync();
+        workflow = Workflow(target, targetDirectory, drill.Clock);
+        drill.Clock.Advance(TimeSpan.FromSeconds(1));
+        await workflow.FenceHostsAsync("drill", default);
+        var (blocked, _) = await workflow.ResumeAsync(true, false, true, null, "drill", default);
+        Assert.Contains(blocked.Blockers, item => item.Code == "git-ref-moved");
+        Git(clone, "push", "origin", $"{recordedSha}:refs/heads/agent-studio/results/run_recovery/fence-1/{recordedSha}");
+        var (ready, _) = await workflow.ResumeAsync(true, false, true, null, "drill", default);
+        Assert.True(ready.Allowed, string.Join("; ", ready.Blockers.Select(item => item.Code)));
+    }
+
     [Theory]
     [InlineData("failed")]
     [InlineData("missing")]
@@ -93,7 +176,7 @@ public sealed class RecoveryDrillTests(ITestOutputHelper output)
         Assert.Null(await target.AuthenticatePrincipalAsync(drill.OldRunnerCredential, default));
 
         drill.Clock.Advance(TimeSpan.FromSeconds(1));
-        var reenrolled = await workflow.ReenrolHostAsync(RunnerPrincipal, "drill", default);
+        var reenrolled = await workflow.ReenrolClientAsync(RunnerPrincipal, "drill", default);
         Assert.NotNull(await target.AuthenticatePrincipalAsync(reenrolled.Credential, default));
 
         drill.Clock.Advance(TimeSpan.FromSeconds(30));
@@ -240,7 +323,11 @@ public sealed class RecoveryDrillTests(ITestOutputHelper output)
             Assert.False(decision.Allowed);
             Assert.Equal(TaskServerMode.Maintenance, target.Mode);
             if (fault == "git-origin-unavailable") Assert.Contains(decision.Blockers, item => item.Code == fault);
-            else Assert.Contains(decision.Blockers, item => item.Code == "secret-bundle-missing");
+            else
+            {
+                Assert.Contains(decision.Blockers, item => item.Code == "secret-bundle-missing");
+                Assert.Contains(decision.Blockers, item => item.Code == "client-credentials-lost");
+            }
         }
 
         Assert.Equal(TaskServerMode.Normal, drill.Source.Mode);
@@ -273,9 +360,11 @@ public sealed class RecoveryDrillTests(ITestOutputHelper output)
         string CopyRoot,
         string Origin,
         string OldRunnerCredential,
-        int SourceTaskCount);
+        int SourceTaskCount,
+        string? OldStudioCredential);
 
-    private static async Task<Drill> CaptureAsync(string root)
+    private static async Task<Drill> CaptureAsync(string root, string credentialCustody = RecoveryCredentialCustody.SecretBundle,
+        bool includeLostStudio = false)
     {
         var clock = new ManualTimeProvider(DateTimeOffset.Parse("2026-01-01T00:00:00Z"));
         var sourceDirectory = Path.Combine(root, "source");
@@ -287,6 +376,9 @@ public sealed class RecoveryDrillTests(ITestOutputHelper output)
         await source.CreateTaskAsync(project.ProjectId, new CreateTaskRequest("Archived task", State: "2-ready"), "test", default);
         var runner = await source.CreatePrincipalAsync(
             new CreatePrincipalRequest(RunnerPrincipal, TaskServerPrincipalKinds.Runner, RunnerId: "runner-full"), "test", default);
+        var studio = includeLostStudio
+            ? await source.CreatePrincipalAsync(new CreatePrincipalRequest("studio:recovery", TaskServerPrincipalKinds.Studio), "test", default)
+            : null;
         await source.RegisterRunnerAsync("runner-full",
             new RegisterRunnerRequest("runner-full", "host-full", "runner-full:1", "1.0.0", TaskServerProtocol.Current,
                 [ReviewCapabilities.CodingExecutor]), "test", default);
@@ -315,11 +407,13 @@ public sealed class RecoveryDrillTests(ITestOutputHelper output)
         var bundle = Path.Combine(root, "offhost", "secrets.age");
         Directory.CreateDirectory(Path.GetDirectoryName(bundle)!);
         await File.WriteAllTextAsync(bundle, "age-encrypted-placeholder");
+        var clientCustody = new List<RecoveryClientCustodyDeclaration> { new(RunnerPrincipal, credentialCustody) };
+        if (includeLostStudio) clientCustody.Add(new("studio:recovery", RecoveryCredentialCustody.Undeclared));
         var custody = new RecoveryCustodyDeclaration(
             "inst_drill",
             [new("compose environment", Path.Combine(root, "compose.env"), RecoveryCredentialCustody.SecretBundle, null)],
             new(bundle, "age", "administrator"),
-            [new(RunnerPrincipal, RecoveryCredentialCustody.SecretBundle)],
+            clientCustody,
             [new("recovery-repo", origin, ["refs/heads/main"])]);
 
         var workflow = Workflow(source, sourceDirectory, clock);
@@ -328,13 +422,13 @@ public sealed class RecoveryDrillTests(ITestOutputHelper output)
         Assert.Equal(1, manifest.ColdEvidence.PayloadCount);
         Assert.Equal(2, manifest.Identities.TaskCount);
         Assert.Equal(40, Assert.Single(Assert.Single(manifest.Repositories).SampledRefs).Sha.Length);
-        Assert.Equal(RecoveryCredentialCustody.SecretBundle, Assert.Single(manifest.SecretCustody.Clients).Custody);
+        Assert.Contains(manifest.SecretCustody.Clients, item => item.PrincipalId == RunnerPrincipal && item.Custody == credentialCustody);
         Assert.NotEmpty(manifest.RebuildableCaches);
 
         var receipt = await workflow.CopyAsync(manifest.DataSet.BackupId, Path.Combine(root, "offhost"), default);
         Assert.Empty(receipt.Warnings);
         return new Drill(source, sourceDirectory, clock, project.ProjectId, manifest.DataSet.BackupId, receipt.Destination, origin,
-            runner.Credential, manifest.Identities.TaskCount);
+            runner.Credential, manifest.Identities.TaskCount, studio?.Credential);
     }
 
     private static RecoveryWorkflow Workflow(TaskServerStore store, string directory, TimeProvider clock)

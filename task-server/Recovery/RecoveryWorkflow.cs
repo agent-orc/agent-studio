@@ -328,13 +328,35 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
                 }
                 var refs = await git.ListRemoteAsync(repository.Origin, ct);
                 foreach (var item in sampled)
-                    probes.Add(refs is null
-                        ? new(repository.RepositoryId, repository.Origin, item.Name, item.Sha, RecoveryGitProbeOutcome.OriginUnavailable, null)
-                        : !refs.TryGetValue(item.Name, out var sha)
-                            ? new(repository.RepositoryId, repository.Origin, item.Name, item.Sha, RecoveryGitProbeOutcome.RefMissing, null)
-                            : string.Equals(sha, item.Sha, StringComparison.OrdinalIgnoreCase)
-                                ? new(repository.RepositoryId, repository.Origin, item.Name, item.Sha, RecoveryGitProbeOutcome.RefPresent, null)
-                                : new(repository.RepositoryId, repository.Origin, item.Name, item.Sha, RecoveryGitProbeOutcome.RefMoved, sha));
+                {
+                    if (refs is null)
+                    {
+                        probes.Add(new(repository.RepositoryId, repository.Origin, item.Name, item.Sha,
+                            RecoveryGitProbeOutcome.OriginUnavailable, null));
+                        continue;
+                    }
+                    if (!refs.TryGetValue(item.Name, out var sha))
+                    {
+                        probes.Add(new(repository.RepositoryId, repository.Origin, item.Name, item.Sha,
+                            RecoveryGitProbeOutcome.RefMissing, null));
+                        continue;
+                    }
+                    if (string.Equals(sha, item.Sha, StringComparison.OrdinalIgnoreCase))
+                    {
+                        probes.Add(new(repository.RepositoryId, repository.Origin, item.Name, item.Sha,
+                            RecoveryGitProbeOutcome.RefPresent, null));
+                        continue;
+                    }
+
+                    var proofRef = refs.Where(candidate =>
+                            string.Equals(candidate.Value, item.Sha, StringComparison.OrdinalIgnoreCase) &&
+                            candidate.Key.StartsWith("refs/heads/agent-studio/results/", StringComparison.Ordinal) &&
+                            candidate.Key.EndsWith("/" + item.Sha, StringComparison.OrdinalIgnoreCase))
+                        .Select(candidate => candidate.Key).FirstOrDefault();
+                    probes.Add(new(repository.RepositoryId, repository.Origin, item.Name, item.Sha,
+                        proofRef is null ? RecoveryGitProbeOutcome.RefMoved : RecoveryGitProbeOutcome.RefMovedWithImmutableProof,
+                        proofRef is null ? sha : $"{sha}; proof {proofRef}"));
+                }
             }
 
         var bundleLocation = secretBundleOverride ?? manifest?.SecretCustody.BundleLocation;
@@ -456,8 +478,12 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
         return revoked;
     }
 
-    public Task<IssuedPrincipalCredential> ReenrolHostAsync(string principalId, string actorId, CancellationToken ct)
-        => store.ReissueRecoveredRunnerCredentialAsync(principalId, actorId, ct);
+    public async Task<IssuedPrincipalCredential> ReenrolClientAsync(string principalId, string actorId, CancellationToken ct)
+    {
+        if (await ReadReceiptAsync(ct) is null)
+            throw new InvalidOperationException("No recovery restore receipt; re-enrol clients only on a restored target.");
+        return await store.ReissueRecoveredClientCredentialAsync(principalId, actorId, ct);
+    }
 
     /// <summary>Evaluates the resume gate and, when it passes and not only checking, releases Maintenance.</summary>
     public async Task<(RecoveryResumeDecision Decision, RecoveryRestoreReceipt? Receipt)> ResumeAsync(

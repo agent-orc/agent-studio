@@ -70,9 +70,31 @@ public sealed partial class TaskServerStore
         await using (var reader = await command.ExecuteReaderAsync(ct))
             while (await reader.ReadAsync(ct)) stale.Add(reader.GetString(0));
 
+        // A lost client is reconciled only after a fresh credential exists and every pre-restore
+        // credential is revoked or expired. This covers runner re-enrolment and deliberate rotation
+        // of other service principals without treating fencing alone as proof of reconnection.
+        var reconciledClients = new List<string>();
+        await using (var command = Command(connection, """
+            SELECT p.principal_id
+              FROM principals p
+             WHERE p.revoked_at IS NULL
+               AND EXISTS (SELECT 1 FROM principal_credentials c
+                            WHERE c.principal_id = p.principal_id AND c.revoked_at IS NULL
+                              AND c.created_at >= $restored
+                              AND (c.expires_at IS NULL OR c.expires_at > $now))
+               AND NOT EXISTS (SELECT 1 FROM principal_credentials c
+                                WHERE c.principal_id = p.principal_id AND c.revoked_at IS NULL
+                                  AND c.created_at < $restored
+                                  AND (c.expires_at IS NULL OR c.expires_at > $now))
+             ORDER BY p.principal_id;
+            """, ("$restored", Iso(restoredAt)), ("$now", Iso(UtcNow))))
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+            while (await reader.ReadAsync(ct)) reconciledClients.Add(reader.GetString(0));
+
         var obligations = await ReadObligationsAsync(connection, ct);
         return new RecoveryResumeFacts(
-            _mode, restoredFromRecoverySet, unresolved, oldWriterClosed, stale, obligations, obligationsRetained, openSetFindings);
+            _mode, restoredFromRecoverySet, unresolved, oldWriterClosed, stale, obligations, obligationsRetained, openSetFindings,
+            ReconciledClientPrincipals: reconciledClients);
     }
 
     /// <summary>
@@ -98,8 +120,8 @@ public sealed partial class TaskServerStore
         return revoked;
     }
 
-    /// <summary>Issues one fresh credential for a fenced runner principal: the deliberate re-enrolment of one host.</summary>
-    internal async Task<IssuedPrincipalCredential> ReissueRecoveredRunnerCredentialAsync(
+    /// <summary>Revokes one restored client's old credentials and issues a fresh one while in Maintenance.</summary>
+    internal async Task<IssuedPrincipalCredential> ReissueRecoveredClientCredentialAsync(
         string principalId, string actorId, CancellationToken ct)
     {
         RequireRecoveryMaintenance();
@@ -110,10 +132,15 @@ public sealed partial class TaskServerStore
         {
             principal = await ReadPrincipalAsync(connection, transaction, principalId, ct)
                         ?? throw new KeyNotFoundException("Principal was not found.");
-            if (principal.RevokedAt is not null || principal.Kind != TaskServerPrincipalKinds.Runner)
-                throw new InvalidOperationException("Only an unrevoked runner principal can be re-enrolled after recovery.");
+            if (principal.RevokedAt is not null)
+                throw new InvalidOperationException("A revoked principal cannot be re-enrolled after recovery.");
+            await ExecuteAsync(connection, """
+                UPDATE principal_credentials
+                   SET revoked_at = $now
+                 WHERE principal_id = $id AND revoked_at IS NULL;
+                """, ct, transaction, ("$now", Iso(now)), ("$id", principalId));
             await InsertCredentialAsync(connection, transaction, principalId, credential, now, ct);
-            await AuditAsync(connection, transaction, actorId, "recovery.host-reenrolled", "principal", principalId, "{}", ct);
+            await AuditAsync(connection, transaction, actorId, "recovery.client-reenrolled", "principal", principalId, "{}", ct);
         }, ct);
         return new IssuedPrincipalCredential(principal!, credential, now);
     }

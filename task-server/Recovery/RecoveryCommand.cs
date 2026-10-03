@@ -64,7 +64,7 @@ public static class RecoveryCommand
                 case "reenrol":
                 {
                     await store.InitializeAsync(ct);
-                    var issued = await workflow.ReenrolHostAsync(command.Option("--principal")!, Actor, ct);
+                    var issued = await workflow.ReenrolClientAsync(command.Option("--principal")!, Actor, ct);
                     var path = command.Option("--credential-out")!;
                     await File.WriteAllTextAsync(path, issued.Credential, ct);
                     if (!OperatingSystem.IsWindows())

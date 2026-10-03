@@ -25,6 +25,7 @@ public enum RecoveryGitProbeOutcome
     RefPresent,
     RefMissing,
     RefMoved,
+    RefMovedWithImmutableProof,
     OriginUnavailable,
     OriginNotDeclared,
 }
@@ -126,28 +127,32 @@ public static class RecoveryCheckPolicy
                         "The origin does not hold the canonical commit the authority recorded. Publish it from the host salvage or source bundle before resuming. Without it, the restored task history points at a commit nobody can fetch."));
                     break;
                 case RecoveryGitProbeOutcome.RefMoved:
-                    findings.Add(new("git-ref-moved", RecoveryFindingSeverity.Advisory, subject,
-                        $"The ref now points elsewhere ({probe.Detail}); the recorded commit is still reachable. Expected after later publication."));
+                    findings.Add(new("git-ref-moved", RecoveryFindingSeverity.BlocksResume, subject,
+                        $"The ref now points elsewhere ({probe.Detail}); the recorded commit has not been proven reachable from the origin. Restore the recorded ref or publish an immutable ref at the recorded commit, then verify the recovery set again before resuming."));
+                    break;
+                case RecoveryGitProbeOutcome.RefMovedWithImmutableProof:
+                    findings.Add(new("git-ref-moved-proven", RecoveryFindingSeverity.Advisory, subject,
+                        $"The ref moved, but an immutable result ref on the origin still points at the recorded commit ({probe.Detail})."));
                     break;
             }
         }
 
         if (facts.SecretBundleDeclared && !facts.SecretBundlePresent)
             findings.Add(new("secret-bundle-missing", RecoveryFindingSeverity.BlocksResume, "secret bundle",
-                "The encrypted secret bundle is not at its declared location. Fetch it from its off-host custody. Otherwise fence hosts after restore, re-enrol every principal listed with secret-bundle custody, and redeliver the new credentials."));
+                "The encrypted secret bundle is not at its declared location. Fetch the copy captured with this set from off-host custody and verify its digest. Client re-enrolment does not recover configuration secrets in the bundle."));
         else if (facts.SecretBundleDeclared && !facts.SecretBundleDigestMatches)
             findings.Add(new("secret-bundle-changed", RecoveryFindingSeverity.BlocksResume, "secret bundle",
-                "The secret bundle digest differs from the one captured with this set. Use the bundle copy made with this set, or fence hosts and re-enrol the affected principals after restore."));
+                "The secret bundle digest differs from the one captured with this set. Use the encrypted bundle copy made with this set and verify its digest before resuming."));
 
         var lost = facts.Clients
-            .Where(client => client.Custody == RecoveryCredentialCustody.Undeclared
+            .Where(client => client.Custody is RecoveryCredentialCustody.Undeclared or RecoveryCredentialCustody.ReEnrol
                              || (client.Custody == RecoveryCredentialCustody.SecretBundle
                                  && (!facts.SecretBundlePresent || !facts.SecretBundleDigestMatches)))
             .Select(client => client.PrincipalId)
             .ToList();
-        if (lost.Count > 0)
-            findings.Add(new("client-credentials-lost", RecoveryFindingSeverity.BlocksResume, string.Join(", ", lost),
-                "Stored principal hashes cannot recreate these clients' cleartext credentials. After restore, run `task-server recovery fence-hosts`, then `task-server recovery reenrol` for each affected principal. Deliver each new credential through the host's protected token file and reconnect hosts one at a time."));
+        foreach (var principalId in lost)
+            findings.Add(new("client-credentials-lost", RecoveryFindingSeverity.BlocksResume, principalId,
+                "Stored principal hashes cannot recreate this client's cleartext credential. After restore, run `task-server recovery reenrol --principal <id> --credential-out <file>` for this principal. It revokes old credentials and issues one fresh credential in Maintenance. Deliver the new credential through the client's protected token file before reconnecting."));
 
         foreach (var obligation in facts.Obligations)
             findings.Add(new("pending-host-obligation", RecoveryFindingSeverity.BlocksResume,

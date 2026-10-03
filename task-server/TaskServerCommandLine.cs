@@ -54,7 +54,7 @@ public sealed record TaskServerCommandLine(
           task-server recovery verify --from <copy-directory> [--secret-bundle <path>] [--git-refs <origins.json>] [--no-git]
           task-server recovery restore --from <copy-directory> [--secret-bundle <path>] [--loss-at <utc>] [host options]
           task-server recovery fence-hosts [host options]
-          task-server recovery reenrol --principal <runner-principal> --credential-out <file> [host options]
+          task-server recovery reenrol --principal <client-principal> --credential-out <file> [host options]
           task-server recovery resume [--check-only] [--old-writer-closed] [--obligations-retained] [--secret-bundle <path>] [host options]
         """;
 

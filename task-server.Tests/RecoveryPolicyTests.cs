@@ -25,11 +25,13 @@ public sealed class RecoveryPolicyTests
         { "git-ref-missing", facts => facts with { GitProbes = [facts.GitProbes[0] with { Outcome = RecoveryGitProbeOutcome.RefMissing }] }, RecoveryFindingSeverity.BlocksResume },
         { "git-origin-undeclared", facts => facts with { GitProbes = [facts.GitProbes[0] with { Outcome = RecoveryGitProbeOutcome.OriginNotDeclared }] }, RecoveryFindingSeverity.BlocksResume },
         { "client-credentials-lost", facts => facts with { Clients = [facts.Clients[0] with { Custody = RecoveryCredentialCustody.Undeclared }] }, RecoveryFindingSeverity.BlocksResume },
+        { "client-credentials-lost", facts => facts with { Clients = [facts.Clients[0] with { Custody = RecoveryCredentialCustody.ReEnrol }] }, RecoveryFindingSeverity.BlocksResume },
         { "secret-bundle-missing", facts => facts with { SecretBundlePresent = false, SecretBundleDigestMatches = false }, RecoveryFindingSeverity.BlocksResume },
         { "secret-bundle-changed", facts => facts with { SecretBundleDigestMatches = false }, RecoveryFindingSeverity.BlocksResume },
         { "pending-host-obligation", facts => facts with { Obligations = [new(RecoveryObligationKinds.RunnerOutbox, "a", "run", "artifact-replay", 2, "")] }, RecoveryFindingSeverity.BlocksResume },
         { "release-differs", facts => facts with { TargetRelease = "1.0.1" }, RecoveryFindingSeverity.Advisory },
-        { "git-ref-moved", facts => facts with { GitProbes = [facts.GitProbes[0] with { Outcome = RecoveryGitProbeOutcome.RefMoved, Detail = "def" }] }, RecoveryFindingSeverity.Advisory },
+        { "git-ref-moved", facts => facts with { GitProbes = [facts.GitProbes[0] with { Outcome = RecoveryGitProbeOutcome.RefMoved, Detail = "def" }] }, RecoveryFindingSeverity.BlocksResume },
+        { "git-ref-moved-proven", facts => facts with { GitProbes = [facts.GitProbes[0] with { Outcome = RecoveryGitProbeOutcome.RefMovedWithImmutableProof, Detail = "def" }] }, RecoveryFindingSeverity.Advisory },
         { "copy-receipt-missing", facts => facts with { OffHostCopyReceiptPresent = false }, RecoveryFindingSeverity.Advisory },
     };
 
@@ -89,6 +91,8 @@ public sealed class RecoveryPolicyTests
         { "stale-hosts-unfenced", facts => facts with { StaleRunnerPrincipals = ["runner:a"] } },
         { "host-obligation-unreconciled", facts => facts with { LiveObligations = [new(RecoveryObligationKinds.RunnerOutbox, "a", "run", "artifact-replay", 1, "")] } },
         { "git-origin-unavailable", facts => facts with { OpenSetFindings = [new("git-origin-unavailable", RecoveryFindingSeverity.BlocksResume, "repo", "g")] } },
+        { "git-ref-moved", facts => facts with { OpenSetFindings = [new("git-ref-moved", RecoveryFindingSeverity.BlocksResume, "repo", "g")] } },
+        { "client-credentials-lost", facts => facts with { OpenSetFindings = [new("client-credentials-lost", RecoveryFindingSeverity.BlocksResume, "runner:a", "g")] } },
     };
 
     [Theory]
@@ -105,12 +109,13 @@ public sealed class RecoveryPolicyTests
         => Assert.True(RecoveryResumePolicy.Decide(Ready()).Allowed);
 
     [Fact]
-    public void Retained_obligations_and_live_reevaluated_findings_do_not_block()
+    public void Retained_obligations_and_reconciled_client_do_not_block()
     {
         var decision = RecoveryResumePolicy.Decide(Ready() with
         {
             LiveObligations = [new(RecoveryObligationKinds.SalvageBundle, "a", "run", "bundle-only", 0, "")],
             ObligationsRetainedAttested = true,
+            ReconciledClientPrincipals = ["runner:a"],
             OpenSetFindings =
             [
                 new("client-credentials-lost", RecoveryFindingSeverity.BlocksResume, "runner:a", "g"),
@@ -118,6 +123,21 @@ public sealed class RecoveryPolicyTests
             ],
         });
         Assert.True(decision.Allowed);
+    }
+
+    [Fact]
+    public void One_reconciled_client_does_not_clear_another_lost_client()
+    {
+        var decision = RecoveryResumePolicy.Decide(Ready() with
+        {
+            ReconciledClientPrincipals = ["runner:a"],
+            OpenSetFindings =
+            [
+                new("client-credentials-lost", RecoveryFindingSeverity.BlocksResume, "runner:a", "g"),
+                new("client-credentials-lost", RecoveryFindingSeverity.BlocksResume, "studio:b", "g"),
+            ],
+        });
+        Assert.Equal("studio:b", Assert.Single(decision.Blockers).Subject);
     }
 }
 

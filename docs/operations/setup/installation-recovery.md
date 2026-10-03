@@ -45,7 +45,9 @@ The manifest records:
 - **Secret custody.** The location, digest, encryption and holder of the
   separately encrypted secret bundle, and a custody for every active principal:
   `secret-bundle`, `re-enrol` or `undeclared`. Principal hashes in the database
-  cannot reconstruct a client's cleartext credential.
+  cannot reconstruct a client's cleartext credential. A declared `re-enrol`
+  client remains a resume blocker until its credential has actually been
+  reissued on the restored authority.
 - **Pending host obligations.** Runner outboxes with unacknowledged records,
   and accepted results that exist only as a source bundle (salvage). These are
   never cache.
@@ -112,7 +114,9 @@ only writer. Pass the same store settings as the service (`STORE_PATH`,
    never starts Git. It reads local bare repositories from their ref files and
    HTTP(S) origins through the smart-HTTP ref advertisement. For SSH origins,
    pass `--git-refs origins.json`, which maps each origin to a file holding
-   `git ls-remote <origin>` output that the operator ran.
+   `git ls-remote <origin>` output that the operator ran. Keep the full listing:
+   a moved sampled ref is accepted only when a visible immutable result ref
+   points at its recorded SHA.
 4. **Restore to an empty target.** Use the same release:
    `STORE_PATH=<empty> task-server recovery restore --from <copy>/<id> --loss-at <UTC loss instant>`.
    The command refuses non-empty data, backup or archive directories. It
@@ -123,10 +127,12 @@ only writer. Pass the same store settings as the service (`STORE_PATH`,
 5. **Fence stale hosts.** `task-server recovery fence-hosts` revokes every
    runner credential issued before the restore. A host still holding the old
    authority's credential is rejected at authentication.
-6. **Re-enrol one host deliberately.**
-   `task-server recovery reenrol --principal runner:<id> --credential-out <file>`
-   writes one fresh credential to an owner-only file. Deliver it to that host's
-   protected token file.
+6. **Re-enrol affected clients deliberately.**
+   `task-server recovery reenrol --principal <id> --credential-out <file>`
+   revokes that principal's old credentials and writes one fresh credential to
+   an owner-only file while the target is in Maintenance. Re-enrol every client
+   reported as `client-credentials-lost`, then deliver each credential through
+   its protected token file. Reconnect one host at a time.
 7. **Resume.** Run `task-server recovery resume --check-only` until no blocker
    remains, then
    `task-server recovery resume --old-writer-closed [--obligations-retained]`.
@@ -138,7 +144,7 @@ only writer. Pass the same store settings as the service (`STORE_PATH`,
    - the attestation that the previous authority is stopped (one writer);
    - no unfenced pre-restore runner credential;
    - no open set finding (such as unverified Git refs or a missing secret
-     bundle);
+   bundle);
    - for each pending host obligation, either reconciliation or the
      attestation that the host's outbox and salvage are kept.
 8. **Reconnect and canary.** Start the service. Reconnect the re-enrolled host
@@ -158,9 +164,11 @@ only writer. Pass the same store settings as the service (`STORE_PATH`,
 | `manifest-missing` / `manifest-unsupported` | Restore refused | Copy again with `recovery copy`, or use the release that captured the set. |
 | `git-origin-unavailable` | Resume blocked | Restore network access or the origin credential, or declare a verified mirror. Stay in `Maintenance` until the refs verify. |
 | `git-ref-missing` / `git-origin-undeclared` | Resume blocked | Publish the recorded commit from host salvage, or declare the origin, then verify again. |
-| `client-credentials-lost` / `secret-bundle-missing` / `secret-bundle-changed` | Resume blocked | Fetch the bundle copied with this set. Otherwise fence hosts, then re-enrol each affected host and redeliver its credential. |
+| `git-ref-moved` | Resume blocked | The new ref tip does not prove that the recorded commit is still available. Restore the recorded ref or publish an immutable `refs/heads/agent-studio/results/.../<recorded SHA>` ref at that commit, then verify again. The ref must be visible in the origin listing. |
+| `client-credentials-lost` | Resume blocked | Re-enrol each named principal on the restored target, which revokes its old credentials, and deliver the new credential to that client. Fencing runners alone does not prove they can reconnect. |
+| `secret-bundle-missing` / `secret-bundle-changed` | Resume blocked | Fetch the encrypted bundle copied with this set and verify its digest. Configuration secrets in that bundle still need recovery even if clients receive fresh credentials. |
 | `pending-host-obligation` | Resume blocked until reconciled or attested | Keep that host's outbox and worktree. It drains against the restored authority under fencing after its reconnect. |
-| `release-differs`, `git-ref-moved`, `copy-receipt-missing` | Advisory | Recorded in the receipt. |
+| `release-differs`, `git-ref-moved-proven`, `copy-receipt-missing` | Advisory | Recorded in the receipt. |
 
 ## Drill and measured objectives
 
