@@ -152,7 +152,7 @@ function buildFakeTimeline(windowHours: number, bucketMinutes: number) {
   // label, so the label is the id itself.
   const remoteModel: Record<string, string> = {
     alpha: 'gpt-6-sol',
-    bravo: 'claude-opus-5-5',
+    bravo: 'zeta-model-9',
     charlie: 'gpt-6-sol',
   };
   const models = Object.values(totals).flatMap((t) => {
@@ -358,13 +358,11 @@ test.describe('Workspace token timeline', () => {
     await expect(models).toBeVisible();
     await expect(models).toContainText('By model and executing host');
 
-    // A model id the registry does not label renders as the id, never as
-    // another model's label (claude-opus-5-5 is not "Claude Opus 5").
-    const bravoRemote = page.getByTestId('wtt-model-row-bravo|claude-opus-5-5|agent-runner-01');
+    // A model id the registry does not label renders as the id.
+    const bravoRemote = page.getByTestId('wtt-model-row-bravo|zeta-model-9|agent-runner-01');
     await expect(bravoRemote).toBeVisible();
-    await expect(bravoRemote.getByTestId('wtt-model-label')).toHaveText('claude-opus-5-5');
+    await expect(bravoRemote.getByTestId('wtt-model-label')).toHaveText('zeta-model-9');
     await expect(bravoRemote.getByTestId('wtt-model-host')).toHaveText('agent-runner-01');
-    await expect(models).not.toContainText('Claude Opus 5');
     await expect(page.getByTestId('wtt-model-row-bravo|claude-sonnet-5|local')
       .getByTestId('wtt-model-label')).toHaveText('Claude Sonnet 5');
 
@@ -375,7 +373,7 @@ test.describe('Workspace token timeline', () => {
 
     // Toggling a project off removes its model rows too.
     await page.getByTestId('wtt-legend-bravo').click();
-    await expect(page.getByTestId('wtt-model-row-bravo|claude-opus-5-5|agent-runner-01')).toHaveCount(0);
+    await expect(page.getByTestId('wtt-model-row-bravo|zeta-model-9|agent-runner-01')).toHaveCount(0);
     await page.getByTestId('wtt-legend-bravo').click();
     await expect(bravoRemote).toBeVisible();
 

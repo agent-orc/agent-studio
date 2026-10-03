@@ -129,11 +129,11 @@ public sealed class RemoteUsageLedgerTimelineTests : IDisposable
             [(Project, entries)], _now.AddHours(-24), _now, 60);
 
         Assert.Equal("zeta-model-9", Assert.Single(timeline.Models, row => row.Model == "zeta-model-9").ModelLabel);
-        Assert.Equal("claude-opus-5-5", Assert.Single(timeline.Models, row => row.Model == "claude-opus-5-5").ModelLabel);
+        Assert.Equal("Claude Opus 5.5", Assert.Single(timeline.Models, row => row.Model == "claude-opus-5-5").ModelLabel);
     }
 
     [Theory]
-    [InlineData("claude-opus-5-5", "claude-opus-5-5", "claude-opus-5-5")]
+    [InlineData("claude-opus-5-5", "claude-opus-5-5", "Claude Opus 5.5")]
     [InlineData("zeta-model-9", "zeta-model-9", "zeta-model-9")]
     [InlineData("claude-opus-5", "claude-opus-5", "Claude Opus 5")]
     [InlineData("claude-haiku-4-5-20251001", "claude-haiku-4-5", "Claude Haiku 4.5")]
@@ -156,7 +156,7 @@ public sealed class RemoteUsageLedgerTimelineTests : IDisposable
         ])[TaskId];
 
         Assert.Equal("claude-opus-5-5", summary.LastModelId);
-        Assert.Equal("claude-opus-5-5", summary.LastModel);
+        Assert.Equal("Claude Opus 5.5", summary.LastModel);
         var call = Assert.Single(summary.Entries);
         Assert.Equal("claude-opus-5-5", call.Model);
         Assert.Equal("agent-runner-01", call.Host);

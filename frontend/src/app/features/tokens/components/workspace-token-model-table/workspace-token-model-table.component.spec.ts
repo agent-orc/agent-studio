@@ -17,7 +17,7 @@ describe('WorkspaceTokenModelTableComponent (AGT-2986)', () => {
     }).compileComponents();
     const fixture = TestBed.createComponent(WorkspaceTokenModelTableComponent);
     fixture.componentRef.setInput('models', [
-      row('studio', 'claude-opus-5-5', 'claude-opus-5-5', 'agent-runner-01', 158_000_000),
+      row('studio', 'zeta-model-9', 'zeta-model-9', 'agent-runner-01', 158_000_000),
       row('studio', 'claude-sonnet-5', 'Claude Sonnet 5', 'local', 2_000_000),
       row('website', 'gpt-6-sol', 'gpt-6-sol', 'agent-runner-01', 40_000_000),
     ]);
@@ -33,10 +33,9 @@ describe('WorkspaceTokenModelTableComponent (AGT-2986)', () => {
     expect(component.visibleModels().map(m => m.host)).toEqual(['agent-runner-01', 'local', 'agent-runner-01']);
     expect(component.totals().total).toBe(200_000_000);
     const el: HTMLElement = fixture.nativeElement;
-    const row = el.querySelector('[data-testid="wtt-model-row-studio|claude-opus-5-5|agent-runner-01"]');
-    // An id the registry does not label renders as the id, not "Claude Opus 5".
-    expect(row?.querySelector('[data-testid="wtt-model-label"]')?.textContent?.trim()).toBe('claude-opus-5-5');
-    expect(el.textContent).not.toContain('Claude Opus 5');
+    const row = el.querySelector('[data-testid="wtt-model-row-studio|zeta-model-9|agent-runner-01"]');
+    // An id the registry does not label renders as the id.
+    expect(row?.querySelector('[data-testid="wtt-model-label"]')?.textContent?.trim()).toBe('zeta-model-9');
   });
 
   it('drops hidden projects from rows and totals', async () => {
