@@ -454,14 +454,6 @@ public sealed class BatchGatePilotService
             }
             foreach (var key in assembly.EjectedKeys)
                 _logger.LogWarning("batch-member-conflict batch={BatchId} task={TaskKey}", manifest.BatchId, key);
-            if (assembly.AdmittedKeys.Count == 0)
-            {
-                State(manifest, BatchPhase.Abandoned, null, lease.Fence, "no-admitted-members");
-                foreach (var key in assembly.EjectedKeys)
-                    await RunPerTaskFallbackAsync(pending[key], cancellation.Token)
-                        .ConfigureAwait(false);
-                return;
-            }
             if (assembly.CascadeStopped)
                 _logger.LogWarning("batch-conflict-cascade batch={BatchId} deferred={Members}",
                     manifest.BatchId, string.Join(',', assembly.DeferredKeys));
@@ -476,6 +468,15 @@ public sealed class BatchGatePilotService
                     BatchGateOwnershipStore.Write(task.FolderPath,
                         new BatchGateOwnership(pending[key].ReviewAttemptId,
                             pending[key].Subject));
+            }
+            if (assembly.AdmittedKeys.Count == 0)
+            {
+                State(manifest, BatchPhase.Abandoned, null, lease.Fence, "no-admitted-members");
+                ReturnToPending(manifest);
+                foreach (var key in assembly.EjectedKeys.Concat(assembly.DeferredKeys))
+                    await RunPerTaskFallbackAsync(pending[key], cancellation.Token)
+                        .ConfigureAwait(false);
+                return;
             }
             var run = NewRun(manifest, assembly.CandidateSha, lease.Fence,
                 repo, _settings.Get(manifest.Scope.Project).BuildProfile);

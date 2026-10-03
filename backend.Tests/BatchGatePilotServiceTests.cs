@@ -108,6 +108,44 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task All_conflict_cascade_returns_deferred_members_to_the_per_task_gate()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 8);
+        var members = Enumerable.Range(1, 8)
+            .Select(index => SeedMember(factory, $"DOC-CONFLICT-{index}", "README.md"))
+            .ToArray();
+        var originalBase = RemoteTip();
+        Git(_repo, "checkout", "-q", "--detach", originalBase);
+        File.WriteAllText(Path.Combine(_repo, "README.md"), "Integration changed this line.\n");
+        Git(_repo, "add", "README.md");
+        Git(_repo, "commit", "-qm", "integration conflict");
+        Git(_repo, "push", "-q", "origin", "HEAD:develop");
+        _gate.Batch = _ => throw new InvalidOperationException("An all-conflict batch reached the suite.");
+        _gate.Fallback = request => Red(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        var manifest = Assert.Single(store.ListManifests());
+        AssertPhase(store, manifest.BatchId, BatchPhase.Abandoned);
+        Assert.Equal(0, _gate.BatchRuns);
+        Assert.Equal(8, _gate.FallbackRuns);
+        Assert.Empty(store.ListPending());
+        foreach (var member in members)
+        {
+            AssertLane(member.Key, TaskStates.Escalated);
+            Assert.Null(Ownership(member.Key));
+        }
+        Assert.Equal(3, members.Count(member =>
+            store.ReadReplay(manifest.BatchId, member.Key).Outcome == "conflict"));
+        Assert.Equal(5, members.Count(member =>
+            store.ReadReplay(manifest.BatchId, member.Key).Outcome == "cascade-deferred"));
+    }
+
+    [Fact]
     public async Task Green_batch_publishes_the_tested_candidate_and_releases_every_member()
     {
         using var factory = BuildFactory();
