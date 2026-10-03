@@ -27,7 +27,7 @@ public static class RemoteRunPrompt
             return new ClaimedFollowUpApplication(taskPrompt, null);
 
         var block = ClaimedFollowUpBlock(followUp);
-        if (taskPrompt.Contains(block, StringComparison.Ordinal))
+        if (ContainsClaimedFollowUp(taskPrompt, followUp))
             return new ClaimedFollowUpApplication(taskPrompt, followUp);
 
         var marker = ClaimedFollowUpMarker(followUp);
@@ -43,30 +43,31 @@ public static class RemoteRunPrompt
             + block;
         return new ClaimedFollowUpApplication(
             composed,
-            composed.Contains(block, StringComparison.Ordinal) ? followUp : null);
+            ContainsClaimedFollowUp(composed, followUp) ? followUp : null);
     }
 
     /// <summary>
-    /// A durable spec written by a Windows runner before prompts were composed
-    /// with LF carries the block with CRLF; it still counts as delivered.
+    /// A durable spec written by an older Windows runner has CRLF framing,
+    /// but its authored follow-up body may still contain LF. Match the complete
+    /// block with either framing while leaving that body unchanged.
     /// </summary>
     internal static bool ContainsClaimedFollowUp(
         string prompt,
         AgentStudio.TaskServer.Contracts.FollowUpDeliveryDto followUp)
     {
-        var block = ClaimedFollowUpBlock(followUp);
-        return prompt.Contains(block, StringComparison.Ordinal)
-               || prompt.Contains(block.Replace("\n", "\r\n", StringComparison.Ordinal), StringComparison.Ordinal);
+        return prompt.Contains(ClaimedFollowUpBlock(followUp), StringComparison.Ordinal)
+               || prompt.Contains(ClaimedFollowUpBlock(followUp, "\r\n"), StringComparison.Ordinal);
     }
 
     private static string ClaimedFollowUpBlock(
-        AgentStudio.TaskServer.Contracts.FollowUpDeliveryDto followUp)
+        AgentStudio.TaskServer.Contracts.FollowUpDeliveryDto followUp,
+        string newline = PromptText.NewLine)
     {
         var marker = ClaimedFollowUpMarker(followUp);
-        return $"<!-- {marker} -->" + PromptText.NewLine
-            + $"## Follow-up for this run ({followUp.Mode})" + PromptText.NewLine + PromptText.NewLine
-            + followUp.Prompt + PromptText.NewLine
-            + $"<!-- /{marker} -->" + PromptText.NewLine;
+        return $"<!-- {marker} -->" + newline
+            + $"## Follow-up for this run ({followUp.Mode})" + newline + newline
+            + followUp.Prompt + newline
+            + $"<!-- /{marker} -->" + newline;
     }
 
     private static string ClaimedFollowUpMarker(

@@ -240,7 +240,6 @@ wall-clock runner.Tests/CommandProgressWatchdogTests.cs 2
 wall-clock runner.Tests/DaemonRecoveryTests.cs 3
 wall-clock runner.Tests/DurableAgentProcessTests.cs 3
 wall-clock runner.Tests/DurableHandoffRecoveryTests.cs 10
-wall-clock runner.Tests/DurableLeaseAuthorityTests.cs 1
 wall-clock runner.Tests/DurableRunOutboxTests.cs 2
 wall-clock runner.Tests/DurableSentinelIncidentTests.cs 3
 wall-clock runner.Tests/GitWorkspaceTests.cs 4
