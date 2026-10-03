@@ -340,6 +340,9 @@ public sealed class AccessSecurityMiddleware
         }
         if (path.StartsWith("/api/orchestrator/", StringComparison.OrdinalIgnoreCase))
         {
+            // Orchestrator task context routes are task:{projectId}/{taskKey}
+            // (see OrchestratorContextEndpoints and OrchestratorSessionEndpoints).
+            // The segment immediately after /task: is the project, not the task.
             var marker = path.Contains("/project:", StringComparison.OrdinalIgnoreCase)
                 ? "/project:"
                 : path.Contains("/task:", StringComparison.OrdinalIgnoreCase) ? "/task:" : null;

@@ -121,6 +121,36 @@ public sealed class ScopedOperatorAuthorizationTests : IDisposable
         Assert.False(result.Called.Value);
     }
 
+    [Fact]
+    public async Task Orchestrator_task_routes_use_the_project_before_the_task_key()
+    {
+        var fixture = NewTaskFixture();
+        var login = await SignedIn(fixture.Store, StudioRoles.Operator, [fixture.Mine.Id]);
+        Assert.NotEqual(MineTask, fixture.Mine.Id);
+
+        foreach (var (method, prefix, suffix) in new[]
+        {
+            ("GET", "/api/orchestrator/context/task:", ""),
+            ("POST", "/api/orchestrator/context/task:", "/refresh"),
+            ("POST", "/api/orchestrator/sessions/task:", "/turns"),
+        })
+        {
+            var own = await fixture.Invoke(method, $"{prefix}{fixture.Mine.Id}/{MineTask}{suffix}", "", login);
+            Assert.True(own.Called.Value, $"{method} {prefix} should authorize the project ID before the task key.");
+
+            var foreign = await fixture.Invoke(method, $"{prefix}{fixture.Foreign.Id}/{ForeignTask}{suffix}",
+                $"?project={fixture.Mine.Id}", login);
+            Assert.Equal(StatusCodes.Status403Forbidden, foreign.Context.Response.StatusCode);
+            Assert.Equal("project-scope-denied", ErrorCode(foreign.Context));
+            Assert.False(foreign.Called.Value);
+
+            var narrowed = await fixture.Invoke(method, $"{prefix}{fixture.Mine.Id}/{MineTask}{suffix}",
+                $"?project={fixture.Foreign.Id}", login);
+            Assert.Equal(StatusCodes.Status403Forbidden, narrowed.Context.Response.StatusCode);
+            Assert.False(narrowed.Called.Value);
+        }
+    }
+
     // --- 2a. /api/v1 bypass requires the proxy and a well-formed bearer ---
 
     [Theory]
