@@ -279,8 +279,14 @@ public sealed class PrincipalAuthenticationTests
         var replay = await manager.PostAsJsonAsync(path, request);
         replay.EnsureSuccessStatusCode();
         var repeated = (await replay.Content.ReadFromJsonAsync<IssuedPrincipalCredential>())!;
-        Assert.Null(repeated.Credential);
+        Assert.Equal(issued.Credential, repeated.Credential);
         Assert.Equal(issued.Rotation!.CredentialGeneration, repeated.Rotation!.CredentialGeneration);
+        using var consumer = Client(factory, issued.Credential);
+        (await consumer.PostAsync("/api/v1/principal-rotations/rotation-engine-1/delivered", null))
+            .EnsureSuccessStatusCode();
+        var afterDelivery = await manager.PostAsJsonAsync(path, request);
+        afterDelivery.EnsureSuccessStatusCode();
+        Assert.Null((await afterDelivery.Content.ReadFromJsonAsync<IssuedPrincipalCredential>())!.Credential);
         Assert.Equal(HttpStatusCode.Conflict,
             (await manager.PostAsJsonAsync(path,
                 request with { OperationId = "rotation-engine-2" })).StatusCode);

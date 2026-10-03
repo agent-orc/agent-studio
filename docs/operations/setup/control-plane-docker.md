@@ -133,6 +133,13 @@ The sidecar checks the returned SHA-256 before and after copying the completed
 file to the off-host mount. It runs every `BACKUP_INTERVAL_SECONDS` (default
 300, matching the plan's five-minute maximum recovery point). Inspect its log:
 
+The Task Server's private `principal-rotation-delivery.key` is a host secret in
+the persistent store volume. The management SQLite snapshot and full backup
+sets do not include it. Preserve it separately in the protected installation
+secret backup. An undelivered rotation cannot replay its bearer after a host
+restore without that key; restore the key or use the separately authorized
+recovery principal after the original overlap deadline.
+
 ```bash
 docker compose --project-directory /opt/agent-orchestrator/compose \
     --env-file /etc/agent-orchestrator/docker.env logs backup --tail 50

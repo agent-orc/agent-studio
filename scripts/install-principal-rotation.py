@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Install one Task Server bearer on its host and acknowledge scoped use.
 
-Pipe the one-time management response to stdin. On retry, use --resume to read
-the already installed protected file. This command prints no bearer or path.
+Pipe the management response to stdin. On retry, --resume reads the protected
+pending or installed file. This command prints no bearer or path.
 """
 
 import argparse
@@ -37,7 +37,7 @@ def read_installed(path):
     descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     with os.fdopen(descriptor, encoding="ascii") as source:
         info = os.fstat(source.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o037:
+        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
             raise ValueError("The credential file must be regular and inaccessible to other users.")
         value = source.read().strip()
     if not value:
@@ -155,8 +155,12 @@ def main():
         raise ValueError("The Task Server URL must be a bare origin without credentials or a query.")
     server = args.server.rstrip("/")
     backup = args.token_file + ".rotation-" + args.operation_id + ".previous"
+    pending = args.token_file + ".rotation-" + args.operation_id + ".pending"
     if args.resume:
-        bearer, _ = read_installed(args.token_file)
+        try:
+            bearer, _ = read_installed(pending)
+        except FileNotFoundError:
+            bearer, _ = read_installed(args.token_file)
     else:
         issued = json.load(sys.stdin)
         receipt = issued.get("rotation") or {}
@@ -171,11 +175,32 @@ def main():
                        urllib.parse.quote(args.operation_id, safe=""),
                        bearer, args.consumer_id, method="GET")
         require_installable(receipt, current)
+        try:
+            staged, _ = read_installed(pending)
+            if staged != bearer:
+                raise ValueError("A different pending generation already exists for this operation.")
+        except FileNotFoundError:
+            # Persist before touching the live file so --resume survives a crash
+            # between backup and replacement without another issuance.
+            install(pending, bearer)
+    installed, _ = read_installed(args.token_file)
+    if installed != bearer:
+        if not os.path.exists(pending):
+            raise ValueError("The installed generation is old and no protected pending bearer exists.")
+        current = call(server, "/api/v1/principal-rotations/" +
+                       urllib.parse.quote(args.operation_id, safe=""),
+                       bearer, args.consumer_id, method="GET")
+        if current.get("state") not in ("issued", "delivered", "awaiting-consumers"):
+            raise RuntimeError("The rotation generation is no longer installable.")
         if os.path.exists(backup):
-            raise ValueError("A local rotation backup already exists; use --resume.")
-        previous, _ = read_installed(args.token_file)
-        install(backup, previous)
+            previous, _ = read_installed(backup)
+            if previous != installed:
+                raise ValueError("The backup does not match the installed previous generation.")
+        else:
+            install(backup, installed)
         install(args.token_file, bearer)
+    if os.path.exists(pending):
+        os.unlink(pending)
     operation = urllib.parse.quote(args.operation_id, safe="")
     call(server, f"/api/v1/principal-rotations/{operation}/delivered", bearer, args.consumer_id)
     result = wait_for_ack(
@@ -185,10 +210,11 @@ def main():
     if args.consumer_id not in result.get("acknowledgedConsumers", []):
         raise RuntimeError("Task Server did not acknowledge this consumer.")
     if result.get("state") == "retired":
-        previous, _ = read_installed(backup)
-        if not old_bearer_rejected(server, args.operation_id, previous, args.consumer_id):
-            raise RuntimeError("Old bearer rejection was not verified.")
-        os.unlink(backup)
+        if os.path.exists(backup):
+            previous, _ = read_installed(backup)
+            if not old_bearer_rejected(server, args.operation_id, previous, args.consumer_id):
+                raise RuntimeError("Old bearer rejection was not verified.")
+            os.unlink(backup)
     print(f"Rotation {args.operation_id}: {result['state']}")
 
 

@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
 using AgentStudio.TaskServer.Contracts;
 using Microsoft.Data.Sqlite;
 
@@ -53,6 +55,16 @@ public sealed partial class TaskServerStore
                     throw new TaskServerConflictException("rotation-idempotency-conflict",
                         "The rotation operation id is already bound to different parameters.");
                 receipt = prior.Receipt;
+                if (prior.DeliveredAt is null && UtcNow < prior.Receipt.PreviousCredentialValidUntil
+                    && prior.Receipt.State == "issued")
+                {
+                    var replay = DeriveRotationCredential(principalId, operationId, createKey: false);
+                    if (!TryCredentialId(replay, out var replayId)
+                        || replayId != prior.Receipt.CredentialGeneration)
+                        throw new TaskServerConflictException("rotation-delivery-key-mismatch",
+                            "The host rotation delivery key does not match this operation.");
+                    credential = replay;
+                }
                 return;
             }
 
@@ -88,7 +100,7 @@ public sealed partial class TaskServerStore
             await using (var reader = await command.ExecuteReaderAsync(ct))
                 while (await reader.ReadAsync(ct)) oldIds.Add(reader.GetString(0));
 
-            credential = GenerateCredential();
+            credential = DeriveRotationCredential(principalId, operationId, createKey: true);
             if (!TryCredentialId(credential, out var credentialId))
                 throw new InvalidOperationException("Generated credential is malformed.");
             await ExecuteAsync(connection, """
@@ -255,6 +267,65 @@ public sealed partial class TaskServerStore
             || actor.CredentialId != row.Receipt.CredentialGeneration)
             throw new TaskServerConflictException("rotation-generation-mismatch",
                 "The acknowledgement must use the newly issued credential.");
+    }
+
+    // The delivery seed belongs to the Task Server host, outside the command
+    // database. A committed receipt can reproduce its one bearer after a lost
+    // HTTP response; the API stops replaying it at delivery or the deadline.
+    private string DeriveRotationCredential(string principalId, string operationId, bool createKey)
+    {
+        var key = ReadRotationDeliveryKey(createKey);
+        try
+        {
+            var context = principalId + "\0" + operationId;
+            var id = HMACSHA256.HashData(key, Encoding.UTF8.GetBytes("id:" + context));
+            var secret = HMACSHA256.HashData(key, Encoding.UTF8.GetBytes("secret:" + context));
+            return $"ats_{Convert.ToHexString(id)[..32].ToLowerInvariant()}.{Convert.ToHexString(secret).ToLowerInvariant()}";
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(key);
+        }
+    }
+
+    private byte[] ReadRotationDeliveryKey(bool create)
+    {
+        var path = Path.Combine(DataDirectory, "principal-rotation-delivery.key");
+        if (!File.Exists(path) && create)
+        {
+            var staged = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            var generated = RandomNumberGenerator.GetBytes(32);
+            try
+            {
+                using (var stream = new FileStream(staged, FileMode.CreateNew, FileAccess.Write,
+                           FileShare.None, 4096, FileOptions.WriteThrough))
+                {
+                    if (!OperatingSystem.IsWindows())
+                        File.SetUnixFileMode(staged, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                    stream.Write(generated);
+                    stream.Flush(flushToDisk: true);
+                }
+                try { File.Move(staged, path); }
+                catch (IOException) when (File.Exists(path)) { }
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(generated);
+                if (File.Exists(staged)) File.Delete(staged);
+            }
+        }
+        if (!File.Exists(path))
+            throw new TaskServerConflictException("rotation-delivery-key-unavailable",
+                "The host rotation delivery key is unavailable; restore its protected backup before retrying.");
+        if (File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint)
+            || !OperatingSystem.IsWindows() && (File.GetUnixFileMode(path) &
+                (UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute |
+                 UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute)) != 0)
+            throw new InvalidOperationException("The host rotation delivery key must be a private regular file.");
+        var key = File.ReadAllBytes(path);
+        if (key.Length != 32)
+            throw new InvalidOperationException("The host rotation delivery key is invalid.");
+        return key;
     }
 
     private async Task<RotationRow?> ReadRotationAsync(

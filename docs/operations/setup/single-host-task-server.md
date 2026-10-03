@@ -92,7 +92,9 @@ the existing supervised SSH link; WireGuard is not required.
    with a stable `operationId`, a declared Studio-edge consumer and an overlap
    sized for installation and verification, as in
    [Rotate and revoke principals](task-server.md#rotate-and-revoke-principals).
-   Redirect the one-time response to a protected file.
+   Redirect the response to a protected file. If it is lost before delivery,
+   repeat the request with the same operation id to recover the same bearer
+   within the overlap deadline.
 3. **Store it in Credential Manager** as the Windows user who runs Studio:
 
    ```powershell
@@ -103,7 +105,7 @@ the existing supervised SSH link; WireGuard is not required.
    Keep the protected response file until the new bearer has called the
    rotation's `delivered` endpoint, the connector has completed its scoped
    attach with the new bearer, and that Studio-edge consumer has called `ack`. Confirm the
-   old bearer receives 401, then remove the one-time response file. See the
+   old bearer receives 401, then remove the response file. See the
    [rotation sequence](task-server.md#rotate-and-revoke-principals).
 
    Without `-FromFile`, the script prompts for the credential as a

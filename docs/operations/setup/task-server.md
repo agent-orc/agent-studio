@@ -752,9 +752,18 @@ curl --fail --silent --show-error \
   > /root/runner-rotation.json
 ```
 
-The first response contains the new bearer once. A retry with the same operation
-id and parameters returns the receipt with `credential: null`; it never issues
-another bearer. `GET /api/v1/management/principals/{principalId}/rotations/{operationId}`
+The first response contains the new bearer. If that response is lost before
+delivery, a retry with the same operation id and parameters returns the same
+bearer until the overlap deadline. It never issues another generation. After
+the receiving host acknowledges delivery, retries return the receipt with
+`credential: null`. The bearer is derived from a private host-owned
+`principal-rotation-delivery.key` in the Task Server data directory; the command
+database stores the bearer's verifier hash and rotation metadata only. Protect
+and back up this key as a host secret with mode `0600` on Linux. Neither the
+SQLite backup route nor a full backup set includes this key. If it is
+unavailable, restore it before retrying; do not create a new rotation to
+compensate for a lost response.
+`GET /api/v1/management/principals/{principalId}/rotations/{operationId}`
 returns the redacted receipt with actor, previous and new generations, delivery
 and per-consumer acknowledgement times, and retirement state. Store the bearer only in the target host's protected
 secret file and replace that file atomically. Runner file-backed clients, the
@@ -768,12 +777,15 @@ work where reattachment is unproven, and roll the consumer within the chosen
 overlap before acknowledging it.
 
 On a Linux receiving host, `scripts/install-principal-rotation.py` accepts the
-one-time response on stdin and installs the bearer in the configured token file
+management response on stdin and installs the bearer in the configured token file
 with an atomic replacement. Use a pinned protected SSH session or run it locally;
 do not put the response in task results. Supply `--server`, `--operation-id`,
 `--consumer-id` and `--token-file`. Before replacing the file, it checks the operation
 receipt with the new bearer and rejects a stale or recovered generation. It
-then acknowledges delivery and waits up to 30 seconds for the running consumer
+first stages the bearer in a private host-local `.pending` file, then backs up
+the previous credential and replaces the live file. It removes the pending file
+after the live file is durable. The installer then acknowledges delivery and waits
+up to 30 seconds for the running consumer
 to complete a successful request requiring its declared scope. It does not
 make that proof request on the consumer's behalf. Use `--resume` to retry the
 acknowledgement from the installed file within the overlap deadline. The
@@ -782,8 +794,11 @@ the operation is active. It removes that backup only after retirement and an
 HTTP 401 check with the old bearer. A failed delivery leaves the backup for
 operator recovery within the original overlap; it does not request another
 rotation or claim rollback after the deadline.
-If its outcome is ambiguous, run it with `--resume` against the installed
-protected file, using the same operation id. It never requests a second bearer.
+If the command stops after staging, run it with `--resume` using the same
+operation id. It reads the private pending or installed file and completes the
+same operation. If the command stopped before staging, repeat the management
+request with the same operation id and pipe its replayed response to the
+installer. No retry requests a second bearer.
 
 The receiving consumer calls `POST /api/v1/principal-rotations/{operationId}/delivered`
 with the new bearer, completes a successful operation on a route requiring its
