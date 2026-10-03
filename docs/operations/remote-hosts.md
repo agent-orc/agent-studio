@@ -22,6 +22,17 @@ hint. A different fingerprint starts a new count; an operator move from
 Escalated to Ready resets the spent budget. Execution Hosts lists parked cards
 and their fingerprints. The activity record is emitted once on escalation.
 
+Execution Hosts reads `GET /api/v1/management/runner-infrastructure-failures`.
+The response is a JSON array of parked infrastructure failures. Each entry has
+`taskKey` (card key), `attempts` (consecutive identical failures),
+`fingerprint` (failure identity), `host` (runner name), and `lastError` (latest
+failure detail). The endpoint includes every card in `5e-escalated` with a
+recorded runner infrastructure failure, even if the configured budget changes
+after escalation. A card leaves the list when it leaves Escalated. The legacy
+management API requires the usual management authorization and returns
+`Cache-Control: no-store`; the Task Server management route uses the same
+response fields.
+
 On preparation, a worktree directory without its `.git` metadata is moved to
 `$RUNNER_STATE_DIR/quarantine/<task>/` and pruned from the shared repository's
 worktree registration. The runner lists the task's origin salvage refs in its
