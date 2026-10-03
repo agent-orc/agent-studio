@@ -11,6 +11,27 @@ namespace OrchestratorEngine.Tests;
 public sealed class EngineContractTests
 {
     [Fact]
+    public async Task Engine_file_credential_reloads_on_an_existing_client()
+    {
+        using var temp = new TempDirectory();
+        var path = Path.Combine(temp.Path, "engine-rotation.token");
+        File.WriteAllText(path, "generation-one");
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        var observed = new List<string?>();
+        using var http = new HttpClient(new EngineCredentialReloadHandler(path,
+            new CaptureHandler(request =>
+            {
+                observed.Add(request.Headers.Authorization?.Parameter);
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+            })));
+        await http.GetAsync("https://task-server.example/first");
+        File.WriteAllText(path, "generation-two");
+        await http.GetAsync("https://task-server.example/second");
+        Assert.Equal(["generation-one", "generation-two"], observed);
+    }
+
+    [Fact]
     public async Task Engine_claim_uses_numeric_stage_values_expected_by_task_server()
     {
         string? requestJson = null;

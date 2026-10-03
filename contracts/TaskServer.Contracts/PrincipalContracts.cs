@@ -31,7 +31,29 @@ public sealed record CreatePrincipalRequest(
     IReadOnlyList<string>? Scopes = null,
     string? RunnerId = null);
 
-public sealed record RotatePrincipalRequest(int? OverlapSeconds = null);
+public sealed record RotatePrincipalRequest(
+    int? OverlapSeconds = null,
+    string? OperationId = null,
+    IReadOnlyList<PrincipalRotationConsumer>? Consumers = null);
+
+public sealed record PrincipalRotationConsumer(string ConsumerId, string RequiredScope);
+
+public sealed record PrincipalRotationReceipt(
+    string OperationId,
+    string PrincipalId,
+    string CredentialGeneration,
+    string State,
+    DateTime IssuedAt,
+    DateTime PreviousCredentialValidUntil,
+    IReadOnlyList<PrincipalRotationConsumer> Consumers,
+    IReadOnlyList<string> AcknowledgedConsumers,
+    DateTime? RetiredAt = null,
+    DateTime? DeliveredAt = null,
+    string? ActorId = null,
+    string? PreviousCredentialGeneration = null,
+    IReadOnlyDictionary<string, DateTime>? AcknowledgedAt = null);
+
+public sealed record PrincipalRotationAcknowledgement(string ConsumerId);
 
 public sealed record PrincipalDto(
     string PrincipalId,
@@ -44,6 +66,7 @@ public sealed record PrincipalDto(
 
 public sealed record IssuedPrincipalCredential(
     PrincipalDto Principal,
-    string Credential,
+    string? Credential,
     DateTime CreatedAt,
-    DateTime? PreviousCredentialValidUntil = null);
+    DateTime? PreviousCredentialValidUntil = null,
+    PrincipalRotationReceipt? Rotation = null);
