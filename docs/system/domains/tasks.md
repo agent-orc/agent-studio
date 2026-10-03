@@ -198,7 +198,10 @@ the oldest queued round to one fenced run. The claim carries that round as its
 `continuationIntent` projection. A required mechanical fresh route takes
 precedence at claim. Otherwise only route fields explicitly submitted for the
 continuation override normal claim and host resolution; snapshotted values
-remain visible in the projection. The round is consumed by the runner's existing
+remain visible in the projection. A provider rejection fallback is a complete
+CLI/model/thinking route and applies only when the continuation has no explicit
+route fields; it is never used to fill missing fields around an operator pin.
+The round is consumed by the runner's existing
 worker-start acknowledgement: the lease renewal names `startedPromptSha256`,
 and only the active lease of the bound run with the matching prompt hash can
 mark it consumed. A different hash returns `follow-up-prompt-mismatch`. If
