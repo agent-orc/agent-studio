@@ -104,8 +104,22 @@ public sealed class LeaseHeartbeat
                         try
                         {
                             var reported = _client.CodingAttemptFor(_lease);
-                            if (await _client.ReRegisterAttemptAsync(reported, shutdown))
+                            var adoption = await _client.ReAdoptAttemptAsync(reported, shutdown);
+                            if (adoption is not null)
                             {
+                                // Exact-current, expiry-only re-adoption (AGT-W65
+                                // D9): the server matched task, runner, lease,
+                                // fence, epoch and lease instance and granted a
+                                // new expiry. Only that confirmation moves the
+                                // stop-before boundary; without it the old
+                                // boundary still ends the run below.
+                                if (adoption.ExpiresAt is { } adoptedExpiresAt)
+                                {
+                                    authorityExpiresAt = adoptedExpiresAt.ToUniversalTime();
+                                    _authority?.Confirm(
+                                        authorityExpiresAt,
+                                        "exact-current attempt re-adopted by a new server confirmation");
+                                }
                                 _log(
                                     $"lease authority re-adopted after HTTP {ex.StatusCode}; " +
                                     $"attempt={reported.AttemptId} fence={reported.Fence}");
