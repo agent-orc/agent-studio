@@ -31,5 +31,6 @@
       "title": "Repair remaining active-page links and finish semantic pass",
       "promptMarkdown": "Documentation only. Use docs/docs-drift-audit-2026-09-29/page-inventory.csv and code-path-candidates.csv as the page and reference checklists. Triage unresolved links in active docs under docs/system and docs/operations; repair moved code/schema targets, exclude intentional examples, and verify each remaining factual operator instruction against current owning source. Acceptance: each in-scope page has a review date and code owner or is explicitly labeled historical/proposal; candidate link failures are resolved or justified; new mismatches are recorded with page, claim, code symbol, severity and proposed wording. Do not rewrite historical incident facts."
     }
-  ]
+  ],
+  "key": "AGT-W71"
 }
