@@ -86,10 +86,15 @@ public sealed class RemotePipelineReviewEvidenceProjector
         if (_mutations is null || string.IsNullOrWhiteSpace(review.AttemptId)) return;
         var calls = BuildReviewUsageCalls(review, report);
         if (calls.Count == 0) return;
-        _mutations.SetTokenReceiptEntriesOnFolder(
+        if (!_mutations.SetTokenReceiptEntriesOnFolder(
             task.FolderPath,
             ReviewParticipantPrefix + review.AttemptId,
-            calls);
+            calls))
+        {
+            // The evidence worker retries I/O failures and leaves the
+            // settlement journal unfinished until the receipt is durable.
+            throw new IOException($"Failed to persist remote review usage receipt for {review.AttemptId}");
+        }
     }
 
     internal static IReadOnlyList<TaskTokenCall> BuildReviewUsageCalls(
