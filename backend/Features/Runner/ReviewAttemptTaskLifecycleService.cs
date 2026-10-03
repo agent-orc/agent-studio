@@ -88,7 +88,8 @@ public sealed class ReviewAttemptTaskLifecycleService
         string hostId,
         string instanceId,
         int? requestedTtlSeconds,
-        IReadOnlySet<string>? capabilities = null)
+        IReadOnlySet<string>? capabilities = null,
+        IReadOnlySet<string>? heldTaskKeys = null)
     {
         lock (_gate)
         {
@@ -99,7 +100,8 @@ public sealed class ReviewAttemptTaskLifecycleService
                 hostId,
                 instanceId,
                 requestedTtlSeconds,
-                capabilities);
+                capabilities,
+                heldTaskKeys);
             AppendClaimEntry(claimed, tasks);
             return claimed;
         }

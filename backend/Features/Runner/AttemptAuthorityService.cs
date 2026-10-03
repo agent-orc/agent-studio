@@ -563,10 +563,11 @@ public sealed class AttemptAuthorityService
                     CreatedAt = now,
                 };
             }
-            else if (ReviewInfrastructureRetryPlanPolicy.RequiresRebuild(
-                         sourceReview.FailureClassification)
-                     && request.Plan is not null)
+            else if (request.Plan is not null)
             {
+                // AGT-W57: a retry carries a plan freshly built from the current
+                // project settings, whatever the failure class was. Freezing the
+                // plan per attempt kept a withdrawn review model in every retry.
                 subject = CopySubjectWithPlan(sourceReview.Subject, sealedPlan);
             }
             else
@@ -837,7 +838,8 @@ public sealed class AttemptAuthorityService
         string hostId,
         string instanceId,
         int? requestedTtlSeconds,
-        IReadOnlySet<string>? capabilities = null)
+        IReadOnlySet<string>? capabilities = null,
+        IReadOnlySet<string>? heldTaskKeys = null)
     {
         if (Blank(executorId) || Blank(hostId) || Blank(instanceId))
             return new AttemptWriteResult(
@@ -866,6 +868,9 @@ public sealed class AttemptAuthorityService
                     // out. Handing it out would burn a fenced attempt on a subject the
                     // executor provably cannot check out.
                     .Where(review => !IsUnmaterializableWithinGrace(review, now))
+                    // AGT-W57: a card parked behind an open cause breaker keeps
+                    // its pending attempt but is not handed out until released.
+                    .Where(review => heldTaskKeys is null || !heldTaskKeys.Contains(review.TaskKey))
                     .Where(review => review.Subject.Plan is null
                         || capabilities is null
                         || AgentStudio.TaskServer.Contracts.ReviewLibraryStepPolicy.Supports(
