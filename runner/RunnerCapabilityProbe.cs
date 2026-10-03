@@ -200,7 +200,8 @@ internal static class RunnerCapabilityProbe
     /// </summary>
     public static IReadOnlyList<string> ReviewRegistrationCapabilities(
         RunnerOptions options,
-        Func<string, bool>? onPath = null)
+        Func<string, bool>? onPath = null,
+        Func<string?>? composeRenderVersion = null)
         => ReviewRequirements(options)
             .Concat(new[]
             {
@@ -215,6 +216,9 @@ internal static class RunnerCapabilityProbe
                 CapabilityProtocol.ProviderAuthentication(item.CliType),
             }))
             .Concat(ReviewToolchainCapabilities(onPath ?? OnPath))
+            .Concat((composeRenderVersion ?? ComposeRenderVersion)() is not null
+                ? [CapabilityProtocol.ComposeRender]
+                : Array.Empty<string>())
             .Distinct(StringComparer.Ordinal)
             .ToArray();
 

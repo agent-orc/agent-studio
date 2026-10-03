@@ -459,10 +459,8 @@ public sealed partial class TaskServerStore
         var now = UtcNow;
         foreach (var attempt in attempts)
         {
-            if (_unclaimableReviewLoggedAt.TryGetValue(attempt.AttemptId, out var last)
-                && now - last < TimeSpan.FromHours(1))
+            if (!TryReserveUnclaimableReviewLog(attempt.AttemptId, now))
                 continue;
-            _unclaimableReviewLoggedAt[attempt.AttemptId] = now;
             _logger?.LogWarning(
                 "review-claim-unclaimable reason={Reason} attempt={AttemptId} task={TaskKey} "
                 + "executor={ExecutorId} missing={MissingCapabilities} pendingSince={PendingSince:O}",
@@ -472,6 +470,20 @@ public sealed partial class TaskServerStore
                 executorId,
                 string.Join(",", attempt.MissingCapabilities),
                 attempt.CreatedAt);
+        }
+    }
+
+    private bool TryReserveUnclaimableReviewLog(string attemptId, DateTime now)
+    {
+        while (true)
+        {
+            if (!_unclaimableReviewLoggedAt.TryGetValue(attemptId, out var last))
+            {
+                if (_unclaimableReviewLoggedAt.TryAdd(attemptId, now)) return true;
+                continue;
+            }
+            if (now - last < TimeSpan.FromHours(1)) return false;
+            if (_unclaimableReviewLoggedAt.TryUpdate(attemptId, now, last)) return true;
         }
     }
 

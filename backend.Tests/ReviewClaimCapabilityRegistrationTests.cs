@@ -116,18 +116,24 @@ public sealed class ReviewClaimCapabilityRegistrationTests : IDisposable
             .Select((tool, index) => new Contract.ReviewCommandDto(
                 $"tool-{index}", "build-tests", "sh", ["-lc", $"{tool} --version"]))
             .ToArray();
+        var render = new Contract.ReviewCommandDto(
+            "compose-render", "build-tests", "sh",
+            ["-lc", Contract.ComposeRenderGatePolicy.GuardedCommand(Contract.ComposeRenderGatePolicy.Scripts[0])]);
         var plan = Contract.ReviewLibraryStepPolicy.Seal(
-            catalogue with { Commands = [.. catalogue.Commands, .. everyTool] },
+            catalogue with { Commands = [.. catalogue.Commands, .. everyTool, render] },
             "sha-contract");
         var emitted = Contract.ReviewLibraryStepPolicy.RequiredCapabilities(plan)
             .Where(key => key.StartsWith("toolchain:", StringComparison.Ordinal))
             .ToArray();
 
-        var registered = RunnerProbe.ReviewRegistrationCapabilities(ReviewOptions(), onPath: _ => true);
+        var registered = RunnerProbe.ReviewRegistrationCapabilities(
+            ReviewOptions(), onPath: _ => true, composeRenderVersion: () => "2.40.3");
 
         Assert.Contains(Contract.CapabilityProtocol.DotNet, emitted);
         Assert.Contains(Contract.CapabilityProtocol.Node, emitted);
         Assert.Contains(Contract.CapabilityProtocol.Playwright, emitted);
+        Assert.Contains(Contract.CapabilityProtocol.ComposeRender,
+            Contract.ReviewLibraryStepPolicy.RequiredCapabilities(plan));
         Assert.Empty(emitted.Except(registered, StringComparer.Ordinal));
         Assert.True(Contract.ReviewLibraryStepPolicy.Supports(plan, registered.ToHashSet(StringComparer.Ordinal)));
     }
@@ -205,6 +211,26 @@ public sealed class ReviewClaimCapabilityRegistrationTests : IDisposable
         time.Advance(TimeSpan.FromMinutes(1));
         Assert.Equal(1, log.Record("reviewer", attempts));
         Assert.Equal([Contract.CapabilityProtocol.Node], log.Latest("review-1")!.MissingCapabilities);
+    }
+
+    [Fact]
+    public void Concurrent_unclaimable_records_log_once_per_attempt_per_interval()
+    {
+        var time = new FakeTimeProvider(new DateTimeOffset(2026, 9, 27, 15, 8, 0, TimeSpan.Zero));
+        var logs = new CapturingLoggerProvider();
+        var log = new ReviewClaimUnclaimableLog(logs.CreateLogger<ReviewClaimUnclaimableLog>(), time);
+        Contract.ReviewUnclaimableAttemptDto[] attempts =
+            [new("review-parallel", "AGT-1", time.GetUtcNow().UtcDateTime, [Contract.CapabilityProtocol.Node])];
+
+        var recorded = 0;
+        Parallel.For(0, 64, _ => Interlocked.Add(ref recorded, log.Record("reviewer", attempts)));
+        Assert.Equal(1, recorded);
+        Assert.Single(logs.Messages, message => message.Contains("review-claim-unclaimable", StringComparison.Ordinal));
+
+        time.Advance(ReviewClaimUnclaimableLog.LogInterval);
+        Parallel.For(0, 64, _ => Interlocked.Add(ref recorded, log.Record("reviewer", attempts)));
+        Assert.Equal(2, recorded);
+        Assert.Equal(2, logs.Messages.Count(message => message.Contains("review-claim-unclaimable", StringComparison.Ordinal)));
     }
 
     // ---- stagnation policy matrix -----------------------------------------

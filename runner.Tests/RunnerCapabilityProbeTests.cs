@@ -103,6 +103,12 @@ public sealed class RunnerCapabilityProbeTests
         Assert.Contains(CapabilityProtocol.DotNet, dotnetOnly);
         Assert.DoesNotContain(CapabilityProtocol.Node, dotnetOnly);
         Assert.DoesNotContain(CapabilityProtocol.Playwright, dotnetOnly);
+        Assert.Contains(CapabilityProtocol.ComposeRender,
+            RunnerCapabilityProbe.ReviewRegistrationCapabilities(
+                options, onPath: _ => false, composeRenderVersion: () => "2.40.3"));
+        Assert.DoesNotContain(CapabilityProtocol.ComposeRender,
+            RunnerCapabilityProbe.ReviewRegistrationCapabilities(
+                options, onPath: _ => false, composeRenderVersion: () => null));
         // Registration and advertisement read the same probe on this host.
         var advertisedToolchains = RunnerCapabilityProbe.Advertise(options, gitPushReady: false)
             .Select(item => item.Key)

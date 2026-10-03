@@ -90,9 +90,8 @@ public sealed class ReviewClaimUnclaimableLog
                 executorId,
                 attempt.MissingCapabilities,
                 now);
-            if (_lastLoggedAt.TryGetValue(attempt.AttemptId, out var last) && now - last < LogInterval)
+            if (!TryReserveLog(attempt.AttemptId, now))
                 continue;
-            _lastLoggedAt[attempt.AttemptId] = now;
             logged++;
             _logger.LogWarning(
                 "review-claim-unclaimable reason={Reason} attempt={AttemptId} task={TaskKey} "
@@ -107,6 +106,20 @@ public sealed class ReviewClaimUnclaimableLog
         return logged;
     }
 
+    private bool TryReserveLog(string attemptId, DateTime now)
+    {
+        while (true)
+        {
+            if (!_lastLoggedAt.TryGetValue(attemptId, out var last))
+            {
+                if (_lastLoggedAt.TryAdd(attemptId, now)) return true;
+                continue;
+            }
+            if (now - last < LogInterval) return false;
+            if (_lastLoggedAt.TryUpdate(attemptId, now, last)) return true;
+        }
+    }
+
     public ReviewUnclaimableObservation? Latest(string? attemptId)
         => attemptId is not null && _latest.TryGetValue(attemptId, out var observation)
             ? observation
@@ -117,8 +130,13 @@ public sealed class ReviewClaimUnclaimableLog
         foreach (var (attemptId, observation) in _latest)
         {
             if (now - observation.ObservedAt <= Retention) continue;
-            _latest.TryRemove(attemptId, out _);
-            _lastLoggedAt.TryRemove(attemptId, out _);
+            // Remove only the stale value we inspected. A concurrent claim may
+            // already have refreshed either dictionary for this attempt.
+            ((ICollection<KeyValuePair<string, ReviewUnclaimableObservation>>)_latest)
+                .Remove(new(attemptId, observation));
+            if (_lastLoggedAt.TryGetValue(attemptId, out var last) && now - last > Retention)
+                ((ICollection<KeyValuePair<string, DateTime>>)_lastLoggedAt)
+                    .Remove(new(attemptId, last));
         }
     }
 }

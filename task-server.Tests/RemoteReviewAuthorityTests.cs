@@ -114,6 +114,31 @@ public sealed class RemoteReviewAuthorityTests
     }
 
     [Fact]
+    public void Concurrent_unclaimable_log_calls_emit_one_warning_per_interval()
+    {
+        using var temp = new TempDirectory();
+        var logs = new CapturingStoreLogger();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 27, 15, 8, 0, TimeSpan.Zero));
+        var store = new TaskServerStore(
+            Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
+            clock,
+            new ApplicationResultFinalizationSummaryGenerator(),
+            operationalEvents: null,
+            logs);
+        var method = typeof(TaskServerStore).GetMethod(
+            "LogUnclaimableReviews", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        ReviewUnclaimableAttemptDto[] attempts =
+            [new("review-parallel", "AGT-1", clock.GetUtcNow().UtcDateTime, [CapabilityProtocol.DotNet])];
+
+        Parallel.For(0, 64, _ => method.Invoke(store, ["reviewer", attempts]));
+        Assert.Single(logs.Messages, message => message.StartsWith("review-claim-unclaimable", StringComparison.Ordinal));
+
+        clock.Advance(TimeSpan.FromHours(1));
+        Parallel.For(0, 64, _ => method.Invoke(store, ["reviewer", attempts]));
+        Assert.Equal(2, logs.Messages.Count(message => message.StartsWith("review-claim-unclaimable", StringComparison.Ordinal)));
+    }
+
+    [Fact]
     public async Task Versioned_review_retry_can_move_to_another_capable_host_without_changing_the_step()
     {
         using var temp = new TempDirectory();

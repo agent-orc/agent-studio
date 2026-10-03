@@ -22,6 +22,7 @@ The toolchain keys come from one published table,
 | `toolchain:dotnet` | `dotnet` | `dotnet` |
 | `toolchain:node` | `node`, `npm`, `npx` | `node` |
 | `toolchain:playwright` | `playwright` | `playwright` |
+| `toolchain:compose-render` | A declared Compose render script | `docker compose version` |
 
 Both Task Server implementations (the backend `V1ReviewPlaneEndpoints` claim
 and the standalone `TaskServerReviewStore.ClaimReviewAsync`) match a plan
@@ -36,8 +37,8 @@ option is **registration**:
 
 - `RunnerCapabilityProbe.ReviewRegistrationCapabilities` adds every key from
   `ToolchainRequirements` whose probe executable is on the review unit's
-  `PATH`. The advertisement uses the same table, so both report the same
-  toolchain keys for a host.
+  `PATH`, plus `toolchain:compose-render` when the Docker Compose plugin answers its
+  version probe. The advertisement uses the same probes.
 - Both server implementations already filter on registration. Changing the
   runner fixes both without a second freshness rule on the claim path. A
   claim check that reads the advertisement would go silent again whenever an
