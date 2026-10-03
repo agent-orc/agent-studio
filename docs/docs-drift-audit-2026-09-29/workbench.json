@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "docs-drift-audit-2026-09-29",
+  "title": "System and operations documentation drift audit",
+  "summary": "Code-anchored drift findings, replacement text, and a bounded set of follow-up documentation cards.",
+  "entrypoint": "index.html",
+  "status": "decision-pending",
+  "phase": "audit",
+  "updatedAt": "2026-10-03T04:20:16Z",
+  "sourceTaskKeys": [
+    "AGT-3004"
+  ],
+  "implementationTasks": []
+}
