@@ -100,6 +100,25 @@ public sealed class RepositoryAccessRenewalTests
     }
 
     [Fact]
+    public async Task Missing_retirement_authority_remains_guided_until_retry()
+    {
+        var host = new FakeHost();
+        var admin = new FakeAdmin { FailDelete = true };
+        var renewal = new RepositoryAccessRenewal(host, admin, new FakeGit(), new FakeJournal());
+
+        var first = await renewal.RotateAsync(Request(), CancellationToken.None);
+        Assert.Equal("administrator-action-required", first.Status);
+        Assert.True(first.Switched);
+        Assert.False(first.OldRetired);
+        admin.FailDelete = false;
+
+        var retry = await renewal.RotateAsync(Request(), CancellationToken.None);
+        Assert.True(retry.Completed);
+        Assert.Equal(1, admin.Created);
+        Assert.Equal(1, admin.Deleted);
+    }
+
+    [Fact]
     public async Task Cancellation_during_proof_keeps_old_generation_and_resumes()
     {
         var host = new FakeHost();
@@ -140,6 +159,7 @@ public sealed class RepositoryAccessRenewalTests
         public int Created { get; private set; }
         public int Deleted { get; private set; }
         public bool FailRegister { get; set; }
+        public bool FailDelete { get; set; }
         public Task<RegisteredRepositoryKey?> FindByFingerprintAsync(RepositoryRotationRequest request, string fingerprint, CancellationToken ct)
             => Task.FromResult<RegisteredRepositoryKey?>(Created > 0 ? new(99, fingerprint, false) : null);
         public Task<RegisteredRepositoryKey?> RegisterAsync(RepositoryRotationRequest request, RepositoryKeyCandidate candidate, CancellationToken ct)
@@ -149,7 +169,10 @@ public sealed class RepositoryAccessRenewalTests
             return Task.FromResult<RegisteredRepositoryKey?>(new(99, candidate.Fingerprint, false));
         }
         public Task DeleteAsync(RepositoryRotationRequest request, long keyId, CancellationToken ct)
-        { Deleted++; return Task.CompletedTask; }
+        {
+            if (FailDelete) throw new RepositoryAdminAuthorityException();
+            Deleted++; return Task.CompletedTask;
+        }
     }
 
     private sealed class FakeGit : IRepositoryGitProof

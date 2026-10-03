@@ -179,7 +179,13 @@ public sealed class RepositoryAccessRenewal(
         {
             await host.RetireAsync(request, ct);
             if (request.OldGitHubKeyId is long oldId)
-                await administration.DeleteAsync(request, oldId, ct);
+            {
+                try { await administration.DeleteAsync(request, oldId, ct); }
+                catch (RepositoryAdminAuthorityException)
+                {
+                    return await SaveFailure(receipt, "administrator-action-required", ct);
+                }
+            }
             receipt = receipt with { OldRetired = true, Status = "completed" };
             await journal.SaveAsync(receipt, ct);
         }

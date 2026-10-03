@@ -19,8 +19,21 @@ public sealed class ProtectedGitCredentialHost(
     Func<RepositoryHttpsRotationRequest, CancellationToken, Task<string>> activeGeneration)
     : IRepositoryHttpsCredentialHost
 {
-    public Task<string> ActiveGenerationAsync(RepositoryHttpsRotationRequest request, CancellationToken ct)
-        => activeGeneration(request, ct);
+    public async Task<string> ActiveGenerationAsync(RepositoryHttpsRotationRequest request, CancellationToken ct)
+    {
+        var marker = MarkerPath(request.Metadata.Origin);
+        if (!File.Exists(marker)) return await activeGeneration(request, ct);
+        var generation = (await File.ReadAllTextAsync(marker, ct)).Trim();
+        return generation.Length > 0 ? generation
+            : throw new InvalidOperationException("Active HTTPS credential generation marker is empty.");
+    }
+
+    private string MarkerPath(string origin)
+    {
+        var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(origin)))
+            .ToLowerInvariant()[..32];
+        return Path.Combine(protectedDirectory, "active-https-" + digest);
+    }
     private string StorePath(string operationId)
     {
         var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(operationId)))
@@ -74,8 +87,22 @@ public sealed class ProtectedGitCredentialHost(
 
     public async Task SwitchAsync(RepositoryHttpsRotationRequest request, string generation, CancellationToken ct)
     {
+        if (!OperatingSystem.IsLinux())
+            throw new PlatformNotSupportedException("Protected Git credential switching requires Linux.");
         if (generation != "https-" + request.OperationId)
             throw new InvalidOperationException("Staged credential generation mismatch.");
+        ProtectedHostPath.EnsureOutsideRepository(protectedDirectory);
+        Directory.CreateDirectory(protectedDirectory);
+        File.SetUnixFileMode(protectedDirectory,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var marker = MarkerPath(request.Metadata.Origin);
+        await using var switchLock = await HostFileOperationLock.AcquireAsync(marker + ".lock", ct);
+        if (File.Exists(marker))
+        {
+            var active = (await File.ReadAllTextAsync(marker, ct)).Trim();
+            if (active != request.ExpectedGeneration && active != generation)
+                throw new InvalidOperationException("HTTPS credential generation changed before switch.");
+        }
         var path = StorePath(request.OperationId);
         var uri = new Uri(request.Metadata.Origin);
         var pathSensitive = await ProcessRunner.RunAsync("git",
@@ -102,6 +129,14 @@ public sealed class ProtectedGitCredentialHost(
                     StringComparison.Ordinal))
                 throw new InvalidOperationException("Active Git helper did not load the verified credential.");
         }
+        var temporaryMarker = marker + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            await File.WriteAllTextAsync(temporaryMarker, generation, ct);
+            File.SetUnixFileMode(temporaryMarker, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            File.Move(temporaryMarker, marker, true);
+        }
+        finally { if (File.Exists(temporaryMarker)) File.Delete(temporaryMarker); }
     }
 
     public Task RetireAsync(RepositoryHttpsRotationRequest request, CancellationToken ct)

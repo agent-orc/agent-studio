@@ -6,6 +6,31 @@ namespace AgentRunner.Tests;
 public sealed class ProtectedGitCredentialHostTests
 {
     [Fact]
+    public async Task Stale_expected_generation_cannot_switch_over_another_https_rotation()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "repository-https-stale-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(root);
+            const string origin = "https://github.com/example/private-workspace.git";
+            var digest = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes(origin))).ToLowerInvariant()[..32];
+            await File.WriteAllTextAsync(Path.Combine(root, "active-https-" + digest), "https-other-op");
+            var host = new ProtectedGitCredentialHost(root, new FakeSession(),
+                (_, _) => Task.FromResult(true), (_, _) => Task.FromResult("old"));
+            var request = new RepositoryHttpsRotationRequest("op", "old",
+                new("fixture", "unknown", "workspace", origin, false,
+                    true, null, null, "unknown"), "old-fixture");
+
+            Assert.Equal("https-other-op", await host.ActiveGenerationAsync(request, CancellationToken.None));
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                host.SwitchAsync(request, "https-op", CancellationToken.None));
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Fact]
     [Trait("Category", "MachineBound")]
     public async Task Concurrent_retry_uses_one_redacted_staged_credential()
     {

@@ -9,11 +9,31 @@ namespace AgentRunner;
 public sealed class LocalRepositoryKeyHost(
     string protectedDirectory,
     Func<RepositoryRotationRequest, CancellationToken, Task<bool>> transportsDrained,
-    Func<RepositoryRotationRequest, CancellationToken, Task<string>> activeGeneration)
+    Func<RepositoryRotationRequest, CancellationToken, Task<string>> activeGeneration,
+    string? gitConfigPath = null,
+    string? sshConfigPath = null)
     : IRepositoryKeyHost
 {
-    public Task<string> ActiveGenerationAsync(RepositoryRotationRequest request, CancellationToken ct)
-        => activeGeneration(request, ct);
+    public async Task<string> ActiveGenerationAsync(RepositoryRotationRequest request, CancellationToken ct)
+        => await ManagedGenerationAsync(request, ct) ?? await activeGeneration(request, ct);
+
+    private async Task<string?> ManagedGenerationAsync(RepositoryRotationRequest request, CancellationToken ct)
+    {
+        var resolved = await ProcessRunner.RunAsync("git", ["ls-remote", "--get-url", request.Origin],
+            environment: gitConfigPath is null ? null : new Dictionary<string, string?> {
+                ["GIT_CONFIG_NOSYSTEM"] = "1", ["GIT_CONFIG_GLOBAL"] = gitConfigPath
+            }, ct: ct);
+        if (!resolved.Success)
+            throw new InvalidOperationException("Active repository transport could not be inspected.");
+        var url = resolved.StdOut.Trim();
+        const string prefix = "git@agent-studio-key-";
+        var suffix = $":{request.Owner}/{request.Repository}.git";
+        if (!url.StartsWith(prefix, StringComparison.Ordinal) || !url.EndsWith(suffix, StringComparison.Ordinal))
+            return null;
+        var digest = url[prefix.Length..^suffix.Length];
+        return digest.Length == 32 && digest.All(ch => ch is >= '0' and <= '9' or >= 'a' and <= 'f')
+            ? "key-" + digest : null;
+    }
     private string KeyPath(RepositoryRotationRequest request)
     {
         var name = Convert.ToHexString(SHA256.HashData(
@@ -59,14 +79,24 @@ public sealed class LocalRepositoryKeyHost(
         var expectedPath = KeyPath(request);
         if (candidate.HostLocalRef != expectedPath || !File.Exists(expectedPath))
             throw new InvalidOperationException("Candidate is not the operation-owned host key.");
+        if (candidate.Generation != "key-" + Path.GetFileName(expectedPath)[7..])
+            throw new InvalidOperationException("Candidate generation does not match the host key.");
         if (expectedPath.Any(char.IsWhiteSpace) || expectedPath.Contains('"'))
             throw new InvalidOperationException("Protected SSH key path must not contain spaces or quotes.");
+        await using var switchLock = await HostFileOperationLock.AcquireAsync(
+            Path.Combine(protectedDirectory, "repository-switch.lock"), ct);
+        var managedGeneration = await ManagedGenerationAsync(request, ct);
+        if (managedGeneration is not null
+            && managedGeneration != request.ExpectedGeneration
+            && managedGeneration != candidate.Generation)
+            throw new InvalidOperationException("Repository transport generation changed before switch.");
         var alias = "agent-studio-key-" + Path.GetFileName(expectedPath)[7..];
-        var sshDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh");
+        var configPath = sshConfigPath ?? Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh", "config");
+        var sshDirectory = Path.GetDirectoryName(configPath)!;
         Directory.CreateDirectory(sshDirectory);
         File.SetUnixFileMode(sshDirectory,
             UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        var configPath = Path.Combine(sshDirectory, "config");
         var existing = File.Exists(configPath) ? await File.ReadAllTextAsync(configPath, ct) : "";
         var marker = "# agent-studio-repository-key " + alias;
         var block = $"{marker}\nHost {alias}\n  HostName github.com\n  User git\n"
@@ -82,16 +112,92 @@ public sealed class LocalRepositoryKeyHost(
             }
             finally { if (File.Exists(temporary)) File.Delete(temporary); }
         }
-        var from = $"https://github.com/{request.Owner}/{request.Repository}.git";
         var to = $"git@{alias}:{request.Owner}/{request.Repository}.git";
-        var rewrite = await ProcessRunner.RunAsync("git",
-            ["config", "--global", "--replace-all", $"url.{to}.insteadOf", from], ct: ct);
-        if (!rewrite.Success)
-            throw new InvalidOperationException("Exact repository transport rewrite failed.");
-        var shortForm = await ProcessRunner.RunAsync("git",
-            ["config", "--global", "--add", $"url.{to}.insteadOf", from[..^4]], ct: ct);
-        if (!shortForm.Success)
-            throw new InvalidOperationException("Second repository URL form could not be configured.");
+        var origins = new[] {
+            $"https://github.com/{request.Owner}/{request.Repository}.git",
+            $"https://github.com/{request.Owner}/{request.Repository}",
+            $"git@github.com:{request.Owner}/{request.Repository}.git",
+            $"git@github.com:{request.Owner}/{request.Repository}"
+        };
+        var globalConfig = gitConfigPath ?? Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".gitconfig");
+        if (gitConfigPath is null)
+        {
+            var globalEntries = await ProcessRunner.RunAsync("git",
+                ["config", "--global", "--show-origin", "--get-regexp", "^url\\..*\\.insteadof$"], ct: ct);
+            if (globalEntries.ExitCode is not (0 or 1))
+                throw new InvalidOperationException("Global repository rewrites could not be inspected.");
+            foreach (var line in globalEntries.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var parts = line.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length == 3 && origins.Contains(parts[2], StringComparer.Ordinal)
+                    && parts[0] != "file:" + globalConfig)
+                    throw new InvalidOperationException(
+                        "An exact repository rewrite in another Git configuration file requires guided removal.");
+            }
+        }
+        var stagedConfig = globalConfig + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        var backupConfig = globalConfig + "." + Guid.NewGuid().ToString("N") + ".bak";
+        var hadConfig = File.Exists(globalConfig);
+        try
+        {
+            if (File.Exists(globalConfig)) File.Copy(globalConfig, stagedConfig);
+            else await File.WriteAllTextAsync(stagedConfig, string.Empty, ct);
+            File.SetUnixFileMode(stagedConfig, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            var entries = await ProcessRunner.RunAsync("git",
+                ["config", "--file", stagedConfig, "--get-regexp", "^url\\..*\\.insteadof$"], ct: ct);
+            if (entries.ExitCode is not (0 or 1))
+                throw new InvalidOperationException("Existing repository rewrites could not be read.");
+            foreach (var line in entries.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var separator = line.IndexOf(' ');
+                if (separator < 0 || !origins.Contains(line[(separator + 1)..], StringComparer.Ordinal)) continue;
+                var removed = await ProcessRunner.RunAsync("git",
+                    ["config", "--file", stagedConfig, "--fixed-value", "--unset-all",
+                        line[..separator], line[(separator + 1)..]], ct: ct);
+                if (!removed.Success)
+                    throw new InvalidOperationException("Old repository transport rewrite could not be removed.");
+            }
+            foreach (var origin in origins)
+            {
+                var added = await ProcessRunner.RunAsync("git",
+                    ["config", "--file", stagedConfig, "--add", $"url.{to}.insteadOf", origin], ct: ct);
+                if (!added.Success)
+                    throw new InvalidOperationException("Exact repository transport rewrite failed.");
+            }
+            foreach (var origin in origins)
+            {
+                var resolved = await ProcessRunner.RunAsync("git", ["ls-remote", "--get-url", origin],
+                    environment: new Dictionary<string, string?> {
+                        ["GIT_CONFIG_NOSYSTEM"] = "1", ["GIT_CONFIG_GLOBAL"] = stagedConfig
+                    }, ct: ct);
+                if (!resolved.Success || resolved.StdOut.Trim() != to)
+                    throw new InvalidOperationException("New repository transport rewrite could not be verified.");
+            }
+            if (hadConfig) File.Copy(globalConfig, backupConfig);
+            File.Move(stagedConfig, globalConfig, true);
+            try
+            {
+                var resolved = await ProcessRunner.RunAsync("git",
+                    ["ls-remote", "--get-url", request.Origin],
+                    environment: gitConfigPath is null ? null : new Dictionary<string, string?> {
+                        ["GIT_CONFIG_NOSYSTEM"] = "1", ["GIT_CONFIG_GLOBAL"] = globalConfig
+                    }, ct: ct);
+                if (!resolved.Success || resolved.StdOut.Trim() != to)
+                    throw new InvalidOperationException("Registered origin did not switch to the new key.");
+            }
+            catch
+            {
+                if (hadConfig) File.Move(backupConfig, globalConfig, true);
+                else File.Delete(globalConfig);
+                throw;
+            }
+        }
+        finally
+        {
+            if (File.Exists(stagedConfig)) File.Delete(stagedConfig);
+            if (File.Exists(backupConfig)) File.Delete(backupConfig);
+        }
     }
 
     public Task RetireAsync(RepositoryRotationRequest request, CancellationToken ct)
@@ -184,12 +290,14 @@ public sealed class GitHubDeployKeyAdministration : IRepositoryKeyAdministration
     public async Task DeleteAsync(RepositoryRotationRequest request, long keyId, CancellationToken ct)
     {
         using var response = await _session.DeleteAsync(PathFor(request) + "/" + keyId, ct);
+        if (response.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.Unauthorized)
+            throw new RepositoryAdminAuthorityException();
         if (response.StatusCode != HttpStatusCode.NotFound) response.EnsureSuccessStatusCode();
     }
 }
 
 public sealed class RepositoryAdminAuthorityException()
-    : Exception("Repository administrator authorization is required for deploy-key registration.");
+    : Exception("Protected repository administrator session is required for deploy-key administration.");
 
 /// <summary>Durable host-local receipt, without a private key or administration bearer.</summary>
 public sealed class FileRepositoryRotationJournal(string protectedDirectory) : IRepositoryRotationJournal
