@@ -233,6 +233,16 @@ test('the Dossier keeps the develop-side AGT-2942 log after the 1 October merge'
   assert.equal((decisions.match(/data-decision-id="D\d"/g) ?? []).length, 8);
 });
 
+test('I10 and the navigation record describe the publication as delivered', () => {
+  const html = read(canonicalEntry);
+  const item = between(html, '<tr id="I10">', '</tr>');
+  assert.match(item, /Published at <code>docs\/operations\/deployment-story\/index\.html<\/code>/);
+  assert.doesNotMatch(item, /requested North star entry|separately scoped publication step/);
+  const navigation = read(join(canonicalDir, 'navigation-integration.md'));
+  assert.match(navigation, /Status: I10 publication is present in this delivery branch/);
+  assert.match(navigation, /POST \/api\/tasks\/AGT-2906\/concept-dossier\?project=PROJ-002/);
+});
+
 // Every implementation card appends its entry just before the end marker. The
 // AGT-2951 entries once sat there too, so each such card that landed first
 // left this move with a merge-into-develop conflict (29 September, 1 and 3

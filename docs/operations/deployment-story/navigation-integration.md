@@ -1,6 +1,6 @@
 # Navigation integration for AGT-2906
 
-Status: I10 publication change prepared on 26 September 2026 in the task worktree. Managed-repository integration and the AGT-2906 reference update follow this delivery. The concept-only run was restricted to one Dossier directory.
+Status: I10 publication is present in this delivery branch. Managed-repository integration and the AGT-2906 reference update follow delivery. The concept-only run was restricted to one Dossier directory.
 
 ## North star map
 
