@@ -192,6 +192,7 @@
         "src/app/components/tag-filters/tag-filters.component.scss",
         "src/app/components/tag-proposals/tag-proposals.component.scss",
         "src/app/features/project-detail/components/project-wiki-section/area-glossary/area-glossary.component.scss",
+        "src/app/features/usage-cockpit/**/*.scss",
         "src/app/components/async-feedback/loading-surface/loading-surface.component.scss",
         "src/app/components/cli-model-selector/cli-model-selector.component.scss",
         "src/app/components/model-level-indicator/model-level-indicator.component.scss",

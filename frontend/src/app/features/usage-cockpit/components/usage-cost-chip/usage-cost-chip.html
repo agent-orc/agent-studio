@@ -1,0 +1,30 @@
+@let v = view();
+<button type="button"
+        class="usage-cost-chip"
+        data-testid="usage-cost-chip"
+        [attr.data-state]="v.state"
+        aria-haspopup="dialog"
+        [attr.aria-expanded]="expanded()"
+        [attr.aria-controls]="controls()"
+        [attr.aria-label]="v.ariaLabel"
+        [cacTooltip]="v.detail"
+        (click)="activate.emit()">
+  <span class="usage-cost-chip__body">
+    <span class="usage-cost-chip__label">Today</span>
+    @if (v.state === 'loading') {
+      <span class="usage-cost-chip__placeholder" aria-hidden="true"></span>
+    } @else {
+      <span class="usage-cost-chip__value"
+            [class.usage-cost-chip__value--muted]="v.state !== 'normal' && v.state !== 'partial'"
+            data-testid="usage-cost-chip-value">{{ v.value }}</span>
+      @if (v.exact) {
+        <span class="usage-cost-chip__unit">USD</span>
+      }
+    }
+    @if (v.state === 'stale') {
+      <span class="usage-cost-chip__mark" aria-hidden="true"><app-studio-icon name="clock" [size]="14" /></span>
+    } @else if (v.state === 'suspicious' || v.state === 'partial') {
+      <span class="usage-cost-chip__mark" aria-hidden="true"><app-studio-icon name="help" [size]="14" /></span>
+    }
+  </span>
+</button>

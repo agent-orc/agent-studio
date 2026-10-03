@@ -50,6 +50,27 @@ public sealed class WikiTaskCrossReferenceServiceTests : IDisposable
         Assert.Equal(2, sidecar.RootElement.GetProperty("relatedTasks").GetArrayLength());
     }
 
+    [Fact]
+    public void LinkAuto_SweepLinksPagesNamingTheTask_AndSkipsOversizedPages()
+    {
+        // AGT-2991: the docs/ sweep reads each page to look for the task key;
+        // a page past the text cap is skipped instead of loaded whole.
+        PreparePage("docs/concepts/mentions.md", "# Mentions\nDelivered by AGT-2053.\n");
+        var huge = PreparePage("docs/concepts/huge.md", "# Huge\nAGT-2053\n");
+        using (var writer = new StreamWriter(huge, append: true))
+        {
+            var filler = new string('x', 1023);
+            for (var i = 0; i < 5 * 1024; i++) writer.WriteLine(filler);
+        }
+        var task = PrepareTask();
+        var runner = new WikiTaskCrossReferenceService(NullLogger<WikiTaskCrossReferenceService>.Instance);
+
+        Assert.Equal(1, runner.LinkAuto(_root, task, []));
+
+        var linked = Assert.Single(ReadTaskPages());
+        Assert.EndsWith("concepts/mentions.md", linked.RelPath);
+    }
+
     private TaskInfo PrepareTask()
     {
         var folder = Path.Combine(_root, "task");

@@ -32,15 +32,18 @@ public sealed class ClaudeModelDiscovery
 
     private readonly ILogger<ClaudeModelDiscovery> _logger;
     private readonly IConfiguration _config;
+    private readonly CliVersionTracker? _versionTracker;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     private CliModelCatalog? _memCache;
     private DateTime _memCacheAt = DateTime.MinValue;
 
-    public ClaudeModelDiscovery(ILogger<ClaudeModelDiscovery> logger, IConfiguration config)
+    public ClaudeModelDiscovery(ILogger<ClaudeModelDiscovery> logger, IConfiguration config,
+        CliVersionTracker? versionTracker = null)
     {
         _logger = logger;
         _config = config;
+        _versionTracker = versionTracker;
     }
 
     private string CachePath
@@ -113,8 +116,9 @@ public sealed class ClaudeModelDiscovery
     /// registry-fallback catalogue still publishes a (conservative) available set
     /// rather than leaving a stale detection behind.
     /// </summary>
-    private static CliModelCatalog Publish(CliModelCatalog cat)
+    private CliModelCatalog Publish(CliModelCatalog cat)
     {
+        cat = cat with { Models = Reconcile(cat.Models, _versionTracker?.CurrentVersion(CliTypes.Claude)) };
         ModelMetadataRegistry.SetDetectedVendorAvailability(
             "anthropic", cat.Models.Where(m => m.Available).Select(m => m.Id));
         return cat;
@@ -229,14 +233,30 @@ public sealed class ClaudeModelDiscovery
         var model = metadata != null
             ? ModelMetadataRegistry.ToCliModelInfo(metadata, CliTypes.Claude)
             : ModelMetadataRegistry.UnknownCliModel(id, normalizedLabel, "anthropic", CliTypes.Claude);
-        result.Add(model with { IsDefault = isCurrent });
+        result.Add(model with { IsDefault = isCurrent, Available = true });
     }
 
-    public static List<CliModelInfo> Reconcile(IReadOnlyList<CliModelInfo> discovered)
+    public static List<CliModelInfo> Reconcile(IReadOnlyList<CliModelInfo> discovered,
+        string? cliVersion = null)
     {
-        var currentId = discovered.FirstOrDefault(m => m.Available && m.IsDefault)?.Id;
-        var live = discovered
-            .Where(m => m.Available)
+        cliVersion = SemanticCliVersion.FromCliOutput(cliVersion);
+        var eligible = discovered.Select(model =>
+        {
+            var minimum = ModelMetadataRegistry.Find(model.Id)?.MinimumCliVersion;
+            return !string.IsNullOrWhiteSpace(minimum)
+                   && SemanticCliVersion.TryCompare(cliVersion, minimum, out var comparison)
+                   && comparison < 0
+                ? model with
+                {
+                    Available = false,
+                    IsDefault = false,
+                    AvailabilityNote = ModelMetadataRegistry.UnavailableOnInstalledCliNote(
+                        "claude-code", cliVersion, model.Id)
+                }
+                : model;
+        }).ToList();
+        var currentId = eligible.FirstOrDefault(m => m.Available && m.IsDefault)?.Id;
+        var live = eligible
             .Select(m => m with { IsDefault = false })
             .ToList();
 
@@ -246,7 +266,14 @@ public sealed class ClaudeModelDiscovery
             live,
             vendor: "anthropic",
             cliType: CliTypes.Claude,
-            availabilityNote: "Known in registry but not reported by the installed Claude CLI.");
+            availabilityNote: ModelMetadataRegistry.UnavailableOnInstalledCliNote(
+                "claude-code", cliVersion));
+
+        result = result.Select(model => model.Available ? model : model with
+        {
+            AvailabilityNote = ModelMetadataRegistry.UnavailableOnInstalledCliNote(
+                "claude-code", cliVersion, model.Id)
+        }).ToList();
 
         MarkDefault(result, currentId);
         return result;
