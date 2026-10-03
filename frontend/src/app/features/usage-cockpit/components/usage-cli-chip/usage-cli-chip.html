@@ -1,8 +1,11 @@
 @let v = view();
 <button type="button"
         class="usage-cli-chip"
+        [class.usage-cli-chip--warning]="v.alarm === 'warning'"
+        [class.usage-cli-chip--limited]="v.alarm === 'limited'"
         [attr.data-testid]="'usage-cli-chip-' + v.cliId"
         [attr.data-state]="v.state"
+        [attr.data-alarm]="v.alarm"
         aria-haspopup="dialog"
         [attr.aria-expanded]="expanded()"
         [attr.aria-controls]="controls()"
@@ -16,7 +19,7 @@
     } @else if (v.state === 'unknown') {
       <span class="usage-cli-chip__value usage-cli-chip__value--muted" data-testid="usage-cli-chip-unavailable">{{ v.stateLabel }}</span>
     } @else {
-      @for (w of [v.weekly, v.session]; track w.kind) {
+      @for (w of compact() ? [v.weekly] : [v.weekly, v.session]; track w.kind) {
         <span class="usage-cli-chip__window" [attr.data-window]="w.kind">
           <span class="usage-cli-chip__tag">{{ w.tag }}</span>
           <span class="usage-cli-chip__value"
@@ -25,10 +28,20 @@
         </span>
       }
     }
-    @if (v.state === 'stale') {
+    @if (v.alarmLabel && !compact()) {
+      <span class="usage-cli-chip__alarm" data-testid="usage-cli-chip-alarm-label">{{ v.alarmLabel }}</span>
+    } @else if (v.alarm) {
+      <span class="usage-cli-chip__mark usage-cli-chip__mark--alarm" data-testid="usage-cli-chip-alarm-mark" aria-hidden="true"><app-studio-icon name="warn" [size]="14" /></span>
+    } @else if (v.state === 'stale') {
       <span class="usage-cli-chip__mark" aria-hidden="true"><app-studio-icon name="clock" [size]="14" /></span>
     } @else if (v.state === 'suspicious') {
       <span class="usage-cli-chip__mark" aria-hidden="true"><app-studio-icon name="help" [size]="14" /></span>
+    }
+    @if (v.hiddenAlarm) {
+      <span class="usage-cli-chip__hidden"
+            [attr.data-severity]="v.hiddenAlarm"
+            data-testid="usage-hidden-alarm"
+            aria-hidden="true"><app-studio-icon name="warn" [size]="14" /></span>
     }
   </span>
 </button>

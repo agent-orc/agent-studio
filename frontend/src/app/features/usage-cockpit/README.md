@@ -2,9 +2,8 @@
 
 Header usage cockpit chips from the Dossier
 [docs/header-usage-cockpit/index.html](../../../../../docs/header-usage-cockpit/index.html)
-(AGT-2913). This folder holds slice HUC-S2: the shared chip components. The
-detail popover and sheet (HUC-S3), header integration (HUC-S4) and alarm
-states (HUC-S5) are separate slices.
+(AGT-2913). This folder holds the shared chips (HUC-S2) and usage alarm
+transitions (HUC-S5). Detail and header integration belong to HUC-S3/S4.
 
 ## Public API
 
@@ -17,6 +16,13 @@ Imports via `from './features/usage-cockpit'`. See [`index.ts`](./index.ts).
   estimate in the workspace-local day, for example `Today $12.48 USD`.
 - `UsageSlotChipComponent` (`app-usage-slot-chip`): remote, review and auto
   slot pools. Expanded usage view only; never in the header strip.
+- `UsageAlarmStatusComponent` (`app-usage-alarm-status`): a polite status region
+  to mount once beside the strip.
+- `UsageAlarmStateService`: the host calls `ingest(snapshot)` on each cockpit
+  snapshot, then passes `alarmsFor('cli:<id>')`, `alarmsFor('cost')`, and
+  `hiddenAlarms(visibleCliIds)` into the chips. Pass hidden alarms only to the
+  primary chip.
+- `usage-alarm.policy.ts`: pure alarm evaluation and transition reducer.
 - `usage-chip.util.ts`: pure view models, formatting and state rules.
 - `models/usage-cockpit.model.ts`: wire types of `GET /api/usage/cockpit`.
 
@@ -30,10 +36,9 @@ Imports via `from './features/usage-cockpit'`. See [`index.ts`](./index.ts).
   accessible name and the tooltip carry the exact amount.
 - `5H` appears only when the provider reports a five-hour window; otherwise
   the tag is `Session`.
-- States in this slice: normal, loading, unknown, stale, suspicious and
-  (cost only) partial coverage. Each state changes the accessible name and
-  shows a clock or question mark; values are muted, never recoloured as
-  alarms. Quota warning, provider limited and budget crossed are HUC-S5.
+- Base data states are normal, loading, unknown, stale, suspicious and
+  (cost only) partial coverage. Each changes the accessible name; stale and
+  suspicious values are muted and use a clock or question mark.
 - Staleness is measured against the host's `now` input; without it each chip
   follows its own 30-second clock (`usage-clock.ts`), so a snapshot that ages
   past its TTL turns stale on screen without a new projection.
@@ -41,9 +46,36 @@ Imports via `from './features/usage-cockpit'`. See [`index.ts`](./index.ts).
 - Chips emit `activate`; the host owns the dialog or pool region and
   passes `expanded` and `controls` back.
 
+## Alarm rules (HUC-S5)
+
+- Precedence is explicit provider limit, then confirmed quota or budget
+  overrun, then suspicious, stale, loading/unavailable and normal. Simultaneous
+  causes remain in the accessible name and detail.
+- A fresh, complete weekly or session quota above 80% warns. Exactly 80% is
+  headroom; values above 100% retain their reported value. A provider limit
+  warns at any percentage and stays latched until trusted recovery.
+- Cost warns only when a known daily or weekly USD total strictly exceeds an
+  optional configured budget from the projection. Equality stays quiet and
+  absent budgets create no limit. The current projection may omit budgets.
+  Partial totals can confirm an overrun but cannot establish safety.
+- Stale, suspicious, partial or unreadable samples do not clear an alarm.
+  A quota window clears only when that same window has a trusted numeric
+  reading; an omitted window cannot clear a latched warning.
+  Quota and budget alarms expire quietly at their reset or local period end.
+  New alarms and limit recovery are announced once per source/window/cycle;
+  ordinary numeric refreshes and resolved history stay quiet.
+- A full-surface semantic tint accompanies a warning mark or the word
+  `Limited`. On a compact phone chip, only weekly quota is numeric; alarms
+  on hidden CLIs add one nonnumeric mark and a spoken explanation to the
+  primary chip. No alarm changes routing or model pins.
+
 ## Evidence
 
 The standalone `usage-chips-mockup` app (`src/mockups/usage-chips/`) mounts
 the real components with fixtures. `e2e/mockups/usage-chips.spec.ts` checks
 geometry, accessible names, focus and state labels in both themes and writes
 screenshots. Build first with `npm run build:mockup:usage`.
+`?view=alarms` mounts the HUC-S5 gallery. `e2e/mockups/usage-alarms.spec.ts`
+checks warning boundaries, limit precedence, data quality states, polite
+announcements and a hidden-provider phone alarm in both themes. Its screenshots
+and contrast JSON are written under `JOB_RESULTS_DIR/usage-alarms`.
