@@ -1,10 +1,14 @@
 import importlib.util
 import contextlib
+import io
+import json
 import pathlib
 import stat
+import sys
 import tempfile
 import unittest
 import urllib.error
+from unittest import mock
 
 
 SCRIPT = pathlib.Path(__file__).resolve().parents[1] / "install-principal-rotation.py"
@@ -14,6 +18,84 @@ SPEC.loader.exec_module(MODULE)
 
 
 class PrincipalRotationInstallerTests(unittest.TestCase):
+    def test_group_readable_existing_file_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "runner.token"
+            path.write_text("old-bearer\n", encoding="ascii")
+            path.chmod(0o640)
+            with self.assertRaises(ValueError):
+                MODULE.install(str(path), "new-bearer")
+            self.assertEqual("old-bearer\n", path.read_text(encoding="ascii"))
+
+    def test_resume_after_backup_before_replacement_uses_protected_stage(self):
+        self._exercise_interrupted_main("replace")
+
+    def test_resume_after_delivery_before_ack_uses_installed_bearer(self):
+        self._exercise_interrupted_main("ack")
+
+    def test_resume_after_ack_before_old_bearer_check_finishes(self):
+        self._exercise_interrupted_main("after_ack")
+
+    def _exercise_interrupted_main(self, interruption):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "runner.token"
+            path.write_text("old-bearer\n", encoding="ascii")
+            path.chmod(0o600)
+            bearer = "ats_0123456789abcdef0123456789abcdef." + "a" * 64
+            receipt = {
+                "operationId": "rotation-1", "credentialGeneration": "0123456789abcdef0123456789abcdef",
+                "state": "issued", "consumers": [{"consumerId": "runner-a", "requiredScope": "tasks:read"}],
+            }
+            argv = ["installer", "--server", "https://task-server.example", "--operation-id", "rotation-1",
+                    "--consumer-id", "runner-a", "--token-file", str(path)]
+            issued = json.dumps({"rotation": receipt, "credential": bearer})
+            original_install = MODULE.install
+            calls = []
+            failed = [False]
+
+            def install(target, value):
+                if interruption == "replace" and target == str(path) and value == bearer and not failed[0]:
+                    failed[0] = True
+                    raise OSError("simulated process interruption")
+                original_install(target, value)
+
+            def call(server, route, credential, consumer, method="POST", body=None):
+                self.assertEqual(bearer, credential)
+                calls.append(route)
+                if method == "GET":
+                    return receipt
+                if route.endswith("/ack"):
+                    if interruption == "ack" and not failed[0]:
+                        failed[0] = True
+                        raise OSError("simulated process interruption")
+                    return {"state": "retired", "acknowledgedConsumers": ["runner-a"]}
+                return {"state": "delivered"}
+
+            def check_old(server, operation, previous, consumer):
+                if interruption == "after_ack" and not failed[0]:
+                    failed[0] = True
+                    raise OSError("simulated process interruption")
+                return True
+
+            with mock.patch.object(sys, "argv", argv), mock.patch.object(sys, "stdin", io.StringIO(issued)), \
+                    mock.patch.object(MODULE, "install", side_effect=install), mock.patch.object(MODULE, "call", side_effect=call), \
+                    mock.patch.object(MODULE, "old_bearer_rejected", side_effect=check_old):
+                with self.assertRaises(OSError):
+                    MODULE.main()
+                self.assertTrue(failed[0])
+                if interruption == "replace":
+                    pending = pathlib.Path(str(path) + ".rotation-rotation-1.pending")
+                    self.assertEqual(bearer, MODULE.read_installed(str(pending))[0])
+                    self.assertEqual(0o600, stat.S_IMODE(pending.stat().st_mode))
+                    self.assertEqual("old-bearer", MODULE.read_installed(str(path))[0])
+                with mock.patch.object(sys, "argv", argv + ["--resume"]):
+                    MODULE.main()
+
+            self.assertEqual(bearer, MODULE.read_installed(str(path))[0])
+            self.assertFalse(pathlib.Path(str(path) + ".rotation-rotation-1.previous").exists())
+            self.assertFalse(pathlib.Path(str(path) + ".rotation-rotation-1.pending").exists())
+            self.assertIn("/api/v1/principal-rotations/rotation-1/ack", calls)
+
     def test_atomic_install_preserves_restricted_mode_and_replaces_old_bearer(self):
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory) / "runner.token"
