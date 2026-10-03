@@ -1344,6 +1344,11 @@ every byte of it is a byte the client already holds.
   `?includeLegacyReviewLane=false` and receives the key as an empty array
   instead of the duplicate, which is what the Angular board does. Omitting the
   parameter keeps the pre-ADR-0025 contract unchanged.
+- **Task navigation does not re-read the board.** Selection reuses the
+  resident grouped snapshot and reads only the bounded task core; this route
+  stays reserved for mutations, push convergence, reconnect and the conditional
+  heartbeat. The client contract is in
+  [Task core cache and board reuse](frontend.md#task-core-cache-and-board-reuse-agt-2956).
 
 ## Project Git inventory contract
 
