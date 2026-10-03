@@ -33,7 +33,7 @@ public sealed class PrincipalRotationStoreTests
         Assert.DoesNotContain(first.Credential!, Encoding.UTF8.GetString(
             await File.ReadAllBytesAsync(Path.Combine(temp.Path, "task-server.db"))), StringComparison.Ordinal);
         var actor = await reopened.AuthenticatePrincipalAsync(first.Credential!, default);
-        await reopened.MarkPrincipalRotationDeliveredAsync(request.OperationId!, actor!, default);
+        await reopened.MarkPrincipalRotationDeliveredAsync(request.OperationId!, actor!, null, null, default);
         Assert.Null((await reopened.RotatePrincipalAsync("engine", request, "studio", default)).Credential);
     }
 
@@ -65,7 +65,7 @@ public sealed class PrincipalRotationStoreTests
         Assert.Equal(first.Credential, retry.Credential);
         Assert.Equal(first.Rotation!.CredentialGeneration, retry.Rotation!.CredentialGeneration);
         var actor = await reopened.AuthenticatePrincipalAsync(first.Credential!, default);
-        await reopened.MarkPrincipalRotationDeliveredAsync(request.OperationId!, actor!, default);
+        await reopened.MarkPrincipalRotationDeliveredAsync(request.OperationId!, actor!, null, null, default);
         var afterDelivery = await reopened.RotatePrincipalAsync("engine-a", request, "studio-a", default);
         Assert.Null(afterDelivery.Credential);
         clock.Advance(TimeSpan.FromSeconds(61));

@@ -45,6 +45,14 @@ def read_installed(path):
     return value, info
 
 
+def read_proof(path, consumer):
+    value, _ = read_installed(path)
+    parts = value.splitlines()
+    if len(parts) != 2 or parts[0] != consumer or not re.fullmatch(r"[0-9a-f]{64}", parts[1]):
+        raise ValueError("The protected consumer proof does not match this consumer.")
+    return parts[1]
+
+
 def install(path, bearer):
     existing = None
     try:
@@ -82,18 +90,21 @@ def require_installable(issued_receipt, current_receipt):
         raise RuntimeError("The rotation generation is no longer installable.")
 
 
-def call(server, path, bearer, consumer, method="POST", body=None):
+def call(server, path, bearer, consumer, method="POST", body=None, proof=None):
     data = json.dumps(body).encode("utf-8") if body is not None else (b"" if method == "POST" else None)
+    headers = {
+        "Authorization": "Bearer " + bearer,
+        "X-Task-Protocol-Version": "2",
+        "X-Principal-Consumer-Id": consumer,
+        "Content-Type": "application/json",
+    }
+    if proof:
+        headers["X-Principal-Consumer-Proof"] = proof
     request = urllib.request.Request(
         server + path,
         data=data,
         method=method,
-        headers={
-            "Authorization": "Bearer " + bearer,
-            "X-Task-Protocol-Version": "2",
-            "X-Principal-Consumer-Id": consumer,
-            "Content-Type": "application/json",
-        },
+        headers=headers,
     )
     try:
         with OPENER.open(request, timeout=20) as response:
@@ -156,24 +167,37 @@ def main():
     server = args.server.rstrip("/")
     backup = args.token_file + ".rotation-" + args.operation_id + ".previous"
     pending = args.token_file + ".rotation-" + args.operation_id + ".pending"
+    proof_file = args.token_file + ".consumer-proof"
+    pending_proof = pending + ".proof"
     if args.resume:
         try:
             bearer, _ = read_installed(pending)
         except FileNotFoundError:
             bearer, _ = read_installed(args.token_file)
+        try:
+            proof_value = read_proof(pending_proof, args.consumer_id)
+        except FileNotFoundError:
+            try:
+                proof_value = read_proof(proof_file, args.consumer_id)
+            except FileNotFoundError:
+                proof_value = None
     else:
         issued = json.load(sys.stdin)
         receipt = issued.get("rotation") or {}
         bearer = issued.get("credential")
+        proof_value = issued.get("consumerProof")
         if receipt.get("operationId") != args.operation_id or not isinstance(bearer, str):
             raise ValueError("The one-time response does not match the requested operation.")
         if not any(item.get("consumerId") == args.consumer_id for item in receipt.get("consumers", [])):
             raise ValueError("The consumer is not declared in the rotation receipt.")
+        if len(receipt.get("consumers", [])) > 1 and (not isinstance(proof_value, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", proof_value)):
+            raise ValueError("A shared principal requires this consumer's delivery proof.")
         if not bearer.startswith("ats_") or bearer.split(".", 1)[0][4:] != receipt.get("credentialGeneration"):
             raise ValueError("The bearer generation does not match the receipt.")
         current = call(server, "/api/v1/principal-rotations/" +
                        urllib.parse.quote(args.operation_id, safe=""),
-                       bearer, args.consumer_id, method="GET")
+                       bearer, args.consumer_id, method="GET", proof=proof_value)
         require_installable(receipt, current)
         try:
             staged, _ = read_installed(pending)
@@ -183,13 +207,15 @@ def main():
             # Persist before touching the live file so --resume survives a crash
             # between backup and replacement without another issuance.
             install(pending, bearer)
+        if proof_value:
+            install(pending_proof, args.consumer_id + "\n" + proof_value)
     installed, _ = read_installed(args.token_file)
     if installed != bearer:
         if not os.path.exists(pending):
             raise ValueError("The installed generation is old and no protected pending bearer exists.")
         current = call(server, "/api/v1/principal-rotations/" +
                        urllib.parse.quote(args.operation_id, safe=""),
-                       bearer, args.consumer_id, method="GET")
+                       bearer, args.consumer_id, method="GET", proof=proof_value)
         if current.get("state") not in ("issued", "delivered", "awaiting-consumers"):
             raise RuntimeError("The rotation generation is no longer installable.")
         if os.path.exists(backup):
@@ -199,13 +225,20 @@ def main():
         else:
             install(backup, installed)
         install(args.token_file, bearer)
+    if proof_value:
+        install(proof_file, args.consumer_id + "\n" + proof_value)
+    elif os.path.exists(proof_file):
+        os.unlink(proof_file)
     if os.path.exists(pending):
         os.unlink(pending)
+    if os.path.exists(pending_proof):
+        os.unlink(pending_proof)
     operation = urllib.parse.quote(args.operation_id, safe="")
-    call(server, f"/api/v1/principal-rotations/{operation}/delivered", bearer, args.consumer_id)
+    call(server, f"/api/v1/principal-rotations/{operation}/delivered", bearer, args.consumer_id,
+         proof=proof_value)
     result = wait_for_ack(
         lambda: call(server, f"/api/v1/principal-rotations/{operation}/ack", bearer,
-                     args.consumer_id, body={"consumerId": args.consumer_id}),
+                     args.consumer_id, body={"consumerId": args.consumer_id}, proof=proof_value),
         args.wait_seconds)
     if args.consumer_id not in result.get("acknowledgedConsumers", []):
         raise RuntimeError("Task Server did not acknowledge this consumer.")

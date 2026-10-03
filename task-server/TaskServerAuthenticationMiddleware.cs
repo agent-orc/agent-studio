@@ -71,6 +71,7 @@ public sealed class TaskServerAuthenticationMiddleware(
             {
                 await store.RecordPrincipalScopeProofAsync(principal, requiredScope.Scope,
                     context.Request.Headers["X-Principal-Consumer-Id"].FirstOrDefault(),
+                    context.Request.Headers["X-Principal-Consumer-Proof"].FirstOrDefault(),
                     context.RequestAborted);
             }
             catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)

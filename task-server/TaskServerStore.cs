@@ -38,8 +38,8 @@ public sealed partial class TaskServerStore
     // provider capability observation fields.
     // The migration block is idempotent; the number guards downgrades from
     // binaries that do not know this state.
-    // 26 adds durable principal rotation receipts and scoped proof observations.
-    public const int CurrentSchemaVersion = 26;
+    // 27 adds authenticated per-consumer rotation delivery.
+    public const int CurrentSchemaVersion = 27;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -3998,6 +3998,7 @@ public sealed partial class TaskServerStore
                 issued_at TEXT NOT NULL,
                 deadline_at TEXT NOT NULL,
                 delivered_at TEXT,
+                delivered_consumers_json TEXT NOT NULL DEFAULT '[]',
                 retired_at TEXT,
                 recovery_closed_at TEXT,
                 revoked_at TEXT
@@ -4018,6 +4019,13 @@ public sealed partial class TaskServerStore
         await EnsureColumnAsync(connection, "principal_rotations", "acknowledged_at_json", "TEXT NOT NULL DEFAULT '{}'", ct);
         await EnsureColumnAsync(connection, "principal_rotations", "actor_id", "TEXT NOT NULL DEFAULT ''", ct);
         await EnsureColumnAsync(connection, "principal_rotations", "revoked_at", "TEXT", ct);
+        await EnsureColumnAsync(connection, "principal_rotations", "delivered_consumers_json", "TEXT NOT NULL DEFAULT '[]'", ct);
+        await ExecuteAsync(connection, """
+            UPDATE principal_rotations
+               SET delivered_consumers_json = json_array(json_extract(consumers_json, '$[0].ConsumerId'))
+             WHERE delivered_at IS NOT NULL AND delivered_consumers_json = '[]'
+               AND json_array_length(consumers_json) = 1;
+            """, ct);
         await SetMetaAsync(connection, null, "schema_version", CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture), ct);
     }
 

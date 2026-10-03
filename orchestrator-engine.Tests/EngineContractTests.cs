@@ -19,16 +19,23 @@ public sealed class EngineContractTests
         if (!OperatingSystem.IsWindows())
             File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         var observed = new List<string?>();
+        var observedProof = new List<string?>();
         using var http = new HttpClient(new EngineCredentialReloadHandler(path,
             new CaptureHandler(request =>
             {
                 observed.Add(request.Headers.Authorization?.Parameter);
+                observedProof.Add(request.Headers.TryGetValues("X-Principal-Consumer-Proof", out var values)
+                    ? values.Single() : null);
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
             })));
         await http.GetAsync("https://task-server.example/first");
         File.WriteAllText(path, "generation-two");
+        File.WriteAllText(path + ".consumer-proof", "engine\n" + new string('b', 64) + "\n");
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(path + ".consumer-proof", UnixFileMode.UserRead | UnixFileMode.UserWrite);
         await http.GetAsync("https://task-server.example/second");
         Assert.Equal(["generation-one", "generation-two"], observed);
+        Assert.Equal([null, new string('b', 64)], observedProof);
     }
 
     [Fact]

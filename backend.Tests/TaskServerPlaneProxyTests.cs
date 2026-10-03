@@ -90,12 +90,15 @@ public sealed class TaskServerPlaneProxyTests
                     ["TaskServer:AuthTokenFile"] = path,
                 }).Build();
             var observed = new List<string?>();
+            var observedProof = new List<string?>();
             var services = new ServiceCollection();
             services.AddTaskServerPlaneProxy(configuration);
             services.AddHttpClient(TaskServerPlaneProxy.ClientName)
                 .ConfigurePrimaryHttpMessageHandler(() => new RecordingHandler(request =>
                 {
                     observed.Add(request.Headers.Authorization?.Parameter);
+                    observedProof.Add(request.Headers.TryGetValues("X-Principal-Consumer-Proof", out var values)
+                        ? values.Single() : null);
                     return new HttpResponseMessage(System.Net.HttpStatusCode.OK);
                 }));
             using var provider = services.BuildServiceProvider();
@@ -103,11 +106,16 @@ public sealed class TaskServerPlaneProxyTests
                 .CreateClient(TaskServerPlaneProxy.ClientName);
             await client.GetAsync("/api/v1/workspaces");
             File.WriteAllText(path, "generation-two");
+            File.WriteAllText(path + ".consumer-proof", "studio-edge\n" + new string('c', 64) + "\n");
+            if (!OperatingSystem.IsWindows())
+                File.SetUnixFileMode(path + ".consumer-proof", UnixFileMode.UserRead | UnixFileMode.UserWrite);
             await client.GetAsync("/api/v1/workspaces");
             Assert.Equal(["generation-one", "generation-two"], observed);
+            Assert.Equal([null, new string('c', 64)], observedProof);
         }
         finally
         {
+            File.Delete(path + ".consumer-proof");
             File.Delete(path);
         }
     }

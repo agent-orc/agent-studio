@@ -199,6 +199,12 @@ public static class TaskServerPlaneProxy
                 var token = ReadServiceToken(configuration)
                     ?? throw new InvalidOperationException("The Task Server service credential is empty.");
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+                if (PrincipalConsumerProofFile.ReadForBearerFile(configuration["TaskServer:AuthTokenFile"]!) is { } proof)
+                {
+                    request.Headers.Remove("X-Principal-Consumer-Id");
+                    request.Headers.TryAddWithoutValidation("X-Principal-Consumer-Id", proof.ConsumerId);
+                    request.Headers.TryAddWithoutValidation("X-Principal-Consumer-Proof", proof.Value);
+                }
             }
             return base.SendAsync(request, cancellationToken);
         }

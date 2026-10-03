@@ -25,6 +25,32 @@ public sealed class ReloadingPrincipalCredentialHandlerTests
         Assert.Equal(["generation-one", "generation-two"], observed);
     }
 
+    [Fact]
+    public async Task File_backed_client_sends_only_its_protected_consumer_proof()
+    {
+        var path = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(path, "generation-two");
+            File.WriteAllText(path + ".consumer-proof", "runner-a\n" + new string('a', 64) + "\n");
+            if (!OperatingSystem.IsWindows())
+                File.SetUnixFileMode(path + ".consumer-proof", UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            using var client = new HttpClient(new ReloadingPrincipalCredentialHandler(path,
+                new RecordingHandler(request =>
+                {
+                    Assert.Equal("runner-a", request.Headers.GetValues("X-Principal-Consumer-Id").Single());
+                    Assert.Equal(new string('a', 64), request.Headers.GetValues("X-Principal-Consumer-Proof").Single());
+                    return new HttpResponseMessage(System.Net.HttpStatusCode.OK);
+                })));
+            await client.GetAsync("https://task-server.example/workspaces");
+        }
+        finally
+        {
+            File.Delete(path + ".consumer-proof");
+            File.Delete(path);
+        }
+    }
+
     private sealed class RecordingHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(

@@ -92,6 +92,9 @@ the existing supervised SSH link; WireGuard is not required.
    with a stable `operationId`, a declared Studio-edge consumer and an overlap
    sized for installation and verification, as in
    [Rotate and revoke principals](task-server.md#rotate-and-revoke-principals).
+   If the principal serves more than one edge, set `deliveryConsumerId` for
+   each host. Install that host's private `.consumer-proof` beside its bearer;
+   each edge must present its own proof on scoped requests and acknowledgement.
    Redirect the response to a protected file. If it is lost before delivery,
    repeat the request with the same operation id to recover the same bearer
    within the overlap deadline.

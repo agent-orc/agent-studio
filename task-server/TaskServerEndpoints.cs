@@ -737,8 +737,12 @@ public static class TaskServerEndpoints
             RotatePrincipalRequest request,
             TaskServerStore store,
             CancellationToken ct) => context.TaskServerPrincipal() is { } actor
-                ? await InvokeAsync(() => store.RotatePrincipalAsync(
-                    principalId, request, actor.PrincipalId, ct))
+                ? actor.PrincipalId == principalId && request.Consumers?.Count > 1
+                    ? Results.Json(new ApiError("rotation-independent-manager-required",
+                        "A shared principal requires a separate management principal for rotation delivery."),
+                        statusCode: StatusCodes.Status409Conflict)
+                    : await InvokeAsync(() => store.RotatePrincipalAsync(
+                        principalId, request, actor.PrincipalId, ct))
                 : Results.Json(new ApiError("principal-required", "An authenticated management principal is required."),
                     statusCode: StatusCodes.Status403Forbidden));
         management.MapGet("/principals/{principalId}/rotations/{operationId}", async (
@@ -759,7 +763,9 @@ public static class TaskServerEndpoints
         api.MapPost("/principal-rotations/{operationId}/delivered", async (
             HttpContext context, string operationId, TaskServerStore store, CancellationToken ct)
             => context.TaskServerPrincipal() is { } actor
-                ? await InvokeAsync(() => store.MarkPrincipalRotationDeliveredAsync(operationId, actor, ct))
+                ? await InvokeAsync(() => store.MarkPrincipalRotationDeliveredAsync(operationId, actor,
+                    context.Request.Headers["X-Principal-Consumer-Id"].FirstOrDefault(),
+                    context.Request.Headers["X-Principal-Consumer-Proof"].FirstOrDefault(), ct))
                 : Results.Json(new ApiError("principal-required", "An authenticated principal is required."),
                     statusCode: StatusCodes.Status403Forbidden))
             .RequireAnyTaskServerScope(TaskServerScopes.RunsWrite,
@@ -773,7 +779,8 @@ public static class TaskServerEndpoints
             HttpContext context, string operationId, PrincipalRotationAcknowledgement request,
             TaskServerStore store, CancellationToken ct)
             => context.TaskServerPrincipal() is { } actor
-                ? await InvokeAsync(() => store.AcknowledgePrincipalRotationAsync(operationId, request, actor, ct))
+                ? await InvokeAsync(() => store.AcknowledgePrincipalRotationAsync(operationId, request, actor,
+                    context.Request.Headers["X-Principal-Consumer-Proof"].FirstOrDefault(), ct))
                 : Results.Json(new ApiError("principal-required", "An authenticated principal is required."),
                     statusCode: StatusCodes.Status403Forbidden))
             .RequireAnyTaskServerScope(TaskServerScopes.RunsWrite,

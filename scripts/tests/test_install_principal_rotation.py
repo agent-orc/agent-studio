@@ -18,6 +18,47 @@ SPEC.loader.exec_module(MODULE)
 
 
 class PrincipalRotationInstallerTests(unittest.TestCase):
+    def test_shared_consumer_proof_survives_interrupted_acknowledgement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "edge.token"
+            path.write_text("old-bearer\n", encoding="ascii")
+            path.chmod(0o600)
+            bearer = "ats_0123456789abcdef0123456789abcdef." + "a" * 64
+            proof = "b" * 64
+            receipt = {
+                "operationId": "shared-1", "credentialGeneration": "0123456789abcdef0123456789abcdef",
+                "state": "issued", "consumers": [
+                    {"consumerId": "edge-a", "requiredScope": "management"},
+                    {"consumerId": "edge-b", "requiredScope": "management"},
+                ],
+            }
+            issued = json.dumps({"rotation": receipt, "credential": bearer, "consumerProof": proof})
+            argv = ["installer", "--server", "https://task-server.example", "--operation-id", "shared-1",
+                    "--consumer-id", "edge-a", "--token-file", str(path)]
+            interrupted = [False]
+
+            def call(server, route, credential, consumer, method="POST", body=None, proof=None):
+                self.assertEqual("edge-a", consumer)
+                self.assertEqual("b" * 64, proof)
+                if route.endswith("/ack"):
+                    if not interrupted[0]:
+                        interrupted[0] = True
+                        raise OSError("simulated acknowledgement interruption")
+                    return {"state": "awaiting-consumers", "acknowledgedConsumers": ["edge-a"]}
+                return receipt
+
+            with mock.patch.object(MODULE, "call", side_effect=call), \
+                    mock.patch.object(sys, "argv", argv), mock.patch.object(sys, "stdin", io.StringIO(issued)):
+                with self.assertRaises(OSError):
+                    MODULE.main()
+                self.assertEqual("edge-a\n" + proof,
+                                 MODULE.read_installed(str(path) + ".consumer-proof")[0])
+                self.assertEqual(0o600, stat.S_IMODE(
+                    pathlib.Path(str(path) + ".consumer-proof").stat().st_mode))
+                with mock.patch.object(sys, "argv", argv + ["--resume"]):
+                    MODULE.main()
+            self.assertTrue(pathlib.Path(str(path) + ".rotation-shared-1.previous").exists())
+
     def test_group_readable_existing_file_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory) / "runner.token"
@@ -59,7 +100,7 @@ class PrincipalRotationInstallerTests(unittest.TestCase):
                     raise OSError("simulated process interruption")
                 original_install(target, value)
 
-            def call(server, route, credential, consumer, method="POST", body=None):
+            def call(server, route, credential, consumer, method="POST", body=None, proof=None):
                 self.assertEqual(bearer, credential)
                 calls.append(route)
                 if method == "GET":

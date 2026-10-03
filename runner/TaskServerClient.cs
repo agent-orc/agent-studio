@@ -119,8 +119,6 @@ public sealed class TaskServerClient : IDisposable
         _configuredClientId = configuredClientId;
         _runnerInstanceIdOverride = runnerInstanceId;
         _usesServiceCredential = !string.IsNullOrWhiteSpace(authToken);
-        if (!_http.DefaultRequestHeaders.Contains("X-Principal-Consumer-Id"))
-            _http.DefaultRequestHeaders.TryAddWithoutValidation("X-Principal-Consumer-Id", runnerId);
         if (_usesServiceCredential)
             _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", authToken);
         SetClientId(configuredClientId ?? runnerId);

@@ -752,11 +752,17 @@ curl --fail --silent --show-error \
   > /root/runner-rotation.json
 ```
 
-The first response contains the new bearer. If that response is lost before
-delivery, a retry with the same operation id and parameters returns the same
-bearer until the overlap deadline. It never issues another generation. After
-the receiving host acknowledges delivery, retries return the receipt with
-`credential: null`. The bearer is derived from a private host-owned
+The first response contains the new bearer and a consumer proof. For a shared
+principal, set `deliveryConsumerId` to one declared consumer on each request.
+The proof is different for each consumer. If a response is lost before that
+consumer acknowledges delivery, retry the same operation id, bindings, overlap,
+and `deliveryConsumerId` with the same issuing management principal before the
+deadline. The shared principal cannot be its own delivery manager. The same
+bearer and that consumer's
+proof are returned. Delivery by another consumer does not end this replay.
+After the selected consumer acknowledges delivery, its retries return the
+receipt with `credential: null` and `consumerProof: null`. No retry issues
+another generation. The bearer and proofs derive from a private host-owned
 `principal-rotation-delivery.key` in the Task Server data directory; the command
 database stores the bearer's verifier hash and rotation metadata only. Protect
 and back up this key as a host secret with mode `0600` on Linux. Neither the
@@ -764,7 +770,8 @@ SQLite backup route nor a full backup set includes this key. If it is
 unavailable, restore it before retrying; do not create a new rotation to
 compensate for a lost response.
 `GET /api/v1/management/principals/{principalId}/rotations/{operationId}`
-returns the redacted receipt with actor, previous and new generations, delivery
+returns the redacted receipt with actor, previous and new generations, delivered
+consumer ids
 and per-consumer acknowledgement times, and retirement state. Store the bearer only in the target host's protected
 secret file and replace that file atomically. Runner file-backed clients, the
 Engine file-backed client, and the Studio edge proxy reread it on subsequent
@@ -782,9 +789,12 @@ with an atomic replacement. Use a pinned protected SSH session or run it locally
 do not put the response in task results. Supply `--server`, `--operation-id`,
 `--consumer-id` and `--token-file`. Before replacing the file, it checks the operation
 receipt with the new bearer and rejects a stale or recovered generation. It
-first stages the bearer in a private host-local `.pending` file, then backs up
+first stages the bearer and any consumer proof in private host-local `.pending`
+files, then backs up
 the previous credential and replaces the live file. It removes the pending file
-after the live file is durable. The installer then acknowledges delivery and waits
+after the live file and adjacent `.consumer-proof` file are durable. File-backed
+Runner, Engine, and Studio edge clients reload this private proof with the bearer
+on each request. The installer then acknowledges delivery and waits
 up to 30 seconds for the running consumer
 to complete a successful request requiring its declared scope. It does not
 make that proof request on the consumer's behalf. Use `--resume` to retry the
@@ -807,10 +817,11 @@ declared `requiredScope`, then calls
 `{"consumerId":"agent-runner-01"}` using that bearer. The server records the
 scoped success against the new credential generation, rejects an acknowledgement
 without it, and revokes old generations only after all declared consumers have
-acknowledged. If an operation names more than one consumer, each scoped request
-must include `X-Principal-Consumer-Id` for its own binding; a single-consumer
-operation infers that binding. Runner and Engine clients send their configured
-identity as this header; a Studio edge can set `TaskServer:ConsumerId`.
+acknowledged. For a shared principal, delivery, scoped requests and acknowledgement
+must carry both `X-Principal-Consumer-Id` and `X-Principal-Consumer-Proof`. A
+bearer and one consumer's proof cannot acknowledge another consumer. A
+single-consumer operation infers its binding. Runner and Engine clients send
+their configured identity; a Studio edge can set `TaskServer:ConsumerId`.
 Verify the old bearer receives 401 and the new
 bearer still works.
 If a response or delivery is lost, inspect the receipt and the target host's
