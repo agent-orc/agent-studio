@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { mkdirSync } from 'node:fs';
+import { copyFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 test.use({ serviceWorkers: 'block', viewport: { width: 1440, height: 1000 } });
@@ -8,8 +8,10 @@ const PROJECT = 'Agent Studio';
 const TASK_CONTEXT_KEY = `task:${PROJECT}/AGT-2577`;
 const ARCHIVED_CONTEXT_KEY = `task:${PROJECT}/AGT-2401`;
 const RESULTS = resolve(process.env.JOB_RESULTS_DIR ?? '../results/AGT-2577');
+const REVIEW_SCREENSHOTS = resolve('results/AGT-2970');
 
 mkdirSync(RESULTS, { recursive: true });
+mkdirSync(REVIEW_SCREENSHOTS, { recursive: true });
 
 const sessions = [
   {
@@ -217,8 +219,11 @@ for (const theme of ['light', 'dark'] as const) {
     await page.getByTestId('chat-metadata-toggle').click();
     await expect(page.getByTestId('chat-session-usage')).not.toContainText('110 tokens');
     await page.getByTestId('chat-metadata-toggle').click();
-    const metadataScreenshot = join(RESULTS, `task-chat-metadata-${theme}--mocked.png`);
+    const filename = `task-chat-metadata-${theme}--mocked.png`;
+    const metadataScreenshot = join(REVIEW_SCREENSHOTS, filename);
     await page.getByTestId('orch-side-sheet').screenshot({ path: metadataScreenshot });
+    copyFileSync(metadataScreenshot, join(RESULTS, filename));
+    await testInfo.attach(`Task Chat Metadata ${theme}`, { path: metadataScreenshot, contentType: 'image/png' });
     await page.getByTestId('orch-context-badge').click();
     await expect(page.getByTestId('orch-context-header')).toHaveAttribute('data-context-key', TASK_CONTEXT_KEY);
   });

@@ -59,6 +59,50 @@ public sealed class ChatTurnMetadataTests
     }
 
     [Fact]
+    public void Known_model_before_first_price_has_no_chat_cost_or_cost_capability()
+    {
+        const string model = "gpt-5-codex";
+        var firstPrice = TokenPricing.Catalog[model].History.Min(price => price.ValidFrom);
+        var finished = firstPrice.AddTicks(-1);
+        var metadata = ChatTurnMetadata.Create(model, "medium", "thread-1", "runner-01",
+            finished.AddSeconds(-5), finished.AddSeconds(-4), finished,
+            new OrchestratorTokenUsage { Model = model, InputTokens = 100, OutputTokens = 20 }, "codex");
+
+        Assert.Equal(model, metadata.Model);
+        Assert.Equal(100, metadata.InputTokens);
+        Assert.Null(metadata.Cost);
+        Assert.Null(metadata.Currency);
+        Assert.Null(metadata.PriceCatalogueVersion);
+        Assert.False(metadata.Capabilities.Cost);
+        Assert.True(metadata.Capabilities.Tokens);
+    }
+
+    [Fact]
+    public void Local_chat_tracker_keeps_project_cost_unknown_after_unpriced_known_model()
+    {
+        const string model = "gpt-5-codex";
+        var firstPrice = TokenPricing.Catalog[model].History.Min(price => price.ValidFrom);
+        var tracker = new LocalChatUsageTracker();
+        tracker.Start("unpriced", "Agent Studio", firstPrice.AddMinutes(-1), firstPrice.AddSeconds(-2));
+        tracker.Complete("unpriced", new OrchestratorTokenUsage
+        {
+            Model = model, InputTokens = 100, OutputTokens = 20,
+        }, model, firstPrice.AddTicks(-1));
+        var unpriced = Assert.Single(tracker.GetUsage(firstPrice));
+        Assert.Equal(120, unpriced.Tokens);
+        Assert.Null(unpriced.CostUsd);
+
+        tracker.Start("priced", "Agent Studio", firstPrice, firstPrice);
+        tracker.Complete("priced", new OrchestratorTokenUsage
+        {
+            Model = model, InputTokens = 50, OutputTokens = 10,
+        }, model, firstPrice.AddSeconds(1));
+        var combined = Assert.Single(tracker.GetUsage(firstPrice.AddSeconds(2)));
+        Assert.Equal(180, combined.Tokens);
+        Assert.Null(combined.CostUsd);
+    }
+
+    [Fact]
     public void Local_chat_tracker_reports_heavy_activity_and_completed_project_cost()
     {
         var tracker = new LocalChatUsageTracker();
