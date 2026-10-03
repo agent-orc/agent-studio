@@ -253,16 +253,16 @@ test('pending crash recovery stays reviewable without blocking task navigation',
   try {
     await page.goto('/');
     await dismissDevErrorDialog(page);
-    await expect(page.getByTestId('crash-recovery-open')).toBeVisible();
+    await expect(page.getByTestId('crash-recovery-entry')).toBeVisible();
     await expect(page.getByTestId('crash-recovery-prompt')).toHaveCount(0);
     await clickCard(page);
     await expect(page.getByTestId('task-core')).toBeVisible();
-    await expect(page.getByTestId('crash-recovery-open')).toBeVisible();
-    await page.getByTestId('crash-recovery-open').click();
+    await expect(page.getByTestId('crash-recovery-entry')).toBeVisible();
+    await page.getByTestId('crash-recovery-entry').click();
     await expect(page.getByTestId('crash-recovery-prompt')).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(page.getByTestId('crash-recovery-prompt')).toHaveCount(0);
-    await expect(page.getByTestId('crash-recovery-open')).toBeVisible();
+    await expect(page.getByTestId('crash-recovery-entry')).toBeVisible();
   } finally {
     releaseDocuments();
   }

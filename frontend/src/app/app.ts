@@ -874,22 +874,16 @@ export class App implements OnInit, OnDestroy {
     // path would set selectedJob() but the new shell would show no tab.
     effect(() => {
       const selected = this.selectedJob();
-      const core = this.selectedCore();
-      const preview = this.detailPreview();
-      const visible = selected?.info ?? (core ? preview : null);
-      // Consume the pager/cursor retarget hint with the first visible task: a
-      // core-first step runs this before its core lands and must keep the hint.
-      const retargetNav = !!visible && (this.laneNavRetarget
-        || this.jobSelection.consumeTaskTabReplacement(visible.taskKey));
+      const visible = selected?.info ?? (this.selectedCore() ? this.detailPreview() : null);
+      // A core-first step keeps the retarget hint until its first visible task.
+      const retargetNav = !!visible && (this.laneNavRetarget || this.jobSelection.consumeTaskTabReplacement(visible.taskKey));
       if (visible) this.laneNavRetarget = false;
       if (!this.featureFlags.vsCodeLayout()) return;
       if (!visible) return;
       untracked(() => {
         this.mirrorSelectionToStudioTab(visible, retargetNav);
         if (this.pendingStudioTaskReference) {
-          const publicReference = visible.key?.trim()
-            || visible.displayKey?.trim()
-            || visible.id;
+          const publicReference = visible.key?.trim() || visible.displayKey?.trim() || visible.id;
           if (publicReference.toLowerCase() === this.pendingStudioTaskReference.toLowerCase()) {
             this.pendingStudioTaskReference = null;
             this.studioRouteReady.set(true);

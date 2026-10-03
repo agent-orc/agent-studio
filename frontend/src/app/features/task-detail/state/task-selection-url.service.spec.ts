@@ -626,8 +626,10 @@ describe('TaskSelectionService · stable task URLs', () => {
       request.flush(documentReply(info, request.request.params.get('name')!));
     expect(selection.detailPreview()).toBeNull();
     expect(selection.selected()?.promptMarkdown).toBe('prompt markdown');
-    await afterPaint();
-    const staleUsage = http.expectOne(req => req.url.endsWith('/details/usage'));
+    const staleUsage = await vi.waitFor(
+      () => http.expectOne(req => req.url.endsWith('/details/usage')),
+      { timeout: 5000 },
+    );
 
     revalidation.flush({ ...coreFor(info, 'Agent Studio'), coreVersion: '2', title: 'Renamed task' });
 

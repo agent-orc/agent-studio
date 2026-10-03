@@ -6,6 +6,9 @@ import { api } from '../helpers/api';
 import { createJob } from '../helpers/jobs';
 import { dismissDevErrorDialog, setTheme } from '../helpers/theme';
 
+// Include the fixture's cold backend startup in this test's timeout.
+test.describe.configure({ timeout: 600_000 });
+
 /**
  * Local end-to-end evidence for the progressive task switch (AGT-2955).
  *
@@ -42,9 +45,8 @@ async function stepToOtherTask(page: Page): Promise<string> {
   return position.startsWith('1 ') ? 'j' : 'k';
 }
 
-test('measures local end-to-end core switches against the legacy detail wait', async ({ page, devBackend }, testInfo) => {
+test('measures local end-to-end core switches against the legacy detail wait', async ({ page, devBackend }) => {
   void devBackend;
-  testInfo.setTimeout(300_000);
   const watchPath = (await api<WatchPath[]>('/api/watch-paths'))[0]?.path;
   if (!watchPath) throw new Error('The dev backend exposes no watch path');
   const stamp = `${Date.now()}-${Math.floor(Math.random() * 10_000)}`;
@@ -81,9 +83,7 @@ test('measures local end-to-end core switches against the legacy detail wait', a
     await page.evaluate(() => document.addEventListener('click',
       () => performance.mark('local-open-click'), { capture: true, once: true }));
     const card = page.getByTestId('task-card').filter({ hasText: ids[0] }).first();
-    const box = await card.boundingBox();
-    if (!box) throw new Error('Task card has no layout box');
-    await card.click({ position: { x: box.width / 2, y: box.height - 4 }, force: true });
+    await card.click();
     // The first open also downloads the lazy task view. In a production
     // build that chunk can land after the documents, so the first view may
     // already be the rich pane; record which one painted first.
